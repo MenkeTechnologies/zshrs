@@ -1,20 +1,55 @@
-# zshrs
+```
+ ███████╗███████╗██╗  ██╗██████╗ ███████╗
+ ╚══███╔╝██╔════╝██║  ██║██╔══██╗██╔════╝
+   ███╔╝ ███████╗███████║██████╔╝███████╗
+  ███╔╝  ╚════██║██╔══██║██╔══██╗╚════█��║
+ ███████╗███████║██║  ██║██║  ██║███████║
+ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+```
 
+[![CI](https://github.com/MenkeTechnologies/zshrs/actions/workflows/ci.yml/badge.svg)](https://github.com/MenkeTechnologies/zshrs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**The first compiled Unix shell. The most powerful shell ever created.**
+### `[THE FIRST COMPILED UNIX SHELL]`
 
 > *"No fork, no problems."*
 
-A drop-in zsh replacement written in Rust. The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler.
+The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — 190k+ lines, 267 source files, 80 core modules, 26 ZLE widgets, 48 fish-ported builtins, persistent worker pool, AOP intercept, SQLite FTS5 caching, and full zsh compatibility.
 
-## Install
+### [`Docs`](https://menketechnologies.github.io/strykelang/zshrs.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
+
+---
+
+## Table of Contents
+
+- [\[0x00\] Overview](#0x00-overview)
+- [\[0x01\] Install](#0x01-install)
+- [\[0x02\] No-Fork Architecture](#0x02-no-fork-architecture)
+- [\[0x03\] Bytecode Compilation](#0x03-bytecode-compilation)
+- [\[0x04\] Concurrent Primitives](#0x04-concurrent-primitives)
+- [\[0x05\] AOP Intercept](#0x05-aop-intercept)
+- [\[0x06\] Worker Thread Pool](#0x06-worker-thread-pool)
+- [\[0x07\] SQLite Caching](#0x07-sqlite-caching)
+- [\[0x08\] Exclusive Builtins](#0x08-exclusive-builtins)
+- [\[0x09\] Compatibility](#0x09-compatibility)
+- [\[0x0A\] Architecture](#0x0a-architecture)
+- [\[0xFF\] License](#0xff-license)
+
+---
+
+## [0x00] OVERVIEW
+
+zshrs replaces `fork + exec` with a persistent worker thread pool, compiles every command to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes, caches compiled chunks in SQLite, and runs the completion system on FTS5 indexes. The result: shell startup, command dispatch, globbing, completion, and autoloading are all faster by orders of magnitude.
+
+---
+
+## [0x01] INSTALL
 
 ```sh
-# Lean build — pure shell, full concurrent primitives, no stryke
-cargo install --path .
+# From crates.io
+cargo install zshrs
 
-# From source
+# From source — lean build, pure shell, no stryke dependency
 git clone https://github.com/MenkeTechnologies/zshrs
 cd zshrs && cargo build --release
 # binary: target/release/zshrs
@@ -24,7 +59,9 @@ sudo sh -c 'echo ~/.cargo/bin/zshrs >> /etc/shells'
 chsh -s ~/.cargo/bin/zshrs
 ```
 
-## No-Fork Architecture
+---
+
+## [0x02] NO-FORK ARCHITECTURE
 
 Every operation that zsh forks for runs in-process on a persistent worker thread pool:
 
@@ -40,20 +77,28 @@ Every operation that zsh forks for runs in-process on a persistent worker thread
 | Autoload | Read file + parse every time | Bytecode deserialization from SQLite |
 | Plugin source | Parse + execute every startup | Delta replay from SQLite cache |
 
-## Bytecode Compilation
+---
 
-Every command compiles to fusevm bytecodes:
+## [0x03] BYTECODE COMPILATION
+
+Every command compiles to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes:
 
 ```
-Interactive command → Parser → ShellCompiler → fusevm::Op → VM::run()
-Script file (first) → Parser → ShellCompiler → VM::run() → cache bytecodes in SQLite
-Script file (cached) → SQLite → deserialize Chunk → VM::run() (no lex, no parse, no compile)
-Autoload function   → SQLite → deserialize Chunk → VM::run() (microseconds)
+Interactive command  ──► Parser ──► ShellCompiler ──► fusevm::Op ──► VM::run()
+Script file (first)  ──► Parser ──► ShellCompiler ──► VM::run() ──► cache in SQLite
+Script file (cached) ──► SQLite ──► deserialize Chunk ──► VM::run()
+                         (no lex, no parse, no compile)
+Autoload function    ──► SQLite ──► deserialize Chunk ──► VM::run()
+                         (microseconds)
 ```
 
-## Concurrent Primitives
+The shell compiler targets the same `Op` enum that [strykelang](https://github.com/MenkeTechnologies/strykelang) uses. Both frontends share fused superinstructions, extension dispatch, and the Cranelift JIT path.
 
-Full parallelism in the thin binary. No stryke dependency needed.
+---
+
+## [0x04] CONCURRENT PRIMITIVES
+
+Full parallelism in the lean binary. No stryke dependency needed.
 
 ```zsh
 # Async/await
@@ -73,7 +118,9 @@ peach 'convert {} {}.png' *.svg
 barrier 'npm test' ::: 'cargo test' ::: 'pytest'
 ```
 
-## AOP Intercept
+---
+
+## [0x05] AOP INTERCEPT
 
 First shell with aspect-oriented programming:
 
@@ -92,7 +139,9 @@ intercept around expensive_func {
 }
 ```
 
-## Worker Thread Pool
+---
+
+## [0x06] WORKER THREAD POOL
 
 Persistent pool of [2-18] threads. Configurable:
 
@@ -112,13 +161,17 @@ parallel_threshold = 32
 recursive_parallel = true
 ```
 
-## SQLite Caching
+---
+
+## [0x07] SQLITE CACHING
 
 Three databases power the shell:
 
-- **compsys.db** — completions: autoloads with bytecodes, comps, services, PATH executables (FTS5)
-- **history.db** — frequency-ranked, timestamped, duration, exit status per command
-- **plugins.db** — plugin delta cache: functions, aliases, variables, hooks, zstyles, options
+| Database | Purpose |
+|----------|---------|
+| **compsys.db** | Completions: autoloads with bytecodes, comps, services, PATH executables (FTS5) |
+| **history.db** | Frequency-ranked, timestamped, duration, exit status per command |
+| **plugins.db** | Plugin delta cache: functions, aliases, variables, hooks, zstyles, options |
 
 Browse without SQL:
 
@@ -129,7 +182,9 @@ dbview comps git              # search completions
 dbview history docker         # search history
 ```
 
-## Exclusive Builtins
+---
+
+## [0x08] EXCLUSIVE BUILTINS
 
 | Builtin | Description |
 |---------|-------------|
@@ -144,7 +199,9 @@ dbview history docker         # search history
 | `dbview` | Browse SQLite caches without SQL |
 | `profile` | In-process command profiling with nanosecond accuracy |
 
-## Compatibility
+---
+
+## [0x09] COMPATIBILITY
 
 - Full zsh script compatibility — runs existing `.zshrc`
 - Full bash compatibility via emulation
@@ -154,11 +211,35 @@ dbview history docker         # search history
 - Glob qualifiers, parameter expansion flags, completion system
 - zstyle, ZLE widgets, hooks, modules
 
-## Documentation
+---
 
-- [HTML docs](https://menketechnologies.github.io/strykelang/zshrs.html)
-- [stryke docs](https://menketechnologies.github.io/strykelang/)
+## [0x0A] ARCHITECTURE
 
-## License
+```
+                  ┌──────────────────────────────────────────┐
+                  │              zshrs binary                 │
+                  ├──────────────┬───────────────────────────┤
+                  │   src/ (80)  │      fish/ (48 builtins)  │
+                  │   lexer      │      reader + line editor  │
+                  │   parser     │      syntax highlighting   │
+                  │   compiler   │      autosuggestions        │
+                  │   exec       │      abbreviations          │
+                  │   jobs       │      env dispatch           │
+                  │   signals    │      history backend        │
+                  │   params     │      process control        │
+                  │   glob       │      event system           │
+                  │   zle/ (26)  │                             │
+                  ├──────────────┴───────────────────────────┤
+                  │             compsys (27 files)            │
+                  │   SQLite FTS5 · menuselect · zstyle      │
+                  ├────────���─────────────────────────────────┤
+                  │           fusevm (bytecode VM)            │
+                  │   127 opcodes · fused loops · JIT path   │
+                  └──────────────────────────────────────────┘
+```
 
-MIT — Copyright (c) 2026 MenkeTechnologies
+---
+
+## [0xFF] LICENSE
+
+MIT — Copyright (c) 2026 [MenkeTechnologies](https://github.com/MenkeTechnologies)
