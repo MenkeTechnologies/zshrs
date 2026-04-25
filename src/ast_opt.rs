@@ -48,49 +48,87 @@ fn optimize_command(cmd: &mut ShellCommand) {
 fn optimize_compound(compound: &mut CompoundCommand) {
     match compound {
         CompoundCommand::BraceGroup(cmds) | CompoundCommand::Subshell(cmds) => {
-            for c in cmds.iter_mut() { optimize_command(c); }
+            for c in cmds.iter_mut() {
+                optimize_command(c);
+            }
         }
-        CompoundCommand::If { conditions, else_part } => {
+        CompoundCommand::If {
+            conditions,
+            else_part,
+        } => {
             for (cond, body) in conditions.iter_mut() {
-                for c in cond.iter_mut() { optimize_command(c); }
-                for c in body.iter_mut() { optimize_command(c); }
+                for c in cond.iter_mut() {
+                    optimize_command(c);
+                }
+                for c in body.iter_mut() {
+                    optimize_command(c);
+                }
             }
             if let Some(els) = else_part {
-                for c in els.iter_mut() { optimize_command(c); }
+                for c in els.iter_mut() {
+                    optimize_command(c);
+                }
             }
         }
         CompoundCommand::For { words, body, .. } => {
             if let Some(ws) = words {
-                for w in ws.iter_mut() { optimize_word(w); }
+                for w in ws.iter_mut() {
+                    optimize_word(w);
+                }
             }
-            for c in body.iter_mut() { optimize_command(c); }
+            for c in body.iter_mut() {
+                optimize_command(c);
+            }
         }
         CompoundCommand::ForArith { body, .. } => {
-            for c in body.iter_mut() { optimize_command(c); }
+            for c in body.iter_mut() {
+                optimize_command(c);
+            }
         }
         CompoundCommand::While { condition, body } | CompoundCommand::Until { condition, body } => {
-            for c in condition.iter_mut() { optimize_command(c); }
-            for c in body.iter_mut() { optimize_command(c); }
+            for c in condition.iter_mut() {
+                optimize_command(c);
+            }
+            for c in body.iter_mut() {
+                optimize_command(c);
+            }
         }
         CompoundCommand::Case { word, cases } => {
             optimize_word(word);
             for (pats, cmds, _) in cases.iter_mut() {
-                for p in pats.iter_mut() { optimize_word(p); }
-                for c in cmds.iter_mut() { optimize_command(c); }
+                for p in pats.iter_mut() {
+                    optimize_word(p);
+                }
+                for c in cmds.iter_mut() {
+                    optimize_command(c);
+                }
             }
         }
         CompoundCommand::Select { words, body, .. } => {
             if let Some(ws) = words {
-                for w in ws.iter_mut() { optimize_word(w); }
+                for w in ws.iter_mut() {
+                    optimize_word(w);
+                }
             }
-            for c in body.iter_mut() { optimize_command(c); }
+            for c in body.iter_mut() {
+                optimize_command(c);
+            }
         }
-        CompoundCommand::Try { try_body, always_body } => {
-            for c in try_body.iter_mut() { optimize_command(c); }
-            for c in always_body.iter_mut() { optimize_command(c); }
+        CompoundCommand::Try {
+            try_body,
+            always_body,
+        } => {
+            for c in try_body.iter_mut() {
+                optimize_command(c);
+            }
+            for c in always_body.iter_mut() {
+                optimize_command(c);
+            }
         }
         CompoundCommand::Repeat { body, .. } => {
-            for c in body.iter_mut() { optimize_command(c); }
+            for c in body.iter_mut() {
+                optimize_command(c);
+            }
         }
         CompoundCommand::Coproc { body, .. } => {
             optimize_command(body);
@@ -114,12 +152,16 @@ fn optimize_word(word: &mut ShellWord) {
             }
         }
         ShellWord::DoubleQuoted(parts) => {
-            for p in parts.iter_mut() { optimize_word(p); }
+            for p in parts.iter_mut() {
+                optimize_word(p);
+            }
             // Merge adjacent literals
             merge_adjacent_literals(parts);
         }
         ShellWord::Concat(parts) => {
-            for p in parts.iter_mut() { optimize_word(p); }
+            for p in parts.iter_mut() {
+                optimize_word(p);
+            }
             merge_adjacent_literals(parts);
             // If concat reduced to single element, unwrap
             if parts.len() == 1 {
@@ -127,7 +169,9 @@ fn optimize_word(word: &mut ShellWord) {
             }
         }
         ShellWord::ArrayLiteral(elements) => {
-            for e in elements.iter_mut() { optimize_word(e); }
+            for e in elements.iter_mut() {
+                optimize_word(e);
+            }
         }
         ShellWord::CommandSub(cmd) => {
             optimize_command(cmd);

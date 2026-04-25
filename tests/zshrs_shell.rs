@@ -1,9 +1,9 @@
 //! Integration tests for zshrs shell — exercises builtins, syntax, and
 //! variable handling by spawning the real `zshrs` binary with `-f -c`.
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::io::Write;
 use std::time::Duration;
 
 /// Locate the debug-built `zshrs` binary.
@@ -125,7 +125,8 @@ fn test_typeset_readonly() {
 
 #[test]
 fn test_continue_in_loop() {
-    let (_, output, _) = run_zshrs("for i in 1 2 3; do if [[ $i == 2 ]]; then continue; fi; echo $i; done");
+    let (_, output, _) =
+        run_zshrs("for i in 1 2 3; do if [[ $i == 2 ]]; then continue; fi; echo $i; done");
     assert!(
         output.contains("1") && output.contains("3"),
         "expected 1 and 3 but not 2, got: {output}"

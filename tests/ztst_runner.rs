@@ -565,11 +565,7 @@ fn run_ztst_file(zshrs: &Path, ztst_path: &Path) -> (usize, usize, usize) {
             let val = &line["__ZTST_UNIMP=".len()..];
             if !val.is_empty() {
                 if verbose {
-                    eprintln!(
-                        "  SKIP all {} tests: {}",
-                        ztst.tests.len(),
-                        val
-                    );
+                    eprintln!("  SKIP all {} tests: {}", ztst.tests.len(), val);
                 }
                 return (0, 0, ztst.tests.len());
             }

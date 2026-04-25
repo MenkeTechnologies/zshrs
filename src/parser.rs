@@ -6,7 +6,7 @@
 
 use crate::lexer::ZshLexer;
 use crate::tokens::LexTok;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::iter::Peekable;
 use std::str::Chars;
 
@@ -1323,19 +1323,28 @@ impl<'a> ShellParser<'a> {
                         let mut depth = 1;
                         let mut cmd = String::new();
                         while let Some(ch) = chars.next() {
-                            if ch == '(' { depth += 1; }
-                            if ch == ')' { depth -= 1; if depth == 0 { break; } }
+                            if ch == '(' {
+                                depth += 1;
+                            }
+                            if ch == ')' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
                             cmd.push(ch);
                         }
                         // Parse the command substitution content into an AST
                         let mut sub_parser = ShellParser::new(&cmd);
                         if let Ok(cmds) = sub_parser.parse_script() {
                             if cmds.len() == 1 {
-                                elements.push(ShellWord::CommandSub(Box::new(cmds.into_iter().next().unwrap())));
+                                elements.push(ShellWord::CommandSub(Box::new(
+                                    cmds.into_iter().next().unwrap(),
+                                )));
                             } else if !cmds.is_empty() {
                                 // Multiple commands — wrap in a brace group
                                 elements.push(ShellWord::CommandSub(Box::new(
-                                    ShellCommand::Compound(CompoundCommand::BraceGroup(cmds))
+                                    ShellCommand::Compound(CompoundCommand::BraceGroup(cmds)),
                                 )));
                             }
                         }
@@ -1684,6 +1693,10 @@ impl<'a> ShellParser<'a> {
                     cmd.words.push(self.parse_word()?);
                 }
 
+                ShellToken::SingleQuotedWord(_) | ShellToken::DoubleQuotedWord(_) => {
+                    cmd.words.push(self.parse_word()?);
+                }
+
                 ShellToken::LBracket => {
                     cmd.words.push(ShellWord::Literal("[".to_string()));
                     self.advance();
@@ -1768,6 +1781,8 @@ impl<'a> ShellParser<'a> {
         let token = self.advance();
         match token {
             ShellToken::Word(w) => Ok(ShellWord::Literal(w)),
+            ShellToken::SingleQuotedWord(s) => Ok(ShellWord::SingleQuoted(s)),
+            ShellToken::DoubleQuotedWord(s) => Ok(self.parse_double_quoted_contents(&s)),
             ShellToken::LBracket => Ok(ShellWord::Literal("[".to_string())),
             ShellToken::If => Ok(ShellWord::Literal("if".to_string())),
             ShellToken::Then => Ok(ShellWord::Literal("then".to_string())),
@@ -1789,6 +1804,75 @@ impl<'a> ShellParser<'a> {
             ShellToken::Typeset(name) => Ok(ShellWord::Literal(name)),
             ShellToken::Repeat => Ok(ShellWord::Literal("repeat".to_string())),
             _ => Err("Expected word".to_string()),
+        }
+    }
+
+    fn parse_double_quoted_contents(&self, s: &str) -> ShellWord {
+        let mut parts = Vec::new();
+        let mut literal = String::new();
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '$' {
+                if !literal.is_empty() {
+                    parts.push(ShellWord::Literal(std::mem::take(&mut literal)));
+                }
+                i += 1;
+                if i >= chars.len() {
+                    literal.push('$');
+                    continue;
+                }
+                if chars[i] == '{' {
+                    i += 1;
+                    let mut var_name = String::new();
+                    while i < chars.len() && chars[i] != '}' {
+                        var_name.push(chars[i]);
+                        i += 1;
+                    }
+                    if i < chars.len() {
+                        i += 1;
+                    }
+                    parts.push(ShellWord::VariableBraced(var_name, None));
+                } else if chars[i].is_ascii_alphabetic() || chars[i] == '_' {
+                    let mut var_name = String::new();
+                    while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                        var_name.push(chars[i]);
+                        i += 1;
+                    }
+                    parts.push(ShellWord::Variable(var_name));
+                } else {
+                    literal.push('$');
+                }
+            } else if chars[i] == '\\' && i + 1 < chars.len() {
+                i += 1;
+                match chars[i] {
+                    'n' => literal.push('\n'),
+                    't' => literal.push('\t'),
+                    'r' => literal.push('\r'),
+                    '\\' => literal.push('\\'),
+                    '"' => literal.push('"'),
+                    '$' => literal.push('$'),
+                    '`' => literal.push('`'),
+                    c => {
+                        literal.push('\\');
+                        literal.push(c);
+                    }
+                }
+                i += 1;
+            } else {
+                literal.push(chars[i]);
+                i += 1;
+            }
+        }
+        if !literal.is_empty() {
+            parts.push(ShellWord::Literal(literal));
+        }
+        if parts.is_empty() {
+            ShellWord::Literal(String::new())
+        } else if parts.len() == 1 {
+            parts.pop().unwrap()
+        } else {
+            ShellWord::DoubleQuoted(parts)
         }
     }
 

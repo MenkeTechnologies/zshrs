@@ -49,12 +49,13 @@ impl ShellCompiler {
 
     /// Compile a list of shell commands into a fusevm Chunk.
     pub fn compile(mut self, commands: &[ShellCommand]) -> fusevm::Chunk {
-        self.builder.emit(Op::PushFrame, 0);
+        // No PushFrame for top-level script — frames are for function calls only.
+        // Top-level just executes and halts.
         for cmd in commands {
             self.compile_command(cmd);
         }
+        // Return the last exit status
         self.builder.emit(Op::GetStatus, 0);
-        self.builder.emit(Op::ReturnValue, 0);
         self.builder.build()
     }
 
@@ -156,7 +157,22 @@ impl ShellCompiler {
             self.builder.emit(Op::Redirect(fd, op_byte), 0);
         }
 
-        // Push command words onto stack
+        // Check if first word is a literal builtin name
+        if let ShellWord::Literal(cmd_name) = &simple.words[0] {
+            if let Some(builtin_id) = fusevm::shell_builtins::builtin_id(cmd_name) {
+                // Push arguments (skip command name itself)
+                let argc = (simple.words.len() - 1) as u8;
+                for word in &simple.words[1..] {
+                    self.compile_word(word);
+                }
+                // CallBuiltin dispatches through the registered handler table
+                self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
+                self.builder.emit(Op::SetStatus, 0);
+                return;
+            }
+        }
+
+        // External command: push all words onto stack, emit Exec
         let argc = simple.words.len() as u8;
         for word in &simple.words {
             self.compile_word(word);
@@ -177,11 +193,7 @@ impl ShellCompiler {
     ///   PipelineStage
     ///   <compile cmdN>
     ///   PipelineEnd        ; waits for all, pushes last status
-    fn compile_pipeline(
-        &mut self,
-        cmds: &[ShellCommand],
-        negated: bool,
-    ) {
+    fn compile_pipeline(&mut self, cmds: &[ShellCommand], negated: bool) {
         if cmds.len() == 1 {
             // Single command, no pipe needed
             self.compile_command(&cmds[0]);
@@ -308,7 +320,7 @@ impl ShellCompiler {
                 self.next_slot += 1;
                 let len_slot = self.next_slot;
                 self.next_slot += 1;
-                let var_slot = self.slot_for(var);
+                let var_idx = self.builder.add_name(var);
 
                 // Build the word list — count items
                 let item_count = if let Some(words) = words {
@@ -324,8 +336,7 @@ impl ShellCompiler {
                         let const_idx = self.builder.add_constant(Value::str(s));
                         self.builder.emit(Op::LoadConst(const_idx), 0);
                     }
-                    self.builder
-                        .emit(Op::MakeArray(item_count as u16), 0);
+                    self.builder.emit(Op::MakeArray(item_count as u16), 0);
                 } else {
                     // No words = iterate $@ (positional params)
                     // TODO: load positional params
@@ -350,10 +361,10 @@ impl ShellCompiler {
                 self.builder.emit(Op::NumLt, 0);
                 let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
-                // var = array[i] — for now just set from constant
-                // TODO: proper array indexing op
+                // var = array[i] — get element from array at index i
                 self.builder.emit(Op::GetSlot(i_slot), 0);
-                self.builder.emit(Op::SetSlot(var_slot), 0);
+                self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
+                self.builder.emit(Op::SetVar(var_idx), 0);
 
                 // Push break/continue targets
                 self.break_patches.push(Vec::new());
@@ -516,8 +527,7 @@ impl ShellCompiler {
 
                 let loop_top = self.builder.current_pos();
                 // Try fused superinstruction
-                self.builder
-                    .emit(Op::GetSlot(i_slot), 0);
+                self.builder.emit(Op::GetSlot(i_slot), 0);
                 self.builder.emit(Op::GetSlot(count_slot), 0);
                 self.builder.emit(Op::NumLt, 0);
                 let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
@@ -704,35 +714,43 @@ impl ShellCompiler {
             // File tests
             CondExpr::FileExists(w) => {
                 self.compile_word(w);
-                self.builder.emit(Op::TestFile(fusevm::op::file_test::EXISTS), 0);
+                self.builder
+                    .emit(Op::TestFile(fusevm::op::file_test::EXISTS), 0);
             }
             CondExpr::FileRegular(w) => {
                 self.compile_word(w);
-                self.builder.emit(Op::TestFile(fusevm::op::file_test::IS_FILE), 0);
+                self.builder
+                    .emit(Op::TestFile(fusevm::op::file_test::IS_FILE), 0);
             }
             CondExpr::FileDirectory(w) => {
                 self.compile_word(w);
-                self.builder.emit(Op::TestFile(fusevm::op::file_test::IS_DIR), 0);
+                self.builder
+                    .emit(Op::TestFile(fusevm::op::file_test::IS_DIR), 0);
             }
             CondExpr::FileSymlink(w) => {
                 self.compile_word(w);
-                self.builder.emit(Op::TestFile(fusevm::op::file_test::IS_SYMLINK), 0);
+                self.builder
+                    .emit(Op::TestFile(fusevm::op::file_test::IS_SYMLINK), 0);
             }
             CondExpr::FileReadable(w) => {
                 self.compile_word(w);
-                self.builder.emit(Op::TestFile(fusevm::op::file_test::IS_READABLE), 0);
+                self.builder
+                    .emit(Op::TestFile(fusevm::op::file_test::IS_READABLE), 0);
             }
             CondExpr::FileWritable(w) => {
                 self.compile_word(w);
-                self.builder.emit(Op::TestFile(fusevm::op::file_test::IS_WRITABLE), 0);
+                self.builder
+                    .emit(Op::TestFile(fusevm::op::file_test::IS_WRITABLE), 0);
             }
             CondExpr::FileExecutable(w) => {
                 self.compile_word(w);
-                self.builder.emit(Op::TestFile(fusevm::op::file_test::IS_EXECUTABLE), 0);
+                self.builder
+                    .emit(Op::TestFile(fusevm::op::file_test::IS_EXECUTABLE), 0);
             }
             CondExpr::FileNonEmpty(w) => {
                 self.compile_word(w);
-                self.builder.emit(Op::TestFile(fusevm::op::file_test::IS_NONEMPTY), 0);
+                self.builder
+                    .emit(Op::TestFile(fusevm::op::file_test::IS_NONEMPTY), 0);
             }
 
             // String tests
@@ -833,23 +851,127 @@ impl ShellCompiler {
     fn compile_word(&mut self, word: &ShellWord) {
         match word {
             ShellWord::Literal(s) => {
-                let idx = self.builder.add_constant(Value::str(s.as_str()));
-                self.builder.emit(Op::LoadConst(idx), 0);
+                if s.contains('$') {
+                    self.compile_string_with_expansions(s);
+                } else {
+                    let idx = self.builder.add_constant(Value::str(s.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                }
             }
             ShellWord::SingleQuoted(s) => {
                 let idx = self.builder.add_constant(Value::str(s.as_str()));
                 self.builder.emit(Op::LoadConst(idx), 0);
             }
             ShellWord::Variable(name) => {
-                let slot = self.slot_for(name);
-                self.builder.emit(Op::GetSlot(slot), 0);
+                let var_idx = self.builder.add_name(name);
+                self.builder.emit(Op::GetVar(var_idx), 0);
             }
-            // TODO: DoubleQuoted, Glob, Tilde, ArrayLiteral, VariableBraced
+            ShellWord::DoubleQuoted(parts) => {
+                if parts.is_empty() {
+                    let idx = self.builder.add_constant(Value::str(""));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                } else if parts.len() == 1 {
+                    self.compile_word(&parts[0]);
+                } else {
+                    self.compile_word(&parts[0]);
+                    for part in &parts[1..] {
+                        self.compile_word(part);
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                }
+            }
+            ShellWord::Concat(parts) => {
+                if parts.is_empty() {
+                    let idx = self.builder.add_constant(Value::str(""));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                } else if parts.len() == 1 {
+                    self.compile_word(&parts[0]);
+                } else {
+                    self.compile_word(&parts[0]);
+                    for part in &parts[1..] {
+                        self.compile_word(part);
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                }
+            }
+            // TODO: Glob, Tilde, ArrayLiteral, VariableBraced
             _ => {
                 // Dynamic word — push empty string placeholder
                 let idx = self.builder.add_constant(Value::str(""));
                 self.builder.emit(Op::LoadConst(idx), 0);
             }
+        }
+    }
+
+    fn compile_string_with_expansions(&mut self, s: &str) {
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        let mut first = true;
+        while i < chars.len() {
+            if chars[i] == '$' {
+                i += 1;
+                if i >= chars.len() {
+                    let idx = self.builder.add_constant(Value::str("$"));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    if !first {
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                    first = false;
+                    continue;
+                }
+                if chars[i] == '{' {
+                    i += 1;
+                    let mut var_name = String::new();
+                    while i < chars.len() && chars[i] != '}' {
+                        var_name.push(chars[i]);
+                        i += 1;
+                    }
+                    if i < chars.len() {
+                        i += 1;
+                    }
+                    let var_idx = self.builder.add_name(&var_name);
+                    self.builder.emit(Op::GetVar(var_idx), 0);
+                    if !first {
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                    first = false;
+                } else if chars[i].is_ascii_alphabetic() || chars[i] == '_' {
+                    let mut var_name = String::new();
+                    while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                        var_name.push(chars[i]);
+                        i += 1;
+                    }
+                    let var_idx = self.builder.add_name(&var_name);
+                    self.builder.emit(Op::GetVar(var_idx), 0);
+                    if !first {
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                    first = false;
+                } else {
+                    let idx = self.builder.add_constant(Value::str("$"));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    if !first {
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                    first = false;
+                }
+            } else {
+                let mut literal = String::new();
+                while i < chars.len() && chars[i] != '$' {
+                    literal.push(chars[i]);
+                    i += 1;
+                }
+                let idx = self.builder.add_constant(Value::str(&literal));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                if !first {
+                    self.builder.emit(Op::Concat, 0);
+                }
+                first = false;
+            }
+        }
+        if first {
+            let idx = self.builder.add_constant(Value::str(""));
+            self.builder.emit(Op::LoadConst(idx), 0);
         }
     }
 
@@ -1005,7 +1127,6 @@ impl<'a> ArithCompiler<'a> {
         }
     }
 
-
     /// Compile the arithmetic expression to fusevm bytecodes.
     /// Returns the compiled chunk.
     pub fn compile(mut self) -> fusevm::Chunk {
@@ -1075,8 +1196,7 @@ impl<'a> ArithCompiler<'a> {
                 || self.input.as_bytes()[self.pos + 1] == b'X')
         {
             self.pos += 2;
-            while self.pos < self.input.len()
-                && self.input.as_bytes()[self.pos].is_ascii_hexdigit()
+            while self.pos < self.input.len() && self.input.as_bytes()[self.pos].is_ascii_hexdigit()
             {
                 self.pos += 1;
             }
@@ -1089,9 +1209,7 @@ impl<'a> ArithCompiler<'a> {
             && self.input.as_bytes()[self.pos] == b'0'
             && self.input.as_bytes()[self.pos + 1].is_ascii_digit()
         {
-            while self.pos < self.input.len()
-                && self.input.as_bytes()[self.pos].is_ascii_digit()
-            {
+            while self.pos < self.input.len() && self.input.as_bytes()[self.pos].is_ascii_digit() {
                 self.pos += 1;
             }
             let val = i64::from_str_radix(&self.input[start + 1..self.pos], 8).unwrap_or(0);
@@ -1136,16 +1254,28 @@ impl<'a> ArithCompiler<'a> {
             b'+' => {
                 self.pos += 1;
                 match self.peek_char() {
-                    Some(b'+') => { self.pos += 1; (Tok::PreInc, String::new()) }
-                    Some(b'=') => { self.pos += 1; (Tok::PlusAssign, String::new()) }
+                    Some(b'+') => {
+                        self.pos += 1;
+                        (Tok::PreInc, String::new())
+                    }
+                    Some(b'=') => {
+                        self.pos += 1;
+                        (Tok::PlusAssign, String::new())
+                    }
                     _ => (Tok::Plus, String::new()),
                 }
             }
             b'-' => {
                 self.pos += 1;
                 match self.peek_char() {
-                    Some(b'-') => { self.pos += 1; (Tok::PreDec, String::new()) }
-                    Some(b'=') => { self.pos += 1; (Tok::MinusAssign, String::new()) }
+                    Some(b'-') => {
+                        self.pos += 1;
+                        (Tok::PreDec, String::new())
+                    }
+                    Some(b'=') => {
+                        self.pos += 1;
+                        (Tok::MinusAssign, String::new())
+                    }
                     _ => (Tok::Minus, String::new()),
                 }
             }
@@ -1161,7 +1291,10 @@ impl<'a> ArithCompiler<'a> {
                             (Tok::Pow, String::new())
                         }
                     }
-                    Some(b'=') => { self.pos += 1; (Tok::MulAssign, String::new()) }
+                    Some(b'=') => {
+                        self.pos += 1;
+                        (Tok::MulAssign, String::new())
+                    }
                     _ => (Tok::Mul, String::new()),
                 }
             }
@@ -1201,8 +1334,14 @@ impl<'a> ArithCompiler<'a> {
                     (Tok::BitOr, String::new())
                 }
             }
-            b'^' => { self.pos += 1; (Tok::BitXor, String::new()) }
-            b'~' => { self.pos += 1; (Tok::BitNot, String::new()) }
+            b'^' => {
+                self.pos += 1;
+                (Tok::BitXor, String::new())
+            }
+            b'~' => {
+                self.pos += 1;
+                (Tok::BitNot, String::new())
+            }
             b'!' => {
                 self.pos += 1;
                 if self.peek_char() == Some(b'=') {
@@ -1215,16 +1354,28 @@ impl<'a> ArithCompiler<'a> {
             b'<' => {
                 self.pos += 1;
                 match self.peek_char() {
-                    Some(b'<') => { self.pos += 1; (Tok::Shl, String::new()) }
-                    Some(b'=') => { self.pos += 1; (Tok::Leq, String::new()) }
+                    Some(b'<') => {
+                        self.pos += 1;
+                        (Tok::Shl, String::new())
+                    }
+                    Some(b'=') => {
+                        self.pos += 1;
+                        (Tok::Leq, String::new())
+                    }
                     _ => (Tok::Lt, String::new()),
                 }
             }
             b'>' => {
                 self.pos += 1;
                 match self.peek_char() {
-                    Some(b'>') => { self.pos += 1; (Tok::Shr, String::new()) }
-                    Some(b'=') => { self.pos += 1; (Tok::Geq, String::new()) }
+                    Some(b'>') => {
+                        self.pos += 1;
+                        (Tok::Shr, String::new())
+                    }
+                    Some(b'=') => {
+                        self.pos += 1;
+                        (Tok::Geq, String::new())
+                    }
                     _ => (Tok::Gt, String::new()),
                 }
             }
@@ -1237,11 +1388,26 @@ impl<'a> ArithCompiler<'a> {
                     (Tok::Assign, String::new())
                 }
             }
-            b'(' => { self.pos += 1; (Tok::LParen, String::new()) }
-            b')' => { self.pos += 1; (Tok::RParen, String::new()) }
-            b',' => { self.pos += 1; (Tok::Comma, String::new()) }
-            b'?' => { self.pos += 1; (Tok::Quest, String::new()) }
-            b':' => { self.pos += 1; (Tok::Colon, String::new()) }
+            b'(' => {
+                self.pos += 1;
+                (Tok::LParen, String::new())
+            }
+            b')' => {
+                self.pos += 1;
+                (Tok::RParen, String::new())
+            }
+            b',' => {
+                self.pos += 1;
+                (Tok::Comma, String::new())
+            }
+            b'?' => {
+                self.pos += 1;
+                (Tok::Quest, String::new())
+            }
+            b':' => {
+                self.pos += 1;
+                (Tok::Colon, String::new())
+            }
             _ => {
                 self.pos += 1;
                 (Tok::Eoi, String::new())
@@ -1276,8 +1442,11 @@ impl<'a> ArithCompiler<'a> {
                         self.builder.emit(Op::SetSlot(slot), 0);
                         return;
                     }
-                    Tok::PlusAssign | Tok::MinusAssign | Tok::MulAssign
-                    | Tok::DivAssign | Tok::ModAssign => {
+                    Tok::PlusAssign
+                    | Tok::MinusAssign
+                    | Tok::MulAssign
+                    | Tok::DivAssign
+                    | Tok::ModAssign => {
                         let _ = self.next_tok(); // consume op=
                         let slot = self.slot_for(&name);
                         self.builder.emit(Op::GetSlot(slot), 0);
@@ -1621,7 +1790,7 @@ impl<'a> ArithCompiler<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fusevm::{VM, VMResult};
+    use fusevm::{VMResult, VM};
 
     fn eval(expr: &str) -> i64 {
         let compiler = ArithCompiler::new(expr);
@@ -1760,9 +1929,9 @@ mod tests {
             init: "i = 0".to_string(),
             cond: "i < 10".to_string(),
             step: "i++".to_string(),
-            body: vec![
-                ShellCommand::Compound(CompoundCommand::Arith("sum = sum + i".to_string())),
-            ],
+            body: vec![ShellCommand::Compound(CompoundCommand::Arith(
+                "sum = sum + i".to_string(),
+            ))],
         });
         let compiler = ShellCompiler::new();
         let chunk = compiler.compile(&[cmd]);
@@ -1808,7 +1977,9 @@ mod tests {
         // if (( 1 )); then (( result = 42 )); fi
         let cmd = ShellCommand::Compound(CompoundCommand::If {
             conditions: vec![(
-                vec![ShellCommand::Compound(CompoundCommand::Arith("1".to_string()))],
+                vec![ShellCommand::Compound(CompoundCommand::Arith(
+                    "1".to_string(),
+                ))],
                 vec![ShellCommand::Compound(CompoundCommand::Arith(
                     "result = 42".to_string(),
                 ))],
@@ -1841,7 +2012,7 @@ mod tests {
     #[test]
     fn test_simple_command_compiles() {
         use crate::parser::SimpleCommand;
-        // echo hello world → Exec(3)
+        // echo hello world → CallBuiltin(BUILTIN_ECHO, 2) since echo is a builtin
         let cmd = ShellCommand::Simple(SimpleCommand {
             assignments: vec![],
             words: vec![
@@ -1853,8 +2024,38 @@ mod tests {
         });
         let compiler = ShellCompiler::new();
         let chunk = compiler.compile(&[cmd]);
-        let has_exec = chunk.ops.iter().any(|op| matches!(op, Op::Exec(3)));
-        assert!(has_exec, "expected Exec(3) for 'echo hello world'");
+        // echo is a builtin, should emit CallBuiltin not Exec
+        let has_builtin = chunk
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::CallBuiltin(2, 2))); // BUILTIN_ECHO=2, 2 args
+        assert!(
+            has_builtin,
+            "expected CallBuiltin(2, 2) for 'echo hello world', got: {:?}",
+            chunk.ops
+        );
+    }
+
+    #[test]
+    fn test_external_command_compiles() {
+        use crate::parser::SimpleCommand;
+        // ls -la → Exec(2) since ls is NOT a builtin
+        let cmd = ShellCommand::Simple(SimpleCommand {
+            assignments: vec![],
+            words: vec![
+                ShellWord::Literal("ls".to_string()),
+                ShellWord::Literal("-la".to_string()),
+            ],
+            redirects: vec![],
+        });
+        let compiler = ShellCompiler::new();
+        let chunk = compiler.compile(&[cmd]);
+        let has_exec = chunk.ops.iter().any(|op| matches!(op, Op::Exec(2)));
+        assert!(
+            has_exec,
+            "expected Exec(2) for 'ls -la', got: {:?}",
+            chunk.ops
+        );
     }
 
     #[test]
@@ -1894,7 +2095,10 @@ mod tests {
         let cmd = ShellCommand::Pipeline(cmds, false);
         let compiler = ShellCompiler::new();
         let chunk = compiler.compile(&[cmd]);
-        let has_begin = chunk.ops.iter().any(|op| matches!(op, Op::PipelineBegin(2)));
+        let has_begin = chunk
+            .ops
+            .iter()
+            .any(|op| matches!(op, Op::PipelineBegin(2)));
         let has_end = chunk.ops.iter().any(|op| matches!(op, Op::PipelineEnd));
         let has_stage = chunk.ops.iter().any(|op| matches!(op, Op::PipelineStage));
         assert!(has_begin, "expected PipelineBegin(2)");
@@ -1956,12 +2160,16 @@ mod tests {
             cases: vec![
                 (
                     vec![ShellWord::Literal("hello".to_string())],
-                    vec![ShellCommand::Compound(CompoundCommand::Arith("result = 1".to_string()))],
+                    vec![ShellCommand::Compound(CompoundCommand::Arith(
+                        "result = 1".to_string(),
+                    ))],
                     CaseTerminator::Break,
                 ),
                 (
                     vec![ShellWord::Literal("world".to_string())],
-                    vec![ShellCommand::Compound(CompoundCommand::Arith("result = 2".to_string()))],
+                    vec![ShellCommand::Compound(CompoundCommand::Arith(
+                        "result = 2".to_string(),
+                    ))],
                     CaseTerminator::Break,
                 ),
             ],
@@ -2005,8 +2213,12 @@ mod tests {
         use crate::parser::CompoundCommand;
         // [[ -f /etc/passwd && -d /tmp ]]
         let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::And(
-            Box::new(CondExpr::FileRegular(ShellWord::Literal("/etc/passwd".to_string()))),
-            Box::new(CondExpr::FileDirectory(ShellWord::Literal("/tmp".to_string()))),
+            Box::new(CondExpr::FileRegular(ShellWord::Literal(
+                "/etc/passwd".to_string(),
+            ))),
+            Box::new(CondExpr::FileDirectory(ShellWord::Literal(
+                "/tmp".to_string(),
+            ))),
         )));
         let compiler = ShellCompiler::new();
         let chunk = compiler.compile(&[cmd]);
@@ -2056,7 +2268,10 @@ mod tests {
         );
         let compiler = ShellCompiler::new();
         let chunk = compiler.compile(&[cmd]);
-        assert!(!chunk.sub_entries.is_empty(), "expected sub entry for function");
+        assert!(
+            !chunk.sub_entries.is_empty(),
+            "expected sub entry for function"
+        );
         let has_return = chunk.ops.iter().any(|op| matches!(op, Op::Return));
         assert!(has_return, "expected Return in function body");
     }
@@ -2078,9 +2293,9 @@ mod tests {
     fn test_exec_file_test_exists() {
         use crate::parser::CompoundCommand;
         // [[ -e /tmp ]] → status 0
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::FileExists(ShellWord::Literal("/tmp".to_string())),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::FileExists(
+            ShellWord::Literal("/tmp".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0, "/tmp should exist");
     }
@@ -2089,9 +2304,9 @@ mod tests {
     fn test_exec_file_test_not_exists() {
         use crate::parser::CompoundCommand;
         // [[ -e /nonexistent_path_xyz ]] → status 1
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::FileExists(ShellWord::Literal("/nonexistent_path_xyz".to_string())),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::FileExists(
+            ShellWord::Literal("/nonexistent_path_xyz".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 1, "/nonexistent should not exist");
     }
@@ -2100,9 +2315,9 @@ mod tests {
     fn test_exec_file_is_dir() {
         use crate::parser::CompoundCommand;
         // [[ -d /tmp ]] → status 0
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::FileDirectory(ShellWord::Literal("/tmp".to_string())),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::FileDirectory(
+            ShellWord::Literal("/tmp".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0, "/tmp should be a directory");
     }
@@ -2111,9 +2326,9 @@ mod tests {
     fn test_exec_file_is_regular() {
         use crate::parser::CompoundCommand;
         // [[ -f /etc/hosts ]] → status 0 (exists on macOS/Linux)
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::FileRegular(ShellWord::Literal("/etc/hosts".to_string())),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::FileRegular(
+            ShellWord::Literal("/etc/hosts".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0, "/etc/hosts should be a regular file");
     }
@@ -2122,12 +2337,10 @@ mod tests {
     fn test_exec_string_equal() {
         use crate::parser::CompoundCommand;
         // [[ "abc" == "abc" ]] → status 0
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::StringEqual(
-                ShellWord::Literal("abc".to_string()),
-                ShellWord::Literal("abc".to_string()),
-            ),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::StringEqual(
+            ShellWord::Literal("abc".to_string()),
+            ShellWord::Literal("abc".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0);
     }
@@ -2136,12 +2349,10 @@ mod tests {
     fn test_exec_string_not_equal() {
         use crate::parser::CompoundCommand;
         // [[ "abc" == "xyz" ]] → status 1
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::StringEqual(
-                ShellWord::Literal("abc".to_string()),
-                ShellWord::Literal("xyz".to_string()),
-            ),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::StringEqual(
+            ShellWord::Literal("abc".to_string()),
+            ShellWord::Literal("xyz".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 1);
     }
@@ -2150,16 +2361,16 @@ mod tests {
     fn test_exec_string_empty() {
         use crate::parser::CompoundCommand;
         // [[ -z "" ]] → status 0
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::StringEmpty(ShellWord::Literal("".to_string())),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::StringEmpty(
+            ShellWord::Literal("".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0);
 
         // [[ -z "notempty" ]] → status 1
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::StringEmpty(ShellWord::Literal("notempty".to_string())),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::StringEmpty(
+            ShellWord::Literal("notempty".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 1);
     }
@@ -2168,12 +2379,12 @@ mod tests {
     fn test_exec_cond_and() {
         use crate::parser::CompoundCommand;
         // [[ -d /tmp && -e /tmp ]] → status 0
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::And(
-                Box::new(CondExpr::FileDirectory(ShellWord::Literal("/tmp".to_string()))),
-                Box::new(CondExpr::FileExists(ShellWord::Literal("/tmp".to_string()))),
-            ),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::And(
+            Box::new(CondExpr::FileDirectory(ShellWord::Literal(
+                "/tmp".to_string(),
+            ))),
+            Box::new(CondExpr::FileExists(ShellWord::Literal("/tmp".to_string()))),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0);
     }
@@ -2182,12 +2393,14 @@ mod tests {
     fn test_exec_cond_and_short_circuit() {
         use crate::parser::CompoundCommand;
         // [[ -f /nonexistent && -d /tmp ]] → status 1 (short-circuits on first)
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::And(
-                Box::new(CondExpr::FileRegular(ShellWord::Literal("/nonexistent".to_string()))),
-                Box::new(CondExpr::FileDirectory(ShellWord::Literal("/tmp".to_string()))),
-            ),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::And(
+            Box::new(CondExpr::FileRegular(ShellWord::Literal(
+                "/nonexistent".to_string(),
+            ))),
+            Box::new(CondExpr::FileDirectory(ShellWord::Literal(
+                "/tmp".to_string(),
+            ))),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 1);
     }
@@ -2196,12 +2409,14 @@ mod tests {
     fn test_exec_cond_or() {
         use crate::parser::CompoundCommand;
         // [[ -f /nonexistent || -d /tmp ]] → status 0 (second is true)
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::Or(
-                Box::new(CondExpr::FileRegular(ShellWord::Literal("/nonexistent".to_string()))),
-                Box::new(CondExpr::FileDirectory(ShellWord::Literal("/tmp".to_string()))),
-            ),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::Or(
+            Box::new(CondExpr::FileRegular(ShellWord::Literal(
+                "/nonexistent".to_string(),
+            ))),
+            Box::new(CondExpr::FileDirectory(ShellWord::Literal(
+                "/tmp".to_string(),
+            ))),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0);
     }
@@ -2210,11 +2425,9 @@ mod tests {
     fn test_exec_cond_not() {
         use crate::parser::CompoundCommand;
         // [[ ! -f /nonexistent ]] → status 0
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::Not(Box::new(CondExpr::FileRegular(
-                ShellWord::Literal("/nonexistent".to_string()),
-            ))),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::Not(Box::new(
+            CondExpr::FileRegular(ShellWord::Literal("/nonexistent".to_string())),
+        ))));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0);
     }
@@ -2226,12 +2439,16 @@ mod tests {
         // Since (( 1 )) sets status=0, true branch runs
         let cmd = ShellCommand::Compound(CompoundCommand::If {
             conditions: vec![(
-                vec![ShellCommand::Compound(CompoundCommand::Arith("1".to_string()))],
-                vec![ShellCommand::Compound(CompoundCommand::Arith("result = 42".to_string()))],
+                vec![ShellCommand::Compound(CompoundCommand::Arith(
+                    "1".to_string(),
+                ))],
+                vec![ShellCommand::Compound(CompoundCommand::Arith(
+                    "result = 42".to_string(),
+                ))],
             )],
-            else_part: Some(vec![
-                ShellCommand::Compound(CompoundCommand::Arith("result = 99".to_string())),
-            ]),
+            else_part: Some(vec![ShellCommand::Compound(CompoundCommand::Arith(
+                "result = 99".to_string(),
+            ))]),
         });
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0); // (( 42 )) is truthy → status 0
@@ -2243,12 +2460,16 @@ mod tests {
         // if (( 0 )); then (( result = 42 )); else (( result = 99 )); fi
         let cmd = ShellCommand::Compound(CompoundCommand::If {
             conditions: vec![(
-                vec![ShellCommand::Compound(CompoundCommand::Arith("0".to_string()))],
-                vec![ShellCommand::Compound(CompoundCommand::Arith("result = 42".to_string()))],
+                vec![ShellCommand::Compound(CompoundCommand::Arith(
+                    "0".to_string(),
+                ))],
+                vec![ShellCommand::Compound(CompoundCommand::Arith(
+                    "result = 42".to_string(),
+                ))],
             )],
-            else_part: Some(vec![
-                ShellCommand::Compound(CompoundCommand::Arith("result = 99".to_string())),
-            ]),
+            else_part: Some(vec![ShellCommand::Compound(CompoundCommand::Arith(
+                "result = 99".to_string(),
+            ))]),
         });
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0); // (( 99 )) is truthy → status 0
@@ -2258,22 +2479,18 @@ mod tests {
     fn test_exec_numeric_comparison() {
         use crate::parser::CompoundCommand;
         // [[ 5 -gt 3 ]] → true
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::NumGreater(
-                ShellWord::Literal("5".to_string()),
-                ShellWord::Literal("3".to_string()),
-            ),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::NumGreater(
+            ShellWord::Literal("5".to_string()),
+            ShellWord::Literal("3".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 0);
 
         // [[ 2 -gt 3 ]] → false
-        let cmd = ShellCommand::Compound(CompoundCommand::Cond(
-            CondExpr::NumGreater(
-                ShellWord::Literal("2".to_string()),
-                ShellWord::Literal("3".to_string()),
-            ),
-        ));
+        let cmd = ShellCommand::Compound(CompoundCommand::Cond(CondExpr::NumGreater(
+            ShellWord::Literal("2".to_string()),
+            ShellWord::Literal("3".to_string()),
+        )));
         let vm = compile_and_run(&[cmd]);
         assert_eq!(vm.last_status, 1);
     }

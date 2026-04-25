@@ -18,11 +18,11 @@ use std::time::Instant;
 use nu_ansi_term::{Color as AnsiColor, Style as AnsiStyle};
 use reedline::Color;
 use reedline::{
-    default_emacs_keybindings, Completer, DefaultHinter, Editor, Emacs, FileBackedHistory,
-    Highlighter, KeyCode, KeyModifiers, Menu as ReedlineMenuTrait, MenuBuilder, MenuEvent,
-    MenuSettings, Painter, Prompt, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
-    ReedlineEvent, ReedlineMenu, Signal, Span, StyledText, Suggestion, ValidationResult, Validator,
-    menu_functions,
+    default_emacs_keybindings, menu_functions, Completer, DefaultHinter, Editor, Emacs,
+    FileBackedHistory, Highlighter, KeyCode, KeyModifiers, Menu as ReedlineMenuTrait, MenuBuilder,
+    MenuEvent, MenuSettings, Painter, Prompt, PromptHistorySearch, PromptHistorySearchStatus,
+    Reedline, ReedlineEvent, ReedlineMenu, Signal, Span, StyledText, Suggestion, ValidationResult,
+    Validator,
 };
 
 use zsh::exec::ShellExecutor;
@@ -30,8 +30,8 @@ use zsh::history::HistoryEngine;
 use zsh::zwc;
 
 use compsys::{
-    build_cache_from_fpath, cache::CompsysCache, compinit_lazy, do_completion, get_system_fpath,
-    completion::CompletionGroup, menu::MenuState, Completion as CompsysCompletion,
+    build_cache_from_fpath, cache::CompsysCache, compinit_lazy, completion::CompletionGroup,
+    do_completion, get_system_fpath, menu::MenuState, Completion as CompsysCompletion,
     CompletionState,
 };
 
@@ -662,9 +662,13 @@ pub fn zshrs_main() {
 
     // Handle shell mode flags (must be checked early)
     if args.iter().any(|a| a == "--posix") {
-        unsafe { SHELL_MODE = ShellMode::Posix; }
+        unsafe {
+            SHELL_MODE = ShellMode::Posix;
+        }
     } else if args.iter().any(|a| a == "--zsh" || a == "--zsh-compat") {
-        unsafe { SHELL_MODE = ShellMode::Zsh; }
+        unsafe {
+            SHELL_MODE = ShellMode::Zsh;
+        }
     }
     tracing::info!(mode = ?shell_mode(), "shell mode selected");
 
@@ -716,7 +720,15 @@ pub fn zshrs_main() {
     // Filter out flags that don't affect -c / script dispatch
     let args: Vec<String> = args
         .into_iter()
-        .filter(|a| a != "--zsh-compat" && a != "--zsh" && a != "--posix" && a != "-f" && a != "--no-rcs" && a != "-x" && a != "-v")
+        .filter(|a| {
+            a != "--zsh-compat"
+                && a != "--zsh"
+                && a != "--posix"
+                && a != "-f"
+                && a != "--no-rcs"
+                && a != "-x"
+                && a != "-v"
+        })
         .collect();
 
     /// Apply CLI flags and shell mode to executor
@@ -789,7 +801,6 @@ pub fn zshrs_main() {
 
 /// zshrs --doctor: full diagnostic report of shell health, caches, and performance.
 fn run_doctor() {
-
     let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
     let red = |s: &str| format!("\x1b[31m{}\x1b[0m", s);
     let yellow = |s: &str| format!("\x1b[33m{}\x1b[0m", s);
@@ -808,8 +819,13 @@ fn run_doctor() {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "?".to_string());
     println!("  cwd:        {}", cwd);
-    println!("  shell:      {}", std::env::var("SHELL").unwrap_or_else(|_| "?".to_string()));
-    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    println!(
+        "  shell:      {}",
+        std::env::var("SHELL").unwrap_or_else(|_| "?".to_string())
+    );
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
     println!("  cpus:       {}", cpus);
     let pool_size = cpus.clamp(2, 18);
     println!("  pool size:  {}", pool_size);
@@ -832,10 +848,17 @@ fn run_doctor() {
             path_missing += 1;
         }
     }
-    println!("  directories: {} total, {} {}, {} {}",
+    println!(
+        "  directories: {} total, {} {}, {} {}",
         path_dirs.len(),
-        path_ok, green("valid"),
-        path_missing, if path_missing > 0 { red("missing") } else { green("missing") },
+        path_ok,
+        green("valid"),
+        path_missing,
+        if path_missing > 0 {
+            red("missing")
+        } else {
+            green("missing")
+        },
     );
     println!("  commands:    ~{}", path_cmds);
     if path_missing > 0 {
@@ -864,10 +887,17 @@ fn run_doctor() {
             fpath_missing += 1;
         }
     }
-    println!("  directories:   {} total, {} {}, {} {}",
+    println!(
+        "  directories:   {} total, {} {}, {} {}",
         fpath_dirs.len(),
-        fpath_ok, green("valid"),
-        fpath_missing, if fpath_missing > 0 { red("missing") } else { green("missing") },
+        fpath_ok,
+        green("valid"),
+        fpath_missing,
+        if fpath_missing > 0 {
+            red("missing")
+        } else {
+            green("missing")
+        },
     );
     println!("  function files: {}", fpath_files);
     println!();
@@ -885,7 +915,8 @@ fn run_doctor() {
             .ok()
             .and_then(|e| e.count().ok())
             .unwrap_or(0);
-        println!("  history.db:  {} entries, {} bytes  {}",
+        println!(
+            "  history.db:  {} entries, {} bytes  {}",
             count,
             format_bytes(size),
             green("OK"),
@@ -897,28 +928,37 @@ fn run_doctor() {
     // Compsys cache
     let compsys_path = compsys::cache::default_cache_path();
     if compsys_path.exists() {
-        let size = std::fs::metadata(&compsys_path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&compsys_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         let count = CompsysCache::open(&compsys_path)
             .ok()
             .map(|c| compsys::cache_entry_count(&c))
             .unwrap_or(0);
-        println!("  compsys.db:  {} completions, {}  {}",
+        println!(
+            "  compsys.db:  {} completions, {}  {}",
             count,
             format_bytes(size),
             green("OK"),
         );
     } else {
-        println!("  compsys.db:  {}", yellow("not found — run compinit to create"));
+        println!(
+            "  compsys.db:  {}",
+            yellow("not found — run compinit to create")
+        );
     }
 
     // Plugin cache
     let plugin_path = zsh::plugin_cache::default_cache_path();
     if plugin_path.exists() {
-        let size = std::fs::metadata(&plugin_path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&plugin_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         let (plugins, functions) = zsh::plugin_cache::PluginCache::open(&plugin_path)
             .map(|c| c.stats())
             .unwrap_or((0, 0));
-        println!("  plugins.db:  {} plugins, {} cached functions, {}  {}",
+        println!(
+            "  plugins.db:  {} plugins, {} cached functions, {}  {}",
             plugins,
             functions,
             format_bytes(size),
@@ -929,12 +969,18 @@ fn run_doctor() {
         if let Ok(cache) = zsh::plugin_cache::PluginCache::open(&plugin_path) {
             let stale = count_stale_plugins(&cache);
             if stale > 0 {
-                println!("               {} {} plugin(s) have stale cache (file changed since cached)",
-                    yellow("!"), stale);
+                println!(
+                    "               {} {} plugin(s) have stale cache (file changed since cached)",
+                    yellow("!"),
+                    stale
+                );
             }
         }
     } else {
-        println!("  plugins.db:  {}", yellow("not found — source a file to create"));
+        println!(
+            "  plugins.db:  {}",
+            yellow("not found — source a file to create")
+        );
     }
     println!();
 
@@ -946,8 +992,12 @@ fn run_doctor() {
         let lines = std::fs::read_to_string(&log_path)
             .map(|s| s.lines().count())
             .unwrap_or(0);
-        println!("  {}  {} lines, {}",
-            log_path.display(), lines, format_bytes(size));
+        println!(
+            "  {}  {} lines, {}",
+            log_path.display(),
+            lines,
+            format_bytes(size)
+        );
     } else {
         println!("  {}", dim("no log file yet"));
     }
@@ -972,8 +1022,13 @@ fn run_doctor() {
         if p.exists() {
             let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
             let cached = is_script_cached(&plugin_path, path);
-            let cache_status = if cached { green("cached") } else { yellow("uncached") };
-            println!("  {} {} {}  [{}]",
+            let cache_status = if cached {
+                green("cached")
+            } else {
+                yellow("uncached")
+            };
+            println!(
+                "  {} {} {}  [{}]",
                 green("*"),
                 path,
                 dim(&format!("({})", format_bytes(size))),
@@ -989,10 +1044,34 @@ fn run_doctor() {
 
     // --- Profiling ---
     println!("{}", bold("Profiling Features"));
-    println!("  chrome tracing: {}", if zsh::log::profiling_enabled() { green("enabled") } else { dim("disabled (build with --features profiling)") });
-    println!("  flamegraph:     {}", if zsh::log::flamegraph_enabled() { green("enabled") } else { dim("disabled (build with --features flamegraph)") });
-    println!("  prometheus:     {}", if zsh::log::prometheus_enabled() { green("enabled") } else { dim("disabled (build with --features prometheus)") });
-    println!("  ZSHRS_LOG:      {}", std::env::var("ZSHRS_LOG").unwrap_or_else(|_| "info (default)".to_string()));
+    println!(
+        "  chrome tracing: {}",
+        if zsh::log::profiling_enabled() {
+            green("enabled")
+        } else {
+            dim("disabled (build with --features profiling)")
+        }
+    );
+    println!(
+        "  flamegraph:     {}",
+        if zsh::log::flamegraph_enabled() {
+            green("enabled")
+        } else {
+            dim("disabled (build with --features flamegraph)")
+        }
+    );
+    println!(
+        "  prometheus:     {}",
+        if zsh::log::prometheus_enabled() {
+            green("enabled")
+        } else {
+            dim("disabled (build with --features prometheus)")
+        }
+    );
+    println!(
+        "  ZSHRS_LOG:      {}",
+        std::env::var("ZSHRS_LOG").unwrap_or_else(|_| "info (default)".to_string())
+    );
     println!();
 
     // --- Startup benchmark ---
@@ -1078,7 +1157,9 @@ fn is_script_cached(plugin_db_path: &std::path::Path, script_path: &str) -> bool
 fn run_non_interactive() {
     let mut executor = ShellExecutor::new();
     executor.zsh_compat = is_zsh_mode();
-    if is_posix_mode() { executor.enter_posix_mode(); }
+    if is_posix_mode() {
+        executor.enter_posix_mode();
+    }
     // Read all of stdin at once so multi-line constructs (heredocs, functions,
     // loops, etc.) are parsed correctly — line-by-line breaks them.
     let mut script = String::new();
@@ -1507,7 +1588,9 @@ fn run_interactive() {
 
     let mut executor = ShellExecutor::new();
     executor.zsh_compat = is_zsh_mode();
-    if is_posix_mode() { executor.enter_posix_mode(); }
+    if is_posix_mode() {
+        executor.enter_posix_mode();
+    }
 
     // Determine shell type from invocation per zshall(1)
     let args: Vec<String> = std::env::args().collect();
@@ -1874,11 +1957,7 @@ impl ReedlineMenuTrait for ZshMenuSelect {
         self.event = Some(event);
     }
 
-    fn update_values(
-        &mut self,
-        editor: &mut Editor,
-        completer: &mut dyn Completer,
-    ) {
+    fn update_values(&mut self, editor: &mut Editor, completer: &mut dyn Completer) {
         let (input, pos) = menu_functions::completer_input(
             editor.get_buffer(),
             editor.line_buffer().insertion_point(),
@@ -1914,15 +1993,11 @@ impl ReedlineMenuTrait for ZshMenuSelect {
                 }
                 MenuEvent::NextElement => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self
-                        .state
-                        .process_action(compsys::MenuAction::Next);
+                    let _ = self.state.process_action(compsys::MenuAction::Next);
                 }
                 MenuEvent::PreviousElement => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self
-                        .state
-                        .process_action(compsys::MenuAction::Prev);
+                    let _ = self.state.process_action(compsys::MenuAction::Prev);
                 }
                 MenuEvent::MoveUp => {
                     self.load_suggestions(painter.screen_width());
@@ -1930,33 +2005,23 @@ impl ReedlineMenuTrait for ZshMenuSelect {
                 }
                 MenuEvent::MoveDown => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self
-                        .state
-                        .process_action(compsys::MenuAction::Down);
+                    let _ = self.state.process_action(compsys::MenuAction::Down);
                 }
                 MenuEvent::MoveLeft => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self
-                        .state
-                        .process_action(compsys::MenuAction::Left);
+                    let _ = self.state.process_action(compsys::MenuAction::Left);
                 }
                 MenuEvent::MoveRight => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self
-                        .state
-                        .process_action(compsys::MenuAction::Right);
+                    let _ = self.state.process_action(compsys::MenuAction::Right);
                 }
                 MenuEvent::NextPage => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self
-                        .state
-                        .process_action(compsys::MenuAction::PageDown);
+                    let _ = self.state.process_action(compsys::MenuAction::PageDown);
                 }
                 MenuEvent::PreviousPage => {
                     self.load_suggestions(painter.screen_width());
-                    let _ = self
-                        .state
-                        .process_action(compsys::MenuAction::PageUp);
+                    let _ = self.state.process_action(compsys::MenuAction::PageUp);
                 }
             }
         }
@@ -2202,18 +2267,85 @@ impl Completer for ZshrsCompleter {
             let prefix_builtin = prefix_lower.clone();
             let builtin_handle = std::thread::spawn(move || -> Vec<Suggestion> {
                 let builtins = [
-                    "alias", "autoload", "bg", "bindkey", "break", "builtin", "cd",
-                    "command", "compctl", "continue", "declare", "dirs", "disown",
-                    "echo", "emulate", "enable", "eval", "exec", "exit", "export",
-                    "false", "fc", "fg", "float", "functions", "getopts", "hash",
-                    "history", "integer", "jobs", "kill", "let", "limit", "local",
-                    "log", "logout", "noglob", "popd", "print", "printf", "pushd",
-                    "pwd", "read", "readonly", "rehash", "return", "set", "setopt",
-                    "shift", "source", "suspend", "test", "times", "trap", "true",
-                    "type", "typeset", "ulimit", "umask", "unalias", "unfunction",
-                    "unhash", "unlimit", "unset", "unsetopt", "wait", "whence",
-                    "where", "which", "zcompile", "zformat", "zle", "zmodload",
-                    "zparseopts", "zprof", "zpty", "zregexparse", "zsocket", "zstat",
+                    "alias",
+                    "autoload",
+                    "bg",
+                    "bindkey",
+                    "break",
+                    "builtin",
+                    "cd",
+                    "command",
+                    "compctl",
+                    "continue",
+                    "declare",
+                    "dirs",
+                    "disown",
+                    "echo",
+                    "emulate",
+                    "enable",
+                    "eval",
+                    "exec",
+                    "exit",
+                    "export",
+                    "false",
+                    "fc",
+                    "fg",
+                    "float",
+                    "functions",
+                    "getopts",
+                    "hash",
+                    "history",
+                    "integer",
+                    "jobs",
+                    "kill",
+                    "let",
+                    "limit",
+                    "local",
+                    "log",
+                    "logout",
+                    "noglob",
+                    "popd",
+                    "print",
+                    "printf",
+                    "pushd",
+                    "pwd",
+                    "read",
+                    "readonly",
+                    "rehash",
+                    "return",
+                    "set",
+                    "setopt",
+                    "shift",
+                    "source",
+                    "suspend",
+                    "test",
+                    "times",
+                    "trap",
+                    "true",
+                    "type",
+                    "typeset",
+                    "ulimit",
+                    "umask",
+                    "unalias",
+                    "unfunction",
+                    "unhash",
+                    "unlimit",
+                    "unset",
+                    "unsetopt",
+                    "wait",
+                    "whence",
+                    "where",
+                    "which",
+                    "zcompile",
+                    "zformat",
+                    "zle",
+                    "zmodload",
+                    "zparseopts",
+                    "zprof",
+                    "zpty",
+                    "zregexparse",
+                    "zsocket",
+                    "zstat",
                     "zstyle",
                 ];
                 let mut results = Vec::new();

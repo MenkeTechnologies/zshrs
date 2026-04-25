@@ -155,12 +155,14 @@ pub fn tcp_connect_timeout(
     std::thread::Builder::new()
         .name("dns-resolve".to_string())
         .spawn(move || {
-            let result: io::Result<Vec<SocketAddr>> = dns_str.to_socket_addrs().map(|a| a.collect());
+            let result: io::Result<Vec<SocketAddr>> =
+                dns_str.to_socket_addrs().map(|a| a.collect());
             let _ = tx.send(result);
         })
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-    let addrs = rx.recv_timeout(timeout)
+    let addrs = rx
+        .recv_timeout(timeout)
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS resolution timed out"))?
         .map_err(|e| {
             tracing::warn!(host, error = %e, "DNS resolution failed");

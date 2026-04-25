@@ -38,7 +38,7 @@ struct Compiler {
 }
 
 struct LoopCtx {
-    start: usize,    // jump target for `continue`
+    start: usize,       // jump target for `continue`
     breaks: Vec<usize>, // jump placeholders to patch for `break`
 }
 
@@ -221,12 +221,12 @@ impl Compiler {
                     // Short-circuit: if last status != 0, skip next command
                     self.emit(Op::GetStatus, self.line);
                     let j = self.emit(Op::JumpIfTrue(0), self.line); // status != 0 means failure
-                    // If we get here, status was 0 (truthy in shell = success)
-                    // Actually shell convention: status 0 = success = truthy for &&
-                    // JumpIfTrue with status value... need to check:
-                    // status=0 → success → continue → don't jump
-                    // status≠0 → failure → skip → jump
-                    // So: push status, if nonzero (truthy as int) jump past next
+                                                                     // If we get here, status was 0 (truthy in shell = success)
+                                                                     // Actually shell convention: status 0 = success = truthy for &&
+                                                                     // JumpIfTrue with status value... need to check:
+                                                                     // status=0 → success → continue → don't jump
+                                                                     // status≠0 → failure → skip → jump
+                                                                     // So: push status, if nonzero (truthy as int) jump past next
                     self.builder.patch_jump(j, self.pos());
                     // Actually this needs rethinking — shell status 0 = success but
                     // Int(0) is falsy in the VM. We need JumpIfFalse for &&.
@@ -252,20 +252,32 @@ impl Compiler {
     fn compile_compound(&mut self, compound: &CompoundCommand) {
         match compound {
             CompoundCommand::BraceGroup(cmds) => {
-                for cmd in cmds { self.compile_command(cmd); }
+                for cmd in cmds {
+                    self.compile_command(cmd);
+                }
             }
             CompoundCommand::Subshell(cmds) => {
                 self.emit(Op::SubshellBegin, self.line);
-                for cmd in cmds { self.compile_command(cmd); }
+                for cmd in cmds {
+                    self.compile_command(cmd);
+                }
                 self.emit(Op::SubshellEnd, self.line);
             }
-            CompoundCommand::If { conditions, else_part } => {
+            CompoundCommand::If {
+                conditions,
+                else_part,
+            } => {
                 self.compile_if(conditions, else_part);
             }
             CompoundCommand::For { var, words, body } => {
                 self.compile_for(var, words, body);
             }
-            CompoundCommand::ForArith { init, cond, step, body } => {
+            CompoundCommand::ForArith {
+                init,
+                cond,
+                step,
+                body,
+            } => {
                 self.compile_for_arith(init, cond, step, body);
             }
             CompoundCommand::While { condition, body } => {
@@ -277,10 +289,17 @@ impl Compiler {
             CompoundCommand::Case { word, cases } => {
                 self.compile_case(word, cases);
             }
-            CompoundCommand::Try { try_body, always_body } => {
+            CompoundCommand::Try {
+                try_body,
+                always_body,
+            } => {
                 // Try: execute try_body, then always execute always_body
-                for cmd in try_body { self.compile_command(cmd); }
-                for cmd in always_body { self.compile_command(cmd); }
+                for cmd in try_body {
+                    self.compile_command(cmd);
+                }
+                for cmd in always_body {
+                    self.compile_command(cmd);
+                }
             }
             CompoundCommand::Repeat { count, body } => {
                 self.compile_repeat(count, body);
@@ -301,13 +320,17 @@ impl Compiler {
 
         for (cond_cmds, body_cmds) in conditions {
             // Compile condition
-            for cmd in cond_cmds { self.compile_command(cmd); }
+            for cmd in cond_cmds {
+                self.compile_command(cmd);
+            }
             // Check exit status
             self.emit(Op::GetStatus, self.line);
             let skip = self.emit(Op::JumpIfTrue(0), self.line); // nonzero status = falsy in shell
 
             // Compile body
-            for cmd in body_cmds { self.compile_command(cmd); }
+            for cmd in body_cmds {
+                self.compile_command(cmd);
+            }
             let end_j = self.emit(Op::Jump(0), self.line);
             end_jumps.push(end_j);
 
@@ -317,7 +340,9 @@ impl Compiler {
 
         // Else part
         if let Some(else_cmds) = else_part {
-            for cmd in else_cmds { self.compile_command(cmd); }
+            for cmd in else_cmds {
+                self.compile_command(cmd);
+            }
         }
 
         // Patch all end jumps to here
@@ -349,14 +374,17 @@ impl Compiler {
         let i_idx = self.name("__for_i");
         let len_idx = self.name("__for_len");
 
-        self.emit(Op::SetVar(iter_idx), self.line);     // store array
-        self.emit(Op::ArrayLen(iter_idx), self.line);    // push length
-        self.emit(Op::SetVar(len_idx), self.line);       // store length
+        self.emit(Op::SetVar(iter_idx), self.line); // store array
+        self.emit(Op::ArrayLen(iter_idx), self.line); // push length
+        self.emit(Op::SetVar(len_idx), self.line); // store length
         self.emit(Op::LoadInt(0), self.line);
-        self.emit(Op::SetVar(i_idx), self.line);         // i = 0
+        self.emit(Op::SetVar(i_idx), self.line); // i = 0
 
         let loop_top = self.pos();
-        self.loop_stack.push(LoopCtx { start: loop_top, breaks: Vec::new() });
+        self.loop_stack.push(LoopCtx {
+            start: loop_top,
+            breaks: Vec::new(),
+        });
 
         // condition: i < len
         self.emit(Op::GetVar(i_idx), self.line);
@@ -369,7 +397,9 @@ impl Compiler {
         self.emit(Op::ArrayGet(iter_idx), self.line);
         self.emit(Op::SetVar(var_idx), self.line);
 
-        for cmd in body { self.compile_command(cmd); }
+        for cmd in body {
+            self.compile_command(cmd);
+        }
 
         // i++
         self.emit(Op::GetVar(i_idx), self.line);
@@ -402,14 +432,19 @@ impl Compiler {
         self.emit(Op::Extended(0, 0), self.line); // placeholder: eval arith
 
         let loop_top = self.pos();
-        self.loop_stack.push(LoopCtx { start: loop_top, breaks: Vec::new() });
+        self.loop_stack.push(LoopCtx {
+            start: loop_top,
+            breaks: Vec::new(),
+        });
 
         // Extended: evaluate condition
         self.emit(Op::LoadConst(cond_c), self.line);
         self.emit(Op::Extended(1, 0), self.line); // placeholder: eval arith condition
         let exit_jump = self.emit(Op::JumpIfFalse(0), self.line);
 
-        for cmd in body { self.compile_command(cmd); }
+        for cmd in body {
+            self.compile_command(cmd);
+        }
 
         // Extended: evaluate step
         self.emit(Op::LoadConst(step_c), self.line);
@@ -420,14 +455,21 @@ impl Compiler {
         self.builder.patch_jump(exit_jump, exit_pos);
 
         let ctx = self.loop_stack.pop().unwrap();
-        for b in ctx.breaks { self.builder.patch_jump(b, exit_pos); }
+        for b in ctx.breaks {
+            self.builder.patch_jump(b, exit_pos);
+        }
     }
 
     fn compile_while(&mut self, condition: &[ShellCommand], body: &[ShellCommand], negate: bool) {
         let loop_top = self.pos();
-        self.loop_stack.push(LoopCtx { start: loop_top, breaks: Vec::new() });
+        self.loop_stack.push(LoopCtx {
+            start: loop_top,
+            breaks: Vec::new(),
+        });
 
-        for cmd in condition { self.compile_command(cmd); }
+        for cmd in condition {
+            self.compile_command(cmd);
+        }
         self.emit(Op::GetStatus, self.line);
 
         let exit_jump = if negate {
@@ -436,17 +478,25 @@ impl Compiler {
             self.emit(Op::JumpIfTrue(0), self.line) // while: exit when status != 0
         };
 
-        for cmd in body { self.compile_command(cmd); }
+        for cmd in body {
+            self.compile_command(cmd);
+        }
         self.emit(Op::Jump(loop_top), self.line);
 
         let exit_pos = self.pos();
         self.builder.patch_jump(exit_jump, exit_pos);
 
         let ctx = self.loop_stack.pop().unwrap();
-        for b in ctx.breaks { self.builder.patch_jump(b, exit_pos); }
+        for b in ctx.breaks {
+            self.builder.patch_jump(b, exit_pos);
+        }
     }
 
-    fn compile_case(&mut self, word: &ShellWord, cases: &[(Vec<ShellWord>, Vec<ShellCommand>, CaseTerminator)]) {
+    fn compile_case(
+        &mut self,
+        word: &ShellWord,
+        cases: &[(Vec<ShellWord>, Vec<ShellCommand>, CaseTerminator)],
+    ) {
         self.compile_word(word); // push the test value
 
         let mut end_jumps = Vec::new();
@@ -472,7 +522,9 @@ impl Compiler {
                 self.builder.patch_jump(j, body_start);
             }
 
-            for cmd in cmds { self.compile_command(cmd); }
+            for cmd in cmds {
+                self.compile_command(cmd);
+            }
 
             let end_j = self.emit(Op::Jump(0), self.line);
             end_jumps.push(end_j);
@@ -482,7 +534,9 @@ impl Compiler {
         }
 
         let end = self.pos();
-        for j in end_jumps { self.builder.patch_jump(j, end); }
+        for j in end_jumps {
+            self.builder.patch_jump(j, end);
+        }
         self.emit(Op::Pop, self.line); // pop test value
     }
 
@@ -496,14 +550,19 @@ impl Compiler {
         self.emit(Op::SetVar(i_idx), self.line);
 
         let loop_top = self.pos();
-        self.loop_stack.push(LoopCtx { start: loop_top, breaks: Vec::new() });
+        self.loop_stack.push(LoopCtx {
+            start: loop_top,
+            breaks: Vec::new(),
+        });
 
         self.emit(Op::GetVar(i_idx), self.line);
         self.emit(Op::LoadInt(0), self.line);
         self.emit(Op::NumGt, self.line);
         let exit_jump = self.emit(Op::JumpIfFalse(0), self.line);
 
-        for cmd in body { self.compile_command(cmd); }
+        for cmd in body {
+            self.compile_command(cmd);
+        }
 
         // i--
         self.emit(Op::GetVar(i_idx), self.line);
@@ -515,7 +574,9 @@ impl Compiler {
         let exit_pos = self.pos();
         self.builder.patch_jump(exit_jump, exit_pos);
         let ctx = self.loop_stack.pop().unwrap();
-        for b in ctx.breaks { self.builder.patch_jump(b, exit_pos); }
+        for b in ctx.breaks {
+            self.builder.patch_jump(b, exit_pos);
+        }
     }
 
     // ── Function definition ──
@@ -639,7 +700,7 @@ impl Compiler {
                 self.emit(Op::NumEq, self.line);
                 let skip = self.emit(Op::JumpIfFalse(0), self.line);
                 self.emit(Op::Pop, self.line); // pop empty value
-                self.compile_word(word);       // push default
+                self.compile_word(word); // push default
                 self.builder.patch_jump(skip, self.pos());
             }
             VarModifier::Length => {
@@ -710,9 +771,7 @@ mod tests {
     #[test]
     fn test_compile_assignment() {
         let cmd = ShellCommand::Simple(SimpleCommand {
-            assignments: vec![
-                ("X".to_string(), ShellWord::Literal("42".to_string()), false),
-            ],
+            assignments: vec![("X".to_string(), ShellWord::Literal("42".to_string()), false)],
             words: vec![],
             redirects: vec![],
         });

@@ -33,13 +33,15 @@ impl CompsysCache {
     pub fn count_table(&self, table: &str) -> rusqlite::Result<usize> {
         // Table name is not user input — it comes from our code.
         let sql = format!("SELECT COUNT(*) FROM {}", table);
-        self.conn.query_row(&sql, [], |row| row.get::<_, i64>(0).map(|n| n as usize))
+        self.conn
+            .query_row(&sql, [], |row| row.get::<_, i64>(0).map(|n| n as usize))
     }
 
     /// Count rows matching a WHERE clause.
     pub fn count_table_where(&self, table: &str, condition: &str) -> rusqlite::Result<usize> {
         let sql = format!("SELECT COUNT(*) FROM {} WHERE {}", table, condition);
-        self.conn.query_row(&sql, [], |row| row.get::<_, i64>(0).map(|n| n as usize))
+        self.conn
+            .query_row(&sql, [], |row| row.get::<_, i64>(0).map(|n| n as usize))
     }
 
     /// Open or create cache database with maximum performance settings
@@ -333,7 +335,10 @@ impl CompsysCache {
     }
 
     /// Get a batch of autoloads missing AST blobs, with configurable limit.
-    pub fn get_autoloads_missing_bytecode_batch(&self, limit: usize) -> rusqlite::Result<Vec<(String, String)>> {
+    pub fn get_autoloads_missing_bytecode_batch(
+        &self,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<(String, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT name, body FROM autoloads WHERE body IS NOT NULL AND bytecode IS NULL LIMIT ?1",
         )?;
@@ -359,9 +364,7 @@ impl CompsysCache {
     ) -> rusqlite::Result<()> {
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare(
-                "UPDATE autoloads SET bytecode = ?2 WHERE name = ?1",
-            )?;
+            let mut stmt = tx.prepare("UPDATE autoloads SET bytecode = ?2 WHERE name = ?1")?;
             for (name, ast) in entries {
                 stmt.execute(params![name, ast])?;
             }

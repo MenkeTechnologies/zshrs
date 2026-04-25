@@ -1,6 +1,8 @@
 //! Shell command executor for zshrs
 //!
-//! Executes the parsed shell AST.
+//! Executes the parsed shell AST via fusevm bytecodes.
+//! Builtins are dispatched through fusevm's CallBuiltin mechanism,
+//! with handlers accessing executor state via thread-local.
 
 use crate::history::HistoryEngine;
 use crate::math::MathEval;
@@ -65,6 +67,760 @@ struct PluginSnapshot {
 /// Cached compiled regexes for hot paths
 static REGEX_CACHE: LazyLock<Mutex<std::collections::HashMap<String, regex::Regex>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashMap::with_capacity(64)));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Thread-local executor context for VM builtin dispatch
+// ═══════════════════════════════════════════════════════════════════════════
+
+use std::cell::RefCell;
+
+/// Thread-local pointer to the current ShellExecutor.
+/// Set before VM execution, cleared after. Used by builtin handlers.
+thread_local! {
+    static CURRENT_EXECUTOR: RefCell<Option<*mut ShellExecutor>> = const { RefCell::new(None) };
+}
+
+/// RAII guard that sets/clears the thread-local executor pointer.
+struct ExecutorContext;
+
+impl ExecutorContext {
+    fn enter(executor: &mut ShellExecutor) -> Self {
+        CURRENT_EXECUTOR.with(|cell| {
+            *cell.borrow_mut() = Some(executor as *mut ShellExecutor);
+        });
+        ExecutorContext
+    }
+}
+
+impl Drop for ExecutorContext {
+    fn drop(&mut self) {
+        CURRENT_EXECUTOR.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+    }
+}
+
+/// Access the current executor from a builtin handler.
+/// # Safety
+/// Only call this from within a VM execution context (after ExecutorContext::enter).
+#[inline]
+fn with_executor<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut ShellExecutor) -> R,
+{
+    CURRENT_EXECUTOR.with(|cell| {
+        let ptr = cell
+            .borrow()
+            .expect("with_executor called outside VM context");
+        // SAFETY: The pointer is valid for the duration of VM execution,
+        // and we're single-threaded within the executor.
+        let executor = unsafe { &mut *ptr };
+        f(executor)
+    })
+}
+
+/// Register all zsh builtins with the VM.
+fn register_builtins(vm: &mut fusevm::VM) {
+    use fusevm::shell_builtins::*;
+    use fusevm::Value;
+
+    // Core builtins
+    vm.register_builtin(BUILTIN_CD, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_cd(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PWD, |vm, argc| {
+        let _args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_pwd(&[]));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ECHO, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_echo(&args, &[]));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PRINT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_print(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PRINTF, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_printf(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_EXPORT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_export(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UNSET, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_unset(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SOURCE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_source(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_EXIT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_exit(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_RETURN, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_return(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_TRUE, |_vm, _argc| Value::Status(0));
+    vm.register_builtin(BUILTIN_FALSE, |_vm, _argc| Value::Status(1));
+    vm.register_builtin(BUILTIN_COLON, |_vm, _argc| Value::Status(0));
+
+    vm.register_builtin(BUILTIN_TEST, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_test(&args));
+        Value::Status(status)
+    });
+
+    // Variable declaration
+    vm.register_builtin(BUILTIN_LOCAL, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_local(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_TYPESET, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_declare(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_READONLY, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_readonly(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_INTEGER, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_integer(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_FLOAT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_float(&args));
+        Value::Status(status)
+    });
+
+    // I/O
+    vm.register_builtin(BUILTIN_READ, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_read(&args));
+        Value::Status(status)
+    });
+
+    // Control flow
+    vm.register_builtin(BUILTIN_BREAK, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_break(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_CONTINUE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_continue(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SHIFT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_shift(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_EVAL, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_eval(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_EXEC, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_exec(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_COMMAND, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_command(&args, &[]));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_BUILTIN, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_builtin(&args, &[]));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_LET, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_let(&args));
+        Value::Status(status)
+    });
+
+    // Job control
+    vm.register_builtin(BUILTIN_JOBS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_jobs(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_FG, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_fg(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_BG, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_bg(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_KILL, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_kill(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_DISOWN, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_disown(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_WAIT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_wait(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SUSPEND, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_suspend(&args));
+        Value::Status(status)
+    });
+
+    // History
+    vm.register_builtin(BUILTIN_HISTORY, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_history(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_FC, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_fc(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_R, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_r(&args));
+        Value::Status(status)
+    });
+
+    // Aliases
+    vm.register_builtin(BUILTIN_ALIAS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_alias(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UNALIAS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_unalias(&args));
+        Value::Status(status)
+    });
+
+    // Options
+    vm.register_builtin(BUILTIN_SET, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_set(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SETOPT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_setopt(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UNSETOPT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_unsetopt(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SHOPT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_shopt(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_EMULATE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_emulate(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_GETOPTS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_getopts(&args));
+        Value::Status(status)
+    });
+
+    // Functions / Autoload
+    vm.register_builtin(BUILTIN_AUTOLOAD, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_autoload(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_FUNCTIONS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_functions(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UNFUNCTION, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_unfunction(&args));
+        Value::Status(status)
+    });
+
+    // Traps
+    vm.register_builtin(BUILTIN_TRAP, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_trap(&args));
+        Value::Status(status)
+    });
+
+    // Directory stack
+    vm.register_builtin(BUILTIN_PUSHD, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_pushd(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_POPD, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_popd(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_DIRS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_dirs(&args));
+        Value::Status(status)
+    });
+
+    // Type / Which / Hash
+    vm.register_builtin(BUILTIN_TYPE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_type(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_WHENCE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_whence(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_WHERE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_where(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_WHICH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_which(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_HASH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_hash(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_REHASH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_rehash(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UNHASH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_unhash(&args));
+        Value::Status(status)
+    });
+
+    // Completion
+    vm.register_builtin(BUILTIN_COMPGEN, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_compgen(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_COMPLETE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_complete(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_COMPOPT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_compopt(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_COMPADD, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_compadd(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_COMPSET, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_compset(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_COMPDEF, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_compdef(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_COMPINIT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_compinit(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_CDREPLAY, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_cdreplay(&args));
+        Value::Status(status)
+    });
+
+    // Zsh-specific
+    vm.register_builtin(BUILTIN_ZSTYLE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zstyle(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZMODLOAD, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zmodload(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_BINDKEY, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_bindkey(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZLE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zle(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_VARED, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_vared(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZCOMPILE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zcompile(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZFORMAT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zformat(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZPARSEOPTS, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zparseopts(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZREGEXPARSE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zregexparse(&args));
+        Value::Status(status)
+    });
+
+    // Resource limits
+    vm.register_builtin(BUILTIN_ULIMIT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_ulimit(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_LIMIT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_limit(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UNLIMIT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_unlimit(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UMASK, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_umask(&args));
+        Value::Status(status)
+    });
+
+    // Misc
+    vm.register_builtin(BUILTIN_TIMES, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_times(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_CALLER, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_caller(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_HELP, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_help(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ENABLE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_enable(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_DISABLE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_disable(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_NOGLOB, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_noglob(&args, &[]));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_TTYCTL, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_ttyctl(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SYNC, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_sync(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_MKDIR, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_mkdir(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_STRFTIME, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_strftime(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZSLEEP, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zsleep(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZSYSTEM, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zsystem(&args));
+        Value::Status(status)
+    });
+
+    // PCRE
+    vm.register_builtin(BUILTIN_PCRE_COMPILE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_pcre_compile(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PCRE_MATCH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_pcre_match(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PCRE_STUDY, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_pcre_study(&args));
+        Value::Status(status)
+    });
+
+    // Database (GDBM)
+    vm.register_builtin(BUILTIN_ZTIE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_ztie(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZUNTIE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zuntie(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZGDBMPATH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zgdbmpath(&args));
+        Value::Status(status)
+    });
+
+    // Prompt
+    vm.register_builtin(BUILTIN_PROMPTINIT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_promptinit(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PROMPT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_prompt(&args));
+        Value::Status(status)
+    });
+
+    // Async / Parallel (zshrs extensions)
+    vm.register_builtin(BUILTIN_ASYNC, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_async(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_AWAIT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_await(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PMAP, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_pmap(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PGREP, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_pgrep(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PEACH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_peach(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_BARRIER, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_barrier(&args));
+        Value::Status(status)
+    });
+
+    // Intercept (AOP)
+    vm.register_builtin(BUILTIN_INTERCEPT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_intercept(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_INTERCEPT_PROCEED, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_intercept_proceed(&args));
+        Value::Status(status)
+    });
+
+    // Debug / Profile
+    vm.register_builtin(BUILTIN_DOCTOR, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_doctor(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_DBVIEW, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_dbview(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_PROFILE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_profile(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ZPROF, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_zprof(&args));
+        Value::Status(status)
+    });
+}
+
+/// Pop argc arguments from the VM stack into a Vec<String>.
+#[inline]
+fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
+    let mut args = Vec::with_capacity(argc as usize);
+    for _ in 0..argc {
+        args.push(vm.pop().to_str());
+    }
+    args.reverse(); // Stack is LIFO, args should be in order
+    args
+}
 
 /// Match an intercept pattern against a command name or full command string.
 /// Supports: exact match, glob ("git *", "_*", "*"), or "all".
@@ -303,26 +1059,138 @@ static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 /// O(1) builtin lookup — replaces the 130+ arm matches! macro in is_builtin()
 static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     [
-        "cd", "chdir", "pwd", "echo", "export", "unset", "source", "exit",
-        "return", "bye", "logout", "log", "true", "false", "test", "local",
-        "declare", "typeset", "read", "shift", "eval", "jobs", "fg", "bg",
-        "kill", "disown", "wait", "autoload", "history", "fc", "trap",
-        "suspend", "alias", "unalias", "set", "shopt", "setopt", "unsetopt",
-        "getopts", "type", "hash", "command", "builtin", "let", "pushd",
-        "popd", "dirs", "printf", "break", "continue", "disable", "enable",
-        "emulate", "exec", "float", "integer", "functions", "print", "whence",
-        "where", "which", "ulimit", "limit", "unlimit", "umask", "rehash",
-        "unhash", "times", "zmodload", "r", "ttyctl", "noglob", "zstat",
-        "stat", "strftime", "zsleep", "zln", "zmv", "zcp", "coproc",
-        "zparseopts", "readonly", "unfunction", "getln", "pushln", "bindkey",
-        "zle", "sched", "zformat", "zcompile", "vared", "echotc", "echoti",
-        "zpty", "zprof", "zsocket", "ztcp", "zregexparse", "clone",
-        "comparguments", "compcall", "compctl", "compdef", "compdescribe",
-        "compfiles", "compgroups", "compinit", "compquote", "comptags",
-        "comptry", "compvalues", "cdreplay", "cap", "getcap", "setcap",
-        "zftp", "zcurses", "sysread", "syswrite", "syserror", "sysopen",
-        "sysseek", "private", "zgetattr", "zsetattr", "zdelattr", "zlistattr",
-        "[", ".", ":", "compgen", "complete",
+        "cd",
+        "chdir",
+        "pwd",
+        "echo",
+        "export",
+        "unset",
+        "source",
+        "exit",
+        "return",
+        "bye",
+        "logout",
+        "log",
+        "true",
+        "false",
+        "test",
+        "local",
+        "declare",
+        "typeset",
+        "read",
+        "shift",
+        "eval",
+        "jobs",
+        "fg",
+        "bg",
+        "kill",
+        "disown",
+        "wait",
+        "autoload",
+        "history",
+        "fc",
+        "trap",
+        "suspend",
+        "alias",
+        "unalias",
+        "set",
+        "shopt",
+        "setopt",
+        "unsetopt",
+        "getopts",
+        "type",
+        "hash",
+        "command",
+        "builtin",
+        "let",
+        "pushd",
+        "popd",
+        "dirs",
+        "printf",
+        "break",
+        "continue",
+        "disable",
+        "enable",
+        "emulate",
+        "exec",
+        "float",
+        "integer",
+        "functions",
+        "print",
+        "whence",
+        "where",
+        "which",
+        "ulimit",
+        "limit",
+        "unlimit",
+        "umask",
+        "rehash",
+        "unhash",
+        "times",
+        "zmodload",
+        "r",
+        "ttyctl",
+        "noglob",
+        "zstat",
+        "stat",
+        "strftime",
+        "zsleep",
+        "zln",
+        "zmv",
+        "zcp",
+        "coproc",
+        "zparseopts",
+        "readonly",
+        "unfunction",
+        "getln",
+        "pushln",
+        "bindkey",
+        "zle",
+        "sched",
+        "zformat",
+        "zcompile",
+        "vared",
+        "echotc",
+        "echoti",
+        "zpty",
+        "zprof",
+        "zsocket",
+        "ztcp",
+        "zregexparse",
+        "clone",
+        "comparguments",
+        "compcall",
+        "compctl",
+        "compdef",
+        "compdescribe",
+        "compfiles",
+        "compgroups",
+        "compinit",
+        "compquote",
+        "comptags",
+        "comptry",
+        "compvalues",
+        "cdreplay",
+        "cap",
+        "getcap",
+        "setcap",
+        "zftp",
+        "zcurses",
+        "sysread",
+        "syswrite",
+        "syserror",
+        "sysopen",
+        "sysseek",
+        "private",
+        "zgetattr",
+        "zsetattr",
+        "zdelattr",
+        "zlistattr",
+        "[",
+        ".",
+        ":",
+        "compgen",
+        "complete",
     ]
     .into_iter()
     .collect()
@@ -671,7 +1539,10 @@ pub struct ShellExecutor {
     // compsys - completion system cache
     pub compsys_cache: Option<CompsysCache>,
     // Background compinit — receiver for async fpath scan result
-    pub compinit_pending: Option<(std::sync::mpsc::Receiver<CompInitBgResult>, std::time::Instant)>,
+    pub compinit_pending: Option<(
+        std::sync::mpsc::Receiver<CompInitBgResult>,
+        std::time::Instant,
+    )>,
     // Plugin source cache — stores side effects of source/. in SQLite
     pub plugin_cache: Option<crate::plugin_cache::PluginCache>,
     // cdreplay - deferred compdef calls for zinit turbo mode
@@ -1384,69 +2255,10 @@ impl ShellExecutor {
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
     /// The AST is stored in SQLite keyed by (path, mtime).
     pub fn execute_script_file(&mut self, file_path: &str) -> Result<i32, String> {
-        let path = std::path::Path::new(file_path);
-        let mtime = crate::plugin_cache::file_mtime(path);
-
-        // Try AST cache first
-        if let (Some(ref cache), Some((mt_s, mt_ns))) = (&self.plugin_cache, mtime) {
-            if let Some(ast_bytes) = cache.check_ast(file_path, mt_s, mt_ns) {
-                if let Ok(commands) = bincode::deserialize::<Vec<crate::parser::ShellCommand>>(&ast_bytes) {
-                    tracing::info!(
-                        path = file_path,
-                        cmds = commands.len(),
-                        bytes = ast_bytes.len(),
-                        "execute_script_file: bytecode cache hit, skipping lex+parse"
-                    );
-                    for cmd in commands {
-                        self.execute_command(&cmd)?;
-                    }
-                    return Ok(self.last_status);
-                }
-            }
-        }
-
-        // Cache miss — read file, parse, execute, cache AST on worker
-        let content = std::fs::read_to_string(file_path)
-            .map_err(|e| format!("{}: {}", file_path, e))?;
-        let expanded = self.expand_history(&content);
-        let mut parser = ShellParser::new(&expanded);
-        let mut commands = parser.parse_script()?;
-        tracing::debug!(
-            path = file_path,
-            cmds = commands.len(),
-            "execute_script_file: bytecode cache miss, parsed from source"
-        );
-
-        // Optimize AST before execution and caching — constant folding, literal merging
-        crate::ast_opt::optimize(&mut commands);
-
-        // Execute
-        for cmd in &commands {
-            self.execute_command(cmd)?;
-        }
-
-        // Async-store the optimized AST in SQLite
-        if let Some((mt_s, mt_ns)) = mtime {
-            if let Ok(ast_bytes) = bincode::serialize(&commands) {
-                let store_path = file_path.to_string();
-                let cache_db_path = crate::plugin_cache::default_cache_path();
-                let ast_size = ast_bytes.len();
-                self.worker_pool.submit(move || {
-                    match crate::plugin_cache::PluginCache::open(&cache_db_path) {
-                        Ok(cache) => {
-                            if let Err(e) = cache.store_ast(&store_path, mt_s, mt_ns, &ast_bytes) {
-                                tracing::error!(path = %store_path, error = %e, "AST cache store failed");
-                            } else {
-                                tracing::debug!(path = %store_path, bytes = ast_size, "bytecode cached");
-                            }
-                        }
-                        Err(e) => tracing::error!(error = %e, "plugin_cache: open for AST write failed"),
-                    }
-                });
-            }
-        }
-
-        Ok(self.last_status)
+        // Read file and delegate to execute_script (which uses VM)
+        let content =
+            std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
+        self.execute_script(&content)
     }
 
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
@@ -1459,32 +2271,31 @@ impl ShellExecutor {
         tracing::trace!(cmds = commands.len(), "execute_script: parsed");
 
         // Compile to fusevm bytecodes and execute on the VM.
-        // The VM handles pure computation (arithmetic, control flow, variables).
-        // Shell ops (Exec, Redirect, Pipeline, Glob, TestFile) callback into
-        // the executor via execute_command for anything that needs shell state.
-        // Primary path: compile to fusevm bytecodes and execute on the VM.
-        // Fallback: tree-walker for commands the VM can't fully handle yet
-        // (builtins that need executor state, complex redirects, etc.)
+        // All execution goes through the VM — no tree-walker fallback.
+        // Builtins dispatch through CallBuiltin, accessing executor state via thread-local.
         let compiler = crate::shell_compiler::ShellCompiler::new();
         let chunk = compiler.compile(&commands);
 
         if !chunk.ops.is_empty() {
+            if std::env::var("ZSHRS_DEBUG_OPS").is_ok() {
+                eprintln!("[DEBUG] Compiled {} ops:", chunk.ops.len());
+                for (i, op) in chunk.ops.iter().enumerate() {
+                    eprintln!("  {:3}: {:?}", i, op);
+                }
+            }
             let mut vm = fusevm::VM::new(chunk);
+            register_builtins(&mut vm);
+
+            // Set executor context for builtin handlers
+            let _ctx = ExecutorContext::enter(self);
+
             match vm.run() {
                 fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
                     self.last_status = vm.last_status;
                 }
-                fusevm::VMResult::Error(_) => {
-                    // VM error — fall back to tree-walker for compatibility
-                    for cmd in &commands {
-                        self.execute_command(cmd)?;
-                    }
+                fusevm::VMResult::Error(e) => {
+                    return Err(format!("VM error: {}", e));
                 }
-            }
-        } else {
-            // Empty compilation (no ops emitted) — tree-walk
-            for cmd in &commands {
-                self.execute_command(cmd)?;
             }
         }
 
@@ -1586,8 +2397,12 @@ impl ShellExecutor {
                 let (event_str, new_i) = self.history_resolve_event(&chars, i, engine, &result);
                 if let Some(ev) = event_str {
                     // Check for word designators and modifiers
-                    let (final_str, final_i) =
-                        self.history_apply_designators_and_modifiers(&chars, new_i, &ev, &mut last_subst);
+                    let (final_str, final_i) = self.history_apply_designators_and_modifiers(
+                        &chars,
+                        new_i,
+                        &ev,
+                        &mut last_subst,
+                    );
                     result.push_str(&final_str);
                     i = final_i;
                 } else {
@@ -1647,7 +2462,11 @@ impl ShellExecutor {
             i += 1;
         }
 
-        let c = if i < chars.len() { chars[i] } else { return (None, bang_pos); };
+        let c = if i < chars.len() {
+            chars[i]
+        } else {
+            return (None, bang_pos);
+        };
 
         let (event, new_i) = match c {
             '!' => {
@@ -1667,7 +2486,11 @@ impl ShellExecutor {
                     i += 1;
                 }
                 if i > start {
-                    let n: usize = chars[start..i].iter().collect::<String>().parse().unwrap_or(0);
+                    let n: usize = chars[start..i]
+                        .iter()
+                        .collect::<String>()
+                        .parse()
+                        .unwrap_or(0);
                     if n > 0 {
                         let entry = engine.get_by_offset(n - 1).ok().flatten();
                         (entry.map(|e| e.command), i)
@@ -1689,7 +2512,10 @@ impl ShellExecutor {
                 if i < chars.len() && chars[i] == '?' {
                     i += 1;
                 }
-                let entry = engine.search(&search, 1).ok().and_then(|v| v.into_iter().next());
+                let entry = engine
+                    .search(&search, 1)
+                    .ok()
+                    .and_then(|v| v.into_iter().next());
                 (entry.map(|e| e.command), i)
             }
             c if c.is_ascii_digit() => {
@@ -1698,7 +2524,11 @@ impl ShellExecutor {
                 while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
                 }
-                let n: i64 = chars[start..i].iter().collect::<String>().parse().unwrap_or(0);
+                let n: i64 = chars[start..i]
+                    .iter()
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0);
                 if n > 0 {
                     let entry = engine.get_by_number(n).ok().flatten();
                     (entry.map(|e| e.command), i)
@@ -1709,9 +2539,8 @@ impl ShellExecutor {
             '$' => {
                 // !$ — last word of previous command (shorthand for !!:$)
                 let entry = engine.get_by_offset(0).ok().flatten();
-                let word = entry.and_then(|e| {
-                    Self::history_split_words(&e.command).last().cloned()
-                });
+                let word =
+                    entry.and_then(|e| Self::history_split_words(&e.command).last().cloned());
                 // Return the word directly — skip designator parsing
                 let final_i = if in_brace && i + 1 < chars.len() && chars[i + 1] == '}' {
                     i + 2
@@ -1739,7 +2568,11 @@ impl ShellExecutor {
                 let entry = engine.get_by_offset(0).ok().flatten();
                 let word = entry.map(|e| {
                     let words = Self::history_split_words(&e.command);
-                    if words.len() > 1 { words[1..].join(" ") } else { String::new() }
+                    if words.len() > 1 {
+                        words[1..].join(" ")
+                    } else {
+                        String::new()
+                    }
                 });
                 let final_i = if in_brace && i + 1 < chars.len() && chars[i + 1] == '}' {
                     i + 2
@@ -1847,11 +2680,17 @@ impl ShellExecutor {
                 if farg.is_some() || larg.is_some() {
                     let f = farg.unwrap_or(0);
                     let l = larg.unwrap_or(argc);
-                    let selected: Vec<&String> = words.iter().enumerate()
+                    let selected: Vec<&String> = words
+                        .iter()
+                        .enumerate()
                         .filter(|(idx, _)| *idx >= f && *idx <= l)
                         .map(|(_, w)| w)
                         .collect();
-                    sline = selected.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
+                    sline = selected
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
             }
         } else if i < chars.len() && chars[i] == '*' {
@@ -1964,13 +2803,21 @@ impl ShellExecutor {
                             old_s.push(chars[i]);
                             i += 1;
                         }
-                        if i < chars.len() { i += 1; } // skip delimiter
+                        if i < chars.len() {
+                            i += 1;
+                        } // skip delimiter
                         let mut new_s = String::new();
-                        while i < chars.len() && chars[i] != delim && chars[i] != ':' && chars[i] != ' ' {
+                        while i < chars.len()
+                            && chars[i] != delim
+                            && chars[i] != ':'
+                            && chars[i] != ' '
+                        {
                             new_s.push(chars[i]);
                             i += 1;
                         }
-                        if i < chars.len() && chars[i] == delim { i += 1; } // skip trailing delimiter
+                        if i < chars.len() && chars[i] == delim {
+                            i += 1;
+                        } // skip trailing delimiter
                         *last_subst = Some((old_s.clone(), new_s.clone()));
                         if global {
                             sline = sline.replace(&old_s, &new_s);
@@ -2016,7 +2863,8 @@ impl ShellExecutor {
 
         // Check for modifiers that aren't word designators
         match chars[i] {
-            'h' | 't' | 'r' | 'e' | 's' | 'S' | 'g' | 'p' | 'q' | 'Q' | 'l' | 'u' | 'a' | 'A' | '&' => {
+            'h' | 't' | 'r' | 'e' | 's' | 'S' | 'g' | 'p' | 'q' | 'Q' | 'l' | 'u' | 'a' | 'A'
+            | '&' => {
                 // This is a modifier, not a word designator — back up
                 return (None, None, i - 1); // -1 to re-read the ':'
             }
@@ -2037,7 +2885,11 @@ impl ShellExecutor {
             while i < chars.len() && chars[i].is_ascii_digit() {
                 i += 1;
             }
-            let n: usize = chars[start..i].iter().collect::<String>().parse().unwrap_or(0);
+            let n: usize = chars[start..i]
+                .iter()
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0);
             Some(n)
         } else {
             None
@@ -2054,7 +2906,11 @@ impl ShellExecutor {
                 while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
                 }
-                let m: usize = chars[start..i].iter().collect::<String>().parse().unwrap_or(0);
+                let m: usize = chars[start..i]
+                    .iter()
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0);
                 return (farg, Some(m), i);
             } else {
                 // n- means n to argc-1
@@ -2227,7 +3083,11 @@ impl ShellExecutor {
         }
 
         // Check if this is a noglob precommand — suppress glob expansion
-        let is_noglob = cmd.words.first().map(|w| self.expand_word(w) == "noglob").unwrap_or(false);
+        let is_noglob = cmd
+            .words
+            .first()
+            .map(|w| self.expand_word(w) == "noglob")
+            .unwrap_or(false);
         let saved_noglob = if is_noglob {
             let saved = self.options.get("noglob").copied();
             self.options.insert("noglob".to_string(), true);
@@ -2258,8 +3118,12 @@ impl ShellExecutor {
         // Restore noglob after expansion
         if is_noglob {
             match saved_noglob {
-                Some(v) => { self.options.insert("noglob".to_string(), v); }
-                None => { self.options.remove("noglob"); }
+                Some(v) => {
+                    self.options.insert("noglob".to_string(), v);
+                }
+                None => {
+                    self.options.remove("noglob");
+                }
             }
         }
         if words.is_empty() {
@@ -2278,7 +3142,11 @@ impl ShellExecutor {
 
         // xtrace: print expanded command to stderr (zsh -x / set -x)
         if self.options.get("xtrace").copied().unwrap_or(false) {
-            let ps4 = self.variables.get("PS4").cloned().unwrap_or_else(|| "+".to_string());
+            let ps4 = self
+                .variables
+                .get("PS4")
+                .cloned()
+                .unwrap_or_else(|| "+".to_string());
             eprintln!("{}{}", ps4, words.join(" "));
         }
 
@@ -2751,8 +3619,12 @@ impl ShellExecutor {
         while self.local_save_stack.len() > saved_local_vars {
             if let Some((name, old_val)) = self.local_save_stack.pop() {
                 match old_val {
-                    Some(v) => { self.variables.insert(name, v); }
-                    None => { self.variables.remove(&name); }
+                    Some(v) => {
+                        self.variables.insert(name, v);
+                    }
+                    None => {
+                        self.variables.remove(&name);
+                    }
                 }
             }
         }
@@ -3818,19 +4690,18 @@ impl ShellExecutor {
     /// Splits `base/**/file_pattern` into per-subdirectory walks, each
     /// running on a pool thread via walkdir.  Results merge via channel.
     /// This is why `echo **/*.rs` will be 5-10x faster than zsh.
-    fn expand_glob_parallel(
-        &self,
-        pattern: &str,
-        dotglob: bool,
-        nocaseglob: bool,
-    ) -> Vec<String> {
+    fn expand_glob_parallel(&self, pattern: &str, dotglob: bool, nocaseglob: bool) -> Vec<String> {
         use walkdir::WalkDir;
 
         // Split pattern at the first **/ into (base_dir, file_glob)
         // e.g. "src/**/*.rs" → ("src", "*.rs")
         //      "**/*.rs"     → (".", "*.rs")
         let (base, file_glob) = if let Some(pos) = pattern.find("**/") {
-            let base = if pos == 0 { "." } else { &pattern[..pos.saturating_sub(1)] };
+            let base = if pos == 0 {
+                "."
+            } else {
+                &pattern[..pos.saturating_sub(1)]
+            };
             let rest = &pattern[pos + 3..]; // skip "**/", get "*.rs" or "foo/**/*.rs"
             (base.to_string(), rest.to_string())
         } else {
@@ -3867,10 +4738,7 @@ impl ShellExecutor {
 
         // Enumerate top-level entries in base dir to fan out across workers
         let top_entries: Vec<std::path::PathBuf> = match std::fs::read_dir(&base) {
-            Ok(rd) => rd
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .collect(),
+            Ok(rd) => rd.filter_map(|e| e.ok()).map(|e| e.path()).collect(),
             Err(_) => return vec![],
         };
 
@@ -4034,15 +4902,17 @@ impl ShellExecutor {
             let tx = tx.clone();
             let chunk: Vec<String> = chunk.to_vec();
             self.worker_pool.submit(move || {
-                let batch: Vec<(String, (Option<std::fs::Metadata>, Option<std::fs::Metadata>))> =
-                    chunk
-                        .into_iter()
-                        .map(|f| {
-                            let meta = std::fs::metadata(&f).ok();
-                            let symlink_meta = std::fs::symlink_metadata(&f).ok();
-                            (f, (meta, symlink_meta))
-                        })
-                        .collect();
+                let batch: Vec<(
+                    String,
+                    (Option<std::fs::Metadata>, Option<std::fs::Metadata>),
+                )> = chunk
+                    .into_iter()
+                    .map(|f| {
+                        let meta = std::fs::metadata(&f).ok();
+                        let symlink_meta = std::fs::symlink_metadata(&f).ok();
+                        (f, (meta, symlink_meta))
+                    })
+                    .collect();
                 let _ = tx.send(batch);
             });
         }
@@ -4085,7 +4955,11 @@ impl ShellExecutor {
                                 .and_then(|(m, _)| m.as_ref())
                                 .map(|m| m.is_file())
                                 .unwrap_or(false);
-                            if negate { !is_file } else { is_file }
+                            if negate {
+                                !is_file
+                            } else {
+                                is_file
+                            }
                         })
                         .collect();
                     negate = false;
@@ -4099,7 +4973,11 @@ impl ShellExecutor {
                                 .and_then(|(m, _)| m.as_ref())
                                 .map(|m| m.is_dir())
                                 .unwrap_or(false);
-                            if negate { !is_dir } else { is_dir }
+                            if negate {
+                                !is_dir
+                            } else {
+                                is_dir
+                            }
                         })
                         .collect();
                     negate = false;
@@ -4113,7 +4991,11 @@ impl ShellExecutor {
                                 .and_then(|(_, sm)| sm.as_ref())
                                 .map(|m| m.file_type().is_symlink())
                                 .unwrap_or(false);
-                            if negate { !is_link } else { is_link }
+                            if negate {
+                                !is_link
+                            } else {
+                                is_link
+                            }
                         })
                         .collect();
                     negate = false;
@@ -4129,7 +5011,11 @@ impl ShellExecutor {
                                 .and_then(|(_, sm)| sm.as_ref())
                                 .map(|m| m.file_type().is_socket())
                                 .unwrap_or(false);
-                            if negate { !is_socket } else { is_socket }
+                            if negate {
+                                !is_socket
+                            } else {
+                                is_socket
+                            }
                         })
                         .collect();
                     negate = false;
@@ -4145,7 +5031,11 @@ impl ShellExecutor {
                                 .and_then(|(_, sm)| sm.as_ref())
                                 .map(|m| m.file_type().is_fifo())
                                 .unwrap_or(false);
-                            if negate { !is_fifo } else { is_fifo }
+                            if negate {
+                                !is_fifo
+                            } else {
+                                is_fifo
+                            }
                         })
                         .collect();
                     negate = false;
@@ -4161,7 +5051,11 @@ impl ShellExecutor {
                                 .and_then(|(m, _)| m.as_ref())
                                 .map(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
                                 .unwrap_or(false);
-                            if negate { !is_exec } else { is_exec }
+                            if negate {
+                                !is_exec
+                            } else {
+                                is_exec
+                            }
                         })
                         .collect();
                     negate = false;
@@ -4185,7 +5079,11 @@ impl ShellExecutor {
                                     }
                                 })
                                 .unwrap_or(false);
-                            if negate { !is_device } else { is_device }
+                            if negate {
+                                !is_device
+                            } else {
+                                is_device
+                            }
                         })
                         .collect();
                     if next == Some('b') || next == Some('c') {
@@ -4278,7 +5176,11 @@ impl ShellExecutor {
                                 .and_then(|(m, _)| m.as_ref())
                                 .map(|m| m.uid() == euid)
                                 .unwrap_or(false);
-                            if negate { !is_owned } else { is_owned }
+                            if negate {
+                                !is_owned
+                            } else {
+                                is_owned
+                            }
                         })
                         .collect();
                     negate = false;
@@ -4295,7 +5197,9 @@ impl ShellExecutor {
                                 .and_then(|(m, _)| m.as_ref())
                                 .map(|m| m.gid() == egid)
                                 .unwrap_or(false);
-                            if negate { !is_owned } else {
+                            if negate {
+                                !is_owned
+                            } else {
                                 is_owned
                             }
                         })
@@ -4314,13 +5218,19 @@ impl ShellExecutor {
                         chars.next();
                         // Sort by size — uses prefetched metadata
                         result.sort_by_key(|f| {
-                            meta_cache.get(f).and_then(|(m, _)| m.as_ref()).map(|m| m.len()).unwrap_or(0)
+                            meta_cache
+                                .get(f)
+                                .and_then(|(m, _)| m.as_ref())
+                                .map(|m| m.len())
+                                .unwrap_or(0)
                         });
                     } else if chars.peek() == Some(&'m') {
                         chars.next();
                         // Sort by modification time — uses prefetched metadata
                         result.sort_by_key(|f| {
-                            meta_cache.get(f).and_then(|(m, _)| m.as_ref())
+                            meta_cache
+                                .get(f)
+                                .and_then(|(m, _)| m.as_ref())
                                 .and_then(|m| m.modified().ok())
                                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         });
@@ -4328,7 +5238,9 @@ impl ShellExecutor {
                         chars.next();
                         // Sort by access time — uses prefetched metadata
                         result.sort_by_key(|f| {
-                            meta_cache.get(f).and_then(|(m, _)| m.as_ref())
+                            meta_cache
+                                .get(f)
+                                .and_then(|(m, _)| m.as_ref())
                                 .and_then(|m| m.accessed().ok())
                                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         });
@@ -4343,13 +5255,19 @@ impl ShellExecutor {
                     } else if chars.peek() == Some(&'L') {
                         chars.next();
                         result.sort_by_key(|f| {
-                            meta_cache.get(f).and_then(|(m, _)| m.as_ref()).map(|m| m.len()).unwrap_or(0)
+                            meta_cache
+                                .get(f)
+                                .and_then(|(m, _)| m.as_ref())
+                                .map(|m| m.len())
+                                .unwrap_or(0)
                         });
                         result.reverse();
                     } else if chars.peek() == Some(&'m') {
                         chars.next();
                         result.sort_by_key(|f| {
-                            meta_cache.get(f).and_then(|(m, _)| m.as_ref())
+                            meta_cache
+                                .get(f)
+                                .and_then(|(m, _)| m.as_ref())
                                 .and_then(|m| m.modified().ok())
                                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         });
@@ -4410,7 +5328,11 @@ impl ShellExecutor {
                     .and_then(|(m, _)| m.as_ref())
                     .map(|m| (m.permissions().mode() & mode) != 0)
                     .unwrap_or(false);
-                if negate { !has_perm } else { has_perm }
+                if negate {
+                    !has_perm
+                } else {
+                    has_perm
+                }
             })
             .collect()
     }
@@ -4976,17 +5898,20 @@ impl ShellExecutor {
         let mut receivers = Vec::with_capacity(words.len());
 
         // Count external command subs — don't bother with pool overhead for just one
-        let external_count = words.iter().filter(|w| {
-            if let ShellWord::CommandSub(cmd) = w {
-                if let ShellCommand::Simple(simple) = cmd.as_ref() {
-                    if let Some(first) = simple.words.first() {
-                        let name = self.expand_word(first);
-                        return !self.functions.contains_key(&name) && !self.is_builtin(&name);
+        let external_count = words
+            .iter()
+            .filter(|w| {
+                if let ShellWord::CommandSub(cmd) = w {
+                    if let ShellCommand::Simple(simple) = cmd.as_ref() {
+                        if let Some(first) = simple.words.first() {
+                            let name = self.expand_word(first);
+                            return !self.functions.contains_key(&name) && !self.is_builtin(&name);
+                        }
                     }
                 }
-            }
-            false
-        }).count();
+                false
+            })
+            .count();
 
         if external_count < 2 {
             // Not worth parallelizing — fall through to sequential
@@ -5033,7 +5958,8 @@ impl ShellExecutor {
         use std::process::{Command, Stdio};
 
         // Phase 1: identify external command subs and pre-launch them
-        let mut preflight: Vec<Option<crossbeam_channel::Receiver<String>>> = Vec::with_capacity(parts.len());
+        let mut preflight: Vec<Option<crossbeam_channel::Receiver<String>>> =
+            Vec::with_capacity(parts.len());
 
         for part in parts {
             if let ShellWord::CommandSub(cmd) = part {
@@ -5160,14 +6086,22 @@ impl ShellExecutor {
                             arr.into_par_iter()
                                 .filter(|elem| {
                                     let m = Self::glob_match_static(elem, &pattern);
-                                    if has_match_flag { m } else { !m }
+                                    if has_match_flag {
+                                        m
+                                    } else {
+                                        !m
+                                    }
                                 })
                                 .collect()
                         } else {
                             arr.into_iter()
                                 .filter(|elem| {
                                     let m = self.glob_match(elem, pattern);
-                                    if has_match_flag { m } else { !m }
+                                    if has_match_flag {
+                                        m
+                                    } else {
+                                        !m
+                                    }
                                 })
                                 .collect()
                         };
@@ -5179,9 +6113,17 @@ impl ShellExecutor {
                     let matches = self.glob_match(&val, pattern);
 
                     return if has_match_flag {
-                        if matches { val } else { String::new() }
+                        if matches {
+                            val
+                        } else {
+                            String::new()
+                        }
                     } else {
-                        if matches { String::new() } else { val }
+                        if matches {
+                            String::new()
+                        } else {
+                            val
+                        }
                     };
                 }
 
@@ -5770,7 +6712,11 @@ impl ShellExecutor {
                     if chars.peek() == Some(&'#') {
                         let mut peek_iter = chars.clone();
                         peek_iter.next(); // skip #
-                        if peek_iter.peek().map(|c| c.is_alphabetic() || *c == '_').unwrap_or(false) {
+                        if peek_iter
+                            .peek()
+                            .map(|c| c.is_alphabetic() || *c == '_')
+                            .unwrap_or(false)
+                        {
                             chars.next(); // consume #
                             let mut name = String::new();
                             while let Some(&c) = chars.peek() {
@@ -5792,7 +6738,13 @@ impl ShellExecutor {
                     }
                     let mut var_name = String::new();
                     while let Some(&c) = chars.peek() {
-                        if c.is_alphanumeric() || c == '_' || c == '@' || c == '*' || c == '#' || c == '?' {
+                        if c.is_alphanumeric()
+                            || c == '_'
+                            || c == '@'
+                            || c == '*'
+                            || c == '#'
+                            || c == '?'
+                        {
                             var_name.push(chars.next().unwrap());
                             // Handle single-char special vars
                             if matches!(
@@ -6039,8 +6991,7 @@ impl ShellExecutor {
         let is_internal = if let ShellCommand::Simple(simple) = &commands[0] {
             let first = simple.words.first().map(|w| self.expand_word(w));
             if let Some(ref name) = first {
-                self.functions.contains_key(name)
-                    || self.is_builtin(name)
+                self.functions.contains_key(name) || self.is_builtin(name)
             } else {
                 true
             }
@@ -6060,8 +7011,12 @@ impl ShellExecutor {
 
             // Save original stdout and redirect to our pipe
             let saved_stdout = unsafe { libc::dup(1) };
-            unsafe { libc::dup2(write_fd, 1); }
-            unsafe { libc::close(write_fd); }
+            unsafe {
+                libc::dup2(write_fd, 1);
+            }
+            unsafe {
+                libc::close(write_fd);
+            }
 
             // Execute all commands
             for cmd in &commands {
@@ -6073,8 +7028,12 @@ impl ShellExecutor {
             let _ = io::stdout().flush();
 
             // Restore stdout
-            unsafe { libc::dup2(saved_stdout, 1); }
-            unsafe { libc::close(saved_stdout); }
+            unsafe {
+                libc::dup2(saved_stdout, 1);
+            }
+            unsafe {
+                libc::close(saved_stdout);
+            }
 
             // Read captured output
             use std::os::unix::io::FromRawFd;
@@ -6087,8 +7046,7 @@ impl ShellExecutor {
         } else {
             // External command: spawn child and capture stdout
             if let ShellCommand::Simple(simple) = &commands[0] {
-                let words: Vec<String> =
-                    simple.words.iter().map(|w| self.expand_word(w)).collect();
+                let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
                 if words.is_empty() {
                     return String::new();
                 }
@@ -7098,9 +8056,11 @@ impl ShellExecutor {
                 // Unique preserves first-occurrence order, so parallel doesn't help.
                 // For 1000+ elements, pre-allocate the HashSet for less rehashing.
                 let words: Vec<&str> = val.split_whitespace().collect();
-                let mut seen = std::collections::HashSet::with_capacity(
-                    if words.len() >= 1000 { words.len() } else { 0 },
-                );
+                let mut seen = std::collections::HashSet::with_capacity(if words.len() >= 1000 {
+                    words.len()
+                } else {
+                    0
+                });
                 if words.len() >= 1000 {
                     tracing::trace!(
                         count = words.len(),
@@ -7589,7 +8549,8 @@ impl ShellExecutor {
                     if let Some(caps) = re.captures(&val) {
                         // Set $MATCH to the full match
                         if let Some(m) = caps.get(0) {
-                            self.variables.insert("MATCH".to_string(), m.as_str().to_string());
+                            self.variables
+                                .insert("MATCH".to_string(), m.as_str().to_string());
                         }
                         // Set $match array with capture groups
                         let mut match_arr = Vec::new();
@@ -7907,9 +8868,15 @@ impl ShellExecutor {
             result = match std::fs::read_to_string(&abs_path) {
                 Ok(content) => match self.execute_script(&content) {
                     Ok(status) => status,
-                    Err(e) => { eprintln!("source: {}: {}", path, e); 1 }
+                    Err(e) => {
+                        eprintln!("source: {}: {}", path, e);
+                        1
+                    }
                 },
-                Err(e) => { eprintln!("source: {}: {}", path, e); 1 }
+                Err(e) => {
+                    eprintln!("source: {}: {}", path, e);
+                    1
+                }
             };
         } else {
             // --- zshrs/zsh mode: plugin cache + AST cache + worker pool ---
@@ -7931,8 +8898,11 @@ impl ShellExecutor {
                                 "source: cache hit, replayed"
                             );
                             // Restore $0
-                            if let Some(z) = saved_zero { self.variables.insert("0".to_string(), z); }
-                            else { self.variables.remove("0"); }
+                            if let Some(z) = saved_zero {
+                                self.variables.insert("0".to_string(), z);
+                            } else {
+                                self.variables.remove("0");
+                            }
                             return 0;
                         }
                     }
@@ -8033,23 +9003,31 @@ impl ShellExecutor {
         // New aliases
         for (name, value) in &self.aliases {
             if !snap.aliases.contains(name) {
-                delta.aliases.push((name.clone(), value.clone(), AliasKind::Regular));
+                delta
+                    .aliases
+                    .push((name.clone(), value.clone(), AliasKind::Regular));
             }
         }
         for (name, value) in &self.global_aliases {
             if !snap.global_aliases.contains(name) {
-                delta.aliases.push((name.clone(), value.clone(), AliasKind::Global));
+                delta
+                    .aliases
+                    .push((name.clone(), value.clone(), AliasKind::Global));
             }
         }
         for (name, value) in &self.suffix_aliases {
             if !snap.suffix_aliases.contains(name) {
-                delta.aliases.push((name.clone(), value.clone(), AliasKind::Suffix));
+                delta
+                    .aliases
+                    .push((name.clone(), value.clone(), AliasKind::Suffix));
             }
         }
 
         // New/changed variables
         for (name, value) in &self.variables {
-            if name == "0" { continue; } // skip $0 (we set it ourselves)
+            if name == "0" {
+                continue;
+            } // skip $0 (we set it ourselves)
             match snap.variables.get(name) {
                 Some(old) if old == value => {} // unchanged
                 _ => {
@@ -8113,9 +9091,15 @@ impl ShellExecutor {
         // Aliases
         for (name, value, kind) in &delta.aliases {
             match kind {
-                AliasKind::Regular => { self.aliases.insert(name.clone(), value.clone()); }
-                AliasKind::Global => { self.global_aliases.insert(name.clone(), value.clone()); }
-                AliasKind::Suffix => { self.suffix_aliases.insert(name.clone(), value.clone()); }
+                AliasKind::Regular => {
+                    self.aliases.insert(name.clone(), value.clone());
+                }
+                AliasKind::Global => {
+                    self.global_aliases.insert(name.clone(), value.clone());
+                }
+                AliasKind::Suffix => {
+                    self.suffix_aliases.insert(name.clone(), value.clone());
+                }
             }
         }
 
@@ -8214,7 +9198,10 @@ impl ShellExecutor {
 
         // Helper closure: get metadata from cache or fetch
         let get_meta = |path: &str| -> Option<std::fs::Metadata> {
-            meta_cache.get(path).cloned().unwrap_or_else(|| std::fs::metadata(path).ok())
+            meta_cache
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| std::fs::metadata(path).ok())
         };
 
         match args.as_slice() {
@@ -8322,7 +9309,11 @@ impl ShellExecutor {
                     } else {
                         mode & 0o004 != 0
                     };
-                    if readable { 0 } else { 1 }
+                    if readable {
+                        0
+                    } else {
+                        1
+                    }
                 } else {
                     1
                 }
@@ -8340,7 +9331,11 @@ impl ShellExecutor {
                     } else {
                         mode & 0o002 != 0
                     };
-                    if writable { 0 } else { 1 }
+                    if writable {
+                        0
+                    } else {
+                        1
+                    }
                 } else {
                     1
                 }
@@ -8358,7 +9353,11 @@ impl ShellExecutor {
                     } else {
                         mode & 0o001 != 0
                     };
-                    if executable { 0 } else { 1 }
+                    if executable {
+                        0
+                    } else {
+                        1
+                    }
                 } else {
                     1
                 }
@@ -8367,11 +9366,25 @@ impl ShellExecutor {
             // Special permission bits — prefetched metadata
             ["-g", path] => {
                 use std::os::unix::fs::MetadataExt;
-                if get_meta(path).map(|m| m.mode() & 0o2000 != 0).unwrap_or(false) { 0 } else { 1 }
+                if get_meta(path)
+                    .map(|m| m.mode() & 0o2000 != 0)
+                    .unwrap_or(false)
+                {
+                    0
+                } else {
+                    1
+                }
             }
             ["-k", path] => {
                 use std::os::unix::fs::MetadataExt;
-                if get_meta(path).map(|m| m.mode() & 0o1000 != 0).unwrap_or(false) { 0 } else { 1 }
+                if get_meta(path)
+                    .map(|m| m.mode() & 0o1000 != 0)
+                    .unwrap_or(false)
+                {
+                    0
+                } else {
+                    1
+                }
             }
             ["-u", path] => {
                 use std::os::unix::fs::MetadataExt;
@@ -8387,17 +9400,35 @@ impl ShellExecutor {
 
             // File size — prefetched metadata
             ["-s", path] => {
-                if get_meta(path).map(|m| m.len() > 0).unwrap_or(false) { 0 } else { 1 }
+                if get_meta(path).map(|m| m.len() > 0).unwrap_or(false) {
+                    0
+                } else {
+                    1
+                }
             }
 
             // Ownership — prefetched metadata
             ["-O", path] => {
                 use std::os::unix::fs::MetadataExt;
-                if get_meta(path).map(|m| m.uid() == unsafe { libc::geteuid() }).unwrap_or(false) { 0 } else { 1 }
+                if get_meta(path)
+                    .map(|m| m.uid() == unsafe { libc::geteuid() })
+                    .unwrap_or(false)
+                {
+                    0
+                } else {
+                    1
+                }
             }
             ["-G", path] => {
                 use std::os::unix::fs::MetadataExt;
-                if get_meta(path).map(|m| m.gid() == unsafe { libc::getegid() }).unwrap_or(false) { 0 } else { 1 }
+                if get_meta(path)
+                    .map(|m| m.gid() == unsafe { libc::getegid() })
+                    .unwrap_or(false)
+                {
+                    0
+                } else {
+                    1
+                }
             }
 
             // File times — prefetched metadata
@@ -9556,7 +10587,12 @@ impl ShellExecutor {
                     // Try fusevm::Chunk first (new format — actual bytecodes)
                     if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
                         if !chunk.ops.is_empty() {
-                            tracing::trace!(name, bytes = bc_blob.len(), ops = chunk.ops.len(), "autoload: bytecode cache hit → VM");
+                            tracing::trace!(
+                                name,
+                                bytes = bc_blob.len(),
+                                ops = chunk.ops.len(),
+                                "autoload: bytecode cache hit → VM"
+                            );
                             // Execute directly on fusevm — no parse, no compile
                             let mut vm = fusevm::VM::new(chunk);
                             let _ = vm.run();
@@ -9572,7 +10608,11 @@ impl ShellExecutor {
                     // Fallback: try legacy Vec<ShellCommand> format (migration)
                     if let Ok(commands) = bincode::deserialize::<Vec<ShellCommand>>(&bc_blob) {
                         if !commands.is_empty() {
-                            tracing::trace!(name, bytes = bc_blob.len(), "autoload: legacy AST cache hit");
+                            tracing::trace!(
+                                name,
+                                bytes = bc_blob.len(),
+                                "autoload: legacy AST cache hit"
+                            );
                             return Some(self.wrap_autoload_commands(name, commands));
                         }
                     }
@@ -9588,7 +10628,11 @@ impl ShellExecutor {
                             let chunk = compiler.compile(&commands);
                             if let Ok(blob) = bincode::serialize(&chunk) {
                                 let _ = cache.set_autoload_bytecode(name, &blob);
-                                tracing::trace!(name, bytes = blob.len(), "autoload: bytecodes compiled and cached");
+                                tracing::trace!(
+                                    name,
+                                    bytes = blob.len(),
+                                    "autoload: bytecodes compiled and cached"
+                                );
                             }
                             return Some(self.wrap_autoload_commands(name, commands));
                         }
@@ -11386,9 +12430,15 @@ impl ShellExecutor {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "?".to_string());
         println!("  cwd:        {}", cwd);
-        println!("  shell:      {}", env::var("SHELL").unwrap_or_else(|_| "?".to_string()));
+        println!(
+            "  shell:      {}",
+            env::var("SHELL").unwrap_or_else(|_| "?".to_string())
+        );
         println!("  pool size:  {}", self.worker_pool.size());
-        println!("  pool done:  {} tasks completed", self.worker_pool.completed());
+        println!(
+            "  pool done:  {} tasks completed",
+            self.worker_pool.completed()
+        );
         println!("  pool queue: {} pending", self.worker_pool.queue_depth());
         println!();
 
@@ -11398,7 +12448,12 @@ impl ShellExecutor {
         if config_path.exists() {
             println!("  {}  {}", green("*"), config_path.display());
         } else {
-            println!("  {}  {} {}", dim("-"), config_path.display(), dim("(using defaults)"));
+            println!(
+                "  {}  {} {}",
+                dim("-"),
+                config_path.display(),
+                dim("(using defaults)")
+            );
         }
         println!();
 
@@ -11406,12 +12461,22 @@ impl ShellExecutor {
         println!("{}", bold("PATH"));
         let path_var = env::var("PATH").unwrap_or_default();
         let path_dirs: Vec<&str> = path_var.split(':').filter(|s| !s.is_empty()).collect();
-        let path_ok = path_dirs.iter().filter(|d| std::path::Path::new(d).is_dir()).count();
+        let path_ok = path_dirs
+            .iter()
+            .filter(|d| std::path::Path::new(d).is_dir())
+            .count();
         let path_missing = path_dirs.len() - path_ok;
-        println!("  directories: {} total, {} {}, {} {}",
+        println!(
+            "  directories: {} total, {} {}, {} {}",
             path_dirs.len(),
-            path_ok, green("valid"),
-            path_missing, if path_missing > 0 { red("missing") } else { green("missing") },
+            path_ok,
+            green("valid"),
+            path_missing,
+            if path_missing > 0 {
+                red("missing")
+            } else {
+                green("missing")
+            },
         );
         println!("  hash table:  {} entries", self.command_hash.len());
         println!();
@@ -11444,9 +12509,16 @@ impl ShellExecutor {
             // Check bytecode blob coverage
             if let Ok(missing) = cache.get_autoloads_missing_bytecode() {
                 if missing.is_empty() {
-                    println!("  bytecode cache:   {}", green("all functions compiled to bytecode"));
+                    println!(
+                        "  bytecode cache:   {}",
+                        green("all functions compiled to bytecode")
+                    );
                 } else {
-                    println!("  bytecode cache:   {} functions {}", missing.len(), yellow("missing bytecode blobs"));
+                    println!(
+                        "  bytecode cache:   {} functions {}",
+                        missing.len(),
+                        yellow("missing bytecode blobs")
+                    );
                 }
             }
         } else {
@@ -11455,7 +12527,12 @@ impl ShellExecutor {
 
         if let Some(ref cache) = self.plugin_cache {
             let (plugins, functions) = cache.stats();
-            println!("  plugins:     {} plugins, {} cached functions  {}", plugins, functions, green("OK"));
+            println!(
+                "  plugins:     {} plugins, {} cached functions  {}",
+                plugins,
+                functions,
+                green("OK")
+            );
         } else {
             println!("  plugins:     {}", yellow("no cache"));
         }
@@ -11469,9 +12546,15 @@ impl ShellExecutor {
         println!("  variables:   {}", self.variables.len());
         println!("  arrays:      {}", self.arrays.len());
         println!("  assoc:       {}", self.assoc_arrays.len());
-        println!("  options:     {} set", self.options.iter().filter(|(_, v)| **v).count());
+        println!(
+            "  options:     {} set",
+            self.options.iter().filter(|(_, v)| **v).count()
+        );
         println!("  traps:       {} active", self.traps.len());
-        println!("  hooks:       {} registered", self.hook_functions.values().map(|v| v.len()).sum::<usize>());
+        println!(
+            "  hooks:       {} registered",
+            self.hook_functions.values().map(|v| v.len()).sum::<usize>()
+        );
         println!();
 
         // --- Log ---
@@ -11487,9 +12570,30 @@ impl ShellExecutor {
 
         // --- Profiling ---
         println!("{}", bold("Profiling"));
-        println!("  chrome tracing: {}", if crate::log::profiling_enabled() { green("enabled") } else { dim("disabled") });
-        println!("  flamegraph:     {}", if crate::log::flamegraph_enabled() { green("enabled") } else { dim("disabled") });
-        println!("  prometheus:     {}", if crate::log::prometheus_enabled() { green("enabled") } else { dim("disabled") });
+        println!(
+            "  chrome tracing: {}",
+            if crate::log::profiling_enabled() {
+                green("enabled")
+            } else {
+                dim("disabled")
+            }
+        );
+        println!(
+            "  flamegraph:     {}",
+            if crate::log::flamegraph_enabled() {
+                green("enabled")
+            } else {
+                dim("disabled")
+            }
+        );
+        println!(
+            "  prometheus:     {}",
+            if crate::log::prometheus_enabled() {
+                green("enabled")
+            } else {
+                dim("disabled")
+            }
+        );
         println!();
 
         0
@@ -11522,20 +12626,34 @@ impl ShellExecutor {
             if let Some(ref cache) = self.compsys_cache {
                 println!("  {} {}", bold("compsys.db"), dim("(completion cache)"));
                 if let Ok(n) = cache.count_table("autoloads") {
-                    let bc_count = cache.count_table_where("autoloads", "bytecode IS NOT NULL").unwrap_or(0);
+                    let bc_count = cache
+                        .count_table_where("autoloads", "bytecode IS NOT NULL")
+                        .unwrap_or(0);
                     println!("    autoloads:    {:>6} rows  ({} compiled)", n, bc_count);
                 }
-                if let Ok(n) = cache.count_table("comps") { println!("    comps:        {:>6} rows", n); }
-                if let Ok(n) = cache.count_table("services") { println!("    services:     {:>6} rows", n); }
-                if let Ok(n) = cache.count_table("patcomps") { println!("    patcomps:     {:>6} rows", n); }
-                if let Ok(n) = cache.count_table("executables") { println!("    executables:  {:>6} rows", n); }
-                if let Ok(n) = cache.count_table("zstyles") { println!("    zstyles:      {:>6} rows", n); }
+                if let Ok(n) = cache.count_table("comps") {
+                    println!("    comps:        {:>6} rows", n);
+                }
+                if let Ok(n) = cache.count_table("services") {
+                    println!("    services:     {:>6} rows", n);
+                }
+                if let Ok(n) = cache.count_table("patcomps") {
+                    println!("    patcomps:     {:>6} rows", n);
+                }
+                if let Ok(n) = cache.count_table("executables") {
+                    println!("    executables:  {:>6} rows", n);
+                }
+                if let Ok(n) = cache.count_table("zstyles") {
+                    println!("    zstyles:      {:>6} rows", n);
+                }
                 println!();
             }
 
             if let Some(ref engine) = self.history {
                 println!("  {} {}", bold("history.db"), dim("(command history)"));
-                if let Ok(n) = engine.count() { println!("    entries:      {:>6} rows", n); }
+                if let Ok(n) = engine.count() {
+                    println!("    entries:      {:>6} rows", n);
+                }
                 println!();
             }
 
@@ -11574,9 +12692,14 @@ impl ShellExecutor {
                         Ok(Some(stub)) => {
                             println!("{}", bold(&format!("autoload: {}", name)));
                             println!("  source:   {}", stub.source);
-                            println!("  body:     {} bytes", stub.body.as_ref().map(|b| b.len()).unwrap_or(0));
+                            println!(
+                                "  body:     {} bytes",
+                                stub.body.as_ref().map(|b| b.len()).unwrap_or(0)
+                            );
                             match cache.get_autoload_bytecode(name) {
-                                Ok(Some(blob)) => println!("  bytecode: {} {} bytes", green("YES"), blob.len()),
+                                Ok(Some(blob)) => {
+                                    println!("  bytecode: {} {} bytes", green("YES"), blob.len())
+                                }
                                 _ => println!("  bytecode: {}", yellow("NULL")),
                             }
                             // Show first few lines of body
@@ -11670,7 +12793,10 @@ impl ShellExecutor {
                             }
                         }
                     }
-                    Err(e) => { eprintln!("dbview: {}", e); return 1; }
+                    Err(e) => {
+                        eprintln!("dbview: {}", e);
+                        return 1;
+                    }
                 }
             }
 
@@ -11701,7 +12827,10 @@ impl ShellExecutor {
                             }
                         }
                     }
-                    Err(e) => { eprintln!("dbview: {}", e); return 1; }
+                    Err(e) => {
+                        eprintln!("dbview: {}", e);
+                        return 1;
+                    }
                 }
             }
 
@@ -11717,12 +12846,22 @@ impl ShellExecutor {
                 if let Some(pat) = filter {
                     if let Ok(entries) = engine.search(pat, 20) {
                         for e in entries {
-                            println!("  {} {} {}", dim(&e.timestamp.to_string()), cyan(&e.command), dim(&format!("[{}]", e.exit_code.unwrap_or(0))));
+                            println!(
+                                "  {} {} {}",
+                                dim(&e.timestamp.to_string()),
+                                cyan(&e.command),
+                                dim(&format!("[{}]", e.exit_code.unwrap_or(0)))
+                            );
                         }
                     }
                 } else if let Ok(entries) = engine.recent(20) {
                     for e in entries {
-                        println!("  {} {} {}", dim(&e.timestamp.to_string()), cyan(&e.command), dim(&format!("[{}]", e.exit_code.unwrap_or(0))));
+                        println!(
+                            "  {} {} {}",
+                            dim(&e.timestamp.to_string()),
+                            cyan(&e.command),
+                            dim(&format!("[{}]", e.exit_code.unwrap_or(0)))
+                        );
                     }
                 }
             }
@@ -11854,8 +12993,15 @@ impl ShellExecutor {
 
         // Per-command breakdown from tracing (if tracing is at debug level)
         println!();
-        println!("  {} set ZSHRS_LOG=trace for per-command tracing", yellow("tip:"));
-        println!("  {} output: {}", dim("log"), dim(&crate::log::log_path().display().to_string()));
+        println!(
+            "  {} set ZSHRS_LOG=trace for per-command tracing",
+            yellow("tip:")
+        );
+        println!(
+            "  {} output: {}",
+            dim("log"),
+            dim(&crate::log::log_path().display().to_string())
+        );
 
         self.profiling_enabled = was_enabled;
         status
@@ -11886,28 +13032,39 @@ impl ShellExecutor {
         }
 
         // Set INTERCEPT_NAME and INTERCEPT_ARGS for advice code
-        self.variables.insert("INTERCEPT_NAME".to_string(), cmd_name.to_string());
-        self.variables.insert("INTERCEPT_ARGS".to_string(), args.join(" "));
-        self.variables.insert("INTERCEPT_CMD".to_string(), full_cmd.to_string());
+        self.variables
+            .insert("INTERCEPT_NAME".to_string(), cmd_name.to_string());
+        self.variables
+            .insert("INTERCEPT_ARGS".to_string(), args.join(" "));
+        self.variables
+            .insert("INTERCEPT_CMD".to_string(), full_cmd.to_string());
 
         // Run before advice
-        for advice in matching.iter().filter(|i| matches!(i.kind, AdviceKind::Before)) {
+        for advice in matching
+            .iter()
+            .filter(|i| matches!(i.kind, AdviceKind::Before))
+        {
             let _ = self.execute_advice(&advice.code);
         }
 
         // Check for around advice — first match wins
-        let around = matching.iter().find(|i| matches!(i.kind, AdviceKind::Around));
+        let around = matching
+            .iter()
+            .find(|i| matches!(i.kind, AdviceKind::Around));
 
         let t0 = std::time::Instant::now();
 
         let result = if let Some(advice) = around {
             // Around advice: set INTERCEPT_PROCEED flag, run advice code.
             // If advice calls `intercept_proceed`, the original command runs.
-            self.variables.insert("__intercept_proceed".to_string(), "0".to_string());
+            self.variables
+                .insert("__intercept_proceed".to_string(), "0".to_string());
             let advice_result = self.execute_advice(&advice.code);
 
             // Check if intercept_proceed was called
-            let proceeded = self.variables.get("__intercept_proceed")
+            let proceeded = self
+                .variables
+                .get("__intercept_proceed")
                 .map(|v| v == "1")
                 .unwrap_or(false);
 
@@ -11937,11 +13094,16 @@ impl ShellExecutor {
 
         // Set timing variable for after advice
         let ms = elapsed.as_secs_f64() * 1000.0;
-        self.variables.insert("INTERCEPT_MS".to_string(), format!("{:.3}", ms));
-        self.variables.insert("INTERCEPT_US".to_string(), format!("{:.0}", ms * 1000.0));
+        self.variables
+            .insert("INTERCEPT_MS".to_string(), format!("{:.3}", ms));
+        self.variables
+            .insert("INTERCEPT_US".to_string(), format!("{:.0}", ms * 1000.0));
 
         // Run after advice
-        for advice in matching.iter().filter(|i| matches!(i.kind, AdviceKind::After)) {
+        for advice in matching
+            .iter()
+            .filter(|i| matches!(i.kind, AdviceKind::After))
+        {
             let _ = self.execute_advice(&advice.code);
         }
 
@@ -12009,7 +13171,13 @@ impl ShellExecutor {
                 } else {
                     let bold = |s: &str| format!("\x1b[1m{}\x1b[0m", s);
                     let cyan = |s: &str| format!("\x1b[36m{}\x1b[0m", s);
-                    println!("{:>4}  {:<8}  {:<20}  {}", bold("ID"), bold("KIND"), bold("PATTERN"), bold("CODE"));
+                    println!(
+                        "{:>4}  {:<8}  {:<20}  {}",
+                        bold("ID"),
+                        bold("KIND"),
+                        bold("PATTERN"),
+                        bold("CODE")
+                    );
                     for i in &self.intercepts {
                         let kind = match i.kind {
                             AdviceKind::Before => "before",
@@ -12021,7 +13189,13 @@ impl ShellExecutor {
                         } else {
                             i.code.clone()
                         };
-                        println!("{:>4}  {:<8}  {:<20}  {}", cyan(&i.id.to_string()), kind, i.pattern, code_preview);
+                        println!(
+                            "{:>4}  {:<8}  {:<20}  {}",
+                            cyan(&i.id.to_string()),
+                            kind,
+                            i.pattern,
+                            code_preview
+                        );
                     }
                 }
                 0
@@ -12089,12 +13263,24 @@ impl ShellExecutor {
                     AdviceKind::After => "after",
                     AdviceKind::Around => "around",
                 };
-                println!("intercept #{}: {} {} → {}", id, kind_str, self.intercepts.last().unwrap().pattern,
-                    if code.len() > 50 { format!("{}...", &code[..47]) } else { code });
+                println!(
+                    "intercept #{}: {} {} → {}",
+                    id,
+                    kind_str,
+                    self.intercepts.last().unwrap().pattern,
+                    if code.len() > 50 {
+                        format!("{}...", &code[..47])
+                    } else {
+                        code
+                    }
+                );
                 0
             }
             _ => {
-                eprintln!("intercept: unknown subcommand '{}'. Use before|after|around|list|remove|clear", args[0]);
+                eprintln!(
+                    "intercept: unknown subcommand '{}'. Use before|after|around|list|remove|clear",
+                    args[0]
+                );
                 1
             }
         }
@@ -12102,10 +13288,19 @@ impl ShellExecutor {
 
     /// intercept_proceed — called from around advice to execute the original command.
     fn builtin_intercept_proceed(&mut self, _args: &[String]) -> i32 {
-        self.variables.insert("__intercept_proceed".to_string(), "1".to_string());
+        self.variables
+            .insert("__intercept_proceed".to_string(), "1".to_string());
         // Run the original command using saved INTERCEPT_NAME/INTERCEPT_ARGS
-        let cmd_name = self.variables.get("INTERCEPT_NAME").cloned().unwrap_or_default();
-        let args_str = self.variables.get("INTERCEPT_ARGS").cloned().unwrap_or_default();
+        let cmd_name = self
+            .variables
+            .get("INTERCEPT_NAME")
+            .cloned()
+            .unwrap_or_default();
+        let args_str = self
+            .variables
+            .get("INTERCEPT_ARGS")
+            .cloned()
+            .unwrap_or_default();
         let args: Vec<String> = if args_str.is_empty() {
             Vec::new()
         } else {
@@ -12267,7 +13462,11 @@ impl ShellExecutor {
             }
         }
 
-        if any_fail { 1 } else { 0 }
+        if any_fail {
+            1
+        } else {
+            0
+        }
     }
 
     /// pgrep 'pattern' arg1 arg2 ... — parallel grep/filter across worker pool.
@@ -12285,7 +13484,8 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        let mut receivers: Vec<(String, crossbeam_channel::Receiver<bool>)> = Vec::with_capacity(items.len());
+        let mut receivers: Vec<(String, crossbeam_channel::Receiver<bool>)> =
+            Vec::with_capacity(items.len());
         for item in items {
             let cmd = template.replace("{}", item);
             let rx = self.worker_pool.submit_with_result(move || {
@@ -12362,7 +13562,11 @@ impl ShellExecutor {
             }
         }
 
-        if any_fail { 1 } else { 0 }
+        if any_fail {
+            1
+        } else {
+            0
+        }
     }
 
     /// barrier cmd1 ::: cmd2 ::: cmd3 — run commands in parallel, wait for ALL to complete.
@@ -13789,91 +14993,95 @@ impl ShellExecutor {
             "compinit: shipping to worker pool"
         );
         self.worker_pool.submit(move || {
-                tracing::debug!("compinit-bg: thread started");
-                let cache_path = compsys::cache::default_cache_path();
-                if let Some(parent) = cache_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+            tracing::debug!("compinit-bg: thread started");
+            let cache_path = compsys::cache::default_cache_path();
+            if let Some(parent) = cache_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            // Remove old DB to start fresh
+            let _ = std::fs::remove_file(&cache_path);
+            let _ = std::fs::remove_file(format!("{}-shm", cache_path.display()));
+            let _ = std::fs::remove_file(format!("{}-wal", cache_path.display()));
+
+            let mut cache = match compsys::cache::CompsysCache::open(&cache_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("compinit: failed to create cache: {}", e);
+                    return;
                 }
-                // Remove old DB to start fresh
-                let _ = std::fs::remove_file(&cache_path);
-                let _ = std::fs::remove_file(format!("{}-shm", cache_path.display()));
-                let _ = std::fs::remove_file(format!("{}-wal", cache_path.display()));
+            };
 
-                let mut cache = match compsys::cache::CompsysCache::open(&cache_path) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        tracing::error!("compinit: failed to create cache: {}", e);
-                        return;
-                    }
-                };
+            let result = match compsys::build_cache_from_fpath(&fpath, &mut cache) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("compinit: scan failed: {}", e);
+                    return;
+                }
+            };
 
-                let result = match compsys::build_cache_from_fpath(&fpath, &mut cache) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        tracing::error!("compinit: scan failed: {}", e);
-                        return;
-                    }
-                };
+            tracing::info!(
+                functions = result.files_scanned,
+                comps = result.comps.len(),
+                dirs = result.dirs_scanned,
+                ms = result.scan_time_ms,
+                "compinit: background scan complete"
+            );
 
-                tracing::info!(
-                    functions = result.files_scanned,
-                    comps = result.comps.len(),
-                    dirs = result.dirs_scanned,
-                    ms = result.scan_time_ms,
-                    "compinit: background scan complete"
-                );
+            // Pre-parse function bodies and cache bytecode blobs.
+            // Stream: parse one → serialize → write → drop. Never accumulate.
+            // 16k functions × ~10KB AST = OOM if held in memory.
+            let parse_start = std::time::Instant::now();
+            let mut parse_ok = 0usize;
+            let mut parse_fail = 0usize;
+            let mut no_body = 0usize;
+            let batch_size = 100;
+            let mut batch: Vec<(String, Vec<u8>)> = Vec::with_capacity(batch_size);
 
-                // Pre-parse function bodies and cache bytecode blobs.
-                // Stream: parse one → serialize → write → drop. Never accumulate.
-                // 16k functions × ~10KB AST = OOM if held in memory.
-                let parse_start = std::time::Instant::now();
-                let mut parse_ok = 0usize;
-                let mut parse_fail = 0usize;
-                let mut no_body = 0usize;
-                let batch_size = 100;
-                let mut batch: Vec<(String, Vec<u8>)> = Vec::with_capacity(batch_size);
-
-                for file in &result.files {
-                    if let Some(ref body) = file.body {
-                        let mut parser = crate::parser::ShellParser::new(body);
-                        match parser.parse_script() {
-                            Ok(commands) if !commands.is_empty() => {
-                                // Compile AST → fusevm bytecodes, then serialize the Chunk
-                                let compiler = crate::shell_compiler::ShellCompiler::new();
-                                let chunk = compiler.compile(&commands);
-                                if let Ok(blob) = bincode::serialize(&chunk) {
-                                    batch.push((file.name.clone(), blob));
-                                    parse_ok += 1;
-                                    if batch.len() >= batch_size {
-                                        let _ = cache.set_autoload_bytecodes_bulk(&batch);
-                                        batch.clear();
-                                    }
+            for file in &result.files {
+                if let Some(ref body) = file.body {
+                    let mut parser = crate::parser::ShellParser::new(body);
+                    match parser.parse_script() {
+                        Ok(commands) if !commands.is_empty() => {
+                            // Compile AST → fusevm bytecodes, then serialize the Chunk
+                            let compiler = crate::shell_compiler::ShellCompiler::new();
+                            let chunk = compiler.compile(&commands);
+                            if let Ok(blob) = bincode::serialize(&chunk) {
+                                batch.push((file.name.clone(), blob));
+                                parse_ok += 1;
+                                if batch.len() >= batch_size {
+                                    let _ = cache.set_autoload_bytecodes_bulk(&batch);
+                                    batch.clear();
                                 }
                             }
-                            Ok(_) => { parse_fail += 1; }
-                            Err(_) => { parse_fail += 1; }
                         }
-                    } else {
-                        no_body += 1;
+                        Ok(_) => {
+                            parse_fail += 1;
+                        }
+                        Err(_) => {
+                            parse_fail += 1;
+                        }
                     }
+                } else {
+                    no_body += 1;
                 }
-                // Flush remaining
-                if !batch.is_empty() {
-                    let _ = cache.set_autoload_bytecodes_bulk(&batch);
-                    batch.clear();
-                }
+            }
+            // Flush remaining
+            if !batch.is_empty() {
+                let _ = cache.set_autoload_bytecodes_bulk(&batch);
+                batch.clear();
+            }
 
-                tracing::info!(
-                    cached = parse_ok,
-                    failed = parse_fail,
-                    no_body = no_body,
-                    total = result.files.len(),
-                    ms = parse_start.elapsed().as_millis() as u64,
-                    "compinit: bytecode blobs cached"
-                );
+            tracing::info!(
+                cached = parse_ok,
+                failed = parse_fail,
+                no_body = no_body,
+                total = result.files.len(),
+                ms = parse_start.elapsed().as_millis() as u64,
+                "compinit: bytecode blobs cached"
+            );
 
-                let _ = tx.send(CompInitBgResult { result, cache });
-            });
+            let _ = tx.send(CompInitBgResult { result, cache });
+        });
 
         self.compinit_pending = Some((rx, bg_start));
         0
@@ -16363,12 +17571,18 @@ impl ShellExecutor {
             ];
             for (res, name, divisor, unit) in resources {
                 let mut rl: rlimit = unsafe { std::mem::zeroed() };
-                unsafe { getrlimit(res, &mut rl); }
+                unsafe {
+                    getrlimit(res, &mut rl);
+                }
                 let val = if rl.rlim_cur == RLIM_INFINITY as u64 {
                     "unlimited".to_string()
                 } else {
                     let v = rl.rlim_cur as u64 / divisor;
-                    if unit.is_empty() { format!("{}", v) } else { format!("{}{}", v, unit) }
+                    if unit.is_empty() {
+                        format!("{}", v)
+                    } else {
+                        format!("{}{}", v, unit)
+                    }
                 };
                 println!("{:<16}{}", name, val);
             }
@@ -16497,8 +17711,7 @@ impl ShellExecutor {
                                 if let Ok(ft) = entry.file_type() {
                                     if ft.is_file() || ft.is_symlink() {
                                         if let Some(name) = entry.file_name().to_str() {
-                                            let path =
-                                                entry.path().to_string_lossy().to_string();
+                                            let path = entry.path().to_string_lossy().to_string();
                                             batch.push((name.to_string(), path));
                                         }
                                     }

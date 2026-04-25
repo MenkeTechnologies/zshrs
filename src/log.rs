@@ -93,8 +93,8 @@ pub fn init() {
         #[cfg(feature = "flamegraph")]
         let (flame_layer, flame_guard) = {
             let flame_path = dir.join(format!("flame-{}.folded", pid));
-            let file = std::fs::File::create(&flame_path)
-                .expect("cannot create flamegraph output file");
+            let file =
+                std::fs::File::create(&flame_path).expect("cannot create flamegraph output file");
             let writer = std::io::BufWriter::new(file);
             let (layer, guard) = tracing_flame::FlameLayer::with_writer(writer).build();
             (Some(layer), guard)
@@ -107,10 +107,7 @@ pub fn init() {
         {
             // Spawn metrics HTTP server on :9090 in background
             let builder = metrics_exporter_prometheus::PrometheusBuilder::new();
-            if let Err(e) = builder
-                .with_http_listener(([127, 0, 0, 1], 9090))
-                .install()
-            {
+            if let Err(e) = builder.with_http_listener(([127, 0, 0, 1], 9090)).install() {
                 eprintln!("zshrs: failed to start prometheus exporter: {}", e);
             }
         }

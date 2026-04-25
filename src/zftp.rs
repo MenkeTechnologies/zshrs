@@ -169,14 +169,22 @@ impl FtpSession {
         let dns = addr_str.clone();
         std::thread::Builder::new()
             .name("zftp-dns".to_string())
-            .spawn(move || { let _ = tx.send(dns.to_socket_addrs().map(|a| a.collect::<Vec<_>>())); })
+            .spawn(move || {
+                let _ = tx.send(dns.to_socket_addrs().map(|a| a.collect::<Vec<_>>()));
+            })
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
-        let addrs = rx.recv_timeout(dns_timeout)
+        let addrs = rx
+            .recv_timeout(dns_timeout)
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS resolution timed out"))?
-            .map_err(|e| { tracing::warn!(host, error = %e, "zftp: DNS failed"); e })?;
+            .map_err(|e| {
+                tracing::warn!(host, error = %e, "zftp: DNS failed");
+                e
+            })?;
 
-        let sock_addr = addrs.into_iter().next()
+        let sock_addr = addrs
+            .into_iter()
+            .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid address"))?;
 
         let stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(30))?;

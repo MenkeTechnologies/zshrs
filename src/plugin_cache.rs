@@ -14,21 +14,21 @@ use std::path::{Path, PathBuf};
 /// Side effects captured from sourcing a plugin file.
 #[derive(Debug, Clone, Default)]
 pub struct PluginDelta {
-    pub functions: Vec<(String, Vec<u8>)>,         // name → bincode-serialized bytecode
+    pub functions: Vec<(String, Vec<u8>)>, // name → bincode-serialized bytecode
     pub aliases: Vec<(String, String, AliasKind)>, // name → value, kind
     pub global_aliases: Vec<(String, String)>,
     pub suffix_aliases: Vec<(String, String)>,
     pub variables: Vec<(String, String)>,
-    pub exports: Vec<(String, String)>,            // also set in env
+    pub exports: Vec<(String, String)>, // also set in env
     pub arrays: Vec<(String, Vec<String>)>,
     pub assoc_arrays: Vec<(String, HashMap<String, String>)>,
-    pub completions: Vec<(String, String)>,         // command → function
+    pub completions: Vec<(String, String)>, // command → function
     pub fpath_additions: Vec<String>,
-    pub hooks: Vec<(String, String)>,               // hook_name → function
-    pub bindkeys: Vec<(String, String, String)>,    // keyseq, widget, keymap
-    pub zstyles: Vec<(String, String, String)>,     // pattern, style, value
-    pub options_changed: Vec<(String, bool)>,        // option → on/off
-    pub autoloads: Vec<(String, String)>,            // function → flags
+    pub hooks: Vec<(String, String)>, // hook_name → function
+    pub bindkeys: Vec<(String, String, String)>, // keyseq, widget, keymap
+    pub zstyles: Vec<(String, String, String)>, // pattern, style, value
+    pub options_changed: Vec<(String, bool)>, // option → on/off
+    pub autoloads: Vec<(String, String)>, // function → flags
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +70,8 @@ impl PluginCache {
     }
 
     fn init_schema(&self) -> rusqlite::Result<()> {
-        self.conn.execute_batch(r#"
+        self.conn.execute_batch(
+            r#"
             CREATE TABLE IF NOT EXISTS plugins (
                 id INTEGER PRIMARY KEY,
                 path TEXT NOT NULL UNIQUE,
@@ -174,18 +175,21 @@ impl PluginCache {
             CREATE INDEX IF NOT EXISTS idx_plugins_path ON plugins(path);
             CREATE INDEX IF NOT EXISTS idx_script_ast_path ON script_ast(path);
             CREATE INDEX IF NOT EXISTS idx_compaudit_path ON compaudit_cache(path);
-        "#)?;
+        "#,
+        )?;
         Ok(())
     }
 
     /// Check if a cached entry exists with matching mtime.
     /// Returns the plugin id if cache is valid, None if miss.
     pub fn check(&self, path: &str, mtime_secs: i64, mtime_nsecs: i64) -> Option<i64> {
-        self.conn.query_row(
-            "SELECT id FROM plugins WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
-            params![path, mtime_secs, mtime_nsecs],
-            |row| row.get(0),
-        ).ok()
+        self.conn
+            .query_row(
+                "SELECT id FROM plugins WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
+                params![path, mtime_secs, mtime_nsecs],
+                |row| row.get(0),
+            )
+            .ok()
     }
 
     /// Load cached delta for a plugin by id.
@@ -193,29 +197,41 @@ impl PluginCache {
         let mut delta = PluginDelta::default();
 
         // Functions (bincode-serialized AST blobs)
-        let mut stmt = self.conn.prepare(
-            "SELECT name, body FROM plugin_functions WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, body FROM plugin_functions WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
         })?;
-        for r in rows { delta.functions.push(r?); }
+        for r in rows {
+            delta.functions.push(r?);
+        }
 
         // Aliases
-        let mut stmt = self.conn.prepare(
-            "SELECT name, value, kind FROM plugin_aliases WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, value, kind FROM plugin_aliases WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, AliasKind::from_i32(row.get::<_, i32>(2)?)))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                AliasKind::from_i32(row.get::<_, i32>(2)?),
+            ))
         })?;
-        for r in rows { delta.aliases.push(r?); }
+        for r in rows {
+            delta.aliases.push(r?);
+        }
 
         // Variables
-        let mut stmt = self.conn.prepare(
-            "SELECT name, value, is_export FROM plugin_variables WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, value, is_export FROM plugin_variables WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, bool>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, bool>(2)?,
+            ))
         })?;
         for r in rows {
             let (name, value, is_export) = r?;
@@ -227,16 +243,17 @@ impl PluginCache {
         }
 
         // Arrays
-        let mut stmt = self.conn.prepare(
-            "SELECT name, value_json FROM plugin_arrays WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, value_json FROM plugin_arrays WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         for r in rows {
             let (name, json) = r?;
             // Simple JSON array: ["a","b","c"]
-            let vals: Vec<String> = json.trim_matches(|c| c == '[' || c == ']')
+            let vals: Vec<String> = json
+                .trim_matches(|c| c == '[' || c == ']')
                 .split(',')
                 .map(|s| s.trim().trim_matches('"').to_string())
                 .filter(|s| !s.is_empty())
@@ -245,67 +262,87 @@ impl PluginCache {
         }
 
         // Completions
-        let mut stmt = self.conn.prepare(
-            "SELECT command, function FROM plugin_completions WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT command, function FROM plugin_completions WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
-        for r in rows { delta.completions.push(r?); }
+        for r in rows {
+            delta.completions.push(r?);
+        }
 
         // Fpath
-        let mut stmt = self.conn.prepare(
-            "SELECT path FROM plugin_fpath WHERE plugin_id = ?1"
-        )?;
-        let rows = stmt.query_map(params![plugin_id], |row| {
-            row.get::<_, String>(0)
-        })?;
-        for r in rows { delta.fpath_additions.push(r?); }
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path FROM plugin_fpath WHERE plugin_id = ?1")?;
+        let rows = stmt.query_map(params![plugin_id], |row| row.get::<_, String>(0))?;
+        for r in rows {
+            delta.fpath_additions.push(r?);
+        }
 
         // Hooks
-        let mut stmt = self.conn.prepare(
-            "SELECT hook, function FROM plugin_hooks WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT hook, function FROM plugin_hooks WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
-        for r in rows { delta.hooks.push(r?); }
+        for r in rows {
+            delta.hooks.push(r?);
+        }
 
         // Bindkeys
-        let mut stmt = self.conn.prepare(
-            "SELECT keyseq, widget, keymap FROM plugin_bindkeys WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT keyseq, widget, keymap FROM plugin_bindkeys WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })?;
-        for r in rows { delta.bindkeys.push(r?); }
+        for r in rows {
+            delta.bindkeys.push(r?);
+        }
 
         // Zstyles
-        let mut stmt = self.conn.prepare(
-            "SELECT pattern, style, value FROM plugin_zstyles WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT pattern, style, value FROM plugin_zstyles WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })?;
-        for r in rows { delta.zstyles.push(r?); }
+        for r in rows {
+            delta.zstyles.push(r?);
+        }
 
         // Options
-        let mut stmt = self.conn.prepare(
-            "SELECT name, enabled FROM plugin_options WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, enabled FROM plugin_options WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
         })?;
-        for r in rows { delta.options_changed.push(r?); }
+        for r in rows {
+            delta.options_changed.push(r?);
+        }
 
         // Autoloads
-        let mut stmt = self.conn.prepare(
-            "SELECT function, flags FROM plugin_autoloads WHERE plugin_id = ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT function, flags FROM plugin_autoloads WHERE plugin_id = ?1")?;
         let rows = stmt.query_map(params![plugin_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
-        for r in rows { delta.autoloads.push(r?); }
+        for r in rows {
+            delta.autoloads.push(r?);
+        }
 
         Ok(delta)
     }
@@ -325,7 +362,8 @@ impl PluginCache {
             .unwrap_or(0);
 
         // Delete old entry if exists
-        self.conn.execute("DELETE FROM plugins WHERE path = ?1", params![path])?;
+        self.conn
+            .execute("DELETE FROM plugins WHERE path = ?1", params![path])?;
 
         self.conn.execute(
             "INSERT INTO plugins (path, mtime_secs, mtime_nsecs, source_time_ms, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -365,7 +403,13 @@ impl PluginCache {
 
         // Arrays
         for (name, vals) in &delta.arrays {
-            let json = format!("[{}]", vals.iter().map(|v| format!("\"{}\"", v.replace('"', "\\\""))).collect::<Vec<_>>().join(","));
+            let json = format!(
+                "[{}]",
+                vals.iter()
+                    .map(|v| format!("\"{}\"", v.replace('"', "\\\"")))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
             self.conn.execute(
                 "INSERT INTO plugin_arrays (plugin_id, name, value_json) VALUES (?1, ?2, ?3)",
                 params![plugin_id, name, json],
@@ -433,20 +477,23 @@ impl PluginCache {
 
     /// Stats for logging.
     pub fn stats(&self) -> (i64, i64) {
-        let plugins: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM plugins", [], |r| r.get(0)
-        ).unwrap_or(0);
-        let functions: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM plugin_functions", [], |r| r.get(0)
-        ).unwrap_or(0);
+        let plugins: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM plugins", [], |r| r.get(0))
+            .unwrap_or(0);
+        let functions: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM plugin_functions", [], |r| r.get(0))
+            .unwrap_or(0);
         (plugins, functions)
     }
 
     /// Count plugins whose file mtime no longer matches the cache.
     pub fn count_stale(&self) -> usize {
-        let mut stmt = match self.conn.prepare(
-            "SELECT path, mtime_secs, mtime_nsecs FROM plugins"
-        ) {
+        let mut stmt = match self
+            .conn
+            .prepare("SELECT path, mtime_secs, mtime_nsecs FROM plugins")
+        {
             Ok(s) => s,
             Err(_) => return 0,
         };
@@ -475,9 +522,10 @@ impl PluginCache {
 
     /// Count AST cache entries whose file mtime no longer matches.
     pub fn count_stale_ast(&self) -> usize {
-        let mut stmt = match self.conn.prepare(
-            "SELECT path, mtime_secs, mtime_nsecs FROM script_ast"
-        ) {
+        let mut stmt = match self
+            .conn
+            .prepare("SELECT path, mtime_secs, mtime_nsecs FROM script_ast")
+        {
             Ok(s) => s,
             Err(_) => return 0,
         };
@@ -530,7 +578,8 @@ impl PluginCache {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        self.conn.execute("DELETE FROM script_ast WHERE path = ?1", params![path])?;
+        self.conn
+            .execute("DELETE FROM script_ast WHERE path = ?1", params![path])?;
         self.conn.execute(
             "INSERT INTO script_ast (path, mtime_secs, mtime_nsecs, ast, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![path, mtime_secs, mtime_nsecs, ast_bytes, now],
@@ -605,7 +654,8 @@ impl PluginCache {
             let is_secure = Self::check_dir_security(&meta, euid);
 
             // Also check parent directory
-            let parent_secure = dir.parent()
+            let parent_secure = dir
+                .parent()
                 .and_then(|p| std::fs::metadata(p).ok())
                 .map(|pm| Self::check_dir_security(&pm, euid))
                 .unwrap_or(true);
@@ -621,7 +671,10 @@ impl PluginCache {
         }
 
         if insecure.is_empty() {
-            tracing::debug!(dirs = fpath.len(), "compaudit: all directories secure (cached)");
+            tracing::debug!(
+                dirs = fpath.len(),
+                "compaudit: all directories secure (cached)"
+            );
         } else {
             tracing::warn!(
                 insecure_count = insecure.len(),

@@ -22,12 +22,12 @@
 pub mod ast_opt;
 pub mod attr;
 pub mod cap;
-pub mod compiler;
 pub mod clone;
 pub mod compat;
+pub mod compiler;
 pub mod completion;
-pub mod config;
 pub mod cond;
+pub mod config;
 pub mod context;
 pub mod curses;
 pub mod datetime;
@@ -73,6 +73,7 @@ pub mod random_real;
 pub mod regex_mod;
 pub mod rlimits;
 pub mod sched;
+pub mod shell_compiler;
 pub mod signals;
 pub mod socket;
 pub mod sort;
@@ -90,13 +91,12 @@ pub mod text;
 pub mod tokens;
 pub mod utils;
 pub mod watch;
+pub mod worker;
 pub mod zftp;
 pub mod zle;
 pub mod zprof;
 pub mod zpty;
 pub mod zselect;
-pub mod shell_compiler;
-pub mod worker;
 pub mod zutil;
 pub mod zwc;
 
@@ -157,4 +157,3 @@ where
 pub fn try_stryke_dispatch(code: &str) -> Option<i32> {
     STRYKE_HANDLER.get().map(|f| f(code))
 }
-
