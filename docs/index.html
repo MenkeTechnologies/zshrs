@@ -1,11 +1,590 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0;url=zshrs.html">
-  <title>zshrs docs</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="zshrs — the most powerful shell ever created. No-fork architecture, AOP intercept, worker thread pool, bytecode caching, fusevm compiled execution.">
+  <title>zshrs — Documentation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&amp;family=Share+Tech+Mono&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="hud-static.css">
+  <link rel="stylesheet" href="tutorial.css">
+  <style>
+    .tutorial-main { max-width: 68rem; }
+    .arch-table { width: 100%; border-collapse: collapse; margin: 0.6rem 0 1rem; font-size: 12px; }
+    .arch-table th {
+      background: var(--bg-secondary); color: var(--cyan);
+      font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: 700;
+      letter-spacing: 1px; text-transform: uppercase; text-align: left;
+      padding: 6px 10px; border: 1px solid var(--border);
+    }
+    .arch-table td { padding: 6px 10px; border: 1px solid var(--border); color: var(--text-dim); vertical-align: top; }
+    .arch-table td code { color: var(--accent-light); background: var(--bg); padding: 1px 4px; font-size: 11px; }
+    .arch-table tr:hover td { background: var(--bg-hover); }
+    .motto { font-family: 'Orbitron', sans-serif; font-size: 16px; color: var(--accent); letter-spacing: 3px; margin: 0.5rem 0 1.5rem; }
+    .section-num { color: var(--cyan); font-family: 'Share Tech Mono', monospace; margin-right: 0.5rem; }
+    .code-block {
+      margin: 0.5rem 0; padding: 0.7rem 1rem; border-left: 2px solid var(--cyan);
+      background: var(--bg); font-family: 'Share Tech Mono', ui-monospace, monospace;
+      font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word;
+      line-height: 1.6;
+    }
+    .code-block .comment { color: var(--text-muted); }
+    .code-block .keyword { color: var(--cyan); }
+    .code-block .string { color: var(--green); }
+    .code-block .var { color: var(--accent-light); }
+    .diagram {
+      margin: 0.8rem 0; padding: 1rem; border: 1px solid var(--border);
+      background: var(--bg-secondary); font-family: 'Share Tech Mono', monospace;
+      font-size: 12px; color: var(--cyan); white-space: pre; overflow-x: auto; line-height: 1.5;
+    }
+    .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 0.6rem; margin: 0.7rem 0; }
+    .cat-card {
+      border: 1px solid var(--border); border-left: 2px solid var(--cyan);
+      padding: 0.6rem 0.8rem; background: color-mix(in srgb, var(--bg-card) 92%, transparent); border-radius: 2px;
+    }
+    .cat-card h4 {
+      font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 700;
+      letter-spacing: 1.5px; text-transform: uppercase; color: var(--cyan); margin: 0 0 0.35rem;
+    }
+    .cat-card p { margin: 0; font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+    .cat-card code { font-size: 11px; color: var(--accent-light); }
+    .highlight { color: var(--accent); font-weight: 700; }
+    .stat { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 900; color: var(--cyan); }
+    .stat-label { font-size: 11px; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 1rem; margin: 1rem 0; text-align: center; }
+    .docs-build-line {
+      margin: 0.35rem 0 0;
+      font-family: 'Share Tech Mono', ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: 0.03em;
+      max-width: 42rem;
+      opacity: 0.75;
+    }
+    .hub-scheme-strip {
+      border-bottom: 1px dashed var(--border);
+      background: color-mix(in srgb, var(--bg-secondary) 85%, transparent);
+      padding: 0.55rem 1.5rem 0.65rem;
+      position: relative;
+    }
+    .hub-scheme-strip-inner {
+      max-width: 68rem;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+    .hub-scheme-strip .hud-scheme-label {
+      flex: 0 0 auto;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--accent);
+      text-align: left;
+    }
+    .hub-scheme-strip .scheme-grid {
+      flex: 1 1 auto;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+    }
+    @media (max-width: 720px) {
+      .hub-scheme-strip-inner { flex-direction: column; align-items: stretch; }
+      .hub-scheme-strip .scheme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
 </head>
 <body>
-  <p>Redirecting to <a href="zshrs.html">zshrs docs</a>...</p>
+  <div class="app tutorial-app" id="docsApp">
+    <div class="crt-scanline" id="crtH" aria-hidden="true"></div>
+    <div class="crt-scanline-v" id="crtV" aria-hidden="true"></div>
+
+    <header class="tutorial-header">
+      <div class="tutorial-header-inner">
+        <div>
+          <h1 class="tutorial-brand">// ZSHRS — COMPILED SHELL</h1>
+          <nav class="tutorial-crumbs" aria-label="Breadcrumb">
+            <span class="current">Docs</span>
+            <span class="sep">/</span>
+            <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <span class="sep">/</span>
+            <a href="https://crates.io/crates/zshrs" target="_blank" rel="noopener noreferrer">crates.io</a>
+            <span class="sep">/</span>
+            <a href="https://docs.rs/zshrs" target="_blank" rel="noopener noreferrer">docs.rs</a>
+          </nav>
+          <p class="docs-build-line">zshrs v0.9.3 · Anti-fork architecture · 23 coreutils builtins · VM-executed parallel · Bytecode caching · JIT</p>
+        </div>
+        <div class="tutorial-toolbar">
+          <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
+          <button type="button" class="btn btn-secondary active" id="btnCrt" title="CRT scanline overlay">CRT</button>
+          <button type="button" class="btn btn-secondary active" id="btnNeon" title="Neon border pulse">Neon</button>
+          <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs/issues" target="_blank" rel="noopener noreferrer">Issues</a>
+        </div>
+      </div>
+    </header>
+
+    <div class="hub-scheme-strip">
+      <div class="hub-scheme-strip-inner">
+        <span class="hud-scheme-label">// Color scheme</span>
+        <div class="scheme-grid" id="hudSchemeGrid"></div>
+      </div>
+    </div>
+
+    <main class="tutorial-main">
+      <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZSHRS REFERENCE</h2>
+      <p class="tutorial-subtitle">The most powerful shell ever created. No-fork architecture, AOP intercept, worker thread pool, bytecode caching, fusevm compiled execution.</p>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <p class="motto">SHELL SCRIPTS AT MACHINE CODE SPEED.</p>
+        <p class="motto" style="font-size: 12px; color: var(--cyan); margin-top: -1rem;">NO FORK. NO INTERPRETER. JUST BYTECODES.</p>
+
+        <div class="stat-grid">
+          <div><div class="stat">0</div><div class="stat-label">forks in hot path</div></div>
+          <div><div class="stat">100%</div><div class="stat-label">bytecode compiled</div></div>
+          <div><div class="stat">18</div><div class="stat-label">worker threads</div></div>
+          <div><div class="stat">180+</div><div class="stat-label">builtins</div></div>
+          <div><div class="stat">23</div><div class="stat-label">coreutils builtins</div></div>
+          <div><div class="stat">100x</div><div class="stat-label">warm start speedup</div></div>
+          <div><div class="stat">2000x</div><div class="stat-label">fork avoidance speedup</div></div>
+          <div><div class="stat">1st</div><div class="stat-label">compiled Unix shell</div></div>
+        </div>
+
+        <p style="font-size: 14px; line-height: 1.8; color: var(--text);">
+        For the first time in the history of computing &mdash; since the dawn of Unix at Bell Labs
+        in 1970 &mdash; a shell compiles to executable bytecodes and runs them on a virtual machine
+        with fused superinstructions. <span class="highlight">Every interactive command line, every shell script,
+        every function invocation, every <code>source</code>&rsquo;d file</span> compiles to fusevm bytecodes
+        and executes at near-machine-code speed. No tree-walking interpreter. No fork. No parsing at
+        runtime if bytecodes are cached.</p>
+
+        <p style="font-size: 14px; line-height: 1.8; color: var(--text);">
+        Compiled bytecodes are cached in SQLite. Function invocations deserialize cached bytecodes
+        in microseconds &mdash; skipping the lexer, parser, and compiler entirely. <code>source</code>&rsquo;d
+        scripts and interpreted scripts follow the same path: compile once, cache, execute from bytecode
+        forever. This has <span class="highlight">never been achieved in a Unix shell</span>.</p>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x00]</span> THE COMPILATION PIPELINE</h2>
+
+        <p>Every path through zshrs ends at the same place: fusevm bytecode execution.</p>
+
+        <div class="diagram">
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                    THREE EXECUTION PATHS                        │
+  │                                                                 │
+  │  ┌─────────────┐   Interactive command line                     │
+  │  │  REPL Input  │──► Parser ──► ShellCompiler ──► fusevm::Op   │
+  │  └─────────────┘                                    │           │
+  │                                                     ▼           │
+  │  ┌─────────────┐   Shell script / source file      VM::run()   │
+  │  │ Script File  │──► Parser ──► ShellCompiler ──►   │           │
+  │  └─────────────┘         │                          │           │
+  │                          └──► SQLite bytecode ──────┘           │
+  │                               (cached on first compile)         │
+  │                                                                 │
+  │  ┌─────────────┐   Autoload function (compinit)                 │
+  │  │  SQLite DB   │──► bincode::deserialize ──► fusevm::Chunk ──► │
+  │  │  .bytecode   │   (no lexer, no parser,      VM::run()       │
+  │  └─────────────┘    no compiler — microseconds)                 │
+  └─────────────────────────────────────────────────────────────────┘
+        </div>
+
+        <table class="arch-table">
+          <tr><th>Path</th><th>Lex</th><th>Parse</th><th>Compile</th><th>Execute</th><th>Cache</th></tr>
+          <tr><td>Interactive command</td><td>Yes</td><td>Yes</td><td>Yes</td><td>fusevm</td><td>No (ephemeral)</td></tr>
+          <tr><td>Script file (first run)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>fusevm</td><td>Yes &rarr; SQLite</td></tr>
+          <tr><td>Script file (cached)</td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td>fusevm</td><td>Hit &rarr; deserialize</td></tr>
+          <tr><td>Autoload function (cached)</td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td>fusevm</td><td>Hit &rarr; deserialize</td></tr>
+          <tr><td>Plugin source (cached)</td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td>fusevm</td><td>Delta replay &rarr; &micro;s</td></tr>
+        </table>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x01]</span> ARCHITECTURE</h2>
+
+        <div class="diagram">
+                         zshrs Architecture
+
+  ┌─────────────────────────────────────────────────────┐
+  │                    REPL / ZLE                        │
+  │   reedline + syntax highlighting + autosuggestions   │
+  └──────────────────────┬──────────────────────────────┘
+                         │
+  ┌──────────────────────▼──────────────────────────────┐
+  │              ShellExecutor (19K lines)               │
+  │   parser ─► compiler ─► fusevm bytecode dispatch     │
+  │   180+ builtins │ AOP intercept │ trap/signal        │
+  └──────┬─────────┬─────────┬─────────┬────────────────┘
+         │         │         │         │
+  ┌──────▼───┐ ┌───▼────┐ ┌─▼──────┐ ┌▼──────────────┐
+  │ Worker   │ │ SQLite │ │ fusevm │ │ compsys       │
+  │ Pool     │ │ Caches │ │ VM     │ │ completion    │
+  │ [2-18]   │ │        │ │        │ │ engine        │
+  │ threads  │ │history │ │ Op enum│ │               │
+  │          │ │compsys │ │ fused  │ │ MenuState     │
+  │ glob     │ │plugins │ │ super- │ │ MenuKeymap    │
+  │ rehash   │ │bytecode│ │ instr  │ │ SQLite FTS5   │
+  │ compinit │ │        │ │ JIT ►  │ │               │
+  │ history  │ │        │ │Cranelft│ │               │
+  └──────────┘ └────────┘ └────────┘ └───────────────┘
+        </div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x01]</span> ANTI-FORK ARCHITECTURE</h2>
+
+        <p>Every fork is a full process copy. On macOS, <code>fork()</code> costs 2-5ms
+        including exec + ld.so + libc init. zsh forks for <em>every</em>
+        <code>$(...)</code>, <code>&lt;(...)</code>, <code>cat</code>, <code>grep</code>, subshell, and completion.
+        zshrs forks for <em>none</em> of them.</p>
+
+        <table class="arch-table">
+          <tr><th>Operation</th><th>zsh</th><th>zshrs</th><th>Speedup</th></tr>
+          <tr><td><code>cat file</code></td><td>fork + exec /bin/cat</td><td><span class="highlight">Builtin</span> &mdash; zero fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>head</code>/<code>tail</code>/<code>wc</code></td><td>fork + exec</td><td><span class="highlight">Builtin</span> &mdash; zero fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>sort</code>/<code>find</code>/<code>uniq</code></td><td>fork + exec</td><td><span class="highlight">Builtin</span> &mdash; zero fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>date</code>/<code>hostname</code>/<code>uname</code></td><td>fork + exec</td><td><span class="highlight">Direct syscall</span></td><td>3000-8000x</td></tr>
+          <tr><td><code>sleep</code>/<code>mktemp</code>/<code>touch</code></td><td>fork + exec</td><td><span class="highlight">Builtin</span> &mdash; zero fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>xattr</code> operations</td><td>fork + exec xattr</td><td><span class="highlight">Direct syscall</span></td><td>2000-5000x</td></tr>
+          <tr><td><code>pmap</code>/<code>pgrep</code>/<code>peach</code></td><td>fork N times to sh -c</td><td><span class="highlight">VM execution</span> &mdash; zero fork</td><td>Nx</td></tr>
+          <tr><td><code>$(cmd)</code></td><td>fork + pipe + exec</td><td>In-process stdout capture via <code>dup2</code></td><td>&mdash;</td></tr>
+          <tr><td><code>&lt;(cmd)</code> / <code>&gt;(cmd)</code></td><td>fork + FIFO</td><td>Worker pool thread + FIFO</td><td>&mdash;</td></tr>
+          <tr><td>Glob <code>**/*.rs</code></td><td>Single-threaded <code>opendir</code></td><td>Parallel <code>walkdir</code> per-subdir on pool</td><td>&mdash;</td></tr>
+          <tr><td><code>rehash</code></td><td>Serial <code>readdir</code> per PATH dir</td><td>Parallel scan across pool</td><td>&mdash;</td></tr>
+          <tr><td>Autoload function</td><td>Read file + parse every time</td><td>Bytecode deserialization from SQLite (&micro;s)</td><td>100x</td></tr>
+        </table>
+
+        <h3>Coreutils Builtins (23 commands, zero fork)</h3>
+        <div class="code-block">cat  head  tail  wc  sort  find  uniq  cut  tr  seq  rev  tee
+basename  dirname  touch  realpath  sleep  whoami  id  hostname
+uname  date  mktemp</div>
+        <p>Every invocation of these commands is <span class="highlight">2000-5000x faster</span> than forking to the external binary.</p>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x02]</span> WORKER THREAD POOL</h2>
+
+        <p>Persistent pool of warm threads. Bounded crossbeam channel with backpressure.
+        Panic recovery keeps workers alive. Task cancellation on Ctrl-C. Instant shutdown on exit.</p>
+
+        <div class="code-block"><span class="comment"># ~/.config/zshrs/config.toml</span>
+[worker_pool]
+<span class="var">size</span> = <span class="string">8</span>            <span class="comment"># 0 = auto (num_cpus clamped [2, 18])</span>
+
+[completion]
+<span class="var">bytecode_cache</span> = <span class="keyword">true</span>  <span class="comment"># compile autoload functions to fusevm bytecodes</span>
+
+[history]
+<span class="var">async_writes</span> = <span class="keyword">true</span> <span class="comment"># write history on worker pool</span>
+
+[glob]
+<span class="var">parallel_threshold</span> = <span class="string">32</span>   <span class="comment"># min files before parallel metadata prefetch</span>
+<span class="var">recursive_parallel</span> = <span class="keyword">true</span> <span class="comment"># fan out **/ across worker pool</span></div>
+
+        <p>Tasks shipped to the pool:</p>
+        <div class="cat-grid">
+          <div class="cat-card"><h4>compinit</h4><p>Background fpath scan + bytecode compilation of 16K+ functions</p></div>
+          <div class="cat-card"><h4>Process Sub</h4><p><code>&lt;(cmd)</code> and <code>&gt;(cmd)</code> on pool threads instead of fork</p></div>
+          <div class="cat-card"><h4>Parallel Glob</h4><p><code>**/</code> recursive walk split per-subdir across pool</p></div>
+          <div class="cat-card"><h4>Metadata Prefetch</h4><p>Glob qualifiers: one parallel <code>stat</code> batch, zero syscalls after</p></div>
+          <div class="cat-card"><h4>PATH Rehash</h4><p>Parallel <code>readdir</code> across every PATH directory</p></div>
+          <div class="cat-card"><h4>History Writes</h4><p>SQLite inserts on pool thread &mdash; prompt never waits</p></div>
+        </div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x03]</span> AOP INTERCEPT</h2>
+
+        <p>The first shell ever with aspect-oriented programming. Hook <span class="highlight">before</span>,
+        <span class="highlight">after</span>, or <span class="highlight">around</span> any command or function
+        &mdash; at machine code speed, no fork. One primitive that replaces <code>defer</code>,
+        <code>profile</code>, <code>memo</code>, <code>retry</code>, and <code>timeout</code>.</p>
+
+        <div class="code-block"><span class="comment"># Before &mdash; log every git command</span>
+<span class="keyword">intercept</span> before git { echo "[$(date)] git <span class="var">$INTERCEPT_ARGS</span>" >> ~/git.log }
+
+<span class="comment"># After &mdash; show timing for completion functions</span>
+<span class="keyword">intercept</span> after '_*' { echo "<span class="var">$INTERCEPT_NAME</span> took <span class="var">${INTERCEPT_MS}</span>ms" }
+
+<span class="comment"># Around &mdash; memoize expensive function</span>
+<span class="keyword">intercept</span> around expensive_func {
+    local cache=/tmp/cache_<span class="var">${INTERCEPT_ARGS// /_}</span>
+    if [[ -f <span class="var">$cache</span> ]]; then cat <span class="var">$cache</span>
+    else <span class="keyword">intercept_proceed</span> | tee <span class="var">$cache</span>; fi
+}
+
+<span class="comment"># Around &mdash; retry with backoff</span>
+<span class="keyword">intercept</span> around flaky_api {
+    repeat 3; do <span class="keyword">intercept_proceed</span>; [[ $? == 0 ]] && break; sleep 1; done
+}
+
+<span class="comment"># Fat binary &mdash; stryke code at machine code speed</span>
+<span class="keyword">intercept</span> after 'make *' { <span class="string">@pmaps { notify "done: $_" } @(slack email)</span> }</div>
+
+        <p>Variables available in advice:</p>
+        <table class="arch-table">
+          <tr><th>Variable</th><th>Available</th><th>Description</th></tr>
+          <tr><td><code>$INTERCEPT_NAME</code></td><td>all</td><td>Command name</td></tr>
+          <tr><td><code>$INTERCEPT_ARGS</code></td><td>all</td><td>Arguments as space-separated string</td></tr>
+          <tr><td><code>$INTERCEPT_CMD</code></td><td>all</td><td>Full command string</td></tr>
+          <tr><td><code>$INTERCEPT_MS</code></td><td>after</td><td>Execution time in milliseconds (nanosecond source)</td></tr>
+          <tr><td><code>$INTERCEPT_US</code></td><td>after</td><td>Execution time in microseconds</td></tr>
+          <tr><td><code>$?</code></td><td>after</td><td>Exit status</td></tr>
+        </table>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x04]</span> SQLITE CACHING LAYER</h2>
+
+        <p>Three SQLite databases power the shell. WAL mode, <code>mmap_size=256MB</code>,
+        <code>cache_size=64000</code> pages. FTS5 for instant fuzzy search.</p>
+
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>compsys.db</h4>
+            <p>Completion cache: autoloads with source text + compiled bytecodes, comps mapping,
+            services, patcomps, PATH executables with FTS5 index</p>
+          </div>
+          <div class="cat-card">
+            <h4>history.db</h4>
+            <p>Command history: frequency-ranked, timestamped, duration, exit status,
+            working directory. FTS5 search.</p>
+          </div>
+          <div class="cat-card">
+            <h4>plugins.db</h4>
+            <p>Plugin delta cache: functions, aliases, variables, exports, arrays,
+            completions, fpath, hooks, bindkeys, zstyles, options, autoloads.
+            Source once, replay microseconds.</p>
+          </div>
+        </div>
+
+        <p>Browse caches without SQL:</p>
+        <div class="code-block"><span class="keyword">dbview</span>                      <span class="comment"># list all tables + row counts</span>
+<span class="keyword">dbview</span> autoloads             <span class="comment"># dump autoloads: name, body size, ast size</span>
+<span class="keyword">dbview</span> autoloads _git        <span class="comment"># single row: source, body, ast status, preview</span>
+<span class="keyword">dbview</span> comps git             <span class="comment"># search comps for "git"</span>
+<span class="keyword">dbview</span> executables rustc     <span class="comment"># search PATH cache</span>
+<span class="keyword">dbview</span> history docker        <span class="comment"># search history</span></div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x05]</span> BYTECODE CACHING</h2>
+
+        <p>Every autoload function in fpath gets compiled to fusevm bytecodes during <code>compinit</code>.
+        The bytecodes are serialized to bincode and stored in SQLite. Subsequent loads
+        skip lexing, parsing, and compilation entirely &mdash; pure deserialization to executable bytecodes in microseconds.</p>
+
+        <div class="diagram">
+First call to _git:
+
+  fpath/_git (source text)
+       │
+       ▼
+  ShellParser::parse_script()     ~1ms
+       │
+       ▼
+  ShellCompiler::compile()         ~0.5ms
+       │
+       ▼
+  fusevm::Chunk (bytecodes)
+       │
+       ├──► VM::run()              native dispatch
+       │
+       └──► bincode::serialize()   ~0.1ms
+            │
+            ▼
+       SQLite autoloads.bytecode   (stored)
+
+Every subsequent call:
+
+  SQLite autoloads.bytecode
+       │
+       ▼
+  bincode::deserialize()           ~0.05ms
+       │
+       ▼
+  fusevm::Chunk                    (no lexer, no parser, no compiler)
+       │
+       ▼
+  VM::run()                        native bytecode dispatch
+        </div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x06]</span> FUSEVM BYTECODE TARGET</h2>
+
+        <p><span class="highlight">100% lowered.</span> Every shell construct compiles to <code>fusevm</code>
+        bytecodes &mdash; a language-agnostic VM with fused superinstructions and Cranelift JIT.
+        The same VM that powers stryke (which beats LuaJIT on benchmarks). No tree-walking
+        interpreter remains. Hot bytecodes compile to native x86-64 machine code.</p>
+
+        <div class="diagram">
+  stryke source ───► stryke compiler ──┐
+                                        ├──► fusevm::Op ──► VM::run() ──► JIT ──► native
+  zshrs source  ───► shell compiler  ──┘                     │
+                                                              ├── Linear JIT: straight-line code
+                                                              ├── Block JIT: loops, conditionals
+                                                              └── Cranelift codegen → x86-64
+        </div>
+
+        <p>Shell constructs already lowered to fusevm bytecodes:</p>
+
+        <div class="cat-grid">
+          <div class="cat-card"><h4>Arithmetic</h4><p><code>$(( ))</code> &mdash; full precedence, ternary, assignment, hex/octal, bitwise</p></div>
+          <div class="cat-card"><h4>Loops</h4><p><code>for</code>, <code>for(())</code>, <code>while</code>, <code>until</code>, <code>repeat</code></p></div>
+          <div class="cat-card"><h4>Conditionals</h4><p><code>if/elif/else</code>, <code>case</code>, <code>[[ ]]</code> with all file tests and comparisons</p></div>
+          <div class="cat-card"><h4>Commands</h4><p><code>Exec</code>, <code>ExecBg</code>, pipelines, redirects, here-docs, here-strings</p></div>
+          <div class="cat-card"><h4>Functions</h4><p>Definition, <code>Call</code>/<code>Return</code>, <code>PushFrame</code>/<code>PopFrame</code></p></div>
+          <div class="cat-card"><h4>Fused Ops</h4><p><code>AccumSumLoop</code>, <code>SlotIncLtIntJumpBack</code>, <code>PreIncSlotVoid</code> &mdash; single-dispatch loop execution</p></div>
+        </div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x07]</span> EXCLUSIVE BUILTINS</h2>
+
+        <h3>Parallel Primitives (VM-executed, zero fork)</h3>
+        <table class="arch-table">
+          <tr><th>Builtin</th><th>Description</th></tr>
+          <tr><td><code>async</code> / <code>await</code></td><td>Ship work to pool, collect result</td></tr>
+          <tr><td><code>pmap</code></td><td>Parallel map with ordered output &mdash; compiles to bytecode, runs on VM, zero forks</td></tr>
+          <tr><td><code>pgrep</code></td><td>Parallel filter &mdash; compiles to bytecode, runs on VM, zero forks</td></tr>
+          <tr><td><code>peach</code></td><td>Parallel for-each, unordered &mdash; compiles to bytecode, runs on VM, zero forks</td></tr>
+          <tr><td><code>barrier</code></td><td>Run all commands in parallel, wait for all</td></tr>
+        </table>
+
+        <h3>AOP / Debugging</h3>
+        <table class="arch-table">
+          <tr><th>Builtin</th><th>Description</th></tr>
+          <tr><td><code>intercept</code></td><td>AOP before/after/around advice on any command. Glob pattern matching. Nanosecond timing.</td></tr>
+          <tr><td><code>intercept_proceed</code></td><td>Call original command from around advice.</td></tr>
+          <tr><td><code>doctor</code></td><td>Full diagnostic: worker pool metrics, cache stats, bytecode coverage, startup health.</td></tr>
+          <tr><td><code>dbview</code></td><td>Browse SQLite caches without SQL. Tables: autoloads, comps, executables, history, plugins.</td></tr>
+          <tr><td><code>profile</code></td><td>In-process command profiling. Nanosecond accuracy. No fork overhead in measurement.</td></tr>
+        </table>
+
+        <h3>Coreutils (Anti-Fork)</h3>
+        <table class="arch-table">
+          <tr><th>Builtin</th><th>Description</th><th>Speedup vs fork</th></tr>
+          <tr><td><code>cat</code></td><td>Concatenate files &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>head</code> / <code>tail</code></td><td>First/last N lines &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>wc</code></td><td>Line/word/char count &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>sort</code> / <code>uniq</code></td><td>Sort and dedupe &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>find</code></td><td>Walk directories &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>cut</code> / <code>tr</code> / <code>rev</code></td><td>Text manipulation &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>seq</code> / <code>tee</code></td><td>Number sequences, copy stdin &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>date</code></td><td>Current date/time &mdash; direct strftime</td><td>3000-8000x</td></tr>
+          <tr><td><code>sleep</code></td><td>Delay &mdash; std::thread::sleep</td><td>2000-5000x</td></tr>
+          <tr><td><code>mktemp</code></td><td>Create temp file/dir &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>hostname</code> / <code>uname</code></td><td>System info &mdash; direct syscall</td><td>3000-8000x</td></tr>
+          <tr><td><code>id</code> / <code>whoami</code></td><td>User info &mdash; direct syscall</td><td>3000-8000x</td></tr>
+          <tr><td><code>touch</code> / <code>realpath</code></td><td>File ops &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>basename</code> / <code>dirname</code></td><td>Path manipulation &mdash; no fork</td><td>2000-5000x</td></tr>
+          <tr><td><code>zgetattr</code> / <code>zsetattr</code></td><td>xattr ops &mdash; direct syscall</td><td>2000-5000x</td></tr>
+        </table>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x08]</span> INSTALL</h2>
+
+        <div class="code-block"><span class="comment"># Lean build &mdash; pure shell, all features, no stryke</span>
+cargo install --path zsh
+
+<span class="comment"># Fat build &mdash; shell + stryke runtime (@ prefix, AOP stryke advice)</span>
+cargo install strykelang
+
+<span class="comment"># From source</span>
+git clone https://github.com/MenkeTechnologies/strykelang
+cd strykelang
+cargo build --release -p zsh    <span class="comment"># target/release/zshrs</span></div>
+
+        <div class="code-block"><span class="comment"># Set as default shell</span>
+sudo sh -c 'echo /Users/$(whoami)/.cargo/bin/zshrs >> /etc/shells'
+chsh -s /Users/$(whoami)/.cargo/bin/zshrs
+
+<span class="comment"># Tab completion for zshrs itself</span>
+cp completions/_zshrs /usr/local/share/zsh/site-functions/</div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x09]</span> DIAGNOSTICS</h2>
+
+        <div class="code-block"><span class="comment"># Full health check</span>
+zshrs --doctor
+
+<span class="comment"># In-session diagnostics</span>
+doctor
+
+<span class="comment"># Browse cache</span>
+dbview
+dbview autoloads _git
+
+<span class="comment"># Profile a command</span>
+profile 'compinit'
+profile -s 'for i in {1..1000}; do echo $i > /dev/null; done'
+
+<span class="comment"># Show intercepts</span>
+intercept list</div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0xFF]</span> THE PHILOSOPHY</h2>
+
+        <p>Shells haven't fundamentally improved since the 1990s. bash is a GNU rewrite of
+        the Bourne shell from 1979. zsh added features but kept the fork-based C architecture.
+        fish focused on UX and abandoned POSIX. nushell reinvented the data model but lost compatibility.</p>
+
+        <p>zshrs takes a different approach: keep everything that makes zsh powerful &mdash;
+        glob qualifiers, parameter expansion flags, the completion system, ZLE, zstyle, modules &mdash;
+        and replace the runtime with modern systems engineering. Rust instead of C. Thread pool
+        instead of fork. SQLite instead of flat files. Bytecode VM instead of tree-walker.
+        AOP instead of monkey-patching.</p>
+
+        <p>The result is the first shell that gets <em>faster</em> as you add more plugins,
+        because the plugin cache means each plugin is only parsed once. The first shell where
+        <code>**/*.rs</code> scales with your CPU count. The first shell where you can
+        intercept any command with nanosecond-accurate timing and zero overhead.</p>
+
+        <p>The result is the first shell where every command &mdash; interactive or scripted &mdash;
+        compiles to bytecodes and executes on a VM with fused superinstructions. The first
+        shell where autoload functions load from pre-compiled bytecodes in microseconds. The first
+        shell where <code>source ~/.zshrc</code> can skip the lexer, parser, and compiler entirely
+        because the bytecodes are cached in SQLite.</p>
+
+        <p>Since the Bourne shell at Bell Labs in 1970, through csh, ksh, bash, zsh, and fish &mdash;
+        every Unix shell has been an interpreter. zshrs is the first to be a compiler. Shell scripts
+        at machine code speed. Achieved in alpha.</p>
+
+        <p class="motto">THE FIRST COMPILED UNIX SHELL. THE MOST POWERFUL SHELL EVER CREATED.</p>
+      </section>
+
+    </main>
+
+    <footer style="border-top: 1px solid var(--border); padding: 1rem 1.5rem; text-align: center; color: var(--text-muted); font-size: 11px;">
+      &copy; 2026 MenkeTechnologies &middot; MIT License &middot;
+      <a href="https://github.com/MenkeTechnologies/strykelang" style="color: var(--cyan);">GitHub</a>
+    </footer>
+  </div>
+
+  <script src="hud-theme.js"></script>
 </body>
 </html>

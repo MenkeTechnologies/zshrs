@@ -7216,7 +7216,7 @@ impl ShellExecutor {
         };
 
         if is_internal {
-            // Internal execution: capture stdout via a pipe
+            // Internal execution: capture stdout via a pipe (no fork)
             let (read_fd, write_fd) = {
                 let mut fds = [0i32; 2];
                 if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
@@ -21095,6 +21095,7 @@ impl ShellExecutor {
     }
 
     /// zgetattr/zsetattr/zdelattr/zlistattr - extended attributes (zsh/attr module)
+    /// Direct syscalls — no fork to xattr/getfattr
     fn builtin_zattr(&self, cmd: &str, args: &[String]) -> i32 {
         match cmd {
             "zgetattr" => {
@@ -21102,113 +21103,137 @@ impl ShellExecutor {
                     eprintln!("zgetattr: need file and attribute name");
                     return 1;
                 }
+                let path = std::ffi::CString::new(args[0].as_str()).unwrap_or_default();
+                let name = std::ffi::CString::new(args[1].as_str()).unwrap_or_default();
+                let mut buf = vec![0u8; 4096];
+
                 #[cfg(target_os = "macos")]
-                {
-                    // macOS uses xattr
-                    let output = std::process::Command::new("xattr")
-                        .arg("-p")
-                        .arg(&args[1])
-                        .arg(&args[0])
-                        .output();
-                    if let Ok(out) = output {
-                        print!("{}", String::from_utf8_lossy(&out.stdout));
-                        return if out.status.success() { 0 } else { 1 };
-                    }
-                }
+                let len = unsafe {
+                    libc::getxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len(),
+                        0,
+                        0,
+                    )
+                };
+
                 #[cfg(target_os = "linux")]
-                {
-                    let output = std::process::Command::new("getfattr")
-                        .arg("-n")
-                        .arg(&args[1])
-                        .arg(&args[0])
-                        .output();
-                    if let Ok(out) = output {
-                        print!("{}", String::from_utf8_lossy(&out.stdout));
-                        return if out.status.success() { 0 } else { 1 };
-                    }
+                let len = unsafe {
+                    libc::getxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        buf.as_mut_ptr() as *mut libc::c_void,
+                        buf.len(),
+                    )
+                };
+
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let len: isize = -1;
+
+                if len >= 0 {
+                    buf.truncate(len as usize);
+                    println!("{}", String::from_utf8_lossy(&buf));
+                    0
+                } else {
+                    eprintln!("zgetattr: {}: {}", args[0], std::io::Error::last_os_error());
+                    1
                 }
-                1
             }
             "zsetattr" => {
                 if args.len() < 3 {
                     eprintln!("zsetattr: need file, attribute name, and value");
                     return 1;
                 }
+                let path = std::ffi::CString::new(args[0].as_str()).unwrap_or_default();
+                let name = std::ffi::CString::new(args[1].as_str()).unwrap_or_default();
+                let value = args[2].as_bytes();
+
                 #[cfg(target_os = "macos")]
-                {
-                    let status = std::process::Command::new("xattr")
-                        .arg("-w")
-                        .arg(&args[1])
-                        .arg(&args[2])
-                        .arg(&args[0])
-                        .status();
-                    return status.map(|s| if s.success() { 0 } else { 1 }).unwrap_or(1);
-                }
+                let ret = unsafe {
+                    libc::setxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        value.as_ptr() as *const libc::c_void,
+                        value.len(),
+                        0,
+                        0,
+                    )
+                };
+
                 #[cfg(target_os = "linux")]
-                {
-                    let status = std::process::Command::new("setfattr")
-                        .arg("-n")
-                        .arg(&args[1])
-                        .arg("-v")
-                        .arg(&args[2])
-                        .arg(&args[0])
-                        .status();
-                    return status.map(|s| if s.success() { 0 } else { 1 }).unwrap_or(1);
+                let ret = unsafe {
+                    libc::setxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        value.as_ptr() as *const libc::c_void,
+                        value.len(),
+                        0,
+                    )
+                };
+
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let ret: i32 = -1;
+
+                if ret == 0 { 0 } else {
+                    eprintln!("zsetattr: {}: {}", args[0], std::io::Error::last_os_error());
+                    1
                 }
-                #[allow(unreachable_code)]
-                1
             }
             "zdelattr" => {
                 if args.len() < 2 {
                     eprintln!("zdelattr: need file and attribute name");
                     return 1;
                 }
+                let path = std::ffi::CString::new(args[0].as_str()).unwrap_or_default();
+                let name = std::ffi::CString::new(args[1].as_str()).unwrap_or_default();
+
                 #[cfg(target_os = "macos")]
-                {
-                    let status = std::process::Command::new("xattr")
-                        .arg("-d")
-                        .arg(&args[1])
-                        .arg(&args[0])
-                        .status();
-                    return status.map(|s| if s.success() { 0 } else { 1 }).unwrap_or(1);
-                }
+                let ret = unsafe { libc::removexattr(path.as_ptr(), name.as_ptr(), 0) };
+
                 #[cfg(target_os = "linux")]
-                {
-                    let status = std::process::Command::new("setfattr")
-                        .arg("-x")
-                        .arg(&args[1])
-                        .arg(&args[0])
-                        .status();
-                    return status.map(|s| if s.success() { 0 } else { 1 }).unwrap_or(1);
+                let ret = unsafe { libc::removexattr(path.as_ptr(), name.as_ptr()) };
+
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let ret: i32 = -1;
+
+                if ret == 0 { 0 } else {
+                    eprintln!("zdelattr: {}: {}", args[0], std::io::Error::last_os_error());
+                    1
                 }
-                #[allow(unreachable_code)]
-                1
             }
             "zlistattr" => {
                 if args.is_empty() {
                     eprintln!("zlistattr: need file");
                     return 1;
                 }
+                let path = std::ffi::CString::new(args[0].as_str()).unwrap_or_default();
+                let mut buf = vec![0u8; 4096];
+
                 #[cfg(target_os = "macos")]
-                {
-                    let output = std::process::Command::new("xattr").arg(&args[0]).output();
-                    if let Ok(out) = output {
-                        print!("{}", String::from_utf8_lossy(&out.stdout));
-                        return if out.status.success() { 0 } else { 1 };
-                    }
-                }
+                let len = unsafe {
+                    libc::listxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len(), 0)
+                };
+
                 #[cfg(target_os = "linux")]
-                {
-                    let output = std::process::Command::new("getfattr")
-                        .arg("-d")
-                        .arg(&args[0])
-                        .output();
-                    if let Ok(out) = output {
-                        print!("{}", String::from_utf8_lossy(&out.stdout));
-                        return if out.status.success() { 0 } else { 1 };
+                let len = unsafe {
+                    libc::listxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len())
+                };
+
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let len: isize = -1;
+
+                if len >= 0 {
+                    buf.truncate(len as usize);
+                    for name in buf.split(|&b| b == 0).filter(|s| !s.is_empty()) {
+                        println!("{}", String::from_utf8_lossy(name));
                     }
+                    0
+                } else {
+                    eprintln!("zlistattr: {}: {}", args[0], std::io::Error::last_os_error());
+                    1
                 }
-                1
             }
             _ => 1,
         }

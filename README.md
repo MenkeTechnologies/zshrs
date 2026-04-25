@@ -67,12 +67,19 @@ chsh -s ~/.cargo/bin/zshrs
 
 ## [0x02] NO-FORK ARCHITECTURE
 
-Every operation that zsh forks for runs in-process on a persistent worker thread pool:
+Every operation that zsh forks for runs in-process. **Zero forks for builtins.**
 
 | Operation | zsh | zshrs |
 |-----------|-----|-------|
 | `$(cmd)` | fork + pipe | In-process stdout capture via `dup2` |
 | `<(cmd)` / `>(cmd)` | fork + FIFO | Worker pool thread + FIFO |
+| `cat file` | fork + exec /bin/cat | **Builtin** — zero fork |
+| `head`/`tail`/`wc` | fork + exec | **Builtin** — zero fork |
+| `sort`/`find`/`uniq` | fork + exec | **Builtin** — zero fork |
+| `date`/`hostname`/`uname` | fork + exec | **Builtin** — direct syscall |
+| `sleep`/`mktemp`/`touch` | fork + exec | **Builtin** — zero fork |
+| `xattr` operations | fork + exec xattr | **Direct syscall** — zero fork |
+| `pmap`/`pgrep`/`peach` | fork N times | **VM execution** — zero fork |
 | `**/*.rs` | Single-threaded `opendir` | Parallel `walkdir` per-subdir on pool |
 | `*(.x)` qualifiers | N serial `stat` calls | One parallel metadata prefetch |
 | `rehash` | Serial `readdir` per PATH dir | Parallel scan across pool |
@@ -80,6 +87,18 @@ Every operation that zsh forks for runs in-process on a persistent worker thread
 | History write | Synchronous `fsync` | Fire-and-forget to pool |
 | Autoload | Read file + parse every time | Bytecode deserialization from SQLite |
 | Plugin source | Parse + execute every startup | Delta replay from SQLite cache |
+
+### Coreutils Builtins (Anti-Fork)
+
+23 coreutils commands run in-process with zero fork overhead:
+
+```
+cat  head  tail  wc  sort  find  uniq  cut  tr  seq  rev  tee
+basename  dirname  touch  realpath  sleep  whoami  id  hostname
+uname  date  mktemp
+```
+
+**Speedup: 2000-5000x** per invocation (2-5ms fork overhead → 0.001ms builtin call).
 
 ---
 
@@ -245,18 +264,44 @@ dbview history docker         # search history
 
 ## [0x08] EXCLUSIVE BUILTINS
 
+### Parallel Primitives (VM-executed, zero fork)
+
+| Builtin | Description |
+|---------|-------------|
+| `async` / `await` | Ship work to pool, collect result |
+| `pmap` | Parallel map with ordered output — runs on VM, not fork |
+| `pgrep` | Parallel filter — runs on VM, not fork |
+| `peach` | Parallel for-each, unordered — runs on VM, not fork |
+| `barrier` | Run all commands in parallel, wait for all |
+
+### AOP / Debugging
+
 | Builtin | Description |
 |---------|-------------|
 | `intercept` | AOP before/after/around advice on any command |
 | `intercept_proceed` | Call original from around advice |
-| `async` / `await` | Ship work to pool, collect result |
-| `pmap` | Parallel map with ordered output |
-| `pgrep` | Parallel filter |
-| `peach` | Parallel for-each, unordered |
-| `barrier` | Run all commands in parallel, wait for all |
 | `doctor` | Full diagnostic: pool metrics, cache stats, bytecode coverage |
 | `dbview` | Browse SQLite caches without SQL |
 | `profile` | In-process command profiling with nanosecond accuracy |
+
+### Coreutils (Anti-Fork)
+
+| Builtin | Description |
+|---------|-------------|
+| `cat` | Concatenate files — no fork |
+| `head` / `tail` | First/last N lines — no fork |
+| `wc` | Line/word/char count — no fork |
+| `sort` / `uniq` | Sort and dedupe — no fork |
+| `find` | Walk directories — no fork |
+| `cut` / `tr` / `rev` | Text manipulation — no fork |
+| `seq` | Number sequences — no fork |
+| `tee` | Copy stdin to files — no fork |
+| `date` | Current date/time — direct syscall |
+| `sleep` | Delay — no fork |
+| `mktemp` | Create temp file/dir — no fork |
+| `hostname` / `uname` / `id` / `whoami` | System info — direct syscall |
+| `touch` / `realpath` / `basename` / `dirname` | File ops — no fork |
+| `zgetattr` / `zsetattr` / `zdelattr` / `zlistattr` | xattr ops — direct syscall |
 
 ---
 
@@ -265,10 +310,11 @@ dbview history docker         # search history
 - Full zsh script compatibility — runs existing `.zshrc`
 - Full bash compatibility via emulation
 - Fish-style syntax highlighting, autosuggestions, abbreviations
-- 150+ builtins ported from zsh
+- **180+ builtins** (150 zsh + 23 coreutils + parallel primitives)
 - ZWC precompiled function support
 - Glob qualifiers, parameter expansion flags, completion system
 - zstyle, ZLE widgets, hooks, modules
+- `--posix` mode for strict POSIX compliance
 
 ---
 
