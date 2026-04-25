@@ -25,7 +25,7 @@ atty = "0.2"
 reedline = "0.47.0"
 nu-ansi-term = "0.50"
 compsys = { path = "compsys", version = "0.8.17" }
-fusevm = { path = "../fusevm" }
+fusevm = { version = "0.8.17", path = "../fusevm" }
 regex = "1.11"
 glob = "0.3"
 libc = "0.2"
