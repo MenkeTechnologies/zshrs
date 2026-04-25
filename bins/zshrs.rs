@@ -789,7 +789,6 @@ pub fn zshrs_main() {
 
 /// zshrs --doctor: full diagnostic report of shell health, caches, and performance.
 fn run_doctor() {
-    use std::os::unix::fs::MetadataExt;
 
     let green = |s: &str| format!("\x1b[32m{}\x1b[0m", s);
     let red = |s: &str| format!("\x1b[31m{}\x1b[0m", s);
