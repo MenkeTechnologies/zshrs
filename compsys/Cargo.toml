@@ -1,6 +1,6 @@
 [package]
 name = "compsys"
-version = "0.8.17"
+version = "0.9.0"
 edition = "2021"
 description = "Zsh-compatible completion system for zshrs — SQLite FTS5, menuselect, zstyle"
 license = "MIT"

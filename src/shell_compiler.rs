@@ -28,8 +28,8 @@ use std::collections::HashMap;
 pub struct ShellCompiler {
     builder: ChunkBuilder,
     /// Variable name → slot index
-    slots: HashMap<String, u8>,
-    next_slot: u8,
+    slots: HashMap<String, u16>,
+    next_slot: u16,
     /// Break target stack — each loop pushes its exit address placeholder
     break_patches: Vec<Vec<usize>>,
     /// Continue target stack — each loop pushes its continue address
@@ -58,7 +58,7 @@ impl ShellCompiler {
         self.builder.build()
     }
 
-    fn slot_for(&mut self, name: &str) -> u8 {
+    fn slot_for(&mut self, name: &str) -> u16 {
         if let Some(&slot) = self.slots.get(name) {
             return slot;
         }
@@ -945,8 +945,8 @@ pub struct ArithCompiler<'a> {
     pub pos: usize,
     pub builder: ChunkBuilder,
     /// Variable name → slot index
-    pub slots: HashMap<String, u8>,
-    pub next_slot: u8,
+    pub slots: HashMap<String, u16>,
+    pub next_slot: u16,
 }
 
 // Token types matching math.rs MathTok
@@ -1017,7 +1017,7 @@ impl<'a> ArithCompiler<'a> {
     }
 
     /// Get or allocate a slot for a variable name.
-    fn slot_for(&mut self, name: &str) -> u8 {
+    fn slot_for(&mut self, name: &str) -> u16 {
         if let Some(&slot) = self.slots.get(name) {
             return slot;
         }
