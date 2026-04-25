@@ -2889,7 +2889,7 @@ pub fn getoutput(cmd: &str, qt: bool, state: &mut SubstState) -> Option<Vec<Stri
     }
 }
 
-/// Parse subscript expression like [1] or [1,5]
+/// Parse subscript expression like `[1]` or `[1,5]`
 /// Port of parse_subscript() logic
 pub fn parse_subscript(s: &str, _allow_range: bool) -> Option<(String, String)> {
     let chars: Vec<char> = s.chars().collect();

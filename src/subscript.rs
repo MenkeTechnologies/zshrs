@@ -3,10 +3,10 @@
 //! Direct port from zsh/Src/params.c getindex() and getarg() functions.
 //!
 //! Handles array subscript syntax including:
-//! - Simple indices: arr[1], arr[-1]
-//! - Ranges: arr[1,5], arr[2,-1]
-//! - All elements: arr[@], arr[*]
-//! - Subscript flags: arr[(r)pattern], arr[(i)string], etc.
+//! - Simple indices: `arr[1]`, `arr[-1]`
+//! - Ranges: `arr[1,5]`, `arr[2,-1]`
+//! - All elements: `arr[@]`, `arr[*]`
+//! - Subscript flags: `arr[(r)pattern]`, `arr[(i)string]`, etc.
 
 // Pattern matching support - uses crate::pattern module when needed
 

@@ -11,7 +11,7 @@
 //! - Ternary operator (? :)
 //! - Assignment operators (=, +=, -=, *=, /=, etc.)
 //! - Pre/post increment/decrement (++, --)
-//! - Base conversion (16#FF, 2#1010, [16]FF)
+//! - Base conversion (`16#FF`, `2#1010`, `[16]FF`)
 //! - Special values (Inf, NaN)
 //! - Variable references and assignment
 

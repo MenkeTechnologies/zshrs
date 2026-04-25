@@ -219,7 +219,7 @@ pub fn pattern_match_equivalence(a: char, b: char, case_insensitive: bool) -> bo
 }
 
 /// Parse a matcher specification string (from compmatch.c)
-/// Format: "m:{[:lower:]}={[:upper:]}" or "l:|=* r:|=*" etc.
+/// Format: `m:{[:lower:]}={[:upper:]}` or `l:|=* r:|=*` etc.
 pub fn parse_matcher_spec(spec: &str) -> Vec<CompMatcher> {
     let mut matchers = Vec::new();
 

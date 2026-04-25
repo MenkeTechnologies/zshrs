@@ -487,7 +487,7 @@ pub fn pathprog(prog: &str, path: &[String]) -> Option<PathBuf> {
     None
 }
 
-/// Determine if shell is a login shell from argv[0]
+/// Determine if shell is a login shell from `argv[0]`
 pub fn is_login_shell(argv0: &str) -> bool {
     argv0.starts_with('-')
 }

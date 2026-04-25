@@ -3459,7 +3459,7 @@ pub fn uniq_array(arr: Vec<String>) -> Vec<String> {
     arr.into_iter().filter(|s| seen.insert(s.clone())).collect()
 }
 
-/// Parse a subscript expression like "[1]", "[1,5]", "[@]", "[*]"
+/// Parse a subscript expression like `[1]`, `[1,5]`, `[@]`, `[*]`
 pub fn parse_subscript(subscript: &str, ksh_arrays: bool) -> Option<SubscriptIndex> {
     let s = subscript.trim();
 
@@ -3487,7 +3487,7 @@ fn parse_index_value(s: &str, _ksh_arrays: bool) -> Option<i64> {
     s.parse::<i64>().ok()
 }
 
-/// Parse simple subscript - extract index from [n] or [m,n] syntax
+/// Parse simple subscript - extract index from `[n]` or `[m,n]` syntax
 pub fn parse_simple_subscript(s: &str) -> Option<(i64, i64)> {
     let s = s.trim();
     if !s.starts_with('[') || !s.ends_with(']') {

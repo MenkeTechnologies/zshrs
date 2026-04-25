@@ -2,9 +2,9 @@
 //!
 //! Provides associative array interface to external files.
 //! The mapfile hash allows reading and writing files through hash syntax:
-//! - Reading: $mapfile[filename] returns file contents
-//! - Writing: mapfile[filename]=content writes to file
-//! - Unsetting: unset 'mapfile[filename]' deletes the file
+//! - Reading: `$mapfile[filename]` returns file contents
+//! - Writing: `mapfile[filename]=content` writes to file
+//! - Unsetting: `unset 'mapfile[filename]'` deletes the file
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};

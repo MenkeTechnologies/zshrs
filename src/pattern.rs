@@ -9,7 +9,7 @@
 //! - Backreferences with parentheses
 //! - Case-insensitive matching
 //! - Approximate matching (error tolerance)
-//! - Numeric ranges: <n-m>
+//! - Numeric ranges: `<n-m>`
 
 /// Pattern opcodes - matching zsh's P_* constants
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1091,7 +1091,7 @@ pub fn patmatchlen(prog: &PatProg, s: &str) -> Option<usize> {
 ///
 /// Supports: (#i) case insensitive, (#l) lowercase matches upper,
 /// (#I) restore case, (#b)/(#B) backrefs, (#m)/(#M) match refs,
-/// (#a<n>) approximate matching, (#s) start assert, (#e) end assert,
+/// `(#a<n>)` approximate matching, `(#s)` start assert, `(#e)` end assert,
 /// (#u)/(#U) multibyte, (#q) glob qualifiers (ignored)
 pub fn patgetglobflags(s: &str) -> Option<(GlobFlags, Option<PatOp>, usize)> {
     if !s.starts_with("(#") {
@@ -1286,7 +1286,7 @@ pub fn pat_enables(cmd: &str, patterns: &[&str], enable: bool) -> i32 {
     0
 }
 
-/// POSIX character class type names for [:stuff:]
+/// POSIX character class type names for `[:stuff:]`
 pub const COLON_CLASSES: &[&str] = &[
     "alpha",
     "alnum",
@@ -1335,7 +1335,7 @@ pub fn metacharinc(s: &str, pos: usize) -> usize {
     pos + c
 }
 
-/// Add bytes to pattern buffer (from pattern.c patadd) - Rust uses Vec<PatNode>
+/// Add bytes to pattern buffer (from pattern.c patadd) - Rust uses `Vec<PatNode>`
 pub fn patadd(prog: &mut Vec<PatNode>, node: PatNode) {
     prog.push(node);
 }
@@ -1367,7 +1367,7 @@ pub fn patcompnot(pattern: &str, flags: PatFlags) -> Result<PatProg, String> {
     patcompile(&negated, flags)
 }
 
-/// Add node to bytecode (from pattern.c patnode) - Rust uses Vec<PatNode>
+/// Add node to bytecode (from pattern.c patnode) - Rust uses `Vec<PatNode>`
 pub fn patnode(prog: &mut Vec<PatNode>, node: PatNode) -> usize {
     let idx = prog.len();
     prog.push(node);
