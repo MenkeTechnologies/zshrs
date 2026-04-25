@@ -16,7 +16,7 @@
 
 The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — 190k+ lines, 267 source files, 80 core modules, 26 ZLE widgets, 48 fish-ported builtins, persistent worker pool, AOP intercept, SQLite FTS5 caching, and full zsh compatibility.
 
-### [`Docs`](https://menketechnologies.github.io/strykelang/zshrs.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
+### [`Docs`](https://menketechnologies.github.io/zshrs/zshrs.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
 
 ---
 
