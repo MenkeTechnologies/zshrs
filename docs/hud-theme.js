@@ -1,17 +1,16 @@
 /**
- * stryke docs — theme / CRT / neon / color-scheme toggles.
- * Vendored and simplified from audio_haxor/docs/hud-theme.js.
- * Storage keys live under the `stryke-hud-*` namespace so the two projects
- * can't clobber each other if ever opened from the same origin.
+ * zshrs docs — theme / CRT / neon / color-scheme toggles.
+ * Vendored and simplified from strykelang/docs/hud-theme.js.
+ * Storage keys live under the `zshrs-hud-*` namespace.
  */
 (function () {
   'use strict';
 
   var STORAGE = {
-    theme: 'stryke-hud-theme',
-    crt: 'stryke-hud-crt',
-    neon: 'stryke-hud-neon',
-    scheme: 'stryke-hud-scheme',
+    theme: 'zshrs-hud-theme',
+    crt: 'zshrs-hud-crt',
+    neon: 'zshrs-hud-neon',
+    scheme: 'zshrs-hud-scheme',
   };
 
   var SCHEME_VAR_KEYS = [
@@ -194,11 +193,6 @@
   function applyScheme(name) {
     var scheme = COLOR_SCHEMES[name];
     if (!scheme) return;
-    // Inline `style.setProperty` on :root beats the CSS variable in
-    // `hud-static.css` (`:root { --accent: …; }`). Without choosing
-    // between `vars` (dark) and `lightVars` (light) by current theme,
-    // toggling `data-theme="light"` does nothing — the inline dark
-    // values stay pinned.
     var theme = document.documentElement.getAttribute('data-theme') || 'dark';
     var vars = (theme === 'light' && scheme.lightVars) ? scheme.lightVars : (scheme.vars || {});
     var root = document.documentElement;
@@ -248,7 +242,6 @@
     writeStored(STORAGE.theme, theme);
     var btn = document.getElementById('btnTheme');
     if (btn) btn.textContent = theme === 'light' ? 'Dark' : 'Light';
-    // Re-apply the scheme so its light/dark variant takes effect.
     applyScheme(currentScheme());
   }
 

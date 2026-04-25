@@ -55,29 +55,90 @@
     .stat { font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 900; color: var(--cyan); }
     .stat-label { font-size: 11px; color: var(--text-muted); letter-spacing: 1px; text-transform: uppercase; }
     .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 1rem; margin: 1rem 0; text-align: center; }
+    .docs-build-line {
+      margin: 0.35rem 0 0;
+      font-family: 'Share Tech Mono', ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: 0.03em;
+      max-width: 42rem;
+      opacity: 0.75;
+    }
+    .hub-scheme-strip {
+      border-bottom: 1px dashed var(--border);
+      background: color-mix(in srgb, var(--bg-secondary) 85%, transparent);
+      padding: 0.55rem 1.5rem 0.65rem;
+      position: relative;
+    }
+    .hub-scheme-strip-inner {
+      max-width: 68rem;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+    .hub-scheme-strip .hud-scheme-label {
+      flex: 0 0 auto;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--accent);
+      text-align: left;
+    }
+    .hub-scheme-strip .scheme-grid {
+      flex: 1 1 auto;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 6px;
+    }
+    @media (max-width: 720px) {
+      .hub-scheme-strip-inner { flex-direction: column; align-items: stretch; }
+      .hub-scheme-strip .scheme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
   </style>
 </head>
 <body>
-  <div class="app tutorial-app">
-    <div class="crt-scanline" aria-hidden="true"></div>
-    <div class="crt-scanline-v" aria-hidden="true"></div>
+  <div class="app tutorial-app" id="docsApp">
+    <div class="crt-scanline" id="crtH" aria-hidden="true"></div>
+    <div class="crt-scanline-v" id="crtV" aria-hidden="true"></div>
 
     <header class="tutorial-header">
       <div class="tutorial-header-inner">
         <div>
-          <h1 class="tutorial-title">ZSHRS</h1>
-          <p class="tutorial-subtitle">The Most Powerful Shell Ever Created</p>
+          <h1 class="tutorial-brand">// ZSHRS — COMPILED SHELL</h1>
+          <nav class="tutorial-crumbs" aria-label="Breadcrumb">
+            <span class="current">Docs</span>
+            <span class="sep">/</span>
+            <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
+            <span class="sep">/</span>
+            <a href="https://crates.io/crates/zshrs" target="_blank" rel="noopener noreferrer">crates.io</a>
+            <span class="sep">/</span>
+            <a href="https://docs.rs/zshrs" target="_blank" rel="noopener noreferrer">docs.rs</a>
+          </nav>
+          <p class="docs-build-line">zshrs v0.9.1 · No-fork architecture · AOP intercept · Worker pool · Bytecode caching</p>
         </div>
-        <nav class="tutorial-nav">
-          <a href="https://menketechnologies.github.io/strykelang/">stryke docs</a>
-          <a href="https://menketechnologies.github.io/strykelang/reference.html">reference</a>
-          <a href="zshrs.html" class="active">zshrs</a>
-          <a href="report.html">coverage report</a>
-        </nav>
+        <div class="tutorial-toolbar">
+          <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
+          <button type="button" class="btn btn-secondary active" id="btnCrt" title="CRT scanline overlay">CRT</button>
+          <button type="button" class="btn btn-secondary active" id="btnNeon" title="Neon border pulse">Neon</button>
+          <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs/issues" target="_blank" rel="noopener noreferrer">Issues</a>
+        </div>
       </div>
     </header>
 
+    <div class="hub-scheme-strip">
+      <div class="hub-scheme-strip-inner">
+        <span class="hud-scheme-label">// Color scheme</span>
+        <div class="scheme-grid" id="hudSchemeGrid"></div>
+      </div>
+    </div>
+
     <main class="tutorial-main">
+      <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>ZSHRS REFERENCE</h2>
+      <p class="tutorial-subtitle">The most powerful shell ever created. No-fork architecture, AOP intercept, worker thread pool, bytecode caching, fusevm compiled execution.</p>
 
       <!-- ════════════════════════════════════════════════════════════ -->
       <section class="tutorial-section">
@@ -487,5 +548,7 @@ intercept list</div>
       <a href="https://github.com/MenkeTechnologies/strykelang" style="color: var(--cyan);">GitHub</a>
     </footer>
   </div>
+
+  <script src="hud-theme.js"></script>
 </body>
 </html>
