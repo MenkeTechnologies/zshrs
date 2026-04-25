@@ -98,6 +98,61 @@ Autoload function    ──► SQLite ──► deserialize Chunk ──► VM::
 
 The shell compiler targets the same `Op` enum that [strykelang](https://github.com/MenkeTechnologies/strykelang) uses. Both frontends share fused superinstructions, extension dispatch, and the Cranelift JIT path.
 
+### Execution Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Script file                                                            │
+│       │                                                                 │
+│       ▼                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ SQLite bytecode cache                                           │   │
+│  │   check_bytecode(path, mtime) → Option<Vec<u8>>                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       │                                                                 │
+│       ├─── HIT (100x faster) ────────────────────────┐                 │
+│       │                                               │                 │
+│       ▼ MISS                                          ▼                 │
+│  Lexer → Parser → ShellCompiler ────────────► fusevm::Chunk            │
+│                         │                             │                 │
+│                         ▼                             │                 │
+│                  store_bytecode()                     │                 │
+│                                                       │                 │
+│       ┌───────────────────────────────────────────────┘                │
+│       ▼                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    fusevm::VM::run()                            │   │
+│  │                                                                 │   │
+│  │  ┌───────────────────────────────────────────────────────────┐ │   │
+│  │  │ JIT eligibility check                                     │ │   │
+│  │  └───────────────────────────────────────────────────────────┘ │   │
+│  │       │                                                         │   │
+│  │       ├─── Block JIT (loops, branches) ──► Cranelift ──► x86-64│   │
+│  │       │                                                         │   │
+│  │       ├─── Linear JIT (straight-line) ──► Cranelift ──► x86-64 │   │
+│  │       │                                                         │   │
+│  │       ▼ Fallback                                                │   │
+│  │  ┌───────────────────────────────────────────────────────────┐ │   │
+│  │  │ Interpreter: jump table dispatch + fused superinstructions│ │   │
+│  │  └───────────────────────────────────────────────────────────┘ │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+| Tier | What | When |
+|------|------|------|
+| **SQLite cache** | Skip lex/parse/compile | Warm script runs |
+| **Block JIT** | Native x86-64 via Cranelift | Loops, conditionals |
+| **Linear JIT** | Native x86-64 via Cranelift | Straight-line arithmetic |
+| **Interpreter** | Jump table + superinstructions | Builtins, I/O, strings |
+
+**Benchmark: 100x warm start speedup**
+
+```
+Cold (cache miss):  717ms  — lex + parse + compile + cache write + execute
+Warm (cache hit):     7ms  — deserialize + execute
+```
+
 ---
 
 ## [0x04] CONCURRENT PRIMITIVES
@@ -238,7 +293,7 @@ dbview history docker         # search history
                   │   SQLite FTS5 · menuselect · zstyle      │
                   ├────────���─────────────────────────────────┤
                   │           fusevm (bytecode VM)            │
-                  │   127 opcodes · fused loops · JIT path   │
+                  │   129 opcodes · fused loops · JIT path   │
                   └──────────────────────────────────────────┘
 ```
 

@@ -809,6 +809,148 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let status = with_executor(|exec| exec.builtin_zprof(&args));
         Value::Status(status)
     });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Coreutils builtins (anti-fork, gated by !posix_mode)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    vm.register_builtin(BUILTIN_CAT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_cat(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_HEAD, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_head(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_TAIL, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_tail(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_WC, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_wc(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_BASENAME, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_basename(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_DIRNAME, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_dirname(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_TOUCH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_touch(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_REALPATH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_realpath(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SORT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_sort(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_FIND, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_find(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UNIQ, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_uniq(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_CUT, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_cut(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_TR, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_tr(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SEQ, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_seq(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_REV, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_rev(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_TEE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_tee(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_SLEEP, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_sleep(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_WHOAMI, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_whoami(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_ID, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_id(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_HOSTNAME, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_hostname(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_UNAME, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_uname(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_DATE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_date(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_MKTEMP, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_mktemp(&args));
+        Value::Status(status)
+    });
 }
 
 /// Pop argc arguments from the VM stack into a Vec<String>.
@@ -2253,12 +2395,86 @@ impl ShellExecutor {
     }
 
     /// Execute a script file with bytecode caching — skips lex+parse+compile on cache hit.
-    /// The AST is stored in SQLite keyed by (path, mtime).
+    /// Bytecode is stored in SQLite keyed by (path, mtime).
     pub fn execute_script_file(&mut self, file_path: &str) -> Result<i32, String> {
-        // Read file and delegate to execute_script (which uses VM)
+        use std::path::Path;
+
+        let path = Path::new(file_path);
+        let abs_path = path
+            .canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .to_string();
+
+        // Try bytecode cache first
+        if let Some(ref cache) = self.plugin_cache {
+            if let Some((mt_s, mt_ns)) = crate::plugin_cache::file_mtime(path) {
+                if let Some(bc_blob) = cache.check_bytecode(&abs_path, mt_s, mt_ns) {
+                    if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
+                        if !chunk.ops.is_empty() {
+                            tracing::trace!(
+                                path = %abs_path,
+                                ops = chunk.ops.len(),
+                                "execute_script_file: bytecode cache hit"
+                            );
+                            let mut vm = fusevm::VM::new(chunk);
+                            register_builtins(&mut vm);
+                            let _ctx = ExecutorContext::enter(self);
+                            match vm.run() {
+                                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                                    self.last_status = vm.last_status;
+                                }
+                                fusevm::VMResult::Error(e) => {
+                                    return Err(format!("VM error: {}", e));
+                                }
+                            }
+                            return Ok(self.last_status);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Cache miss — read, parse, compile, execute, then cache
         let content =
             std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
-        self.execute_script(&content)
+        let expanded = self.expand_history(&content);
+        let mut parser = ShellParser::new(&expanded);
+        let commands = parser.parse_script()?;
+
+        let compiler = crate::shell_compiler::ShellCompiler::new();
+        let chunk = compiler.compile(&commands);
+
+        // Cache the bytecode for next time
+        if let Some(ref cache) = self.plugin_cache {
+            if let Some((mt_s, mt_ns)) = crate::plugin_cache::file_mtime(path) {
+                if let Ok(blob) = bincode::serialize(&chunk) {
+                    let _ = cache.store_bytecode(&abs_path, mt_s, mt_ns, &blob);
+                    tracing::trace!(
+                        path = %abs_path,
+                        bytes = blob.len(),
+                        "execute_script_file: bytecode cached"
+                    );
+                }
+            }
+        }
+
+        // Execute
+        if !chunk.ops.is_empty() {
+            let mut vm = fusevm::VM::new(chunk);
+            register_builtins(&mut vm);
+            let _ctx = ExecutorContext::enter(self);
+            match vm.run() {
+                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                    self.last_status = vm.last_status;
+                }
+                fusevm::VMResult::Error(e) => {
+                    return Err(format!("VM error: {}", e));
+                }
+            }
+        }
+
+        Ok(self.last_status)
     }
 
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
@@ -13427,46 +13643,48 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        // Ship each item to the pool
-        let mut receivers = Vec::with_capacity(items.len());
+        // Compile template once, execute for each item on VM — no forks
+        let mut results: Vec<(i32, String)> = Vec::with_capacity(items.len());
+        
         for item in items {
             let cmd = template.replace("{}", item);
-            let rx = self.worker_pool.submit_with_result(move || {
-                use std::process::{Command, Stdio};
-                let output = Command::new("sh")
-                    .args(["-c", &cmd])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
-                    .output();
-                match output {
-                    Ok(out) => (
-                        out.status.code().unwrap_or(1),
-                        String::from_utf8_lossy(&out.stdout).to_string(),
-                    ),
-                    Err(_) => (127, String::new()),
+            let mut parser = crate::parser::ShellParser::new(&cmd);
+            match parser.parse_script() {
+                Ok(commands) => {
+                    let compiler = crate::shell_compiler::ShellCompiler::new();
+                    let chunk = compiler.compile(&commands);
+                    
+                    // Capture stdout
+                    let mut output = Vec::new();
+                    let status = {
+                        let mut vm = fusevm::VM::new(chunk);
+                        register_builtins(&mut vm);
+                        let _ctx = ExecutorContext::enter(self);
+                        match vm.run() {
+                            fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                            fusevm::VMResult::Error(_) => 1,
+                        }
+                    };
+                    results.push((status, String::from_utf8_lossy(&output).to_string()));
                 }
-            });
-            receivers.push(rx);
-        }
-
-        // Collect results in order
-        let mut any_fail = false;
-        for rx in receivers {
-            if let Ok((status, stdout)) = rx.recv() {
-                if !stdout.is_empty() {
-                    print!("{}", stdout);
-                }
-                if status != 0 {
-                    any_fail = true;
+                Err(e) => {
+                    eprintln!("pmap: parse error: {}", e);
+                    results.push((1, String::new()));
                 }
             }
         }
 
-        if any_fail {
-            1
-        } else {
-            0
+        let mut any_fail = false;
+        for (status, stdout) in results {
+            if !stdout.is_empty() {
+                print!("{}", stdout);
+            }
+            if status != 0 {
+                any_fail = true;
+            }
         }
+
+        if any_fail { 1 } else { 0 }
     }
 
     /// pgrep 'pattern' arg1 arg2 ... — parallel grep/filter across worker pool.
@@ -13484,26 +13702,25 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        let mut receivers: Vec<(String, crossbeam_channel::Receiver<bool>)> =
-            Vec::with_capacity(items.len());
+        // Compile and run on VM — no forks
         for item in items {
             let cmd = template.replace("{}", item);
-            let rx = self.worker_pool.submit_with_result(move || {
-                use std::process::{Command, Stdio};
-                Command::new("sh")
-                    .args(["-c", &cmd])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false)
-            });
-            receivers.push((item.clone(), rx));
-        }
-
-        for (item, rx) in receivers {
-            if let Ok(true) = rx.recv() {
-                println!("{}", item);
+            let mut parser = crate::parser::ShellParser::new(&cmd);
+            if let Ok(commands) = parser.parse_script() {
+                let compiler = crate::shell_compiler::ShellCompiler::new();
+                let chunk = compiler.compile(&commands);
+                
+                let mut vm = fusevm::VM::new(chunk);
+                register_builtins(&mut vm);
+                let _ctx = ExecutorContext::enter(self);
+                let status = match vm.run() {
+                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                    fusevm::VMResult::Error(_) => 1,
+                };
+                
+                if status == 0 {
+                    println!("{}", item);
+                }
             }
         }
 
@@ -13525,48 +13742,33 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        let (tx, rx) = crossbeam_channel::unbounded::<(String, i32, String)>();
-
+        // Compile and run on VM — no forks, fire-and-forget style
+        let mut any_fail = false;
+        
         for item in items {
             let cmd = template.replace("{}", item);
-            let item_clone = item.clone();
-            let tx = tx.clone();
-            self.worker_pool.submit(move || {
-                use std::process::{Command, Stdio};
-                let output = Command::new("sh")
-                    .args(["-c", &cmd])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
-                    .output();
-                match output {
-                    Ok(out) => {
-                        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                        let status = out.status.code().unwrap_or(1);
-                        let _ = tx.send((item_clone, status, stdout));
-                    }
-                    Err(_) => {
-                        let _ = tx.send((item_clone, 127, String::new()));
-                    }
+            let mut parser = crate::parser::ShellParser::new(&cmd);
+            if let Ok(commands) = parser.parse_script() {
+                let compiler = crate::shell_compiler::ShellCompiler::new();
+                let chunk = compiler.compile(&commands);
+                
+                let mut vm = fusevm::VM::new(chunk);
+                register_builtins(&mut vm);
+                let _ctx = ExecutorContext::enter(self);
+                let status = match vm.run() {
+                    fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
+                    fusevm::VMResult::Error(_) => 1,
+                };
+                
+                if status != 0 {
+                    any_fail = true;
                 }
-            });
-        }
-        drop(tx);
-
-        let mut any_fail = false;
-        for (_, status, stdout) in rx {
-            if !stdout.is_empty() {
-                print!("{}", stdout);
-            }
-            if status != 0 {
+            } else {
                 any_fail = true;
             }
         }
 
-        if any_fail {
-            1
-        } else {
-            0
-        }
+        if any_fail { 1 } else { 0 }
     }
 
     /// barrier cmd1 ::: cmd2 ::: cmd3 — run commands in parallel, wait for ALL to complete.
@@ -21704,6 +21906,1021 @@ impl ShellExecutor {
 
         eprintln!("zshrs: command not found: {}", name);
         127
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Coreutils builtins (anti-fork) — only active when !posix_mode
+    // ═══════════════════════════════════════════════════════════════════════
+
+    fn builtin_cat(&self, args: &[String]) -> i32 {
+        use std::io::{self, Read, Write};
+
+        let mut show_line_numbers = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-n" => show_line_numbers = true,
+                "-" => files.push("-"),
+                a if a.starts_with('-') => {} // ignore other flags for now
+                _ => files.push(arg),
+            }
+        }
+
+        if files.is_empty() {
+            files.push("-");
+        }
+
+        let mut stdout = io::stdout().lock();
+        let mut line_num = 1usize;
+
+        for file in files {
+            let result: io::Result<()> = (|| {
+                if file == "-" {
+                    let stdin = io::stdin();
+                    let mut handle = stdin.lock();
+                    if show_line_numbers {
+                        let mut buf = String::new();
+                        handle.read_to_string(&mut buf)?;
+                        for line in buf.lines() {
+                            writeln!(stdout, "{:6}\t{}", line_num, line)?;
+                            line_num += 1;
+                        }
+                    } else {
+                        io::copy(&mut handle, &mut stdout)?;
+                    }
+                } else {
+                    let mut f = match std::fs::File::open(file) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            eprintln!("cat: {}: {}", file, e);
+                            return Err(e);
+                        }
+                    };
+                    if show_line_numbers {
+                        let mut buf = String::new();
+                        f.read_to_string(&mut buf)?;
+                        for line in buf.lines() {
+                            writeln!(stdout, "{:6}\t{}", line_num, line)?;
+                            line_num += 1;
+                        }
+                    } else {
+                        io::copy(&mut f, &mut stdout)?;
+                    }
+                }
+                Ok(())
+            })();
+
+            if result.is_err() {
+                return 1;
+            }
+        }
+        0
+    }
+
+    fn builtin_head(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+
+        let mut lines = 10usize;
+        let mut files: Vec<&str> = Vec::new();
+        let mut i = 0;
+
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-n" && i + 1 < args.len() {
+                i += 1;
+                lines = args[i].parse().unwrap_or(10);
+            } else if arg.starts_with("-n") {
+                lines = arg[2..].parse().unwrap_or(10);
+            } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+                lines = arg[1..].parse().unwrap_or(10);
+            } else if !arg.starts_with('-') {
+                files.push(arg);
+            }
+            i += 1;
+        }
+
+        if files.is_empty() {
+            files.push("-");
+        }
+
+        let show_headers = files.len() > 1;
+
+        for (idx, file) in files.iter().enumerate() {
+            if show_headers {
+                if idx > 0 {
+                    println!();
+                }
+                println!("==> {} <==", file);
+            }
+
+            let reader: Box<dyn BufRead> = if *file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("head: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+
+            for line in reader.lines().take(lines) {
+                match line {
+                    Ok(l) => println!("{}", l),
+                    Err(_) => break,
+                }
+            }
+        }
+        0
+    }
+
+    fn builtin_tail(&self, args: &[String]) -> i32 {
+        use std::collections::VecDeque;
+        use std::io::{BufRead, BufReader};
+
+        let mut lines = 10usize;
+        let mut files: Vec<&str> = Vec::new();
+        let mut i = 0;
+
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-n" && i + 1 < args.len() {
+                i += 1;
+                lines = args[i].parse().unwrap_or(10);
+            } else if arg.starts_with("-n") {
+                lines = arg[2..].parse().unwrap_or(10);
+            } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+                lines = arg[1..].parse().unwrap_or(10);
+            } else if !arg.starts_with('-') || arg == "-" {
+                files.push(arg);
+            }
+            i += 1;
+        }
+
+        if files.is_empty() {
+            files.push("-");
+        }
+
+        let show_headers = files.len() > 1;
+
+        for (idx, file) in files.iter().enumerate() {
+            if show_headers {
+                if idx > 0 {
+                    println!();
+                }
+                println!("==> {} <==", file);
+            }
+
+            let reader: Box<dyn BufRead> = if *file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("tail: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+
+            let mut ring: VecDeque<String> = VecDeque::with_capacity(lines);
+            for line in reader.lines().flatten() {
+                if ring.len() == lines {
+                    ring.pop_front();
+                }
+                ring.push_back(line);
+            }
+            for line in ring {
+                println!("{}", line);
+            }
+        }
+        0
+    }
+
+    fn builtin_wc(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+
+        let mut count_lines = false;
+        let mut count_words = false;
+        let mut count_chars = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-l" => count_lines = true,
+                "-w" => count_words = true,
+                "-c" | "-m" => count_chars = true,
+                a if a.starts_with('-') => {
+                    for c in a[1..].chars() {
+                        match c {
+                            'l' => count_lines = true,
+                            'w' => count_words = true,
+                            'c' | 'm' => count_chars = true,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => files.push(arg),
+            }
+        }
+
+        if !count_lines && !count_words && !count_chars {
+            count_lines = true;
+            count_words = true;
+            count_chars = true;
+        }
+
+        if files.is_empty() {
+            files.push("-");
+        }
+
+        let mut total_lines = 0usize;
+        let mut total_words = 0usize;
+        let mut total_chars = 0usize;
+
+        for file in &files {
+            let reader: Box<dyn BufRead> = if *file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("wc: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+
+            let mut lines = 0usize;
+            let mut words = 0usize;
+            let mut chars = 0usize;
+
+            for line in reader.lines().flatten() {
+                lines += 1;
+                words += line.split_whitespace().count();
+                chars += line.len() + 1; // +1 for newline
+            }
+
+            total_lines += lines;
+            total_words += words;
+            total_chars += chars;
+
+            let mut out = String::new();
+            if count_lines {
+                out.push_str(&format!("{:8}", lines));
+            }
+            if count_words {
+                out.push_str(&format!("{:8}", words));
+            }
+            if count_chars {
+                out.push_str(&format!("{:8}", chars));
+            }
+            if *file != "-" {
+                out.push_str(&format!(" {}", file));
+            }
+            println!("{}", out.trim_start());
+        }
+
+        if files.len() > 1 {
+            let mut out = String::new();
+            if count_lines {
+                out.push_str(&format!("{:8}", total_lines));
+            }
+            if count_words {
+                out.push_str(&format!("{:8}", total_words));
+            }
+            if count_chars {
+                out.push_str(&format!("{:8}", total_chars));
+            }
+            out.push_str(" total");
+            println!("{}", out.trim_start());
+        }
+        0
+    }
+
+    fn builtin_basename(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("basename: missing operand");
+            return 1;
+        }
+
+        let path = &args[0];
+        let suffix = args.get(1).map(|s| s.as_str());
+
+        let mut name = std::path::Path::new(path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+
+        if let Some(suf) = suffix {
+            if name.ends_with(suf) && name.len() > suf.len() {
+                name.truncate(name.len() - suf.len());
+            }
+        }
+
+        println!("{}", name);
+        0
+    }
+
+    fn builtin_dirname(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("dirname: missing operand");
+            return 1;
+        }
+
+        for path in args {
+            let dir = std::path::Path::new(path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".to_string());
+            println!("{}", if dir.is_empty() { "." } else { &dir });
+        }
+        0
+    }
+
+    fn builtin_touch(&self, args: &[String]) -> i32 {
+        use std::fs::OpenOptions;
+
+        if args.is_empty() {
+            eprintln!("touch: missing file operand");
+            return 1;
+        }
+
+        let mut status = 0;
+        for file in args {
+            if file.starts_with('-') {
+                continue; // ignore flags for now
+            }
+            let path = std::path::Path::new(file);
+            if path.exists() {
+                // Update mtime
+                let now = std::time::SystemTime::now();
+                if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::from_system_time(now)) {
+                    eprintln!("touch: {}: {}", file, e);
+                    status = 1;
+                }
+            } else {
+                // Create empty file
+                if let Err(e) = OpenOptions::new().create(true).write(true).open(path) {
+                    eprintln!("touch: {}: {}", file, e);
+                    status = 1;
+                }
+            }
+        }
+        status
+    }
+
+    fn builtin_realpath(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("realpath: missing operand");
+            return 1;
+        }
+
+        let mut status = 0;
+        for path in args {
+            if path.starts_with('-') {
+                continue;
+            }
+            match std::fs::canonicalize(path) {
+                Ok(abs) => println!("{}", abs.display()),
+                Err(e) => {
+                    eprintln!("realpath: {}: {}", path, e);
+                    status = 1;
+                }
+            }
+        }
+        status
+    }
+
+    fn builtin_sort(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+
+        let mut reverse = false;
+        let mut numeric = false;
+        let mut unique = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-r" => reverse = true,
+                "-n" => numeric = true,
+                "-u" => unique = true,
+                "-rn" | "-nr" => { reverse = true; numeric = true; }
+                a if a.starts_with('-') => {
+                    for c in a[1..].chars() {
+                        match c {
+                            'r' => reverse = true,
+                            'n' => numeric = true,
+                            'u' => unique = true,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => files.push(arg),
+            }
+        }
+
+        let mut lines: Vec<String> = Vec::new();
+
+        if files.is_empty() {
+            let stdin = std::io::stdin();
+            for line in stdin.lock().lines().flatten() {
+                lines.push(line);
+            }
+        } else {
+            for file in files {
+                match std::fs::File::open(file) {
+                    Ok(f) => {
+                        for line in BufReader::new(f).lines().flatten() {
+                            lines.push(line);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("sort: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            }
+        }
+
+        if numeric {
+            lines.sort_by(|a, b| {
+                let na: f64 = a.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                let nb: f64 = b.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        } else {
+            lines.sort();
+        }
+
+        if reverse {
+            lines.reverse();
+        }
+
+        if unique {
+            lines.dedup();
+        }
+
+        for line in lines {
+            println!("{}", line);
+        }
+        0
+    }
+
+    fn builtin_find(&self, args: &[String]) -> i32 {
+        use std::path::Path;
+
+        let mut paths: Vec<&str> = Vec::new();
+        let mut name_pattern: Option<&str> = None;
+        let mut type_filter: Option<char> = None;
+        let mut i = 0;
+
+        while i < args.len() {
+            let arg = &args[i];
+            match arg.as_str() {
+                "-name" if i + 1 < args.len() => {
+                    i += 1;
+                    name_pattern = Some(&args[i]);
+                }
+                "-type" if i + 1 < args.len() => {
+                    i += 1;
+                    type_filter = args[i].chars().next();
+                }
+                a if !a.starts_with('-') => paths.push(a),
+                _ => {}
+            }
+            i += 1;
+        }
+
+        if paths.is_empty() {
+            paths.push(".");
+        }
+
+        fn walk(dir: &Path, name_pat: Option<&str>, type_f: Option<char>) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let meta = entry.metadata().ok();
+                    let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                    let is_file = meta.as_ref().map(|m| m.is_file()).unwrap_or(false);
+
+                    let type_match = match type_f {
+                        Some('d') => is_dir,
+                        Some('f') => is_file,
+                        _ => true,
+                    };
+
+                    let name_match = match name_pat {
+                        Some(pat) => {
+                            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                            glob_match(pat, name)
+                        }
+                        None => true,
+                    };
+
+                    if type_match && name_match {
+                        println!("{}", path.display());
+                    }
+
+                    if is_dir {
+                        walk(&path, name_pat, type_f);
+                    }
+                }
+            }
+        }
+
+        fn glob_match(pattern: &str, name: &str) -> bool {
+            if pattern == "*" { return true; }
+            if let Some(suffix) = pattern.strip_prefix('*') {
+                return name.ends_with(suffix);
+            }
+            if let Some(prefix) = pattern.strip_suffix('*') {
+                return name.starts_with(prefix);
+            }
+            pattern == name
+        }
+
+        for p in paths {
+            let path = Path::new(p);
+            if path.is_dir() {
+                println!("{}", path.display());
+                walk(path, name_pattern, type_filter);
+            } else if path.exists() {
+                println!("{}", path.display());
+            } else {
+                eprintln!("find: '{}': No such file or directory", p);
+            }
+        }
+        0
+    }
+
+    fn builtin_uniq(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+
+        let mut count = false;
+        let mut repeated = false;
+        let mut files: Vec<&str> = Vec::new();
+
+        for arg in args {
+            match arg.as_str() {
+                "-c" => count = true,
+                "-d" => repeated = true,
+                a if !a.starts_with('-') => files.push(a),
+                _ => {}
+            }
+        }
+
+        let reader: Box<dyn BufRead> = if files.is_empty() || files[0] == "-" {
+            Box::new(BufReader::new(std::io::stdin()))
+        } else {
+            match std::fs::File::open(files[0]) {
+                Ok(f) => Box::new(BufReader::new(f)),
+                Err(e) => {
+                    eprintln!("uniq: {}: {}", files[0], e);
+                    return 1;
+                }
+            }
+        };
+
+        let mut prev: Option<String> = None;
+        let mut cnt = 0usize;
+
+        for line in reader.lines().flatten() {
+            if prev.as_ref() == Some(&line) {
+                cnt += 1;
+            } else {
+                if let Some(p) = prev.take() {
+                    if !repeated || cnt > 1 {
+                        if count {
+                            println!("{:7} {}", cnt, p);
+                        } else {
+                            println!("{}", p);
+                        }
+                    }
+                }
+                prev = Some(line);
+                cnt = 1;
+            }
+        }
+
+        if let Some(p) = prev {
+            if !repeated || cnt > 1 {
+                if count {
+                    println!("{:7} {}", cnt, p);
+                } else {
+                    println!("{}", p);
+                }
+            }
+        }
+        0
+    }
+
+    fn builtin_cut(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+
+        let mut delimiter = '\t';
+        let mut fields: Vec<usize> = Vec::new();
+        let mut files: Vec<&str> = Vec::new();
+        let mut i = 0;
+
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-d" && i + 1 < args.len() {
+                i += 1;
+                delimiter = args[i].chars().next().unwrap_or('\t');
+            } else if arg.starts_with("-d") {
+                delimiter = arg[2..].chars().next().unwrap_or('\t');
+            } else if arg == "-f" && i + 1 < args.len() {
+                i += 1;
+                for part in args[i].split(',') {
+                    if let Ok(n) = part.parse::<usize>() {
+                        if n > 0 { fields.push(n - 1); }
+                    }
+                }
+            } else if arg.starts_with("-f") {
+                for part in arg[2..].split(',') {
+                    if let Ok(n) = part.parse::<usize>() {
+                        if n > 0 { fields.push(n - 1); }
+                    }
+                }
+            } else if !arg.starts_with('-') {
+                files.push(arg);
+            }
+            i += 1;
+        }
+
+        let reader: Box<dyn BufRead> = if files.is_empty() || files[0] == "-" {
+            Box::new(BufReader::new(std::io::stdin()))
+        } else {
+            match std::fs::File::open(files[0]) {
+                Ok(f) => Box::new(BufReader::new(f)),
+                Err(e) => {
+                    eprintln!("cut: {}: {}", files[0], e);
+                    return 1;
+                }
+            }
+        };
+
+        for line in reader.lines().flatten() {
+            let parts: Vec<&str> = line.split(delimiter).collect();
+            let selected: Vec<&str> = fields.iter()
+                .filter_map(|&idx| parts.get(idx).copied())
+                .collect();
+            println!("{}", selected.join(&delimiter.to_string()));
+        }
+        0
+    }
+
+    fn builtin_tr(&self, args: &[String]) -> i32 {
+        use std::io::Read;
+
+        if args.len() < 2 {
+            eprintln!("tr: missing operand");
+            return 1;
+        }
+
+        let delete = args.iter().any(|a| a == "-d");
+        let set1: &str;
+        let set2: &str;
+
+        if delete {
+            set1 = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str()).unwrap_or("");
+            set2 = "";
+        } else {
+            let non_flag: Vec<&str> = args.iter().filter(|a| !a.starts_with('-')).map(|s| s.as_str()).collect();
+            set1 = non_flag.first().copied().unwrap_or("");
+            set2 = non_flag.get(1).copied().unwrap_or("");
+        }
+
+        let mut input = String::new();
+        std::io::stdin().read_to_string(&mut input).ok();
+
+        let output: String = if delete {
+            input.chars().filter(|c| !set1.contains(*c)).collect()
+        } else {
+            let s1: Vec<char> = set1.chars().collect();
+            let s2: Vec<char> = set2.chars().collect();
+            input.chars().map(|c| {
+                if let Some(pos) = s1.iter().position(|&x| x == c) {
+                    s2.get(pos).or(s2.last()).copied().unwrap_or(c)
+                } else {
+                    c
+                }
+            }).collect()
+        };
+
+        print!("{}", output);
+        0
+    }
+
+    fn builtin_seq(&self, args: &[String]) -> i32 {
+        let nums: Vec<i64> = args.iter()
+            .filter(|a| !a.starts_with('-') || a.parse::<i64>().is_ok())
+            .filter_map(|a| a.parse().ok())
+            .collect();
+
+        let (first, inc, last) = match nums.len() {
+            1 => (1, 1, nums[0]),
+            2 => (nums[0], 1, nums[1]),
+            3 => (nums[0], nums[1], nums[2]),
+            _ => {
+                eprintln!("seq: missing operand");
+                return 1;
+            }
+        };
+
+        if inc == 0 {
+            eprintln!("seq: zero increment");
+            return 1;
+        }
+
+        let mut i = first;
+        if inc > 0 {
+            while i <= last {
+                println!("{}", i);
+                i += inc;
+            }
+        } else {
+            while i >= last {
+                println!("{}", i);
+                i += inc;
+            }
+        }
+        0
+    }
+
+    fn builtin_rev(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+
+        let reader: Box<dyn BufRead> = if args.is_empty() || args[0] == "-" {
+            Box::new(BufReader::new(std::io::stdin()))
+        } else {
+            match std::fs::File::open(&args[0]) {
+                Ok(f) => Box::new(BufReader::new(f)),
+                Err(e) => {
+                    eprintln!("rev: {}: {}", args[0], e);
+                    return 1;
+                }
+            }
+        };
+
+        for line in reader.lines().flatten() {
+            println!("{}", line.chars().rev().collect::<String>());
+        }
+        0
+    }
+
+    fn builtin_tee(&self, args: &[String]) -> i32 {
+        use std::io::{Read, Write};
+
+        let append = args.iter().any(|a| a == "-a");
+        let files: Vec<&str> = args.iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .collect();
+
+        let mut input = Vec::new();
+        std::io::stdin().read_to_end(&mut input).ok();
+
+        // Write to stdout
+        std::io::stdout().write_all(&input).ok();
+
+        // Write to files
+        for file in files {
+            let result = if append {
+                std::fs::OpenOptions::new().create(true).append(true).open(file)
+            } else {
+                std::fs::File::create(file)
+            };
+
+            match result {
+                Ok(mut f) => { f.write_all(&input).ok(); }
+                Err(e) => eprintln!("tee: {}: {}", file, e),
+            }
+        }
+        0
+    }
+
+    fn builtin_sleep(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("sleep: missing operand");
+            return 1;
+        }
+
+        let mut total_secs = 0.0f64;
+        for arg in args {
+            if arg.starts_with('-') { continue; }
+            let (num, suffix) = if arg.ends_with('s') {
+                (&arg[..arg.len()-1], 1.0)
+            } else if arg.ends_with('m') {
+                (&arg[..arg.len()-1], 60.0)
+            } else if arg.ends_with('h') {
+                (&arg[..arg.len()-1], 3600.0)
+            } else if arg.ends_with('d') {
+                (&arg[..arg.len()-1], 86400.0)
+            } else {
+                (arg.as_str(), 1.0)
+            };
+            if let Ok(n) = num.parse::<f64>() {
+                total_secs += n * suffix;
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_secs_f64(total_secs));
+        0
+    }
+
+    fn builtin_whoami(&self, _args: &[String]) -> i32 {
+        if let Ok(user) = std::env::var("USER") {
+            println!("{}", user);
+            0
+        } else {
+            let uid = unsafe { libc::getuid() };
+            println!("{}", uid);
+            0
+        }
+    }
+
+    fn builtin_id(&self, args: &[String]) -> i32 {
+        let uid = unsafe { libc::getuid() };
+        let gid = unsafe { libc::getgid() };
+        let euid = unsafe { libc::geteuid() };
+        let egid = unsafe { libc::getegid() };
+
+        if args.iter().any(|a| a == "-u") {
+            println!("{}", uid);
+        } else if args.iter().any(|a| a == "-g") {
+            println!("{}", gid);
+        } else if args.iter().any(|a| a == "-un") {
+            if let Ok(user) = std::env::var("USER") {
+                println!("{}", user);
+            } else {
+                println!("{}", uid);
+            }
+        } else {
+            let user = std::env::var("USER").unwrap_or_else(|_| uid.to_string());
+            print!("uid={}({}) gid={}", uid, user, gid);
+            if euid != uid {
+                print!(" euid={}", euid);
+            }
+            if egid != gid {
+                print!(" egid={}", egid);
+            }
+            println!();
+        }
+        0
+    }
+
+    fn builtin_hostname(&self, _args: &[String]) -> i32 {
+        let mut buf = [0u8; 256];
+        let result = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) };
+        if result == 0 {
+            let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            println!("{}", String::from_utf8_lossy(&buf[..len]));
+            0
+        } else {
+            eprintln!("hostname: cannot get hostname");
+            1
+        }
+    }
+
+    fn builtin_uname(&self, args: &[String]) -> i32 {
+        let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+        if unsafe { libc::uname(&mut uts) } != 0 {
+            eprintln!("uname: cannot get system info");
+            return 1;
+        }
+
+        let sysname = unsafe { std::ffi::CStr::from_ptr(uts.sysname.as_ptr()) }.to_string_lossy();
+        let nodename = unsafe { std::ffi::CStr::from_ptr(uts.nodename.as_ptr()) }.to_string_lossy();
+        let release = unsafe { std::ffi::CStr::from_ptr(uts.release.as_ptr()) }.to_string_lossy();
+        let version = unsafe { std::ffi::CStr::from_ptr(uts.version.as_ptr()) }.to_string_lossy();
+        let machine = unsafe { std::ffi::CStr::from_ptr(uts.machine.as_ptr()) }.to_string_lossy();
+
+        if args.is_empty() || args.iter().any(|a| a == "-s") {
+            println!("{}", sysname);
+        } else if args.iter().any(|a| a == "-a") {
+            println!("{} {} {} {} {}", sysname, nodename, release, version, machine);
+        } else if args.iter().any(|a| a == "-n") {
+            println!("{}", nodename);
+        } else if args.iter().any(|a| a == "-r") {
+            println!("{}", release);
+        } else if args.iter().any(|a| a == "-v") {
+            println!("{}", version);
+        } else if args.iter().any(|a| a == "-m") {
+            println!("{}", machine);
+        } else {
+            println!("{}", sysname);
+        }
+        0
+    }
+
+    fn builtin_date(&self, args: &[String]) -> i32 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+
+        let mut format: Option<&str> = None;
+        for arg in args {
+            if arg.starts_with('+') {
+                format = Some(&arg[1..]);
+            }
+        }
+
+        if let Some(fmt) = format {
+            let tm = unsafe {
+                let t = now as libc::time_t;
+                *libc::localtime(&t)
+            };
+            let mut buf = [0i8; 256];
+            let fmt_cstr = std::ffi::CString::new(fmt).unwrap_or_default();
+            let len = unsafe {
+                libc::strftime(buf.as_mut_ptr(), buf.len(), fmt_cstr.as_ptr(), &tm)
+            };
+            if len > 0 {
+                let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+                println!("{}", s.to_string_lossy());
+            }
+        } else {
+            let tm = unsafe {
+                let t = now as libc::time_t;
+                *libc::localtime(&t)
+            };
+            let mut buf = [0i8; 256];
+            let fmt = std::ffi::CString::new("%a %b %e %H:%M:%S %Z %Y").unwrap();
+            let len = unsafe {
+                libc::strftime(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), &tm)
+            };
+            if len > 0 {
+                let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+                println!("{}", s.to_string_lossy());
+            }
+        }
+        0
+    }
+
+    fn builtin_mktemp(&self, args: &[String]) -> i32 {
+        let mut dir = false;
+        let mut template: Option<&str> = None;
+
+        for arg in args {
+            match arg.as_str() {
+                "-d" => dir = true,
+                a if !a.starts_with('-') => template = Some(a),
+                _ => {}
+            }
+        }
+
+        let tmpdir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+        let base = template.unwrap_or("tmp.XXXXXXXXXX");
+        
+        let rand_suffix: String = (0..10)
+            .map(|_| {
+                let idx = (std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .subsec_nanos() as usize) % 36;
+                "abcdefghijklmnopqrstuvwxyz0123456789".chars().nth(idx).unwrap()
+            })
+            .collect();
+
+        let name = if base.contains("XXXXXX") {
+            base.replace("XXXXXXXXXX", &rand_suffix)
+                .replace("XXXXXX", &rand_suffix[..6])
+        } else {
+            format!("{}.{}", base, rand_suffix)
+        };
+
+        let path = std::path::Path::new(&tmpdir).join(&name);
+
+        if dir {
+            match std::fs::create_dir(&path) {
+                Ok(_) => {
+                    println!("{}", path.display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("mktemp: {}: {}", path.display(), e);
+                    1
+                }
+            }
+        } else {
+            match std::fs::File::create(&path) {
+                Ok(_) => {
+                    println!("{}", path.display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("mktemp: {}: {}", path.display(), e);
+                    1
+                }
+            }
+        }
     }
 }
 

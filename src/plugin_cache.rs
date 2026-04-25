@@ -150,13 +150,13 @@ impl PluginCache {
                 flags TEXT NOT NULL DEFAULT ''
             );
 
-            -- Full parsed AST cache: skip lex+parse entirely on cache hit
-            CREATE TABLE IF NOT EXISTS script_ast (
+            -- Bytecode cache: skip lex+parse+compile entirely on cache hit
+            CREATE TABLE IF NOT EXISTS script_bytecode (
                 id INTEGER PRIMARY KEY,
                 path TEXT NOT NULL UNIQUE,
                 mtime_secs INTEGER NOT NULL,
                 mtime_nsecs INTEGER NOT NULL,
-                ast BLOB NOT NULL,
+                bytecode BLOB NOT NULL,
                 cached_at INTEGER NOT NULL
             );
 
@@ -173,7 +173,7 @@ impl PluginCache {
             );
 
             CREATE INDEX IF NOT EXISTS idx_plugins_path ON plugins(path);
-            CREATE INDEX IF NOT EXISTS idx_script_ast_path ON script_ast(path);
+            CREATE INDEX IF NOT EXISTS idx_script_bytecode_path ON script_bytecode(path);
             CREATE INDEX IF NOT EXISTS idx_compaudit_path ON compaudit_cache(path);
         "#,
         )?;
@@ -520,11 +520,11 @@ impl PluginCache {
         count
     }
 
-    /// Count AST cache entries whose file mtime no longer matches.
-    pub fn count_stale_ast(&self) -> usize {
+    /// Count bytecode cache entries whose file mtime no longer matches.
+    pub fn count_stale_bytecode(&self) -> usize {
         let mut stmt = match self
             .conn
-            .prepare("SELECT path, mtime_secs, mtime_nsecs FROM script_ast")
+            .prepare("SELECT path, mtime_secs, mtime_nsecs FROM script_bytecode")
         {
             Ok(s) => s,
             Err(_) => return 0,
@@ -553,25 +553,25 @@ impl PluginCache {
     }
 
     // -----------------------------------------------------------------
-    // Script AST cache — skip lex+parse entirely
+    // Script bytecode cache — skip lex+parse+compile entirely
     // -----------------------------------------------------------------
 
-    /// Check if a cached AST exists with matching mtime.
-    pub fn check_ast(&self, path: &str, mtime_secs: i64, mtime_nsecs: i64) -> Option<Vec<u8>> {
+    /// Check if cached bytecode exists with matching mtime.
+    pub fn check_bytecode(&self, path: &str, mtime_secs: i64, mtime_nsecs: i64) -> Option<Vec<u8>> {
         self.conn.query_row(
-            "SELECT ast FROM script_ast WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
+            "SELECT bytecode FROM script_bytecode WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
             params![path, mtime_secs, mtime_nsecs],
             |row| row.get::<_, Vec<u8>>(0),
         ).ok()
     }
 
-    /// Store a parsed AST for a script file.
-    pub fn store_ast(
+    /// Store compiled bytecode for a script file.
+    pub fn store_bytecode(
         &self,
         path: &str,
         mtime_secs: i64,
         mtime_nsecs: i64,
-        ast_bytes: &[u8],
+        bytecode: &[u8],
     ) -> rusqlite::Result<()> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -579,10 +579,10 @@ impl PluginCache {
             .unwrap_or(0);
 
         self.conn
-            .execute("DELETE FROM script_ast WHERE path = ?1", params![path])?;
+            .execute("DELETE FROM script_bytecode WHERE path = ?1", params![path])?;
         self.conn.execute(
-            "INSERT INTO script_ast (path, mtime_secs, mtime_nsecs, ast, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![path, mtime_secs, mtime_nsecs, ast_bytes, now],
+            "INSERT INTO script_bytecode (path, mtime_secs, mtime_nsecs, bytecode, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![path, mtime_secs, mtime_nsecs, bytecode, now],
         )?;
         Ok(())
     }
