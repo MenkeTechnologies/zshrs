@@ -1,0 +1,84 @@
+[package]
+name = "zshrs"
+version = "0.8.17"
+edition = "2021"
+description = "The first compiled Unix shell — bytecode VM, worker pool, AOP intercept, SQLite caching"
+license = "MIT"
+authors = ["MenkeTechnologies"]
+repository = "https://github.com/MenkeTechnologies/zshrs"
+documentation = "https://menketechnologies.github.io/strykelang/zshrs.html"
+readme = "README.md"
+keywords = ["shell", "zsh", "bytecode", "terminal", "unix"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "zsh"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zshrs"
+path = "bins/zshrs.rs"
+
+[dependencies]
+ctrlc = "3"
+atty = "0.2"
+reedline = "0.47.0"
+nu-ansi-term = "0.50"
+compsys = { path = "compsys", version = "0.8.17" }
+fusevm = { path = "../fusevm" }
+regex = "1.11"
+glob = "0.3"
+libc = "0.2"
+indexmap = "2"
+parking_lot = "0.12"
+thiserror = "2"
+nix = { version = "0.29", features = ["signal", "process", "term", "fs"] }
+rusqlite = "0.32"
+dirs = "5"
+bitflags = "2"
+tempfile = "3"
+chrono = "0.4"
+os_pipe = "1"
+hostname = "0.4"
+libm = "0.2"
+rand = "0.8"
+unicode-width = "0.2"
+once_cell = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+tracing-appender = "0.2"
+tracing-chrome = "0.7"
+tracing-flame = { version = "0.2", optional = true }
+metrics = { version = "0.24", optional = true }
+metrics-exporter-prometheus = { version = "0.16", optional = true, default-features = false, features = ["http-listener"] }
+walkdir = "2.5"
+crossbeam-channel = "0.5"
+rayon = "1.10"
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+toml = "1"
+
+[features]
+default = []
+profiling = []
+flamegraph = ["tracing-flame"]
+prometheus = ["metrics", "metrics-exporter-prometheus"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[workspace]
+members = [".", "compsys"]
+
+[workspace.package]
+version = "0.8.17"
+edition = "2021"
+license = "MIT"
+authors = ["MenkeTechnologies"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

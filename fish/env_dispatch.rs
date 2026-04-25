@@ -1,0 +1,507 @@
+use crate::common::init_special_chars_once;
+use crate::complete::complete_invalidate_path;
+use crate::env::{setenv_lock, unsetenv_lock, EnvMode, EnvStack, Environment as _};
+use crate::env::{DEFAULT_READ_BYTE_LIMIT, READ_BYTE_LIMIT};
+use crate::flog::flog;
+use crate::function;
+use crate::input_common::{update_wait_on_escape_ms, update_wait_on_sequence_key_ms};
+use crate::locale::{invalidate_numeric_locale, set_libc_locales};
+use crate::prelude::*;
+use crate::reader::{
+    reader_change_cursor_end_mode, reader_change_cursor_selection_mode, reader_change_history,
+    reader_current_data, reader_schedule_prompt_repaint, reader_set_autosuggestion_enabled,
+    reader_set_transient_prompt,
+};
+use crate::screen::{screen_set_midnight_commander_hack, IS_DUMB, ONLY_GRAYSCALE};
+use crate::terminal::ColorSupport;
+use crate::wutil::fish_wcstoi;
+use fish_wcstringutil::{bool_from_string, string_prefixes_string};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// List of all locale environment variable names that might trigger (re)initializing of the locale
+/// subsystem. These are only the variables we're possibly interested in.
+const LOCALE_VARIABLES: [&wstr; 7] = [
+    L!("LANG"),
+    L!("LANGUAGE"),
+    L!("LC_ALL"),
+    L!("LC_MESSAGES"),
+    L!("LC_NUMERIC"),
+    L!("LC_TIME"),
+    L!("LOCPATH"),
+];
+
+/// Whether to use `posix_spawn()` when possible.
+static USE_POSIX_SPAWN: AtomicBool = AtomicBool::new(false);
+
+/// The variable dispatch table. This is set at startup and cannot be modified after.
+static VAR_DISPATCH_TABLE: once_cell::sync::Lazy<VarDispatchTable> =
+    once_cell::sync::Lazy::new(|| {
+        let mut table = VarDispatchTable::default();
+
+        macro_rules! vars {
+            ( $f:ident ) => {
+                |vars: &EnvStack, _suppress_repaint: bool| $f(vars)
+            };
+        }
+
+        for name in LOCALE_VARIABLES {
+            table.add_anon(name, vars!(handle_locale_change));
+        }
+
+        table.add_anon(L!("TERM"), handle_term_change);
+
+        table.add(L!("TZ"), handle_tz_change);
+        table.add_anon(L!("COLORTERM"), handle_fish_term_change);
+        table.add_anon(L!("fish_term256"), handle_fish_term_change);
+        table.add_anon(L!("fish_term24bit"), handle_fish_term_change);
+        table.add_anon(L!("fish_escape_delay_ms"), vars!(update_wait_on_escape_ms));
+        table.add_anon(
+            L!("fish_sequence_key_delay_ms"),
+            vars!(update_wait_on_sequence_key_ms),
+        );
+        table.add_anon(L!("fish_emoji_width"), vars!(handle_emoji_width));
+        table.add_anon(
+            L!("fish_ambiguous_width"),
+            vars!(handle_change_ambiguous_width),
+        );
+        table.add_anon(L!("LINES"), vars!(handle_term_size_change));
+        table.add_anon(L!("COLUMNS"), vars!(handle_term_size_change));
+        table.add_anon(L!("fish_complete_path"), vars!(handle_complete_path_change));
+        table.add_anon(L!("fish_function_path"), vars!(handle_function_path_change));
+        table.add_anon(L!("fish_read_limit"), vars!(handle_read_limit_change));
+        table.add_anon(L!("fish_history"), vars!(handle_fish_history_change));
+        table.add_anon(
+            L!("fish_autosuggestion_enabled"),
+            vars!(handle_autosuggestion_change),
+        );
+        table.add_anon(
+            L!("fish_transient_prompt"),
+            vars!(handle_transient_prompt_change),
+        );
+        table.add_anon(
+            L!("fish_use_posix_spawn"),
+            vars!(handle_fish_use_posix_spawn_change),
+        );
+        table.add_anon(L!("fish_trace"), vars!(handle_fish_trace));
+        table.add_anon(
+            L!("fish_cursor_selection_mode"),
+            vars!(handle_fish_cursor_selection_mode_change),
+        );
+        table.add_anon(
+            L!("fish_cursor_end_mode"),
+            vars!(handle_fish_cursor_end_mode_change),
+        );
+
+        table
+    });
+
+type NamedEnvCallback = fn(name: &wstr, env: &EnvStack);
+type AnonEnvCallback = fn(env: &EnvStack, suppress_repaint: bool);
+
+enum EnvCallback {
+    Named(NamedEnvCallback),
+    Anon(AnonEnvCallback),
+}
+
+#[derive(Default)]
+struct VarDispatchTable {
+    table: HashMap<&'static wstr, EnvCallback>,
+}
+
+impl VarDispatchTable {
+    /// Add a callback for the variable `name`. We must not already be observing this variable.
+    pub fn add(&mut self, name: &'static wstr, callback: NamedEnvCallback) {
+        let prev = self.table.insert(name, EnvCallback::Named(callback));
+        assert!(prev.is_none(), "Already observing {}", name);
+    }
+
+    /// Add an callback for the variable `name`. We must not already be observing this variable.
+    pub fn add_anon(&mut self, name: &'static wstr, callback: AnonEnvCallback) {
+        let prev = self.table.insert(name, EnvCallback::Anon(callback));
+        assert!(prev.is_none(), "Already observing {}", name);
+    }
+
+    pub fn dispatch(&self, key: &wstr, vars: &EnvStack, suppress_repaint: bool) {
+        match self.table.get(key) {
+            Some(EnvCallback::Named(named)) => (named)(key, vars),
+            Some(EnvCallback::Anon(anon)) => (anon)(vars, suppress_repaint),
+            None => (),
+        }
+    }
+}
+
+fn handle_timezone(var_name: &wstr, vars: &EnvStack) {
+    let var = vars.get_unless_empty(var_name).map(|v| v.as_string());
+    flog!(
+        env_dispatch,
+        "handle_timezone() current timezone var:",
+        var_name,
+        "=>",
+        var.as_ref()
+            .map(|v| v.as_utfstr())
+            .unwrap_or(L!("MISSING/EMPTY")),
+    );
+    if let Some(value) = var {
+        setenv_lock(var_name, &value, true);
+    } else {
+        unsetenv_lock(var_name);
+    }
+
+    unsafe extern "C" {
+        unsafe fn tzset();
+    }
+
+    unsafe {
+        tzset();
+    }
+}
+
+/// Update the value of [`FISH_EMOJI_WIDTH`](fish_fallback::FISH_EMOJI_WIDTH).
+pub fn handle_emoji_width(vars: &EnvStack) {
+    use fish_fallback::FISH_EMOJI_WIDTH;
+
+    if let Some(width_str) = vars.get(L!("fish_emoji_width")) {
+        // The only valid values are 1 or 2; we default to 1 if it was an invalid int.
+        let new_width = fish_wcstoi(&width_str.as_string()).unwrap_or(1).clamp(1, 2);
+        let new_width = usize::try_from(new_width).unwrap_or_default();
+        FISH_EMOJI_WIDTH.store(new_width, Ordering::Relaxed);
+        flog!(
+            term_support,
+            "Overriding default fish_emoji_width w/",
+            new_width
+        );
+    } else {
+        let width = 2_usize;
+        FISH_EMOJI_WIDTH.store(width, Ordering::Relaxed);
+        flog!(term_support, "default emoji width:", width);
+    }
+}
+
+pub struct VarChangeMilieu {
+    pub is_repainting: bool,
+    pub global_or_universal: bool,
+}
+
+/// React to modifying the given variable.
+pub fn env_dispatch_var_change(milieu: VarChangeMilieu, key: &wstr, vars: &EnvStack) {
+    use once_cell::sync::Lazy;
+
+    let suppress_repaint = milieu.is_repainting || !milieu.global_or_universal;
+
+    // We want to ignore variable changes until the dispatch table is explicitly initialized.
+    // TODO(MSRV>=1.94): Use std::sync::LazyLock. (LazyLock::get is stabilized in Rust 1.94)
+    if let Some(dispatch_table) = Lazy::get(&VAR_DISPATCH_TABLE) {
+        dispatch_table.dispatch(key, vars, suppress_repaint);
+    }
+
+    if !suppress_repaint {
+        if let Some(data) = reader_current_data() {
+            if string_prefixes_string(L!("fish_color_"), key) || {
+                // TODO Don't re-exec prompt when only pager color changed.
+                string_prefixes_string(L!("fish_pager_color_"), key)
+            } {
+                data.schedule_prompt_repaint();
+            }
+        }
+    }
+}
+
+fn handle_fish_term_change(vars: &EnvStack, suppress_repaint: bool) {
+    update_fish_color_support(vars);
+    if !suppress_repaint {
+        reader_schedule_prompt_repaint();
+    }
+}
+
+fn handle_change_ambiguous_width(vars: &EnvStack) {
+    let new_width = vars
+        .get(L!("fish_ambiguous_width"))
+        .map(|v| v.as_string())
+        // We use the default value of 1 if it was an invalid int.
+        .and_then(|fish_ambiguous_width| fish_wcstoi(&fish_ambiguous_width).ok())
+        .unwrap_or(1);
+    // Clamp in case of negative values.
+    let new_width = usize::try_from(new_width).unwrap_or_default();
+    fish_fallback::FISH_AMBIGUOUS_WIDTH.store(new_width, Ordering::Relaxed);
+}
+
+fn handle_term_size_change(vars: &EnvStack) {
+    crate::termsize::handle_columns_lines_var_change(vars);
+}
+
+fn handle_fish_history_change(vars: &EnvStack) {
+    let session_id = crate::history::history_session_id(vars);
+    reader_change_history(&session_id);
+}
+
+fn handle_fish_cursor_selection_mode_change(vars: &EnvStack) {
+    use crate::reader::CursorSelectionMode;
+
+    let inclusive = vars
+        .get(L!("fish_cursor_selection_mode"))
+        .as_ref()
+        .map(|v| v.as_string())
+        .is_some_and(|v| v == "inclusive");
+    let mode = if inclusive {
+        CursorSelectionMode::Inclusive
+    } else {
+        CursorSelectionMode::Exclusive
+    };
+
+    reader_change_cursor_selection_mode(mode);
+}
+
+fn handle_fish_cursor_end_mode_change(vars: &EnvStack) {
+    use crate::reader::CursorEndMode;
+
+    let inclusive = vars
+        .get(L!("fish_cursor_end_mode"))
+        .as_ref()
+        .map(|v| v.as_string())
+        .is_some_and(|v| v == "inclusive");
+    let mode = if inclusive {
+        CursorEndMode::Inclusive
+    } else {
+        CursorEndMode::Exclusive
+    };
+
+    reader_change_cursor_end_mode(mode);
+}
+
+fn handle_autosuggestion_change(vars: &EnvStack) {
+    reader_set_autosuggestion_enabled(vars);
+}
+
+fn handle_transient_prompt_change(vars: &EnvStack) {
+    reader_set_transient_prompt(vars);
+}
+
+fn handle_function_path_change(_: &EnvStack) {
+    function::invalidate_path();
+}
+
+fn handle_complete_path_change(_: &EnvStack) {
+    complete_invalidate_path();
+}
+
+fn handle_tz_change(var_name: &wstr, vars: &EnvStack) {
+    handle_timezone(var_name, vars);
+}
+
+fn handle_locale_change(vars: &EnvStack) {
+    init_locale(vars);
+}
+
+fn handle_term_change(vars: &EnvStack, suppress_repaint: bool) {
+    init_terminal(vars);
+    if !suppress_repaint {
+        reader_schedule_prompt_repaint();
+    }
+}
+
+fn handle_fish_use_posix_spawn_change(vars: &EnvStack) {
+    // Note that if the variable is missing or empty we default to true (if allowed).
+    if !cfg!(have_posix_spawn) {
+        USE_POSIX_SPAWN.store(false, Ordering::Relaxed);
+    } else if let Some(var) = vars.get(L!("fish_use_posix_spawn")) {
+        let use_posix_spawn = var.is_empty() || bool_from_string(&var.as_string());
+        USE_POSIX_SPAWN.store(use_posix_spawn, Ordering::Relaxed);
+    } else {
+        USE_POSIX_SPAWN.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Allow the user to override the limits on how much data the `read` command will process. This is
+/// primarily intended for testing, but could also be used directly by users in special situations.
+fn handle_read_limit_change(vars: &EnvStack) {
+    let read_byte_limit = vars
+        .get_unless_empty(L!("fish_read_limit"))
+        .map(|v| v.as_string())
+        .and_then(|v| {
+            // We use fish_wcstoul() to support leading/trailing whitespace
+            match (crate::wutil::fish_wcstoul(&v).ok())
+                // wcstoul() returns a u64 but want a usize. Handle overflow on 32-bit platforms.
+                .and_then(|_u64| usize::try_from(_u64).ok())
+            {
+                Some(v) => Some(v),
+                None => {
+                    // We intentionally warn here even in non-interactive mode.
+                    flog!(warning, "Ignoring invalid $fish_read_limit");
+                    None
+                }
+            }
+        });
+
+    match read_byte_limit {
+        Some(new_limit) => READ_BYTE_LIMIT.store(new_limit, Ordering::Relaxed),
+        None => READ_BYTE_LIMIT.store(DEFAULT_READ_BYTE_LIMIT, Ordering::Relaxed),
+    }
+}
+
+fn handle_fish_trace(vars: &EnvStack) {
+    crate::trace::trace_set_enabled(
+        vars.get_unless_empty(L!("fish_trace"))
+            .map(|var| var.as_list().to_vec())
+            .unwrap_or_default(),
+    );
+}
+
+pub fn env_dispatch_init(vars: &EnvStack) {
+    use once_cell::sync::Lazy;
+
+    run_inits(vars);
+    // env_dispatch_var_change() purposely suppresses change notifications until the dispatch table
+    // was initialized elsewhere (either explicitly as below or via deref of VAR_DISPATCH_TABLE).
+    Lazy::force(&VAR_DISPATCH_TABLE);
+}
+
+/// Runs the subset of dispatch functions that need to be called at startup.
+fn run_inits(vars: &EnvStack) {
+    init_locale(vars);
+    init_special_chars_once();
+    init_terminal(vars);
+    handle_emoji_width(vars);
+    update_wait_on_escape_ms(vars);
+    update_wait_on_sequence_key_ms(vars);
+    handle_read_limit_change(vars);
+    handle_fish_use_posix_spawn_change(vars);
+    handle_fish_trace(vars);
+}
+
+/// Updates our idea of whether we support term256 and term24bit (see issue #10222).
+fn update_fish_color_support(vars: &EnvStack) {
+    // Detect or infer term256 support. If fish_term256 is set, we respect it. Otherwise, infer it
+    // from $TERM.
+
+    let term = vars.get_unless_empty(L!("TERM"));
+    let term = term.as_ref().map_or(L!(""), |term| &term.as_list()[0]);
+    let is_xterm_16color = term == "xterm-16color";
+
+    let supports_256color = if let Some(fish_term256) = vars.get(L!("fish_term256")) {
+        let ok = bool_from_string(&fish_term256.as_string());
+        flog!(
+            term_support,
+            "256-color support determined by $fish_term256:",
+            ok
+        );
+        ok
+    } else {
+        !is_xterm_16color
+    };
+
+    let supports_24bit;
+    #[allow(unused_parens)]
+    if let Some(fish_term24bit) = vars.get(L!("fish_term24bit")).map(|v| v.as_string()) {
+        // $fish_term24bit
+        supports_24bit = bool_from_string(&fish_term24bit);
+        flog!(
+            term_support,
+            "$fish_term24bit preference: 24-bit color",
+            if supports_24bit {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    } else if (
+        // TODO(term-workaround)
+        vars.get(L!("STY")).is_some()
+    ) {
+        // Screen requires "truecolor on" to enable true-color sequences, so we ignore them
+        // unless force-enabled.
+        supports_24bit = false;
+        flog!(term_support, "True-color support: disabled for screen");
+    } else if let Some(ct) = vars.get(L!("COLORTERM")).map(|v| v.as_string()) {
+        // If someone sets $COLORTERM, that's the sort of color they want.
+        supports_24bit = ct == "truecolor" || ct == "24bit";
+        flog!(
+            term_support,
+            "True-color support",
+            if supports_24bit {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            "per $COLORTERM",
+            ct
+        );
+    } else {
+        supports_24bit = !is_xterm_16color && {
+            // TODO(term-workaround)
+            vars.get_unless_empty(L!("TERM_PROGRAM"))
+                .is_none_or(|term| term.as_list()[0] != "Apple_Terminal")
+        };
+        flog!(
+            term_support,
+            "True-color support",
+            if supports_24bit {
+                "enabled"
+            } else {
+                "disabled"
+            },
+        );
+    }
+
+    let mut color_support = ColorSupport::default();
+    color_support.set(ColorSupport::TERM_256COLOR, supports_256color);
+    color_support.set(ColorSupport::TERM_24BIT, supports_24bit);
+    crate::terminal::set_color_support(color_support);
+}
+
+pub const MIDNIGHT_COMMANDER_SID: &wstr = L!("MC_SID");
+
+// Initialize the terminal subsystem
+fn init_terminal(vars: &EnvStack) {
+    let term = vars.get(L!("TERM"));
+    let term = term
+        .as_ref()
+        .and_then(|v| v.as_list().first())
+        .map(|v| v.as_utfstr())
+        .unwrap_or(L!(""));
+
+    IS_DUMB.store(term == "dumb");
+    ONLY_GRAYSCALE.store(term == "ansi-m" || term == "linux-m" || term == "xterm-mono");
+
+    // TODO(term-workaround)
+    if vars.get(MIDNIGHT_COMMANDER_SID).is_some() {
+        screen_set_midnight_commander_hack();
+    }
+
+    update_fish_color_support(vars);
+}
+
+/// Initialize the locale subsystem
+fn init_locale(vars: &EnvStack) {
+    let _guard = crate::locale::LOCALE_LOCK.lock().unwrap();
+
+    for var_name in LOCALE_VARIABLES {
+        let var = vars
+            .getf_unless_empty(var_name, EnvMode::EXPORT)
+            .map(|v| v.as_string());
+        if let Some(value) = var {
+            flog!(env_locale, "locale var", var_name, "=", value);
+            setenv_lock(var_name, &value, true);
+        } else {
+            flog!(env_locale, "locale var", var_name, "is missing or empty");
+            unsetenv_lock(var_name);
+        }
+    }
+
+    // Safety: we hold the locale lock.
+    if !unsafe {
+        set_libc_locales(/*log_ok=*/ true)
+    } {
+        flog!(env_locale, "user has an invalid locale configured");
+    }
+
+    // Invalidate the cached numeric locale.
+    invalidate_numeric_locale();
+
+    #[cfg(feature = "localize-messages")]
+    crate::localization::update_from_env(vars);
+}
+
+pub fn use_posix_spawn() -> bool {
+    USE_POSIX_SPAWN.load(Ordering::Relaxed)
+}

@@ -1,0 +1,782 @@
+// printf - format and print data
+// Copyright (C) 1990-2007 Free Software Foundation, Inc.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2, or (at your option)
+// any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software Foundation,
+// Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.  */
+// Usage: printf format [argument...]
+//
+// A front end to the printf function that lets it be used from the shell.
+//
+// Backslash escapes:
+//
+// \" = double quote
+// \\ = backslash
+// \a = alert (bell)
+// \b = backspace
+// \c = produce no further output
+// \e = escape
+// \f = form feed
+// \n = new line
+// \r = carriage return
+// \t = horizontal tab
+// \v = vertical tab
+// \ooo = octal number (ooo is 1 to 3 digits)
+// \xhh = hexadecimal number (hhh is 1 to 2 digits)
+// \uhhhh = 16-bit Unicode character (hhhh is 4 digits)
+// \Uhhhhhhhh = 32-bit Unicode character (hhhhhhhh is 8 digits)
+//
+// Additional directive:
+//
+// %b = print an argument string, interpreting backslash escapes,
+//   except that octal escapes are of the form \0 or \0ooo.
+//
+// The `format' argument is re-used as many times as necessary
+// to convert all of the given arguments.
+//
+// David MacKenzie <djm@gnu.ai.mit.edu>
+
+// This file has been imported from source code of printf command in GNU Coreutils version 6.9.
+
+use super::prelude::*;
+use crate::builtins::error;
+use crate::locale::{get_numeric_locale, Locale};
+use crate::wutil::{
+    errors::Error,
+    wcstod::wcstod,
+    wcstoi::{wcstoi_partial, Options as WcstoiOpts},
+    wstr_offset_in,
+};
+use crate::{err_fmt, err_str};
+use fish_printf::{sprintf_locale, ToArg as _};
+use fish_widestring::{decode_byte_from_char, encode_byte_to_char};
+
+/// Return true if `c` is an octal digit.
+fn is_octal_digit(c: char) -> bool {
+    ('0'..='7').contains(&c)
+}
+
+/// Return true if `c` is a decimal digit.
+fn iswdigit(c: char) -> bool {
+    c.is_ascii_digit()
+}
+
+/// Return true if `c` is a hexadecimal digit.
+fn iswxdigit(c: char) -> bool {
+    c.is_ascii_hexdigit()
+}
+
+struct builtin_printf_state_t<'a, 'b> {
+    // Out and err streams. Note this is a captured reference!
+    streams: &'a mut IoStreams<'b>,
+
+    // The status of the operation.
+    exit_code: BuiltinResult,
+
+    // Whether we should stop outputting. This gets set in the case of an error, and also with the
+    // \c escape.
+    early_exit: bool,
+
+    // Our output buffer, so we don't write() constantly.
+    // Our strategy is simple:
+    // We print once per argument, and we flush the buffer before the error.
+    buff: WString,
+
+    // The locale, which affects printf output and also parsing of floats due to decimal separators.
+    locale: Locale,
+}
+
+/// Convert to a scalar type. Return the result of conversion, and the end of the converted string.
+/// On conversion failure, `end` is not modified.
+trait RawStringToScalarType: Copy + std::convert::From<u32> {
+    /// Convert from a string to our self type.
+    /// Return the result of conversion, and the remainder of the string.
+    fn raw_string_to_scalar_type<'a>(
+        s: &'a wstr,
+        locale: &Locale,
+        end: &mut &'a wstr,
+    ) -> Result<Self, Error>;
+
+    /// Convert from a Unicode code point to this type.
+    /// This supports printf's ability to convert from char to scalar via a leading quote.
+    /// Try it:
+    ///     > printf "%f" "'a"
+    ///     97.000000
+    /// Wild stuff.
+    fn from_ord(c: char) -> Self {
+        let as_u32: u32 = c.into();
+        as_u32.into()
+    }
+}
+
+impl RawStringToScalarType for i64 {
+    fn raw_string_to_scalar_type<'a>(
+        s: &'a wstr,
+        _locale: &Locale,
+        end: &mut &'a wstr,
+    ) -> Result<Self, Error> {
+        let mut consumed = 0;
+        let res = wcstoi_partial(s, WcstoiOpts::default(), &mut consumed);
+        *end = s.slice_from(consumed);
+        res
+    }
+}
+
+impl RawStringToScalarType for u64 {
+    fn raw_string_to_scalar_type<'a>(
+        s: &'a wstr,
+        _locale: &Locale,
+        end: &mut &'a wstr,
+    ) -> Result<Self, Error> {
+        let mut consumed = 0;
+        let res = wcstoi_partial(
+            s,
+            WcstoiOpts {
+                wrap_negatives: true,
+                ..Default::default()
+            },
+            &mut consumed,
+        );
+        *end = s.slice_from(consumed);
+        res
+    }
+}
+
+impl RawStringToScalarType for f64 {
+    fn raw_string_to_scalar_type<'a>(
+        s: &'a wstr,
+        locale: &Locale,
+        end: &mut &'a wstr,
+    ) -> Result<Self, Error> {
+        let mut consumed: usize = 0;
+        let mut result = wcstod(s, locale.decimal_point, &mut consumed);
+        if result.is_ok() && consumed == s.chars().count() {
+            *end = s.slice_from(consumed);
+            return result;
+        }
+        // The conversion using the user's locale failed. That may be due to the string not being a
+        // valid floating point value. It could also be due to the locale using different separator
+        // characters than the normal english convention. So try again by forcing the use of a locale
+        // that employs the english convention for writing floating point numbers.
+        consumed = 0;
+        result = wcstod(s, '.', &mut consumed);
+        if result.is_ok() {
+            *end = s.slice_from(consumed);
+        }
+        result
+    }
+}
+
+/// Convert a string to a scalar type.
+/// Use state.verify_numeric to report any errors.
+fn string_to_scalar_type<T: RawStringToScalarType>(
+    s: &wstr,
+    state: &mut builtin_printf_state_t,
+) -> T {
+    if s.char_at(0) == '"' || s.char_at(0) == '\'' {
+        // Note that if the string is really just a leading quote,
+        // we really do want to convert the "trailing nul".
+        T::from_ord(s.char_at(1))
+    } else {
+        let mut end = s;
+        let mval = T::raw_string_to_scalar_type(s, &state.locale, &mut end);
+        state.verify_numeric(s, end, mval.err());
+        mval.unwrap_or(T::from(0))
+    }
+}
+
+/// For each character in str, set the corresponding boolean in the array to the given flag.
+fn modify_allowed_format_specifiers(ok: &mut [bool; 256], str: &str, flag: bool) {
+    for c in str.chars() {
+        ok[c as usize] = flag;
+    }
+}
+
+impl<'a, 'b> builtin_printf_state_t<'a, 'b> {
+    #[allow(clippy::partialeq_to_none)]
+    fn verify_numeric(&mut self, s: &wstr, end: &wstr, errcode: Option<Error>) {
+        // This check matches the historic `errcode != EINVAL` check from C++.
+        // Note that empty or missing values will be silently treated as 0.
+        if errcode.is_some_and(|err| err != Error::InvalidChar && err != Error::Empty) {
+            match errcode.unwrap() {
+                Error::Overflow => {
+                    self.fatal_error(err_fmt!("%s: Number out of range", s));
+                }
+                Error::InvalidChar | Error::Empty => {
+                    unreachable!("Unreachable");
+                }
+            }
+        } else if !end.is_empty() {
+            if s.as_ptr() == end.as_ptr() {
+                self.fatal_error(err_fmt!("%s: expected a numeric value", s));
+            } else {
+                // This isn't entirely fatal - the value should still be printed.
+                self.nonfatal_error(err_fmt!(
+                    "%s: value not completely converted (can't convert '%s')",
+                    s,
+                    end
+                ));
+                // Warn about octal numbers as they can be confusing.
+                // Do it if the unconverted digit is a valid hex digit,
+                // because it could also be an "0x" -> "0" typo.
+                if s.char_at(0) == '0' && iswxdigit(end.char_at(0)) {
+                    self.nonfatal_error(err_str!(
+                        "Hint: a leading '0' without an 'x' indicates an octal number"
+                    ));
+                }
+            }
+        }
+    }
+
+    fn handle_sprintf_error(&mut self, err: fish_printf::Error) {
+        match err {
+            fish_printf::Error::Overflow => self.fatal_error(err_str!("Number out of range")),
+            _ => panic!("unhandled error: {err:?}"),
+        }
+    }
+
+    /// Evaluate a printf conversion specification.
+    /// `spec` is the start of the directive, and `conversion` specifies the type of conversion.
+    /// `spec` does not include any length modifier or the conversion specifier itself.
+    /// `field_width` and `precision` are the field width and precision for '*' values, if any.
+    /// `argument` is the argument to be formatted.
+    #[allow(clippy::collapsible_else_if, clippy::too_many_arguments)]
+    fn print_directive(
+        &mut self,
+        spec: &wstr,
+        conversion: char,
+        field_width: Option<i64>,
+        precision: Option<i64>,
+        argument: &wstr,
+    ) {
+        /// Printf macro helper which provides our locale.
+        macro_rules! append_output_fmt {
+            (
+            $fmt:expr, // format string of type &wstr
+            $($arg:expr),* // arguments
+            ) => {
+                // Don't output if we're done.
+                if !self.early_exit {
+                    sprintf_locale(
+                        &mut self.buff,
+                        $fmt,
+                        &self.locale,
+                        &mut [$($arg.to_arg()),*]
+                    ).err().map(|err| self.handle_sprintf_error(err));
+                }
+            }
+        }
+
+        // Start with everything except the conversion specifier.
+        let mut fmt = spec.to_owned();
+
+        // Append the conversion itself.
+        fmt.push(conversion);
+
+        // Rebind as a ref.
+        let fmt: &wstr = &fmt;
+        match conversion {
+            'd' | 'i' => {
+                let arg: i64 = string_to_scalar_type(argument, self);
+                match field_width {
+                    Some(field_width) => match precision {
+                        Some(precision) => {
+                            append_output_fmt!(fmt, field_width, precision, arg);
+                        }
+                        None => {
+                            append_output_fmt!(fmt, field_width, arg);
+                        }
+                    },
+                    None => match precision {
+                        Some(precision) => {
+                            append_output_fmt!(fmt, precision, arg);
+                        }
+                        None => {
+                            append_output_fmt!(fmt, arg);
+                        }
+                    },
+                }
+            }
+            'o' | 'u' | 'x' | 'X' => {
+                let arg: u64 = string_to_scalar_type(argument, self);
+                match field_width {
+                    Some(field_width) => match precision {
+                        Some(precision) => {
+                            append_output_fmt!(fmt, field_width, precision, arg);
+                        }
+                        None => {
+                            append_output_fmt!(fmt, field_width, arg);
+                        }
+                    },
+                    None => match precision {
+                        Some(precision) => {
+                            append_output_fmt!(fmt, precision, arg);
+                        }
+                        None => {
+                            append_output_fmt!(fmt, arg);
+                        }
+                    },
+                }
+            }
+
+            'a' | 'A' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => {
+                let arg: f64 = string_to_scalar_type(argument, self);
+                match field_width {
+                    Some(field_width) => match precision {
+                        Some(precision) => {
+                            append_output_fmt!(fmt, field_width, precision, arg);
+                        }
+                        None => {
+                            append_output_fmt!(fmt, field_width, arg);
+                        }
+                    },
+                    None => match precision {
+                        Some(precision) => {
+                            append_output_fmt!(fmt, precision, arg);
+                        }
+                        None => {
+                            append_output_fmt!(fmt, arg);
+                        }
+                    },
+                }
+            }
+
+            'c' => match field_width {
+                Some(field_width) => {
+                    append_output_fmt!(fmt, field_width, argument.char_at(0));
+                }
+                None => {
+                    append_output_fmt!(fmt, argument.char_at(0));
+                }
+            },
+
+            's' => match field_width {
+                Some(field_width) => match precision {
+                    Some(precision) => {
+                        append_output_fmt!(fmt, field_width, precision, argument);
+                    }
+                    None => {
+                        append_output_fmt!(fmt, field_width, argument);
+                    }
+                },
+                None => match precision {
+                    Some(precision) => {
+                        append_output_fmt!(fmt, precision, argument);
+                    }
+                    None => {
+                        append_output_fmt!(fmt, argument);
+                    }
+                },
+            },
+
+            _ => {
+                panic!("unexpected opt: {}", conversion);
+            }
+        }
+    }
+
+    /// Print the text in `format`, using `argv` for arguments to any `%' directives.
+    /// Return the number of elements of `argv` used.
+    fn print_formatted(&mut self, format: &wstr, mut argv: &[&wstr]) -> usize {
+        let mut argc = argv.len();
+        let save_argc = argc; /* Preserve original value.  */
+        let mut f: &wstr; /* Pointer into `format'.  */
+        let mut directive_start: &wstr; /* Start of % directive.  */
+        let mut directive_length: usize; /* Length of % directive.  */
+        let mut field_width: Option<i64>; /* Arg to first '*'.  */
+        let mut precision: Option<i64>; /* Arg to second '*'.  */
+        let mut ok = [false; 256]; /* ok['x'] is true if %x is allowed.  */
+
+        // N.B. this was originally written as a loop like so:
+        //    for (f = format; *f != L'\0'; ++f) {
+        // so we emulate that.
+        f = format;
+        let mut first = true;
+        loop {
+            if !first {
+                f = &f[1..];
+            }
+            first = false;
+            if f.is_empty() {
+                break;
+            }
+
+            match f.char_at(0) {
+                '%' => {
+                    directive_start = f;
+                    f = &f[1..];
+                    directive_length = 1;
+                    field_width = None;
+                    precision = None;
+                    if f.char_at(0) == '%' {
+                        self.append_output('%');
+                        continue;
+                    }
+                    if f.char_at(0) == 'b' {
+                        // FIXME: Field width and precision are not supported for %b, even though POSIX
+                        // requires it.
+                        if argc > 0 {
+                            self.print_esc_string(argv[0]);
+                            argv = &argv[1..];
+                            argc -= 1;
+                        }
+                        continue;
+                    }
+
+                    modify_allowed_format_specifiers(&mut ok, "aAcdeEfFgGiosuxX", true);
+                    let mut continue_looking_for_flags = true;
+                    while continue_looking_for_flags {
+                        match f.char_at(0) {
+                            '\'' => {
+                                modify_allowed_format_specifiers(&mut ok, "aAceEosxX", false);
+                            }
+
+                            '-' | '+' | ' ' => {
+                                // pass
+                            }
+
+                            '#' => {
+                                modify_allowed_format_specifiers(&mut ok, "cdisu", false);
+                            }
+
+                            '0' => {
+                                modify_allowed_format_specifiers(&mut ok, "cs", false);
+                            }
+
+                            _ => {
+                                continue_looking_for_flags = false;
+                            }
+                        }
+                        if continue_looking_for_flags {
+                            f = &f[1..];
+                            directive_length += 1;
+                        }
+                    }
+
+                    if f.char_at(0) == '*' {
+                        f = &f[1..];
+                        directive_length += 1;
+                        if argc > 0 {
+                            let width: i64 = string_to_scalar_type(argv[0], self);
+                            if (c_int::MIN as i64) <= width && width <= (c_int::MAX as i64) {
+                                field_width = Some(width);
+                            } else {
+                                self.fatal_error(err_fmt!("invalid field width: %s", argv[0]));
+                            }
+                            argv = &argv[1..];
+                            argc -= 1;
+                        } else {
+                            field_width = Some(0);
+                        }
+                    } else {
+                        while iswdigit(f.char_at(0)) {
+                            f = &f[1..];
+                            directive_length += 1;
+                        }
+                    }
+
+                    if f.char_at(0) == '.' {
+                        f = &f[1..];
+                        directive_length += 1;
+                        modify_allowed_format_specifiers(&mut ok, "c", false);
+                        if f.char_at(0) == '*' {
+                            f = &f[1..];
+                            directive_length += 1;
+                            if argc > 0 {
+                                let prec: i64 = string_to_scalar_type(argv[0], self);
+                                if prec < 0 {
+                                    // A negative precision is taken as if the precision were omitted,
+                                    // so -1 is safe here even if prec < INT_MIN.
+                                    precision = Some(-1);
+                                } else if (c_int::MAX as i64) < prec {
+                                    self.fatal_error(err_fmt!("invalid precision: %s", argv[0]));
+                                } else {
+                                    precision = Some(prec);
+                                }
+                                argv = &argv[1..];
+                                argc -= 1;
+                            } else {
+                                precision = Some(0);
+                            }
+                        } else {
+                            while iswdigit(f.char_at(0)) {
+                                f = &f[1..];
+                                directive_length += 1;
+                            }
+                        }
+                    }
+
+                    while matches!(f.char_at(0), 'l' | 'L' | 'h' | 'j' | 't' | 'z') {
+                        f = &f[1..];
+                    }
+
+                    let conversion = f.char_at(0);
+                    if (conversion as usize) > 0xFF || !ok[conversion as usize] {
+                        let directive = &directive_start[0..directive_start
+                            .len()
+                            .min(wstr_offset_in(f, directive_start) + 1)];
+                        self.fatal_error(err_fmt!(
+                            "%s: invalid conversion specification",
+                            directive
+                        ));
+                        return 0;
+                    }
+
+                    let mut argument = L!("");
+                    if argc > 0 {
+                        argument = argv[0];
+                        argv = &argv[1..];
+                        argc -= 1;
+                    }
+                    self.print_directive(
+                        &directive_start[..directive_length],
+                        f.char_at(0),
+                        field_width,
+                        precision,
+                        argument,
+                    );
+                }
+                '\\' => {
+                    let consumed_minus_1 = self.print_esc(f, false);
+                    f = &f[consumed_minus_1..]; // Loop increment will add 1.
+                }
+
+                c => {
+                    self.append_output(c);
+                }
+            }
+        }
+        save_argc - argc
+    }
+
+    fn nonfatal_error(&mut self, err: error::Error) {
+        // Don't error twice.
+        if self.early_exit {
+            return;
+        }
+
+        // If we have output, write it so it appears first.
+        if !self.buff.is_empty() {
+            self.streams.out.append(&self.buff);
+            self.buff.clear();
+        }
+
+        let errstr = err.to_string();
+        self.streams.err.append(&errstr);
+        if !errstr.ends_with('\n') {
+            self.streams.err.append('\n');
+        }
+
+        // We set the exit code to error, because one occurred,
+        // but we don't do an early exit so we still print what we can.
+        self.exit_code = Err(STATUS_CMD_ERROR);
+    }
+
+    fn fatal_error(&mut self, err: error::Error) {
+        self.nonfatal_error(err);
+        self.early_exit = true;
+    }
+
+    /// Print a \ escape sequence starting at ESCSTART.
+    /// Return the number of characters in the string, *besides the backslash*.
+    /// That is this is ONE LESS than the number of characters consumed.
+    /// If octal_0 is nonzero, octal escapes are of the form \0ooo, where o
+    /// is an octal digit; otherwise they are of the form \ooo.
+    fn print_esc(&mut self, escstart: &wstr, octal_0: bool) -> usize {
+        assert_eq!(escstart.char_at(0), '\\');
+        let mut p = &escstart[1..];
+        let mut esc_value = 0; /* Value of \nnn escape. */
+        let mut esc_length; /* Length of \nnn escape. */
+        if p.char_at(0) == 'x' {
+            // A hexadecimal \xhh escape sequence must have 1 or 2 hex. digits.
+            p = &p[1..];
+            esc_length = 0;
+            while esc_length < 2 && iswxdigit(p.char_at(0)) {
+                esc_value = esc_value * 16 + p.char_at(0).to_digit(16).unwrap();
+                esc_length += 1;
+                p = &p[1..];
+            }
+            if esc_length == 0 {
+                self.fatal_error(err_str!("missing hexadecimal number in escape"));
+            }
+            self.append_output(encode_byte_to_char((esc_value % 256) as u8));
+        } else if is_octal_digit(p.char_at(0)) {
+            // Parse \0ooo (if octal_0 && *p == L'0') or \ooo (otherwise). Allow \ooo if octal_0 && *p
+            // != L'0'; this is an undocumented extension to POSIX that is compatible with Bash 2.05b.
+            // Wrap mod 256, which matches historic behavior.
+            esc_length = 0;
+            if octal_0 && p.char_at(0) == '0' {
+                p = &p[1..];
+            }
+            while esc_length < 3 && is_octal_digit(p.char_at(0)) {
+                esc_value = esc_value * 8 + p.char_at(0).to_digit(8).unwrap();
+                esc_length += 1;
+                p = &p[1..];
+            }
+            self.append_output(encode_byte_to_char((esc_value % 256) as u8));
+        } else if "\"\\abcefnrtv".contains(p.char_at(0)) {
+            self.print_esc_char(p.char_at(0));
+            p = &p[1..];
+        } else if p.char_at(0) == 'u' || p.char_at(0) == 'U' {
+            let esc_char: char = p.char_at(0);
+            p = &p[1..];
+            let mut uni_value = 0;
+            let exp_esc_length = if esc_char == 'u' { 4 } else { 8 };
+            for esc_length in 0..exp_esc_length {
+                if !iswxdigit(p.char_at(0)) {
+                    // Escape sequence must be done. Complain if we didn't get anything.
+                    if esc_length == 0 {
+                        self.fatal_error(err_str!("Missing hexadecimal number in Unicode escape"));
+                    }
+                    break;
+                }
+                uni_value = uni_value * 16 + p.char_at(0).to_digit(16).unwrap();
+                p = &p[1..];
+            }
+            match char::from_u32(uni_value) {
+                Some(c) => {
+                    // Test if this character would be treated specially when decoding.
+                    // If so, PUA-encode it.
+                    if decode_byte_from_char(c).is_some() {
+                        // A `char` represents an Unicode scalar value, which takes up at most 4 bytes when encoded in UTF-8.
+                        let mut converted = [0_u8; 4];
+                        for byte in c.encode_utf8(&mut converted).as_bytes() {
+                            self.append_output(encode_byte_to_char(*byte));
+                        }
+                    } else {
+                        self.append_output(c);
+                    }
+                }
+                None => {
+                    let escaped_char_string = format!("\\{esc_char}{uni_value:0exp_esc_length$x}");
+                    self.fatal_error(err_fmt!(
+                        "Not a valid Unicode character: %s",
+                        escaped_char_string
+                    ));
+                }
+            }
+        } else {
+            self.append_output('\\');
+            if !p.is_empty() {
+                self.append_output(p.char_at(0));
+                p = &p[1..];
+            }
+        }
+        wstr_offset_in(p, escstart) - 1
+    }
+
+    /// Print string str, evaluating \ escapes.
+    fn print_esc_string(&mut self, mut str: &wstr) {
+        // Emulating the following loop: for (; *str; str++)
+        while !str.is_empty() {
+            let c = str.char_at(0);
+            if c == '\\' {
+                let consumed_minus_1 = self.print_esc(str, true);
+                str = &str[consumed_minus_1..];
+            } else {
+                self.append_output(c);
+            }
+            str = &str[1..];
+        }
+    }
+
+    /// Output a single-character \ escape.
+    fn print_esc_char(&mut self, c: char) {
+        match c {
+            'a' => {
+                // alert
+                self.append_output('\x07'); // \a
+            }
+            'b' => {
+                // backspace
+                self.append_output('\x08'); // \b
+            }
+            'c' => {
+                // cancel the rest of the output
+                self.early_exit = true;
+            }
+            'e' => {
+                // escape
+                self.append_output('\x1B');
+            }
+            'f' => {
+                // form feed
+                self.append_output('\x0C'); // \f
+            }
+            'n' => {
+                // new line
+                self.append_output('\n');
+            }
+            'r' => {
+                // carriage return
+                self.append_output('\r');
+            }
+            't' => {
+                // horizontal tab
+                self.append_output('\t');
+            }
+            'v' => {
+                // vertical tab
+                self.append_output('\x0B'); // \v
+            }
+            _ => {
+                self.append_output(c);
+            }
+        }
+    }
+
+    fn append_output(&mut self, c: char) {
+        // Don't output if we're done.
+        if self.early_exit {
+            return;
+        }
+
+        self.buff.push(c);
+    }
+}
+
+/// The printf builtin.
+pub fn printf(_parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
+    let mut argc = argv.len();
+
+    // Rebind argv as immutable slice (can't rearrange its elements), skipping the command name.
+    let mut argv: &[&wstr] = &argv[1..];
+    argc -= 1;
+    if argc < 1 {
+        return Err(STATUS_INVALID_ARGS);
+    }
+
+    let mut state = builtin_printf_state_t {
+        streams,
+        exit_code: Ok(SUCCESS),
+        early_exit: false,
+        buff: WString::new(),
+        locale: get_numeric_locale(),
+    };
+    let format = argv[0];
+    argc -= 1;
+    argv = &argv[1..];
+    loop {
+        let args_used = state.print_formatted(format, argv);
+        argc -= args_used;
+        argv = &argv[args_used..];
+        if !state.buff.is_empty() {
+            state.streams.out.append(&state.buff);
+            state.buff.clear();
+        }
+        if !(args_used > 0 && argc > 0 && !state.early_exit) {
+            break;
+        }
+    }
+    state.exit_code
+}

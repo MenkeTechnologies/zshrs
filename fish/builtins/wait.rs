@@ -1,0 +1,227 @@
+use super::prelude::*;
+use crate::err_fmt;
+use crate::proc::{proc_wait_any, Job, Pid};
+use crate::signal::SigChecker;
+use crate::wait_handle::{WaitHandleRef, WaitHandleStore};
+
+/// Return true if we can wait on a job.
+fn can_wait_on_job(j: &Job) -> bool {
+    j.is_constructed() && !j.is_foreground() && !j.is_stopped()
+}
+
+/// Return true if a wait handle matches a pid or a process name.
+fn wait_handle_matches(query: WaitHandleQuery, wh: &WaitHandleRef) -> bool {
+    match query {
+        WaitHandleQuery::Pid(pid) => wh.pid == pid,
+        WaitHandleQuery::ProcName(proc_name) => proc_name == wh.base_name,
+    }
+}
+
+/// Return true if all chars are numeric.
+fn iswnumeric(s: &wstr) -> bool {
+    s.chars().all(|c| c.is_ascii_digit())
+}
+
+#[derive(Copy, Clone)]
+enum WaitHandleQuery<'a> {
+    Pid(Pid),
+    ProcName(&'a wstr),
+}
+
+/// Walk the list of jobs, looking for a process with the given pid or proc name.
+/// Append all matching wait handles to `handles`.
+/// Return true if we found a matching job (even if not waitable), false if not.
+fn find_wait_handles(
+    query: WaitHandleQuery<'_>,
+    parser: &Parser,
+    handles: &mut Vec<WaitHandleRef>,
+) -> bool {
+    // Has a job already completed?
+    let mut matched = false;
+    let wait_handles: &mut WaitHandleStore = &mut parser.mut_wait_handles();
+    match query {
+        WaitHandleQuery::Pid(pid) => {
+            if let Some(wh) = wait_handles.get_by_pid(pid) {
+                handles.push(wh);
+                matched = true;
+            }
+        }
+        _ => {
+            for wh in wait_handles.iter() {
+                if wait_handle_matches(query, wh) {
+                    handles.push(wh.clone());
+                    matched = true;
+                }
+            }
+        }
+    }
+
+    // Is there a running job match?
+    for j in &*parser.jobs() {
+        // We want to set 'matched' to true if we could have matched, even if the job was stopped.
+        let provide_handle = can_wait_on_job(j);
+        let internal_job_id = j.internal_job_id;
+        for proc in j.processes().iter() {
+            let Some(wh) = proc.make_wait_handle(internal_job_id) else {
+                continue;
+            };
+            if wait_handle_matches(query, &wh) {
+                matched = true;
+                if provide_handle {
+                    handles.push(wh.clone());
+                }
+            }
+        }
+    }
+    matched
+}
+
+fn get_all_wait_handles(parser: &Parser) -> Vec<WaitHandleRef> {
+    // Get wait handles for reaped jobs.
+    let mut result = parser.get_wait_handles().get_list();
+
+    // Get wait handles for running jobs.
+    for j in &*parser.jobs() {
+        if !can_wait_on_job(j) {
+            continue;
+        }
+        let internal_job_id = j.internal_job_id;
+        for proc in j.processes().iter() {
+            if let Some(wh) = proc.make_wait_handle(internal_job_id) {
+                result.push(wh);
+            }
+        }
+    }
+    result
+}
+
+fn is_completed(wh: &WaitHandleRef) -> bool {
+    wh.is_completed()
+}
+
+/// Wait for the given wait handles to be marked as completed.
+/// If `any_flag` is set, wait for the first one; otherwise wait for all.
+/// Return a status code.
+fn wait_for_completion(parser: &Parser, whs: &[WaitHandleRef], any_flag: bool) -> BuiltinResult {
+    if whs.is_empty() {
+        return Ok(SUCCESS);
+    }
+
+    let mut sigint = SigChecker::new_sighupintterm();
+    loop {
+        let finished = if any_flag {
+            whs.iter().any(is_completed)
+        } else {
+            whs.iter().all(is_completed)
+        };
+
+        if finished {
+            // Remove completed wait handles (at most 1 if any_flag is set).
+            for wh in whs {
+                if is_completed(wh) {
+                    parser.mut_wait_handles().remove(wh);
+                    if any_flag {
+                        break;
+                    }
+                }
+            }
+            return Ok(SUCCESS);
+        }
+        if sigint.check() {
+            return Err(128 + libc::SIGINT);
+        }
+        proc_wait_any(parser);
+    }
+}
+
+pub fn wait(parser: &Parser, streams: &mut IoStreams, argv: &mut [&wstr]) -> BuiltinResult {
+    let cmd = argv[0];
+    let argc = argv.len();
+    let mut any_flag = false; // flag for -n option
+    let mut print_help = false;
+    let print_hints = false;
+
+    let shortopts: &wstr = L!("nh");
+    let longopts: &[WOption] = &[
+        wopt(L!("any"), ArgType::NoArgument, 'n'),
+        wopt(L!("help"), ArgType::NoArgument, 'h'),
+    ];
+
+    let mut w = WGetopter::new(shortopts, longopts, argv);
+    while let Some(c) = w.next_opt() {
+        match c {
+            'n' => {
+                any_flag = true;
+            }
+            'h' => {
+                print_help = true;
+            }
+            ':' => {
+                builtin_missing_argument(
+                    parser,
+                    streams,
+                    cmd,
+                    None,
+                    argv[w.wopt_index - 1],
+                    print_hints,
+                );
+                return Err(STATUS_INVALID_ARGS);
+            }
+            ';' => {
+                builtin_unexpected_argument(
+                    parser,
+                    streams,
+                    cmd,
+                    argv[w.wopt_index - 1],
+                    print_hints,
+                );
+                return Err(STATUS_INVALID_ARGS);
+            }
+            '?' => {
+                builtin_unknown_option(parser, streams, cmd, argv[w.wopt_index - 1], print_hints);
+                return Err(STATUS_INVALID_ARGS);
+            }
+            _ => {
+                panic!("unexpected retval from wgeopter.next()");
+            }
+        }
+    }
+
+    if print_help {
+        builtin_print_help(parser, streams, cmd);
+        return Ok(SUCCESS);
+    }
+
+    if w.wopt_index == argc {
+        // No jobs specified.
+        // Note this may succeed with an empty wait list.
+        return wait_for_completion(parser, &get_all_wait_handles(parser), any_flag);
+    }
+
+    // Get the list of wait handles for our waiting.
+    let mut wait_handles: Vec<WaitHandleRef> = Vec::new();
+    let optind = w.wopt_index;
+    for item in &argv[optind..argc] {
+        if iswnumeric(item) {
+            let Ok(pid) = parse_pid(streams, cmd, item) else {
+                continue;
+            };
+            if !find_wait_handles(WaitHandleQuery::Pid(pid), parser, &mut wait_handles) {
+                err_fmt!("Could not find a job with process ID '%d'", pid,)
+                    .cmd(cmd)
+                    .finish(streams);
+            }
+        } else {
+            // argument is process name
+            if !find_wait_handles(WaitHandleQuery::ProcName(item), parser, &mut wait_handles) {
+                err_fmt!("Could not find child processes with the name '%s'", item,)
+                    .cmd(cmd)
+                    .finish(streams);
+            }
+        }
+    }
+    if wait_handles.is_empty() {
+        return Err(STATUS_INVALID_ARGS);
+    }
+    wait_for_completion(parser, &wait_handles, any_flag)
+}

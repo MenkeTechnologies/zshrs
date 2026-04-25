@@ -1,0 +1,32 @@
+[package]
+name = "compsys"
+version = "0.8.17"
+edition = "2021"
+description = "Zsh-compatible completion system for zshrs — SQLite FTS5, menuselect, zstyle"
+license = "MIT"
+authors = ["MenkeTechnologies"]
+repository = "https://github.com/MenkeTechnologies/zshrs"
+
+[lib]
+name = "compsys"
+path = "lib.rs"
+
+[[bin]]
+name = "compsys-test"
+path = "main.rs"
+
+[[bin]]
+name = "menu-demo"
+path = "bins/menu_demo.rs"
+
+[[bin]]
+name = "bench-autoload"
+path = "bins/bench_autoload.rs"
+
+[dependencies]
+dirs = "5"
+libc = "0.2"
+rayon = "1.10"
+regex-lite = "0.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+unicode-width = "0.2"

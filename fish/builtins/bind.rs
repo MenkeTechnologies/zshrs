@@ -1,0 +1,574 @@
+//! Implementation of the bind builtin.
+
+use super::prelude::*;
+use crate::{
+    builtins::error::Error,
+    common::valid_var_name,
+    err_fmt, err_raw, err_str,
+    highlight::highlight_and_colorize,
+    input::{
+        input_function_get_names, input_mappings, InputMapping, InputMappingSet, KeyNameStyle,
+    },
+    key::{
+        self, char_to_symbol, function_key, parse_keys, Key, Modifiers, KEY_NAMES, MAX_FUNCTION_KEY,
+    },
+};
+use fish_common::{escape, escape_string, help_section, EscapeFlags, EscapeStringStyle};
+use fish_widestring::bytes2wcstring;
+use std::sync::MutexGuard;
+
+const DEFAULT_BIND_MODE: &wstr = L!("default");
+
+enum BindMode {
+    Insert,
+    Erase,
+    KeyNames,
+    FunctionNames,
+}
+
+struct Options {
+    all: bool,
+    list_modes: bool,
+    print_help: bool,
+    silent: bool,
+    have_user: bool,
+    user: bool,
+    have_preset: bool,
+    preset: bool,
+    mode: BindMode,
+    bind_mode: Option<WString>,
+    sets_bind_mode: Option<WString>,
+    color: ColorEnabled,
+}
+
+impl Options {
+    fn new() -> Options {
+        Options {
+            all: false,
+            list_modes: false,
+            print_help: false,
+            silent: false,
+            have_user: false,
+            user: false,
+            have_preset: false,
+            preset: false,
+            mode: BindMode::Insert,
+            bind_mode: None,
+            sets_bind_mode: None,
+            color: ColorEnabled::default(),
+        }
+    }
+}
+
+struct BuiltinBind {
+    /// Note that BuiltinBind holds the singleton lock.
+    /// It must not call out to anything which can execute fish shell code or attempt to acquire the
+    /// lock again.
+    input_mappings: MutexGuard<'static, InputMappingSet>,
+    opts: Options,
+}
+
+impl BuiltinBind {
+    fn new() -> BuiltinBind {
+        BuiltinBind {
+            input_mappings: input_mappings(),
+            opts: Options::new(),
+        }
+    }
+
+    /// Returns a WString for the output line of a bind
+    fn generate_output_string(seq: &[Key], user: bool, bind: &InputMapping) -> WString {
+        let mut out = WString::new();
+
+        out.push_str("bind");
+
+        // Append the mode flags if applicable.
+        if !user {
+            out.push_str(" --preset");
+        }
+        if bind.mode != DEFAULT_BIND_MODE {
+            out.push_str(" -M ");
+            out.push_utfstr(&escape(&bind.mode));
+        }
+
+        if let Some(sets_mode) = &bind.sets_mode {
+            if *sets_mode != bind.mode {
+                out.push_str(" -m ");
+                out.push_utfstr(&escape(sets_mode));
+            }
+        }
+
+        out.push(' ');
+        match bind.key_name_style {
+            KeyNameStyle::Plain => {
+                // Append the name.
+                for (i, key) in seq.iter().enumerate() {
+                    if i != 0 {
+                        out.push(key::KEY_SEPARATOR);
+                    }
+                    out.push_utfstr(&WString::from(*key));
+                }
+                if seq.is_empty() {
+                    out.push_str("''");
+                }
+            }
+            KeyNameStyle::RawEscapeSequence => {
+                for (i, key) in seq.iter().enumerate() {
+                    if key.modifiers == Modifiers::ALT {
+                        out.push_utfstr(&char_to_symbol('\x1b', i == 0));
+                        out.push_utfstr(&char_to_symbol(
+                            if key.codepoint == key::ESCAPE {
+                                '\x1b'
+                            } else {
+                                key.codepoint
+                            },
+                            false,
+                        ));
+                    } else {
+                        assert!(key.modifiers.is_none());
+                        out.push_utfstr(&char_to_symbol(key.codepoint, i == 0));
+                    }
+                }
+            }
+        }
+
+        // Now show the list of commands.
+        for ecmd in &bind.commands {
+            out.push(' ');
+            out.push_utfstr(&escape(ecmd));
+        }
+        out.push('\n');
+
+        out
+    }
+
+    /// List a single binding of a specific sequence from the specified mode.
+    /// Returns false if no binding with that sequence and mode exists.
+    ///
+    /// If bind_mode is None, then binds from all modes are listed.
+    fn list_one(
+        &self,
+        seq: &[Key],
+        bind_mode: Option<&wstr>,
+        user: bool,
+        parser: &Parser,
+        streams: &mut IoStreams,
+    ) -> bool {
+        let results = self.input_mappings.get(seq, bind_mode, user);
+
+        // no binds found
+        if results.is_empty() {
+            return false;
+        }
+
+        for bind in results {
+            let out = Self::generate_output_string(seq, user, bind);
+
+            if self.opts.color.enabled(streams) {
+                streams.out.append(&bytes2wcstring(&highlight_and_colorize(
+                    &out,
+                    &parser.context(),
+                    parser.vars(),
+                )));
+            } else {
+                streams.out.append(&out);
+            }
+        }
+
+        true
+    }
+
+    /// Overload with both preset and user bindings.
+    /// Returns false only if neither exists.
+    ///
+    /// If bind_mode is None, then binds from all modes are listed.
+    fn list_one_user_andor_preset(
+        &self,
+        seq: &[Key],
+        bind_mode: Option<&wstr>,
+        user: bool,
+        preset: bool,
+        parser: &Parser,
+        streams: &mut IoStreams,
+    ) -> bool {
+        let mut retval = false;
+        if preset {
+            retval |= self.list_one(seq, bind_mode, false, parser, streams);
+        }
+        if user {
+            retval |= self.list_one(seq, bind_mode, true, parser, streams);
+        }
+        retval
+    }
+
+    /// List all current key bindings.
+    fn list(&self, bind_mode: Option<&wstr>, user: bool, parser: &Parser, streams: &mut IoStreams) {
+        let lst = self.input_mappings.get_names(user);
+        for binding in lst {
+            if bind_mode.is_some_and(|m| m != binding.mode) {
+                continue;
+            }
+
+            self.list_one(&binding.seq, Some(&binding.mode), user, parser, streams);
+        }
+    }
+
+    /// Print all named keys to the string buffer used for standard output.
+    fn key_names(&self, streams: &mut IoStreams) {
+        let function_keys: Vec<WString> = (1..=MAX_FUNCTION_KEY)
+            .map(|i| WString::from(Key::from_raw(function_key(i))))
+            .collect();
+        let mut keys: Vec<&wstr> = KEY_NAMES
+            .iter()
+            .map(|(_encoding, name)| *name)
+            .chain(function_keys.iter().map(|s| s.as_utfstr()))
+            .collect();
+        keys.sort_unstable();
+        for name in keys {
+            streams.out.appendln(name);
+        }
+    }
+
+    /// Print all the special key binding functions to string buffer used for standard output.
+    fn function_names(&self, streams: &mut IoStreams) {
+        let names = input_function_get_names();
+        for name in names {
+            streams.out.appendln(name);
+        }
+    }
+
+    /// Add specified key binding.
+    fn add(
+        &mut self,
+        seq: &wstr,
+        cmds: &[&wstr],
+        mode: WString,
+        sets_mode: Option<WString>,
+        user: bool,
+        streams: &mut IoStreams,
+    ) -> bool {
+        let cmds = cmds.iter().map(|&s| s.to_owned()).collect();
+        let is_raw_escape_sequence = seq.len() > 2 && seq.char_at(0) == '\x1b';
+        let Some(key_seq) = self.compute_seq(streams, seq) else {
+            return true;
+        };
+        let key_name_style = if is_raw_escape_sequence {
+            KeyNameStyle::RawEscapeSequence
+        } else {
+            KeyNameStyle::Plain
+        };
+        self.input_mappings
+            .add(key_seq, key_name_style, cmds, mode, sets_mode, user);
+        false
+    }
+
+    fn compute_seq(&self, streams: &mut IoStreams, seq: &wstr) -> Option<Vec<Key>> {
+        match parse_keys(seq) {
+            Ok(keys) => Some(keys),
+            Err(err) => {
+                err_raw!(err).cmd(L!("bind")).finish(streams);
+                None
+            }
+        }
+    }
+
+    /// Erase specified key bindings
+    ///
+    /// @param  seq
+    ///    an array of all key bindings to erase
+    /// @param  all
+    ///    if specified, _all_ key bindings will be erased
+    ///
+    fn erase(&mut self, seq: &[&wstr], all: bool, user: bool, streams: &mut IoStreams) -> bool {
+        let bind_mode = self.opts.bind_mode.as_deref();
+
+        if all {
+            self.input_mappings.clear(bind_mode, user);
+            return false;
+        }
+
+        let bind_mode = bind_mode.unwrap_or(DEFAULT_BIND_MODE);
+
+        for s in seq {
+            let Some(s) = self.compute_seq(streams, s) else {
+                return true;
+            };
+            self.input_mappings.erase(&s, bind_mode, user);
+        }
+        false
+    }
+
+    fn insert(
+        &mut self,
+        optind: usize,
+        argv: &[&wstr],
+        parser: &Parser,
+        streams: &mut IoStreams,
+    ) -> bool {
+        let argc = argv.len();
+        let cmd = argv[0];
+        let arg_count = argc - optind;
+        if arg_count < 2 {
+            // If we get both or neither preset/user, we list both.
+            if !self.opts.have_preset && !self.opts.have_user {
+                self.opts.preset = true;
+                self.opts.user = true;
+            }
+        } else {
+            // Inserting both on the other hand makes no sense.
+            if self.opts.have_preset && self.opts.have_user {
+                err_fmt!(Error::COMBO_EXCLUSIVE, "--preset", "--user")
+                    .cmd(cmd)
+                    .finish(streams);
+                return true;
+            }
+        }
+
+        if arg_count == 0 {
+            // We don't overload this with user and def because we want them to be grouped.
+            // First the presets, then the users (because of scrolling).
+            let bind_mode = self.opts.bind_mode.as_deref();
+            if self.opts.preset {
+                self.list(bind_mode, false, parser, streams);
+            }
+            if self.opts.user {
+                self.list(bind_mode, true, parser, streams);
+            }
+        } else if arg_count == 1 {
+            let Some(seq) = self.compute_seq(streams, argv[optind]) else {
+                return true;
+            };
+
+            let bind_mode = self.opts.bind_mode.as_deref();
+
+            if !self.list_one_user_andor_preset(
+                &seq,
+                bind_mode,
+                self.opts.user,
+                self.opts.preset,
+                parser,
+                streams,
+            ) {
+                let eseq = escape_string(
+                    argv[optind],
+                    EscapeStringStyle::Script(EscapeFlags::NO_PRINTABLES),
+                );
+                if !self.opts.silent {
+                    if seq.len() == 1 {
+                        err_fmt!("No binding found for key '%s'", seq[0])
+                            .cmd(cmd)
+                            .finish(streams);
+                    } else {
+                        err_fmt!("No binding found for key sequence '%s'", eseq)
+                            .cmd(cmd)
+                            .finish(streams);
+                    }
+                }
+                return true;
+            }
+        } else {
+            // Actually insert!
+            let seq = argv[optind];
+            if self.add(
+                seq,
+                &argv[optind + 1..],
+                self.opts
+                    .bind_mode
+                    .clone()
+                    .unwrap_or(DEFAULT_BIND_MODE.to_owned()),
+                self.opts.sets_bind_mode.clone(),
+                self.opts.user,
+                streams,
+            ) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// List all current bind modes.
+    fn list_modes(&mut self, streams: &mut IoStreams) {
+        // List all known modes, even if they are only in preset bindings.
+        let lst = self.input_mappings.get_names(true);
+        let preset_lst = self.input_mappings.get_names(false);
+
+        // Extract the bind modes, uniqueize, and sort.
+        let mut modes: Vec<WString> = lst.into_iter().chain(preset_lst).map(|m| m.mode).collect();
+        modes.sort_unstable();
+        modes.dedup();
+
+        for mode in modes {
+            streams.out.appendln(&mode);
+        }
+    }
+}
+
+fn parse_cmd_opts(
+    opts: &mut Options,
+    optind: &mut usize,
+    argv: &mut [&wstr],
+    parser: &Parser,
+    streams: &mut IoStreams,
+) -> BuiltinResult {
+    let cmd = argv[0];
+    let short_options = L!("aehkKfM:Lm:s");
+    let long_options: &[WOption] = &[
+        wopt(L!("all"), NoArgument, 'a'),
+        wopt(L!("erase"), NoArgument, 'e'),
+        wopt(L!("function-names"), NoArgument, 'f'),
+        wopt(L!("help"), NoArgument, 'h'),
+        wopt(L!("key"), NoArgument, 'k'),
+        wopt(L!("key-names"), NoArgument, 'K'),
+        wopt(L!("list-modes"), NoArgument, 'L'),
+        wopt(L!("mode"), RequiredArgument, 'M'),
+        wopt(L!("preset"), NoArgument, 'p'),
+        wopt(L!("sets-mode"), RequiredArgument, 'm'),
+        wopt(L!("silent"), NoArgument, 's'),
+        wopt(L!("user"), NoArgument, 'u'),
+        wopt(L!("color"), RequiredArgument, COLOR_OPTION_CHAR),
+    ];
+
+    let check_mode_name = |streams: &mut IoStreams, mode_name: &wstr| -> Result<(), ErrorCode> {
+        if !valid_var_name(mode_name) {
+            err_fmt!(
+                Error::BIND_MODE,
+                mode_name,
+                help_section!("language#shell-variable-and-function-names")
+            )
+            .cmd(cmd)
+            .finish(streams);
+            return Err(STATUS_INVALID_ARGS);
+        }
+        Ok(())
+    };
+
+    let mut w = WGetopter::new(short_options, long_options, argv);
+    while let Some(c) = w.next_opt() {
+        match c {
+            'a' => opts.all = true,
+            'e' => opts.mode = BindMode::Erase,
+            'f' => opts.mode = BindMode::FunctionNames,
+            'h' => opts.print_help = true,
+            'k' => {
+                err_str!(
+                    "the -k/--key syntax is no longer supported. See `bind --help` and `bind --key-names`"
+                )
+                .cmd(cmd)
+                .finish(streams);
+                return Err(STATUS_INVALID_ARGS);
+            }
+            'K' => opts.mode = BindMode::KeyNames,
+            'L' => {
+                opts.list_modes = true;
+                return Ok(SUCCESS);
+            }
+            'M' => {
+                let applicable_mode = w.woptarg.unwrap();
+                check_mode_name(streams, applicable_mode)?;
+                opts.bind_mode = Some(applicable_mode.to_owned());
+            }
+            'm' => {
+                let new_mode = w.woptarg.unwrap();
+                check_mode_name(streams, new_mode)?;
+                opts.sets_bind_mode = Some(new_mode.to_owned());
+            }
+            'p' => {
+                opts.have_preset = true;
+                opts.preset = true;
+            }
+            's' => opts.silent = true,
+            'u' => {
+                opts.have_user = true;
+                opts.user = true;
+            }
+            ':' => {
+                builtin_missing_argument(parser, streams, cmd, None, argv[w.wopt_index - 1], true);
+                return Err(STATUS_INVALID_ARGS);
+            }
+            ';' => {
+                builtin_unexpected_argument(parser, streams, cmd, argv[w.wopt_index - 1], true);
+                return Err(STATUS_INVALID_ARGS);
+            }
+            '?' => {
+                builtin_unknown_option(parser, streams, cmd, argv[w.wopt_index - 1], true);
+                return Err(STATUS_INVALID_ARGS);
+            }
+            COLOR_OPTION_CHAR => {
+                opts.color = ColorEnabled::parse_from_opt(streams, cmd, w.woptarg.unwrap())?;
+            }
+            _ => {
+                panic!("unexpected retval from WGetopter")
+            }
+        }
+    }
+    *optind = w.wopt_index;
+    Ok(SUCCESS)
+}
+
+impl BuiltinBind {
+    /// The bind builtin, used for setting character sequences.
+    pub fn bind(
+        &mut self,
+        parser: &Parser,
+        streams: &mut IoStreams,
+        argv: &mut [&wstr],
+    ) -> BuiltinResult {
+        let cmd = argv[0];
+        let mut optind = 0;
+        parse_cmd_opts(&mut self.opts, &mut optind, argv, parser, streams)?;
+
+        if self.opts.list_modes {
+            self.list_modes(streams);
+            return Ok(SUCCESS);
+        }
+
+        if self.opts.print_help {
+            builtin_print_help(parser, streams, cmd);
+            return Ok(SUCCESS);
+        }
+
+        // Default to user mode
+        if !self.opts.have_preset && !self.opts.have_user {
+            self.opts.user = true;
+        }
+
+        match self.opts.mode {
+            BindMode::Erase => {
+                // If we get both, we erase both.
+                if self.opts.user
+                    && self.erase(
+                        &argv[optind..],
+                        self.opts.all,
+                        true, /* user */
+                        streams,
+                    )
+                {
+                    return Err(STATUS_CMD_ERROR);
+                }
+                if self.opts.preset
+                    && self.erase(
+                        &argv[optind..],
+                        self.opts.all,
+                        false, /* user */
+                        streams,
+                    )
+                {
+                    return Err(STATUS_CMD_ERROR);
+                }
+            }
+            BindMode::Insert => {
+                if self.insert(optind, argv, parser, streams) {
+                    return Err(STATUS_CMD_ERROR);
+                }
+            }
+            BindMode::KeyNames => self.key_names(streams),
+            BindMode::FunctionNames => self.function_names(streams),
+        }
+        Ok(SUCCESS)
+    }
+}
+
+pub fn bind(parser: &Parser, streams: &mut IoStreams, args: &mut [&wstr]) -> BuiltinResult {
+    BuiltinBind::new().bind(parser, streams, args)
+}
