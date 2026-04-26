@@ -397,9 +397,9 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "fusevm"
-version = "0.9.7"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f268ee4f7ae6fbcee3764c811484137619d189cc83e172620df91bd9cca97223"
+checksum = "0809c7addcdf6958a131b4f6b9f0f0d1f829b1d469da28096626b6cadf47f17f"
 dependencies = [
  "glob",
  "serde",
@@ -2312,7 +2312,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zshrs"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "atty",
  "bincode",
