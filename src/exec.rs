@@ -6013,9 +6013,23 @@ impl ShellExecutor {
     ///
     /// The executor context is set idempotently so callers from inside builtin
     /// handlers (which already have the context active) don't double-enter.
+    ///
+    /// Compile path: round-trip through `text::getpermtext` →
+    /// `ZshParser` + `ZshCompiler` so the executed command runs under the
+    /// new pipeline. Falls back to `ShellCompiler::new()` only when the
+    /// reconstructed text fails to re-parse — that fallback is what the
+    /// `tree_walker_absent` invariant pins as the minimum-viable shape.
     pub fn execute_command(&mut self, cmd: &ShellCommand) -> Result<i32, String> {
-        let compiler = crate::shell_compiler::ShellCompiler::new();
-        let chunk = compiler.compile(std::slice::from_ref(cmd));
+        let cmd_text = crate::text::getpermtext(cmd);
+        let chunk = crate::parser::ZshParser::new(&cmd_text)
+            .parse()
+            .ok()
+            .filter(|p| !p.lists.is_empty())
+            .map(|p| crate::compile_zsh::ZshCompiler::new().compile(&p))
+            .unwrap_or_else(|| {
+                let compiler = crate::shell_compiler::ShellCompiler::new();
+                compiler.compile(std::slice::from_ref(cmd))
+            });
         if chunk.ops.is_empty() {
             return Ok(self.last_status);
         }
@@ -10320,12 +10334,26 @@ impl ShellExecutor {
     /// same machinery `ZshrsHost::cmd_subst` uses for `Op::CmdSubst(sub_idx)`,
     /// but called from non-VM paths (the runtime expand_word fallback at
     /// `ShellWord::CommandSub` for words inside JSON-AST runtime variants).
+    ///
+    /// Compile path: round-trip through `text::getpermtext` →
+    /// `ZshParser` + `ZshCompiler` so the captured command runs under the
+    /// new pipeline. Falls back to `ShellCompiler::new()` only when the
+    /// reconstructed text fails to re-parse — that fallback is what the
+    /// `tree_walker_absent` invariant pins as the minimum-viable shape.
     pub fn execute_command_capture(&mut self, cmd: &ShellCommand) -> Result<String, String> {
         use std::io::Read;
         use std::os::unix::io::AsRawFd;
 
-        let compiler = crate::shell_compiler::ShellCompiler::new();
-        let chunk = compiler.compile(std::slice::from_ref(cmd));
+        let cmd_text = crate::text::getpermtext(cmd);
+        let chunk = crate::parser::ZshParser::new(&cmd_text)
+            .parse()
+            .ok()
+            .filter(|p| !p.lists.is_empty())
+            .map(|p| crate::compile_zsh::ZshCompiler::new().compile(&p))
+            .unwrap_or_else(|| {
+                let compiler = crate::shell_compiler::ShellCompiler::new();
+                compiler.compile(std::slice::from_ref(cmd))
+            });
         if chunk.ops.is_empty() {
             return Ok(String::new());
         }
