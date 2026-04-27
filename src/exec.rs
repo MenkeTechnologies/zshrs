@@ -5974,63 +5974,99 @@ impl ShellExecutor {
         }
     }
 
-    /// Call a function with positional parameters
-    #[tracing::instrument(level = "debug", skip_all)]
-    fn call_function(&mut self, func: &ShellCommand, args: &[String]) -> Result<i32, String> {
-        // Save current positional params
-        let saved_params = std::mem::take(&mut self.positional_params);
-
-        // Save local variable scope — any `local` declarations during this
-        // function will be reversed on exit (matches zsh's startparamscope/endparamscope).
-        let saved_local_vars = self.local_save_stack.len();
-        let saved_local_arrs = self.local_array_save_stack.len();
-        self.local_scope_depth += 1;
-
-        // Set new positional params
-        self.positional_params = args.to_vec();
-
-        // Execute the function
-        let result = self.execute_command(func);
-
-        // Handle return - clear the flag and use its value
-        let final_result = if let Some(ret) = self.returning.take() {
-            self.last_status = ret;
-            Ok(ret)
+    /// Dispatch a function by name through the new (compiled) pipeline.
+    /// Mirrors `ZshrsHost::call_function`'s resolution order — checks
+    /// `functions_compiled` first, triggers autoload if needed, then falls
+    /// back to the legacy AST recompile path. Returns `None` if the name
+    /// isn't a function (caller falls back to external dispatch).
+    ///
+    /// This is the synchronous-side replacement for the legacy
+    /// `call_function(&ShellCommand, args)`. It avoids the AST detour when
+    /// the new pipeline already has a Chunk for the function.
+    pub fn dispatch_function_call(
+        &mut self,
+        name: &str,
+        args: &[String],
+    ) -> Option<i32> {
+        // Resolve to a Chunk via the same cascade as ZshrsHost::call_function.
+        let chunk = if let Some(c) = self.functions_compiled.get(name) {
+            c.clone()
         } else {
-            result
+            // Trigger pending autoload, then re-check.
+            if !self.functions.contains_key(name) {
+                self.maybe_autoload(name);
+            }
+            if !self.functions.contains_key(name) {
+                let _ = self.autoload_function(name);
+            }
+            if let Some(c) = self.functions_compiled.get(name) {
+                c.clone()
+            } else if let Some(ast) = self.functions.get(name).cloned() {
+                let chunk =
+                    crate::shell_compiler::ShellCompiler::new()
+                        .compile(std::slice::from_ref(&ast));
+                self.functions_compiled.insert(name.to_string(), chunk.clone());
+                chunk
+            } else {
+                return None;
+            }
         };
 
-        // Restore local variables (endparamscope)
+        // Save and replace positional params + local-scope save/restore,
+        // mirroring the legacy `call_function(&ShellCommand, args)` and
+        // ZshrsHost::call_function.
+        let saved_params = std::mem::replace(
+            &mut self.positional_params,
+            args.to_vec(),
+        );
+        let saved_local_count = self.local_save_stack.len();
+        let saved_local_arr_count = self.local_array_save_stack.len();
+        self.local_scope_depth += 1;
+
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        let _ctx = ExecutorContext::enter(self);
+        let _ = vm.run();
+        let status = vm.last_status;
+        drop(_ctx);
+
+        self.positional_params = saved_params;
         self.local_scope_depth -= 1;
-        while self.local_save_stack.len() > saved_local_vars {
-            if let Some((name, old_val)) = self.local_save_stack.pop() {
+        while self.local_save_stack.len() > saved_local_count {
+            if let Some((var_name, old_val)) = self.local_save_stack.pop() {
                 match old_val {
                     Some(v) => {
-                        self.variables.insert(name, v);
+                        self.variables.insert(var_name, v);
                     }
                     None => {
-                        self.variables.remove(&name);
+                        self.variables.remove(&var_name);
                     }
                 }
             }
         }
-        while self.local_array_save_stack.len() > saved_local_arrs {
-            if let Some((name, old_arr)) = self.local_array_save_stack.pop() {
+        while self.local_array_save_stack.len() > saved_local_arr_count {
+            if let Some((arr_name, old_arr)) =
+                self.local_array_save_stack.pop()
+            {
                 match old_arr {
                     Some(items) => {
-                        self.arrays.insert(name, items);
+                        self.arrays.insert(arr_name, items);
                     }
                     None => {
-                        self.arrays.remove(&name);
+                        self.arrays.remove(&arr_name);
                     }
                 }
             }
         }
 
-        // Restore positional params
-        self.positional_params = saved_params;
-
-        final_result
+        // Honor explicit `return N` from inside the function body.
+        if let Some(ret) = self.returning.take() {
+            self.last_status = ret;
+            Some(ret)
+        } else {
+            self.last_status = status;
+            Some(status)
+        }
     }
 
     fn execute_external(
@@ -15044,14 +15080,10 @@ impl ShellExecutor {
     }
 
     fn run_original_command(&mut self, cmd_name: &str, args: &[String]) -> Result<i32, String> {
-        // Try function
-        if let Some(func) = self.functions.get(cmd_name).cloned() {
-            return self.call_function(&func, args);
-        }
-        if self.maybe_autoload(cmd_name) {
-            if let Some(func) = self.functions.get(cmd_name).cloned() {
-                return self.call_function(&func, args);
-            }
+        // Function dispatch via the compiled pipeline (functions_compiled
+        // first, falls back to legacy AST recompile if needed).
+        if let Some(status) = self.dispatch_function_call(cmd_name, args) {
+            return Ok(status);
         }
         // External command
         self.execute_external(cmd_name, &args.to_vec(), &[])
@@ -21391,10 +21423,12 @@ impl ShellExecutor {
                             return 1;
                         }
                         crate::zle::WidgetResult::CallFunction(func) => {
-                            // Would need to call shell function
+                            // Call user widget through compiled-function dispatch.
                             drop(zle);
-                            if let Some(f) = self.functions.get(&func).cloned() {
-                                return self.call_function(&f, &[]).unwrap_or(1);
+                            if let Some(status) =
+                                self.dispatch_function_call(&func, &[])
+                            {
+                                return status;
                             }
                             return 1;
                         }
@@ -23373,44 +23407,6 @@ impl ShellExecutor {
         self.traps.clear();
     }
 
-    /// Execute a shell function
-    /// Port of doshfunc() from exec.c
-    pub fn doshfunc(
-        &mut self,
-        name: &str,
-        func: &ShellCommand,
-        args: &[String],
-    ) -> Result<i32, String> {
-        // Save current state
-        let old_argv = self.positional_params.clone();
-        let old_funcstack = self.arrays.get("funcstack").cloned();
-        let old_funcsourcetrace = self.arrays.get("funcsourcetrace").cloned();
-
-        // Set positional parameters to function arguments
-        self.positional_params = args.to_vec();
-
-        // Update funcstack
-        let mut funcstack = old_funcstack.clone().unwrap_or_default();
-        funcstack.insert(0, name.to_string());
-        self.arrays.insert("funcstack".to_string(), funcstack);
-
-        // Execute function body
-        let result = self.execute_command(func);
-
-        // Restore state
-        self.positional_params = old_argv;
-        if let Some(fs) = old_funcstack {
-            self.arrays.insert("funcstack".to_string(), fs);
-        } else {
-            self.arrays.remove("funcstack");
-        }
-        if let Some(fst) = old_funcsourcetrace {
-            self.arrays.insert("funcsourcetrace".to_string(), fst);
-        }
-
-        result
-    }
-
     /// Execute arithmetic expression
     /// Port of execarith() from exec.c
     pub fn execarith(&mut self, expr: &str) -> i32 {
@@ -23430,31 +23426,6 @@ impl ShellExecutor {
         } else {
             1
         }
-    }
-
-    /// Execute command and capture time
-    /// Port of exectime() from exec.c
-    pub fn exectime(&mut self, cmd: &ShellCommand) -> Result<i32, String> {
-        use std::time::Instant;
-
-        let start = Instant::now();
-        let result = self.execute_command(cmd);
-        let elapsed = start.elapsed();
-
-        // Print time in zsh format
-        let user_time = elapsed.as_secs_f64() * 0.7; // Approximation
-        let sys_time = elapsed.as_secs_f64() * 0.1;
-        let real_time = elapsed.as_secs_f64();
-
-        eprintln!(
-            "{:.2}s user {:.2}s system {:.0}% cpu {:.3} total",
-            user_time,
-            sys_time,
-            ((user_time + sys_time) / real_time * 100.0).min(100.0),
-            real_time
-        );
-
-        result
     }
 
     /// Find command in PATH
@@ -23629,15 +23600,15 @@ impl ShellExecutor {
     /// Command not found handler
     /// Port of commandnotfound() from exec.c
     pub fn commandnotfound(&mut self, name: &str, args: &[String]) -> i32 {
-        // Check for command_not_found_handler function
-        if self.functions.contains_key("command_not_found_handler") {
+        if self.functions_compiled.contains_key("command_not_found_handler")
+            || self.functions.contains_key("command_not_found_handler")
+        {
             let mut handler_args = vec![name.to_string()];
             handler_args.extend(args.iter().cloned());
-
-            if let Some(func) = self.functions.get("command_not_found_handler").cloned() {
-                if let Ok(code) = self.doshfunc("command_not_found_handler", &func, &handler_args) {
-                    return code;
-                }
+            if let Some(code) =
+                self.dispatch_function_call("command_not_found_handler", &handler_args)
+            {
+                return code;
             }
         }
 
