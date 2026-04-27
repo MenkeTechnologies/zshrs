@@ -210,3 +210,96 @@ Closed gaps:
 - **PIPESTATUS / pipestatus arrays** (carried forward) — `BUILTIN_RUN_PIPELINE` populates both `pipestatus` (zsh) and `PIPESTATUS` (bash) with per-stage exit codes.
 
 Old-pipeline (`ZSHRS_OLD_PIPELINE=1`) corpus pass rate is now ~96% — the legacy ShellParser path doesn't have anonymous functions, `|&` pipe-merge, `$RANDOM`, `(exit N)` subshell-isolation, etc. That's intentional: the old path is an emergency escape hatch slated for deletion (task #37). The 100% parity target is the **new** (default) pipeline.
+
+## Session 2026-04-27 — Phase 1 native lowerings (kill the bridge)
+
+The bridge in `compile_word_str` round-trips raw zsh-tokenized words through `untokenize_preserve_quotes → format!("echo {}", …) → ShellParser → ShellWord → JSON → BUILTIN_EXPAND_WORD_RUNTIME → expand_word_glob → expand_word → expand_string`. Phase 1 replaces high-traffic shapes with native bytecode. Status:
+
+| Step | Shape | Status | Implementation |
+|---|---|---|---|
+| 1a | `${v:-d}` `:=` `:?` `:+` | ✅ done | `BUILTIN_PARAM_DEFAULT_FAMILY` (id 307) |
+| 1b | `${v:offset:length}` | ✅ done | `BUILTIN_PARAM_SUBSTRING` (id 308) |
+| 1c | `${v#}` `##` `%` `%%` strip | ✅ done | `BUILTIN_PARAM_STRIP` (id 309) |
+| 1d | `${v/p/r}` `//` `/#` `/%` replace | ✅ done | `BUILTIN_PARAM_REPLACE` (id 310) |
+| 2 | `${#name}` length | ✅ done | `BUILTIN_PARAM_LENGTH` (id 311) |
+| 3 | `$(cmd)` cmd-sub | ✅ done | `BUILTIN_CMD_SUBST_TEXT` (id 313) — routes through `run_command_substitution` for now (`Op::CmdSubst` sub-chunk path had a quoting bug — `printf "a\nb"` produced "anb"; the text-passthrough avoids it) |
+| 3b | `$((expr))` arith-sub | ✅ done | `BUILTIN_ARITH_EVAL` (id 312) — calls `evaluate_arithmetic` for proper int/float distinction (fusevm's `Op::Div` is float-only and was the source of `$((10/3)) = 3.333...`) |
+| 4 | concat `pre${v}suf` / `${a}${b}` | ✅ done | `split_word_segments` walks raw tokenized word, splits on top-level META-`$` / QSTRING / backtick; tracks INBRACE/INBRACK depth so `${a[$i]}` doesn't get mis-split; per-segment recursive emit + N-1 `Concat` |
+| 5 | DoubleQuoted `"$1 and $2"` | ✅ done | falls into step 4 — QSTRING markers are top-level inside DNULL wrappers |
+| 6 | Tilde non-leading | pending | low-priority, niche shape |
+
+**Bug closed in step 4**: my POUND vs QSTRING confusion. `\u{84}` is POUND (`#`), `\u{8c}` is QSTRING (`$` inside double quotes). My initial concat-split predicate included `\u{84}` as a `$`-marker; this wrongly treated `${#arr[@]}` as a concat with `#arr` as the expansion body, producing literal `${#arr[@]}` output.
+
+**Bug closed in step 4**: depth tracking. `${a[$i]}` was getting split at the inner `$i`, yielding `${a[` + GET_VAR("i") + `]}` instead of array-element access. Fix: brace_depth + brack_depth counters, only split markers at top level.
+
+**Bug closed in step 3b**: `Op::Div` is float-only in fusevm 0.10.1. ArithCompiler emits it for `/`. zsh integer-divides `10/3 = 3`. Bypassing ArithCompiler entirely for `$((expr))` and going through the executor's MathEval (which preserves int semantics) is correct AND simpler than patching ArithCompiler.
+
+**Bug closed in step 3**: my naive `Op::CmdSubst(sub_idx)` path fed the inner cmd through ZshParser+ZshCompiler. Some sub-chunk word-emit difference (vs shell_compiler's same-shaped emit) loses quotes — `$(printf "a\nb")` produced "anb" instead of "a\nb". Workaround: pass the raw cmd text to a builtin that calls `run_command_substitution` (uses ShellParser internally — to be migrated to ZshParser as part of Phase 2's type-deletion sweep).
+
+After Phase 1, the bridge is hit only for: tilde non-leading, brace expansion with vars, nested `${${var}[1]}`/`${var/${pat}/repl}`, `${(P)var}` indirect. All niche. Bridge usage in real scripts (zpwr, .zshrc) drops to a small fraction of what it was.
+
+Phase 2 — actual deletion of `ShellParser`/`ShellLexer`/`ShellCommand`/`ShellWord` types — remains pending. The runtime callers `run_command_substitution`, `run_process_sub_in/out`, autoload, `expand_word_glob`, `apply_var_modifier`, `apply_zsh_param_flag` all still consume `ShellWord`/`ShellCommand`. Migrating them is its own session-bounded task. The legacy `ZSHRS_OLD_PIPELINE=1` env-var fallback also stays for now (one more migration milestone before it's safe to delete).
+
+Test count: **876 across 9 suites, all green on the new (default) pipeline.**
+
+## Session 2026-04-27 — Phase 2 (kill the runtime ShellParser callers)
+
+Purpose: chip away at runtime callers of `ShellParser`/`ShellWord`/`ShellCommand` so those types become deletable. Strict no-regression — every migration must preserve the 876-test green slate.
+
+### Migrations landed
+
+| Caller | From | To |
+|---|---|---|
+| `run_command_substitution` | `ShellParser → ShellCompiler → execute_command` (internal) + `Command::new` (external) split | `ZshParser → ZshCompiler → sub-VM` with stdout-capture pipe; one path handles both |
+| `execute_script_file` (cache-miss) | `ShellParser + ShellCompiler` | `ZshParser + ZshCompiler` |
+| `execute_script` legacy body (`ZSHRS_OLD_PIPELINE=1` opt-out) | full ShellParser+ShellCompiler+VM body + EXIT trap | one-line delegate to `execute_script_zsh_pipeline` (env-var is now a no-op) |
+| `builtin_pmap` / `pgrep` / `peach` | `ShellParser + ShellCompiler` per-arg | `ZshParser + ZshCompiler` per-arg |
+| **The bridge in `compile_word_str`** | `ShellParser → ShellWord → JSON → BUILTIN_EXPAND_WORD_RUNTIME → expand_word_glob → expand_word → expand_string` | `untokenize_preserve_quotes(s) + mode_byte → BUILTIN_EXPAND_TEXT → expand_string + braces + glob` (mode 0=Default, 1=DoubleQuoted, 2=SingleQuoted, 3=Backquote) |
+| Heredoc body var-expansion | `ShellWord::Literal` JSON + `BUILTIN_EXPAND_WORD_RUNTIME` | `BUILTIN_EXPAND_TEXT` direct |
+| `run_process_sub_in/out` | `ShellParser → ShellCommand::Simple` words via `expand_word(ShellWord)` | new `simple_cmd_words` helper: `ZshParser → ZshSimple` + `expand_string` per word |
+
+### What had to be solved mid-flight
+
+- **Bridge mode-byte API**: the old bridge target (`BUILTIN_EXPAND_WORD_RUNTIME`) consumed a `ShellWord` JSON and routed by variant — `Literal` got brace+glob, `DoubleQuoted` skipped them. Replacing with text-only meant losing that distinction. New `BUILTIN_EXPAND_TEXT(text, mode_byte)` re-encodes the variant info as a 4-state mode byte. Compile-time `expand_text_mode` decides by inspecting the raw zsh-tokenized word's wrapping.
+- **DQ-mode `\$` handling**: `expand_string` expects the lexer's `\0X` zero-marker for already-escaped chars. The text-only bridge ships raw `\$lit` from the source. Pre-process inside the DQ arm: walk chars, convert `\\$` / `\\\`` / `\\"` / `\\\\` → `\0…` before calling `expand_string`. Without this, `echo "\$lit"` produced just `\` because the `$` was treated as live expansion.
+- **`$((expr))` segmentation in concat**: `find_expansion_end` was walking `$((` looking for matching `\u{8a}` OUTPAR pairs, but the lexer collapses `))` into a single `\u{8b}` OUTPARMATH token (and the inner `(` / `)` stay as literal ASCII, not META). The expansion never closed → engulfed the trailing literal. Fixed: detect arith-shape via `chars[i+2] == '('` or `INPARMATH`, end at the first OUTPARMATH.
+
+### State at session end
+
+Reference counts of the legacy types (lower = closer to deletable):
+
+| File | Refs (before this session) | Refs (now) | Notes |
+|---|---|---|---|
+| `src/compile_zsh.rs` | 18 | **17** (mostly comments) | bridge gone; only `ShellCompiler::new()` reuse for `ArithCompiler` |
+| `src/exec.rs` | 121 | **114** | `ShellParser::new` count: 10 → 4 (run_process_sub_in/out moved off; autoload + compsys cache + 2 helpers remain) |
+| `src/parser.rs` | 203 | 203 | type definitions themselves; can shrink only when types are deleted |
+| `src/shell_compiler.rs` | 177 | 177 | unchanged; depends on autoload deletion |
+| `src/compiler.rs` | 56 | 56 | legacy bytecode compiler — still consumed somewhere |
+| `src/ast_opt.rs` | 18 | 18 | unchanged |
+| `src/text.rs` | 58 | 58 | pretty-printing of legacy AST |
+| `src/zwc.rs` | 45 | 45 | autoload bytecode cache |
+
+`ShellParser` callers in `exec.rs`: **10 → 4** (`run_process_sub_in/out` migrated, `pmap`/`pgrep`/`peach` migrated, `run_command_substitution` migrated, `execute_script_file` migrated, legacy `execute_script` body deleted). The remaining 4 are autoload-related (lines 12482, 12541, 16796, 16893).
+
+### Why the actual type deletion can't ship in one session
+
+The remaining work to remove `ShellParser`/`ShellLexer`/`ShellCommand`/`ShellWord` is a cascade through `executor.functions` (44 references — the AST table that `BUILTIN_REGISTER_FUNCTION` populates and that `ZshrsHost::call_function` reads when compiling autoloaded functions on demand). Migrating it requires:
+
+1. Change `autoload_function` return type from `Option<ShellCommand>` to `Option<ZshProgram>`.
+2. Rename / re-type `executor.functions` to `HashMap<String, ZshProgram>`.
+3. Migrate `ZshrsHost::call_function`'s "compile AST on demand" path to `ZshCompiler`.
+4. Migrate `BUILTIN_REGISTER_FUNCTION`'s body-decode (currently deserializes `ShellCommand` JSON).
+5. Migrate the compsys cache prefetch loop (lines 16796 / 16893) to ZshParser.
+6. Migrate `run_process_sub_in/out`-style `simple_cmd_words` to handle non-Simple commands (or accept the Simple-only restriction permanently).
+7. Delete `ShellExecutor::execute_command` (used only by legacy `call_function`).
+8. Delete `ShellExecutor::call_function(&ShellCommand, ...)` (legacy tree-walker fallback).
+9. Delete `expand_word_glob` / `expand_word` / `apply_var_modifier` / `apply_zsh_param_flag` (still used by ShellCommand-loaded function bodies).
+10. Delete `BUILTIN_EXPAND_WORD_RUNTIME` (still emitted by `shell_compiler.rs` for legacy-compiled function bodies).
+11. Move `ArithCompiler` out of `shell_compiler.rs` into its own module.
+12. Delete `shell_compiler.rs` entirely.
+13. Delete `compiler.rs` (legacy compiler), `ast_opt.rs`, `text.rs`'s ShellCommand pretty-printer.
+14. Delete `ShellParser` / `ShellLexer` / `ShellCommand` / `ShellWord` / `Redirect` / `RedirectOp` / `CompoundCommand` / `SimpleCommand` / `VarModifier` / `CaseTerminator` / `ShellToken`.
+
+Each step is non-trivial — most touch ~20-50 references. The whole sequence is multi-session work. This session shipped the high-leverage Phase 2 chunks: the bridge target, run_command_substitution, process_sub. The remaining sequence is **autoload-shaped** — once autoload migrates, the rest cascades cleanly.
+
+Test count: **876 across 9 suites, all green on the new (default) pipeline.**

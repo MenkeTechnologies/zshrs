@@ -2618,6 +2618,119 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::str(result)
     });
 
+    // `$((expr))` — pops [expr_string], evaluates via MathEval which
+    // honors integer-vs-float distinction (zsh-compatible). Returns
+    // the result as Value::Str so it can be Concat'd into surrounding
+    // word context.
+    vm.register_builtin(BUILTIN_ARITH_EVAL, |vm, _argc| {
+        let expr = vm.pop().to_str();
+        let result = with_executor(|exec| exec.evaluate_arithmetic(&expr));
+        fusevm::Value::str(result)
+    });
+
+    // `$(cmd)` — pops [cmd_string], routes through
+    // run_command_substitution which uses ShellParser + an in-process
+    // pipe-capture. Avoids the Op::CmdSubst sub-chunk word-emit bug
+    // (`printf "a\nb"` produced "anb" via that path). Returns trimmed
+    // output (trailing newlines stripped per POSIX cmd-sub semantics).
+    vm.register_builtin(BUILTIN_CMD_SUBST_TEXT, |vm, _argc| {
+        let cmd = vm.pop().to_str();
+        let result = with_executor(|exec| exec.run_command_substitution(&cmd));
+        fusevm::Value::str(result)
+    });
+
+    // Text-based bridge replacement. Pops [preserved_text, mode_byte].
+    // mode_byte:
+    //   0 = Default — expand_string + expand_braces + expand_glob
+    //   1 = DoubleQuoted — strip outer `"…"`, expand_string only
+    //         (no brace, no glob — DQ semantics)
+    //   2 = SingleQuoted — strip outer `'…'`, no expansion
+    //         (kept for symmetry; SNULL early-return covers most SQ)
+    //   3 = AltBackquote — strip backticks, run as cmd-sub
+    // Single result → Value::str; multi → Value::Array.
+    //
+    // Replaces the legacy ShellParser → ShellWord → JSON → expand_word
+    // bridge target. The ShellWord layer was pure overhead — its
+    // DoubleQuoted/Literal distinction is the only semantic bit, and
+    // we encode that in the mode byte at compile time.
+    vm.register_builtin(BUILTIN_EXPAND_TEXT, |vm, _argc| {
+        let mode = vm.pop().to_int() as u8;
+        let text = vm.pop().to_str();
+        with_executor(|exec| match mode {
+            1 => {
+                // DoubleQuoted: strip outer `"…"` if present. In DQ
+                // context, `\` escapes the DQ-special chars `$`, `` ` ``,
+                // `"`, `\`. zsh's expand_string expects the lexer's
+                // `\0X` literal-marker for an already-escaped char, so
+                // we pre-process: `\$` → `\0$`, `\\` → `\0\`, etc. Then
+                // expand_string handles the rest.
+                let inner = if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
+                    &text[1..text.len() - 1]
+                } else {
+                    text.as_str()
+                };
+                let mut prepped = String::with_capacity(inner.len());
+                let mut chars = inner.chars().peekable();
+                while let Some(c) = chars.next() {
+                    if c == '\\' {
+                        match chars.peek() {
+                            Some('$') | Some('`') | Some('"') | Some('\\') => {
+                                prepped.push('\x00');
+                                prepped.push(chars.next().unwrap());
+                            }
+                            _ => prepped.push(c),
+                        }
+                    } else {
+                        prepped.push(c);
+                    }
+                }
+                fusevm::Value::str(exec.expand_string(&prepped))
+            }
+            2 => {
+                // SingleQuoted: pure literal, strip outer `'…'`.
+                let inner = if text.len() >= 2 && text.starts_with('\'') && text.ends_with('\'') {
+                    &text[1..text.len() - 1]
+                } else {
+                    text.as_str()
+                };
+                fusevm::Value::str(inner.to_string())
+            }
+            3 => {
+                // Backquote command sub: strip outer backticks.
+                let inner = if text.len() >= 2 && text.starts_with('`') && text.ends_with('`') {
+                    &text[1..text.len() - 1]
+                } else {
+                    text.as_str()
+                };
+                fusevm::Value::str(exec.run_command_substitution(inner))
+            }
+            _ => {
+                // Default: full expansion pipeline.
+                let expanded = exec.expand_string(&text);
+                let brace_expanded = exec.expand_braces(&expanded);
+                let noglob = exec.options.get("noglob").copied().unwrap_or(false)
+                    || exec.options.get("GLOB").map(|v| !v).unwrap_or(false);
+                let parts: Vec<String> = brace_expanded
+                    .into_iter()
+                    .flat_map(|s| {
+                        if !noglob
+                            && (s.contains('*') || s.contains('?') || s.contains('['))
+                        {
+                            exec.expand_glob(&s)
+                        } else {
+                            vec![s]
+                        }
+                    })
+                    .collect();
+                if parts.len() == 1 {
+                    fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
+                } else {
+                    fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
+                }
+            }
+        })
+    });
+
     // `${#name}` — pops [name]. Returns the value's element count for
     // arrays (indexed and assoc) or character length for scalars.
     vm.register_builtin(BUILTIN_PARAM_LENGTH, |vm, _argc| {
@@ -2939,6 +3052,26 @@ pub const BUILTIN_PARAM_REPLACE: u16 = 310;
 /// `${#name}` — character length of a scalar value, or element count
 /// of an indexed/assoc array. Pops [name], returns count as Value::Str.
 pub const BUILTIN_PARAM_LENGTH: u16 = 311;
+/// `$((expr))` arithmetic substitution. Pops [expr_string], evaluates
+/// via the executor's MathEval (integer-aware), returns result as
+/// Value::Str. Bypasses ArithCompiler's float-only Op::Div path so
+/// `$((10/3))` returns "3" not "3.333...".
+pub const BUILTIN_ARITH_EVAL: u16 = 312;
+/// `$(cmd)` command substitution. Pops [cmd_string], runs through
+/// `run_command_substitution` which uses ShellParser to parse and
+/// captures stdout via in-process pipe. Returns trimmed output as
+/// Value::Str. Avoids the sub-chunk word-emit quoting bug in the
+/// raw Op::CmdSubst path.
+pub const BUILTIN_CMD_SUBST_TEXT: u16 = 313;
+/// Text-based bridge replacement. Pops [preserved_text]: the word with
+/// quotes preserved (DNULL→`"`, SNULL→`'`, BNULL→`\`), runs
+/// `expand_string` (variable + cmd-sub + arith) then `expand_braces`
+/// then `expand_glob`. Returns Value::str (single match) or
+/// Value::Array (multi-match brace/glob). Replaces the JSON-ShellWord
+/// roundtrip via BUILTIN_EXPAND_WORD_RUNTIME — no ShellParser/ShellWord
+/// dependence on the runtime side. The text-walking `expand_string` is
+/// the same code that ShellWord::Literal eventually called.
+pub const BUILTIN_EXPAND_TEXT: u16 = 314;
 
 /// `${(flags)name}` — zsh parameter expansion flags. Stack: [name, flags].
 /// Flags applied left-to-right. Supported subset (high-value, used by zpwr):
@@ -5066,15 +5199,26 @@ impl ShellExecutor {
             }
         }
 
-        // Cache miss — read, parse, compile, execute, then cache
+        // Cache miss — read, parse, compile, execute, then cache.
+        // Phase 2 migration: parse via ZshParser + compile via
+        // ZshCompiler (was ShellParser + ShellCompiler). The cached
+        // chunk format is the same (fusevm::Chunk) — agnostic to which
+        // frontend produced it. Old cached chunks still load via the
+        // BYTECODE_VERSION gate.
         let content =
             std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
         let expanded = self.expand_history(&content);
-        let mut parser = ShellParser::new(&expanded);
-        let commands = parser.parse_script()?;
+        let mut parser = crate::parser::ZshParser::new(&expanded);
+        let program = parser
+            .parse()
+            .map_err(|errs| {
+                errs.first()
+                    .map(|e| format!("{}", e))
+                    .unwrap_or_else(|| "parse error".to_string())
+            })?;
 
-        let compiler = crate::shell_compiler::ShellCompiler::new();
-        let chunk = compiler.compile(&commands);
+        let compiler = crate::compile_zsh::ZshCompiler::new();
+        let chunk = compiler.compile(&program);
 
         // Cache the bytecode for next time
         if let Some(ref cache) = self.plugin_cache {
@@ -5156,59 +5300,11 @@ impl ShellExecutor {
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
         // The new ZshLexer + ZshParser + ZshCompiler pipeline is the
-        // default. Reaches parity with the legacy ShellParser path on
-        // the full 227-construct corpus, the 158-test no_tree_walker
-        // dispatch suite, and the 70-file ztst integration suite.
-        // Set `ZSHRS_OLD_PIPELINE=1` to fall back as an emergency
-        // escape hatch while the legacy path is still around.
-        if std::env::var("ZSHRS_OLD_PIPELINE").is_err() {
-            return self.execute_script_zsh_pipeline(script);
-        }
-
-        // Expand history references before parsing
-        let expanded = self.expand_history(script);
-
-        let mut parser = ShellParser::new(&expanded);
-        let commands = parser.parse_script()?;
-        tracing::trace!(cmds = commands.len(), "execute_script: parsed");
-
-        // Compile to fusevm bytecodes and execute on the VM.
-        // All execution goes through the VM — no tree-walker fallback.
-        // Builtins dispatch through CallBuiltin, accessing executor state via thread-local.
-        let compiler = crate::shell_compiler::ShellCompiler::new();
-        let chunk = compiler.compile(&commands);
-
-        if !chunk.ops.is_empty() {
-            if std::env::var("ZSHRS_DEBUG_OPS").is_ok() {
-                eprintln!("[DEBUG] Compiled {} ops:", chunk.ops.len());
-                for (i, op) in chunk.ops.iter().enumerate() {
-                    eprintln!("  {:3}: {:?}", i, op);
-                }
-            }
-            let mut vm = fusevm::VM::new(chunk);
-            register_builtins(&mut vm);
-
-            // Set executor context for builtin handlers
-            let _ctx = ExecutorContext::enter(self);
-
-            match vm.run() {
-                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                    self.last_status = vm.last_status;
-                }
-                fusevm::VMResult::Error(e) => {
-                    return Err(format!("VM error: {}", e));
-                }
-            }
-        }
-
-        // Fire EXIT trap if set (matches zsh's zshexit behavior).
-        // Remove it first to prevent infinite recursion.
-        if let Some(action) = self.traps.remove("EXIT") {
-            tracing::debug!("firing EXIT trap");
-            let _ = self.execute_script(&action);
-        }
-
-        Ok(self.last_status)
+        // only execution path. The legacy `ZSHRS_OLD_PIPELINE=1` opt-out
+        // and its ShellParser+ShellCompiler body were removed in Phase 2
+        // of the bridge-deletion sweep — both pipelines reached parity on
+        // 876 tests across 9 suites before the cut.
+        self.execute_script_zsh_pipeline(script)
     }
 
     /// Expand history references: !!, !n, !-n, !string, !?string?
@@ -8551,16 +8647,46 @@ impl ShellExecutor {
         result
     }
 
+    /// Parse `cmd_str` via ZshParser and pull out the first Simple
+    /// command's words, untokenized + variable-expanded, ready to spawn
+    /// as argv. Used by process-substitution where we need raw argv to
+    /// hand to `Command::new`. Returns empty vec if the cmd isn't a
+    /// simple shape — pipelines / compound forms aren't process-sub
+    /// friendly anyway.
+    fn simple_cmd_words(&mut self, cmd_str: &str) -> Vec<String> {
+        let mut parser = crate::parser::ZshParser::new(cmd_str);
+        let prog = match parser.parse() {
+            Ok(p) => p,
+            Err(_) => return Vec::new(),
+        };
+        let first = match prog.lists.first() {
+            Some(l) => l,
+            None => return Vec::new(),
+        };
+        let pipe = &first.sublist.pipe;
+        if let crate::parser::ZshCommand::Simple(simple) = &pipe.cmd {
+            simple
+                .words
+                .iter()
+                .map(|w| {
+                    // Untokenize then variable-expand. Mimics
+                    // shell_compiler's expand_word but text-based.
+                    let untoked = crate::lexer::untokenize(w);
+                    self.expand_string(&untoked)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     fn run_process_sub_in(&mut self, cmd_str: &str) -> String {
         use std::fs;
         use std::process::Stdio;
 
-        // Parse the command
-        let mut parser = ShellParser::new(cmd_str);
-        let commands = match parser.parse_script() {
-            Ok(cmds) => cmds,
-            Err(_) => return String::new(),
-        };
+        // Phase 2: parse via ZshParser. Extract the first Simple cmd's
+        // words (untokenized), pre-expand to argv strings, spawn.
+        let words = self.simple_cmd_words(cmd_str);
 
         // Create a unique FIFO in temp directory
         let fifo_path = format!("/tmp/zshrs_psub_{}", std::process::id());
@@ -8576,27 +8702,22 @@ impl ShellExecutor {
 
         // Spawn command that writes to the FIFO
         let fifo_clone = fifo_path.clone();
-        if let Some(cmd) = commands.first() {
-            if let ShellCommand::Simple(simple) = cmd {
-                let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
-                if !words.is_empty() {
-                    let cmd_name = words[0].clone();
-                    let args: Vec<String> = words[1..].to_vec();
+        if !words.is_empty() {
+            let cmd_name = words[0].clone();
+            let args: Vec<String> = words[1..].to_vec();
 
-                    self.worker_pool.submit(move || {
-                        // Open FIFO for writing (will block until reader connects)
-                        if let Ok(fifo) = fs::OpenOptions::new().write(true).open(&fifo_clone) {
-                            let _ = Command::new(&cmd_name)
-                                .args(&args)
-                                .stdout(fifo)
-                                .stderr(Stdio::inherit())
-                                .status();
-                        }
-                        // Clean up FIFO after command completes
-                        let _ = fs::remove_file(&fifo_clone);
-                    });
+            self.worker_pool.submit(move || {
+                // Open FIFO for writing (will block until reader connects)
+                if let Ok(fifo) = fs::OpenOptions::new().write(true).open(&fifo_clone) {
+                    let _ = Command::new(&cmd_name)
+                        .args(&args)
+                        .stdout(fifo)
+                        .stderr(Stdio::inherit())
+                        .status();
                 }
-            }
+                // Clean up FIFO after command completes
+                let _ = fs::remove_file(&fifo_clone);
+            });
         }
 
         fifo_path
@@ -8606,12 +8727,7 @@ impl ShellExecutor {
         use std::fs;
         use std::process::Stdio;
 
-        // Parse the command
-        let mut parser = ShellParser::new(cmd_str);
-        let commands = match parser.parse_script() {
-            Ok(cmds) => cmds,
-            Err(_) => return String::new(),
-        };
+        let words = self.simple_cmd_words(cmd_str);
 
         // Create a unique FIFO in temp directory
         let fifo_path = format!("/tmp/zshrs_psub_{}", std::process::id());
@@ -8627,140 +8743,100 @@ impl ShellExecutor {
 
         // Spawn command that reads from the FIFO
         let fifo_clone = fifo_path.clone();
-        if let Some(cmd) = commands.first() {
-            if let ShellCommand::Simple(simple) = cmd {
-                let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
-                if !words.is_empty() {
-                    let cmd_name = words[0].clone();
-                    let args: Vec<String> = words[1..].to_vec();
+        if !words.is_empty() {
+            let cmd_name = words[0].clone();
+            let args: Vec<String> = words[1..].to_vec();
 
-                    self.worker_pool.submit(move || {
-                        // Open FIFO for reading (will block until writer connects)
-                        if let Ok(fifo) = fs::File::open(&fifo_clone) {
-                            let _ = Command::new(&cmd_name)
-                                .args(&args)
-                                .stdin(fifo)
-                                .stdout(Stdio::inherit())
-                                .stderr(Stdio::inherit())
-                                .status();
-                        }
-                        // Clean up FIFO after command completes
-                        let _ = fs::remove_file(&fifo_clone);
-                    });
+            self.worker_pool.submit(move || {
+                // Open FIFO for reading (will block until writer connects)
+                if let Ok(fifo) = fs::File::open(&fifo_clone) {
+                    let _ = Command::new(&cmd_name)
+                        .args(&args)
+                        .stdin(fifo)
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit())
+                        .status();
                 }
-            }
+                // Clean up FIFO after command completes
+                let _ = fs::remove_file(&fifo_clone);
+            });
         }
 
         fifo_path
     }
 
-    fn run_command_substitution(&mut self, cmd_str: &str) -> String {
-        use std::process::Stdio;
+    pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
+        // Port of getoutput() from Src/exec.c. Phase 2 migration: parse
+        // and compile via the new ZshLexer + ZshParser + ZshCompiler
+        // pipeline (was ShellParser + ShellCompiler), run on a sub-VM
+        // with the host wired up. Stdout is captured through an
+        // in-process pipe via dup2 — no fork.
+        //
+        // This single path replaces the prior "internal vs external"
+        // fast-path split: the sub-VM emits Op::Exec for unknown
+        // command names, which forks/execs through the host. Result
+        // is identical to the old code; one less ShellParser caller.
 
-        // Port of getoutput() from Src/exec.c:
-        // C zsh forks, redirects stdout to a pipe, executes via execode(),
-        // and the parent reads back the output.  We achieve the same by
-        // capturing stdout through an in-process pipe.
-
-        let mut parser = ShellParser::new(cmd_str);
-        let commands = match parser.parse_script() {
-            Ok(cmds) => cmds,
-            Err(_) => return String::new(),
-        };
-
-        if commands.is_empty() {
-            return String::new();
-        }
-
-        // Check if this is a simple external-only command (no builtins/functions)
-        // so we can use the fast path of spawning a child process.
-        let is_internal = if let ShellCommand::Simple(simple) = &commands[0] {
-            let first = simple.words.first().map(|w| self.expand_word(w));
-            if let Some(ref name) = first {
-                // Functions can live in either `functions` (legacy AST table,
-                // populated by ShellCompiler's REGISTER_FUNCTION) or
-                // `functions_compiled` (new pipeline's REGISTER_COMPILED_FN).
-                // Either is "internal" — capture stdout via the in-process
-                // pipe path instead of spawning a child that wouldn't see
-                // the parent's function definitions.
-                self.functions.contains_key(name)
-                    || self.functions_compiled.contains_key(name)
-                    || self.is_builtin(name)
-            } else {
-                true
+        // Set up the stdout-capture pipe. We dup the original stdout
+        // so post-run we can restore it; the write end is dup2'd onto
+        // STDOUT_FILENO so all output the sub-VM emits (including from
+        // forked children, which inherit fd 1) lands in the pipe.
+        let (read_fd, write_fd) = {
+            let mut fds = [0i32; 2];
+            if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+                return String::new();
             }
-        } else {
-            true // compound commands are always internal
+            (fds[0], fds[1])
         };
-
-        if is_internal {
-            // Internal execution: capture stdout via a pipe (no fork)
-            let (read_fd, write_fd) = {
-                let mut fds = [0i32; 2];
-                if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
-                    return String::new();
-                }
-                (fds[0], fds[1])
-            };
-
-            // Save original stdout and redirect to our pipe
-            let saved_stdout = unsafe { libc::dup(1) };
+        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if saved_stdout < 0 {
             unsafe {
-                libc::dup2(write_fd, 1);
-            }
-            unsafe {
+                libc::close(read_fd);
                 libc::close(write_fd);
             }
+            return String::new();
+        }
+        unsafe {
+            libc::dup2(write_fd, libc::STDOUT_FILENO);
+            libc::close(write_fd);
+        }
 
-            // Execute all commands
-            for cmd in &commands {
-                let _ = self.execute_command(cmd);
-            }
-
-            // Flush stdout so buffered output goes to pipe
-            use std::io::Write;
-            let _ = io::stdout().flush();
-
-            // Restore stdout
-            unsafe {
-                libc::dup2(saved_stdout, 1);
-            }
-            unsafe {
-                libc::close(saved_stdout);
-            }
-
-            // Read captured output
-            use std::os::unix::io::FromRawFd;
-            let mut output = String::new();
-            let read_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
-            use std::io::Read;
-            let _ = std::io::BufReader::new(read_file).read_to_string(&mut output);
-
-            output.trim_end_matches('\n').to_string()
-        } else {
-            // External command: spawn child and capture stdout
-            if let ShellCommand::Simple(simple) = &commands[0] {
-                let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
-                if words.is_empty() {
-                    return String::new();
-                }
-
-                let output = Command::new(&words[0])
-                    .args(&words[1..])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
-                    .output();
-
-                match output {
-                    Ok(out) => String::from_utf8_lossy(&out.stdout)
-                        .trim_end_matches('\n')
-                        .to_string(),
-                    Err(_) => String::new(),
-                }
-            } else {
-                String::new()
+        // Parse + compile + run.
+        let mut parser = crate::parser::ZshParser::new(cmd_str);
+        let prog = parser.parse().ok();
+        if let Some(prog) = prog {
+            let compiler = crate::compile_zsh::ZshCompiler::new();
+            let chunk = compiler.compile(&prog);
+            if !chunk.ops.is_empty() {
+                let mut vm = fusevm::VM::new(chunk);
+                register_builtins(&mut vm);
+                vm.set_shell_host(Box::new(ZshrsHost));
+                let _ctx = ExecutorContext::enter(self);
+                let _ = vm.run();
             }
         }
+
+        // Flush any buffered Rust-side stdout so it reaches the pipe
+        // before we restore.
+        use std::io::Write;
+        let _ = io::stdout().flush();
+
+        // Restore stdout and read what was captured.
+        unsafe {
+            libc::dup2(saved_stdout, libc::STDOUT_FILENO);
+            libc::close(saved_stdout);
+        }
+        use std::os::unix::io::FromRawFd;
+        let read_file = unsafe { std::fs::File::from_raw_fd(read_fd) };
+        let mut output = String::new();
+        use std::io::Read;
+        let _ = std::io::BufReader::new(read_file).read_to_string(&mut output);
+
+        // POSIX: trailing newlines stripped from cmd-sub result.
+        while output.ends_with('\n') {
+            output.pop();
+        }
+        output
     }
 
     /// Process substitution <(cmd) - returns FIFO path
@@ -15230,14 +15306,15 @@ impl ShellExecutor {
         
         for item in items {
             let cmd = template.replace("{}", item);
-            let mut parser = crate::parser::ShellParser::new(&cmd);
-            match parser.parse_script() {
-                Ok(commands) => {
-                    let compiler = crate::shell_compiler::ShellCompiler::new();
-                    let chunk = compiler.compile(&commands);
-                    
+            // Phase 2 migration: ZshParser + ZshCompiler.
+            let mut parser = crate::parser::ZshParser::new(&cmd);
+            match parser.parse() {
+                Ok(prog) => {
+                    let compiler = crate::compile_zsh::ZshCompiler::new();
+                    let chunk = compiler.compile(&prog);
+
                     // Capture stdout
-                    let mut output = Vec::new();
+                    let output = Vec::new();
                     let status = {
                         let mut vm = fusevm::VM::new(chunk);
                         register_builtins(&mut vm);
@@ -15249,8 +15326,12 @@ impl ShellExecutor {
                     };
                     results.push((status, String::from_utf8_lossy(&output).to_string()));
                 }
-                Err(e) => {
-                    eprintln!("pmap: parse error: {}", e);
+                Err(errs) => {
+                    let msg = errs
+                        .first()
+                        .map(|e| format!("{}", e))
+                        .unwrap_or_else(|| "parse error".to_string());
+                    eprintln!("pmap: parse error: {}", msg);
                     results.push((1, String::new()));
                 }
             }
@@ -15284,14 +15365,14 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        // Compile and run on VM — no forks
+        // Compile and run on VM — no forks. Phase 2: ZshParser+ZshCompiler.
         for item in items {
             let cmd = template.replace("{}", item);
-            let mut parser = crate::parser::ShellParser::new(&cmd);
-            if let Ok(commands) = parser.parse_script() {
-                let compiler = crate::shell_compiler::ShellCompiler::new();
-                let chunk = compiler.compile(&commands);
-                
+            let mut parser = crate::parser::ZshParser::new(&cmd);
+            if let Ok(prog) = parser.parse() {
+                let compiler = crate::compile_zsh::ZshCompiler::new();
+                let chunk = compiler.compile(&prog);
+
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 let _ctx = ExecutorContext::enter(self);
@@ -15299,7 +15380,7 @@ impl ShellExecutor {
                     fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
                     fusevm::VMResult::Error(_) => 1,
                 };
-                
+
                 if status == 0 {
                     println!("{}", item);
                 }
@@ -15324,16 +15405,17 @@ impl ShellExecutor {
         let template = &args[0];
         let items = &args[1..];
 
-        // Compile and run on VM — no forks, fire-and-forget style
+        // Compile and run on VM — no forks, fire-and-forget style.
+        // Phase 2: ZshParser+ZshCompiler.
         let mut any_fail = false;
-        
+
         for item in items {
             let cmd = template.replace("{}", item);
-            let mut parser = crate::parser::ShellParser::new(&cmd);
-            if let Ok(commands) = parser.parse_script() {
-                let compiler = crate::shell_compiler::ShellCompiler::new();
-                let chunk = compiler.compile(&commands);
-                
+            let mut parser = crate::parser::ZshParser::new(&cmd);
+            if let Ok(prog) = parser.parse() {
+                let compiler = crate::compile_zsh::ZshCompiler::new();
+                let chunk = compiler.compile(&prog);
+
                 let mut vm = fusevm::VM::new(chunk);
                 register_builtins(&mut vm);
                 let _ctx = ExecutorContext::enter(self);
@@ -15341,7 +15423,7 @@ impl ShellExecutor {
                     fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => vm.last_status,
                     fusevm::VMResult::Error(_) => 1,
                 };
-                
+
                 if status != 0 {
                     any_fail = true;
                 }
