@@ -12577,7 +12577,17 @@ impl ShellExecutor {
         // Read the file
         let content = std::fs::read_to_string(&path).ok()?;
 
-        // Parse the content
+        // New pipeline: ZshParser + ZshCompiler builds the persisted Chunk.
+        // Populates `functions_compiled` so call dispatch hits it directly.
+        if let Ok(program) = crate::parser::ZshParser::new(&content).parse() {
+            if !program.lists.is_empty() {
+                let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
+                self.functions_compiled.insert(name.to_string(), chunk);
+            }
+        }
+
+        // Parse the content for the legacy AST table (still needed by
+        // `whence`/`which`/etc. which read from `self.functions`).
         let mut parser = ShellParser::new(&content);
 
         if let Ok(commands) = parser.parse_script() {
