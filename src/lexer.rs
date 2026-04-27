@@ -100,9 +100,9 @@ pub struct HereDoc {
 /// The Zsh Lexer
 pub struct ZshLexer<'a> {
     /// Input source
-    input: &'a str,
+    pub(crate) input: &'a str,
     /// Current position in input
-    pos: usize,
+    pub(crate) pos: usize,
     /// Look-ahead buffer for ungotten characters
     unget_buf: VecDeque<char>,
     /// Current token string

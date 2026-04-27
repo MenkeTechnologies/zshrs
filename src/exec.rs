@@ -2740,9 +2740,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let mut iter = args.into_iter();
         let name = iter.next().unwrap_or_default();
         let body_b64 = iter.next().unwrap_or_default();
+        let body_source = iter.next().unwrap_or_default();
         let bytes = base64_decode(&body_b64);
         let status = match bincode::deserialize::<fusevm::Chunk>(&bytes) {
             Ok(chunk) => with_executor(|exec| {
+                if !body_source.is_empty() {
+                    exec.function_source.insert(name.clone(), body_source);
+                }
                 exec.functions_compiled.insert(name, chunk);
                 0
             }),
