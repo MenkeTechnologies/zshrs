@@ -4289,6 +4289,13 @@ pub struct ShellExecutor {
     /// `ZshrsHost::call_function` when only an AST exists in `self.functions`
     /// (autoloaded, sourced, etc.). `Op::CallFunction` dispatches through here.
     pub functions_compiled: HashMap<String, fusevm::Chunk>,
+    /// Canonical source text for functions. Populated by autoload paths (the
+    /// raw file/cache body), runtime FuncDef compile (the parsed source span),
+    /// and `unfunction` removal. Used by introspection (`whence`, `which`,
+    /// `typeset -f`) instead of reconstructing from a ShellCommand AST. When a
+    /// function is in `functions_compiled` but not here, introspection falls
+    /// back to `text::getpermtext(self.functions[name])`.
+    pub function_source: HashMap<String, String>,
 }
 
 impl ShellExecutor {
@@ -4449,6 +4456,7 @@ impl ShellExecutor {
             redirect_scope_stack: Vec::new(),
             pending_stdin: None,
             functions_compiled: HashMap::new(),
+            function_source: HashMap::new(),
         }
     }
 
@@ -5946,6 +5954,42 @@ impl ShellExecutor {
         } else {
             (None, None, i)
         }
+    }
+
+    /// Whether `name` is a known function. Checks both the new
+    /// `functions_compiled` table and the legacy `self.functions` AST table.
+    /// Doesn't trigger autoload — use `maybe_autoload` first if needed.
+    pub fn function_exists(&self, name: &str) -> bool {
+        self.functions_compiled.contains_key(name) || self.functions.contains_key(name)
+    }
+
+    /// Canonical source text for a function. Returns the autoload-captured
+    /// raw source (`function_source`) if available, otherwise reconstructs
+    /// from the legacy AST via `text::getpermtext`. Returns `None` only if
+    /// the function isn't known.
+    pub fn function_definition_text(&self, name: &str) -> Option<String> {
+        if let Some(src) = self.function_source.get(name) {
+            return Some(src.clone());
+        }
+        self.functions
+            .get(name)
+            .map(crate::text::getpermtext)
+    }
+
+    /// Sorted list of every known function name (union of compiled + AST + source).
+    pub fn function_names(&self) -> Vec<String> {
+        let mut set: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for k in self.functions_compiled.keys() {
+            set.insert(k.clone());
+        }
+        for k in self.functions.keys() {
+            set.insert(k.clone());
+        }
+        for k in self.function_source.keys() {
+            set.insert(k.clone());
+        }
+        set.into_iter().collect()
     }
 
     #[tracing::instrument(level = "trace", skip_all)]
@@ -11762,17 +11806,10 @@ impl ShellExecutor {
 
         // If -f (function mode) with no args, list functions
         if is_function && var_args.is_empty() {
-            let mut func_names: Vec<_> = self.functions.keys().cloned().collect();
-            func_names.sort();
-            for name in &func_names {
-                if let Some(func) = self.functions.get(name) {
-                    if print_mode {
-                        let body = crate::text::getpermtext(func);
-                        println!("{} () {{\n\t{}\n}}", name, body.trim());
-                    } else {
-                        let body = crate::text::getpermtext(func);
-                        println!("{} () {{\n\t{}\n}}", name, body.trim());
-                    }
+            let _ = print_mode;
+            for name in self.function_names() {
+                if let Some(body) = self.function_definition_text(&name) {
+                    println!("{} () {{\n\t{}\n}}", name, body.trim());
                 }
             }
             return 0;
@@ -11780,15 +11817,10 @@ impl ShellExecutor {
 
         // If -f with args, just show those functions
         if is_function {
+            let _ = print_mode;
             for name in &var_args {
-                if let Some(func) = self.functions.get(name) {
-                    if print_mode {
-                        let body = crate::text::getpermtext(func);
-                        println!("{} () {{\n\t{}\n}}", name, body.trim());
-                    } else {
-                        let body = crate::text::getpermtext(func);
-                        println!("{} () {{\n\t{}\n}}", name, body.trim());
-                    }
+                if let Some(body) = self.function_definition_text(name) {
+                    println!("{} () {{\n\t{}\n}}", name, body.trim());
                 }
             }
             return 0;
@@ -12558,20 +12590,21 @@ impl ShellExecutor {
                                     "autoload: bytecodes compiled and cached"
                                 );
                             }
-                            // Also populate the in-process compiled-functions
-                            // table so call dispatch hits it without re-compiling.
+                            // Populate in-process compiled-functions and the
+                            // canonical source-text map (introspection reads
+                            // from `function_source` first, falling back to
+                            // the legacy AST in `self.functions` only when
+                            // the source isn't available).
                             self.functions_compiled.insert(name.to_string(), chunk);
+                            self.function_source.insert(name.to_string(), body.clone());
                         }
                     }
-                    // Legacy AST path is still required: callers register the
-                    // returned ShellCommand into self.functions for the
-                    // introspection surface (whence/which, function listings).
-                    let mut parser = ShellParser::new(&body);
-                    if let Ok(commands) = parser.parse_script() {
-                        if !commands.is_empty() {
-                            return Some(self.wrap_autoload_commands(name, commands));
-                        }
-                    }
+                    // ShellParser parse for the legacy `self.functions` AST
+                    // table is no longer needed — `functions_compiled` and
+                    // `function_source` cover both call dispatch and
+                    // introspection. Returning None lets `maybe_autoload`
+                    // confirm via `function_exists(name)`.
+                    return None;
                 }
             }
         }
@@ -12613,45 +12646,16 @@ impl ShellExecutor {
         // Read the file
         let content = std::fs::read_to_string(&path).ok()?;
 
-        // New pipeline: ZshParser + ZshCompiler builds the persisted Chunk.
-        // Populates `functions_compiled` so call dispatch hits it directly.
+        // New pipeline: ZshParser + ZshCompiler builds the persisted Chunk
+        // and `function_source` captures the raw file contents. Together they
+        // satisfy both call dispatch and introspection — no ShellParser
+        // round-trip into `self.functions` required.
         if let Ok(program) = crate::parser::ZshParser::new(&content).parse() {
             if !program.lists.is_empty() {
                 let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
                 self.functions_compiled.insert(name.to_string(), chunk);
+                self.function_source.insert(name.to_string(), content);
             }
-        }
-
-        // Parse the content for the legacy AST table (still needed by
-        // `whence`/`which`/etc. which read from `self.functions`).
-        let mut parser = ShellParser::new(&content);
-
-        if let Ok(commands) = parser.parse_script() {
-            if commands.is_empty() {
-                return None;
-            }
-
-            // Check if it's a single function definition for this name (ksh style)
-            if commands.len() == 1 {
-                if let ShellCommand::FunctionDef(ref fn_name, _) = commands[0] {
-                    if fn_name == name {
-                        return Some(commands[0].clone());
-                    }
-                }
-            }
-
-            // Otherwise, the file contents become the function body (zsh style)
-            // Wrap all commands in a List
-            let body = if commands.len() == 1 {
-                commands.into_iter().next().unwrap()
-            } else {
-                // Convert to List with Semi separators
-                let list_cmds: Vec<(ShellCommand, ListOp)> =
-                    commands.into_iter().map(|c| (c, ListOp::Semi)).collect();
-                ShellCommand::List(list_cmds)
-            };
-
-            return Some(ShellCommand::FunctionDef(name.to_string(), Box::new(body)));
         }
 
         None
@@ -12678,19 +12682,25 @@ impl ShellExecutor {
         ShellCommand::FunctionDef(name.to_string(), Box::new(body))
     }
 
-    /// Check if a function is autoload pending and load it if so
+    /// Check if a function is autoload pending and load it if so. The new
+    /// pipeline populates `functions_compiled` + `function_source` directly,
+    /// so success is signaled by `function_exists(name)` regardless of
+    /// whether `load_autoload_function` produced a `ShellCommand` for the
+    /// legacy AST table.
     pub fn maybe_autoload(&mut self, name: &str) -> bool {
-        if self.autoload_pending.contains_key(name) {
-            if let Some(func) = self.load_autoload_function(name) {
-                // For FunctionDef, extract the body and store it
-                let to_store = match func {
-                    ShellCommand::FunctionDef(_, body) => (*body).clone(),
-                    other => other,
-                };
-                self.functions.insert(name.to_string(), to_store);
-                self.autoload_pending.remove(name);
-                return true;
-            }
+        if !self.autoload_pending.contains_key(name) {
+            return false;
+        }
+        if let Some(func) = self.load_autoload_function(name) {
+            let to_store = match func {
+                ShellCommand::FunctionDef(_, body) => (*body).clone(),
+                other => other,
+            };
+            self.functions.insert(name.to_string(), to_store);
+        }
+        if self.function_exists(name) {
+            self.autoload_pending.remove(name);
+            return true;
         }
         false
     }
@@ -18724,30 +18734,23 @@ impl ShellExecutor {
         }
 
         if names.is_empty() {
-            // List all functions
-            let mut func_names: Vec<_> = self.functions.keys().collect();
-            func_names.sort();
-            for name in func_names {
+            for name in self.function_names() {
                 if list_only {
                     println!("{}", name);
-                } else if let Some(func) = self.functions.get(name) {
-                    let body = crate::text::getpermtext(func);
+                } else if let Some(body) = self.function_definition_text(&name) {
                     println!("{} () {{\n\t{}\n}}", name, body.trim());
                 }
             }
         } else {
-            // Show specific functions
             for name in names {
-                if let Some(func) = self.functions.get(name) {
-                    if show_trace {
-                        println!("functions -t {}", name);
-                    } else {
-                        let body = crate::text::getpermtext(func);
-                        println!("{} () {{\n\t{}\n}}", name, body.trim());
-                    }
-                } else {
+                if !self.function_exists(name) {
                     eprintln!("functions: no such function: {}", name);
                     return 1;
+                }
+                if show_trace {
+                    println!("functions -t {}", name);
+                } else if let Some(body) = self.function_definition_text(name) {
+                    println!("{} () {{\n\t{}\n}}", name, body.trim());
                 }
             }
         }
