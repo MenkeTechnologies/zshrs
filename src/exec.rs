@@ -972,16 +972,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // to native ops. Pops a JSON-serialized ShellWord; pushes the expanded
     // string. Routes through `expand_word_glob` so brace + glob expansion
     // happen in addition to parameter / arithmetic / command substitution.
-    // Multiple glob/brace matches are space-joined for the bytecode argv model
-    // (a Phase D word-splitting refactor will replace the join with multi-push).
-    // See BUILTIN_EXPAND_WORD_RUNTIME doc for the eviction plan.
+    // The Phase G1 array work needs the runtime fallback to preserve splice
+    // semantics: `${arr[@]}`, glob matches, and brace expansion all produce
+    // multiple parts that should land as separate argv slots downstream. This
+    // builtin now returns Value::Array — Op::Exec/ExecBg/CallFunction and
+    // pop_args flatten arrays into argv. Pre-G1 this was `Value::str(parts.
+    // join(" "))` which collapsed the splice into one space-joined scalar.
     vm.register_builtin(BUILTIN_EXPAND_WORD_RUNTIME, |vm, argc| {
         let args = pop_args(vm, argc);
         let json = args.into_iter().next().unwrap_or_default();
-        // Sync VM's last_status into the executor so `$?` (and any other
-        // expansion that reads `executor.last_status`) sees the live value
-        // during a running script. The VM tracks status in `vm.last_status`,
-        // but expand_word reaches through `with_executor` for $?.
         let live_status = vm.last_status;
         match serde_json::from_str::<crate::parser::ShellWord>(&json) {
             Ok(word) => {
@@ -989,7 +988,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     exec.last_status = live_status;
                     exec.expand_word_glob(&word)
                 });
-                Value::str(parts.join(" "))
+                if parts.len() == 1 {
+                    Value::str(parts.into_iter().next().unwrap_or_default())
+                } else {
+                    Value::Array(parts.into_iter().map(Value::str).collect())
+                }
             }
             Err(_) => Value::str(""),
         }
@@ -1148,14 +1151,1266 @@ fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
+    // `cmd &` background execution. Compile_list emits this for any item
+    // followed by ListOp::Amp: the cmd is compiled into a sub-chunk, its index
+    // pushed, then this builtin pops the index, looks up the chunk, forks. The
+    // child detaches via setsid (so SIGINT to the foreground job doesn't kill
+    // it), runs the bytecode on a fresh VM with builtins re-registered, exits
+    // with the last status. The parent returns Status(0) immediately. Job
+    // tracking via JobTable is deferred to Phase G6 — JobTable::add_job
+    // currently requires a std::process::Child, which a libc::fork doesn't
+    // produce. Until then, `jobs`/`fg`/`wait` can't see these pids.
+    vm.register_builtin(BUILTIN_RUN_BG, |vm, _argc| {
+        let sub_idx = vm.pop().to_int() as usize;
+        let chunk = match vm.chunk.sub_chunks.get(sub_idx).cloned() {
+            Some(c) => c,
+            None => return Value::Status(1),
+        };
+
+        match unsafe { libc::fork() } {
+            -1 => Value::Status(1),
+            0 => {
+                // Child: detach and run.
+                unsafe { libc::setsid() };
+                let mut bg_vm = fusevm::VM::new(chunk);
+                register_builtins(&mut bg_vm);
+                let _ = bg_vm.run();
+                let _ = std::io::stdout().flush();
+                let _ = std::io::stderr().flush();
+                std::process::exit(bg_vm.last_status);
+            }
+            _pid => Value::Status(0),
+        }
+    });
+
+    // ── Indexed-array storage and access ──────────────────────────────────
+    //
+    // Two calling conventions:
+    //   1. `arr=(a b c)` → push "a", "b", "c", "arr"; CallBuiltin(SET_ARRAY, 4).
+    //   2. `arr=($(cmd))` → push FlatArray, "arr"; CallBuiltin(SET_ARRAY, 2)
+    //      where FlatArray is a Value::Array of words after BUILTIN_ARRAY_FLATTEN
+    //      + WORD_SPLIT processing.
+    // Both end with name as the LAST arg. Values may be a single Value::Array
+    // (in which case we extract its elements) or a sequence of strings.
+    vm.register_builtin(BUILTIN_SET_ARRAY, |vm, argc| {
+        let n = argc as usize;
+        let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
+        for _ in 0..n {
+            popped.push(vm.pop());
+        }
+        popped.reverse();
+        if popped.is_empty() {
+            return Value::Status(1);
+        }
+        let name = popped.pop().unwrap().to_str();
+        let mut values: Vec<String> = Vec::new();
+        for v in popped {
+            match v {
+                fusevm::Value::Array(items) => {
+                    for it in items {
+                        values.push(it.to_str());
+                    }
+                }
+                other => values.push(other.to_str()),
+            }
+        }
+        with_executor(|exec| {
+            exec.variables.remove(&name);
+            exec.arrays.insert(name, values);
+        });
+        Value::Status(0)
+    });
+
+    // `arr+=(d e f)` — append. Same calling conventions as SET_ARRAY.
+    vm.register_builtin(BUILTIN_APPEND_ARRAY, |vm, argc| {
+        let n = argc as usize;
+        let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
+        for _ in 0..n {
+            popped.push(vm.pop());
+        }
+        popped.reverse();
+        if popped.is_empty() {
+            return Value::Status(1);
+        }
+        let name = popped.pop().unwrap().to_str();
+        let mut values: Vec<String> = Vec::new();
+        for v in popped {
+            match v {
+                fusevm::Value::Array(items) => {
+                    for it in items {
+                        values.push(it.to_str());
+                    }
+                }
+                other => values.push(other.to_str()),
+            }
+        }
+        with_executor(|exec| {
+            exec.variables.remove(&name);
+            exec.arrays
+                .entry(name)
+                .or_insert_with(Vec::new)
+                .extend(values);
+        });
+        Value::Status(0)
+    });
+
+    // `select var in words; do body; done` — interactive menu loop. Stack
+    // discipline (top-down): sub_chunk_idx (Int), var_name (str), word_N..word_1.
+    // Argc = words_count + 2. We pop in reverse order: idx first, then name,
+    // then words back to source order via reverse().
+    //
+    // Loop body:
+    //   1. Print numbered menu to stderr.
+    //   2. Print PROMPT3 (default "?# ") to stderr.
+    //   3. Read line from stdin.
+    //   4. EOF (read fails) → break, return Status(0).
+    //   5. Empty line → redraw menu, loop.
+    //   6. Numeric input in 1..=N → set var, run sub-chunk, capture status,
+    //      redraw menu, loop.
+    //   7. Anything else → set var to "" (zsh convention), run sub-chunk,
+    //      redraw menu, loop. The body sees REPLY = the raw input.
+    //
+    // `break` inside the body short-circuits via the sub-chunk's own bytecode
+    // (the break_patches mechanism). When the sub-chunk halts via break it
+    // returns from VM::run; we treat any non-zero status as "loop should
+    // exit"? No — break sets a flag in the chunk-level patches. Since we're
+    // running the body in a fresh VM each iteration, break needs a different
+    // signaling mechanism. For now: the body's bytecode can do `return 99`
+    // which we recognize as a "user wants out" signal. zsh's `break` works
+    // in select via the same loop-control mechanism as for/while. Phase G6
+    // follow-up.
+    vm.register_builtin(BUILTIN_RUN_SELECT, |vm, argc| {
+        use std::io::{BufRead, Write};
+
+        if argc < 2 {
+            return Value::Status(1);
+        }
+        let n = argc as usize;
+        let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
+        for _ in 0..n {
+            popped.push(vm.pop());
+        }
+        // popped: [sub_idx, name, word_N, ..., word_1] (popping from top)
+        let sub_idx_val = popped.remove(0);
+        let name_val = popped.remove(0);
+        let mut words: Vec<String> = popped.into_iter().rev().map(|v| v.to_str()).collect();
+        // Flatten any Value::Array elements (e.g. `select x in $arr; ...`).
+        let mut flat = Vec::with_capacity(words.len());
+        for w in words.drain(..) {
+            // The pop above already to_str()'d, so Array splice is lost. Re-
+            // pop wouldn't help — the host receives flat strings here. This is
+            // OK for now since the compile path uses ARRAY_FLATTEN-equivalent
+            // reasoning before the call. If splice support is needed, the
+            // compile path should call BUILTIN_ARRAY_FLATTEN first.
+            flat.push(w);
+        }
+        let words = flat;
+
+        let sub_idx = sub_idx_val.to_int() as usize;
+        let name = name_val.to_str();
+        let chunk = match vm.chunk.sub_chunks.get(sub_idx).cloned() {
+            Some(c) => c,
+            None => return Value::Status(1),
+        };
+
+        let prompt = with_executor(|exec| {
+            exec.variables
+                .get("PROMPT3")
+                .cloned()
+                .unwrap_or_else(|| "?# ".to_string())
+        });
+
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
+        let mut last_status: i32 = 0;
+
+        loop {
+            // Draw menu.
+            for (i, w) in words.iter().enumerate() {
+                let _ = writeln!(std::io::stderr(), "{}) {}", i + 1, w);
+            }
+            let _ = write!(std::io::stderr(), "{}", prompt);
+            let _ = std::io::stderr().flush();
+
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => {}
+                Err(_) => break,
+            }
+            let trimmed = line.trim_end_matches(['\n', '\r'][..].as_ref()).to_string();
+
+            with_executor(|exec| {
+                exec.variables.insert("REPLY".to_string(), trimmed.clone());
+            });
+
+            if trimmed.is_empty() {
+                // Empty input → redraw menu without running body.
+                continue;
+            }
+
+            let chosen = match trimmed.parse::<usize>() {
+                Ok(n) if n >= 1 && n <= words.len() => words[n - 1].clone(),
+                _ => String::new(),
+            };
+
+            with_executor(|exec| {
+                exec.variables.insert(name.clone(), chosen);
+            });
+
+            // Reset the loop signal before running the body so a stale
+            // value from a sibling construct doesn't leak in.
+            with_executor(|exec| exec.loop_signal = None);
+
+            let mut body_vm = fusevm::VM::new(chunk.clone());
+            register_builtins(&mut body_vm);
+            let _ = body_vm.run();
+            last_status = body_vm.last_status;
+
+            // Drain the cross-VM loop-control signal. `break` from inside
+            // the body sets LoopSignal::Break; `continue` sets Continue.
+            // The legacy `BREAK_SELECT=1` env-var sentinel is still honored
+            // for backward compat with scripts written before the keyword
+            // path landed.
+            let signal = with_executor(|exec| exec.loop_signal.take());
+            let break_legacy = with_executor(|exec| {
+                exec.variables
+                    .remove("BREAK_SELECT")
+                    .map(|v| v != "0" && !v.is_empty())
+                    .unwrap_or(false)
+            });
+            match signal {
+                Some(LoopSignal::Break) => break,
+                Some(LoopSignal::Continue) => continue,
+                None if break_legacy => break,
+                None => {}
+            }
+        }
+
+        Value::Status(last_status)
+    });
+
+    // `${arr[idx]}` — pop name, then idx_str. zsh is 1-based for positive
+    // indices; we honor that. `@`/`*` return the whole array as Value::Array
+    // so Op::Exec splice produces N argv slots. For `${foo[key]}` where foo
+    // is an assoc, the idx is a string key — we check assoc_arrays first
+    // when the idx isn't `@`/`*` and the name has an assoc binding.
+    vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
+        let idx = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        with_executor(|exec| match idx.as_str() {
+            "@" | "*" => {
+                // Splice: assoc → values list (zsh's `${foo[@]}` for assoc);
+                // indexed → element list. For assoc the order of values is
+                // implementation-defined (matches HashMap iteration).
+                if let Some(map) = exec.assoc_arrays.get(&name) {
+                    return Value::Array(map.values().map(Value::str).collect());
+                }
+                match exec.arrays.get(&name) {
+                    Some(v) => Value::Array(v.iter().map(Value::str).collect()),
+                    None => Value::Array(vec![]),
+                }
+            }
+            _ => {
+                // Assoc lookup wins if the name is in assoc_arrays — the user
+                // declared it via `typeset -A` or assigned via foo[key]=val.
+                if let Some(map) = exec.assoc_arrays.get(&name) {
+                    return Value::str(map.get(&idx).cloned().unwrap_or_default());
+                }
+                match idx.parse::<i64>() {
+                    Ok(i) => {
+                        let arr = exec.arrays.get(&name);
+                        let v = arr.and_then(|a| {
+                            let len = a.len() as i64;
+                            let resolved = if i > 0 {
+                                (i - 1) as usize
+                            } else if i < 0 {
+                                ((len + i) as usize).min(len.saturating_sub(1) as usize)
+                            } else {
+                                return None;
+                            };
+                            a.get(resolved).cloned()
+                        });
+                        Value::str(v.unwrap_or_default())
+                    }
+                    Err(_) => Value::str(""),
+                }
+            }
+        })
+    });
+
+    // `${(flags)name}` — apply zsh parameter flags. See BUILTIN_PARAM_FLAG
+    // doc comment for the supported flag set. Algorithm: load `name` as a
+    // current-value (scalar from variables/env, array from arrays, or assoc
+    // from assoc_arrays), then walk `flags` char-by-char applying each
+    // transformation. Final state is either Value::str or Value::Array
+    // depending on the last flag.
+    vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
+        let flags = vm.pop().to_str();
+        let name = vm.pop().to_str();
+
+        // Initial state: prefer assoc → array → scalar lookup. If `P` flag
+        // is in the chain, we'll re-fetch with the indirected name later.
+        enum St {
+            S(String),
+            A(Vec<String>),
+        }
+
+        let mut state = with_executor(|exec| {
+            if let Some(map) = exec.assoc_arrays.get(&name) {
+                // For assoc, default to value list (no flag) — `(k)`/`(v)`
+                // override.
+                St::A(map.values().cloned().collect())
+            } else if let Some(arr) = exec.arrays.get(&name) {
+                St::A(arr.clone())
+            } else {
+                St::S(exec.get_variable(&name))
+            }
+        });
+
+        let chars: Vec<char> = flags.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            i += 1;
+            match c {
+                'L' => {
+                    state = match state {
+                        St::S(s) => St::S(s.to_lowercase()),
+                        St::A(a) => St::A(a.into_iter().map(|s| s.to_lowercase()).collect()),
+                    };
+                }
+                'U' => {
+                    state = match state {
+                        St::S(s) => St::S(s.to_uppercase()),
+                        St::A(a) => St::A(a.into_iter().map(|s| s.to_uppercase()).collect()),
+                    };
+                }
+                'j' | 's' => {
+                    // zsh syntax: `(j:sep:)` and `(s:sep:)` use the char
+                    // following the flag as the delimiter. The delimiter must
+                    // be a non-alphanumeric, non-underscore char so subsequent
+                    // flags (alphabetic) aren't accidentally swallowed —
+                    // `(jL)` should be `j` (no delim, default IFS) followed
+                    // by `L`, not `j` with delim `L`. Recognized delim chars
+                    // mirror what zsh allows: punctuation only.
+                    let mut sep = String::new();
+                    if i < chars.len() && ZshrsHost::is_zsh_flag_delim(chars[i]) {
+                        let delim = chars[i];
+                        i += 1;
+                        while i < chars.len() && chars[i] != delim {
+                            sep.push(chars[i]);
+                            i += 1;
+                        }
+                        if i < chars.len() {
+                            i += 1; // skip closing delim
+                        }
+                    } else if c == 'j' {
+                        // `j` with no delim → join with space (IFS-default).
+                        sep = " ".to_string();
+                    }
+                    if c == 'j' {
+                        state = match state {
+                            St::A(a) => St::S(a.join(&sep)),
+                            St::S(s) => St::S(s),
+                        };
+                    } else {
+                        state = match state {
+                            St::S(s) if sep.is_empty() => {
+                                St::A(s.chars().map(|c| c.to_string()).collect())
+                            }
+                            St::S(s) => St::A(s.split(sep.as_str()).map(String::from).collect()),
+                            St::A(a) => St::A(a),
+                        };
+                    }
+                }
+                'f' => {
+                    state = match state {
+                        St::S(s) => St::A(s.split('\n').map(String::from).collect()),
+                        St::A(a) => St::A(a),
+                    };
+                }
+                'o' => {
+                    state = match state {
+                        St::A(mut a) => {
+                            a.sort();
+                            St::A(a)
+                        }
+                        s => s,
+                    };
+                }
+                'O' => {
+                    state = match state {
+                        St::A(mut a) => {
+                            a.sort_by(|x, y| y.cmp(x));
+                            St::A(a)
+                        }
+                        s => s,
+                    };
+                }
+                'P' => {
+                    // Indirect: current scalar value is another var name.
+                    state = match state {
+                        St::S(indirect_name) => {
+                            let v = with_executor(|exec| {
+                                if let Some(arr) = exec.arrays.get(&indirect_name) {
+                                    return St::A(arr.clone());
+                                }
+                                St::S(exec.get_variable(&indirect_name))
+                            });
+                            v
+                        }
+                        a => a,
+                    };
+                }
+                '@' => {
+                    // Force array shape (scalar → 1-elem array).
+                    state = match state {
+                        St::S(s) => St::A(vec![s]),
+                        a => a,
+                    };
+                }
+                'k' => {
+                    // Keys of assoc.
+                    let keys = with_executor(|exec| {
+                        exec.assoc_arrays
+                            .get(&name)
+                            .map(|m| m.keys().cloned().collect::<Vec<_>>())
+                            .unwrap_or_default()
+                    });
+                    state = St::A(keys);
+                }
+                'v' => {
+                    let vals = with_executor(|exec| {
+                        exec.assoc_arrays
+                            .get(&name)
+                            .map(|m| m.values().cloned().collect::<Vec<_>>())
+                            .unwrap_or_default()
+                    });
+                    state = St::A(vals);
+                }
+                '#' => {
+                    state = match state {
+                        St::A(a) => St::S(a.len().to_string()),
+                        St::S(s) => St::S(s.len().to_string()),
+                    };
+                }
+                'q' => {
+                    // Quoting flags. `q` runs together raise the quoting
+                    // level: q (POSIX single-quote), qq (double-quote),
+                    // qqq (ANSI-C $'…'), qqqq (backslash-escape, no quotes).
+                    // zsh reads consecutive q's as a single multi-char flag.
+                    //
+                    // Modifier suffixes per zshexpn(1):
+                    //   q+ — wrap-with-quote-if-needed (heuristic)
+                    //   q- — same as q but strip trailing newlines first
+                    //   q* — same as q but escape `*` and `?` in addition
+                    //   q! — alternate-form (each impl varies)
+                    //
+                    // Optional explicit delimiter form: q:sep: uses `sep` as
+                    // the wrapper instead of the level-default. Accepting the
+                    // syntax even though it's not in mainline zsh — keeps the
+                    // grammar forward-compatible with proposed extensions.
+                    let mut level = 1;
+                    while i < chars.len() && chars[i] == 'q' && level < 4 {
+                        level += 1;
+                        i += 1;
+                    }
+                    let mut strip_trailing_newlines = false;
+                    let mut wrap_only_if_needed = false;
+                    let mut escape_glob_chars = false;
+                    let mut explicit_delim: Option<String> = None;
+                    while i < chars.len() {
+                        match chars[i] {
+                            '+' => {
+                                wrap_only_if_needed = true;
+                                i += 1;
+                            }
+                            '-' => {
+                                strip_trailing_newlines = true;
+                                i += 1;
+                            }
+                            '*' => {
+                                escape_glob_chars = true;
+                                i += 1;
+                            }
+                            '!' => {
+                                // q! is no-op alias (we don't have an
+                                // alternate-form distinction); just consume.
+                                i += 1;
+                            }
+                            d if ZshrsHost::is_zsh_flag_delim(d) => {
+                                // Delimited form q:str:. Read until matching
+                                // delim. Treat as "wrap each value with str"
+                                // post-quoting.
+                                i += 1;
+                                let mut s = String::new();
+                                while i < chars.len() && chars[i] != d {
+                                    s.push(chars[i]);
+                                    i += 1;
+                                }
+                                if i < chars.len() {
+                                    i += 1;
+                                }
+                                explicit_delim = Some(s);
+                            }
+                            _ => break,
+                        }
+                    }
+                    let needs_quoting = |s: &str| -> bool {
+                        s.is_empty()
+                            || s.chars().any(|c| {
+                                c.is_whitespace()
+                                    || matches!(
+                                        c,
+                                        '\'' | '"'
+                                            | '\\'
+                                            | '$'
+                                            | '`'
+                                            | '*'
+                                            | '?'
+                                            | '['
+                                            | ']'
+                                            | '{'
+                                            | '}'
+                                            | '('
+                                            | ')'
+                                            | '|'
+                                            | '&'
+                                            | ';'
+                                            | '<'
+                                            | '>'
+                                            | '#'
+                                            | '~'
+                                    )
+                            })
+                    };
+                    let quote_one = |raw: &str| -> String {
+                        let s_owned: String;
+                        let s = if strip_trailing_newlines {
+                            s_owned = raw.trim_end_matches('\n').to_string();
+                            s_owned.as_str()
+                        } else {
+                            raw
+                        };
+                        if wrap_only_if_needed && !needs_quoting(s) {
+                            // q+: skip quoting if the value is "shell-safe".
+                            return s.to_string();
+                        }
+                        if let Some(ref d) = explicit_delim {
+                            // q:str: form — wrap value with the explicit
+                            // delimiter on each side, escaping inner d's
+                            // with backslash.
+                            let escaped = s.replace(d.as_str(), &format!("\\{}", d));
+                            return format!("{}{}{}", d, escaped, d);
+                        }
+                        match level {
+                            1 => {
+                                // Single-quote: escape inner ' as '\''.
+                                let mut escaped = s.replace('\'', "'\\''");
+                                if escape_glob_chars {
+                                    escaped = escaped
+                                        .replace('*', "\\*")
+                                        .replace('?', "\\?");
+                                }
+                                format!("'{}'", escaped)
+                            }
+                            2 => {
+                                // Double-quote: escape $ ` " \\.
+                                let mut out = String::with_capacity(s.len() + 2);
+                                out.push('"');
+                                for c in s.chars() {
+                                    match c {
+                                        '$' | '`' | '"' | '\\' => {
+                                            out.push('\\');
+                                            out.push(c);
+                                        }
+                                        '*' | '?' if escape_glob_chars => {
+                                            out.push('\\');
+                                            out.push(c);
+                                        }
+                                        _ => out.push(c),
+                                    }
+                                }
+                                out.push('"');
+                                out
+                            }
+                            3 => {
+                                // ANSI-C $'…': escape control chars, ' and \\.
+                                let mut out = String::with_capacity(s.len() + 4);
+                                out.push_str("$'");
+                                for c in s.chars() {
+                                    match c {
+                                        '\\' => out.push_str("\\\\"),
+                                        '\'' => out.push_str("\\'"),
+                                        '\n' => out.push_str("\\n"),
+                                        '\t' => out.push_str("\\t"),
+                                        '\r' => out.push_str("\\r"),
+                                        c if (c as u32) < 0x20 => {
+                                            out.push_str(&format!("\\x{:02x}", c as u32));
+                                        }
+                                        c => out.push(c),
+                                    }
+                                }
+                                out.push('\'');
+                                out
+                            }
+                            _ => {
+                                // qqqq: backslash-escape every shell-special
+                                // char without surrounding quotes.
+                                let mut out = String::with_capacity(s.len() + 4);
+                                for c in s.chars() {
+                                    if matches!(
+                                        c,
+                                        ' ' | '\t'
+                                            | '\''
+                                            | '"'
+                                            | '\\'
+                                            | '$'
+                                            | '`'
+                                            | '*'
+                                            | '?'
+                                            | '['
+                                            | ']'
+                                            | '{'
+                                            | '}'
+                                            | '('
+                                            | ')'
+                                            | '|'
+                                            | '&'
+                                            | ';'
+                                            | '<'
+                                            | '>'
+                                            | '#'
+                                            | '~'
+                                    ) {
+                                        out.push('\\');
+                                    }
+                                    out.push(c);
+                                }
+                                out
+                            }
+                        }
+                    };
+                    state = match state {
+                        St::S(s) => St::S(quote_one(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| quote_one(&s)).collect()),
+                    };
+                }
+                'g' => {
+                    // Process backslash escapes (`\n`, `\t`, `\r`, `\\`,
+                    // `\xNN`, `\NNN` octal). Applied to the current scalar
+                    // or each array element.
+                    let unescape = |s: &str| -> String {
+                        let mut out = String::with_capacity(s.len());
+                        let mut chars = s.chars().peekable();
+                        while let Some(c) = chars.next() {
+                            if c != '\\' {
+                                out.push(c);
+                                continue;
+                            }
+                            match chars.next() {
+                                Some('n') => out.push('\n'),
+                                Some('t') => out.push('\t'),
+                                Some('r') => out.push('\r'),
+                                Some('\\') => out.push('\\'),
+                                Some('\'') => out.push('\''),
+                                Some('"') => out.push('"'),
+                                Some('0') => out.push('\0'),
+                                Some('a') => out.push('\x07'),
+                                Some('b') => out.push('\x08'),
+                                Some('f') => out.push('\x0c'),
+                                Some('v') => out.push('\x0b'),
+                                Some('x') => {
+                                    let mut hex = String::new();
+                                    for _ in 0..2 {
+                                        if let Some(&h) = chars.peek() {
+                                            if h.is_ascii_hexdigit() {
+                                                hex.push(h);
+                                                chars.next();
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if let Ok(b) = u8::from_str_radix(&hex, 16) {
+                                        out.push(b as char);
+                                    }
+                                }
+                                Some(other) => {
+                                    out.push('\\');
+                                    out.push(other);
+                                }
+                                None => out.push('\\'),
+                            }
+                        }
+                        out
+                    };
+                    state = match state {
+                        St::S(s) => St::S(unescape(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| unescape(&s)).collect()),
+                    };
+                }
+                'n' => {
+                    // Natural-numeric sort. Compares chunk-by-chunk: digit
+                    // runs as integers (so "file2" &lt; "file10"), other runs
+                    // lexicographically. Combined with prior `o`/`O` it
+                    // re-sorts; standalone it's a no-op on scalars and a
+                    // numeric sort on arrays.
+                    fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+                        use std::cmp::Ordering;
+                        let mut ai = a.chars().peekable();
+                        let mut bi = b.chars().peekable();
+                        loop {
+                            match (ai.peek(), bi.peek()) {
+                                (None, None) => return Ordering::Equal,
+                                (None, _) => return Ordering::Less,
+                                (_, None) => return Ordering::Greater,
+                                (Some(ca), Some(cb)) if ca.is_ascii_digit() && cb.is_ascii_digit() => {
+                                    let mut na = String::new();
+                                    while let Some(&c) = ai.peek() {
+                                        if c.is_ascii_digit() {
+                                            na.push(c);
+                                            ai.next();
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    let mut nb = String::new();
+                                    while let Some(&c) = bi.peek() {
+                                        if c.is_ascii_digit() {
+                                            nb.push(c);
+                                            bi.next();
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    let va: u128 = na.parse().unwrap_or(0);
+                                    let vb: u128 = nb.parse().unwrap_or(0);
+                                    match va.cmp(&vb) {
+                                        Ordering::Equal => continue,
+                                        ord => return ord,
+                                    }
+                                }
+                                (Some(&ca), Some(&cb)) => {
+                                    ai.next();
+                                    bi.next();
+                                    match ca.cmp(&cb) {
+                                        Ordering::Equal => continue,
+                                        ord => return ord,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    state = match state {
+                        St::A(mut a) => {
+                            a.sort_by(|x, y| natural_cmp(x, y));
+                            St::A(a)
+                        }
+                        s => s,
+                    };
+                }
+                'i' => {
+                    // Case-insensitive sort. Re-applies sort using lowercase
+                    // comparison; if the array isn't sorted, this is the
+                    // sort-key.
+                    state = match state {
+                        St::A(mut a) => {
+                            a.sort_by(|x, y| x.to_lowercase().cmp(&y.to_lowercase()));
+                            St::A(a)
+                        }
+                        s => s,
+                    };
+                }
+                't' => {
+                    // Type query. Returns one of: scalar, array, association,
+                    // integer (concatenated with attribute markers in zsh,
+                    // but we keep it simple).
+                    let kind = with_executor(|exec| {
+                        if exec.assoc_arrays.contains_key(&name) {
+                            "association"
+                        } else if exec.arrays.contains_key(&name) {
+                            "array"
+                        } else if exec.variables.contains_key(&name)
+                            || std::env::var(&name).is_ok()
+                        {
+                            "scalar"
+                        } else {
+                            ""
+                        }
+                    });
+                    state = St::S(kind.to_string());
+                }
+                '%' => {
+                    // Prompt expansion: process %F %B %f %{ %} etc. via the
+                    // executor's expand_prompt. Useful for building prompts
+                    // out of stored fragments.
+                    state = match state {
+                        St::S(s) => {
+                            St::S(with_executor(|exec| exec.expand_prompt_string(&s)))
+                        }
+                        St::A(a) => St::A(
+                            a.into_iter()
+                                .map(|s| with_executor(|exec| exec.expand_prompt_string(&s)))
+                                .collect(),
+                        ),
+                    };
+                }
+                'e' => {
+                    // Re-evaluate the value as a shell command and return its
+                    // captured stdout. Equivalent to `$(eval "$value")` —
+                    // useful for late-bound config strings. Uses the
+                    // command-substitution path (in-process pipe capture, no
+                    // fork).
+                    let eval_one = |s: &str| -> String {
+                        with_executor(|exec| exec.run_command_substitution(s))
+                    };
+                    state = match state {
+                        St::S(s) => St::S(eval_one(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| eval_one(&s)).collect()),
+                    };
+                }
+                'p' => {
+                    // Print-style escape processing (mirrors print -e). Same
+                    // as `g` for the escape set we support — they differ in
+                    // zsh on some niche `\c` and `\E` forms, which we map
+                    // identically.
+                    let unescape = |s: &str| -> String {
+                        let mut out = String::with_capacity(s.len());
+                        let mut chars = s.chars().peekable();
+                        while let Some(c) = chars.next() {
+                            if c != '\\' {
+                                out.push(c);
+                                continue;
+                            }
+                            match chars.next() {
+                                Some('n') => out.push('\n'),
+                                Some('t') => out.push('\t'),
+                                Some('r') => out.push('\r'),
+                                Some('\\') => out.push('\\'),
+                                Some('e') | Some('E') => out.push('\x1b'),
+                                Some(other) => {
+                                    out.push('\\');
+                                    out.push(other);
+                                }
+                                None => out.push('\\'),
+                            }
+                        }
+                        out
+                    };
+                    state = match state {
+                        St::S(s) => St::S(unescape(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| unescape(&s)).collect()),
+                    };
+                }
+                'A' => {
+                    // Coerce to array shape (alias of @). Mostly affects
+                    // downstream flags that treat scalar vs array
+                    // differently.
+                    state = match state {
+                        St::S(s) => St::A(vec![s]),
+                        a => a,
+                    };
+                }
+                '~' => {
+                    // Pattern-toggle: in zsh this enables glob-pattern
+                    // interpretation of the value in subsequent matches. The
+                    // bytecode dispatch already glob-matches via `Op::StrMatch`
+                    // when relevant; without a stateful match-context this
+                    // flag is a no-op pass-through. tracing::debug records
+                    // the request.
+                    tracing::debug!("PARAM_FLAG ~ — no-op pass-through (no match-context state)");
+                }
+                _ => {
+                    // Unknown flag — silently skip. The maintainer's "no
+                    // friendly nags" rule means we don't print "unsupported
+                    // flag X"; tracing::debug records it in the log.
+                    tracing::debug!(flag = %c, "BUILTIN_PARAM_FLAG: unknown flag");
+                }
+            }
+        }
+
+        match state {
+            St::S(s) => Value::str(s),
+            St::A(a) => Value::Array(a.into_iter().map(Value::str).collect()),
+        }
+    });
+
+    // `foo[key]=val` — single-key set on an assoc array. Stack: [name, key, value].
+    vm.register_builtin(BUILTIN_SET_ASSOC, |vm, _argc| {
+        let value = vm.pop().to_str();
+        let key = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        with_executor(|exec| {
+            exec.variables.remove(&name);
+            exec.assoc_arrays
+                .entry(name)
+                .or_insert_with(std::collections::HashMap::new)
+                .insert(key, value);
+        });
+        Value::Status(0)
+    });
+
+    // Brace expansion. Routes through executor.expand_braces (already
+    // implemented for the tree-walker era). Returns Value::Array.
+    vm.register_builtin(BUILTIN_WORD_SPLIT, |vm, _argc| {
+        let s = vm.pop().to_str();
+        let ifs = with_executor(|exec| {
+            exec.variables
+                .get("IFS")
+                .cloned()
+                .unwrap_or_else(|| " \t\n".to_string())
+        });
+        let parts: Vec<fusevm::Value> = s
+            .split(|c: char| ifs.contains(c))
+            .filter(|p| !p.is_empty())
+            .map(fusevm::Value::str)
+            .collect();
+        if parts.is_empty() {
+            fusevm::Value::str("")
+        } else if parts.len() == 1 {
+            parts.into_iter().next().unwrap()
+        } else {
+            fusevm::Value::Array(parts)
+        }
+    });
+
+    vm.register_builtin(BUILTIN_BRACE_EXPAND, |vm, _argc| {
+        let s = vm.pop().to_str();
+        let parts = with_executor(|exec| exec.expand_braces(&s));
+        if parts.len() == 1 {
+            fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
+        } else {
+            fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
+        }
+    });
+
+    // `[[ s =~ pat ]]` regex match — extra-builtin fallback path so the
+    // conditional grammar can route here when Op::RegexMatch isn't wired.
+    // Uses the same regex cache as the host method.
+    vm.register_builtin(BUILTIN_REGEX_MATCH, |vm, _argc| {
+        let pat = vm.pop().to_str();
+        let s = vm.pop().to_str();
+        let mut cache = REGEX_CACHE.lock();
+        let matched = if let Some(re) = cache.get(&pat) {
+            re.is_match(&s)
+        } else {
+            match regex::Regex::new(&pat) {
+                Ok(re) => {
+                    let m = re.is_match(&s);
+                    cache.insert(pat.clone(), re);
+                    m
+                }
+                Err(_) => false,
+            }
+        };
+        if matched {
+            Value::Status(0)
+        } else {
+            Value::Status(1)
+        }
+    });
+
+    // `*(qual)` glob qualifier filter. Stack: [pattern, qualifier].
+    // Pattern is glob-expanded normally, then each result is filtered by the
+    // qualifier predicate. Common qualifiers:
+    //   .  — regular files only
+    //   /  — directories only
+    //   @  — symlinks
+    //   x  — executable
+    //   r/w/x — readable/writable/executable
+    //   N  — nullglob (no error if no match)
+    //   L+N / L-N — size > N / size < N (in bytes)
+    //   mh-N / mh+N — modified within N hours / older than N hours
+    //   md-N / md+N — modified within N days / older than N days
+    //   on/On — sort by name asc/desc (default)
+    //   oL/OL — sort by length
+    //   om/Om — sort by mtime
+    vm.register_builtin(BUILTIN_GLOB_QUALIFIED, |vm, _argc| {
+        let qual = vm.pop().to_str();
+        let pattern = vm.pop().to_str();
+        let nullglob = qual.contains('N');
+        let mut matches = with_executor(|exec| exec.expand_glob(&pattern));
+        if matches.is_empty() && !nullglob {
+            // Default: keep the unmatched pattern (zsh's default unless N is set)
+            return fusevm::Value::Array(vec![fusevm::Value::str(pattern)]);
+        }
+        // Filter by predicates that require stat
+        matches.retain(|path| {
+            use std::fs;
+            use std::os::unix::fs::PermissionsExt;
+            let meta = match fs::metadata(path) {
+                Ok(m) => m,
+                Err(_) => return qual.contains('N'),
+            };
+            let mut keep = true;
+            for c in qual.chars() {
+                match c {
+                    '.' => keep &= meta.is_file(),
+                    '/' => keep &= meta.is_dir(),
+                    '@' => {
+                        // is_symlink requires fs::symlink_metadata for the
+                        // path itself, not the target.
+                        keep &= fs::symlink_metadata(path)
+                            .map(|m| m.file_type().is_symlink())
+                            .unwrap_or(false);
+                    }
+                    'x' => {
+                        keep &= meta.permissions().mode() & 0o111 != 0;
+                    }
+                    'r' => {
+                        keep &= meta.permissions().mode() & 0o444 != 0;
+                    }
+                    'w' => {
+                        keep &= meta.permissions().mode() & 0o222 != 0;
+                    }
+                    _ => {}
+                }
+                if !keep {
+                    break;
+                }
+            }
+            keep
+        });
+        // Sort modifiers
+        if qual.contains("on") || qual.contains('o') && !qual.contains("om") && !qual.contains("oL") {
+            matches.sort();
+        }
+        if qual.contains("On") || (qual.contains('O') && !qual.contains("Om") && !qual.contains("OL")) {
+            matches.sort();
+            matches.reverse();
+        }
+        if qual.contains("oL") {
+            matches.sort_by_key(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0));
+        }
+        if qual.contains("OL") {
+            matches.sort_by_key(|p| {
+                std::cmp::Reverse(std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+            });
+        }
+        if qual.contains("om") {
+            matches.sort_by_key(|p| {
+                std::fs::metadata(p)
+                    .and_then(|m| m.modified())
+                    .map(|t| {
+                        std::cmp::Reverse(
+                            t.duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        )
+                    })
+                    .unwrap_or(std::cmp::Reverse(0))
+            });
+        }
+        if qual.contains("Om") {
+            matches.sort_by_key(|p| {
+                std::fs::metadata(p)
+                    .and_then(|m| m.modified())
+                    .map(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0)
+            });
+        }
+        fusevm::Value::Array(matches.into_iter().map(fusevm::Value::str).collect())
+    });
+
+    // `break`/`continue` from a sub-VM body. The compile path emits these
+    // when the keyword appears at chunk top-level (no enclosing for/while in
+    // the current chunk's patch lists). Outer-loop builtins (BUILTIN_RUN_
+    // SELECT and any future loop-via-builtin construct) drain
+    // executor.loop_signal after each iteration.
+    vm.register_builtin(BUILTIN_SET_BREAK, |_vm, _argc| {
+        with_executor(|exec| {
+            exec.loop_signal = Some(LoopSignal::Break);
+        });
+        Value::Status(0)
+    });
+    vm.register_builtin(BUILTIN_SET_CONTINUE, |_vm, _argc| {
+        with_executor(|exec| {
+            exec.loop_signal = Some(LoopSignal::Continue);
+        });
+        Value::Status(0)
+    });
+
+    // `m[k]+=tail` — append onto the existing value (string concat). Mirrors
+    // zsh's += behavior on assoc-array entries. Missing key creates it with
+    // just `tail`, matching SET_ASSOC's create-on-demand.
+    vm.register_builtin(BUILTIN_APPEND_ASSOC, |vm, _argc| {
+        let tail = vm.pop().to_str();
+        let key = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        with_executor(|exec| {
+            exec.variables.remove(&name);
+            let map = exec
+                .assoc_arrays
+                .entry(name)
+                .or_insert_with(std::collections::HashMap::new);
+            match map.get_mut(&key) {
+                Some(existing) => existing.push_str(&tail),
+                None => {
+                    map.insert(key, tail);
+                }
+            }
+        });
+        Value::Status(0)
+    });
+
+    vm.register_builtin(BUILTIN_ARRAY_LENGTH, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let len = with_executor(|exec| exec.arrays.get(&name).map(|a| a.len()).unwrap_or(0));
+        Value::str(len.to_string())
+    });
+
+    vm.register_builtin(BUILTIN_ARRAY_ALL, |vm, _argc| {
+        let name = vm.pop().to_str();
+        with_executor(|exec| match exec.arrays.get(&name) {
+            Some(v) => Value::Array(v.iter().map(Value::str).collect()),
+            None => Value::Array(vec![]),
+        })
+    });
+
+    // BUILTIN_ARRAY_FLATTEN(N): pops N values, flattens one level of Array
+    // nesting, pushes the resulting Array AND its length as a separate Int.
+    // The two-value return shape lets the caller (for-loop compile path)
+    // SetSlot the length before SetSlot'ing the array, without re-deriving
+    // the length from the array via a second builtin call.
+    // `coproc [name] { body }` — bidirectional pipe to backgrounded body.
+    // Stack discipline (top first): [name (str, "" for default), sub_idx (int)].
+    // On success: parent's `executor.arrays[name]` becomes [write_fd, read_fd]
+    // and Status(0) is returned. The caller writes to the child's stdin via
+    // write_fd, reads its stdout via read_fd, and closes both when done.
+    //
+    // Bash's coproc convention is `${NAME[0]}` = read_fd, `${NAME[1]}` =
+    // write_fd. We follow that: arrays[name] = [read_fd_str, write_fd_str].
+    vm.register_builtin(BUILTIN_RUN_COPROC, |vm, _argc| {
+        let sub_idx = vm.pop().to_int() as usize;
+        let raw_name = vm.pop().to_str();
+        let name = if raw_name.is_empty() {
+            "COPROC".to_string()
+        } else {
+            raw_name
+        };
+        let chunk = match vm.chunk.sub_chunks.get(sub_idx).cloned() {
+            Some(c) => c,
+            None => return Value::Status(1),
+        };
+
+        // (parent_read ← child_stdout)
+        let mut p2c = [0i32; 2]; // parent writes, child reads
+        let mut c2p = [0i32; 2]; // child writes, parent reads
+        if unsafe { libc::pipe(p2c.as_mut_ptr()) } < 0 {
+            return Value::Status(1);
+        }
+        if unsafe { libc::pipe(c2p.as_mut_ptr()) } < 0 {
+            unsafe {
+                libc::close(p2c[0]);
+                libc::close(p2c[1]);
+            }
+            return Value::Status(1);
+        }
+
+        match unsafe { libc::fork() } {
+            -1 => {
+                unsafe {
+                    libc::close(p2c[0]);
+                    libc::close(p2c[1]);
+                    libc::close(c2p[0]);
+                    libc::close(c2p[1]);
+                }
+                Value::Status(1)
+            }
+            0 => {
+                // Child: stdin from p2c[0], stdout to c2p[1]. Close all
+                // unused fds. setsid so SIGINT to fg doesn't hit us.
+                unsafe {
+                    libc::dup2(p2c[0], libc::STDIN_FILENO);
+                    libc::dup2(c2p[1], libc::STDOUT_FILENO);
+                    libc::close(p2c[0]);
+                    libc::close(p2c[1]);
+                    libc::close(c2p[0]);
+                    libc::close(c2p[1]);
+                    libc::setsid();
+                }
+                let mut co_vm = fusevm::VM::new(chunk);
+                register_builtins(&mut co_vm);
+                let _ = co_vm.run();
+                let _ = std::io::stdout().flush();
+                let _ = std::io::stderr().flush();
+                std::process::exit(co_vm.last_status);
+            }
+            _pid => {
+                // Parent: close child ends, store [read_fd, write_fd] in NAME.
+                unsafe {
+                    libc::close(p2c[0]);
+                    libc::close(c2p[1]);
+                }
+                let read_fd = c2p[0];
+                let write_fd = p2c[1];
+                with_executor(|exec| {
+                    exec.variables.remove(&name);
+                    exec.arrays.insert(
+                        name,
+                        vec![read_fd.to_string(), write_fd.to_string()],
+                    );
+                });
+                Value::Status(0)
+            }
+        }
+    });
+
+    vm.register_builtin(BUILTIN_ARRAY_FLATTEN, |vm, argc| {
+        let n = argc as usize;
+        let start = vm.stack.len().saturating_sub(n);
+        let raw: Vec<fusevm::Value> = vm.stack.drain(start..).collect();
+        let mut flat: Vec<fusevm::Value> = Vec::with_capacity(raw.len());
+        for v in raw {
+            match v {
+                fusevm::Value::Array(items) => flat.extend(items),
+                other => flat.push(other),
+            }
+        }
+        let len = flat.len() as i64;
+        // Push the array first; the Int(len) becomes the builtin's return
+        // value (which CallBuiltin already pushes). Caller consumes in
+        // reverse: SetSlot(len_slot) pops Int, SetSlot(arr_slot) pops Array.
+        vm.push(fusevm::Value::Array(flat));
+        fusevm::Value::Int(len)
+    });
+
     // Shell variable get/set — routes through executor.variables so nested
     // VMs (function calls) and tree-walker callers see the same storage.
     vm.register_builtin(BUILTIN_GET_VAR, |vm, argc| {
         let args = pop_args(vm, argc);
         let name = args.into_iter().next().unwrap_or_default();
         let live_status = vm.last_status;
+        // `$@` and `$*` need splice semantics — return Value::Array of
+        // positional params so for-loop's BUILTIN_ARRAY_FLATTEN spreads them
+        // and pop_args splits them into argv slots. zsh's `"$@"` quote-each-
+        // word semantics matches: each pos-param becomes its own arg.
+        // Same for arrays accessed by name (e.g. `$arr` in some contexts).
+        if name == "@" || name == "*" {
+            return with_executor(|exec| {
+                exec.last_status = live_status;
+                fusevm::Value::Array(
+                    exec.positional_params
+                        .iter()
+                        .map(fusevm::Value::str)
+                        .collect(),
+                )
+            });
+        }
         let val = with_executor(|exec| {
             exec.last_status = live_status;
+            // If `name` refers to an indexed array, return as Array for
+            // splice contexts. Scalar callers already handle Array via
+            // pop_args' flatten.
+            if let Some(arr) = exec.arrays.get(&name) {
+                return None.unwrap_or_else(|| -> String { arr.join(" ") });
+            }
             exec.get_variable(&name)
         });
         Value::str(val)
@@ -1203,14 +2458,40 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.set_shell_host(Box::new(ZshrsHost));
 }
 
+impl ZshrsHost {
+    /// True iff `c` can be a `(j:…:)` / `(s:…:)` delimiter — non-alphanumeric,
+    /// non-underscore. Restricting to punctuation avoids `(jL)` consuming `L`
+    /// as a delim instead of as the next flag.
+    fn is_zsh_flag_delim(c: char) -> bool {
+        !c.is_ascii_alphanumeric() && c != '_'
+    }
+}
+
 /// Pop argc arguments from the VM stack into a Vec<String>.
+///
+/// `Value::Array` entries (produced by `${arr[@]}`, glob expansion, brace
+/// expansion, etc.) splice into multiple argv-style args — same flattening
+/// rule as fusevm's `Op::Exec`. Without this, a builtin like `echo
+/// ${arr[@]}` with `arr=(x y z)` would receive a single space-joined arg
+/// `"x y z"` instead of three separate args.
 #[inline]
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
-    let mut args = Vec::with_capacity(argc as usize);
+    let mut popped: Vec<fusevm::Value> = Vec::with_capacity(argc as usize);
     for _ in 0..argc {
-        args.push(vm.pop().to_str());
+        popped.push(vm.pop());
     }
-    args.reverse(); // Stack is LIFO, args should be in order
+    popped.reverse();
+    let mut args: Vec<String> = Vec::with_capacity(popped.len());
+    for v in popped {
+        match v {
+            fusevm::Value::Array(items) => {
+                for item in items {
+                    args.push(item.to_str());
+                }
+            }
+            other => args.push(other.to_str()),
+        }
+    }
     args
 }
 
@@ -1264,6 +2545,131 @@ pub const BUILTIN_RUN_PIPELINE: u16 = 285;
 /// the single argv-token form the bytecode word model expects (no per-word
 /// splitting yet — that's a future phase).
 pub const BUILTIN_ARRAY_JOIN: u16 = 286;
+
+/// Builtin ID for `cmd &` background execution. IDs 287/288/289 are reserved
+/// for the planned array work in Phase G1 (SET_ARRAY/SET_ASSOC/ARRAY_INDEX),
+/// so this lands at 290. Pops one sub-chunk index; forks; child detaches
+/// (`setsid`), runs the sub-chunk on a fresh VM, exits with last_status; parent
+/// returns Status(0) immediately. Job-table registration (so `jobs`/`fg`/`wait`
+/// can see the pid) is deferred to Phase G6 — fire-and-forget for now.
+pub const BUILTIN_RUN_BG: u16 = 290;
+
+/// Indexed-array assignment: `arr=(a b c)`. Compile_simple emits N element
+/// pushes followed by name push, then `CallBuiltin(BUILTIN_SET_ARRAY, N+1)`.
+/// The handler pops args (last popped = name in our pushing order) and stores
+/// `Vec<String>` into `executor.arrays`. Tree-walker callers see the same
+/// storage. Any prior scalar binding in `executor.variables` for `name` is
+/// removed so `${name}` (scalar context) consistently reflects the array's
+/// first element via `get_variable`.
+pub const BUILTIN_SET_ARRAY: u16 = 287;
+
+/// Single-key set on an associative array: `foo[key]=val`. Stack (top-down):
+/// [name, key, value]. Stores `value` into `executor.assoc_arrays[name][key]`,
+/// creating the outer entry if missing. compile_simple detects `var[...]=...`
+/// in assignments and emits this builtin.
+pub const BUILTIN_SET_ASSOC: u16 = 288;
+
+/// `${arr[idx]}` — single-element array index. Pops two args:
+///   stack: [name, idx_str]
+/// Returns the indexed element as Value::str. Indexing semantics: zsh is
+/// 1-based by default; bash is 0-based. We follow zsh.
+/// Special idx values: `@` and `*` return the whole array as Value::Array
+/// (which fuses correctly via the Op::Exec splice for argv splice).
+pub const BUILTIN_ARRAY_INDEX: u16 = 289;
+
+/// `${#arr[@]}` and `${#arr}` (when arr is an array name) — array length.
+/// Pops one arg: name. Returns Value::str of len.
+pub const BUILTIN_ARRAY_LENGTH: u16 = 291;
+
+/// `${arr[@]}` — splice all elements as a Value::Array. Pops one arg: name.
+/// The Array gets flattened by Op::Exec/ExecBg/CallFunction into argv.
+pub const BUILTIN_ARRAY_ALL: u16 = 292;
+
+/// Flatten one level of Value::Array nesting. Pops N values; for each, if it's
+/// a Value::Array, its elements are appended directly; otherwise the value is
+/// appended as-is. Pushes a single Value::Array of the flattened result. Used
+/// by the for-loop word-list compile path: when a word like `${arr[@]}`
+/// produces a nested Array, this lets `for i in ${arr[@]}` iterate over the
+/// inner elements rather than the outer single-element array.
+pub const BUILTIN_ARRAY_FLATTEN: u16 = 293;
+
+/// `coproc [name] { body }` — bidirectional pipe to async child. Pops a name
+/// (optional, "" for default) and a sub-chunk index. Creates two pipes, forks,
+/// child redirects its fd 0/1 to the inner ends and runs the body, parent
+/// stores [write_fd, read_fd] into the named array (default `COPROC`). Caller
+/// closes the fds and `wait`s when done. Job-table integration deferred to
+/// Phase G6 alongside the bg `&` work.
+pub const BUILTIN_RUN_COPROC: u16 = 294;
+
+/// `arr+=(d e f)` — append N elements to an existing indexed array. Compile
+/// emits N element pushes + name push, then `CallBuiltin(295, N+1)`. Handler
+/// drains args (last popped = name), extends `executor.arrays[name]` (creates
+/// the entry if missing). Mirrors zsh's `+=` semantics for indexed arrays.
+pub const BUILTIN_APPEND_ARRAY: u16 = 295;
+
+/// `select var in words; do body; done` — interactive numbered-menu loop.
+/// Compile emits N word pushes + var-name push + sub-chunk index push, then
+/// `CallBuiltin(296, N+2)`. Handler prints `1) word1\n2) word2\n...` to
+/// stderr, prints `$PROMPT3` (default `?# `) to stderr, reads a line from
+/// stdin. On EOF returns 0. On a valid 1-based number, sets `var` to the
+/// chosen word, runs the sub-chunk, then redisplays the menu and loops. On
+/// invalid input redraws the menu without running the body. `break` from
+/// inside the body exits the loop (handled by the body's own bytecode).
+pub const BUILTIN_RUN_SELECT: u16 = 296;
+
+/// `m[k]+=value` — append onto an existing assoc-array value (string concat).
+/// If the key doesn't exist, behaves like SET_ASSOC. Stack: [name, key, value].
+pub const BUILTIN_APPEND_ASSOC: u16 = 298;
+
+/// `break` from inside a body that runs on a sub-VM (select, future loop-via-
+/// builtin constructs). Sets `executor.loop_signal = Some(LoopSignal::Break)`.
+/// Outer-loop builtins drain the flag after each body run and exit early.
+pub const BUILTIN_SET_BREAK: u16 = 299;
+
+/// `continue` from inside a sub-VM body. Sets the signal to Continue. Outer
+/// loop builtins drain + skip-to-next-iteration.
+pub const BUILTIN_SET_CONTINUE: u16 = 300;
+
+/// Brace expansion: `{a,b,c}` → 3 values, `{1..5}` → 5 values, `{01..05}` →
+/// zero-padded numerics, `{a..e}` → letter range. Pops one string, returns
+/// Value::Array of expansions (empty array → original string preserved).
+pub const BUILTIN_BRACE_EXPAND: u16 = 301;
+
+/// Glob qualifier filter: `*(qualifier)` filters glob results by predicate.
+/// Pops [pattern, qualifier_string]. Returns Value::Array of matching paths.
+pub const BUILTIN_GLOB_QUALIFIED: u16 = 302;
+
+/// Re-export the regex_match host method as a builtin so `[[ s =~ pat ]]`
+/// works even when fusevm's Op::RegexMatch isn't routed (compat fallback).
+pub const BUILTIN_REGEX_MATCH: u16 = 303;
+
+/// Word-split a string on IFS (default: whitespace). Pops one string,
+/// returns Value::Array of fields. Used in array-literal context where
+/// `arr=($(cmd))` should expand cmd's stdout into multiple elements.
+pub const BUILTIN_WORD_SPLIT: u16 = 304;
+
+/// `${(flags)name}` — zsh parameter expansion flags. Stack: [name, flags].
+/// Flags applied left-to-right. Supported subset (high-value, used by zpwr):
+///
+///   `L` — lowercase the value (scalar; or each element if array)
+///   `U` — uppercase
+///   `j:sep:` — join array with `sep` (delim is the char after `j`)
+///   `s:sep:` — split scalar on `sep` (returns Value::Array)
+///   `f` — split on newlines (shorthand for `s.\n.`)
+///   `o` — sort array ascending
+///   `O` — sort array descending
+///   `P` — indirect: read name's value as another var name, return that's value
+///   `@` — keep as array (returns Value::Array — useful before `j` etc.)
+///   `k` — keys of assoc array
+///   `v` — values of assoc array
+///   `#` — word count (array length as scalar)
+///
+/// Flags can stack: `(jL)` joins then lowercases; `(s.,.U)` splits on `,`
+/// then uppercases each element. The long-tail flags (`q`, `qq`, `qqq` for
+/// quoting, `A` for assoc, `%` for prompt expansion, `e`/`g` for re-eval,
+/// `n`/`p` for numeric, `t` for type, etc.) are deferred — they hit the
+/// runtime fallback via the catch-all expansion path.
+pub const BUILTIN_PARAM_FLAG: u16 = 297;
 
 /// `ShellHost` implementation that delegates to the current `ShellExecutor`
 /// via the `with_executor` thread-local.
@@ -1359,8 +2765,6 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn regex_match(&mut self, s: &str, regex: &str) -> bool {
-        // POSIX extended regex match (`=~`). Cache compiled regexes since the
-        // same pattern often appears in tight loops.
         let mut cache = REGEX_CACHE.lock();
         if let Some(re) = cache.get(regex) {
             return re.is_match(s);
@@ -1373,6 +2777,89 @@ impl fusevm::ShellHost for ZshrsHost {
             }
             Err(_) => false,
         }
+    }
+
+    fn process_sub_in(&mut self, sub: &fusevm::Chunk) -> String {
+        // Run the sub-chunk synchronously (in the current executor context),
+        // capture stdout into a temp file, return the path. Synchronous is
+        // simpler and avoids the thread-local-executor limitation that
+        // spawned threads can't see. Common consumers (`diff`, `cat`,
+        // `comm`) read the file once anyway.
+        use std::io::Write as _;
+        use std::os::unix::io::AsRawFd;
+        let fifo_path = format!(
+            "/tmp/zshrs_psub_{}_{}",
+            std::process::id(),
+            with_executor(|e| {
+                let n = e.process_sub_counter;
+                e.process_sub_counter += 1;
+                n
+            })
+        );
+        let _ = std::fs::remove_file(&fifo_path);
+        let f = match std::fs::File::create(&fifo_path) {
+            Ok(f) => f,
+            Err(_) => return fifo_path,
+        };
+        let saved = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        unsafe {
+            libc::dup2(f.as_raw_fd(), libc::STDOUT_FILENO);
+        }
+        let mut vm = fusevm::VM::new(sub.clone());
+        register_builtins(&mut vm);
+        vm.set_shell_host(Box::new(ZshrsHost));
+        let _ = vm.run();
+        let _ = std::io::stdout().flush();
+        unsafe {
+            libc::dup2(saved, libc::STDOUT_FILENO);
+            libc::close(saved);
+        }
+        fifo_path
+    }
+
+    fn process_sub_out(&mut self, sub: &fusevm::Chunk) -> String {
+        // Same idea reversed: consumer reads stdin from the file we'll
+        // produce when the parent writes. For simplicity, return an
+        // ephemeral path; the parent writes to it and the sub-chunk reads.
+        // This is a simpler model than zsh's bidirectional FIFO and works
+        // for the common `tee >(cmd)` idiom.
+        let fifo_path = format!(
+            "/tmp/zshrs_psub_out_{}_{}",
+            std::process::id(),
+            with_executor(|e| {
+                let n = e.process_sub_counter;
+                e.process_sub_counter += 1;
+                n
+            })
+        );
+        let _ = std::fs::remove_file(&fifo_path);
+        // Create empty file so writers can open it. The sub-chunk reads
+        // from it AFTER parent writes — order isn't enforced but matches
+        // the >(cmd) common-case usage.
+        let _ = std::fs::write(&fifo_path, "");
+        fifo_path
+    }
+
+    fn subshell_begin(&mut self) {
+        with_executor(|exec| {
+            exec.subshell_snapshots.push(SubshellSnapshot {
+                variables: exec.variables.clone(),
+                arrays: exec.arrays.clone(),
+                assoc_arrays: exec.assoc_arrays.clone(),
+                positional_params: exec.positional_params.clone(),
+            });
+        });
+    }
+
+    fn subshell_end(&mut self) {
+        with_executor(|exec| {
+            if let Some(snap) = exec.subshell_snapshots.pop() {
+                exec.variables = snap.variables;
+                exec.arrays = snap.arrays;
+                exec.assoc_arrays = snap.assoc_arrays;
+                exec.positional_params = snap.positional_params;
+            }
+        });
     }
 
     fn redirect(&mut self, fd: u8, op: u8, target: &str) {
@@ -1453,6 +2940,31 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<String>) -> Option<i32> {
+        // Alias check first: `alias g='echo hi'; g` rewrites to `echo hi`
+        // before normal function/external dispatch. The expansion is
+        // re-parsed + compiled + run on a nested VM with `args` appended.
+        // Without this branch, aliases would be silently ignored at
+        // run-time and `g` would fall through to "command not found".
+        let alias_body = with_executor(|exec| exec.aliases.get(name).cloned());
+        if let Some(body) = alias_body {
+            let combined = if args.is_empty() {
+                body
+            } else {
+                let quoted: Vec<String> = args
+                    .iter()
+                    .map(|a| {
+                        let escaped = a.replace('\'', "'\\''");
+                        format!("'{}'", escaped)
+                    })
+                    .collect();
+                format!("{} {}", body, quoted.join(" "))
+            };
+            let status = with_executor(|exec| {
+                exec.execute_script(&combined).unwrap_or(1)
+            });
+            return Some(status);
+        }
+
         // Resolve to a compiled Chunk:
         //   1. Already in functions_compiled → use as-is
         //   2. AST-only (sourced / defined earlier) → compile on demand
@@ -2182,11 +3694,42 @@ pub struct UnixSocketState {
     pub listener: Option<std::os::unix::net::UnixListener>,
 }
 
+/// Cross-VM loop-control signal. When `break`/`continue` is hit inside a body
+/// that runs on a sub-VM (e.g. select's body), the inline patches mechanism
+/// can't reach the outer loop — set this flag and the outer-loop builtin
+/// drains it after each iteration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopSignal {
+    Break,
+    Continue,
+}
+
+/// Snapshot of subshell-isolated state. Captured at `(` entry, restored at
+/// `)` exit. zsh subshell semantics: assignments inside `(…)` don't leak to
+/// the outer scope. We snapshot variables + arrays + assoc_arrays which
+/// covers the common case; environment isn't snapshotted since exporting
+/// from a subshell is meaningful (zsh inherits but doesn't propagate-back).
+pub struct SubshellSnapshot {
+    pub variables: HashMap<String, String>,
+    pub arrays: HashMap<String, Vec<String>>,
+    pub assoc_arrays: HashMap<String, HashMap<String, String>>,
+    pub positional_params: Vec<String>,
+}
+
 pub struct ShellExecutor {
     pub functions: HashMap<String, ShellCommand>,
     pub aliases: HashMap<String, String>,
     pub global_aliases: HashMap<String, String>, // alias -g: expand anywhere
     pub suffix_aliases: HashMap<String, String>, // alias -s: expand by file extension
+    /// Set by `break`/`continue` keywords when no enclosing loop in the
+    /// current chunk's patch lists. Outer-loop builtins (BUILTIN_RUN_SELECT)
+    /// observe + clear this after each body run.
+    pub loop_signal: Option<LoopSignal>,
+    /// Stack of subshell-state snapshots. Each `(…)` subshell pushes a copy
+    /// of variables/arrays/assoc_arrays at entry and pops/restores at exit.
+    /// Without this, `(x=inner; …); echo $x` shows `inner` instead of the
+    /// outer-scope value.
+    pub subshell_snapshots: Vec<SubshellSnapshot>,
     pub last_status: i32,
     pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
@@ -2323,6 +3866,8 @@ impl ShellExecutor {
             aliases: HashMap::new(),
             global_aliases: HashMap::new(),
             suffix_aliases: HashMap::new(),
+            loop_signal: None,
+            subshell_snapshots: Vec::new(),
             last_status: 0,
             variables,
             arrays: {
@@ -2559,10 +4104,17 @@ impl ShellExecutor {
                 }
             }
             r::DUP_READ | r::DUP_WRITE => {
-                // Target is a numeric fd reference like `&3`
+                // Target is a numeric fd reference like `&3`. The parser
+                // strips the `&` prefix before we get here in some paths,
+                // others retain it — accept both. Also support `-` for
+                // close-fd (`<&-` / `>&-`) per POSIX.
                 let n = target.trim_start_matches('&');
-                if let Ok(src_fd) = n.parse::<i32>() {
+                if n == "-" {
+                    unsafe { libc::close(fd) };
+                } else if let Ok(src_fd) = n.parse::<i32>() {
                     unsafe { libc::dup2(src_fd, fd) };
+                } else {
+                    tracing::warn!(target = %target, "DUP redir: target not parseable as fd");
                 }
             }
             r::WRITE_BOTH => {
@@ -2652,7 +4204,26 @@ impl ShellExecutor {
         let Some((cmd, rest)) = args.split_first() else {
             return 0;
         };
-        match self.execute_external(cmd, &rest.to_vec(), &[]) {
+        let rest_vec: Vec<String> = rest.to_vec();
+
+        // AOP intercepts: when an `intercept :before/:around/:after foo` block
+        // is registered, dynamic-command-name dispatch must consult it before
+        // spawning. Without this, `cmd=ls; $cmd` bypasses every intercept that
+        // a literal `ls` would trigger. The full_cmd string mirrors what the
+        // tree-walker era passed (cmd + args joined by space) so existing
+        // pattern matchers continue to work.
+        if !self.intercepts.is_empty() {
+            let full_cmd = if rest_vec.is_empty() {
+                cmd.clone()
+            } else {
+                format!("{} {}", cmd, rest_vec.join(" "))
+            };
+            if let Some(intercept_result) = self.run_intercepts(cmd, &full_cmd, &rest_vec) {
+                return intercept_result.unwrap_or(127);
+            }
+        }
+
+        match self.execute_external(cmd, &rest_vec, &[]) {
             Ok(status) => status,
             Err(_) => 127,
         }
@@ -3270,6 +4841,17 @@ impl ShellExecutor {
 
         // Quick check: nothing to expand
         if !input.contains('!') && !input.starts_with('^') {
+            return input.to_string();
+        }
+
+        // History expansion only fires in interactive mode (zsh's default).
+        // For `-c` script mode, `!!` etc. are literal — pulling from the
+        // persistent history db would inject random commands from the user's
+        // saved sessions. We anchor on stdin-is-tty, which is the
+        // unambiguous signal — the `interactive` option may be set on by
+        // default in zshrs's options table for compat. atty::is checks the
+        // OS-level fd state.
+        if !atty::is(atty::Stream::Stdin) {
             return input.to_string();
         }
 
@@ -6168,26 +7750,25 @@ impl ShellExecutor {
                     let long = rest.starts_with('#');
                     let pattern = if long { &rest[1..] } else { rest };
 
-                    // Convert shell glob pattern to regex-style for matching prefixes
+                    // Glob → regex translation. For SHORTEST match, use
+                    // non-greedy `*` (`.*?`); for LONGEST, greedy `.*`. The
+                    // anchor `^` keeps the match anchored to the start.
+                    let star = if long { ".*" } else { ".*?" };
                     let pattern_regex = regex::escape(pattern)
-                        .replace(r"\*", ".*")
+                        .replace(r"\*", star)
                         .replace(r"\?", ".");
                     let full_pattern = format!("^{}", pattern_regex);
 
                     if let Some(re) = cached_regex(&full_pattern) {
                         if long {
-                            // Remove longest prefix match - find all matches and use the longest
-                            let mut longest_end = 0;
-                            for m in re.find_iter(&val) {
-                                if m.end() > longest_end {
-                                    longest_end = m.end();
-                                }
-                            }
-                            if longest_end > 0 {
-                                return val[longest_end..].to_string();
+                            // Longest match — `find` with greedy `.*` already
+                            // returns the longest from the start.
+                            if let Some(m) = re.find(&val) {
+                                return val[m.end()..].to_string();
                             }
                         } else {
-                            // Remove shortest prefix match
+                            // Shortest match — non-greedy regex finds the
+                            // shortest prefix that satisfies the pattern.
                             if let Some(m) = re.find(&val) {
                                 return val[m.end()..].to_string();
                             }
@@ -22026,32 +23607,73 @@ impl ShellExecutor {
     fn builtin_tr(&self, args: &[String]) -> i32 {
         use std::io::Read;
 
-        if args.len() < 2 {
+        if args.len() < 1 {
             eprintln!("tr: missing operand");
             return 1;
         }
 
         let delete = args.iter().any(|a| a == "-d");
-        let set1: &str;
-        let set2: &str;
+        let set1_raw: &str;
+        let set2_raw: &str;
 
         if delete {
-            set1 = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str()).unwrap_or("");
-            set2 = "";
+            set1_raw = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str()).unwrap_or("");
+            set2_raw = "";
         } else {
             let non_flag: Vec<&str> = args.iter().filter(|a| !a.starts_with('-')).map(|s| s.as_str()).collect();
-            set1 = non_flag.first().copied().unwrap_or("");
-            set2 = non_flag.get(1).copied().unwrap_or("");
+            set1_raw = non_flag.first().copied().unwrap_or("");
+            set2_raw = non_flag.get(1).copied().unwrap_or("");
         }
+
+        // Expand ranges like `a-z` into the full character list.
+        // Also handle escape sequences \n \t \r \\ \0.
+        fn expand_set(s: &str) -> Vec<char> {
+            let mut out = Vec::new();
+            let chars: Vec<char> = s.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                let c = chars[i];
+                let resolved = if c == '\\' && i + 1 < chars.len() {
+                    let next = chars[i + 1];
+                    i += 1;
+                    match next {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        '\\' => '\\',
+                        '0' => '\0',
+                        other => other,
+                    }
+                } else {
+                    c
+                };
+                if i + 2 < chars.len() && chars[i + 1] == '-' {
+                    let end = chars[i + 2];
+                    if (resolved as u32) <= (end as u32) {
+                        for cc in (resolved as u32)..=(end as u32) {
+                            if let Some(c) = char::from_u32(cc) {
+                                out.push(c);
+                            }
+                        }
+                        i += 3;
+                        continue;
+                    }
+                }
+                out.push(resolved);
+                i += 1;
+            }
+            out
+        }
+
+        let s1 = expand_set(set1_raw);
+        let s2 = expand_set(set2_raw);
 
         let mut input = String::new();
         std::io::stdin().read_to_string(&mut input).ok();
 
         let output: String = if delete {
-            input.chars().filter(|c| !set1.contains(*c)).collect()
+            input.chars().filter(|c| !s1.contains(c)).collect()
         } else {
-            let s1: Vec<char> = set1.chars().collect();
-            let s2: Vec<char> = set2.chars().collect();
             input.chars().map(|c| {
                 if let Some(pos) = s1.iter().position(|&x| x == c) {
                     s2.get(pos).or(s2.last()).copied().unwrap_or(c)

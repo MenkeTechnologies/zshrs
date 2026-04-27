@@ -15,6 +15,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::time::Duration;
 
 fn zshrs_bin() -> PathBuf {
@@ -22,6 +23,16 @@ fn zshrs_bin() -> PathBuf {
     p.push("target/debug/zshrs");
     p
 }
+
+/// Serializes execution of fork-heavy subprocess tests (pipelines, command
+/// substitution, background `&`). zshrs itself uses `libc::fork` for pipeline
+/// stages and bg dispatch, and post-fork in a multi-threaded program is only
+/// async-signal-safe in theory — in practice, running multiple of these in
+/// parallel cargo-test threads exposes timing races (held mutexes, stdio
+/// reordering, pid reaping). Held only for the duration of the spawned zshrs
+/// invocation. Pure-bytecode tests (no zshrs-internal fork) skip the lock and
+/// run in parallel as before.
+static FORK_SERIAL: Mutex<()> = Mutex::new(());
 
 /// Run `zshrs -f -c code` with a 10-second timeout. Returns (status, stdout).
 /// stderr is captured and discarded — tests assert only on stdout/status to
@@ -91,6 +102,14 @@ fn ok(code: &str, expected_stdout: &str) {
         "stdout mismatch for `{}`",
         code
     );
+}
+
+/// Wrap `ok` with the FORK_SERIAL mutex. Use for tests where zshrs internally
+/// forks (pipelines, command substitution, `cmd &`). The lock is held only
+/// for the spawned subprocess's lifetime — pure-bytecode tests stay parallel.
+fn ok_serial(code: &str, expected_stdout: &str) {
+    let _guard = FORK_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+    ok(code, expected_stdout);
 }
 
 /// Assert exact stdout and exact exit status.
@@ -198,22 +217,22 @@ fn semicolon_runs_sequentially() {
 
 #[test]
 fn pipeline_two_stages_with_external() {
-    ok("echo hello | /bin/cat", "hello\n");
+    ok_serial("echo hello | /bin/cat", "hello\n");
 }
 
 #[test]
 fn pipeline_three_stages() {
-    ok("echo abc | cat | cat", "abc\n");
+    ok_serial("echo abc | cat | cat", "abc\n");
 }
 
 #[test]
 fn pipeline_with_builtin_consumer() {
-    ok("seq 5 | wc -l", "5\n");
+    ok_serial("seq 5 | wc -l", "5\n");
 }
 
 #[test]
 fn pipeline_function_in_first_stage() {
-    ok(
+    ok_serial(
         "greet() { echo from-func; }; greet | /bin/cat",
         "from-func\n",
     );
@@ -224,6 +243,7 @@ fn pipeline_terminates_on_sigpipe() {
     // Function produces unbounded output; `head -3` closes its read end after
     // 3 lines, sending SIGPIPE to producer. If pipelines weren't real (just
     // sequential execution), this would hang or recurse to stack overflow.
+    let _guard = FORK_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
     let (status, stdout) = run(
         r#"foo() { echo $1; foo $(($1 + 1)); }; foo 1 2>/dev/null | head -3"#,
     );
@@ -774,4 +794,776 @@ fn eval_sees_outer_vars() {
     // sharing executor state. This proves that variables set in the outer
     // scope are visible inside eval'd code.
     ok(r#"x=10; eval "y=\$x"; echo $y"#, "10\n");
+}
+
+#[test]
+fn eval_single_quoted_arg_defers_expansion() {
+    // Regression test: `eval 'echo $x'` must pass the LITERAL string to eval,
+    // not the outer-shell-expanded one. Lexer marks single-quoted `$` chars
+    // with a leading `\0` sentinel; compile_word's trigger detection must
+    // honor the sentinel so the `$` does not fire compile-time expansion,
+    // and the emitted constant must have the marker stripped. Bug pre-fix:
+    // output was `\0 10\n` (NUL + space + 10 + newline) because the outer
+    // compile expanded `$x` then split on the leftover NUL.
+    ok(r#"x=10; eval 'echo $x'"#, "10\n");
+}
+
+#[test]
+fn eval_single_quoted_multi_statement() {
+    // Same fix as eval_single_quoted_arg_defers_expansion, plus proves the
+    // re-parsed literal handles multiple commands and assignment correctly.
+    ok(
+        r#"x=hello; eval 'echo $x; echo two; a=$x; echo $a'"#,
+        "hello\ntwo\nhello\n",
+    );
+}
+
+#[test]
+fn single_quoted_dollar_stays_literal_in_echo() {
+    // Compile-path correctness: `echo 'literal $dollar'` must output the
+    // string verbatim with no $-expansion and no embedded NUL bytes.
+    ok(r#"echo 'literal $dollar'"#, "literal $dollar\n");
+}
+
+#[test]
+fn background_amp_returns_immediately() {
+    // `cmd &` must not block the parent. We assert behavior from the parent's
+    // perspective: a foreground `echo done` runs synchronously while the bg
+    // `sleep` continues in another process. Output is just `done\n`; if the
+    // shell waited on the bg command, this test would hang the entire suite
+    // until the sleep completed.
+    //
+    // The compile path: ListOp::Amp now routes `cmd` through compile_command_bg
+    // → BUILTIN_RUN_BG → fork + setsid + run sub-chunk + exit. Pre-fix, the
+    // Amp arm was a no-op TODO and the cmd ran synchronously inline.
+    ok_serial(r#"sleep 1 & echo done"#, "done\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Indexed arrays — Phase G1
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `arr=(a b c)` storage now lands in `executor.arrays` (Vec<String>) via
+// BUILTIN_SET_ARRAY (id 287). Reads of `${arr[idx]}`, `${arr[@]}`,
+// `${#arr[@]}` lower to BUILTIN_ARRAY_INDEX/_ALL/_LENGTH (289/292/291). Splice
+// uses Value::Array which Op::Exec/ExecBg/CallFunction and pop_args flatten
+// into argv slots. Pre-G1, `arr=(a b c)` collapsed to a space-joined scalar
+// via the runtime fallback and `${arr[@]}` was a single string.
+
+#[test]
+fn array_literal_index_returns_element() {
+    // zsh is 1-based for positive indices.
+    ok(
+        r#"arr=(alpha beta gamma); echo ${arr[1]}; echo ${arr[2]}; echo ${arr[3]}"#,
+        "alpha\nbeta\ngamma\n",
+    );
+}
+
+#[test]
+fn array_literal_negative_index_counts_from_end() {
+    ok(
+        r#"arr=(a b c d); echo ${arr[-1]}; echo ${arr[-2]}"#,
+        "d\nc\n",
+    );
+}
+
+#[test]
+fn array_length_reports_element_count() {
+    ok(
+        r#"arr=(one two three four five); echo ${#arr[@]}"#,
+        "5\n",
+    );
+}
+
+#[test]
+fn empty_array_has_zero_length() {
+    ok(r#"arr=(); echo ${#arr[@]}"#, "0\n");
+}
+
+#[test]
+fn array_splice_in_for_loop() {
+    // The for-loop now compiles each word at runtime and routes through
+    // BUILTIN_ARRAY_FLATTEN, so ${arr[@]} produces N iterations not 1.
+    ok(
+        r#"arr=(x y z); for i in ${arr[@]}; do echo $i; done"#,
+        "x\ny\nz\n",
+    );
+}
+
+#[test]
+fn array_splice_with_surrounding_words_in_for() {
+    ok(
+        r#"arr=(b c); for i in a ${arr[@]} d; do echo $i; done"#,
+        "a\nb\nc\nd\n",
+    );
+}
+
+#[test]
+fn array_splice_into_argv_for_external() {
+    // Each array element becomes a separate argv slot to /bin/echo. We pipe
+    // through `wc -w` to count words — proves N elements landed as N args
+    // rather than one space-joined arg.
+    ok_serial(
+        r#"arr=(a b c d e); /bin/echo ${arr[@]} | /usr/bin/wc -w"#,
+        "       5\n",
+    );
+}
+
+#[test]
+fn empty_array_in_for_iterates_zero_times() {
+    ok(
+        r#"arr=(); for i in ${arr[@]}; do echo iter; done; echo done"#,
+        "done\n",
+    );
+}
+
+#[test]
+fn array_with_spaces_preserves_elements() {
+    // Each quoted element is one slot, not split. zsh-array semantics: the
+    // outer parens collect words but quoted segments are atomic.
+    ok(
+        r#"arr=(one "two words" three); for i in ${arr[@]}; do echo "[$i]"; done"#,
+        "[one]\n[two words]\n[three]\n",
+    );
+}
+
+#[test]
+fn array_splice_to_echo_builtin() {
+    // Echo joins its args with a single space. With splice working, three
+    // array elements become three echo args → `a b c`. Without splice (pre-
+    // G1), it would be one joined arg `a b c` (same string but one arg) —
+    // the test below distinguishes via `wc -w` which sees argv at the OS
+    // level after fork-exec.
+    ok(r#"arr=(a b c); echo ${arr[@]}"#, "a b c\n");
+}
+
+#[test]
+fn array_indexed_singletons_dont_collide_with_scalar_lookup() {
+    // After `arr=(x y z)`, $arr (no subscript) returns the array's space-
+    // joined form (zsh convention via get_variable). ${arr[1]} returns the
+    // first element only. Guards against the bug where arrays used to
+    // shadow into `executor.variables` as a scalar — BUILTIN_SET_ARRAY now
+    // explicitly removes any prior scalar binding.
+    ok(
+        r#"arr=(x y z); echo "$arr"; echo ${arr[1]}"#,
+        "x y z\nx\n",
+    );
+}
+
+#[test]
+fn array_append_extends_existing() {
+    // `arr+=(c d)` on an existing array appends, doesn't replace.
+    ok(
+        r#"arr=(a b); arr+=(c d); echo ${arr[@]}; echo ${#arr[@]}"#,
+        "a b c d\n4\n",
+    );
+}
+
+#[test]
+fn array_append_creates_when_missing() {
+    // `arr+=(x)` with no prior `arr` is equivalent to `arr=(x)`. zsh and bash
+    // both behave this way.
+    ok(
+        r#"arr+=(start); echo ${arr[@]}; arr+=(more); echo ${arr[@]}"#,
+        "start\nstart more\n",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zsh parameter-expansion flags — Phase G4 subset
+// `${(L)var}` lowercase, `${(U)var}` upper, `${(j:s:)arr}` join,
+// `${(s:s:)scalar}` split, `${(o)arr}` sort, `${(O)arr}` reverse-sort,
+// `${(P)var}` indirect, `${(@)scalar}` force-array, `${(k)assoc}` keys,
+// `${(v)assoc}` values, `${#arr}` length. Flags can stack: `(jL)` joins
+// then lowercases.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn zshflag_lowercase_scalar() {
+    ok(r#"x=Hello; echo "${(L)x}""#, "hello\n");
+}
+
+#[test]
+fn zshflag_uppercase_scalar() {
+    ok(r#"x=hello; echo "${(U)x}""#, "HELLO\n");
+}
+
+#[test]
+fn zshflag_sort_array_ascending() {
+    ok(r#"arr=(c a b); echo "${(o)arr}""#, "a b c\n");
+}
+
+#[test]
+fn zshflag_sort_array_descending() {
+    ok(r#"arr=(c a b); echo "${(O)arr}""#, "c b a\n");
+}
+
+#[test]
+fn zshflag_join_with_explicit_sep() {
+    ok(
+        r#"arr=(one two three); echo "${(j:-:)arr}""#,
+        "one-two-three\n",
+    );
+}
+
+#[test]
+fn zshflag_split_on_explicit_sep() {
+    // After split, echo joins the resulting array with space (default IFS).
+    ok(r#"s=a,b,c; echo "${(s:,:)s}""#, "a b c\n");
+}
+
+#[test]
+fn zshflag_indirect_resolves_through_name() {
+    // `(P)ref` reads $ref's value as another var name and returns that var's value.
+    ok(r#"real=42; ref=real; echo "${(P)ref}""#, "42\n");
+}
+
+#[test]
+fn zshflag_array_length_via_pound() {
+    // `${#arr}` (NOT `${#arr[@]}` — that's covered by ARRAY_LENGTH already).
+    // Goes through PARAM_FLAG with `#` flag; on an array it returns length.
+    ok(r#"arr=(a b c d); echo "${(#)arr}""#, "4\n");
+}
+
+#[test]
+fn zshflag_stacked_join_then_upper() {
+    // `(j:-:U)`: join with `-`, then uppercase the joined string.
+    ok(r#"arr=(foo bar); echo "${(j:-:U)arr}""#, "FOO-BAR\n");
+}
+
+#[test]
+fn zshflag_stacked_split_then_upper() {
+    // `(s:,:U)`: split scalar on `,`, then uppercase each element.
+    ok(r#"s=a,b,c; echo "${(s:,:U)s}""#, "A B C\n");
+}
+
+#[test]
+fn zshflag_q_single_quote_escapes_inner() {
+    ok(
+        r##"x="hi 'world'"; echo "${(q)x}""##,
+        "'hi '\\''world'\\'''\n",
+    );
+}
+
+#[test]
+fn zshflag_qq_double_quote() {
+    ok(r#"x=hello; echo "${(qq)x}""#, "\"hello\"\n");
+}
+
+#[test]
+fn zshflag_qqq_ansi_c_quoting() {
+    // Tab → \\t in $'…' form.
+    ok(
+        r#"s=$(printf 'a\tb'); echo "${(qqq)s}""#,
+        "$'a\\tb'\n",
+    );
+}
+
+#[test]
+fn zshflag_g_processes_backslash_escapes() {
+    // `(g)` interprets backslash escapes — `\n` becomes a real newline.
+    ok(
+        r#"s='hello\nworld'; echo "${(g)s}""#,
+        "hello\nworld\n",
+    );
+}
+
+#[test]
+fn zshflag_n_natural_sort() {
+    // Natural-numeric sort: file2 < file10 (lexicographically file10 would
+    // come first, naturally file2 does).
+    ok(
+        r#"arr=(file10 file2 file1 file20); echo "${(on)arr}""#,
+        "file1 file2 file10 file20\n",
+    );
+}
+
+#[test]
+fn zshflag_t_type_query() {
+    // `(t)var` returns the variable's typeset shape.
+    ok(
+        r#"arr=(a b); typeset -A m; m[k]=v; sc=str; echo "${(t)arr}|${(t)m}|${(t)sc}""#,
+        "array|association|scalar\n",
+    );
+}
+
+#[test]
+fn zshflag_i_case_insensitive_sort() {
+    // `(i)` sorts case-insensitively while preserving the original case.
+    ok(
+        r#"arr=(Banana apple Cherry); echo "${(i)arr}""#,
+        "apple Banana Cherry\n",
+    );
+}
+
+#[test]
+fn zshflag_q_plus_skips_safe_values() {
+    // `(q+)` only quotes when needed (whitespace or shell-specials).
+    // Pre: 'safe' word stays bare, 'has space' gets quoted.
+    ok(
+        r#"a=safe; b="has space"; echo "${(q+)a}|${(q+)b}""#,
+        "safe|'has space'\n",
+    );
+}
+
+#[test]
+fn zshflag_q_minus_strips_trailing_newlines() {
+    // `(q-)` strips trailing newlines before quoting. Common with cmd-subst
+    // values that come back with a trailing \n.
+    ok(
+        r#"x=$(printf 'val\n\n'); echo "${(q-)x}""#,
+        "'val'\n",
+    );
+}
+
+#[test]
+fn zshflag_q_star_escapes_glob_chars() {
+    // `(q*)` escapes `*` and `?` in addition to the level's normal escapes.
+    ok(
+        r#"x="*.rs"; echo "${(q*)x}""#,
+        "'\\*.rs'\n",
+    );
+}
+
+#[test]
+fn zshflag_qqqq_backslash_no_quotes() {
+    // `(qqqq)` backslash-escapes shell-specials without surrounding quotes.
+    ok(r#"x="has space"; echo "${(qqqq)x}""#, "has\\ space\n");
+}
+
+#[test]
+fn brace_range_numeric() {
+    ok(r#"echo {1..5}"#, "1 2 3 4 5\n");
+}
+
+#[test]
+fn brace_range_letter() {
+    ok(r#"echo {a..e}"#, "a b c d e\n");
+}
+
+#[test]
+fn brace_alternation() {
+    ok(r#"echo {alpha,beta,gamma}"#, "alpha beta gamma\n");
+}
+
+#[test]
+fn brace_with_prefix_and_suffix() {
+    ok(r#"echo pre{a,b,c}post"#, "preapost prebpost precpost\n");
+}
+
+#[test]
+fn brace_in_for_loop() {
+    ok(
+        r#"for i in {1..3}; do echo "iter=$i"; done"#,
+        "iter=1\niter=2\niter=3\n",
+    );
+}
+
+#[test]
+fn glob_qualifier_dot_filters_regular_files() {
+    // Pre-fix: `*(.)` returned all entries. Post-fix: only regular files.
+    // The test creates a tempdir with one file + one dir, asserts that
+    // `*(.) ` returns only the file basename.
+    let tmp = std::env::temp_dir().join(format!(
+        "zshrs_glob_qual_dot_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("alpha.txt"), "x").unwrap();
+    std::fs::create_dir_all(tmp.join("beta_dir")).unwrap();
+    let p = tmp.to_string_lossy().into_owned();
+    let script = format!(r#"echo {}/*(.)"#, p);
+    let (status, stdout) = run(&script);
+    assert_eq!(status, 0);
+    assert!(stdout.contains("alpha.txt"), "missing file: {}", stdout);
+    assert!(
+        !stdout.contains("beta_dir"),
+        "should not contain dir: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn glob_qualifier_slash_filters_directories() {
+    let tmp = std::env::temp_dir().join(format!(
+        "zshrs_glob_qual_slash_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("foo.txt"), "x").unwrap();
+    std::fs::create_dir_all(tmp.join("subdir")).unwrap();
+    let p = tmp.to_string_lossy().into_owned();
+    let script = format!(r#"echo {}/*(/)"#, p);
+    let (status, stdout) = run(&script);
+    assert_eq!(status, 0);
+    assert!(stdout.contains("subdir"), "missing dir: {}", stdout);
+    assert!(!stdout.contains("foo.txt"), "should not have file: {}", stdout);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn regex_match_caret_anchor() {
+    // Pre-fix: lexer split `^h` into Bang+h, joined with space → `^ h`,
+    // regex compile failed silently. Plus the RHS was glob-expanded before
+    // RegexMatch.
+    ok_status(
+        r#"[[ "hello" =~ ^h ]] && echo MATCH || echo NOMATCH"#,
+        "MATCH\n",
+        0,
+    );
+}
+
+#[test]
+fn regex_match_complex_with_captures() {
+    ok_status(
+        r#"[[ "version 1.2.3" =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]] && echo MATCH || echo NOMATCH"#,
+        "MATCH\n",
+        0,
+    );
+}
+
+#[test]
+fn regex_match_failure_returns_status_1() {
+    ok_status(
+        r#"[[ "abc" =~ ^z ]] && echo MATCH || echo NOMATCH"#,
+        "NOMATCH\n",
+        0,
+    );
+}
+
+#[test]
+fn bang_literal_in_non_interactive() {
+    // Pre-fix: `echo !!` consumed `!` as Bang twice → echo got 0 args.
+    // Post-fix: `!` followed by non-whitespace stays in the word.
+    ok(r#"echo !!"#, "!!\n");
+    ok(r#"echo "args: !*""#, "args: !*\n");
+    ok(r#"echo !arg !cmd"#, "!arg !cmd\n");
+}
+
+#[test]
+fn bang_negation_keyword_still_works() {
+    // `! cmd` (with space) is still command negation.
+    ok_status(r#"! true; echo $?"#, "1\n", 0);
+    ok_status(r#"! false; echo $?"#, "0\n", 0);
+}
+
+#[test]
+fn zshflag_in_quoted_context_works() {
+    // Regression: pre-fix, `${(t)sc}` inside double quotes hit
+    // compile_string_with_expansions which emitted GET_VAR("(t)sc").
+    // Post-fix, the synthesized `${(t)sc}` routes to PARAM_FLAG via the
+    // same matcher used by the Literal-word path.
+    ok(r#"sc=hello; echo "type=${(t)sc}""#, "type=scalar\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Associative arrays — Phase G1 follow-up (id 288 = BUILTIN_SET_ASSOC)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn assoc_set_and_get_single_entry() {
+    ok(
+        r#"foo[key]=val; echo "${foo[key]}""#,
+        "val\n",
+    );
+}
+
+#[test]
+fn assoc_typeset_then_set_and_get() {
+    ok(
+        r#"typeset -A m; m[name]=Jacob; m[role]=eng; echo "name=${m[name]} role=${m[role]}""#,
+        "name=Jacob role=eng\n",
+    );
+}
+
+#[test]
+fn assoc_two_lookups_in_double_quoted_string() {
+    // Regression: pre-fix `try_lower_array_literal` falsely matched the
+    // entire string `${foo[a]} ${foo[b]}` as a single ${name[idx]} reference
+    // (treating `a]} ${foo[b` as the index). The fix rejects bodies
+    // containing `${` or `}` so multi-group strings route to the runtime
+    // string walker.
+    ok(
+        r#"foo[a]=1; foo[b]=2; echo "${foo[a]} ${foo[b]}""#,
+        "1 2\n",
+    );
+}
+
+#[test]
+fn assoc_append_concats_to_existing() {
+    // `m[k]+=tail` appends to the existing value (string concat). Pre-fix,
+    // is_append was ignored on the assoc compile branch.
+    ok(
+        r#"m[k]=hello; m[k]+=" world"; echo "${m[k]}""#,
+        "hello world\n",
+    );
+}
+
+#[test]
+fn assoc_append_creates_when_missing() {
+    // First +=on a missing key behaves like a plain set, matching zsh/bash.
+    ok(r#"m[a]+=foo; m[a]+=bar; echo "${m[a]}""#, "foobar\n");
+}
+
+#[test]
+fn assoc_overwrite_replaces_value() {
+    ok(
+        r#"m[k]=first; m[k]=second; echo "${m[k]}""#,
+        "second\n",
+    );
+}
+
+#[test]
+fn assoc_missing_key_returns_empty() {
+    ok(r#"m[a]=1; echo "[${m[nonexistent]}]""#, "[]\n");
+}
+
+#[test]
+fn select_with_eof_stdin_exits_zero_no_body() {
+    // Pre-fix: `select` was unrecognized by ShellParser, fell through to
+    // parse_simple_command which treated `select` as an external command name
+    // and hung trying to spawn it. Post-fix: parse_select wires a
+    // CompoundCommand::Select; compile path emits BUILTIN_RUN_SELECT which
+    // prints menu to stderr, reads stdin, exits 0 on EOF without running the
+    // body. Test pipes empty stdin (`< /dev/null` via run_stdin's empty
+    // input) — body should never execute, "done" should print.
+    let (status, stdout) = run_stdin(
+        r#"select x in a b c; do echo "got=$x"; done; echo done"#,
+        "",
+    );
+    assert_eq!(status, 0);
+    assert!(stdout.contains("done"), "expected 'done' in stdout: {}", stdout);
+    assert!(
+        !stdout.contains("got="),
+        "body must not run when stdin is empty: {}",
+        stdout
+    );
+}
+
+#[test]
+fn select_runs_body_with_valid_choice() {
+    // Pipe "2" → select sets x to second word, runs body, body sets
+    // BREAK_SELECT to exit loop. Asserts both that the selection landed in
+    // $x and that BREAK_SELECT was honored.
+    let (status, stdout) = run_stdin(
+        r#"select x in alpha beta gamma; do echo "selected=$x"; BREAK_SELECT=1; done; echo after"#,
+        "2\n",
+    );
+    assert_eq!(status, 0);
+    assert!(
+        stdout.contains("selected=beta"),
+        "expected selected=beta: {}",
+        stdout
+    );
+    assert!(stdout.contains("after"), "expected 'after': {}", stdout);
+}
+
+#[test]
+fn select_break_keyword_exits_loop() {
+    // Pre-fix: `break` inside the select body emitted no ops (no enclosing
+    // loop in the sub-chunk's patch lists), so the only way to exit was
+    // setting BREAK_SELECT=1. Post-fix: break with no enclosing loop emits
+    // BUILTIN_SET_BREAK + a halt-jump; BUILTIN_RUN_SELECT drains
+    // executor.loop_signal after each body run and exits when seen.
+    let (status, stdout) = run_stdin(
+        r#"select x in alpha beta gamma; do echo "got=$x"; break; done; echo after"#,
+        "1\n",
+    );
+    assert_eq!(status, 0);
+    assert!(stdout.contains("got=alpha"));
+    assert!(stdout.contains("after"));
+}
+
+#[test]
+fn select_break_after_match() {
+    // Real-world idiom: pick options until a sentinel one is hit, then break.
+    let (status, stdout) = run_stdin(
+        r#"select x in alpha beta gamma; do
+  echo "iter=$x"
+  [[ $x = beta ]] && break
+done
+echo done"#,
+        "1\n2\n",
+    );
+    assert_eq!(status, 0);
+    assert!(stdout.contains("iter=alpha"));
+    assert!(stdout.contains("iter=beta"));
+    assert!(stdout.contains("done"));
+}
+
+#[test]
+fn select_invalid_input_sets_var_empty() {
+    // zsh convention: non-numeric or out-of-range input sets the var to
+    // empty string (not "preserve previous"). REPLY contains the raw input
+    // for the body to inspect.
+    let (status, stdout) = run_stdin(
+        r#"select x in alpha beta; do echo "x=[$x] reply=[$REPLY]"; BREAK_SELECT=1; done"#,
+        "bogus\n",
+    );
+    assert_eq!(status, 0);
+    assert!(
+        stdout.contains("x=[] reply=[bogus]"),
+        "expected x empty + REPLY=bogus: {}",
+        stdout
+    );
+}
+
+#[test]
+fn read_dup_fd_with_literal_number() {
+    // `read line <&N` — DupRead with a literal fd. Pre-fix, the compile path
+    // defaulted DupRead's fd to 1 (stdout) so `<&10` dup2'd onto STDOUT
+    // instead of STDIN, and read blocked on the original terminal stdin.
+    // Post-fix, DupRead joins the "read group" defaulting to fd 0.
+    ok_serial(
+        r#"coproc { echo CHILD_LINE; }
+sleep 0.2
+read line <&10
+echo "got=[$line]"
+"#,
+        "got=[CHILD_LINE]\n",
+    );
+}
+
+#[test]
+fn read_dup_fd_with_variable_expansion() {
+    // `read line <&${COPROC[1]}` — same fix, plus the target word goes
+    // through array-index expansion (BUILTIN_ARRAY_INDEX) before redirect
+    // dispatch. Proves both the default-fd fix and the var-expansion path
+    // work together.
+    ok_serial(
+        r#"coproc { echo VAR_PATH; }
+sleep 0.2
+read line <&${COPROC[1]}
+echo "got=[$line]"
+"#,
+        "got=[VAR_PATH]\n",
+    );
+}
+
+#[test]
+fn coproc_round_trip_via_dev_fd() {
+    // Prove the registered fds are real OS-level pipe ends: child writes to
+    // its stdout (= write end of the c2p pipe), parent reads from
+    // /dev/fd/${COPROC[1]} (= read end of the c2p pipe).
+    //
+    // We use /dev/fd/N (the procfs/devfs path, present on macOS and Linux)
+    // because zshrs's `<&fd` numeric-redirect parser path doesn't currently
+    // honor variable-expanded fd numbers — separate gap, parser-level. The
+    // /dev/fd/ approach is portable and exercises the same coproc plumbing.
+    ok_serial(
+        r#"coproc { echo CHILD_LINE; sleep 0.1; }
+sleep 0.3
+fd=${COPROC[1]}
+read line < /dev/fd/$fd
+echo "got=[$line]"
+"#,
+        "got=[CHILD_LINE]\n",
+    );
+}
+
+#[test]
+fn coproc_registers_fd_pair_in_named_array() {
+    // `coproc { body }` forks the body, wires its stdin/stdout to two pipes,
+    // and stores [read_fd, write_fd] in the COPROC array. We don't exchange
+    // data here — full bidirectional comms is more host plumbing than this
+    // test should verify. We just prove the array got populated with two
+    // numeric fd values, which is the load-bearing piece (fork happened, the
+    // pipes were created, fds were captured by name).
+    //
+    // Pre-fix: the Coproc compile arm called `compile_command(body)` inline,
+    // so `coproc { sleep 1 }` blocked the parent for 1s and never created
+    // pipes or set COPROC.
+    let (status, stdout) = run(r#"coproc { :; } 2>/dev/null
+echo "len=${#COPROC[@]}"
+echo "rd_is_int=$([ -n "${COPROC[1]}" ] && [ "${COPROC[1]}" -ge 0 ] && echo yes || echo no)"
+echo "wr_is_int=$([ -n "${COPROC[2]}" ] && [ "${COPROC[2]}" -ge 0 ] && echo yes || echo no)"
+"#);
+    assert_eq!(status, 0, "coproc set-up failed: {}", stdout);
+    assert!(
+        stdout.contains("len=2"),
+        "COPROC should have 2 entries, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("rd_is_int=yes"),
+        "COPROC[1] (read fd) should be a non-negative int: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("wr_is_int=yes"),
+        "COPROC[2] (write fd) should be a non-negative int: {}",
+        stdout
+    );
+}
+
+#[test]
+fn dynamic_command_name_expands_and_dispatches() {
+    // Pre-fix: `cmd=ls; $cmd` compiled with the literal-name fast path
+    // emitting CallFunction(name="$cmd", ...). The host's host_exec_external
+    // received the literal `$cmd` and printed `command not found: $cmd`.
+    //
+    // Post-fix: compile_simple detects unquoted `$` in the first word and
+    // skips the literal-name branch, falling through to the dynamic Op::Exec
+    // path. compile_word lowers `$cmd` to BUILTIN_GET_VAR, the resolved string
+    // lands on the stack, Op::Exec routes through host.exec for actual
+    // dispatch.
+    ok_serial(
+        r#"cmd=/bin/echo; $cmd hello world"#,
+        "hello world\n",
+    );
+}
+
+#[test]
+fn op_exec_routes_through_host() {
+    // Pre-fix: fusevm's Op::Exec called Command::new directly for the
+    // unknown-command path, bypassing ZshrsHost::exec entirely. AOP intercepts
+    // registered against external commands never fired for dynamic-name
+    // invocations.
+    //
+    // Post-fix: vm.rs Op::Exec routes through `host.exec(args)`, which lands
+    // in ZshrsHost::exec → host_exec_external → run_intercepts. This test
+    // proves the route by registering a `before` advice that prints a
+    // sentinel, then triggering the cmd via a dynamic name. Both the sentinel
+    // (from the advice) and the original cmd's output must appear.
+    ok_serial(
+        r#"intercept before /bin/echo "echo INTERCEPT_FIRED" >/dev/null 2>&1
+cmd=/bin/echo
+$cmd payload"#,
+        "INTERCEPT_FIRED\npayload\n",
+    );
+}
+
+#[test]
+fn background_amp_actually_runs_the_child() {
+    // Verifying just non-blocking isn't enough — the child must actually
+    // execute the cmd. Use a tempfile sentinel: parent backgrounds a write,
+    // exits, the orchestration in this test waits, then asserts the file
+    // exists with the expected content.
+    let path = std::env::temp_dir().join(format!(
+        "zshrs_bg_test_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let path_str = path.to_string_lossy().into_owned();
+    let _ = std::fs::remove_file(&path);
+
+    let script = format!(r#"echo wrote > {} & wait"#, path_str);
+    ok_serial(&script, "");
+
+    // After `wait`, the bg child has flushed and exited.
+    let content = std::fs::read_to_string(&path).expect("bg child wrote sentinel");
+    assert_eq!(content, "wrote\n");
+    let _ = std::fs::remove_file(&path);
 }
