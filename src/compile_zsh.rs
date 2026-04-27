@@ -1687,20 +1687,42 @@ impl ZshCompiler {
     }
 
     /// Compile arithmetic expression text. Leaves the result on stack as
-    /// Value::Int. Delegates to ShellCompiler::compile_arith_inline, which
-    /// has the pre-load + post-sync to executor.variables logic for
-    /// `(( i++ ))` style mutation. Ops are remapped into our builder.
+    /// Value::Int. Inlines the same pre-load → arith ops → post-sync
+    /// pattern that `ShellCompiler::compile_arith_inline` uses, but
+    /// targets this ZshCompiler's builder + slot table directly so no
+    /// `ShellCompiler` instance is constructed.
     fn compile_arith_str(&mut self, expr: &str) {
         // ZshLexer tokenizes operator chars (`<`, `>`, `=`, `&`, `|`,
         // `*`, `?`, etc.) into the META range. ArithCompiler can't parse
         // those — un-tokenize first to recover the original ASCII form.
         let expr_clean = crate::lexer::untokenize(expr);
-        let mut sc = crate::shell_compiler::ShellCompiler::new();
-        sc.slots = self.slots.clone();
-        sc.next_slot = self.next_slot;
-        sc.compile_arith_inline(&expr_clean);
-        // Drain sc.builder's emitted ops into ours with const-index remap.
-        let chunk = sc.builder.build();
+
+        let mut ac = crate::shell_compiler::ArithCompiler::new(&expr_clean);
+        ac.slots = self.slots.clone();
+        ac.next_slot = self.next_slot;
+
+        // Pre-load: any var the arith expression touches needs its current
+        // value pulled from executor.variables into its slot. Without this
+        // `i=5; (( i+1 ))` reads 0 from the uninitialized slot.
+        let pre_load_names = ac.collect_identifiers(&expr_clean);
+        for name in &pre_load_names {
+            let slot = ac.slot_for(name);
+            let name_const = ac.builder.add_constant(Value::str(name.as_str()));
+            ac.builder.emit(Op::LoadConst(name_const), 0);
+            ac.builder.emit(
+                Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1),
+                0,
+            );
+            ac.builder.emit(Op::SetSlot(slot), 0);
+        }
+
+        ac.expr();
+        let new_slots = ac.slots.clone();
+        let new_next = ac.next_slot;
+        let chunk = ac.builder.build();
+
+        // Inline ArithCompiler's emitted ops into ours, remapping const
+        // indices into our local constant table.
         let mut const_remap: std::collections::HashMap<u16, u16> =
             std::collections::HashMap::new();
         for op in &chunk.ops {
@@ -1720,8 +1742,33 @@ impl ZshCompiler {
             };
             self.builder.emit(remapped, 0);
         }
-        self.slots = sc.slots;
-        self.next_slot = sc.next_slot;
+
+        self.slots = new_slots.clone();
+        self.next_slot = new_next;
+
+        // Post-sync: write each pre-loaded slot back to executor.variables
+        // via BUILTIN_SET_VAR. This makes `(( i++ ))` visible to subsequent
+        // `echo $i` and to the loop's own conditional check.
+        // The arith result is on top of stack — capture into a temp slot,
+        // sync, then restore.
+        let result_slot = self.next_slot;
+        self.next_slot += 1;
+        self.builder.emit(Op::SetSlot(result_slot), 0);
+
+        for name in &pre_load_names {
+            if let Some(&slot) = new_slots.get(name) {
+                let name_const = self.builder.add_constant(Value::str(name.as_str()));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                self.builder.emit(Op::GetSlot(slot), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0); // discard Status(0)
+            }
+        }
+
+        self.builder.emit(Op::GetSlot(result_slot), 0);
     }
 }
 

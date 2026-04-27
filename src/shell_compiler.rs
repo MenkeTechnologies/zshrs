@@ -2617,7 +2617,7 @@ impl<'a> ArithCompiler<'a> {
     }
 
     /// Get or allocate a slot for a variable name.
-    fn slot_for(&mut self, name: &str) -> u16 {
+    pub fn slot_for(&mut self, name: &str) -> u16 {
         if let Some(&slot) = self.slots.get(name) {
             return slot;
         }
@@ -3006,7 +3006,7 @@ impl<'a> ArithCompiler<'a> {
     // Precedence climbing: comma < assign < ternary < logor < logand <
     // bitor < bitxor < bitand < eq < cmp < shift < add < mul < pow < unary
 
-    fn expr(&mut self) {
+    pub fn expr(&mut self) {
         self.assign_expr();
     }
 
