@@ -81,22 +81,38 @@ thread_local! {
 }
 
 /// RAII guard that sets/clears the thread-local executor pointer.
-struct ExecutorContext;
+///
+/// Idempotent: calling `enter` when a context is already active is a no-op
+/// for the entry side, and the guard's drop only clears the thread-local if
+/// *this* call was the one that set it. Nested `execute_command` invocations
+/// (e.g. from inside a builtin handler) reuse the outer pointer instead of
+/// stomping it.
+struct ExecutorContext {
+    we_set_it: bool,
+}
 
 impl ExecutorContext {
     fn enter(executor: &mut ShellExecutor) -> Self {
-        CURRENT_EXECUTOR.with(|cell| {
-            *cell.borrow_mut() = Some(executor as *mut ShellExecutor);
+        let we_set_it = CURRENT_EXECUTOR.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_some() {
+                false
+            } else {
+                *slot = Some(executor as *mut ShellExecutor);
+                true
+            }
         });
-        ExecutorContext
+        ExecutorContext { we_set_it }
     }
 }
 
 impl Drop for ExecutorContext {
     fn drop(&mut self) {
-        CURRENT_EXECUTOR.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
+        if self.we_set_it {
+            CURRENT_EXECUTOR.with(|cell| {
+                *cell.borrow_mut() = None;
+            });
+        }
     }
 }
 
@@ -962,19 +978,228 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_EXPAND_WORD_RUNTIME, |vm, argc| {
         let args = pop_args(vm, argc);
         let json = args.into_iter().next().unwrap_or_default();
+        // Sync VM's last_status into the executor so `$?` (and any other
+        // expansion that reads `executor.last_status`) sees the live value
+        // during a running script. The VM tracks status in `vm.last_status`,
+        // but expand_word reaches through `with_executor` for $?.
+        let live_status = vm.last_status;
         match serde_json::from_str::<crate::parser::ShellWord>(&json) {
             Ok(word) => {
-                let parts = with_executor(|exec| exec.expand_word_glob(&word));
+                let parts = with_executor(|exec| {
+                    exec.last_status = live_status;
+                    exec.expand_word_glob(&word)
+                });
                 Value::str(parts.join(" "))
             }
             Err(_) => Value::str(""),
         }
     });
 
+    // Pipeline execution — bytecode-native fork-per-stage. Pops N sub-chunk
+    // indices, forks N children with stdin/stdout wired through N-1 pipes,
+    // each child runs its stage's compiled bytecode and exits. Parent waits
+    // and returns the last stage's status.
+    //
+    // Caveats: post-fork in a multi-threaded program, only async-signal-safe
+    // ops are POSIX-safe. We violate this (running the bytecode VM after fork
+    // touches mutexes like REGEX_CACHE). In practice, most pipeline stages
+    // don't touch shared mutex state — externals fork/exec away, builtins do
+    // pure I/O. Risks are bounded; if a stage does touch a held mutex, the
+    // child deadlocks.
+    vm.register_builtin(BUILTIN_RUN_PIPELINE, |vm, argc| {
+        let n = argc as usize;
+        if n == 0 {
+            return Value::Status(0);
+        }
+
+        // Pop N sub-chunk indices (LIFO → reverse to stage order)
+        let mut indices: Vec<u16> = Vec::with_capacity(n);
+        for _ in 0..n {
+            indices.push(vm.pop().to_int() as u16);
+        }
+        indices.reverse();
+
+        // Clone each stage's sub-chunk
+        let stages: Vec<fusevm::Chunk> = indices
+            .iter()
+            .filter_map(|&i| vm.chunk.sub_chunks.get(i as usize).cloned())
+            .collect();
+        if stages.len() != n {
+            return Value::Status(1);
+        }
+
+        // Single stage — no pipe, just run inline
+        if n == 1 {
+            let mut stage_vm = fusevm::VM::new(stages.into_iter().next().unwrap());
+            register_builtins(&mut stage_vm);
+            let _ = stage_vm.run();
+            return Value::Status(stage_vm.last_status);
+        }
+
+        // Build N-1 pipes
+        let mut pipes: Vec<(i32, i32)> = Vec::with_capacity(n - 1);
+        for _ in 0..n - 1 {
+            let mut fds = [0i32; 2];
+            if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
+                // Cleanup any pipes we already created
+                for (r, w) in &pipes {
+                    unsafe {
+                        libc::close(*r);
+                        libc::close(*w);
+                    }
+                }
+                return Value::Status(1);
+            }
+            pipes.push((fds[0], fds[1]));
+        }
+
+        // Fork each stage
+        let mut child_pids: Vec<libc::pid_t> = Vec::with_capacity(n);
+        for (i, chunk) in stages.into_iter().enumerate() {
+            match unsafe { libc::fork() } {
+                -1 => {
+                    // fork failed — kill any children we already started
+                    for pid in &child_pids {
+                        unsafe { libc::kill(*pid, libc::SIGTERM) };
+                    }
+                    for (r, w) in &pipes {
+                        unsafe {
+                            libc::close(*r);
+                            libc::close(*w);
+                        }
+                    }
+                    return Value::Status(1);
+                }
+                0 => {
+                    // Child: wire stdin from previous pipe's read end
+                    if i > 0 {
+                        unsafe {
+                            libc::dup2(pipes[i - 1].0, libc::STDIN_FILENO);
+                        }
+                    }
+                    // Wire stdout to next pipe's write end
+                    if i < n - 1 {
+                        unsafe {
+                            libc::dup2(pipes[i].1, libc::STDOUT_FILENO);
+                        }
+                    }
+                    // Close all original pipe fds (keeping stdin/stdout dups)
+                    for (r, w) in &pipes {
+                        unsafe {
+                            libc::close(*r);
+                            libc::close(*w);
+                        }
+                    }
+
+                    // Run this stage's bytecode on a fresh VM
+                    let mut stage_vm = fusevm::VM::new(chunk);
+                    register_builtins(&mut stage_vm);
+                    let _ = stage_vm.run();
+                    // Flush any buffered output before exiting
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
+                    let _ = std::io::stderr().flush();
+                    std::process::exit(stage_vm.last_status);
+                }
+                pid => {
+                    child_pids.push(pid);
+                }
+            }
+        }
+
+        // Parent: close all pipe fds — children have their own copies
+        for (r, w) in &pipes {
+            unsafe {
+                libc::close(*r);
+                libc::close(*w);
+            }
+        }
+
+        // Wait for all children, capture last status
+        let mut last_status = 0i32;
+        for pid in child_pids {
+            let mut status: i32 = 0;
+            unsafe {
+                libc::waitpid(pid, &mut status, 0);
+            }
+            last_status = if libc::WIFEXITED(status) {
+                libc::WEXITSTATUS(status)
+            } else if libc::WIFSIGNALED(status) {
+                128 + libc::WTERMSIG(status)
+            } else {
+                1
+            };
+        }
+
+        Value::Status(last_status)
+    });
+
+    // Array→String join. Pops one value; if it's an Array (e.g. from Op::Glob),
+    // joins string-coerced elements with a single space. Pass-through for
+    // non-arrays so the op is safe to chain after any String-or-Array producer.
+    vm.register_builtin(BUILTIN_ARRAY_JOIN, |vm, _argc| {
+        let val = vm.pop();
+        match val {
+            fusevm::Value::Array(items) => {
+                let parts: Vec<String> = items.iter().map(|v| v.to_str()).collect();
+                fusevm::Value::str(parts.join(" "))
+            }
+            other => other,
+        }
+    });
+
+    // Shell variable get/set — routes through executor.variables so nested
+    // VMs (function calls) and tree-walker callers see the same storage.
+    vm.register_builtin(BUILTIN_GET_VAR, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let name = args.into_iter().next().unwrap_or_default();
+        let live_status = vm.last_status;
+        let val = with_executor(|exec| {
+            exec.last_status = live_status;
+            exec.get_variable(&name)
+        });
+        Value::str(val)
+    });
+
+    vm.register_builtin(BUILTIN_SET_VAR, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let mut iter = args.into_iter();
+        let name = iter.next().unwrap_or_default();
+        let value = iter.next().unwrap_or_default();
+        with_executor(|exec| {
+            exec.variables.insert(name, value);
+        });
+        Value::Status(0)
+    });
+
+    // Runtime function registration. `FunctionDef(name, body)` lowers to a
+    // CallBuiltin(BUILTIN_REGISTER_FUNCTION, 2) with [name, body_json] on
+    // stack. We compile the body AST to a Chunk and store it in
+    // executor.functions_compiled, also stashing the AST in executor.functions
+    // for the legacy tree-walker callers (autoload, intercepts, etc.).
+    vm.register_builtin(BUILTIN_REGISTER_FUNCTION, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let mut iter = args.into_iter();
+        let name = iter.next().unwrap_or_default();
+        let body_json = iter.next().unwrap_or_default();
+        let status = with_executor(|exec| {
+            match serde_json::from_str::<crate::parser::ShellCommand>(&body_json) {
+                Ok(body_ast) => {
+                    let compiler = crate::shell_compiler::ShellCompiler::new();
+                    let chunk = compiler.compile(std::slice::from_ref(&body_ast));
+                    exec.functions_compiled.insert(name.clone(), chunk);
+                    exec.functions.insert(name, body_ast);
+                    0
+                }
+                Err(_) => 1,
+            }
+        });
+        Value::Status(status)
+    });
+
     // Wire the ShellHost so direct shell ops (Op::Glob, Op::TildeExpand,
-    // Op::ExpandParam, Op::CmdSubst, etc.) route through ZshrsHost back into
-    // the executor. Builtins keep using CallBuiltin + with_executor; the host
-    // covers ops the compiler emits directly.
+    // Op::ExpandParam, Op::CmdSubst, Op::CallFunction, etc.) route through
+    // ZshrsHost back into the executor.
     vm.set_shell_host(Box::new(ZshrsHost));
 }
 
@@ -1000,6 +1225,45 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 /// ops (Op::Glob, Op::TildeExpand, Op::ExpandParam, etc.), the corresponding
 /// compile_word arms stop emitting this builtin.
 pub const BUILTIN_EXPAND_WORD_RUNTIME: u16 = 281;
+
+/// Builtin ID for runtime function registration.
+///
+/// Emitted by `compile_command` for `FunctionDef(name, body)`. Pops two
+/// strings from the stack: the function name and the JSON-serialized body
+/// AST. The handler compiles the body to a `fusevm::Chunk` and stores it in
+/// `executor.functions_compiled`. Subsequent `Op::CallFunction(name_idx, argc)`
+/// dispatches through `ZshrsHost::call_function` which finds the chunk here.
+///
+/// Also stores the AST in `executor.functions` for the (still-extant)
+/// tree-walker callers; once Phase E retires those, the AST table can go.
+pub const BUILTIN_REGISTER_FUNCTION: u16 = 282;
+
+/// Builtin ID for `${name}` reads — routes through `ShellExecutor::get_variable`
+/// which knows about special params (`$?`, `$@`, `$#`, `$1..$9`), shell vars
+/// (`self.variables`), arrays, and env. Replaces emission of `Op::GetVar` for
+/// shell variable names so nested VMs (function calls) see the same storage.
+pub const BUILTIN_GET_VAR: u16 = 283;
+
+/// Builtin ID for `name=value` assignments — pops [name, value] and stores
+/// into `executor.variables`. Replaces `Op::SetVar` emission for the same
+/// reason: the storage must be visible to both bytecode and tree-walker code,
+/// across nested VM boundaries.
+pub const BUILTIN_SET_VAR: u16 = 284;
+
+/// Builtin ID for pipeline execution. Pops N sub-chunk indices from the stack;
+/// each index points into `vm.chunk.sub_chunks` (compiled stage bodies). Forks
+/// N children, wires stdin/stdout between them via pipes, runs each stage's
+/// bytecode on a fresh VM in its child, parent waits for all and pushes the
+/// last stage's exit status. This is bytecode-native pipeline execution —
+/// no tree-walker delegation.
+pub const BUILTIN_RUN_PIPELINE: u16 = 285;
+
+/// Builtin ID for `Array → String` joining. Pops one value: if it's an Array,
+/// joins its string-coerced elements with a single space; otherwise passes
+/// through. Used after `Op::Glob` to convert the pattern's matched paths into
+/// the single argv-token form the bytecode word model expects (no per-word
+/// splitting yet — that's a future phase).
+pub const BUILTIN_ARRAY_JOIN: u16 = 286;
 
 /// `ShellHost` implementation that delegates to the current `ShellExecutor`
 /// via the `with_executor` thread-local.
@@ -1028,6 +1292,124 @@ impl fusevm::ShellHost for ZshrsHost {
         } else {
             vec![expanded]
         }
+    }
+
+    fn str_match(&mut self, s: &str, pattern: &str) -> bool {
+        // Shell glob match — `*`, `?`, `[...]`, alternation. Used by `[[ x = pat ]]`,
+        // `case` arms, and any other point that compares against a glob pattern.
+        ShellExecutor::glob_match_static(s, pattern)
+    }
+
+    fn expand_param(&mut self, name: &str, modifier: u8, args: &[fusevm::Value]) -> fusevm::Value {
+        // Reconstruct a synthetic `VarModifier` from the modifier byte + args
+        // and feed it to the executor's existing `apply_var_modifier`. This
+        // preserves all the zsh-specific edge cases (whitespace handling,
+        // pattern semantics, etc.) without re-implementing them.
+        use crate::parser::VarModifier;
+        use fusevm::op::param_mod;
+
+        let arg_word = |i: usize| -> crate::parser::ShellWord {
+            crate::parser::ShellWord::Literal(
+                args.get(i).map(|v| v.to_str()).unwrap_or_default(),
+            )
+        };
+
+        let synthetic: Option<VarModifier> = match modifier {
+            param_mod::DEFAULT => Some(VarModifier::Default(arg_word(0))),
+            param_mod::ASSIGN => Some(VarModifier::DefaultAssign(arg_word(0))),
+            param_mod::ERROR => Some(VarModifier::Error(arg_word(0))),
+            param_mod::ALTERNATE => Some(VarModifier::Alternate(arg_word(0))),
+            param_mod::LENGTH => Some(VarModifier::Length),
+            param_mod::STRIP_SHORT => Some(VarModifier::RemovePrefix(arg_word(0))),
+            param_mod::STRIP_LONG => Some(VarModifier::RemovePrefixLong(arg_word(0))),
+            param_mod::RSTRIP_SHORT => Some(VarModifier::RemoveSuffix(arg_word(0))),
+            param_mod::RSTRIP_LONG => Some(VarModifier::RemoveSuffixLong(arg_word(0))),
+            param_mod::SUBST_FIRST => {
+                Some(VarModifier::Replace(arg_word(0), arg_word(1)))
+            }
+            param_mod::SUBST_ALL => {
+                Some(VarModifier::ReplaceAll(arg_word(0), arg_word(1)))
+            }
+            param_mod::UPPER => Some(VarModifier::Upper),
+            param_mod::LOWER => Some(VarModifier::Lower),
+            param_mod::SLICE => {
+                let off = args.first().map(|v| v.to_int()).unwrap_or(0);
+                let len = args.get(1).map(|v| v.to_int());
+                // -1 sentinel from compiler means "no length specified"
+                let len_opt = match len {
+                    Some(-1) => None,
+                    other => other,
+                };
+                Some(VarModifier::Substring(off, len_opt))
+            }
+            // INDIRECT, KEYS, UPPER_FIRST, LOWER_FIRST, and any unmapped modifier
+            // — let apply_var_modifier handle the unmodified value as a fallback.
+            _ => None,
+        };
+
+        let val_str = with_executor(|exec| {
+            // Match expand_word's semantics for `${name}` lookup: env::var
+            // is the source of record for VariableBraced.
+            let raw = std::env::var(name)
+                .ok()
+                .or_else(|| exec.variables.get(name).cloned());
+            exec.apply_var_modifier(name, raw, synthetic.as_ref())
+        });
+        fusevm::Value::str(val_str)
+    }
+
+    fn regex_match(&mut self, s: &str, regex: &str) -> bool {
+        // POSIX extended regex match (`=~`). Cache compiled regexes since the
+        // same pattern often appears in tight loops.
+        let mut cache = REGEX_CACHE.lock();
+        if let Some(re) = cache.get(regex) {
+            return re.is_match(s);
+        }
+        match regex::Regex::new(regex) {
+            Ok(re) => {
+                let m = re.is_match(s);
+                cache.insert(regex.to_string(), re);
+                m
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn redirect(&mut self, fd: u8, op: u8, target: &str) {
+        // Apply a redirection at the OS level for the next command/builtin.
+        // The host tracks saved fds in a per-executor stack so a future
+        // `with_redirects_end` can restore. For now, this is a thin wrapper
+        // that performs the dup2; pairing with explicit save/restore is
+        // delivered by `with_redirects_begin/end`.
+        with_executor(|exec| exec.host_apply_redirect(fd, op, target));
+    }
+
+    fn with_redirects_begin(&mut self, count: u8) {
+        with_executor(|exec| exec.host_redirect_scope_begin(count));
+    }
+
+    fn with_redirects_end(&mut self) {
+        with_executor(|exec| exec.host_redirect_scope_end());
+    }
+
+    fn heredoc(&mut self, content: &str) {
+        with_executor(|exec| exec.host_set_pending_stdin(content.to_string()));
+    }
+
+    fn herestring(&mut self, content: &str) {
+        // Shell semantics: herestring appends a newline.
+        let mut s = content.to_string();
+        s.push('\n');
+        with_executor(|exec| exec.host_set_pending_stdin(s));
+    }
+
+    fn exec(&mut self, args: Vec<String>) -> i32 {
+        // Route external command spawning through `executor.execute_external`
+        // so intercepts (AOP before/after/around), command_hash lookups,
+        // pre/postexec hooks, and zsh-specific fork-then-exec all apply.
+        // Without this override, fusevm's default `host.exec` calls
+        // `Command::new` directly, bypassing zshrs's dispatch logic.
+        with_executor(|exec| exec.host_exec_external(&args))
     }
 
     fn cmd_subst(&mut self, sub: &fusevm::Chunk) -> String {
@@ -1068,6 +1450,73 @@ impl fusevm::ShellHost for ZshrsHost {
             buf.pop();
         }
         buf
+    }
+
+    fn call_function(&mut self, name: &str, args: Vec<String>) -> Option<i32> {
+        // Resolve to a compiled Chunk:
+        //   1. Already in functions_compiled → use as-is
+        //   2. AST-only (sourced / defined earlier) → compile on demand
+        //   3. Pending autoload → trigger autoload, then retry the AST path
+        //   4. Available via fpath ZWC scan → autoload via that, then AST path
+        //   5. Not a function → None so fusevm falls back to host.exec
+        let chunk = with_executor(|exec| {
+            if let Some(c) = exec.functions_compiled.get(name) {
+                return Some(c.clone());
+            }
+            // Trigger pending autoload before checking functions[]
+            if !exec.functions.contains_key(name) {
+                exec.maybe_autoload(name);
+            }
+            if !exec.functions.contains_key(name) {
+                let _ = exec.autoload_function(name);
+            }
+            if let Some(ast) = exec.functions.get(name).cloned() {
+                let compiler = crate::shell_compiler::ShellCompiler::new();
+                let chunk = compiler.compile(std::slice::from_ref(&ast));
+                exec.functions_compiled.insert(name.to_string(), chunk.clone());
+                return Some(chunk);
+            }
+            None
+        });
+
+        let chunk = chunk?;
+
+        // Save and replace positional params, mirror local-scope save/restore
+        // from the tree-walker `call_function`. The thread-local executor
+        // pointer set by the outer VM remains valid for the nested VM —
+        // nested CallBuiltin handlers and host callbacks all see the same
+        // executor.
+        let (saved_params, saved_local_count) = with_executor(|exec| {
+            let prev = std::mem::replace(&mut exec.positional_params, args.clone());
+            let count = exec.local_save_stack.len();
+            exec.local_scope_depth += 1;
+            (prev, count)
+        });
+
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        let _ = vm.run();
+        let status = vm.last_status;
+
+        with_executor(|exec| {
+            exec.positional_params = saved_params;
+            exec.local_scope_depth -= 1;
+            // Unwind any `local` declarations made during the function call.
+            while exec.local_save_stack.len() > saved_local_count {
+                if let Some((var_name, old_val)) = exec.local_save_stack.pop() {
+                    match old_val {
+                        Some(v) => {
+                            exec.variables.insert(var_name, v);
+                        }
+                        None => {
+                            exec.variables.remove(&var_name);
+                        }
+                    }
+                }
+            }
+        });
+
+        Some(status)
     }
 }
 
@@ -1823,6 +2272,18 @@ pub struct ShellExecutor {
     pub next_async_id: u32,
     /// Defer stack: commands to run on scope exit (LIFO).
     pub defer_stack: Vec<Vec<String>>,
+    /// Per-scope saved-fd stacks for `Op::WithRedirectsBegin/End`. Each entry
+    /// is a Vec of (fd, saved_dup_fd) pairs taken from `dup(fd)` before the
+    /// redirect was applied; `with_redirects_end` `dup2`s them back and closes.
+    pub redirect_scope_stack: Vec<Vec<(i32, i32)>>,
+    /// Stdin content set by `Op::HereDoc(idx)` / `Op::HereString` for the next
+    /// command/builtin in this VM. Consumed (and cleared) by the next command.
+    pub pending_stdin: Option<String>,
+    /// Compiled function bodies — name → fusevm::Chunk. Populated by
+    /// `BUILTIN_REGISTER_FUNCTION` (from `FunctionDef` lowering) and lazily by
+    /// `ZshrsHost::call_function` when only an AST exists in `self.functions`
+    /// (autoloaded, sourced, etc.). `Op::CallFunction` dispatches through here.
+    pub functions_compiled: HashMap<String, fusevm::Chunk>,
 }
 
 impl ShellExecutor {
@@ -1977,6 +2438,9 @@ impl ShellExecutor {
             async_jobs: HashMap::new(),
             next_async_id: 1,
             defer_stack: Vec::new(),
+            redirect_scope_stack: Vec::new(),
+            pending_stdin: None,
+            functions_compiled: HashMap::new(),
         }
     }
 
@@ -2026,6 +2490,172 @@ impl ShellExecutor {
     pub fn add_named_dir(&mut self, name: &str, path: &str) {
         self.named_dirs
             .insert(name.to_string(), PathBuf::from(path));
+    }
+
+    // ─── Host-routed shell ops (called by ZshrsHost from fusevm) ────────────
+
+    /// Apply a single redirection. The current scope's saved-fd vec gets a
+    /// dup of the original fd so it can be restored by `host_redirect_scope_end`.
+    /// `op_byte` matches `fusevm::op::redirect_op::*`.
+    pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
+        use fusevm::op::redirect_op as r;
+        use std::os::unix::io::IntoRawFd;
+        let fd = fd as i32;
+        let saved = unsafe { libc::dup(fd) };
+        if saved >= 0 {
+            if let Some(top) = self.redirect_scope_stack.last_mut() {
+                top.push((fd, saved));
+            } else {
+                // No scope — leave saved fd open and let the next scope
+                // reclaim it. (Caller without a scope leaks the dup; this
+                // matches `WithRedirects` parser construction always wrapping.)
+                unsafe { libc::close(saved) };
+            }
+        }
+        match op_byte {
+            r::WRITE | r::CLOBBER => {
+                if let Ok(file) = std::fs::File::create(target) {
+                    let new_fd = file.into_raw_fd();
+                    unsafe {
+                        libc::dup2(new_fd, fd);
+                        libc::close(new_fd);
+                    }
+                }
+            }
+            r::APPEND => {
+                if let Ok(file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(target)
+                {
+                    let new_fd = file.into_raw_fd();
+                    unsafe {
+                        libc::dup2(new_fd, fd);
+                        libc::close(new_fd);
+                    }
+                }
+            }
+            r::READ => {
+                if let Ok(file) = std::fs::File::open(target) {
+                    let new_fd = file.into_raw_fd();
+                    unsafe {
+                        libc::dup2(new_fd, fd);
+                        libc::close(new_fd);
+                    }
+                }
+            }
+            r::READ_WRITE => {
+                if let Ok(file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .write(true)
+                    .open(target)
+                {
+                    let new_fd = file.into_raw_fd();
+                    unsafe {
+                        libc::dup2(new_fd, fd);
+                        libc::close(new_fd);
+                    }
+                }
+            }
+            r::DUP_READ | r::DUP_WRITE => {
+                // Target is a numeric fd reference like `&3`
+                let n = target.trim_start_matches('&');
+                if let Ok(src_fd) = n.parse::<i32>() {
+                    unsafe { libc::dup2(src_fd, fd) };
+                }
+            }
+            r::WRITE_BOTH => {
+                if let Ok(file) = std::fs::File::create(target) {
+                    let new_fd = file.into_raw_fd();
+                    unsafe {
+                        libc::dup2(new_fd, 1);
+                        libc::dup2(new_fd, 2);
+                        libc::close(new_fd);
+                    }
+                }
+            }
+            r::APPEND_BOTH => {
+                if let Ok(file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(target)
+                {
+                    let new_fd = file.into_raw_fd();
+                    unsafe {
+                        libc::dup2(new_fd, 1);
+                        libc::dup2(new_fd, 2);
+                        libc::close(new_fd);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Push a fresh redirect scope. `_count` is informational — the actual
+    /// saved fds are appended by host_apply_redirect into the top scope.
+    pub fn host_redirect_scope_begin(&mut self, _count: u8) {
+        self.redirect_scope_stack.push(Vec::new());
+    }
+
+    /// Pop the top redirect scope, restoring saved fds.
+    pub fn host_redirect_scope_end(&mut self) {
+        if let Some(saved) = self.redirect_scope_stack.pop() {
+            for (fd, saved_fd) in saved.into_iter().rev() {
+                unsafe {
+                    libc::dup2(saved_fd, fd);
+                    libc::close(saved_fd);
+                }
+            }
+        }
+    }
+
+    /// Set up `content` as stdin (fd 0) for the next command via a real pipe.
+    /// Used by `Op::HereDoc(idx)` and `Op::HereString`.
+    ///
+    /// The pattern: dup2 the read end of a fresh pipe onto fd 0, save the
+    /// original fd 0 into the active redirect scope so `WithRedirectsEnd`
+    /// restores it, and spawn a thread that writes `content` to the write end
+    /// and closes it (so the consumer sees EOF after the body). A thread is
+    /// needed because writing could block on a finite pipe buffer.
+    pub fn host_set_pending_stdin(&mut self, content: String) {
+        use std::io::Write;
+        let (read_end, write_end) = match os_pipe::pipe() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let saved = unsafe { libc::dup(libc::STDIN_FILENO) };
+        if saved >= 0 {
+            if let Some(top) = self.redirect_scope_stack.last_mut() {
+                top.push((libc::STDIN_FILENO, saved));
+            } else {
+                unsafe { libc::close(saved) };
+            }
+        }
+        let read_fd = std::os::unix::io::AsRawFd::as_raw_fd(&read_end);
+        unsafe { libc::dup2(read_fd, libc::STDIN_FILENO) };
+        drop(read_end);
+        std::thread::spawn(move || {
+            let mut w = write_end;
+            let _ = w.write_all(content.as_bytes());
+        });
+    }
+
+    /// Spawn an external command using zshrs's full dispatch logic
+    /// (intercepts, command_hash, redirect handling). Used by
+    /// `ZshrsHost::exec` so the bytecode VM's `Op::Exec` and
+    /// `Op::CallFunction` external fallback get the same semantics as
+    /// the tree-walker's `execute_external` rather than a plain
+    /// `Command::new` shortcut. Returns the exit status.
+    pub fn host_exec_external(&mut self, args: &[String]) -> i32 {
+        let Some((cmd, rest)) = args.split_first() else {
+            return 0;
+        };
+        match self.execute_external(cmd, &rest.to_vec(), &[]) {
+            Ok(status) => status,
+            Err(_) => 127,
+        }
     }
 
     /// Expand ~ with named directories
@@ -3249,667 +3879,29 @@ impl ShellExecutor {
     }
 
     #[tracing::instrument(level = "trace", skip_all)]
+    /// Execute a shell command via the bytecode VM. The tree-walker dispatch
+    /// (execute_simple/pipeline/list/compound) is gone — every command is
+    /// compiled to a fusevm chunk and run on a fresh VM with `ZshrsHost`
+    /// wired up.
+    ///
+    /// The executor context is set idempotently so callers from inside builtin
+    /// handlers (which already have the context active) don't double-enter.
     pub fn execute_command(&mut self, cmd: &ShellCommand) -> Result<i32, String> {
-        match cmd {
-            ShellCommand::Simple(simple) => self.execute_simple(simple),
-            ShellCommand::Pipeline(cmds, negated) => {
-                let status = self.execute_pipeline(cmds)?;
-                if *negated {
-                    self.last_status = if status == 0 { 1 } else { 0 };
-                } else {
-                    self.last_status = status;
-                }
-                Ok(self.last_status)
+        let compiler = crate::shell_compiler::ShellCompiler::new();
+        let chunk = compiler.compile(std::slice::from_ref(cmd));
+        if chunk.ops.is_empty() {
+            return Ok(self.last_status);
+        }
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        let _ctx = ExecutorContext::enter(self);
+        match vm.run() {
+            fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                self.last_status = vm.last_status;
+                Ok(vm.last_status)
             }
-            ShellCommand::List(items) => self.execute_list(items),
-            ShellCommand::Compound(compound) => self.execute_compound(compound),
-            ShellCommand::FunctionDef(name, body) => {
-                if name.is_empty() {
-                    // Anonymous function - execute immediately
-                    let result = self.execute_command(body);
-                    // Clear returning flag since the anonymous function has completed
-                    if let Some(ret) = self.returning.take() {
-                        self.last_status = ret;
-                        return Ok(ret);
-                    }
-                    result
-                } else {
-                    // Named function - just define it
-                    self.functions.insert(name.clone(), (**body).clone());
-                    self.last_status = 0;
-                    Ok(0)
-                }
-            }
+            fusevm::VMResult::Error(e) => Err(format!("VM error: {}", e)),
         }
-    }
-
-    #[tracing::instrument(level = "trace", skip_all)]
-    fn execute_simple(&mut self, cmd: &SimpleCommand) -> Result<i32, String> {
-        // Handle assignments
-        for (var, val, is_append) in &cmd.assignments {
-            match val {
-                ShellWord::ArrayLiteral(elements) => {
-                    // Array assignment: arr=(a b c) or arr+=(a b c)
-                    // For associative arrays: assoc=(k1 v1 k2 v2)
-                    // Use expand_word_split so $(cmd) and $var undergo
-                    // word splitting into separate array elements (C zsh behavior).
-                    let new_elements: Vec<String> = elements
-                        .iter()
-                        .flat_map(|e| self.expand_word_split(e))
-                        .collect();
-
-                    // Check if this is an associative array
-                    if self.assoc_arrays.contains_key(var) {
-                        // Associative array: treat pairs as key-value
-                        if *is_append {
-                            let assoc = self.assoc_arrays.get_mut(var).unwrap();
-                            let mut iter = new_elements.iter();
-                            while let Some(key) = iter.next() {
-                                if let Some(val) = iter.next() {
-                                    assoc.insert(key.clone(), val.clone());
-                                }
-                            }
-                        } else {
-                            let mut assoc = HashMap::new();
-                            let mut iter = new_elements.iter();
-                            while let Some(key) = iter.next() {
-                                if let Some(val) = iter.next() {
-                                    assoc.insert(key.clone(), val.clone());
-                                }
-                            }
-                            self.assoc_arrays.insert(var.clone(), assoc);
-                        }
-                    } else if *is_append {
-                        // Append to existing indexed array
-                        let arr = self.arrays.entry(var.clone()).or_insert_with(Vec::new);
-                        arr.extend(new_elements);
-                    } else {
-                        self.arrays.insert(var.clone(), new_elements);
-                    }
-                }
-                _ => {
-                    let expanded = self.expand_word(val);
-
-                    // Check for array element assignment: arr[idx]=value or assoc[key]=value
-                    if let Some(bracket_pos) = var.find('[') {
-                        if var.ends_with(']') {
-                            let array_name = &var[..bracket_pos];
-                            let key = &var[bracket_pos + 1..var.len() - 1];
-                            let key = self.expand_string(key); // Expand the key/index
-
-                            // Check if it's an associative array
-                            if self.assoc_arrays.contains_key(array_name) {
-                                let assoc = self.assoc_arrays.get_mut(array_name).unwrap();
-                                if *is_append {
-                                    let existing = assoc.get(&key).cloned().unwrap_or_default();
-                                    assoc.insert(key, existing + &expanded);
-                                } else {
-                                    assoc.insert(key, expanded);
-                                }
-                            } else if let Ok(idx) = key.parse::<i64>() {
-                                // Regular indexed array
-                                let idx = if idx < 0 { 0 } else { (idx - 1) as usize }; // zsh is 1-indexed
-                                let arr = self
-                                    .arrays
-                                    .entry(array_name.to_string())
-                                    .or_insert_with(Vec::new);
-                                while arr.len() <= idx {
-                                    arr.push(String::new());
-                                }
-                                if *is_append {
-                                    arr[idx].push_str(&expanded);
-                                } else {
-                                    arr[idx] = expanded;
-                                }
-                            } else {
-                                // Non-numeric key on non-assoc array - treat as assoc
-                                let assoc = self
-                                    .assoc_arrays
-                                    .entry(array_name.to_string())
-                                    .or_insert_with(HashMap::new);
-                                if *is_append {
-                                    let existing = assoc.get(&key).cloned().unwrap_or_default();
-                                    assoc.insert(key, existing + &expanded);
-                                } else {
-                                    assoc.insert(key, expanded);
-                                }
-                            }
-                            continue;
-                        }
-                    }
-
-                    // Regular variable assignment or append
-                    let final_value = if *is_append {
-                        let existing = self.variables.get(var).cloned().unwrap_or_default();
-                        existing + &expanded
-                    } else {
-                        expanded
-                    };
-
-                    if self.readonly_vars.contains(var) {
-                        eprintln!("zshrs: read-only variable: {}", var);
-                        self.last_status = 1;
-                        return Ok(1);
-                    }
-                    if cmd.words.is_empty() {
-                        // Just assignment, set in environment
-                        env::set_var(var, &final_value);
-                    }
-                    self.variables.insert(var.clone(), final_value);
-                }
-            }
-        }
-
-        if cmd.words.is_empty() {
-            self.last_status = 0;
-            return Ok(0);
-        }
-
-        // Check if this is a noglob precommand — suppress glob expansion
-        let is_noglob = cmd
-            .words
-            .first()
-            .map(|w| self.expand_word(w) == "noglob")
-            .unwrap_or(false);
-        let saved_noglob = if is_noglob {
-            let saved = self.options.get("noglob").copied();
-            self.options.insert("noglob".to_string(), true);
-            saved
-        } else {
-            None
-        };
-
-        // Pre-launch external command substitutions in parallel before expanding words.
-        // Each external $(cmd) gets spawned on the worker pool immediately.
-        // When we reach that word during sequential expansion, we collect the result.
-        let preflight = self.preflight_command_subs(&cmd.words);
-
-        let mut words: Vec<String> = cmd
-            .words
-            .iter()
-            .enumerate()
-            .flat_map(|(i, w)| {
-                if let Some(rx) = &preflight[i] {
-                    // Pre-launched external command sub — collect result
-                    vec![rx.recv().unwrap_or_default()]
-                } else {
-                    self.expand_word_glob(w)
-                }
-            })
-            .collect();
-
-        // Restore noglob after expansion
-        if is_noglob {
-            match saved_noglob {
-                Some(v) => {
-                    self.options.insert("noglob".to_string(), v);
-                }
-                None => {
-                    self.options.remove("noglob");
-                }
-            }
-        }
-        if words.is_empty() {
-            self.last_status = 0;
-            return Ok(0);
-        }
-
-        // Expand global aliases (alias -g) in all word positions
-        if !self.global_aliases.is_empty() {
-            let global_aliases = self.global_aliases.clone();
-            words = words
-                .into_iter()
-                .map(|w| global_aliases.get(&w).cloned().unwrap_or(w))
-                .collect();
-        }
-
-        // xtrace: print expanded command to stderr (zsh -x / set -x)
-        if self.options.get("xtrace").copied().unwrap_or(false) {
-            let ps4 = self
-                .variables
-                .get("PS4")
-                .cloned()
-                .unwrap_or_else(|| "+".to_string());
-            eprintln!("{}{}", ps4, words.join(" "));
-        }
-
-        // Check for regular alias expansion (alias > builtin > function > command)
-        let cmd_name = &words[0];
-        if let Some(alias_value) = self.aliases.get(cmd_name).cloned() {
-            // Expand the alias: replace cmd_name with alias value, keep remaining args
-            let expanded_cmd = if words.len() > 1 {
-                format!("{} {}", alias_value, words[1..].join(" "))
-            } else {
-                alias_value
-            };
-            // Re-execute the expanded command
-            return self.execute_script(&expanded_cmd);
-        }
-
-        // Check for suffix alias expansion (alias -s) when command is a file path
-        if !self.suffix_aliases.is_empty() {
-            let cmd_path = std::path::Path::new(cmd_name);
-            if let Some(ext) = cmd_path.extension().and_then(|e| e.to_str()) {
-                if let Some(handler) = self.suffix_aliases.get(ext).cloned() {
-                    // Suffix alias: "alias -s txt=vim" makes "foo.txt" run "vim foo.txt"
-                    let expanded_cmd = format!("{} {}", handler, words.join(" "));
-                    return self.execute_script(&expanded_cmd);
-                }
-            }
-        }
-
-        let args = &words[1..];
-
-        // Check if this is `exec` with only redirects (no command args)
-        // For exec, redirects with {varname} allocate FDs; redirects are permanent
-        let is_exec_with_redirects_only =
-            cmd_name == "exec" && args.is_empty() && !cmd.redirects.is_empty();
-
-        // Apply redirects for builtins
-        let mut saved_fds: Vec<(i32, i32)> = Vec::new();
-        for redirect in &cmd.redirects {
-            let target = self.expand_word(&redirect.target);
-
-            // Handle {varname}>file syntax - allocate new FD and store in variable
-            if let Some(ref var_name) = redirect.fd_var {
-                use std::os::unix::io::IntoRawFd;
-                let file_result = match redirect.op {
-                    RedirectOp::Write | RedirectOp::Clobber => std::fs::File::create(&target),
-                    RedirectOp::Append => std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&target),
-                    RedirectOp::Read => std::fs::File::open(&target),
-                    _ => continue,
-                };
-                match file_result {
-                    Ok(file) => {
-                        let new_fd = file.into_raw_fd();
-                        self.variables.insert(var_name.clone(), new_fd.to_string());
-                        // Store allocated FD for potential cleanup (not for exec)
-                        if !is_exec_with_redirects_only {
-                            // For non-exec, we might want to track these
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("{}: {}: {}", cmd_name, target, e);
-                        return Ok(1);
-                    }
-                }
-                continue;
-            }
-
-            let fd = redirect.fd.unwrap_or(match redirect.op {
-                RedirectOp::Read
-                | RedirectOp::HereDoc
-                | RedirectOp::HereString
-                | RedirectOp::ReadWrite => 0,
-                _ => 1,
-            });
-
-            match redirect.op {
-                RedirectOp::Write | RedirectOp::Clobber => {
-                    use std::os::unix::io::IntoRawFd;
-                    if !is_exec_with_redirects_only {
-                        let saved = unsafe { libc::dup(fd) };
-                        if saved >= 0 {
-                            saved_fds.push((fd, saved));
-                        }
-                    }
-                    if let Ok(file) = std::fs::File::create(&target) {
-                        let new_fd = file.into_raw_fd();
-                        unsafe {
-                            libc::dup2(new_fd, fd);
-                        }
-                        unsafe {
-                            libc::close(new_fd);
-                        }
-                    }
-                }
-                RedirectOp::Append => {
-                    use std::os::unix::io::IntoRawFd;
-                    if !is_exec_with_redirects_only {
-                        let saved = unsafe { libc::dup(fd) };
-                        if saved >= 0 {
-                            saved_fds.push((fd, saved));
-                        }
-                    }
-                    if let Ok(file) = std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&target)
-                    {
-                        let new_fd = file.into_raw_fd();
-                        unsafe {
-                            libc::dup2(new_fd, fd);
-                        }
-                        unsafe {
-                            libc::close(new_fd);
-                        }
-                    }
-                }
-                RedirectOp::Read => {
-                    use std::os::unix::io::IntoRawFd;
-                    if !is_exec_with_redirects_only {
-                        let saved = unsafe { libc::dup(fd) };
-                        if saved >= 0 {
-                            saved_fds.push((fd, saved));
-                        }
-                    }
-                    if let Ok(file) = std::fs::File::open(&target) {
-                        let new_fd = file.into_raw_fd();
-                        unsafe {
-                            libc::dup2(new_fd, fd);
-                        }
-                        unsafe {
-                            libc::close(new_fd);
-                        }
-                    }
-                }
-                RedirectOp::DupWrite | RedirectOp::DupRead => {
-                    if let Ok(target_fd) = target.parse::<i32>() {
-                        if !is_exec_with_redirects_only {
-                            let saved = unsafe { libc::dup(fd) };
-                            if saved >= 0 {
-                                saved_fds.push((fd, saved));
-                            }
-                        }
-                        unsafe {
-                            libc::dup2(target_fd, fd);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // For exec with only redirects, we're done - redirects are applied permanently
-        if is_exec_with_redirects_only {
-            self.last_status = 0;
-            return Ok(0);
-        }
-
-        // Check for shell builtins
-        let status = match cmd_name.as_str() {
-            "cd" => self.builtin_cd(args),
-            "pwd" => self.builtin_pwd(&cmd.redirects),
-            "echo" => self.builtin_echo(args, &cmd.redirects),
-            "export" => self.builtin_export(args),
-            "unset" => self.builtin_unset(args),
-            "source" | "." => self.builtin_source(args),
-            "exit" | "bye" | "logout" => self.builtin_exit(args),
-            "return" => self.builtin_return(args),
-            "true" => 0,
-            "false" => 1,
-            ":" => 0,
-            "chdir" => self.builtin_cd(args),
-            "test" | "[" => self.builtin_test(args),
-            "local" => self.builtin_local(args),
-            "declare" | "typeset" => self.builtin_declare(args),
-            "read" => self.builtin_read(args),
-            "shift" => self.builtin_shift(args),
-            "eval" => self.builtin_eval(args),
-            "jobs" => self.builtin_jobs(args),
-            "fg" => self.builtin_fg(args),
-            "bg" => self.builtin_bg(args),
-            "kill" => self.builtin_kill(args),
-            "disown" => self.builtin_disown(args),
-            "wait" => self.builtin_wait(args),
-            "autoload" => self.builtin_autoload(args),
-            "history" => self.builtin_history(args),
-            "fc" => self.builtin_fc(args),
-            "trap" => self.builtin_trap(args),
-            "suspend" => self.builtin_suspend(args),
-            "alias" => self.builtin_alias(args),
-            "unalias" => self.builtin_unalias(args),
-            "set" => self.builtin_set(args),
-            "shopt" => self.builtin_shopt(args),
-            // Bash compatibility
-            "bind" => self.builtin_bindkey(args),
-            "caller" => self.builtin_caller(args),
-            "help" => self.builtin_help(args),
-            "doctor" => self.builtin_doctor(args),
-            "dbview" => self.builtin_dbview(args),
-            "profile" => self.builtin_profile(args),
-            "intercept" => self.builtin_intercept(args),
-            "intercept_proceed" => self.builtin_intercept_proceed(args),
-            // ── Concurrent primitives ──
-            "async" => self.builtin_async(args),
-            "await" => self.builtin_await(args),
-            "pmap" => self.builtin_pmap(args),
-            "pgrep" => self.builtin_pgrep(args),
-            "peach" => self.builtin_peach(args),
-            "barrier" => self.builtin_barrier(args),
-            "readarray" | "mapfile" => self.builtin_readarray(args),
-            "setopt" => self.builtin_setopt(args),
-            "unsetopt" => self.builtin_unsetopt(args),
-            "getopts" => self.builtin_getopts(args),
-            "type" => self.builtin_type(args),
-            "hash" => self.builtin_hash(args),
-            "add-zsh-hook" => self.builtin_add_zsh_hook(args),
-            "command" => self.builtin_command(args, &cmd.redirects),
-            "builtin" => self.builtin_builtin(args, &cmd.redirects),
-            "let" => self.builtin_let(args),
-            "compgen" => self.builtin_compgen(args),
-            "complete" => self.builtin_complete(args),
-            "compopt" => self.builtin_compopt(args),
-            "compadd" => self.builtin_compadd(args),
-            "compset" => self.builtin_compset(args),
-            "compdef" => self.builtin_compdef(args),
-            "compinit" => self.builtin_compinit(args),
-            "cdreplay" => self.builtin_cdreplay(args),
-            "zstyle" => self.builtin_zstyle(args),
-            // GDBM database bindings
-            "ztie" => self.builtin_ztie(args),
-            "zuntie" => self.builtin_zuntie(args),
-            "zgdbmpath" => self.builtin_zgdbmpath(args),
-            "pushd" => self.builtin_pushd(args),
-            "popd" => self.builtin_popd(args),
-            "dirs" => self.builtin_dirs(args),
-            "printf" => self.builtin_printf(args),
-            // Control flow
-            "break" => self.builtin_break(args),
-            "continue" => self.builtin_continue(args),
-            // Enable/disable builtins
-            "disable" => self.builtin_disable(args),
-            "enable" => self.builtin_enable(args),
-            // Emulation
-            "emulate" => self.builtin_emulate(args),
-            // Prompt themes
-            "promptinit" => self.builtin_promptinit(args),
-            "prompt" => self.builtin_prompt(args),
-            // PCRE
-            "pcre_compile" => self.builtin_pcre_compile(args),
-            "pcre_match" => self.builtin_pcre_match(args),
-            "pcre_study" => self.builtin_pcre_study(args),
-            // Exec
-            "exec" => self.builtin_exec(args),
-            // Typed variables
-            "float" => self.builtin_float(args),
-            "integer" => self.builtin_integer(args),
-            // Functions
-            "functions" => self.builtin_functions(args),
-            // Print (zsh style)
-            "print" => self.builtin_print(args),
-            // Command lookup
-            "whence" => self.builtin_whence(args),
-            "where" => self.builtin_where(args),
-            "which" => self.builtin_which(args),
-            // Resource limits
-            "ulimit" => self.builtin_ulimit(args),
-            "limit" => self.builtin_limit(args),
-            "unlimit" => self.builtin_unlimit(args),
-            // File mask
-            "umask" => self.builtin_umask(args),
-            // Hash table
-            "rehash" => self.builtin_rehash(args),
-            "unhash" => self.builtin_unhash(args),
-            // Times
-            "times" => self.builtin_times(args),
-            // Module loading (stub)
-            "zmodload" => self.builtin_zmodload(args),
-            // Redo
-            "r" => self.builtin_r(args),
-            // TTY control
-            "ttyctl" => self.builtin_ttyctl(args),
-            // Noglob
-            "noglob" => self.builtin_noglob(args, &cmd.redirects),
-            // zsh/stat module
-            "zstat" | "stat" => self.builtin_zstat(args),
-            // zsh/datetime module
-            "strftime" => self.builtin_strftime(args),
-            // sleep with fractional seconds
-            "zsleep" => self.builtin_zsleep(args),
-            // zsh/system module - ported from Src/Modules/system.c
-            "zsystem" => self.builtin_zsystem(args),
-            // zsh/files module - ported from Src/Modules/files.c
-            "sync" => self.builtin_sync(args),
-            "mkdir" => self.builtin_mkdir(args),
-            "rmdir" => self.builtin_rmdir(args),
-            "ln" => self.builtin_ln(args),
-            "mv" => self.builtin_mv(args),
-            "cp" => self.builtin_cp(args),
-            "rm" => self.builtin_rm(args),
-            "chown" => self.builtin_chown(args),
-            "chmod" => self.builtin_chmod(args),
-            "zln" | "zmv" | "zcp" => self.builtin_zfiles(cmd_name, args),
-            // coproc management
-            "coproc" => self.builtin_coproc(args),
-            // zparseopts - option parsing
-            "zparseopts" => self.builtin_zparseopts(args),
-            // readonly/unfunction
-            "readonly" => self.builtin_readonly(args),
-            "unfunction" => self.builtin_unfunction(args),
-            // getln/pushln
-            "getln" => self.builtin_getln(args),
-            "pushln" => self.builtin_pushln(args),
-            // bindkey stub
-            "bindkey" => self.builtin_bindkey(args),
-            // zle stub
-            "zle" => self.builtin_zle(args),
-            // sched
-            "sched" => self.builtin_sched(args),
-            // zformat
-            "zformat" => self.builtin_zformat(args),
-            // zcompile
-            "zcompile" => self.builtin_zcompile(args),
-            // vared - visual edit
-            "vared" => self.builtin_vared(args),
-            // terminal capabilities
-            "echotc" => self.builtin_echotc(args),
-            "echoti" => self.builtin_echoti(args),
-            // PTY and socket operations
-            "zpty" => self.builtin_zpty(args),
-            "zprof" => self.builtin_zprof(args),
-            "zsocket" => self.builtin_zsocket(args),
-            "ztcp" => self.builtin_ztcp(args),
-            "zregexparse" => self.builtin_zregexparse(args),
-            "clone" => self.builtin_clone(args),
-            "log" => self.builtin_log(args),
-            // Completion system builtins
-            "comparguments" => self.builtin_comparguments(args),
-            "compcall" => self.builtin_compcall(args),
-            "compctl" => self.builtin_compctl(args),
-            "compdescribe" => self.builtin_compdescribe(args),
-            "compfiles" => self.builtin_compfiles(args),
-            "compgroups" => self.builtin_compgroups(args),
-            "compquote" => self.builtin_compquote(args),
-            "comptags" => self.builtin_comptags(args),
-            "comptry" => self.builtin_comptry(args),
-            "compvalues" => self.builtin_compvalues(args),
-            // Capabilities (Linux-specific, stubs on macOS)
-            "cap" | "getcap" | "setcap" => self.builtin_cap(args),
-            // FTP client
-            "zftp" => self.builtin_zftp(args),
-            // zsh/curses module
-            "zcurses" => self.builtin_zcurses(args),
-            // zsh/system module
-            "sysread" => self.builtin_sysread(args),
-            "syswrite" => self.builtin_syswrite(args),
-            "syserror" => self.builtin_syserror(args),
-            "sysopen" => self.builtin_sysopen(args),
-            "sysseek" => self.builtin_sysseek(args),
-            // zsh/mapfile module
-            "mapfile" => 0, // mapfile is a special parameter, not a command
-            // zsh/param/private
-            "private" => self.builtin_private(args),
-            // zsh/attr (extended attributes)
-            "zgetattr" | "zsetattr" | "zdelattr" | "zlistattr" => {
-                self.builtin_zattr(cmd_name, args)
-            }
-            // Completion helper functions (now implemented in Rust compsys crate)
-            // These are stubs that return success during non-completion execution
-            "_arguments" | "_describe" | "_description" | "_message" | "_tags" | "_requested"
-            | "_all_labels" | "_next_label" | "_files" | "_path_files" | "_directories" | "_cd"
-            | "_default" | "_dispatch" | "_complete" | "_main_complete" | "_normal"
-            | "_approximate" | "_correct" | "_expand" | "_history" | "_match" | "_menu"
-            | "_oldlist" | "_list" | "_prefix" | "_generic" | "_wanted" | "_alternative"
-            | "_values" | "_sequence" | "_sep_parts" | "_multi_parts" | "_combination"
-            | "_parameters" | "_command" | "_command_names" | "_commands" | "_functions"
-            | "_aliases" | "_builtins" | "_jobs" | "_pids" | "_process_names" | "_signals"
-            | "_users" | "_groups" | "_hosts" | "_domains" | "_urls" | "_email_addresses"
-            | "_options" | "_contexts" | "_set_options" | "_unset_options" | "_vars"
-            | "_env_variables" | "_shell_variables" | "_arrays" | "_globflags" | "_globquals"
-            | "_globqual_delims" | "_subscript" | "_history_modifiers" | "_brace_parameter"
-            | "_tilde" | "_style" | "_cache_invalid" | "_store_cache" | "_retrieve_cache"
-            | "_call_function" | "_call_program" | "_pick_variant" | "_setup"
-            | "_comp_priv_prefix" | "_regex_arguments" | "_regex_words" | "_guard"
-            | "_gnu_generic" | "_long_options" | "_x_arguments" | "_sub_commands"
-            | "_cmdstring" | "_cmdambivalent" | "_first" | "_precommand" | "_user_at_host"
-            | "_user_expand" | "_path_commands" | "_globbed_files" | "_have_glob_qual" => {
-                // Return success - these functions are for completion context only
-                // The actual completion logic is in the compsys Rust crate
-                0
-            }
-            _ => {
-                // ── AOP intercept dispatch ──
-                // Check if any intercepts match this command name.
-                // Fast path: skip if no intercepts registered.
-                if !self.intercepts.is_empty() {
-                    let full_cmd = if args.is_empty() {
-                        cmd_name.to_string()
-                    } else {
-                        format!("{} {}", cmd_name, args.join(" "))
-                    };
-                    if let Some(result) = self.run_intercepts(cmd_name, &full_cmd, args) {
-                        return result;
-                    }
-                }
-
-                // Check for function
-                if let Some(func) = self.functions.get(cmd_name).cloned() {
-                    return self.call_function(&func, args);
-                }
-
-                // Try autoloading from pending autoload list
-                if self.maybe_autoload(cmd_name) {
-                    if let Some(func) = self.functions.get(cmd_name).cloned() {
-                        return self.call_function(&func, args);
-                    }
-                }
-
-                // Try autoloading from ZWC
-                if self.autoload_function(cmd_name).is_some() {
-                    if let Some(func) = self.functions.get(cmd_name).cloned() {
-                        return self.call_function(&func, args);
-                    }
-                }
-
-                // External command
-                self.execute_external(cmd_name, args, &cmd.redirects)?
-            }
-        };
-
-        // Restore saved fds
-        for (fd, saved) in saved_fds.into_iter().rev() {
-            unsafe {
-                libc::dup2(saved, fd);
-                libc::close(saved);
-            }
-        }
-
-        self.last_status = status;
-        Ok(status)
     }
 
     /// Call a function with positional parameters
@@ -4130,652 +4122,6 @@ impl ShellExecutor {
                         Err(format!("zshrs: {}: {}", cmd, e))
                     }
                 }
-            }
-        }
-    }
-
-    #[tracing::instrument(level = "trace", skip_all, fields(stages = cmds.len()))]
-    fn execute_pipeline(&mut self, cmds: &[ShellCommand]) -> Result<i32, String> {
-        if cmds.len() == 1 {
-            return self.execute_command(&cmds[0]);
-        }
-
-        let mut children: Vec<Child> = Vec::new();
-        let mut prev_stdout: Option<std::process::ChildStdout> = None;
-
-        for (i, cmd) in cmds.iter().enumerate() {
-            if let ShellCommand::Simple(simple) = cmd {
-                let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
-                if words.is_empty() {
-                    continue;
-                }
-
-                let mut command = Command::new(&words[0]);
-                command.args(&words[1..]);
-
-                if let Some(stdout) = prev_stdout.take() {
-                    command.stdin(Stdio::from(stdout));
-                }
-
-                if i < cmds.len() - 1 {
-                    command.stdout(Stdio::piped());
-                }
-
-                match command.spawn() {
-                    Ok(mut child) => {
-                        prev_stdout = child.stdout.take();
-                        children.push(child);
-                    }
-                    Err(e) => {
-                        eprintln!("zshrs: {}: {}", words[0], e);
-                        return Ok(127);
-                    }
-                }
-            }
-        }
-
-        // Wait for all children
-        let mut last_status = 0;
-        for mut child in children {
-            if let Ok(status) = child.wait() {
-                last_status = status.code().unwrap_or(1);
-            }
-        }
-
-        Ok(last_status)
-    }
-
-    fn execute_list(&mut self, items: &[(ShellCommand, ListOp)]) -> Result<i32, String> {
-        for (cmd, op) in items {
-            // Check if this command should run in background
-            let background = matches!(op, ListOp::Amp);
-
-            let status = if background {
-                self.execute_command_bg(cmd)?
-            } else {
-                self.execute_command(cmd)?
-            };
-
-            // Check for control flow
-            if self.returning.is_some() || self.breaking > 0 || self.continuing > 0 {
-                return Ok(status);
-            }
-
-            match op {
-                ListOp::And => {
-                    if status != 0 {
-                        return Ok(status);
-                    }
-                }
-                ListOp::Or => {
-                    if status == 0 {
-                        return Ok(0);
-                    }
-                }
-                ListOp::Amp => {
-                    // Already backgrounded above, continue
-                }
-                ListOp::Semi | ListOp::Newline => {
-                    // Sequential, continue
-                }
-            }
-        }
-
-        Ok(self.last_status)
-    }
-
-    fn execute_command_bg(&mut self, cmd: &ShellCommand) -> Result<i32, String> {
-        // For simple commands, run in background
-        if let ShellCommand::Simple(simple) = cmd {
-            if simple.words.is_empty() {
-                return Ok(0);
-            }
-            let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
-            let cmd_name = &words[0];
-            let args: Vec<String> = words[1..].to_vec();
-            return self.execute_external_bg(cmd_name, &args, &simple.redirects, true);
-        }
-        // For complex commands, just execute normally (could fork in future)
-        self.execute_command(cmd)
-    }
-
-    #[tracing::instrument(level = "trace", skip_all)]
-    fn execute_compound(&mut self, compound: &CompoundCommand) -> Result<i32, String> {
-        match compound {
-            CompoundCommand::BraceGroup(cmds) => {
-                for cmd in cmds {
-                    self.execute_command(cmd)?;
-                    if self.returning.is_some() {
-                        break;
-                    }
-                }
-                Ok(self.last_status)
-            }
-            CompoundCommand::Subshell(cmds) => {
-                // Subshell isolates variable changes — save/restore all state.
-                // In real zsh this forks; we simulate by cloning variables.
-                let saved_vars = self.variables.clone();
-                let saved_arrays = self.arrays.clone();
-                let saved_assoc = self.assoc_arrays.clone();
-                let saved_params = self.positional_params.clone();
-
-                for cmd in cmds {
-                    self.execute_command(cmd)?;
-                    if self.returning.is_some() {
-                        break;
-                    }
-                }
-                let status = self.last_status;
-
-                // Restore state — subshell changes are discarded
-                self.variables = saved_vars;
-                self.arrays = saved_arrays;
-                self.assoc_arrays = saved_assoc;
-                self.positional_params = saved_params;
-                self.last_status = status;
-
-                Ok(status)
-            }
-
-            CompoundCommand::If {
-                conditions,
-                else_part,
-            } => {
-                for (cond, body) in conditions {
-                    // Execute condition
-                    for cmd in cond {
-                        self.execute_command(cmd)?;
-                    }
-
-                    if self.last_status == 0 {
-                        // Condition true, execute body
-                        for cmd in body {
-                            self.execute_command(cmd)?;
-                        }
-                        return Ok(self.last_status);
-                    }
-                }
-
-                // All conditions false, execute else
-                if let Some(else_cmds) = else_part {
-                    for cmd in else_cmds {
-                        self.execute_command(cmd)?;
-                    }
-                }
-
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::For { var, words, body } => {
-                let items: Vec<String> = if let Some(words) = words {
-                    words
-                        .iter()
-                        .flat_map(|w| self.expand_word_split(w))
-                        .collect()
-                } else {
-                    // Iterate over positional parameters
-                    self.positional_params.clone()
-                };
-
-                for item in items {
-                    env::set_var(var, &item);
-                    self.variables.insert(var.clone(), item);
-
-                    for cmd in body {
-                        self.execute_command(cmd)?;
-                        if self.breaking > 0 || self.continuing > 0 || self.returning.is_some() {
-                            break;
-                        }
-                    }
-
-                    if self.continuing > 0 {
-                        self.continuing -= 1;
-                        if self.continuing > 0 {
-                            break;
-                        }
-                        continue;
-                    }
-                    if self.breaking > 0 {
-                        self.breaking -= 1;
-                        break;
-                    }
-                    if self.returning.is_some() {
-                        break;
-                    }
-                }
-
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::ForArith {
-                init,
-                cond,
-                step,
-                body,
-            } => {
-                // C-style for loop: for ((init; cond; step))
-                // Execute init expression (use evaluate_arithmetic_expr for assignment support)
-                if !init.is_empty() {
-                    self.evaluate_arithmetic_expr(init);
-                }
-
-                // Loop while condition is true
-                loop {
-                    // Evaluate condition (use eval_arith_expr for comparison result)
-                    if !cond.is_empty() {
-                        let cond_result = self.eval_arith_expr(cond);
-                        if cond_result == 0 {
-                            break;
-                        }
-                    }
-
-                    // Execute body
-                    for cmd in body {
-                        self.execute_command(cmd)?;
-                        if self.breaking > 0 || self.continuing > 0 || self.returning.is_some() {
-                            break;
-                        }
-                    }
-
-                    if self.continuing > 0 {
-                        self.continuing -= 1;
-                        if self.continuing > 0 {
-                            break;
-                        }
-                        continue;
-                    }
-                    if self.breaking > 0 {
-                        self.breaking -= 1;
-                        break;
-                    }
-                    if self.returning.is_some() {
-                        break;
-                    }
-
-                    // Execute step (use evaluate_arithmetic_expr for assignment support like i++)
-                    if !step.is_empty() {
-                        self.evaluate_arithmetic_expr(step);
-                    }
-                }
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::While { condition, body } => {
-                loop {
-                    for cmd in condition {
-                        self.execute_command(cmd)?;
-                        if self.breaking > 0 || self.returning.is_some() {
-                            break;
-                        }
-                    }
-
-                    if self.last_status != 0 || self.breaking > 0 || self.returning.is_some() {
-                        break;
-                    }
-
-                    for cmd in body {
-                        self.execute_command(cmd)?;
-                        if self.breaking > 0 || self.continuing > 0 || self.returning.is_some() {
-                            break;
-                        }
-                    }
-
-                    if self.continuing > 0 {
-                        self.continuing -= 1;
-                        if self.continuing > 0 {
-                            break;
-                        }
-                        continue;
-                    }
-                    if self.breaking > 0 {
-                        self.breaking -= 1;
-                        break;
-                    }
-                }
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::Until { condition, body } => {
-                loop {
-                    for cmd in condition {
-                        self.execute_command(cmd)?;
-                        if self.breaking > 0 || self.returning.is_some() {
-                            break;
-                        }
-                    }
-
-                    if self.last_status == 0 || self.breaking > 0 || self.returning.is_some() {
-                        break;
-                    }
-
-                    for cmd in body {
-                        self.execute_command(cmd)?;
-                        if self.breaking > 0 || self.continuing > 0 || self.returning.is_some() {
-                            break;
-                        }
-                    }
-
-                    if self.continuing > 0 {
-                        self.continuing -= 1;
-                        if self.continuing > 0 {
-                            break;
-                        }
-                        continue;
-                    }
-                    if self.breaking > 0 {
-                        self.breaking -= 1;
-                        break;
-                    }
-                }
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::Case { word, cases } => {
-                let value = self.expand_word(word);
-
-                for (patterns, body, term) in cases {
-                    for pattern in patterns {
-                        let pat = self.expand_word(pattern);
-                        if self.matches_pattern(&value, &pat) {
-                            for cmd in body {
-                                self.execute_command(cmd)?;
-                            }
-
-                            match term {
-                                CaseTerminator::Break => return Ok(self.last_status),
-                                CaseTerminator::Fallthrough => {
-                                    // Continue to next case body
-                                }
-                                CaseTerminator::Continue => {
-                                    // Continue pattern matching
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::Select { var, words, body } => {
-                // Simplified: just use first word
-                if let Some(words) = words {
-                    if let Some(first) = words.first() {
-                        let val = self.expand_word(first);
-                        env::set_var(var, &val);
-                        for cmd in body {
-                            self.execute_command(cmd)?;
-                        }
-                    }
-                }
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::Repeat { count, body } => {
-                let n: i64 = self
-                    .expand_word(&ShellWord::Literal(count.clone()))
-                    .parse()
-                    .unwrap_or(0);
-
-                for _ in 0..n {
-                    for cmd in body {
-                        self.execute_command(cmd)?;
-                        if self.breaking > 0 || self.continuing > 0 || self.returning.is_some() {
-                            break;
-                        }
-                    }
-
-                    if self.continuing > 0 {
-                        self.continuing -= 1;
-                        if self.continuing > 0 {
-                            break;
-                        }
-                        continue;
-                    }
-                    if self.breaking > 0 {
-                        self.breaking -= 1;
-                        break;
-                    }
-                    if self.returning.is_some() {
-                        break;
-                    }
-                }
-
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::Try {
-                try_body,
-                always_body,
-            } => {
-                // Port of exectry() from Src/loop.c
-                // The :try clause
-                for cmd in try_body {
-                    if let Err(_e) = self.execute_command(cmd) {
-                        break;
-                    }
-                    if self.returning.is_some() {
-                        break;
-                    }
-                }
-
-                // endval = lastval ? lastval : errflag
-                let endval = self.last_status;
-
-                // Save and reset control flow flags for the always clause
-                let save_returning = self.returning.take();
-                let save_breaking = self.breaking;
-                let save_continuing = self.continuing;
-                self.breaking = 0;
-                self.continuing = 0;
-
-                // The always clause — executes unconditionally
-                for cmd in always_body {
-                    let _ = self.execute_command(cmd);
-                }
-
-                // Restore control flow: C uses "if (!retflag) retflag = save"
-                // i.e. always block's flags take precedence if set
-                if self.returning.is_none() {
-                    self.returning = save_returning;
-                }
-                if self.breaking == 0 {
-                    self.breaking = save_breaking;
-                }
-                if self.continuing == 0 {
-                    self.continuing = save_continuing;
-                }
-
-                self.last_status = endval;
-                Ok(endval)
-            }
-
-            CompoundCommand::Cond(expr) => {
-                let result = self.eval_cond_expr(expr);
-                self.last_status = if result { 0 } else { 1 };
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::Arith(expr) => {
-                // Evaluate arithmetic expression and set variables
-                let result = self.evaluate_arithmetic_expr(expr);
-                // (( )) returns 0 if result is non-zero, 1 if result is zero
-                self.last_status = if result != 0 { 0 } else { 1 };
-                Ok(self.last_status)
-            }
-
-            CompoundCommand::Coproc { name, body } => {
-                // Create pipes for stdin and stdout
-                let (stdin_read, stdin_write) =
-                    os_pipe::pipe().map_err(|e| format!("Cannot create pipe: {}", e))?;
-                let (stdout_read, stdout_write) =
-                    os_pipe::pipe().map_err(|e| format!("Cannot create pipe: {}", e))?;
-
-                // Get the command to run
-                let cmd_str = match body.as_ref() {
-                    ShellCommand::Simple(simple) => simple
-                        .words
-                        .iter()
-                        .map(|w| self.expand_word(w))
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    ShellCommand::Compound(CompoundCommand::BraceGroup(_cmds)) => {
-                        // Just run as a subshell with the commands
-                        // For simplicity, we'll use bash -c
-                        "bash -c 'true'".to_string()
-                    }
-                    _ => "true".to_string(),
-                };
-
-                // Fork and run the command in background with redirected stdin/stdout
-                let parts: Vec<&str> = cmd_str.split_whitespace().collect();
-                if parts.is_empty() {
-                    return Ok(0);
-                }
-
-                let mut command = Command::new(parts[0]);
-                if parts.len() > 1 {
-                    command.args(&parts[1..]);
-                }
-
-                use std::os::unix::io::{FromRawFd, IntoRawFd};
-
-                command.stdin(unsafe { Stdio::from_raw_fd(stdin_read.into_raw_fd()) });
-                command.stdout(unsafe { Stdio::from_raw_fd(stdout_write.into_raw_fd()) });
-
-                match command.spawn() {
-                    Ok(child) => {
-                        let pid = child.id();
-                        let coproc_name = name.clone().unwrap_or_else(|| "COPROC".to_string());
-
-                        // Store file descriptors in environment-like variables
-                        // COPROC[0] = read from coproc (stdout_read)
-                        // COPROC[1] = write to coproc (stdin_write)
-                        let read_fd = stdout_read.into_raw_fd();
-                        let write_fd = stdin_write.into_raw_fd();
-
-                        self.arrays.insert(
-                            coproc_name.clone(),
-                            vec![read_fd.to_string(), write_fd.to_string()],
-                        );
-
-                        // Also store PID
-                        self.variables
-                            .insert(format!("{}_PID", coproc_name), pid.to_string());
-
-                        let cmd_str_clone = cmd_str.clone();
-                        self.jobs.add_job(child, cmd_str_clone, JobState::Running);
-
-                        Ok(0)
-                    }
-                    Err(e) => {
-                        if e.kind() == io::ErrorKind::NotFound {
-                            eprintln!("zshrs: command not found: {}", parts[0]);
-                            Ok(127)
-                        } else {
-                            Err(format!("zshrs: coproc: {}: {}", parts[0], e))
-                        }
-                    }
-                }
-            }
-
-            CompoundCommand::WithRedirects(cmd, redirects) => {
-                // Execute the command with redirects applied
-                let mut saved_fds: Vec<(i32, i32)> = Vec::new();
-
-                // Set up redirects
-                for redirect in redirects {
-                    let fd = redirect.fd.unwrap_or(match redirect.op {
-                        RedirectOp::Read
-                        | RedirectOp::HereDoc
-                        | RedirectOp::HereString
-                        | RedirectOp::ReadWrite => 0,
-                        _ => 1,
-                    });
-
-                    let target = self.expand_word(&redirect.target);
-
-                    match redirect.op {
-                        RedirectOp::Write | RedirectOp::Clobber => {
-                            use std::os::unix::io::IntoRawFd;
-                            let saved = unsafe { libc::dup(fd) };
-                            if saved >= 0 {
-                                saved_fds.push((fd, saved));
-                            }
-                            if let Ok(file) = std::fs::File::create(&target) {
-                                let new_fd = file.into_raw_fd();
-                                unsafe {
-                                    libc::dup2(new_fd, fd);
-                                }
-                                unsafe {
-                                    libc::close(new_fd);
-                                }
-                            }
-                        }
-                        RedirectOp::Append => {
-                            use std::os::unix::io::IntoRawFd;
-                            let saved = unsafe { libc::dup(fd) };
-                            if saved >= 0 {
-                                saved_fds.push((fd, saved));
-                            }
-                            if let Ok(file) = std::fs::OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(&target)
-                            {
-                                let new_fd = file.into_raw_fd();
-                                unsafe {
-                                    libc::dup2(new_fd, fd);
-                                }
-                                unsafe {
-                                    libc::close(new_fd);
-                                }
-                            }
-                        }
-                        RedirectOp::Read => {
-                            use std::os::unix::io::IntoRawFd;
-                            let saved = unsafe { libc::dup(fd) };
-                            if saved >= 0 {
-                                saved_fds.push((fd, saved));
-                            }
-                            if let Ok(file) = std::fs::File::open(&target) {
-                                let new_fd = file.into_raw_fd();
-                                unsafe {
-                                    libc::dup2(new_fd, fd);
-                                }
-                                unsafe {
-                                    libc::close(new_fd);
-                                }
-                            }
-                        }
-                        RedirectOp::DupWrite | RedirectOp::DupRead => {
-                            if let Ok(target_fd) = target.parse::<i32>() {
-                                let saved = unsafe { libc::dup(fd) };
-                                if saved >= 0 {
-                                    saved_fds.push((fd, saved));
-                                }
-                                unsafe {
-                                    libc::dup2(target_fd, fd);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Execute the inner command
-                let result = self.execute_command(cmd);
-
-                // Restore saved fds
-                for (fd, saved) in saved_fds.into_iter().rev() {
-                    unsafe {
-                        libc::dup2(saved, fd);
-                        libc::close(saved);
-                    }
-                }
-
-                result
             }
         }
     }
@@ -8651,89 +7997,63 @@ impl ShellExecutor {
             .unwrap_or(80)
     }
 
-    /// Execute a command and capture its output (command substitution)
-    fn execute_command_substitution(&mut self, cmd: &ShellCommand) -> String {
+    /// Execute a command and capture its stdout (`$(cmd)` semantics).
+    ///
+    /// Bytecode-routed: compiles `cmd` to a chunk, runs on a fresh VM with
+    /// stdout dup2'd to a pipe write end. Reads the pipe to a String. POSIX
+    /// trims trailing newlines.
+    pub fn execute_command_substitution(&mut self, cmd: &ShellCommand) -> String {
         match self.execute_command_capture(cmd) {
-            Ok(output) => output.trim_end_matches('\n').to_string(),
+            Ok(output) => {
+                let mut s = output;
+                while s.ends_with('\n') {
+                    s.pop();
+                }
+                s
+            }
             Err(_) => String::new(),
         }
     }
 
-    /// Execute a command and capture its stdout
-    fn execute_command_capture(&mut self, cmd: &ShellCommand) -> Result<String, String> {
-        // For simple commands, we can use Command directly
-        if let ShellCommand::Simple(simple) = cmd {
-            let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
-            if words.is_empty() {
-                return Ok(String::new());
-            }
+    /// Execute a command and capture its stdout. Bytecode-routed via the
+    /// same machinery `ZshrsHost::cmd_subst` uses for `Op::CmdSubst(sub_idx)`,
+    /// but called from non-VM paths (the runtime expand_word fallback at
+    /// `ShellWord::CommandSub` for words inside JSON-AST runtime variants).
+    pub fn execute_command_capture(&mut self, cmd: &ShellCommand) -> Result<String, String> {
+        use std::io::Read;
+        use std::os::unix::io::AsRawFd;
 
-            let cmd_name = &words[0];
-            let args = &words[1..];
-
-            // Handle some builtins that can return values
-            match cmd_name.as_str() {
-                "echo" => {
-                    let output = args.join(" ");
-                    return Ok(format!("{}\n", output));
-                }
-                "printf" => {
-                    if !args.is_empty() {
-                        // Simple printf - just format string with args
-                        let format = &args[0];
-                        let result = if args.len() > 1 {
-                            // Very basic: just handle %s
-                            let mut out = format.clone();
-                            for (i, arg) in args[1..].iter().enumerate() {
-                                out = out.replacen("%s", arg, 1);
-                                out = out.replacen(&format!("${}", i + 1), arg, 1);
-                            }
-                            out
-                        } else {
-                            format.clone()
-                        };
-                        return Ok(result);
-                    }
-                    return Ok(String::new());
-                }
-                "pwd" => {
-                    return Ok(env::current_dir()
-                        .map(|p| format!("{}\n", p.display()))
-                        .unwrap_or_default());
-                }
-                _ => {}
-            }
-
-            // External command - capture its output
-            let output = Command::new(cmd_name)
-                .args(args)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .output();
-
-            match output {
-                Ok(output) => {
-                    self.last_status = output.status.code().unwrap_or(1);
-                    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-                }
-                Err(e) => {
-                    self.last_status = 127;
-                    Err(format!("{}: {}", cmd_name, e))
-                }
-            }
-        } else if let ShellCommand::Pipeline(cmds, _negated) = cmd {
-            // For pipelines, execute and capture output of the last command
-            // This is simplified - proper implementation would pipe between all
-            if let Some(last) = cmds.last() {
-                return self.execute_command_capture(last);
-            }
-            Ok(String::new())
-        } else {
-            // For compound commands, execute them and return empty
-            // (complex case - could be expanded later)
-            let _ = self.execute_command(cmd);
-            Ok(String::new())
+        let compiler = crate::shell_compiler::ShellCompiler::new();
+        let chunk = compiler.compile(std::slice::from_ref(cmd));
+        if chunk.ops.is_empty() {
+            return Ok(String::new());
         }
+
+        let (read_end, write_end) =
+            os_pipe::pipe().map_err(|e| format!("os_pipe: {}", e))?;
+        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if saved_stdout < 0 {
+            return Err("dup(stdout) failed".into());
+        }
+        let write_fd = write_end.as_raw_fd();
+        unsafe { libc::dup2(write_fd, libc::STDOUT_FILENO) };
+        drop(write_end);
+
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        let _ctx = ExecutorContext::enter(self);
+        let _ = vm.run();
+        self.last_status = vm.last_status;
+
+        unsafe {
+            libc::dup2(saved_stdout, libc::STDOUT_FILENO);
+            libc::close(saved_stdout);
+        }
+
+        let mut buf = String::new();
+        let mut reader = read_end;
+        let _ = reader.read_to_string(&mut buf);
+        Ok(buf)
     }
 
     /// Evaluate arithmetic expression using the full math module
@@ -20781,14 +20101,12 @@ impl ShellExecutor {
         0
     }
 
-    /// compctl - old-style completion (deprecated)
-    fn builtin_compctl(&mut self, args: &[String]) -> i32 {
-        if args.is_empty() {
-            println!("compctl: old-style completion system");
-            println!("Use the new completion system (compsys) instead");
-            return 0;
-        }
-        // Parse compctl options for backwards compatibility
+    /// compctl - old-style completion (deprecated, accepted silently for compat)
+    fn builtin_compctl(&mut self, _args: &[String]) -> i32 {
+        // Power-user shell: don't lecture on deprecation. compctl exists for
+        // .zshrc compatibility; if the user calls it without args we no-op
+        // silently rather than printing a tutorial pointing to compsys. They
+        // know what compsys is — they wrote half of it.
         0
     }
 
