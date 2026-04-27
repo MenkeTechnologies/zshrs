@@ -19,12 +19,10 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
 
-pub mod ast_opt;
 pub mod attr;
 pub mod cap;
 pub mod clone;
 pub mod compat;
-pub mod compiler;
 pub mod completion;
 pub mod cond;
 pub mod config;
