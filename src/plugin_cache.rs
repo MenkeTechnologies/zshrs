@@ -11,6 +11,44 @@ use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// On-disk format version for cached fusevm chunks. Bumped when fusevm's
+/// bincode layout changes in a non-backward-compat way. Cached blobs are
+/// stored as `[VERSION_BYTE, bincode_bytes...]`; readers verify the prefix
+/// and treat any mismatch as a cache miss (the source file is recompiled).
+///
+/// Version history:
+///   0  — fusevm 0.10.0 (Phase F baseline; no version prefix in storage)
+///   1  — fusevm 0.10.1 (Tier C: argv-flatten in Op::Exec/ExecBg/CallFunction
+///        + ShellHost::exec_bg; current)
+///
+/// Bumping is a one-line change. Existing caches transparently rebuild — no
+/// migration code needed because the unwrap function returns None on
+/// mismatch and the caller's "cache miss → compile" path takes over.
+pub const BYTECODE_VERSION: u8 = 1;
+
+/// Wrap raw bincode bytes with the format version prefix. Called by
+/// `store_bytecode` (and any other persisted-chunk writer in the future)
+/// before the INSERT.
+#[inline]
+fn wrap_bytecode(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len() + 1);
+    out.push(BYTECODE_VERSION);
+    out.extend_from_slice(bytes);
+    out
+}
+
+/// Strip and verify the format version prefix. Returns `Some(inner_bytes)`
+/// if the prefix matches the current `BYTECODE_VERSION`, `None` otherwise.
+/// `None` triggers cache miss in the caller, which silently recompiles from
+/// source — no warning, no error (the maintainer's "no nag" rule).
+#[inline]
+fn unwrap_bytecode(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.is_empty() || bytes[0] != BYTECODE_VERSION {
+        return None;
+    }
+    Some(bytes[1..].to_vec())
+}
+
 /// Side effects captured from sourcing a plugin file.
 #[derive(Debug, Clone, Default)]
 pub struct PluginDelta {
@@ -556,16 +594,22 @@ impl PluginCache {
     // Script bytecode cache — skip lex+parse+compile entirely
     // -----------------------------------------------------------------
 
-    /// Check if cached bytecode exists with matching mtime.
+    /// Check if cached bytecode exists with matching mtime AND a current
+    /// format-version prefix. A prefix mismatch returns None — the caller
+    /// treats this as a cache miss and recompiles from source. No warning is
+    /// printed; the rebuild is silent.
     pub fn check_bytecode(&self, path: &str, mtime_secs: i64, mtime_nsecs: i64) -> Option<Vec<u8>> {
-        self.conn.query_row(
+        let raw = self.conn.query_row(
             "SELECT bytecode FROM script_bytecode WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
             params![path, mtime_secs, mtime_nsecs],
             |row| row.get::<_, Vec<u8>>(0),
-        ).ok()
+        ).ok()?;
+        unwrap_bytecode(&raw)
     }
 
-    /// Store compiled bytecode for a script file.
+    /// Store compiled bytecode for a script file. The blob is wrapped with
+    /// the format version prefix so future readers (after a fusevm bump) can
+    /// detect the staleness without parsing the bincode body.
     pub fn store_bytecode(
         &self,
         path: &str,
@@ -578,11 +622,12 @@ impl PluginCache {
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
+        let wrapped = wrap_bytecode(bytecode);
         self.conn
             .execute("DELETE FROM script_bytecode WHERE path = ?1", params![path])?;
         self.conn.execute(
             "INSERT INTO script_bytecode (path, mtime_secs, mtime_nsecs, bytecode, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![path, mtime_secs, mtime_nsecs, bytecode, now],
+            params![path, mtime_secs, mtime_nsecs, wrapped, now],
         )?;
         Ok(())
     }
@@ -718,4 +763,75 @@ pub fn default_cache_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".cache/zshrs/plugins.db")
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn wrap_unwrap_round_trip() {
+        let raw = b"some-bincode-blob".to_vec();
+        let wrapped = wrap_bytecode(&raw);
+        assert_eq!(wrapped[0], BYTECODE_VERSION);
+        let unwrapped = unwrap_bytecode(&wrapped).expect("matching version unwraps");
+        assert_eq!(unwrapped, raw);
+    }
+
+    #[test]
+    fn unwrap_rejects_old_version() {
+        // Pre-version-byte cache (or a bumped version) should be rejected.
+        // The caller's cache-miss branch then recompiles from source.
+        let mut bogus = vec![0u8]; // version 0 (pre-Tier C)
+        bogus.extend_from_slice(b"old-bincode-blob");
+        assert!(unwrap_bytecode(&bogus).is_none());
+
+        let mut future = vec![BYTECODE_VERSION.wrapping_add(1)];
+        future.extend_from_slice(b"future-bincode-blob");
+        assert!(unwrap_bytecode(&future).is_none());
+    }
+
+    #[test]
+    fn unwrap_rejects_empty_blob() {
+        assert!(unwrap_bytecode(&[]).is_none());
+    }
+
+    #[test]
+    fn store_then_check_round_trips_through_sqlite() {
+        // End-to-end: serialize a tiny chunk-shaped blob, store via the
+        // cache, read it back, confirm it matches. Proves the version byte
+        // is invisible to callers under normal operation.
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("test_cache.db");
+        let cache = PluginCache::open(&db_path).expect("open temp cache");
+
+        let path = "/fake/script.zsh";
+        let blob = b"bincode-bytes-here".to_vec();
+        cache.store_bytecode(path, 12345, 6789, &blob).expect("store");
+        let got = cache.check_bytecode(path, 12345, 6789).expect("hit");
+        assert_eq!(got, blob);
+    }
+
+    #[test]
+    fn manually_inserted_old_version_invalidates() {
+        // Simulate a pre-Tier-C cache by INSERTing a row with version byte 0.
+        // check_bytecode must return None so the caller falls back to
+        // recompile-from-source.
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("legacy_cache.db");
+        let cache = PluginCache::open(&db_path).expect("open temp cache");
+
+        let mut legacy = vec![0u8]; // wrong version
+        legacy.extend_from_slice(b"would-be-bincode");
+        cache
+            .conn
+            .execute(
+                "INSERT INTO script_bytecode (path, mtime_secs, mtime_nsecs, bytecode, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params!["/fake/legacy.zsh", 0i64, 0i64, legacy, 0i64],
+            )
+            .unwrap();
+
+        let result = cache.check_bytecode("/fake/legacy.zsh", 0, 0);
+        assert!(result.is_none(), "legacy bytecode must invalidate");
+    }
 }

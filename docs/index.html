@@ -117,12 +117,13 @@
             <span class="sep">/</span>
             <a href="https://docs.rs/zshrs" target="_blank" rel="noopener noreferrer">docs.rs</a>
           </nav>
-          <p class="docs-build-line">zshrs v0.9.3 · Anti-fork architecture · 23 coreutils builtins · VM-executed parallel · Bytecode caching · JIT</p>
+          <p class="docs-build-line">zshrs v0.9.4 · Anti-fork architecture · 23 coreutils builtins · VM-executed parallel · Bytecode caching · JIT · <a href="reference.html" style="color: var(--cyan);">Full reference</a></p>
         </div>
         <div class="tutorial-toolbar">
           <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
           <button type="button" class="btn btn-secondary active" id="btnCrt" title="CRT scanline overlay">CRT</button>
           <button type="button" class="btn btn-secondary active" id="btnNeon" title="Neon border pulse">Neon</button>
+          <a class="btn btn-secondary" href="reference.html">Reference</a>
           <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a class="btn btn-secondary" href="https://github.com/MenkeTechnologies/zshrs/issues" target="_blank" rel="noopener noreferrer">Issues</a>
         </div>
@@ -498,6 +499,91 @@ Every subsequent call:
           <tr><td><code>basename</code> / <code>dirname</code></td><td>Path manipulation &mdash; no fork</td><td>2000-5000x</td></tr>
           <tr><td><code>zgetattr</code> / <code>zsetattr</code></td><td>xattr ops &mdash; direct syscall</td><td>2000-5000x</td></tr>
         </table>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x07b]</span> SHELL LANGUAGE FEATURES</h2>
+
+        <p>Every shell construct compiles to fusevm bytecode &mdash; no tree-walker
+        dispatch lives in zshrs. The categories below are summaries; the
+        <a href="reference.html">full reference</a> documents each entry with a runnable
+        code example.</p>
+
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>Control Flow</h4>
+            <p><code>if</code>, <code>while</code>, <code>until</code>, <code>for</code>, <code>for ((;;))</code>,
+            <code>case</code>, <code>select</code>, <code>coproc</code>, <code>break</code>, <code>continue</code>,
+            <code>return</code>, <code>;</code>/<code>&amp;&amp;</code>/<code>||</code>/<code>&amp;</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Indexed Arrays</h4>
+            <p><code>arr=(a b c)</code>, <code>arr+=(d)</code>, <code>${arr[1]}</code> (1-based),
+            <code>${arr[-1]}</code>, <code>${arr[@]}</code> (argv splice), <code>${#arr[@]}</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Associative Arrays</h4>
+            <p><code>typeset -A m</code>, <code>m[key]=val</code>, <code>${m[key]}</code>,
+            <code>${(k)m}</code> (keys), <code>${(v)m}</code> (values).</p>
+          </div>
+          <div class="cat-card">
+            <h4>Parameter Expansion</h4>
+            <p><code>${var:-x}</code>, <code>${var:=x}</code>, <code>${var:?msg}</code>,
+            <code>${var:+x}</code>, <code>${#var}</code>, <code>${var:o:l}</code>, <code>${var#pat}</code>,
+            <code>${var/pat/repl}</code>, <code>${var:u}</code>/<code>:l</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Zsh Flags</h4>
+            <p><code>(L)</code>/<code>(U)</code> case, <code>(j: :)</code> join,
+            <code>(s. .)</code> split, <code>(f)</code> newline-split, <code>(o)</code>/<code>(O)</code> sort,
+            <code>(P)</code> indirect, <code>(@)</code> force-array, <code>(k)</code>/<code>(v)</code>,
+            <code>(#)</code>. Stack: <code>(jL)</code>, <code>(s:,:U)</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Redirects &amp; Pipelines</h4>
+            <p><code>&gt;</code> <code>&gt;&gt;</code> <code>&lt;</code> <code>&lt;&lt;EOF</code> <code>&lt;&lt;&lt;</code>
+            <code>2&gt;&amp;1</code> <code>&amp;&gt;</code> <code>&amp;&gt;&gt;</code> <code>|</code>
+            <code>|&amp;</code> <code>!</code> <code>&lt;(cmd)</code> <code>&gt;(cmd)</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Background &amp; Async</h4>
+            <p><code>cmd &amp;</code> (fork + setsid), <code>$!</code>, <code>wait</code>,
+            <code>jobs</code>/<code>fg</code>/<code>bg</code>; <code>async</code>/<code>await</code>
+            (worker pool, no fork).</p>
+          </div>
+          <div class="cat-card">
+            <h4>Coprocesses</h4>
+            <p><code>coproc { body }</code> creates two pipes, forks, registers
+            <code>$COPROC=[read_fd, write_fd]</code>. Read from <code>/dev/fd/${COPROC[1]}</code>,
+            write to <code>/dev/fd/${COPROC[2]}</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Eval &amp; Indirect Dispatch</h4>
+            <p><code>eval 'echo $x'</code> defers expansion correctly (single-quoted specials honored).
+            <code>cmd=ls; $cmd</code> routes through host intercepts.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Arithmetic</h4>
+            <p><code>$((expr))</code>, <code>(( cond ))</code>, <code>let</code>; full integer expression
+            grammar compiled inline (no runtime parser).</p>
+          </div>
+          <div class="cat-card">
+            <h4>Glob &amp; Brace</h4>
+            <p><code>*.rs</code>, <code>**/*.rs</code> (parallel walk), <code>{a,b,c}</code>,
+            <code>{1..10}</code>, glob qualifiers <code>*(.x)</code> <code>*(N)</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Tilde &amp; Cmd-Sub</h4>
+            <p><code>~</code>, <code>~user</code>, <code>~+</code>/<code>~-</code>; <code>$(cmd)</code>
+            (in-process pipe-capture), backticks.</p>
+          </div>
+        </div>
+
+        <p style="margin-top: 1rem; font-size: 12px; color: var(--text-muted);">
+        For the complete catalog &mdash; every supported builtin, keyword, parameter-expansion form,
+        ZshFlag, AOP primitive, parallel primitive, and anti-fork coreutils replacement with a code
+        example for each &mdash; see the <a href="reference.html" style="color: var(--cyan); font-weight: 700;">FULL REFERENCE</a>.</p>
       </section>
 
       <!-- ════════════════════════════════════════════════════════════ -->

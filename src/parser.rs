@@ -837,10 +837,21 @@ impl<'a> ShellLexer<'a> {
         }
 
         if c == '!' {
+            // `!` is only the negation operator when it stands alone (followed
+            // by whitespace, `;`, `\n`, or end-of-input). When followed by any
+            // other character, it's part of a word — `!!`, `!$`, `!arg`,
+            // `!cmd`, etc. are literal in non-interactive mode (history
+            // expansion is gated by `expand_history`'s tty check). The
+            // command-negation `! cmd` form retains its meaning because the
+            // space before `cmd` keeps `!` as its own token.
             self.next_char();
-            if self.peek() == Some('=') {
+            let next = self.peek();
+            if next == Some('=') {
                 self.next_char();
                 return ShellToken::Word("!=".to_string());
+            }
+            if next.map(|c| c.is_whitespace() || c == ';' || c == '\n' || c == '|' || c == '&').unwrap_or(true) {
+                return ShellToken::Bang;
             }
             if self.peek() == Some('(') {
                 let mut word = String::from("!(");
@@ -871,7 +882,23 @@ impl<'a> ShellLexer<'a> {
                 }
                 return ShellToken::Word(word);
             }
-            return ShellToken::Bang;
+            // Followed by something else (e.g. `!`, `$`, alphanum) — read as
+            // a word starting with `!`. Covers `!!`, `!$`, `!arg`, `!cmd`,
+            // `!?str?` for non-interactive scripts.
+            let mut word = String::from("!");
+            while let Some(ch) = self.peek() {
+                if ch.is_whitespace()
+                    || ch == ';'
+                    || ch == '&'
+                    || ch == '|'
+                    || ch == '<'
+                    || ch == '>'
+                {
+                    break;
+                }
+                word.push(self.next_char().unwrap());
+            }
+            return ShellToken::Word(word);
         }
 
         if c.is_alphanumeric()
@@ -891,6 +918,14 @@ impl<'a> ShellLexer<'a> {
             || c == ':'
             || c == '='
             || c == '`'
+            // `^` for regex anchors and zsh extended-glob negation; `,`/`!`
+            // for brace expansion / negation; `\\` for escapes; `#` only when
+            // mid-word (start-of-word `#` is a comment, handled before this).
+            || c == '^'
+            || c == ','
+            || c == '!'
+            || c == '\\'
+            || c == '#'
         {
             return self.read_word();
         }
@@ -1196,7 +1231,15 @@ impl<'a> ShellLexer<'a> {
                             if let Some(escaped) = self.peek() {
                                 match escaped {
                                     '$' | '`' | '"' | '\\' | '\n' => {
-                                        word.push(self.next_char().unwrap());
+                                        // Use the `\0X` quote sentinel that
+                                        // compile_word's trigger-detection
+                                        // honors so `\$` becomes a literal
+                                        // `$` instead of a variable trigger.
+                                        let c = self.next_char().unwrap();
+                                        if matches!(c, '$' | '`') {
+                                            word.push('\x00');
+                                        }
+                                        word.push(c);
                                     }
                                     _ => {
                                         word.push('\\');
@@ -1531,6 +1574,7 @@ impl<'a> ShellParser<'a> {
             ShellToken::DoubleLParen => self.parse_arith_command(),
             ShellToken::Function => self.parse_function(),
             ShellToken::Coproc => self.parse_coproc(),
+            ShellToken::Select => self.parse_select(),
             _ => self.parse_simple_command(),
         }?;
 
@@ -2079,6 +2123,58 @@ impl<'a> ShellParser<'a> {
         }))
     }
 
+    /// `select var [in words]; do body; done` — interactive numbered-menu
+    /// loop. zsh's prompt is `$PROMPT3` (default `?# `); on EOF the loop
+    /// exits 0; on invalid input the menu redisplays. Parses the same shape
+    /// as `for var [in words]; do body; done` and returns a Select compound.
+    /// Without this method, ShellParser fell through to parse_simple_command
+    /// which treated `select` as an external command name and hung.
+    fn parse_select(&mut self) -> Result<ShellCommand, String> {
+        self.expect(ShellToken::Select)?;
+        self.skip_newlines();
+
+        let var = if let ShellToken::Word(w) = self.advance() {
+            w
+        } else {
+            return Err("Expected variable name after 'select'".to_string());
+        };
+
+        while self.current == ShellToken::Newline {
+            self.advance();
+        }
+
+        let words = if self.current == ShellToken::In {
+            self.advance();
+            let mut words = Vec::new();
+            while let ShellToken::Word(_) = &self.current {
+                words.push(self.parse_word()?);
+            }
+            Some(words)
+        } else {
+            None
+        };
+
+        self.skip_separators();
+
+        let body = if self.current == ShellToken::LBrace {
+            self.advance();
+            let body = self.parse_compound_list_until(&[ShellToken::RBrace])?;
+            self.expect(ShellToken::RBrace)?;
+            body
+        } else {
+            self.expect(ShellToken::Do)?;
+            let body = self.parse_compound_list()?;
+            self.expect(ShellToken::Done)?;
+            body
+        };
+
+        Ok(ShellCommand::Compound(CompoundCommand::Select {
+            var,
+            words,
+            body,
+        }))
+    }
+
     fn parse_for_arith(&mut self) -> Result<ShellCommand, String> {
         self.expect(ShellToken::DoubleLParen)?;
 
@@ -2410,7 +2506,12 @@ impl<'a> ShellParser<'a> {
                 }
                 "=~" => {
                     let left = tokens[..i].join(" ");
-                    let right = tokens[i + 1..].join(" ");
+                    // Regex patterns: join with empty so `([0-9]+)\.` doesn't
+                    // become `( [0-9]+ ) .`. The cond-grammar tokenizer
+                    // splits on `(`/`)`/whitespace; for regex purposes the
+                    // RHS should be the verbatim pattern. zsh doesn't allow
+                    // spaces in unquoted regex either — users quote: `=~ "a b"`.
+                    let right = tokens[i + 1..].concat();
                     return Ok(CondExpr::StringMatch(
                         ShellWord::Literal(left),
                         ShellWord::Literal(right),
@@ -2537,6 +2638,17 @@ impl<'a> ShellParser<'a> {
                 ShellToken::LessLess => expr.push_str("<<"),
                 ShellToken::GreaterGreater => expr.push_str(">>"),
                 ShellToken::Bang => expr.push('!'),
+                // Logical and comparison operators inside `((…))` — these
+                // tokens come from the lexer's pre-arith specialization (the
+                // shell-level `&&`/`||` parsing). Without these, `(( 0 || 1 ))`
+                // would lose the `||` between the operands and parse as just
+                // `0 1`, evaluating to 0.
+                ShellToken::AmpAmp => expr.push_str("&&"),
+                ShellToken::PipePipe => expr.push_str("||"),
+                ShellToken::Pipe => expr.push('|'),
+                ShellToken::Amp => expr.push('&'),
+                ShellToken::Semi => expr.push(','),
+                ShellToken::Newline => expr.push(' '),
                 ShellToken::Eof => break,
                 _ => {}
             }

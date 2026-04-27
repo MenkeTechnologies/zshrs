@@ -20,7 +20,7 @@
 
 The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — 190k+ lines, 267 source files, 80 core modules, 26 ZLE widgets, 48 fish-ported builtins, persistent worker pool, AOP intercept, SQLite FTS5 caching, and full zsh compatibility.
 
-### [`Docs`](https://menketechnologies.github.io/zshrs/index.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
+### [`Docs`](https://menketechnologies.github.io/zshrs/index.html) · [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
 
 ---
 
@@ -35,8 +35,9 @@ The first Unix shell to compile to bytecodes and execute on a purpose-built virt
 - [\[0x06\] Worker Thread Pool](#0x06-worker-thread-pool)
 - [\[0x07\] SQLite Caching](#0x07-sqlite-caching)
 - [\[0x08\] Exclusive Builtins](#0x08-exclusive-builtins)
-- [\[0x09\] Compatibility](#0x09-compatibility)
-- [\[0x0A\] Architecture](#0x0a-architecture)
+- [\[0x09\] Shell Language Features](#0x09-shell-language-features)
+- [\[0x0A\] Compatibility](#0x0a-compatibility)
+- [\[0x0B\] Architecture](#0x0b-architecture)
 - [\[0xFF\] License](#0xff-license)
 
 ---
@@ -305,12 +306,103 @@ dbview history docker         # search history
 
 ---
 
-## [0x09] COMPATIBILITY
+## [0x09] SHELL LANGUAGE FEATURES
+
+Every shell construct compiles to fusevm bytecode — no tree-walker dispatch lives in zshrs. The [full reference](https://menketechnologies.github.io/zshrs/reference.html) documents each entry with a runnable example.
+
+### Control flow
+
+```zsh
+# Standard POSIX/zsh control structures — all compile to fusevm bytecode
+if [[ -d $dir ]]; then …; elif [[ -f $dir ]]; then …; else …; fi
+while (( i < 10 )); do …; done
+until ping -c1 host >/dev/null; do sleep 1; done
+for f in *.rs; do echo "$f"; done
+for ((i=0; i<10; i++)); do …; done
+case $cmd in start) … ;; stop) … ;; *) … ;; esac
+select choice in build test deploy; do … done   # interactive numbered menu
+coproc { while read l; do echo "ECHO: $l"; done } # bidirectional pipe
+```
+
+### Indexed arrays
+
+```zsh
+arr=(alpha beta gamma)            # literal
+arr+=(delta epsilon)              # append
+echo ${arr[1]}                    # alpha (1-based)
+echo ${arr[-1]}                   # epsilon (negative from end)
+echo ${arr[@]}                    # splice — N argv slots
+echo ${#arr[@]}                   # length
+for x in ${arr[@]}; do …; done    # iterate (flattens via BUILTIN_ARRAY_FLATTEN)
+```
+
+### Associative arrays
+
+```zsh
+typeset -A m                      # declare
+m[name]=Jacob; m[role]=eng        # set
+echo "${m[name]}"                 # lookup
+for k in "${(k)m}"; do echo $k; done   # keys
+for v in "${(v)m}"; do echo $v; done   # values
+```
+
+### Parameter expansion flags (zsh-style)
+
+```zsh
+echo ${(L)var}                    # lowercase
+echo ${(U)var}                    # uppercase
+echo ${(j: :)arr}                 # join with space
+echo ${(s:,:)scalar}              # split on comma → array
+echo ${(f)$(cmd)}                 # split on newlines
+echo ${(o)arr}                    # sort ascending
+echo ${(O)arr}                    # sort descending
+echo ${(P)ref}                    # indirect lookup
+echo ${(jL)arr}                   # stack: join then lowercase
+echo ${(s:,:U)scalar}             # stack: split then uppercase
+```
+
+### Parameter expansion forms
+
+```zsh
+${var:-default}                   # default if unset/empty
+${var:=default}                   # assign default
+${var:?msg}                       # error if unset
+${var:+alt}                       # alternate if set
+${#var}                           # length
+${var:offset:length}              # substring
+${var#pat} / ${var##pat}          # strip shortest/longest prefix
+${var%pat} / ${var%%pat}          # strip shortest/longest suffix
+${var/pat/repl} / ${var//pat/repl} # replace first/all
+${var:u} / ${var:l}               # upper/lower case (zsh postfix)
+```
+
+### Background, async, coprocesses
+
+```zsh
+sleep 30 &                        # fork + setsid; parent gets Status(0)
+jobs; fg %1; wait $!              # job control
+async 'expensive-task' | xargs await   # worker-pool, no fork
+coproc { body }                   # bidirectional pipe; $COPROC=[rd_fd, wr_fd]
+echo hi >/dev/fd/${COPROC[2]}     # write to coproc stdin
+read line </dev/fd/${COPROC[1]}   # read from coproc stdout
+```
+
+### Eval, dynamic dispatch, AOP
+
+```zsh
+eval 'echo $x'                    # single-quoted args defer expansion correctly
+cmd=ls; $cmd -la                  # dynamic command name routes through host intercepts
+intercept before git { …; }       # AOP advice fires for both literal and dynamic invocations
+```
+
+---
+
+## [0x0A] COMPATIBILITY
 
 - Full zsh script compatibility — runs existing `.zshrc`
 - Full bash compatibility via emulation
 - Fish-style syntax highlighting, autosuggestions, abbreviations
-- **180+ builtins** (150 zsh + 23 coreutils + parallel primitives)
+- **180+ builtins** (150 zsh + 23 coreutils + parallel primitives) — see the [Reference](https://menketechnologies.github.io/zshrs/reference.html) for the full catalog
 - ZWC precompiled function support
 - Glob qualifiers, parameter expansion flags, completion system
 - zstyle, ZLE widgets, hooks, modules
@@ -318,7 +410,7 @@ dbview history docker         # search history
 
 ---
 
-## [0x0A] ARCHITECTURE
+## [0x0B] ARCHITECTURE
 
 ```
                   ┌──────────────────────────────────────────┐
