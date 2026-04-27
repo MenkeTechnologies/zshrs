@@ -105,18 +105,22 @@ uname  date  mktemp
 
 ## [0x03] BYTECODE COMPILATION
 
-Every command compiles to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes:
+Every command compiles to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes via a faithful port of zsh's lexer + parser:
 
 ```
-Interactive command  ──► Parser ──► ShellCompiler ──► fusevm::Op ──► VM::run()
-Script file (first)  ──► Parser ──► ShellCompiler ──► VM::run() ──► cache in SQLite
+Interactive command  ──► ZshLexer ──► ZshParser ──► ZshCompiler ──► fusevm::Op ──► VM::run()
+                         (port of    (port of      (original;
+                          Src/lex.c)  Src/parse.c)  ~1.4k LOC)
+Script file (first)  ──► ZshLexer ──► ZshParser ──► ZshCompiler ──► VM::run() ──► cache in SQLite
 Script file (cached) ──► SQLite ──► deserialize Chunk ──► VM::run()
                          (no lex, no parse, no compile)
 Autoload function    ──► SQLite ──► deserialize Chunk ──► VM::run()
                          (microseconds)
 ```
 
-The shell compiler targets the same `Op` enum that [strykelang](https://github.com/MenkeTechnologies/strykelang) uses. Both frontends share fused superinstructions, extension dispatch, and the Cranelift JIT path.
+The lexer and parser are direct ports from zsh's C source (`Src/lex.c`, `Src/parse.c`); only the bytecode compiler is original Rust. The 4-tier `ZshProgram → ZshList → ZshSublist → ZshPipe → ZshCommand` AST is preserved verbatim from zsh, ensuring per-construct behavior parity. The shell compiler targets the same `Op` enum that [strykelang](https://github.com/MenkeTechnologies/strykelang) uses. Both frontends share fused superinstructions, extension dispatch, and the Cranelift JIT path.
+
+The legacy hand-rolled `ShellLexer + ShellParser + ShellCompiler` path remains as an emergency escape hatch (`ZSHRS_OLD_PIPELINE=1`) and is scheduled for deletion once the `ZshrsHost::expand_word` fallback is fully native.
 
 ### Execution Pipeline
 
@@ -407,6 +411,19 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
 - Glob qualifiers, parameter expansion flags, completion system
 - zstyle, ZLE widgets, hooks, modules
 - `--posix` mode for strict POSIX compliance
+
+### Test corpus parity
+
+| Suite | Tests | Coverage |
+|-------|-------|----------|
+| `zsh_construct_corpus` | 392 | Every sh/zsh construct outside modules |
+| `zsh_corpus_via_new_pipeline` | 123 | Native ZshLexer+ZshParser+ZshCompiler path |
+| `no_tree_walker_dispatch` | 158 | Behavioral pins for the no-tree-walker invariant |
+| `compile_zsh_smoke` | 28 | Per-construct bytecode-level smoke |
+| `tree_walker_absent` | 8 | Source-level absence checks (anti-regression) |
+| `zsh_parser_probe` | 89 | AST-shape probes for every construct |
+| `ztst_runner` | 70 | Real `.ztst` files from upstream zsh |
+| **Total** | **868** | All green on the new (default) pipeline |
 
 ---
 

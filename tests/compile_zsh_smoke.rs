@@ -111,3 +111,155 @@ fn smoke_pipeline_simple() {
     assert_eq!(status, 0);
     assert_eq!(out, "hi\n");
 }
+
+// ── Control flow ──
+
+#[test]
+fn smoke_if_then() {
+    let (status, out) = run_via_zsh_pipeline("if true; then echo yes; fi");
+    assert_eq!(status, 0);
+    assert_eq!(out, "yes\n");
+}
+
+#[test]
+fn smoke_if_else() {
+    let (status, out) = run_via_zsh_pipeline("if false; then echo no; else echo yes; fi");
+    assert_eq!(status, 0);
+    assert_eq!(out, "yes\n");
+}
+
+#[test]
+fn smoke_if_elif() {
+    let (status, out) =
+        run_via_zsh_pipeline("if false; then echo a; elif true; then echo b; else echo c; fi");
+    assert_eq!(status, 0);
+    assert_eq!(out, "b\n");
+}
+
+#[test]
+fn smoke_while() {
+    let (status, out) = run_via_zsh_pipeline(
+        "i=0; while (( i < 3 )); do echo $i; (( i++ )); done",
+    );
+    assert_eq!(status, 0);
+    assert_eq!(out, "0\n1\n2\n");
+}
+
+#[test]
+fn smoke_until() {
+    let (status, out) = run_via_zsh_pipeline(
+        "i=0; until (( i >= 3 )); do echo $i; (( i++ )); done",
+    );
+    assert_eq!(status, 0);
+    assert_eq!(out, "0\n1\n2\n");
+}
+
+#[test]
+fn smoke_for_in_words() {
+    let (status, out) = run_via_zsh_pipeline("for x in a b c; do echo $x; done");
+    assert_eq!(status, 0);
+    assert_eq!(out, "a\nb\nc\n");
+}
+
+#[test]
+fn smoke_for_arith() {
+    let (status, out) = run_via_zsh_pipeline("for ((i=0; i<3; i++)); do echo $i; done");
+    assert_eq!(status, 0);
+    assert_eq!(out, "0\n1\n2\n");
+}
+
+#[test]
+fn smoke_case_match() {
+    let (status, out) =
+        run_via_zsh_pipeline("case x in a) echo a ;; x) echo x ;; *) echo o ;; esac");
+    assert_eq!(status, 0);
+    assert_eq!(out, "x\n");
+}
+
+#[test]
+fn smoke_case_default() {
+    let (status, out) =
+        run_via_zsh_pipeline("case foo in a) echo a ;; *) echo def ;; esac");
+    assert_eq!(status, 0);
+    assert_eq!(out, "def\n");
+}
+
+#[test]
+fn smoke_case_glob_pattern() {
+    let (status, out) =
+        run_via_zsh_pipeline("case file.txt in *.txt) echo txt ;; *) echo o ;; esac");
+    assert_eq!(status, 0);
+    assert_eq!(out, "txt\n");
+}
+
+#[test]
+fn smoke_repeat() {
+    let (status, out) = run_via_zsh_pipeline("repeat 3 echo hi");
+    assert_eq!(status, 0);
+    assert_eq!(out, "hi\nhi\nhi\n");
+}
+
+#[test]
+fn smoke_break() {
+    let (status, out) = run_via_zsh_pipeline(
+        "for i in 1 2 3 4 5; do [[ $i -eq 3 ]] && break; echo $i; done",
+    );
+    assert_eq!(status, 0);
+    assert_eq!(out, "1\n2\n");
+}
+
+#[test]
+fn smoke_continue() {
+    let (status, out) = run_via_zsh_pipeline(
+        "for i in 1 2 3; do [[ $i -eq 2 ]] && continue; echo $i; done",
+    );
+    assert_eq!(status, 0);
+    assert_eq!(out, "1\n3\n");
+}
+
+// ── Conditionals ──
+
+#[test]
+fn smoke_cond_string_eq() {
+    let (status, out) = run_via_zsh_pipeline("[[ a == a ]] && echo y");
+    assert_eq!(status, 0);
+    assert_eq!(out, "y\n");
+}
+
+#[test]
+fn smoke_cond_num_lt() {
+    let (status, out) = run_via_zsh_pipeline("[[ 1 -lt 2 ]] && echo y");
+    assert_eq!(status, 0);
+    assert_eq!(out, "y\n");
+}
+
+#[test]
+fn smoke_cond_file_dir() {
+    let (status, out) = run_via_zsh_pipeline("[[ -d /tmp ]] && echo y");
+    assert_eq!(status, 0);
+    assert_eq!(out, "y\n");
+}
+
+#[test]
+fn smoke_cond_negate() {
+    let (status, out) = run_via_zsh_pipeline("[[ ! a == b ]] && echo y");
+    assert_eq!(status, 0);
+    assert_eq!(out, "y\n");
+}
+
+// ── Arithmetic ──
+
+#[test]
+fn smoke_arith_compound() {
+    let (status, out) = run_via_zsh_pipeline("(( x = 2 + 3 )); echo $x");
+    assert_eq!(status, 0);
+    assert_eq!(out, "5\n");
+}
+
+#[test]
+fn smoke_arith_compare() {
+    let (status, _) = run_via_zsh_pipeline("(( 1 < 2 ))");
+    assert_eq!(status, 0);
+    let (status, _) = run_via_zsh_pipeline("(( 0 ))");
+    assert_eq!(status, 1);
+}

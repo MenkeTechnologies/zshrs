@@ -91,6 +91,10 @@ pub struct HereDoc {
     pub terminator: String,
     pub strip_tabs: bool,
     pub content: String,
+    /// True if the terminator was originally quoted (`<<'EOF'`,
+    /// `<<"EOF"`, or `<<\EOF`). Disables variable expansion / command
+    /// substitution / arithmetic in the body.
+    pub quoted: bool,
 }
 
 /// The Zsh Lexer
@@ -355,14 +359,27 @@ impl<'a> ZshLexer<'a> {
         if self.heredoc_pending > 0 && self.tok == LexTok::String {
             if let Some(ref terminator) = self.tokstr {
                 let strip_tabs = self.heredoc_pending == 2;
-                // Handle quoted terminators (e.g., 'EOF' or "EOF")
+                // Detect originally-quoted terminator (`<<'EOF'`,
+                // `<<"EOF"`). The lexer wraps single-quoted text in
+                // SNULL (`\u{9d}`) and double-quoted text in DNULL
+                // (`\u{9e}`); plain `EOF` has neither. Quoted-terminator
+                // heredocs disable variable / command-sub / arithmetic
+                // expansion in the body — see `compile_redir` for the
+                // expansion side.
+                let quoted = terminator.contains('\u{9d}')
+                    || terminator.contains('\u{9e}')
+                    || terminator.starts_with('\'')
+                    || terminator.starts_with('"');
                 let term = terminator
-                    .trim_matches(|c| c == '\'' || c == '"')
+                    .trim_matches(|c: char| {
+                        c == '\'' || c == '"' || c == '\u{9d}' || c == '\u{9e}'
+                    })
                     .to_string();
                 self.heredocs.push(HereDoc {
                     terminator: term,
                     strip_tabs,
                     content: String::new(),
+                    quoted,
                 });
             }
             self.heredoc_pending = 0;
@@ -382,6 +399,7 @@ impl<'a> ZshLexer<'a> {
                     || s == "\u{8d}\u{8d}"
                     || s == "!\u{8d}"
                     || s == "\u{8d}~"
+                    || s == "\u{8d}\u{98}"
                 {
                     self.incondpat = true;
                 } else if self.incondpat {
@@ -464,11 +482,22 @@ impl<'a> ZshLexer<'a> {
         }
     }
 
-    /// Process pending here-documents
+    /// Process pending here-documents. Walks each heredoc whose body
+    /// hasn't been filled yet (content is empty AND terminator is set),
+    /// reads lines from input until the terminator, and stuffs the body
+    /// into `hdoc.content` IN PLACE. The list itself is preserved so the
+    /// parser can index into it after parse() finishes.
     fn process_heredocs(&mut self) {
-        let heredocs = std::mem::take(&mut self.heredocs);
-
-        for mut hdoc in heredocs {
+        let n = self.heredocs.len();
+        for i in 0..n {
+            // Skip heredocs we've already processed (content non-empty
+            // means we filled it on a prior newline). Empty terminator is
+            // an error/empty case — skip.
+            if !self.heredocs[i].content.is_empty() || self.heredocs[i].terminator.is_empty() {
+                continue;
+            }
+            let strip_tabs = self.heredocs[i].strip_tabs;
+            let terminator = self.heredocs[i].terminator.clone();
             let mut content = String::new();
             let mut line_count = 0;
 
@@ -488,20 +517,27 @@ impl<'a> ZshLexer<'a> {
                 }
 
                 let line = line.unwrap();
-                let check_line = if hdoc.strip_tabs {
+                let check_line = if strip_tabs {
                     line.trim_start_matches('\t')
                 } else {
-                    &line
+                    line.as_str()
                 };
 
-                if check_line.trim_end_matches('\n') == hdoc.terminator {
+                if check_line.trim_end_matches('\n') == terminator {
                     break;
                 }
 
-                content.push_str(&line);
+                // `<<-` strips leading tabs from BODY lines too, not just
+                // from terminator-match comparison. Without this, tabs in
+                // here-doc content survive into stdin.
+                if strip_tabs {
+                    content.push_str(check_line);
+                } else {
+                    content.push_str(&line);
+                }
             }
 
-            hdoc.content = content;
+            self.heredocs[i].content = content;
         }
     }
 
@@ -1998,6 +2034,7 @@ impl<'a> ZshLexer<'a> {
             terminator,
             strip_tabs,
             content: String::new(),
+            quoted: false,
         });
     }
 
@@ -2274,6 +2311,58 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
 /// Untokenize a string - convert tokenized chars back to original
 ///
 /// Port of untokenize() from exec.c (but used by lexer too)
+/// Like `untokenize`, but maps SNULL → `'` and DNULL → `"` instead of
+/// stripping them. Used by callers (e.g. compile_zsh's bridge to
+/// ShellParser) that need the source form including quoting.
+pub fn untokenize_preserve_quotes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 4);
+    for c in s.chars() {
+        let cu = c as u32;
+        if cu >= 0x83 && cu <= 0x9f {
+            match c {
+                c if c == char_tokens::POUND => result.push('#'),
+                c if c == char_tokens::STRING => result.push('$'),
+                c if c == char_tokens::HAT => result.push('^'),
+                c if c == char_tokens::STAR => result.push('*'),
+                c if c == char_tokens::INPAR => result.push('('),
+                c if c == char_tokens::OUTPAR => result.push(')'),
+                c if c == char_tokens::INPARMATH => result.push('('),
+                c if c == char_tokens::OUTPARMATH => result.push(')'),
+                c if c == char_tokens::QSTRING => result.push('$'),
+                c if c == char_tokens::EQUALS => result.push('='),
+                c if c == char_tokens::BAR => result.push('|'),
+                c if c == char_tokens::INBRACE => result.push('{'),
+                c if c == char_tokens::OUTBRACE => result.push('}'),
+                c if c == char_tokens::INBRACK => result.push('['),
+                c if c == char_tokens::OUTBRACK => result.push(']'),
+                c if c == char_tokens::TICK => result.push('`'),
+                c if c == char_tokens::INANG => result.push('<'),
+                c if c == char_tokens::OUTANG => result.push('>'),
+                c if c == char_tokens::QUEST => result.push('?'),
+                c if c == char_tokens::TILDE => result.push('~'),
+                c if c == char_tokens::QTICK => result.push('`'),
+                c if c == char_tokens::COMMA => result.push(','),
+                c if c == char_tokens::DASH => result.push('-'),
+                c if c == char_tokens::BANG => result.push('!'),
+                c if c == char_tokens::SNULL => result.push('\''),
+                c if c == char_tokens::DNULL => result.push('"'),
+                c if c == char_tokens::BNULL => result.push('\\'),
+                _ => {
+                    let idx = c as usize;
+                    if idx < char_tokens::ZTOKENS.len() {
+                        result.push(char_tokens::ZTOKENS.chars().nth(idx).unwrap_or(c));
+                    } else {
+                        result.push(c);
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 pub fn untokenize(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();

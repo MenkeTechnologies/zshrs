@@ -83,28 +83,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  ztst:
-    name: ztst integration tests
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked
-      - name: Run ztst integration tests
-        run: cargo test --locked --test ztst_runner -- --nocapture
-        env:
-          ZSHRS: ${{ github.workspace }}/target/debug/zshrs
-          ZTST_VERBOSE: 1
+  # ztst job removed: the per-block fresh-spawn wrapper at tests/ztst_runner.rs
+  # was a fake-pass (counted failures, never asserted). The corpus exercises
+  # interactive ZLE/completion/job-control/signal-trap paths that need a real
+  # pty + per-file persistent shell to drive correctly. Replacement is the
+  # PTY harness designed in docs/ZTST_PTY_HARNESS.md; not CI-gated until that
+  # lands. Local manual runs only via `cargo run --bin ztst-runner` once built.
 
   release-build:
     name: Release Build
-    needs: [check, test, doc, corpus, ztst]
+    needs: [check, test, doc, corpus]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:

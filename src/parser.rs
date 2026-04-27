@@ -59,6 +59,11 @@ pub struct ZshPipe {
     pub cmd: ZshCommand,
     pub next: Option<Box<ZshPipe>>,
     pub lineno: u64,
+    /// `|&` between this stage and the next — merge stderr into the
+    /// pipe so the next stage's stdin sees both stdout AND stderr from
+    /// this stage. When `next` is None this flag is meaningless.
+    #[serde(default)]
+    pub merge_stderr: bool,
 }
 
 /// A command
@@ -78,6 +83,11 @@ pub enum ZshCommand {
     Cond(ZshCond), // [[ ... ]]
     Arith(String), // (( ... ))
     Try(ZshTry),   // { ... } always { ... }
+    /// Compound command with trailing redirects:
+    /// `{ cmd } 2>&1`, `(...) >file`, `if ...; fi >file`, etc.
+    /// Simple commands carry redirects in their own struct; this wrapper
+    /// is only used for compound forms.
+    Redirected(Box<ZshCommand>, Vec<ZshRedir>),
 }
 
 /// A simple command (assignments, words, redirections)
@@ -110,12 +120,23 @@ pub struct ZshRedir {
     pub name: String,
     pub heredoc: Option<HereDocInfo>,
     pub varid: Option<String>, // {var}>file
+    /// Index into ZshLexer.heredocs[] for body lookup. Filled in by
+    /// `parse_redirection` for Heredoc/HeredocDash, then resolved into
+    /// `heredoc.content` by `fill_heredoc_bodies` after process_heredocs
+    /// has run for the line.
+    #[serde(skip)]
+    pub heredoc_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HereDocInfo {
     pub content: String,
     pub terminator: String,
+    /// Originally-quoted terminator (`<<'EOF'`, `<<"EOF"`). When true the
+    /// body is passed verbatim — no `$var` / `$(cmd)` / `$((expr))`
+    /// expansion. Plain `<<EOF` runs all expansions.
+    #[serde(default)]
+    pub quoted: bool,
 }
 
 /// Redirection type
@@ -146,6 +167,10 @@ pub struct ZshFor {
     pub var: String,
     pub list: ForList,
     pub body: Box<ZshProgram>,
+    /// True if this was parsed as `select` rather than `for`. Both share
+    /// the same parser, so the compiler routes on this flag.
+    #[serde(default)]
+    pub is_select: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +235,12 @@ pub struct ZshFuncDef {
     pub names: Vec<String>,
     pub body: Box<ZshProgram>,
     pub tracing: bool,
+    /// Anonymous-function call args. `() { body } a b` parses as a
+    /// FuncDef (auto-named) with `auto_call_args = Some(vec!["a", "b"])`.
+    /// compile_funcdef registers the function then emits a Simple call
+    /// with these args.
+    #[serde(default)]
+    pub auto_call_args: Option<Vec<String>>,
 }
 
 /// Conditional expression [[ ... ]]
@@ -244,6 +275,7 @@ pub enum ZshParamFlag {
     Type,                  // t - type of variable
     Words,                 // w - word splitting
     Quote,                 // q - quote result
+    QuoteIfNeeded,         // q+ - quote only if value contains shell-specials
     DoubleQuote,           // qq - double quote
     QuoteBackslash,        // b - quote with backslashes for patterns
     Unique,                // u - unique elements only
@@ -2765,6 +2797,84 @@ pub struct ZshParser<'a> {
 
 const MAX_RECURSION_DEPTH: usize = 500;
 
+/// Walk every ZshRedir in the program and, for any with a `heredoc_idx`,
+/// pull the body+terminator out of `bodies` and stuff into `heredoc`.
+/// `bodies[i]` corresponds to the i-th heredoc registered by the lexer
+/// during scanning (in source order).
+fn fill_heredoc_bodies(prog: &mut ZshProgram, bodies: &[HereDocInfo]) {
+    for list in &mut prog.lists {
+        fill_in_sublist(&mut list.sublist, bodies);
+    }
+}
+
+fn fill_in_sublist(sub: &mut ZshSublist, bodies: &[HereDocInfo]) {
+    fill_in_pipe(&mut sub.pipe, bodies);
+    if let Some(next) = &mut sub.next {
+        fill_in_sublist(&mut next.1, bodies);
+    }
+}
+
+fn fill_in_pipe(pipe: &mut ZshPipe, bodies: &[HereDocInfo]) {
+    fill_in_command(&mut pipe.cmd, bodies);
+    if let Some(next) = &mut pipe.next {
+        fill_in_pipe(next, bodies);
+    }
+}
+
+fn fill_in_command(cmd: &mut ZshCommand, bodies: &[HereDocInfo]) {
+    match cmd {
+        ZshCommand::Simple(s) => {
+            for r in &mut s.redirs {
+                resolve_redir(r, bodies);
+            }
+        }
+        ZshCommand::Subsh(p) | ZshCommand::Cursh(p) => fill_heredoc_bodies(p, bodies),
+        ZshCommand::FuncDef(f) => fill_heredoc_bodies(&mut f.body, bodies),
+        ZshCommand::If(i) => {
+            fill_heredoc_bodies(&mut i.cond, bodies);
+            fill_heredoc_bodies(&mut i.then, bodies);
+            for (c, b) in &mut i.elif {
+                fill_heredoc_bodies(c, bodies);
+                fill_heredoc_bodies(b, bodies);
+            }
+            if let Some(e) = &mut i.else_ {
+                fill_heredoc_bodies(e, bodies);
+            }
+        }
+        ZshCommand::While(w) | ZshCommand::Until(w) => {
+            fill_heredoc_bodies(&mut w.cond, bodies);
+            fill_heredoc_bodies(&mut w.body, bodies);
+        }
+        ZshCommand::For(f) => fill_heredoc_bodies(&mut f.body, bodies),
+        ZshCommand::Case(c) => {
+            for arm in &mut c.arms {
+                fill_heredoc_bodies(&mut arm.body, bodies);
+            }
+        }
+        ZshCommand::Repeat(r) => fill_heredoc_bodies(&mut r.body, bodies),
+        ZshCommand::Time(Some(sublist)) => fill_in_sublist(sublist, bodies),
+        ZshCommand::Try(t) => {
+            fill_heredoc_bodies(&mut t.try_block, bodies);
+            fill_heredoc_bodies(&mut t.always, bodies);
+        }
+        ZshCommand::Redirected(inner, redirs) => {
+            for r in redirs {
+                resolve_redir(r, bodies);
+            }
+            fill_in_command(inner, bodies);
+        }
+        ZshCommand::Time(None) | ZshCommand::Cond(_) | ZshCommand::Arith(_) => {}
+    }
+}
+
+fn resolve_redir(r: &mut ZshRedir, bodies: &[HereDocInfo]) {
+    if let Some(idx) = r.heredoc_idx {
+        if let Some(info) = bodies.get(idx) {
+            r.heredoc = Some(info.clone());
+        }
+    }
+}
+
 impl<'a> ZshParser<'a> {
     /// Create a new parser
     pub fn new(input: &'a str) -> Self {
@@ -2793,10 +2903,26 @@ impl<'a> ZshParser<'a> {
     pub fn parse(&mut self) -> Result<ZshProgram, Vec<ParseError>> {
         self.lexer.zshlex();
 
-        let program = self.parse_program_until(None);
+        let mut program = self.parse_program_until(None);
 
         if !self.errors.is_empty() {
             return Err(std::mem::take(&mut self.errors));
+        }
+
+        // Post-pass: wire heredoc bodies (collected by lexer.process_heredocs)
+        // back into ZshRedir.heredoc fields via heredoc_idx.
+        let bodies: Vec<HereDocInfo> = self
+            .lexer
+            .heredocs
+            .iter()
+            .map(|h| HereDocInfo {
+                content: h.content.clone(),
+                terminator: h.terminator.clone(),
+                quoted: h.quoted,
+            })
+            .collect();
+        if !bodies.is_empty() {
+            fill_heredoc_bodies(&mut program, &bodies);
         }
 
         Ok(program)
@@ -2956,9 +3082,10 @@ impl<'a> ZshParser<'a> {
         };
 
         // Check for | or |&
+        let mut merge_stderr = false;
         let next = match self.lexer.tok {
             LexTok::Bar | LexTok::Baramp => {
-                let _merge_stderr = self.lexer.tok == LexTok::Baramp;
+                merge_stderr = self.lexer.tok == LexTok::Baramp;
                 self.lexer.zshlex();
                 self.skip_separators();
                 self.parse_pipe().map(Box::new)
@@ -2967,7 +3094,7 @@ impl<'a> ZshParser<'a> {
         };
 
         self.recursion_depth -= 1;
-        Some(ZshPipe { cmd, next, lineno })
+        Some(ZshPipe { cmd, next, lineno, merge_stderr })
     }
 
     /// Parse a command
@@ -2989,6 +3116,7 @@ impl<'a> ZshParser<'a> {
             LexTok::Until => self.parse_while(true),
             LexTok::Repeat => self.parse_repeat(),
             LexTok::Inpar => self.parse_subsh(),
+            LexTok::Inoutpar => self.parse_anon_funcdef(),
             LexTok::Inbrace => self.parse_cursh(),
             LexTok::Func => self.parse_funcdef(),
             LexTok::Dinbrack => self.parse_cond(),
@@ -2997,17 +3125,33 @@ impl<'a> ZshParser<'a> {
             _ => self.parse_simple(redirs),
         };
 
-        // Parse trailing redirections
-        if cmd.is_some() {
+        // Parse trailing redirections. For Simple commands the redirs were
+        // already captured inside parse_simple; for compound forms (Cursh,
+        // Subsh, If, While, etc.) we collect them here and wrap in
+        // ZshCommand::Redirected so compile_zsh can scope-bracket them.
+        if let Some(inner) = cmd {
+            let mut trailing: Vec<ZshRedir> = Vec::new();
             while self.lexer.tok.is_redirop() {
-                if let Some(_redir) = self.parse_redir() {
-                    // Append to command redirections
-                    // (for non-simple commands, we'd need to handle this differently)
+                if let Some(redir) = self.parse_redir() {
+                    trailing.push(redir);
                 }
             }
+            if trailing.is_empty() {
+                return Some(inner);
+            }
+            // Simple already absorbed its own redirs (compile path expects
+            // them on ZshSimple), so don't double-wrap.
+            if matches!(inner, ZshCommand::Simple(_)) {
+                if let ZshCommand::Simple(mut s) = inner {
+                    s.redirs.extend(trailing);
+                    return Some(ZshCommand::Simple(s));
+                }
+                unreachable!()
+            }
+            return Some(ZshCommand::Redirected(Box::new(inner), trailing));
         }
 
-        cmd
+        None
     }
 
     /// Parse a simple command
@@ -3131,9 +3275,18 @@ impl<'a> ZshParser<'a> {
                 self.lexer.zshlex();
             }
 
-            // Expect OUTPAR
+            // The closing OUTPAR is consumed here. The outer parse_simple
+            // loop will then `zshlex()` past whatever follows (typically
+            // a separator or the next word) — calling zshlex twice in
+            // tandem (here AND in parse_simple) over-advances and merges
+            // a following `name() { … }` funcdef into the same Simple.
+            // We only consume Outpar; let the caller handle the rest.
+            // Without this guard `g=(o1); f() { :; }` parsed as one
+            // Simple with assigns=[g] and words=["f()"] (one token).
             if self.lexer.tok == LexTok::Outpar {
-                self.lexer.zshlex();
+                // Note: do NOT zshlex() here. parse_simple's `self.lexer
+                // .zshlex()` after `parse_assign` returns advances past
+                // the Outpar onto the next significant token.
             }
 
             ZshAssignValue::Array(elements)
@@ -3199,10 +3352,16 @@ impl<'a> ZshParser<'a> {
             }
         };
 
-        // Handle heredoc
-        let heredoc = if matches!(rtype, RedirType::Heredoc | RedirType::HeredocDash) {
-            // Heredoc content will be filled in by the lexer
-            None // Placeholder
+        // Heredoc body capture: when reading the terminator above, the
+        // lexer pushed a HereDoc to self.lexer.heredocs[]. Record the
+        // index so fill_heredoc_bodies() can wire content back after
+        // process_heredocs() has run.
+        let heredoc_idx = if matches!(rtype, RedirType::Heredoc | RedirType::HeredocDash) {
+            if !self.lexer.heredocs.is_empty() {
+                Some(self.lexer.heredocs.len() - 1)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -3211,8 +3370,9 @@ impl<'a> ZshParser<'a> {
             rtype,
             fd,
             name,
-            heredoc,
+            heredoc: None,
             varid: None,
+            heredoc_idx,
         })
     }
 
@@ -3300,6 +3460,7 @@ impl<'a> ZshParser<'a> {
             var,
             list,
             body: Box::new(body),
+            is_select: false,
         }))
     }
 
@@ -3345,12 +3506,21 @@ impl<'a> ZshParser<'a> {
             var: String::new(),
             list: ForList::CStyle { init, cond, step },
             body: Box::new(body),
+            is_select: false,
         }))
     }
 
     /// Parse select loop (same syntax as for)
     fn parse_select(&mut self) -> Option<ZshCommand> {
-        self.parse_for()
+        // `select` shares parse_for's grammar (var, words, body) but the
+        // compile path is different (interactive prompt loop).
+        match self.parse_for()? {
+            ZshCommand::For(mut f) => {
+                f.is_select = true;
+                Some(ZshCommand::For(f))
+            }
+            other => Some(other),
+        }
     }
 
     /// Parse case statement
@@ -3694,6 +3864,50 @@ impl<'a> ZshParser<'a> {
         Some(ZshCommand::Subsh(Box::new(prog)))
     }
 
+    /// `() { body } arg1 arg2 …` — anonymous function. Defines a fresh
+    /// function named `_zshrs_anon_N`, invokes it with the args, and the
+    /// body runs with positional params set. Implemented as the desugared
+    /// pair (FuncDef + Simple call) so the compile path doesn't need new
+    /// machinery.
+    fn parse_anon_funcdef(&mut self) -> Option<ZshCommand> {
+        self.lexer.zshlex(); // skip ()
+        self.skip_separators();
+        // No `{` after `()` → bare empty subshell shape `()`. Fall back
+        // to a Subsh with an empty program so the status is 0 (matches
+        // zsh's `()` no-op behavior).
+        if self.lexer.tok != LexTok::Inbrace {
+            return Some(ZshCommand::Subsh(Box::new(ZshProgram { lists: Vec::new() })));
+        }
+        self.lexer.zshlex(); // skip {
+        let body = self.parse_program();
+        if self.lexer.tok == LexTok::Outbrace {
+            self.lexer.zshlex();
+        }
+        // Collect any trailing args until a separator. zsh's anon-fn form
+        // `() { body } a b c` runs body with $1=a, $2=b, $3=c.
+        let mut args = Vec::new();
+        while self.lexer.tok == LexTok::String {
+            if let Some(s) = self.lexer.tokstr.clone() {
+                args.push(s);
+            }
+            self.lexer.zshlex();
+        }
+
+        // Generate a unique name. Module-level static would be cleaner but
+        // a thread-local atomic is enough — anonymous functions are
+        // ephemeral and the name isn't user-visible.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static ANON_COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = ANON_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let name = format!("_zshrs_anon_{}", n);
+        Some(ZshCommand::FuncDef(ZshFuncDef {
+            names: vec![name],
+            body: Box::new(body),
+            tracing: false,
+            auto_call_args: Some(args),
+        }))
+    }
+
     /// Parse {...} cursh
     fn parse_cursh(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip {
@@ -3773,6 +3987,7 @@ impl<'a> ZshParser<'a> {
                 names,
                 body: Box::new(body),
                 tracing,
+                auto_call_args: None,
             }))
         } else {
             // Short form
@@ -3781,6 +3996,7 @@ impl<'a> ZshParser<'a> {
                     names,
                     body: Box::new(ZshProgram { lists: vec![list] }),
                     tracing,
+                    auto_call_args: None,
                 })),
                 None => None,
             }
@@ -3807,6 +4023,7 @@ impl<'a> ZshParser<'a> {
                 names: vec![name],
                 body: Box::new(body),
                 tracing: false,
+                auto_call_args: None,
             }))
         } else {
             match self.parse_cmd() {
@@ -3817,6 +4034,7 @@ impl<'a> ZshParser<'a> {
                                 cmd,
                                 next: None,
                                 lineno: self.lexer.lineno,
+                                merge_stderr: false,
                             },
                             next: None,
                             flags: SublistFlags::default(),
@@ -3827,6 +4045,7 @@ impl<'a> ZshParser<'a> {
                         names: vec![name],
                         body: Box::new(ZshProgram { lists: vec![list] }),
                         tracing: false,
+                        auto_call_args: None,
                     }))
                 }
                 None => None,

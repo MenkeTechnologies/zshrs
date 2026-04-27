@@ -487,6 +487,22 @@ fn run_code(zshrs: &Path, code: &str, stdin_data: &str, workdir: &Path) -> (i32,
         .and_then(|v| v.parse().ok())
         .unwrap_or(200);
 
+    // Sandbox the spawned process so any `~/X` or `$ZTST_tmp/X` writes
+    // land in a per-process tempdir instead of the real $HOME. C02cond.ztst
+    // and others touch `~/newnewnew`-style paths during their %prep phase
+    // — without this redirection, the cargo test pollutes the user's
+    // home directory.
+    let sandbox = env::temp_dir().join(format!(
+        "zshrs_ztst_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::create_dir_all(&sandbox);
+    let sandbox_str = sandbox.to_string_lossy().into_owned();
+
     let mut cmd = Command::new(zshrs);
     cmd.arg("-f")
         .arg("-c")
@@ -494,6 +510,9 @@ fn run_code(zshrs: &Path, code: &str, stdin_data: &str, workdir: &Path) -> (i32,
         .current_dir(workdir)
         .env("LANG", "C")
         .env("LC_ALL", "C")
+        .env("HOME", &sandbox_str)
+        .env("TMPDIR", &sandbox_str)
+        .env("ZTST_tmp", &sandbox_str)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -522,7 +541,7 @@ fn run_code(zshrs: &Path, code: &str, stdin_data: &str, workdir: &Path) -> (i32,
         let _ = tx.send(child.wait_with_output());
     });
 
-    match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+    let result = match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
         Ok(Ok(output)) => {
             let status = output.status.code().unwrap_or(-1);
             let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -537,7 +556,9 @@ fn run_code(zshrs: &Path, code: &str, stdin_data: &str, workdir: &Path) -> (i32,
             let _ = handle.join();
             (-1, String::new(), format!("TIMEOUT after {}ms", timeout_ms))
         }
-    }
+    };
+    let _ = std::fs::remove_dir_all(&sandbox);
+    result
 }
 
 fn run_ztst_file(zshrs: &Path, ztst_path: &Path) -> (usize, usize, usize) {
