@@ -566,16 +566,15 @@ impl ZshCompiler {
                     // body. Strip the trailing newline before passing
                     // through HereString (which re-appends one) so the
                     // resulting stdin matches the heredoc body byte-for-
-                    // byte.
+                    // byte. Phase 2: route through the text-based
+                    // BUILTIN_EXPAND_TEXT (mode 0 = default) instead of
+                    // the legacy ShellWord JSON path.
                     let trimmed = content_clean.trim_end_matches('\n').to_string();
-                    let json = serde_json::to_string(
-                        &crate::parser::ShellWord::Literal(trimmed),
-                    )
-                    .unwrap_or_default();
-                    let json_const = self.builder.add_constant(Value::str(json));
-                    self.builder.emit(Op::LoadConst(json_const), 0);
+                    let text_const = self.builder.add_constant(Value::str(trimmed));
+                    self.builder.emit(Op::LoadConst(text_const), 0);
+                    self.builder.emit(Op::LoadInt(0), 0); // mode = Default
                     self.builder.emit(
-                        Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_WORD_RUNTIME, 1),
+                        Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2),
                         0,
                     );
                     self.builder.emit(Op::HereString, 0);
@@ -930,41 +929,87 @@ impl ZshCompiler {
         // The compound `(( ))` form has the same bug — pre-existing —
         // but currently dodges the test because $((..)) was bridged.
 
-        // TODO Phase 1 step 3 — `$(cmd)` native lowering. Reverted
-        // because feeding the inner cmd through ZshParser+ZshCompiler
-        // mis-handles the embedded quotes (`printf "a\nb"` produces
-        // "anb" instead of "a\nb"). The OLD pipeline gets the same
-        // Op::CmdSubst host path right via shell_compiler — likely a
-        // sub-chunk compile-time difference. Bridge stays for now.
-
-        // Anything else — runtime fallback for now. Re-parse the word
-        // through ShellParser so the existing expand_word semantics
-        // apply, then serialize and call BUILTIN_EXPAND_WORD_RUNTIME.
-        // Subsequent migration passes replace this with native ops.
-        //
-        // Use the quote-preserving variant so DoubleQuoted forms like
-        // `"$1|$2"` survive the round-trip (plain `untokenize` strips
-        // DNULL/SNULL and lets the embedded `|` reach ShellParser as a
-        // pipe operator).
-        let preserved = crate::lexer::untokenize_preserve_quotes(s);
-        let bridge_src = format!("echo {}", preserved);
-        let mut parser = crate::parser::ShellParser::new(&bridge_src);
-        if let Ok(commands) = parser.parse_script() {
-            if let Some(crate::parser::ShellCommand::Simple(simple)) = commands.first() {
-                if let Some(word) = simple.words.get(1) {
-                    let json = serde_json::to_string(word).unwrap_or_default();
-                    let const_idx = self.builder.add_constant(Value::str(json));
-                    self.builder.emit(Op::LoadConst(const_idx), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_WORD_RUNTIME, 1),
-                        0,
-                    );
-                    return;
-                }
+        // Phase 1 step 3b: `$((expr))` arithmetic substitution. Push
+        // the expression text and call BUILTIN_ARITH_EVAL which routes
+        // through the executor's MathEval (integer-aware, zsh-compat).
+        // Avoids the float-only Op::Div in ArithCompiler.
+        if !has_bnull {
+            let preserved_for_arith = crate::lexer::untokenize_preserve_quotes(s);
+            if let Some(expr) = strip_arith_subst(&preserved_for_arith) {
+                let idx = self.builder.add_constant(Value::str(expr.as_str()));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
+                return;
             }
         }
-        let idx = self.builder.add_constant(Value::str(untoked.as_str()));
+
+        // Phase 1 step 3: `$(cmd)` command substitution. Push the
+        // command text and call BUILTIN_CMD_SUBST_TEXT which routes
+        // through `run_command_substitution` (uses ShellParser + an
+        // in-process pipe capture). The ShellParser inner dependency
+        // can be migrated to ZshParser as a follow-up — fixing the
+        // current path's "$(printf "a\nb")" → "anb" quoting bug
+        // independently is the harder problem.
+        if !has_bnull {
+            let preserved_for_cmdsub = crate::lexer::untokenize_preserve_quotes(s);
+            if let Some(inner) = strip_cmd_subst(&preserved_for_cmdsub) {
+                let idx = self.builder.add_constant(Value::str(inner));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_SUBST_TEXT, 1), 0);
+                return;
+            }
+        }
+
+        // Phase 1 step 4: concat. Walk the raw word, split into
+        // (literal | expansion) segments, emit each, then fold via N-1
+        // Concats. Each Expansion segment recurses through compile_word_str
+        // (smaller input — terminates). Each Literal segment emits as a
+        // pure-literal LoadConst (after untokenize so embedded META
+        // chars resolve to their original ASCII).
+        if !has_bnull {
+            if let Some(segs) = split_word_segments(s) {
+                for (i, seg) in segs.iter().enumerate() {
+                    match seg {
+                        WordSegment::Literal(lit) => {
+                            let cleaned = crate::lexer::untokenize(lit);
+                            let stripped = strip_quote_markers(&cleaned);
+                            let idx = self.builder.add_constant(Value::str(stripped.as_str()));
+                            self.builder.emit(Op::LoadConst(idx), 0);
+                        }
+                        WordSegment::Expansion(exp) => {
+                            self.compile_word_str(exp);
+                        }
+                    }
+                    if i > 0 {
+                        self.builder.emit(Op::Concat, 0);
+                    }
+                }
+                return;
+            }
+        }
+
+        // Phase 2 step 2: text-based bridge replacement. Determine the
+        // word's quoting mode from its raw zsh-tokenized form, push the
+        // preserved text + mode_byte, call BUILTIN_EXPAND_TEXT.
+        //
+        // Mode detection:
+        // - Whole-word DNULL-wrapped (`"…"`) and no inner unescaped
+        //   DNULL → DoubleQuoted. Suppresses brace + glob expansion;
+        //   var / cmd-sub / arith inside still expand.
+        // - Backquote-wrapped (`` `…` ``) → AltBackquote, runs as
+        //   command substitution.
+        // - Else → Default, full expand_string + braces + glob.
+        //
+        // No more ShellParser → ShellWord → JSON round-trip.
+        let preserved = crate::lexer::untokenize_preserve_quotes(s);
+        let mode = expand_text_mode(s, &preserved);
+        let idx = self.builder.add_constant(Value::str(preserved.as_str()));
         self.builder.emit(Op::LoadConst(idx), 0);
+        self.builder.emit(Op::LoadInt(mode as i64), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
     }
 
     // ── Control flow ────────────────────────────────────────────────
@@ -1760,6 +1805,220 @@ fn looks_like_brace_expansion(s: &str) -> bool {
         }
     }
     false
+}
+
+/// Determine the quote-mode for the bridge replacement based on the
+/// raw zsh-tokenized word. Returns one of:
+///   0 = Default (full expand_string + braces + glob)
+///   1 = DoubleQuoted (expand vars, suppress brace + glob)
+///   3 = AltBackquote (run as command substitution)
+/// Mode 2 (SingleQuoted) is rare here because the SNULL early-return at
+/// the top of compile_word_str already catches `'…'` shapes.
+fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
+    // DoubleQuoted: starts AND ends with raw DNULL, no inner unescaped
+    // DNULL pair (i.e. exactly one matching pair wrapping the whole
+    // word). Looking at the raw form catches escape-context correctly.
+    if raw.starts_with('\u{9e}') && raw.ends_with('\u{9e}') && raw.len() >= 2 {
+        // Count interior DNULLs — for a simple `"…"` it's exactly 0 in
+        // the inside (the start/end are the two DNULLs). Mixed shapes
+        // like `"a"b"c"` would have inner DNULLs and we route to
+        // Default (the bridge path can't easily handle them either,
+        // but expand_string at least won't strip too much).
+        let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
+            ..raw.char_indices().rev().nth(0).map(|(i, _)| i).unwrap_or(raw.len())];
+        if !inner.contains('\u{9e}') {
+            return 1;
+        }
+    }
+    // Whole-word backquote: `…`
+    if preserved.starts_with('`') && preserved.ends_with('`') && preserved.len() >= 2 {
+        return 3;
+    }
+    0
+}
+
+/// One piece of a concatenated word. Either a literal stretch (raw
+/// zsh-tokenized chars; may contain META markers like STAR/QUEST that
+/// need un-tokenize), or one expansion (`$NAME`, `${NAME[..]}`, etc.).
+#[derive(Debug)]
+enum WordSegment {
+    Literal(String),
+    Expansion(String),
+}
+
+/// Split a raw zsh-tokenized word into literal and expansion segments
+/// for native concat lowering. Returns `None` for words that contain at
+/// most one expansion at the very start AND no trailing literal — those
+/// are handled by the existing single-expansion fast paths. Returns
+/// `Some(segs)` with `segs.len() >= 2` for concat shapes.
+///
+/// Walks the chars looking for META-$ (`\u{85}`), QSTRING-`$` inside
+/// double-quotes (`\u{8c}`), or backtick (`` ` ``) markers. Each marker
+/// plus its body becomes one Expansion segment; everything else is
+/// Literal. NOTE: `\u{84}` is POUND (`#`), not a `$`-marker; including
+/// it here would treat `${#arr[@]}` as a concat with `#arr` as the
+/// expansion body.
+fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    let mut segs: Vec<WordSegment> = Vec::new();
+    let mut lit_start = 0;
+    let mut i = 0;
+    // Track nesting inside `{...}` (INBRACE/OUTBRACE) and `[...]`
+    // (INBRACK/OUTBRACK) so an inner expansion marker like the `$i`
+    // in `${a[$i]}` doesn't get pulled out as its own segment.
+    // Top-level (depth 0) markers are real concat boundaries.
+    let mut brace_depth = 0i32;
+    let mut brack_depth = 0i32;
+    while i < n {
+        let c = chars[i];
+        match c {
+            '\u{8f}' => brace_depth += 1, // INBRACE
+            '\u{90}' => brace_depth = (brace_depth - 1).max(0), // OUTBRACE
+            '\u{91}' => brack_depth += 1, // INBRACK
+            '\u{92}' => brack_depth = (brack_depth - 1).max(0), // OUTBRACK
+            _ => {}
+        }
+        let is_dollar = c == '\u{85}' || c == '\u{8c}';
+        let is_backtick = c == '`';
+        let at_top = brace_depth == 0 && brack_depth == 0;
+        if !(is_dollar || is_backtick) || !at_top {
+            i += 1;
+            continue;
+        }
+        // Flush any pending literal.
+        if lit_start < i {
+            let lit: String = chars[lit_start..i].iter().collect();
+            segs.push(WordSegment::Literal(lit));
+        }
+        // Find end of expansion.
+        let end = find_expansion_end(&chars, i);
+        let exp: String = chars[i..end].iter().collect();
+        segs.push(WordSegment::Expansion(exp));
+        i = end;
+        lit_start = i;
+    }
+    if lit_start < n {
+        let lit: String = chars[lit_start..].iter().collect();
+        segs.push(WordSegment::Literal(lit));
+    }
+
+    // Reject single-segment cases — the caller's other fast paths cover
+    // pure-literal and bare-expansion words. Only multi-segment concat
+    // benefits from this path.
+    if segs.len() < 2 {
+        return None;
+    }
+    // Sanity: at least one expansion (otherwise we'd be a literal, but
+    // split_word_segments only emits literals between expansions, so a
+    // 2-piece result with no expansion is impossible — safety check).
+    if !segs.iter().any(|s| matches!(s, WordSegment::Expansion(_))) {
+        return None;
+    }
+    Some(segs)
+}
+
+/// Given chars[i] is META-$ / QSTRING / backtick, return the index just
+/// past the end of the expansion. Handles `${...}`, `$(...)`,
+/// `$((...))`, `$NAME`, `$N`, `$@` etc., and `` `cmd` ``.
+fn find_expansion_end(chars: &[char], i: usize) -> usize {
+    let c = chars[i];
+    if c == '`' {
+        // Backtick: find matching `
+        let mut j = i + 1;
+        while j < chars.len() && chars[j] != '`' {
+            j += 1;
+        }
+        return (j + 1).min(chars.len());
+    }
+    // META-$ or QSTRING — look at next char
+    let next = chars.get(i + 1).copied();
+    match next {
+        // INBRACE: ${...}
+        Some('\u{8f}') => {
+            let mut depth = 1;
+            let mut j = i + 2;
+            while j < chars.len() && depth > 0 {
+                match chars[j] {
+                    '\u{8f}' => depth += 1,
+                    '\u{90}' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            j
+        }
+        // INPAR: $(...) or $((...))
+        // The lexer emits these shapes:
+        //   `$(cmd)`    → META-$ INPAR <body chars> OUTPAR
+        //   `$((expr))` → META-$ INPAR <body w/ literal `(`/`)`> OUTPARMATH
+        // For `$((`, the inner `(` is kept literal and the closing `))`
+        // is collapsed into a single OUTPARMATH (\u{8b}). We detect by
+        // peeking after INPAR — if the next char is literal `(` (0x28)
+        // or INPARMATH, we're in arith mode and end at OUTPARMATH.
+        Some('\u{88}') => {
+            let after = chars.get(i + 2).copied();
+            let is_arith = matches!(after, Some('(') | Some('\u{89}'));
+            let close_match = if is_arith { '\u{8b}' } else { '\u{8a}' };
+            let mut depth = 1;
+            let mut j = i + 2;
+            while j < chars.len() && depth > 0 {
+                let c = chars[j];
+                if !is_arith && c == '\u{88}' {
+                    depth += 1;
+                } else if c == close_match {
+                    depth -= 1;
+                }
+                j += 1;
+            }
+            j
+        }
+        // Also catch META-$ + INPARMATH directly for arith forms.
+        Some('\u{89}') => {
+            let mut j = i + 2;
+            while j < chars.len() && chars[j] != '\u{8b}' {
+                j += 1;
+            }
+            (j + 1).min(chars.len())
+        }
+        // INBRACK: $[...]
+        Some('\u{91}') => {
+            let mut depth = 1;
+            let mut j = i + 2;
+            while j < chars.len() && depth > 0 {
+                match chars[j] {
+                    '\u{91}' => depth += 1,
+                    '\u{92}' => depth -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            j
+        }
+        // Special single-char params: $@ $* $# $? $! $- $_ $$
+        Some(ch) if matches!(ch, '@' | '*' | '#' | '?' | '!' | '-' | '_' | '$') => {
+            i + 2
+        }
+        // All-digit positional: $0..$N
+        Some(ch) if ch.is_ascii_digit() => {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                j += 1;
+            }
+            j
+        }
+        // Identifier: $NAME
+        Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {
+            let mut j = i + 1;
+            while j < chars.len()
+                && (chars[j].is_ascii_alphanumeric() || chars[j] == '_')
+            {
+                j += 1;
+            }
+            j
+        }
+        _ => i + 1,
+    }
 }
 
 /// If `s` is exactly `$((expr))` (un-tokenized form), return the inner

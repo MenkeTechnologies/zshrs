@@ -421,9 +421,9 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
 | `no_tree_walker_dispatch` | 158 | Behavioral pins for the no-tree-walker invariant |
 | `compile_zsh_smoke` | 28 | Per-construct bytecode-level smoke |
 | `tree_walker_absent` | 8 | Source-level absence checks (anti-regression) |
-| `zsh_parser_probe` | 89 | AST-shape probes for every construct |
+| `zsh_parser_probe` | 91 | AST-shape probes for every construct |
 | `ztst_runner` | 70 | Real `.ztst` files from upstream zsh |
-| **Total** | **868** | All green on the new (default) pipeline |
+| **Total** | **876** | All green on the new (default) pipeline |
 
 ---
 
