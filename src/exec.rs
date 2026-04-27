@@ -4466,7 +4466,7 @@ impl ShellExecutor {
     pub fn run_hooks(&mut self, hook_name: &str) {
         if let Some(funcs) = self.hook_functions.get(hook_name).cloned() {
             for func_name in funcs {
-                if self.functions.contains_key(&func_name) {
+                if self.function_exists(&func_name) {
                     let _ = self.execute_script(&format!("{}", func_name));
                 }
             }
@@ -4475,7 +4475,7 @@ impl ShellExecutor {
         let array_name = format!("{}_functions", hook_name);
         if let Some(funcs) = self.arrays.get(&array_name).cloned() {
             for func_name in funcs {
-                if self.functions.contains_key(&func_name) {
+                if self.function_exists(&func_name) {
                     let _ = self.execute_script(&format!("{}", func_name));
                 }
             }
@@ -7718,7 +7718,7 @@ impl ShellExecutor {
                     if let ShellCommand::Simple(simple) = cmd.as_ref() {
                         if let Some(first) = simple.words.first() {
                             let name = self.expand_word(first);
-                            return !self.functions.contains_key(&name) && !self.is_builtin(&name);
+                            return !self.function_exists(&name) && !self.is_builtin(&name);
                         }
                     }
                 }
@@ -7736,7 +7736,7 @@ impl ShellExecutor {
                 if let ShellCommand::Simple(simple) = cmd.as_ref() {
                     let first = simple.words.first().map(|w| self.expand_word(w));
                     if let Some(ref name) = first {
-                        if !self.functions.contains_key(name) && !self.is_builtin(name) {
+                        if !self.function_exists(name) && !self.is_builtin(name) {
                             let expanded: Vec<String> =
                                 simple.words.iter().map(|w| self.expand_word(w)).collect();
                             let rx = self.worker_pool.submit_with_result(move || {
@@ -7779,7 +7779,7 @@ impl ShellExecutor {
                 if let ShellCommand::Simple(simple) = cmd.as_ref() {
                     let first = simple.words.first().map(|w| self.expand_word(w));
                     if let Some(ref name) = first {
-                        if !self.functions.contains_key(name) && !self.is_builtin(name) {
+                        if !self.function_exists(name) && !self.is_builtin(name) {
                             // External command — pre-launch on background thread
                             let words: Vec<String> =
                                 simple.words.iter().map(|w| self.expand_word(w)).collect();
@@ -8073,7 +8073,7 @@ impl ShellExecutor {
                 || self.arrays.contains_key(rest)
                 || self.assoc_arrays.contains_key(rest)
                 || std::env::var(rest).is_ok()
-                || self.functions.contains_key(rest);
+                || self.function_exists(rest);
             return if is_set {
                 "1".to_string()
             } else {
@@ -9966,7 +9966,7 @@ impl ShellExecutor {
                     "array".to_string()
                 } else if self.assoc_arrays.contains_key(name) {
                     "association".to_string()
-                } else if self.functions.contains_key(name) {
+                } else if self.function_exists(name) {
                     "function".to_string()
                 } else if std::env::var(name).is_ok() || self.variables.contains_key(name) {
                     "scalar".to_string()
@@ -16045,7 +16045,7 @@ impl ShellExecutor {
             }
 
             // Check for function (skip if -p)
-            if !path_only && self.functions.contains_key(name) {
+            if !path_only && self.function_exists(name) {
                 found_any = true;
                 if !silent {
                     if show_type {
