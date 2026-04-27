@@ -968,35 +968,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    // Runtime word-expansion fallback for ShellWord variants not yet lowered
-    // to native ops. Pops a JSON-serialized ShellWord; pushes the expanded
-    // string. Routes through `expand_word_glob` so brace + glob expansion
-    // happen in addition to parameter / arithmetic / command substitution.
-    // The Phase G1 array work needs the runtime fallback to preserve splice
-    // semantics: `${arr[@]}`, glob matches, and brace expansion all produce
-    // multiple parts that should land as separate argv slots downstream. This
-    // builtin now returns Value::Array — Op::Exec/ExecBg/CallFunction and
-    // pop_args flatten arrays into argv. Pre-G1 this was `Value::str(parts.
-    // join(" "))` which collapsed the splice into one space-joined scalar.
-    vm.register_builtin(BUILTIN_EXPAND_WORD_RUNTIME, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let json = args.into_iter().next().unwrap_or_default();
-        let live_status = vm.last_status;
-        match serde_json::from_str::<crate::parser::ShellWord>(&json) {
-            Ok(word) => {
-                let parts = with_executor(|exec| {
-                    exec.last_status = live_status;
-                    exec.expand_word_glob(&word)
-                });
-                if parts.len() == 1 {
-                    Value::str(parts.into_iter().next().unwrap_or_default())
-                } else {
-                    Value::Array(parts.into_iter().map(Value::str).collect())
-                }
-            }
-            Err(_) => Value::str(""),
-        }
-    });
+    // BUILTIN_EXPAND_WORD_RUNTIME (id 281) was the JSON-ShellWord round-trip
+    // bridge emitted by the deleted shell_compiler.rs. With shell_compiler.rs
+    // gone, no chunk emits this op. The constant + handler are removed; the
+    // ID stays reserved in the gap before BUILTIN_REGISTER_FUNCTION so future
+    // remaps don't reuse it.
 
     // Pipeline execution — bytecode-native fork-per-stage. Pops N sub-chunk
     // indices, forks N children with stdin/stdout wired through N-1 pipes,
@@ -2438,49 +2414,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    // Runtime function registration. `FunctionDef(name, body)` lowers to a
-    // CallBuiltin(BUILTIN_REGISTER_FUNCTION, 2) with [name, body_json] on
-    // the stack. The handler decodes the JSON ShellCommand body, then:
-    //   1. Reconstructs source text via `text::getpermtext` and parses it
-    //      via `ZshParser` + `ZshCompiler` (the only pipeline) to land a
-    //      Chunk in `functions_compiled`.
-    //   2. Logs and skips registration if the round-trip parse fails
-    //      (surfacing parser/getpermtext bugs rather than masking them).
-    //   3. Always populates `function_source` (introspection canonical) and
-    //      `self.functions` (legacy AST surface for code paths that still
-    //      consume `&ShellCommand`).
-    vm.register_builtin(BUILTIN_REGISTER_FUNCTION, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let mut iter = args.into_iter();
-        let name = iter.next().unwrap_or_default();
-        let body_json = iter.next().unwrap_or_default();
-        let status = with_executor(|exec| {
-            let Ok(body_ast) =
-                serde_json::from_str::<crate::parser::ShellCommand>(&body_json)
-            else {
-                return 1;
-            };
-            let body_text = crate::text::getpermtext(&body_ast);
-            let Some(program) = crate::parser::ZshParser::new(&body_text)
-                .parse()
-                .ok()
-                .filter(|p| !p.lists.is_empty())
-            else {
-                tracing::warn!(
-                    name = %name,
-                    "BUILTIN_REGISTER_FUNCTION: round-trip parse failed; \
-                     function not registered"
-                );
-                return 1;
-            };
-            let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
-            exec.function_source.insert(name.clone(), body_text);
-            exec.functions_compiled.insert(name.clone(), chunk);
-            exec.functions.insert(name, body_ast);
-            0
-        });
-        Value::Status(status)
-    });
+    // BUILTIN_REGISTER_FUNCTION (id 282) was the JSON-ShellCommand body bridge
+    // emitted by the deleted shell_compiler.rs. ZshCompiler emits
+    // BUILTIN_REGISTER_COMPILED_FN (id 305) instead, which carries a base64
+    // bincode of an already-compiled Chunk. The constant + handler are
+    // removed; the ID stays reserved.
 
     // Pre-compiled function registration — used by compile_zsh.rs's
     // FuncDef path. Stack: [name, base64-bincode-of-Chunk]. We decode
@@ -2891,29 +2829,11 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
     args
 }
 
-/// Builtin ID for the runtime word-expansion fallback.
-///
-/// `compile_word` emits this for ShellWord variants that aren't yet lowered to
-/// native fusevm ops. The serialized ShellWord is JSON-encoded, pushed as a
-/// constant, and the handler deserializes + delegates to `expand_word`.
-///
-/// This is the bridge from "bytecode that calls builtins" to "tree-walker
-/// expansion semantics" — correct but slow. As variants are lowered to real
-/// ops (Op::Glob, Op::TildeExpand, Op::ExpandParam, etc.), the corresponding
-/// compile_word arms stop emitting this builtin.
-pub const BUILTIN_EXPAND_WORD_RUNTIME: u16 = 281;
-
-/// Builtin ID for runtime function registration.
-///
-/// Emitted by `compile_command` for `FunctionDef(name, body)`. Pops two
-/// strings from the stack: the function name and the JSON-serialized body
-/// AST. The handler compiles the body to a `fusevm::Chunk` and stores it in
-/// `executor.functions_compiled`. Subsequent `Op::CallFunction(name_idx, argc)`
-/// dispatches through `ZshrsHost::call_function` which finds the chunk here.
-///
-/// Also stores the AST in `executor.functions` for the (still-extant)
-/// tree-walker callers; once Phase E retires those, the AST table can go.
-pub const BUILTIN_REGISTER_FUNCTION: u16 = 282;
+// IDs 281 (was BUILTIN_EXPAND_WORD_RUNTIME) and 282 (was
+// BUILTIN_REGISTER_FUNCTION) were the JSON-AST bridges emitted by the
+// deleted shell_compiler.rs. ZshCompiler emits BUILTIN_EXPAND_TEXT (314)
+// and BUILTIN_REGISTER_COMPILED_FN (305) instead. The IDs stay reserved
+// in this gap so future builtins don't reuse them.
 
 /// Builtin ID for `${name}` reads — routes through `ShellExecutor::get_variable`
 /// which knows about special params (`$?`, `$@`, `$#`, `$1..$9`), shell vars
