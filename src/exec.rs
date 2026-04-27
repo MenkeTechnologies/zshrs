@@ -12246,16 +12246,18 @@ impl ShellExecutor {
         // and then need to execute it with the original arguments
         if execute_now {
             for func_name in &functions {
-                // Load the function from fpath
+                // Load the function from fpath. The new pipeline populates
+                // `functions_compiled` + `function_source` directly inside
+                // `load_autoload_function` and may return None even on
+                // success (only the ZWC path produces a ShellCommand AST).
                 if let Some(loaded) = self.load_autoload_function(func_name) {
-                    // Extract body from FunctionDef
                     let body = match loaded {
                         ShellCommand::FunctionDef(_, body) => (*body).clone(),
                         other => other,
                     };
-                    // Replace the stub with the real function
                     self.functions.insert(func_name.clone(), body);
-                    // Remove from pending
+                }
+                if self.function_exists(func_name) {
                     self.autoload_pending.remove(func_name);
                 } else {
                     eprintln!(
@@ -12474,7 +12476,7 @@ impl ShellExecutor {
         }
 
         // SLOW PATH: Try ZWC cache (but skip if we're reloading an existing function)
-        if !self.functions.contains_key(name) {
+        if !self.function_exists(name) {
             // Try to load from ZWC files
             for dir in &self.fpath.clone() {
                 // Try dir.zwc (e.g., /path/to/src.zwc for /path/to/src)
