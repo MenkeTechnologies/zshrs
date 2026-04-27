@@ -5070,15 +5070,26 @@ impl ShellExecutor {
         // Convert to shell command and cache
         let shell_func = decoded.to_shell_function()?;
 
-        // Register the function. Compile the body into a fusevm Chunk
-        // immediately so call dispatch reads from `functions_compiled`
-        // (the new source of truth) without lazy compile-on-demand.
-        // The legacy `functions` AST table stays populated for now so
-        // legacy code paths (intercepts, `type`, etc.) keep working.
+        // Register the function. ZWC bodies arrive as a ShellCommand AST
+        // (the wordcode → AST decoder produces the legacy shape). Round-trip
+        // through `getpermtext` → ZshParser → ZshCompiler so the compiled
+        // chunk lives on the new pipeline; fall back to `ShellCompiler` only
+        // when the round-trip parse fails. The legacy `self.functions` AST
+        // table stays populated as the back-compat surface for code paths
+        // (intercepts, `type`, etc.) that haven't migrated.
         if let ShellCommand::FunctionDef(fname, body) = &shell_func {
             self.functions.insert(fname.clone(), (**body).clone());
-            let compiler = crate::shell_compiler::ShellCompiler::new();
-            let chunk = compiler.compile(std::slice::from_ref(body.as_ref()));
+            let body_text = crate::text::getpermtext(body.as_ref());
+            let compiled_via_zsh = crate::parser::ZshParser::new(&body_text)
+                .parse()
+                .ok()
+                .filter(|p| !p.lists.is_empty())
+                .map(|p| crate::compile_zsh::ZshCompiler::new().compile(&p));
+            let chunk = compiled_via_zsh.unwrap_or_else(|| {
+                crate::shell_compiler::ShellCompiler::new()
+                    .compile(std::slice::from_ref(body.as_ref()))
+            });
+            self.function_source.insert(fname.clone(), body_text);
             self.functions_compiled.insert(fname.clone(), chunk);
         }
 
