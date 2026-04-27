@@ -19,6 +19,7 @@
 #![allow(deprecated)]
 #![allow(unexpected_cfgs)]
 
+pub mod arith_compiler;
 pub mod attr;
 pub mod cap;
 pub mod clone;
