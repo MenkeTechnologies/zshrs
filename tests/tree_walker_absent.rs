@@ -68,19 +68,25 @@ fn execute_command_bg_is_deleted() {
 }
 
 #[test]
-fn execute_command_dispatches_via_shell_compiler() {
-    // The new execute_command body must compile a chunk and run it on a VM.
-    // Find the function and check its first ~30 lines for the signature
-    // markers. If a future refactor reintroduces a `match cmd { Simple => ...`
-    // dispatch, this test will fail.
+fn execute_command_dispatches_via_compiler() {
+    // The execute_command body must compile a chunk and run it on a VM —
+    // primary path through `ZshParser` + `ZshCompiler` (the ported pipeline),
+    // with `ShellCompiler` as the fallback when re-parse of the
+    // round-tripped source fails. If a future refactor reintroduces a
+    // `match cmd { Simple => ...` tree-walker dispatch, this test fails.
     let src = read_exec_rs();
     let entry = src
         .find("pub fn execute_command(&mut self, cmd: &ShellCommand)")
         .expect("execute_command entry point missing");
-    let window = &src[entry..entry + 1500];
+    let window = &src[entry..entry + 1800];
+    assert!(
+        window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
+        "execute_command must compile via ZshParser+ZshCompiler (primary):\n{}",
+        window
+    );
     assert!(
         window.contains("ShellCompiler::new()"),
-        "execute_command must build a chunk via ShellCompiler:\n{}",
+        "execute_command must keep a ShellCompiler fallback so unparseable round-trip text still runs:\n{}",
         window
     );
     assert!(
@@ -96,17 +102,22 @@ fn execute_command_dispatches_via_shell_compiler() {
 
 #[test]
 fn execute_command_substitution_uses_pipe_capture() {
-    // The new capture machinery: compile → dup2 stdout to a pipe → run VM →
-    // read pipe. The old version had a giant `match cmd { Simple => ... }`
-    // with hand-rolled `echo`/`printf`/`pwd` shortcuts.
+    // The capture machinery: compile (via ZshCompiler primary, ShellCompiler
+    // fallback) → dup2 stdout to a pipe → run VM → read pipe. The old version
+    // had a giant `match cmd { Simple => ... }` with hand-rolled
+    // `echo`/`printf`/`pwd` shortcuts.
     let src = read_exec_rs();
     let entry = src
         .find("pub fn execute_command_capture")
         .expect("execute_command_capture missing");
-    let window = &src[entry..entry + 2000];
+    let window = &src[entry..entry + 2200];
+    assert!(
+        window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
+        "capture must compile via ZshParser+ZshCompiler (primary)"
+    );
     assert!(
         window.contains("ShellCompiler::new()"),
-        "capture must compile to a chunk"
+        "capture must keep a ShellCompiler fallback for unparseable round-trip text"
     );
     assert!(
         window.contains("os_pipe::pipe()"),
