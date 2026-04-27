@@ -69,11 +69,12 @@ fn execute_command_bg_is_deleted() {
 
 #[test]
 fn execute_command_dispatches_via_compiler() {
-    // The execute_command body must compile a chunk and run it on a VM —
-    // primary path through `ZshParser` + `ZshCompiler` (the ported pipeline),
-    // with `ShellCompiler` as the fallback when re-parse of the
-    // round-tripped source fails. If a future refactor reintroduces a
-    // `match cmd { Simple => ...` tree-walker dispatch, this test fails.
+    // The execute_command body must round-trip the AST through
+    // `text::getpermtext` → `ZshParser` → `ZshCompiler` and run the chunk
+    // on a fusevm VM. The legacy `ShellCompiler` is no longer reachable
+    // here — its only remaining users are inside shell_compiler.rs itself.
+    // If a future refactor reintroduces a `match cmd { Simple => ...`
+    // tree-walker dispatch, this test fails.
     let src = read_exec_rs();
     let entry = src
         .find("pub fn execute_command(&mut self, cmd: &ShellCommand)")
@@ -81,12 +82,12 @@ fn execute_command_dispatches_via_compiler() {
     let window = &src[entry..entry + 1800];
     assert!(
         window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
-        "execute_command must compile via ZshParser+ZshCompiler (primary):\n{}",
+        "execute_command must compile via ZshParser+ZshCompiler:\n{}",
         window
     );
     assert!(
-        window.contains("ShellCompiler::new()"),
-        "execute_command must keep a ShellCompiler fallback so unparseable round-trip text still runs:\n{}",
+        !window.contains("ShellCompiler::new()"),
+        "execute_command must NOT use the legacy ShellCompiler fallback anymore:\n{}",
         window
     );
     assert!(
@@ -102,10 +103,11 @@ fn execute_command_dispatches_via_compiler() {
 
 #[test]
 fn execute_command_substitution_uses_pipe_capture() {
-    // The capture machinery: compile (via ZshCompiler primary, ShellCompiler
-    // fallback) → dup2 stdout to a pipe → run VM → read pipe. The old version
-    // had a giant `match cmd { Simple => ... }` with hand-rolled
-    // `echo`/`printf`/`pwd` shortcuts.
+    // The capture machinery: compile via ZshParser+ZshCompiler → dup2
+    // stdout to a pipe → run VM → read pipe. The old version had a giant
+    // `match cmd { Simple => ... }` with hand-rolled `echo`/`printf`/`pwd`
+    // shortcuts; the bridge era used `ShellCompiler` here as a fallback.
+    // Both are gone.
     let src = read_exec_rs();
     let entry = src
         .find("pub fn execute_command_capture")
@@ -113,11 +115,11 @@ fn execute_command_substitution_uses_pipe_capture() {
     let window = &src[entry..entry + 2200];
     assert!(
         window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
-        "capture must compile via ZshParser+ZshCompiler (primary)"
+        "capture must compile via ZshParser+ZshCompiler"
     );
     assert!(
-        window.contains("ShellCompiler::new()"),
-        "capture must keep a ShellCompiler fallback for unparseable round-trip text"
+        !window.contains("ShellCompiler::new()"),
+        "capture must NOT use the legacy ShellCompiler fallback anymore"
     );
     assert!(
         window.contains("os_pipe::pipe()"),
