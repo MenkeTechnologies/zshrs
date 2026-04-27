@@ -279,7 +279,9 @@ Reference counts of the legacy types (lower = closer to deletable):
 | `src/text.rs` | 58 | 58 | pretty-printing of legacy AST |
 | `src/zwc.rs` | 45 | 45 | autoload bytecode cache |
 
-`ShellParser` callers in `exec.rs`: **10 → 4** (`run_process_sub_in/out` migrated, `pmap`/`pgrep`/`peach` migrated, `run_command_substitution` migrated, `execute_script_file` migrated, legacy `execute_script` body deleted). The remaining 4 are autoload-related (lines 12482, 12541, 16796, 16893).
+`ShellParser` callers in `exec.rs`: **10 → 4 → 2** (this iteration: compsys cache backfill loops at the old line 16818 and 16915 migrated to `ZshParser` + `ZshCompiler`; the SQLite blob format is fusevm `Chunk` so the cache hit path is unchanged). Two callers remain in `load_autoload_function`: the cached-body fast path (still needs the `ShellParser`-produced `Vec<ShellCommand>` for `wrap_autoload_commands`) and the filesystem slow path. Both now also populate `self.functions_compiled` via the ported pipeline so call dispatch hits the bytecode cache directly without a second-pass compile.
+
+Plus: `load_function_from_zwc` (ZWC autoload path) now compiles the loaded body into `functions_compiled` immediately, removing the lazy compile-on-demand at `Op::CallFunction`.
 
 ### Why the actual type deletion can't ship in one session
 
@@ -303,3 +305,15 @@ The remaining work to remove `ShellParser`/`ShellLexer`/`ShellCommand`/`ShellWor
 Each step is non-trivial — most touch ~20-50 references. The whole sequence is multi-session work. This session shipped the high-leverage Phase 2 chunks: the bridge target, run_command_substitution, process_sub. The remaining sequence is **autoload-shaped** — once autoload migrates, the rest cascades cleanly.
 
 Test count: **876 across 9 suites, all green on the new (default) pipeline.**
+
+## Session 2026-04-27 — Phase 2 continuation: autoload cascade
+
+This iteration's deltas:
+
+- **`load_function_from_zwc` populates `functions_compiled` on load.** Previously the ZWC autoload path inserted only into the legacy `executor.functions` AST table; call dispatch then re-compiled the AST on first invocation via `ShellCompiler.compile`. Now the function body is compiled inline via `ShellCompiler` and persisted in `functions_compiled` directly. The legacy `functions` table stays populated for the introspection surface (`whence`, `which`, function listings) until the cascade migrates fully.
+- **Compsys cache backfill loops migrated to `ZshParser` + `ZshCompiler`.** The two batch loops that pre-parse autoload bodies and serialize fusevm `Chunk` blobs into SQLite — one for backfill-missing-bytecode, one for first-time compinit — both now feed through the ported pipeline. Persisted blob format is unchanged (`bincode::serialize::<fusevm::Chunk>`), so the cache-hit fast path at the top of `load_autoload_function` deserializes the same `Chunk` it always did.
+- **`load_autoload_function` cached-body path compiles via `ZshCompiler` AND populates `functions_compiled`.** Both the in-process compiled-functions table and the persistent SQLite blob now come from the ported pipeline. The legacy `ShellParser` still runs alongside it to produce the `Vec<ShellCommand>` that `wrap_autoload_commands` needs for `self.functions` registration.
+
+Net `ShellParser::new` references in `exec.rs`: **4 → 2**. The remaining 2 (cached-body fallback + filesystem fallback in `load_autoload_function`) are gated by the `executor.functions: HashMap<String, ShellCommand>` cascade — until function lookup, `whence`, `which`, `functions[name]=…`, and `unfunction` all migrate to a `functions_compiled`-only world, the autoload paths must keep producing `ShellCommand` for back-compat.
+
+Targeted-test gate (`zsh_construct_corpus` + `no_tree_walker_dispatch` + `ztst_runner`): **70 passed, 0 failed, 1 ignored** (the load-bearing 96-invariant + corpus + ztst suite).

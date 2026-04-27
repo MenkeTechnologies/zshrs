@@ -5067,9 +5067,16 @@ impl ShellExecutor {
         // Convert to shell command and cache
         let shell_func = decoded.to_shell_function()?;
 
-        // Register the function
+        // Register the function. Compile the body into a fusevm Chunk
+        // immediately so call dispatch reads from `functions_compiled`
+        // (the new source of truth) without lazy compile-on-demand.
+        // The legacy `functions` AST table stays populated for now so
+        // legacy code paths (intercepts, `type`, etc.) keep working.
         if let ShellCommand::FunctionDef(fname, body) = &shell_func {
             self.functions.insert(fname.clone(), (**body).clone());
+            let compiler = crate::shell_compiler::ShellCompiler::new();
+            let chunk = compiler.compile(std::slice::from_ref(body.as_ref()));
+            self.functions_compiled.insert(fname.clone(), chunk);
         }
 
         Some(shell_func)
@@ -12494,12 +12501,12 @@ impl ShellExecutor {
 
                 // FAST: cached source text — parse + compile (still no filesystem access)
                 if let Ok(Some(body)) = cache.get_autoload_body(name) {
-                    let mut parser = ShellParser::new(&body);
-                    if let Ok(commands) = parser.parse_script() {
-                        if !commands.is_empty() {
-                            // Compile to bytecodes and cache for next time
-                            let compiler = crate::shell_compiler::ShellCompiler::new();
-                            let chunk = compiler.compile(&commands);
+                    // New pipeline: ZshParser + ZshCompiler emits the persisted
+                    // Chunk that the bytecode-cache hit at the top of this fn
+                    // deserializes on the next invocation.
+                    if let Ok(program) = crate::parser::ZshParser::new(&body).parse() {
+                        if !program.lists.is_empty() {
+                            let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
                             if let Ok(blob) = bincode::serialize(&chunk) {
                                 let _ = cache.set_autoload_bytecode(name, &blob);
                                 tracing::trace!(
@@ -12508,6 +12515,17 @@ impl ShellExecutor {
                                     "autoload: bytecodes compiled and cached"
                                 );
                             }
+                            // Also populate the in-process compiled-functions
+                            // table so call dispatch hits it without re-compiling.
+                            self.functions_compiled.insert(name.to_string(), chunk);
+                        }
+                    }
+                    // Legacy AST path is still required: callers register the
+                    // returned ShellCommand into self.functions for the
+                    // introspection surface (whence/which, function listings).
+                    let mut parser = ShellParser::new(&body);
+                    if let Ok(commands) = parser.parse_script() {
+                        if !commands.is_empty() {
                             return Some(self.wrap_autoload_commands(name, commands));
                         }
                     }
@@ -16808,11 +16826,10 @@ impl ShellExecutor {
                                             };
                                             let mut batch: Vec<(String, Vec<u8>)> = Vec::with_capacity(stubs.len());
                                             for (name, body) in &stubs {
-                                                let mut parser = crate::parser::ShellParser::new(body);
-                                                if let Ok(commands) = parser.parse_script() {
-                                                    if !commands.is_empty() {
-                                                        let compiler = crate::shell_compiler::ShellCompiler::new();
-                                                        let chunk = compiler.compile(&commands);
+                                                let mut parser = crate::parser::ZshParser::new(body);
+                                                if let Ok(program) = parser.parse() {
+                                                    if !program.lists.is_empty() {
+                                                        let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
                                                         if let Ok(blob) = bincode::serialize(&chunk) {
                                                             batch.push((name.clone(), blob));
                                                         }
@@ -16905,12 +16922,11 @@ impl ShellExecutor {
 
             for file in &result.files {
                 if let Some(ref body) = file.body {
-                    let mut parser = crate::parser::ShellParser::new(body);
-                    match parser.parse_script() {
-                        Ok(commands) if !commands.is_empty() => {
-                            // Compile AST → fusevm bytecodes, then serialize the Chunk
-                            let compiler = crate::shell_compiler::ShellCompiler::new();
-                            let chunk = compiler.compile(&commands);
+                    let mut parser = crate::parser::ZshParser::new(body);
+                    match parser.parse() {
+                        Ok(program) if !program.lists.is_empty() => {
+                            // Compile ported AST → fusevm bytecodes, then serialize the Chunk
+                            let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
                             if let Ok(blob) = bincode::serialize(&chunk) {
                                 batch.push((file.name.clone(), blob));
                                 parse_ok += 1;
