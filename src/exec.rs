@@ -4785,8 +4785,50 @@ impl ShellExecutor {
         Ok(self.last_status)
     }
 
+    /// Execute via the new ZshLexer + ZshParser + ZshCompiler pipeline.
+    /// Migration entry point; opt-in until the corpus passes through this
+    /// path. Switch by setting `ZSHRS_NEW_PIPELINE=1`.
+    pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
+        let expanded = self.expand_history(script);
+        let mut parser = crate::parser::ZshParser::new(&expanded);
+        let program = match parser.parse() {
+            Ok(p) => p,
+            Err(errs) => {
+                return Err(errs
+                    .first()
+                    .map(|e| format!("{}", e))
+                    .unwrap_or_else(|| "parse error".to_string()));
+            }
+        };
+
+        let compiler = crate::compile_zsh::ZshCompiler::new();
+        let chunk = compiler.compile(&program);
+
+        if chunk.ops.is_empty() {
+            return Ok(self.last_status);
+        }
+
+        let mut vm = fusevm::VM::new(chunk);
+        register_builtins(&mut vm);
+        let _ctx = ExecutorContext::enter(self);
+        match vm.run() {
+            fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                self.last_status = vm.last_status;
+            }
+            fusevm::VMResult::Error(e) => return Err(format!("VM error: {}", e)),
+        }
+        Ok(self.last_status)
+    }
+
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
+        // Opt-in to the new ZshParser pipeline via env var. Once parity
+        // with the corpus is reached, this becomes the default and the
+        // old ShellParser path is deleted.
+        if std::env::var("ZSHRS_NEW_PIPELINE").is_ok() {
+            return self.execute_script_zsh_pipeline(script);
+        }
+
         // Expand history references before parsing
         let expanded = self.expand_history(script);
 
