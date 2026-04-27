@@ -72,7 +72,6 @@ pub mod random_real;
 pub mod regex_mod;
 pub mod rlimits;
 pub mod sched;
-pub mod shell_compiler;
 pub mod compile_zsh;
 pub mod signals;
 pub mod socket;
