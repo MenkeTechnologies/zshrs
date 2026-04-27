@@ -19076,7 +19076,7 @@ impl ShellExecutor {
                 }
 
                 // Check functions (unless -f)
-                if !skip_functions && self.functions.contains_key(name) {
+                if !skip_functions && self.function_exists(name) {
                     found = true;
                     word = "function";
                     if word_type {
@@ -23337,7 +23337,7 @@ impl ShellExecutor {
         }
 
         // Check if it's a function
-        if self.functions.contains_key(name) {
+        if self.function_exists(name) {
             return true;
         }
 
@@ -23469,9 +23469,7 @@ impl ShellExecutor {
     /// Command not found handler
     /// Port of commandnotfound() from exec.c
     pub fn commandnotfound(&mut self, name: &str, args: &[String]) -> i32 {
-        if self.functions_compiled.contains_key("command_not_found_handler")
-            || self.functions.contains_key("command_not_found_handler")
-        {
+        if self.function_exists("command_not_found_handler") {
             let mut handler_args = vec![name.to_string()];
             handler_args.extend(args.iter().cloned());
             if let Some(code) =
