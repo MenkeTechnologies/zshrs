@@ -2454,25 +2454,29 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let name = iter.next().unwrap_or_default();
         let body_json = iter.next().unwrap_or_default();
         let status = with_executor(|exec| {
-            match serde_json::from_str::<crate::parser::ShellCommand>(&body_json) {
-                Ok(body_ast) => {
-                    let body_text = crate::text::getpermtext(&body_ast);
-                    let chunk = crate::parser::ZshParser::new(&body_text)
-                        .parse()
-                        .ok()
-                        .filter(|p| !p.lists.is_empty())
-                        .map(|p| crate::compile_zsh::ZshCompiler::new().compile(&p))
-                        .unwrap_or_else(|| {
-                            crate::shell_compiler::ShellCompiler::new()
-                                .compile(std::slice::from_ref(&body_ast))
-                        });
-                    exec.function_source.insert(name.clone(), body_text);
-                    exec.functions_compiled.insert(name.clone(), chunk);
-                    exec.functions.insert(name, body_ast);
-                    0
-                }
-                Err(_) => 1,
-            }
+            let Ok(body_ast) =
+                serde_json::from_str::<crate::parser::ShellCommand>(&body_json)
+            else {
+                return 1;
+            };
+            let body_text = crate::text::getpermtext(&body_ast);
+            let Some(program) = crate::parser::ZshParser::new(&body_text)
+                .parse()
+                .ok()
+                .filter(|p| !p.lists.is_empty())
+            else {
+                tracing::warn!(
+                    name = %name,
+                    "BUILTIN_REGISTER_FUNCTION: round-trip parse failed; \
+                     function not registered"
+                );
+                return 1;
+            };
+            let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
+            exec.function_source.insert(name.clone(), body_text);
+            exec.functions_compiled.insert(name.clone(), chunk);
+            exec.functions.insert(name, body_ast);
+            0
         });
         Value::Status(status)
     });
@@ -5087,24 +5091,30 @@ impl ShellExecutor {
         // Register the function. ZWC bodies arrive as a ShellCommand AST
         // (the wordcode → AST decoder produces the legacy shape). Round-trip
         // through `getpermtext` → ZshParser → ZshCompiler so the compiled
-        // chunk lives on the new pipeline; fall back to `ShellCompiler` only
-        // when the round-trip parse fails. The legacy `self.functions` AST
-        // table stays populated as the back-compat surface for code paths
-        // (intercepts, `type`, etc.) that haven't migrated.
+        // chunk lives on the new pipeline. If the round-trip parse fails,
+        // skip the chunk and log — the legacy `self.functions` AST stays
+        // populated as the introspection back-compat surface, but the
+        // function will be uncallable (matches "function not registered"
+        // semantics rather than masking a real round-trip bug behind a
+        // legacy code path).
         if let ShellCommand::FunctionDef(fname, body) = &shell_func {
             self.functions.insert(fname.clone(), (**body).clone());
             let body_text = crate::text::getpermtext(body.as_ref());
-            let compiled_via_zsh = crate::parser::ZshParser::new(&body_text)
+            if let Some(program) = crate::parser::ZshParser::new(&body_text)
                 .parse()
                 .ok()
                 .filter(|p| !p.lists.is_empty())
-                .map(|p| crate::compile_zsh::ZshCompiler::new().compile(&p));
-            let chunk = compiled_via_zsh.unwrap_or_else(|| {
-                crate::shell_compiler::ShellCompiler::new()
-                    .compile(std::slice::from_ref(body.as_ref()))
-            });
+            {
+                let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
+                self.functions_compiled.insert(fname.clone(), chunk);
+            } else {
+                tracing::warn!(
+                    function = %fname,
+                    "ZWC autoload: round-trip parse failed; function not callable \
+                     via the new pipeline"
+                );
+            }
             self.function_source.insert(fname.clone(), body_text);
-            self.functions_compiled.insert(fname.clone(), chunk);
         }
 
         Some(shell_func)
