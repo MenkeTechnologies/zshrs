@@ -951,6 +951,31 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let status = with_executor(|exec| exec.builtin_mktemp(&args));
         Value::Status(status)
     });
+
+    // Runtime word-expansion fallback for ShellWord variants not yet lowered
+    // to native ops. Pops a JSON-serialized ShellWord; pushes the expanded
+    // string. Routes through `expand_word_glob` so brace + glob expansion
+    // happen in addition to parameter / arithmetic / command substitution.
+    // Multiple glob/brace matches are space-joined for the bytecode argv model
+    // (a Phase D word-splitting refactor will replace the join with multi-push).
+    // See BUILTIN_EXPAND_WORD_RUNTIME doc for the eviction plan.
+    vm.register_builtin(BUILTIN_EXPAND_WORD_RUNTIME, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let json = args.into_iter().next().unwrap_or_default();
+        match serde_json::from_str::<crate::parser::ShellWord>(&json) {
+            Ok(word) => {
+                let parts = with_executor(|exec| exec.expand_word_glob(&word));
+                Value::str(parts.join(" "))
+            }
+            Err(_) => Value::str(""),
+        }
+    });
+
+    // Wire the ShellHost so direct shell ops (Op::Glob, Op::TildeExpand,
+    // Op::ExpandParam, Op::CmdSubst, etc.) route through ZshrsHost back into
+    // the executor. Builtins keep using CallBuiltin + with_executor; the host
+    // covers ops the compiler emits directly.
+    vm.set_shell_host(Box::new(ZshrsHost));
 }
 
 /// Pop argc arguments from the VM stack into a Vec<String>.
@@ -962,6 +987,88 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
     }
     args.reverse(); // Stack is LIFO, args should be in order
     args
+}
+
+/// Builtin ID for the runtime word-expansion fallback.
+///
+/// `compile_word` emits this for ShellWord variants that aren't yet lowered to
+/// native fusevm ops. The serialized ShellWord is JSON-encoded, pushed as a
+/// constant, and the handler deserializes + delegates to `expand_word`.
+///
+/// This is the bridge from "bytecode that calls builtins" to "tree-walker
+/// expansion semantics" — correct but slow. As variants are lowered to real
+/// ops (Op::Glob, Op::TildeExpand, Op::ExpandParam, etc.), the corresponding
+/// compile_word arms stop emitting this builtin.
+pub const BUILTIN_EXPAND_WORD_RUNTIME: u16 = 281;
+
+/// `ShellHost` implementation that delegates to the current `ShellExecutor`
+/// via the `with_executor` thread-local.
+///
+/// Construct fresh on each VM run (it carries no state itself). The VM
+/// dispatches host method calls during `vm.run()`, and `with_executor`
+/// resolves to the executor pointer set by `ExecutorContext::enter`.
+pub struct ZshrsHost;
+
+impl fusevm::ShellHost for ZshrsHost {
+    fn glob(&mut self, pattern: &str, _recursive: bool) -> Vec<String> {
+        with_executor(|exec| exec.expand_glob(pattern))
+    }
+
+    fn tilde_expand(&mut self, s: &str) -> String {
+        with_executor(|exec| exec.expand_tilde_named(s))
+    }
+
+    fn brace_expand(&mut self, s: &str) -> Vec<String> {
+        // Default to the existing string expansion + whitespace split since
+        // expand_string already handles brace expansion as part of literal
+        // substitution. Returns single-element vec if no braces.
+        let expanded = with_executor(|exec| exec.expand_string(s));
+        if expanded.contains(' ') {
+            expanded.split(' ').map(String::from).collect()
+        } else {
+            vec![expanded]
+        }
+    }
+
+    fn cmd_subst(&mut self, sub: &fusevm::Chunk) -> String {
+        // Run the sub-chunk on a nested VM with the same host wired up,
+        // capturing stdout. The current executor remains active via the
+        // thread-local — the nested VM uses CallBuiltin to dispatch shell
+        // ops back through `with_executor`.
+        use std::io::Read;
+        let (read_end, write_end) = match os_pipe::pipe() {
+            Ok(p) => p,
+            Err(_) => return String::new(),
+        };
+        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
+        if saved_stdout < 0 {
+            return String::new();
+        }
+        let write_fd = std::os::unix::io::AsRawFd::as_raw_fd(&write_end);
+        unsafe {
+            libc::dup2(write_fd, libc::STDOUT_FILENO);
+        }
+        drop(write_end);
+
+        let mut vm = fusevm::VM::new(sub.clone());
+        register_builtins(&mut vm);
+        vm.set_shell_host(Box::new(ZshrsHost));
+        let _ = vm.run();
+
+        unsafe {
+            libc::dup2(saved_stdout, libc::STDOUT_FILENO);
+            libc::close(saved_stdout);
+        }
+
+        let mut buf = String::new();
+        let mut reader = read_end;
+        let _ = reader.read_to_string(&mut buf);
+        // Strip trailing newlines (POSIX command substitution semantics)
+        while buf.ends_with('\n') {
+            buf.pop();
+        }
+        buf
+    }
 }
 
 /// Match an intercept pattern against a command name or full command string.

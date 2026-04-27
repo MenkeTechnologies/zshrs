@@ -397,9 +397,9 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "fusevm"
-version = "0.9.9"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0809c7addcdf6958a131b4f6b9f0f0d1f829b1d469da28096626b6cadf47f17f"
+checksum = "ffc91f388068bde24fa2c68aae4e32e75b9feca606f93b6bfa19f3e2ac475703"
 dependencies = [
  "glob",
  "serde",
@@ -2342,6 +2342,7 @@ dependencies = [
  "regex",
  "rusqlite",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "toml",

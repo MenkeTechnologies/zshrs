@@ -851,11 +851,32 @@ impl ShellCompiler {
     fn compile_word(&mut self, word: &ShellWord) {
         match word {
             ShellWord::Literal(s) => {
-                if s.contains('$') {
-                    self.compile_string_with_expansions(s);
-                } else {
+                // Triggers that demand the runtime expander (expand_word / expand_string):
+                //   $    — variables, ${...} modifiers, $((...)), $(...)
+                //   `    — backtick command substitution
+                //   ~    — tilde expansion (only at start of word, or after `:` for PATH-likes)
+                //   * ? [ — glob characters
+                let trigger_dollar = s.contains('$') || s.contains('`');
+                let trigger_glob = s.contains('*') || s.contains('?') || s.contains('[');
+                let trigger_tilde = s.starts_with('~') || s.contains(":~") || s.contains("=~");
+                if !trigger_dollar && !trigger_glob && !trigger_tilde {
+                    // Pure literal — no expansion possible, store as constant.
                     let idx = self.builder.add_constant(Value::str(s.as_str()));
                     self.builder.emit(Op::LoadConst(idx), 0);
+                } else if trigger_dollar
+                    && !trigger_glob
+                    && !trigger_tilde
+                    && Self::literal_has_only_simple_vars(s)
+                {
+                    // Cheap inline path: only $VAR / ${VAR} and no glob/tilde.
+                    self.compile_string_with_expansions(s);
+                } else {
+                    // Complex literal: globs, tilde, $(...), $((...)), `...`,
+                    // ${VAR/x/y}, etc. Round-trip through runtime expand_word so
+                    // semantics match the tree walker. Phase B+ replaces specific
+                    // patterns with dedicated ops (Op::Glob, Op::TildeExpand,
+                    // Op::ExpandParam, Op::CmdSubst).
+                    self.compile_word_runtime(word);
                 }
             }
             ShellWord::SingleQuoted(s) => {
@@ -894,13 +915,81 @@ impl ShellCompiler {
                     }
                 }
             }
-            // TODO: Glob, Tilde, ArrayLiteral, VariableBraced
-            _ => {
-                // Dynamic word — push empty string placeholder
-                let idx = self.builder.add_constant(Value::str(""));
-                self.builder.emit(Op::LoadConst(idx), 0);
-            }
+            // Dynamic word variants (Glob, Tilde, ArrayLiteral, ArrayVar,
+            // VariableBraced, CommandSub, ProcessSubIn/Out, ArithSub) — round-
+            // trip through the runtime expand_word builtin. See the helper.
+            _ => self.compile_word_runtime(word),
         }
+    }
+
+    /// Emit a runtime expand_word call for a ShellWord variant that isn't yet
+    /// lowered to native ops. Serialize the AST node to JSON, push as a
+    /// constant, call `BUILTIN_EXPAND_WORD_RUNTIME` — the handler deserializes
+    /// and delegates to `ShellExecutor::expand_word`, guaranteeing tree-walker
+    /// parity. Phase B+ replaces individual call sites with dedicated ops.
+    fn compile_word_runtime(&mut self, word: &ShellWord) {
+        let json = serde_json::to_string(word).unwrap_or_default();
+        let const_idx = self.builder.add_constant(Value::str(json));
+        self.builder.emit(Op::LoadConst(const_idx), 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_WORD_RUNTIME, 1),
+            0,
+        );
+    }
+
+    /// True iff `s` contains only simple `$VAR` / `${VAR}` references that
+    /// `compile_string_with_expansions` can handle inline. Returns false for
+    /// `$(`, `$((`, `${VAR/x/y}`, `${#VAR}`, backticks — anything that needs
+    /// the full `expand_string` runtime.
+    fn literal_has_only_simple_vars(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i];
+            if c == b'`' {
+                return false;
+            }
+            if c == b'$' {
+                let next = bytes.get(i + 1).copied();
+                match next {
+                    Some(b'(') => return false, // $( or $((
+                    Some(b'{') => {
+                        // Scan to matching `}` — if it contains any of `:#%/!^,?+=-`
+                        // or any operator, it needs the full expansion engine.
+                        let mut j = i + 2;
+                        let mut depth = 1;
+                        while j < bytes.len() && depth > 0 {
+                            match bytes[j] {
+                                b'{' => depth += 1,
+                                b'}' => depth -= 1,
+                                b':' | b'#' | b'%' | b'/' | b'!' | b'^' | b','
+                                | b'?' | b'+' | b'=' | b'-' => return false,
+                                _ => {}
+                            }
+                            j += 1;
+                        }
+                        i = j;
+                        continue;
+                    }
+                    Some(b) if b.is_ascii_alphabetic() || b == b'_' => {
+                        // Plain $VAR — fine
+                        i += 2;
+                        while i < bytes.len()
+                            && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+                        {
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    _ => {
+                        // $? $$ $! $@ $* $# $- $0..$9 — special params, runtime
+                        return false;
+                    }
+                }
+            }
+            i += 1;
+        }
+        true
     }
 
     fn compile_string_with_expansions(&mut self, s: &str) {
