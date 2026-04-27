@@ -1697,7 +1697,7 @@ impl ZshCompiler {
         // those — un-tokenize first to recover the original ASCII form.
         let expr_clean = crate::lexer::untokenize(expr);
 
-        let mut ac = crate::shell_compiler::ArithCompiler::new(&expr_clean);
+        let mut ac = crate::arith_compiler::ArithCompiler::new(&expr_clean);
         ac.slots = self.slots.clone();
         ac.next_slot = self.next_slot;
 
