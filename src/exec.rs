@@ -3411,6 +3411,13 @@ impl fusevm::ShellHost for ZshrsHost {
             if !exec.functions.contains_key(name) {
                 let _ = exec.autoload_function(name);
             }
+            // Autoload paths now populate functions_compiled directly via the
+            // ported pipeline. Re-check after the autoload triggers above so
+            // we skip the legacy AST-recompile fallback when the new pipeline
+            // already produced a Chunk.
+            if let Some(c) = exec.functions_compiled.get(name) {
+                return Some(c.clone());
+            }
             if let Some(ast) = exec.functions.get(name).cloned() {
                 let compiler = crate::shell_compiler::ShellCompiler::new();
                 let chunk = compiler.compile(std::slice::from_ref(&ast));
