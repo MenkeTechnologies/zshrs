@@ -3404,27 +3404,15 @@ impl fusevm::ShellHost for ZshrsHost {
             if let Some(c) = exec.functions_compiled.get(name) {
                 return Some(c.clone());
             }
-            // Trigger pending autoload before checking functions[]
-            if !exec.functions.contains_key(name) {
+            // Autoload paths populate `functions_compiled` directly via
+            // ZshParser + ZshCompiler. Trigger autoload then re-check.
+            if !exec.function_exists(name) {
                 exec.maybe_autoload(name);
             }
-            if !exec.functions.contains_key(name) {
+            if !exec.function_exists(name) {
                 let _ = exec.autoload_function(name);
             }
-            // Autoload paths now populate functions_compiled directly via the
-            // ported pipeline. Re-check after the autoload triggers above so
-            // we skip the legacy AST-recompile fallback when the new pipeline
-            // already produced a Chunk.
-            if let Some(c) = exec.functions_compiled.get(name) {
-                return Some(c.clone());
-            }
-            if let Some(ast) = exec.functions.get(name).cloned() {
-                let compiler = crate::shell_compiler::ShellCompiler::new();
-                let chunk = compiler.compile(std::slice::from_ref(&ast));
-                exec.functions_compiled.insert(name.to_string(), chunk.clone());
-                return Some(chunk);
-            }
-            None
+            exec.functions_compiled.get(name).cloned()
         });
 
         let chunk = chunk?;
@@ -6036,24 +6024,13 @@ impl ShellExecutor {
         let chunk = if let Some(c) = self.functions_compiled.get(name) {
             c.clone()
         } else {
-            // Trigger pending autoload, then re-check.
-            if !self.functions.contains_key(name) {
+            if !self.function_exists(name) {
                 self.maybe_autoload(name);
             }
-            if !self.functions.contains_key(name) {
+            if !self.function_exists(name) {
                 let _ = self.autoload_function(name);
             }
-            if let Some(c) = self.functions_compiled.get(name) {
-                c.clone()
-            } else if let Some(ast) = self.functions.get(name).cloned() {
-                let chunk =
-                    crate::shell_compiler::ShellCompiler::new()
-                        .compile(std::slice::from_ref(&ast));
-                self.functions_compiled.insert(name.to_string(), chunk.clone());
-                chunk
-            } else {
-                return None;
-            }
+            self.functions_compiled.get(name).cloned()?
         };
 
         // Save and replace positional params + local-scope save/restore,
