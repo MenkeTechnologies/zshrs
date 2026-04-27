@@ -196,35 +196,11 @@ fn probe_funcdef_ast() {
 }
 
 #[test]
-fn probe_zshflag_via_shellparser() {
-    use zsh::parser::ShellParser;
-    let mut p = ShellParser::new("echo ${(#)a}");
-    let cmds = p.parse_script().unwrap();
-    eprintln!("ShellParser ${{(#)a}} AST: {:#?}", cmds);
-}
-
-#[test]
-fn probe_zshflag_full_via_shellparser() {
-    use zsh::parser::ShellParser;
-    let mut p = ShellParser::new("a=(x y z); echo ${(#)a}");
-    let cmds = p.parse_script().unwrap();
-    eprintln!("ShellParser FULL ${{(#)a}} AST: {:#?}", cmds);
-}
-
-#[test]
 fn probe_assoc_two_in_dquote() {
     use zsh::parser::ZshParser;
     let mut p = ZshParser::new(r#"echo "${foo[a]} ${foo[b]}""#);
     let prog = p.parse().unwrap();
     eprintln!("ASSOC-TWO AST: {:#?}", prog);
-}
-
-#[test]
-fn probe_assoc_two_old() {
-    use zsh::parser::ShellParser;
-    let mut p = ShellParser::new(r#"echo "${foo[a]} ${foo[b]}""#);
-    let cmds = p.parse_script().unwrap();
-    eprintln!("ASSOC-TWO-OLD AST: {:#?}", cmds);
 }
 
 #[test]
@@ -336,14 +312,6 @@ fn probe_bang_dollar() {
     let mut p = ZshParser::new("echo !$");
     let prog = p.parse().unwrap();
     eprintln!("BANG-DOLLAR AST: {:#?}", prog);
-}
-
-#[test]
-fn probe_bang_dollar_old() {
-    use zsh::parser::ShellParser;
-    let mut p = ShellParser::new("echo !$");
-    let cmds = p.parse_script().unwrap();
-    eprintln!("BANG-DOLLAR OLD AST: {:#?}", cmds);
 }
 
 #[test]
