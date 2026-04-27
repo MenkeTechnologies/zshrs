@@ -3340,13 +3340,15 @@ impl fusevm::ShellHost for ZshrsHost {
         //   4. Available via fpath ZWC scan → autoload via that, then AST path
         //   5. Not a function → None so fusevm falls back to host.exec
         let chunk = with_executor(|exec| {
+            // Autoload pending: the legacy stub in self.functions makes
+            // function_exists() true even though no Chunk has landed yet,
+            // so trigger autoload BEFORE the existence check. maybe_autoload
+            // is a no-op when autoload_pending doesn't hold the name.
+            if exec.autoload_pending.contains_key(name) {
+                exec.maybe_autoload(name);
+            }
             if let Some(c) = exec.functions_compiled.get(name) {
                 return Some(c.clone());
-            }
-            // Autoload paths populate `functions_compiled` directly via
-            // ZshParser + ZshCompiler. Trigger autoload then re-check.
-            if !exec.function_exists(name) {
-                exec.maybe_autoload(name);
             }
             if !exec.function_exists(name) {
                 let _ = exec.autoload_function(name);
@@ -6001,12 +6003,14 @@ impl ShellExecutor {
         args: &[String],
     ) -> Option<i32> {
         // Resolve to a Chunk via the same cascade as ZshrsHost::call_function.
+        // Always trigger autoload first if pending — the stub in self.functions
+        // only counts as "loaded" once it has a real Chunk in functions_compiled.
+        if self.autoload_pending.contains_key(name) {
+            self.maybe_autoload(name);
+        }
         let chunk = if let Some(c) = self.functions_compiled.get(name) {
             c.clone()
         } else {
-            if !self.function_exists(name) {
-                self.maybe_autoload(name);
-            }
             if !self.function_exists(name) {
                 let _ = self.autoload_function(name);
             }
@@ -10957,9 +10961,23 @@ impl ShellExecutor {
                 .push(func.clone());
         }
 
-        // Functions — deserialize bincode bytecode blobs directly into self.functions
+        // Plugin cache replay: each bincode blob is a ShellCommand AST.
+        // Round-trip through getpermtext → ZshParser → ZshCompiler so the
+        // function lands in functions_compiled for dispatch (matches the
+        // ZWC autoload + BUILTIN_REGISTER_FUNCTION shape from the cascade).
+        // The legacy AST stays in self.functions as the back-compat surface.
         for (name, bytes) in &delta.functions {
             if let Ok(ast) = bincode::deserialize::<crate::parser::ShellCommand>(bytes) {
+                let body_text = crate::text::getpermtext(&ast);
+                if let Some(program) = crate::parser::ZshParser::new(&body_text)
+                    .parse()
+                    .ok()
+                    .filter(|p| !p.lists.is_empty())
+                {
+                    let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
+                    self.functions_compiled.insert(name.clone(), chunk);
+                    self.function_source.insert(name.clone(), body_text);
+                }
                 self.functions.insert(name.clone(), ast);
             }
         }
