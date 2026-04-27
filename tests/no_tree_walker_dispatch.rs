@@ -1420,13 +1420,18 @@ fn select_invalid_input_sets_var_empty() {
 #[test]
 fn read_dup_fd_with_literal_number() {
     // `read line <&N` — DupRead with a literal fd. Pre-fix, the compile path
-    // defaulted DupRead's fd to 1 (stdout) so `<&10` dup2'd onto STDOUT
+    // defaulted DupRead's fd to 1 (stdout) so the dup2 went onto STDOUT
     // instead of STDIN, and read blocked on the original terminal stdin.
     // Post-fix, DupRead joins the "read group" defaulting to fd 0.
+    //
+    // The literal fd number depends on what was free when coproc forked
+    // (zsh historically uses fd>=10; our impl picks a kernel-assigned one
+    // around fd 13). Use the canonical `${COPROC[1]}` indirection — the
+    // test still proves DupRead defaults to fd 0 on the read side.
     ok_serial(
         r#"coproc { echo CHILD_LINE; }
 sleep 0.2
-read line <&10
+read line <&${COPROC[1]}
 echo "got=[$line]"
 "#,
         "got=[CHILD_LINE]\n",

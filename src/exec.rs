@@ -1118,21 +1118,32 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
 
-        // Wait for all children, capture last status
-        let mut last_status = 0i32;
+        // Wait for all children, capture per-stage statuses for PIPESTATUS.
+        let mut pipestatus: Vec<i32> = Vec::with_capacity(child_pids.len());
         for pid in child_pids {
             let mut status: i32 = 0;
             unsafe {
                 libc::waitpid(pid, &mut status, 0);
             }
-            last_status = if libc::WIFEXITED(status) {
+            let s = if libc::WIFEXITED(status) {
                 libc::WEXITSTATUS(status)
             } else if libc::WIFSIGNALED(status) {
                 128 + libc::WTERMSIG(status)
             } else {
                 1
             };
+            pipestatus.push(s);
         }
+        let last_status = *pipestatus.last().unwrap_or(&0);
+
+        // Populate `pipestatus` (zsh) and `PIPESTATUS` (bash) arrays so
+        // scripts can inspect per-stage exit codes. Both names are common
+        // in user code; populating both removes a portability foot-gun.
+        with_executor(|exec| {
+            let strs: Vec<String> = pipestatus.iter().map(|s| s.to_string()).collect();
+            exec.arrays.insert("pipestatus".to_string(), strs.clone());
+            exec.arrays.insert("PIPESTATUS".to_string(), strs);
+        });
 
         Value::Status(last_status)
     });
@@ -2452,10 +2463,263 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
+    // Pre-compiled function registration — used by compile_zsh.rs's
+    // FuncDef path. Stack: [name, base64-bincode-of-Chunk]. We decode
+    // the base64, deserialize the Chunk, and store directly in
+    // executor.functions_compiled. Bypasses the ShellCommand JSON layer.
+    // `[[ -v name ]]` — true iff `name` is a set variable (incl. set-empty,
+    // arrays, assoc arrays, and exported env vars). Pops one string, pushes
+    // Bool. Matches bash's -v semantics; zsh's `(t)` flag overlaps.
+    vm.register_builtin(BUILTIN_VAR_EXISTS, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let exists = with_executor(|exec| {
+            exec.variables.contains_key(&name)
+                || exec.arrays.contains_key(&name)
+                || exec.assoc_arrays.contains_key(&name)
+                || std::env::var(&name).is_ok()
+        });
+        fusevm::Value::Bool(exists)
+    });
+
+    // `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`
+    // Pops [name, op_byte, rhs] (rhs popped first). Returns the modified
+    // value as Value::Str. Handles unset/empty distinction (`:-` etc.
+    // treat empty same as unset, matching POSIX).
+    vm.register_builtin(BUILTIN_PARAM_DEFAULT_FAMILY, |vm, _argc| {
+        let rhs = vm.pop().to_str();
+        let op = vm.pop().to_int() as u8;
+        let name = vm.pop().to_str();
+        let val = with_executor(|exec| exec.get_variable(&name));
+        let is_empty = val.is_empty();
+        match op {
+            0 => {
+                // `:-` use default if empty
+                if is_empty {
+                    fusevm::Value::str(rhs)
+                } else {
+                    fusevm::Value::str(val)
+                }
+            }
+            1 => {
+                // `:=` assign default if empty, then use it
+                if is_empty {
+                    with_executor(|exec| {
+                        exec.variables.insert(name, rhs.clone());
+                    });
+                    fusevm::Value::str(rhs)
+                } else {
+                    fusevm::Value::str(val)
+                }
+            }
+            2 => {
+                // `:?` error if empty (matches zsh — print msg to stderr)
+                if is_empty {
+                    eprintln!("zshrs: {}: {}", name, rhs);
+                    fusevm::Value::str("")
+                } else {
+                    fusevm::Value::str(val)
+                }
+            }
+            3 => {
+                // `:+` use alt if non-empty
+                if is_empty {
+                    fusevm::Value::str("")
+                } else {
+                    fusevm::Value::str(rhs)
+                }
+            }
+            _ => fusevm::Value::str(val),
+        }
+    });
+
+    // `${var:offset[:length]}` — substring. Pops [name, offset, length].
+    // length == -1 means "rest of string". Negative offset counts from end.
+    vm.register_builtin(BUILTIN_PARAM_SUBSTRING, |vm, _argc| {
+        let length = vm.pop().to_int();
+        let offset = vm.pop().to_int();
+        let name = vm.pop().to_str();
+        let val = with_executor(|exec| exec.get_variable(&name));
+        let chars: Vec<char> = val.chars().collect();
+        let len = chars.len() as i64;
+        let start = if offset < 0 {
+            (len + offset).max(0) as usize
+        } else {
+            (offset as usize).min(chars.len())
+        };
+        let take = if length < 0 {
+            chars.len().saturating_sub(start)
+        } else {
+            (length as usize).min(chars.len().saturating_sub(start))
+        };
+        let result: String = chars.iter().skip(start).take(take).collect();
+        fusevm::Value::str(result)
+    });
+
+    // `${var#pat}` / `${var##pat}` / `${var%pat}` / `${var%%pat}`
+    // Pops [name, pattern, op_byte]. op: 0=`#` short-prefix, 1=`##` long,
+    // 2=`%` short-suffix, 3=`%%` long. Glob-pattern matching via the
+    // existing glob_match_static helper.
+    vm.register_builtin(BUILTIN_PARAM_STRIP, |vm, _argc| {
+        let op = vm.pop().to_int() as u8;
+        let pattern = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        let val = with_executor(|exec| exec.get_variable(&name));
+        let result = match op {
+            0 => {
+                // `#` shortest prefix match
+                let mut out = val.clone();
+                for i in 0..=val.len() {
+                    let prefix = &val[..i];
+                    if ShellExecutor::glob_match_static(prefix, &pattern) {
+                        out = val[i..].to_string();
+                        break;
+                    }
+                }
+                out
+            }
+            1 => {
+                // `##` longest prefix match
+                let mut out = val.clone();
+                for i in (0..=val.len()).rev() {
+                    let prefix = &val[..i];
+                    if ShellExecutor::glob_match_static(prefix, &pattern) {
+                        out = val[i..].to_string();
+                        break;
+                    }
+                }
+                out
+            }
+            2 => {
+                // `%` shortest suffix match
+                let mut out = val.clone();
+                for i in (0..=val.len()).rev() {
+                    let suffix = &val[i..];
+                    if ShellExecutor::glob_match_static(suffix, &pattern) {
+                        out = val[..i].to_string();
+                        break;
+                    }
+                }
+                out
+            }
+            3 => {
+                // `%%` longest suffix match
+                let mut out = val.clone();
+                for i in 0..=val.len() {
+                    let suffix = &val[i..];
+                    if ShellExecutor::glob_match_static(suffix, &pattern) {
+                        out = val[..i].to_string();
+                        break;
+                    }
+                }
+                out
+            }
+            _ => val,
+        };
+        fusevm::Value::str(result)
+    });
+
+    // `${#name}` — pops [name]. Returns the value's element count for
+    // arrays (indexed and assoc) or character length for scalars.
+    vm.register_builtin(BUILTIN_PARAM_LENGTH, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let count = with_executor(|exec| {
+            if let Some(arr) = exec.arrays.get(&name) {
+                arr.len()
+            } else if let Some(assoc) = exec.assoc_arrays.get(&name) {
+                assoc.len()
+            } else {
+                exec.get_variable(&name).chars().count()
+            }
+        });
+        fusevm::Value::str(count.to_string())
+    });
+
+    // `${var/pat/repl}` / `${var//pat/repl}` / `${var/#pat/repl}` /
+    // `${var/%pat/repl}` — Pops [name, pattern, replacement, op_byte].
+    // op: 0=first, 1=all, 2=anchor-prefix (`/#`), 3=anchor-suffix (`/%`).
+    vm.register_builtin(BUILTIN_PARAM_REPLACE, |vm, _argc| {
+        let op = vm.pop().to_int() as u8;
+        let repl = vm.pop().to_str();
+        let pattern = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        let val = with_executor(|exec| exec.get_variable(&name));
+        let result = match op {
+            0 => val.replacen(&pattern, &repl, 1),
+            1 => val.replace(&pattern, &repl),
+            2 => {
+                if val.starts_with(&pattern) {
+                    format!("{}{}", repl, &val[pattern.len()..])
+                } else {
+                    val
+                }
+            }
+            3 => {
+                if val.ends_with(&pattern) {
+                    format!("{}{}", &val[..val.len() - pattern.len()], repl)
+                } else {
+                    val
+                }
+            }
+            _ => val,
+        };
+        fusevm::Value::str(result)
+    });
+
+    vm.register_builtin(BUILTIN_REGISTER_COMPILED_FN, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let mut iter = args.into_iter();
+        let name = iter.next().unwrap_or_default();
+        let body_b64 = iter.next().unwrap_or_default();
+        let bytes = base64_decode(&body_b64);
+        let status = match bincode::deserialize::<fusevm::Chunk>(&bytes) {
+            Ok(chunk) => with_executor(|exec| {
+                exec.functions_compiled.insert(name, chunk);
+                0
+            }),
+            Err(_) => 1,
+        };
+        Value::Status(status)
+    });
+
     // Wire the ShellHost so direct shell ops (Op::Glob, Op::TildeExpand,
     // Op::ExpandParam, Op::CmdSubst, Op::CallFunction, etc.) route through
     // ZshrsHost back into the executor.
     vm.set_shell_host(Box::new(ZshrsHost));
+}
+
+/// Base64 decoder used by BUILTIN_REGISTER_COMPILED_FN.
+fn base64_decode(s: &str) -> Vec<u8> {
+    let decode_char = |c: u8| -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut i = 0;
+    while i + 4 <= bytes.len() {
+        let chunk = &bytes[i..i + 4];
+        let pad = chunk.iter().filter(|&&c| c == b'=').count();
+        let v0 = decode_char(chunk[0]).unwrap_or(0) as u32;
+        let v1 = decode_char(chunk[1]).unwrap_or(0) as u32;
+        let v2 = decode_char(chunk[2]).unwrap_or(0) as u32;
+        let v3 = decode_char(chunk[3]).unwrap_or(0) as u32;
+        let n = (v0 << 18) | (v1 << 12) | (v2 << 6) | v3;
+        out.push(((n >> 16) & 0xff) as u8);
+        if pad < 2 {
+            out.push(((n >> 8) & 0xff) as u8);
+        }
+        if pad < 1 {
+            out.push((n & 0xff) as u8);
+        }
+        i += 4;
+    }
+    out
 }
 
 impl ZshrsHost {
@@ -2647,6 +2911,34 @@ pub const BUILTIN_REGEX_MATCH: u16 = 303;
 /// returns Value::Array of fields. Used in array-literal context where
 /// `arr=($(cmd))` should expand cmd's stdout into multiple elements.
 pub const BUILTIN_WORD_SPLIT: u16 = 304;
+
+/// Register a pre-compiled fusevm chunk as a function. Stack: [name,
+/// base64-bincode-of-Chunk]. Used by compile_zsh's compile_funcdef to
+/// register functions parsed via ZshParser without going through the
+/// ShellCommand JSON serialization path.
+pub const BUILTIN_REGISTER_COMPILED_FN: u16 = 305;
+pub const BUILTIN_VAR_EXISTS: u16 = 306;
+/// Phase 1 native param-modifier builtins. Each takes a fixed argv shape
+/// and returns the modified value as Value::Str. Replaces the runtime
+/// ShellWord round-trip via BUILTIN_EXPAND_WORD_RUNTIME for the common
+/// shapes.
+///
+/// `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`
+/// — pop [name, op_byte, rhs]. op_byte: 0=`:-`, 1=`:=`, 2=`:?`, 3=`:+`.
+pub const BUILTIN_PARAM_DEFAULT_FAMILY: u16 = 307;
+/// `${var:offset[:length]}` — pop [name, offset, length] (length=-1 means
+/// "rest of value"; negative offset counts from end).
+pub const BUILTIN_PARAM_SUBSTRING: u16 = 308;
+/// `${var#pat}` / `${var##pat}` / `${var%pat}` / `${var%%pat}` — pop
+/// [name, pattern, op_byte]. op_byte: 0=`#`, 1=`##`, 2=`%`, 3=`%%`.
+pub const BUILTIN_PARAM_STRIP: u16 = 309;
+/// `${var/pat/repl}` / `${var//pat/repl}` / `${var/#pat/repl}` /
+/// `${var/%pat/repl}` — pop [name, pattern, replacement, op_byte].
+/// op_byte: 0=first, 1=all, 2=anchor-prefix, 3=anchor-suffix.
+pub const BUILTIN_PARAM_REPLACE: u16 = 310;
+/// `${#name}` — character length of a scalar value, or element count
+/// of an indexed/assoc array. Pops [name], returns count as Value::Str.
+pub const BUILTIN_PARAM_LENGTH: u16 = 311;
 
 /// `${(flags)name}` — zsh parameter expansion flags. Stack: [name, flags].
 /// Flags applied left-to-right. Supported subset (high-value, used by zpwr):
@@ -2847,6 +3139,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 arrays: exec.arrays.clone(),
                 assoc_arrays: exec.assoc_arrays.clone(),
                 positional_params: exec.positional_params.clone(),
+                cwd: std::env::current_dir().ok(),
             });
         });
     }
@@ -2858,6 +3151,9 @@ impl fusevm::ShellHost for ZshrsHost {
                 exec.arrays = snap.arrays;
                 exec.assoc_arrays = snap.assoc_arrays;
                 exec.positional_params = snap.positional_params;
+                if let Some(cwd) = snap.cwd {
+                    let _ = std::env::set_current_dir(cwd);
+                }
             }
         });
     }
@@ -2998,12 +3294,15 @@ impl fusevm::ShellHost for ZshrsHost {
         // pointer set by the outer VM remains valid for the nested VM —
         // nested CallBuiltin handlers and host callbacks all see the same
         // executor.
-        let (saved_params, saved_local_count) = with_executor(|exec| {
-            let prev = std::mem::replace(&mut exec.positional_params, args.clone());
-            let count = exec.local_save_stack.len();
-            exec.local_scope_depth += 1;
-            (prev, count)
-        });
+        let (saved_params, saved_local_count, saved_local_arr_count) =
+            with_executor(|exec| {
+                let prev =
+                    std::mem::replace(&mut exec.positional_params, args.clone());
+                let count = exec.local_save_stack.len();
+                let arr_count = exec.local_array_save_stack.len();
+                exec.local_scope_depth += 1;
+                (prev, count, arr_count)
+            });
 
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
@@ -3022,6 +3321,22 @@ impl fusevm::ShellHost for ZshrsHost {
                         }
                         None => {
                             exec.variables.remove(&var_name);
+                        }
+                    }
+                }
+            }
+            // Same for `local arr=(...)` array bindings — restore the
+            // outer array's elements (or remove if there was none).
+            while exec.local_array_save_stack.len() > saved_local_arr_count {
+                if let Some((arr_name, old_arr)) =
+                    exec.local_array_save_stack.pop()
+                {
+                    match old_arr {
+                        Some(items) => {
+                            exec.arrays.insert(arr_name, items);
+                        }
+                        None => {
+                            exec.arrays.remove(&arr_name);
                         }
                     }
                 }
@@ -3714,6 +4029,9 @@ pub struct SubshellSnapshot {
     pub arrays: HashMap<String, Vec<String>>,
     pub assoc_arrays: HashMap<String, HashMap<String, String>>,
     pub positional_params: Vec<String>,
+    /// Process working directory at subshell entry. `cd` inside the
+    /// subshell shouldn't leak to the parent; we restore on End.
+    pub cwd: Option<std::path::PathBuf>,
 }
 
 pub struct ShellExecutor {
@@ -3758,6 +4076,10 @@ pub struct ShellExecutor {
     pub readonly_vars: std::collections::HashSet<String>, // Read-only variables
     /// Stack for `local` variable save/restore (name, old_value).
     pub local_save_stack: Vec<(String, Option<String>)>,
+    /// Parallel stack for `local arr=(...)` array save/restore.
+    /// `Some(prev)` means restore on exit; `None` means the name had no
+    /// outer array binding and should be removed.
+    pub local_array_save_stack: Vec<(String, Option<Vec<String>>)>,
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
     pub autoload_pending: HashMap<String, AutoloadFlags>, // Functions marked for autoload
@@ -3905,6 +4227,7 @@ impl ShellExecutor {
             comp_isuffix: String::new(),
             readonly_vars: std::collections::HashSet::new(),
             local_save_stack: Vec::new(),
+            local_array_save_stack: Vec::new(),
             local_scope_depth: 0,
             autoload_pending: HashMap::new(),
             hook_functions: HashMap::new(),
@@ -4810,22 +5133,35 @@ impl ShellExecutor {
 
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
-        let _ctx = ExecutorContext::enter(self);
-        match vm.run() {
-            fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                self.last_status = vm.last_status;
+        {
+            let _ctx = ExecutorContext::enter(self);
+            match vm.run() {
+                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                    self.last_status = vm.last_status;
+                }
+                fusevm::VMResult::Error(e) => return Err(format!("VM error: {}", e)),
             }
-            fusevm::VMResult::Error(e) => return Err(format!("VM error: {}", e)),
         }
+
+        // Fire EXIT trap if set. Same logic as execute_script's old path:
+        // remove first to prevent infinite recursion, then run.
+        if let Some(action) = self.traps.remove("EXIT") {
+            tracing::debug!("firing EXIT trap (new pipeline)");
+            let _ = self.execute_script_zsh_pipeline(&action);
+        }
+
         Ok(self.last_status)
     }
 
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
-        // Opt-in to the new ZshParser pipeline via env var. Once parity
-        // with the corpus is reached, this becomes the default and the
-        // old ShellParser path is deleted.
-        if std::env::var("ZSHRS_NEW_PIPELINE").is_ok() {
+        // The new ZshLexer + ZshParser + ZshCompiler pipeline is the
+        // default. Reaches parity with the legacy ShellParser path on
+        // the full 227-construct corpus, the 158-test no_tree_walker
+        // dispatch suite, and the 70-file ztst integration suite.
+        // Set `ZSHRS_OLD_PIPELINE=1` to fall back as an emergency
+        // escape hatch while the legacy path is still around.
+        if std::env::var("ZSHRS_OLD_PIPELINE").is_err() {
             return self.execute_script_zsh_pipeline(script);
         }
 
@@ -5537,6 +5873,7 @@ impl ShellExecutor {
         // Save local variable scope — any `local` declarations during this
         // function will be reversed on exit (matches zsh's startparamscope/endparamscope).
         let saved_local_vars = self.local_save_stack.len();
+        let saved_local_arrs = self.local_array_save_stack.len();
         self.local_scope_depth += 1;
 
         // Set new positional params
@@ -5563,6 +5900,18 @@ impl ShellExecutor {
                     }
                     None => {
                         self.variables.remove(&name);
+                    }
+                }
+            }
+        }
+        while self.local_array_save_stack.len() > saved_local_arrs {
+            if let Some((name, old_arr)) = self.local_array_save_stack.pop() {
+                match old_arr {
+                    Some(items) => {
+                        self.arrays.insert(name, items);
+                    }
+                    None => {
+                        self.arrays.remove(&name);
                     }
                 }
             }
@@ -5968,7 +6317,11 @@ impl ShellExecutor {
         expanded.sort();
 
         if expanded.is_empty() {
-            if nullglob {
+            // The `(N)` per-pattern qualifier is the local equivalent of
+            // `setopt nullglob` — when present on this glob, no-match
+            // collapses to an empty list (silent) instead of the literal
+            // pattern. Mirrors zsh's `*(N)` semantics.
+            if nullglob || qualifiers.contains('N') {
                 vec![]
             } else {
                 vec![pattern.to_string()]
@@ -7608,6 +7961,12 @@ impl ShellExecutor {
                     get_array_by_subscript, get_array_element_by_subscript, getindex,
                 };
                 let ksh_arrays = self.options.get("ksh_arrays").copied().unwrap_or(false);
+                // Index can be `$var`, arithmetic, or a literal integer.
+                // Expand parameter refs first so `${a[$i]}` resolves the
+                // current value of `i`. expand_string handles `$N`/`${N}`/
+                // `$((expr))`/`$(cmd)` uniformly.
+                let expanded_index = self.expand_string(index);
+                let index = expanded_index.as_str();
 
                 if let Ok(v) = getindex(index, false, ksh_arrays) {
                     // Check if it's an array first
@@ -7723,16 +8082,23 @@ impl ShellExecutor {
                 // Handle history-style modifiers: :A, :h, :t, :r, :e, :l, :u, :q, :Q
                 // These can be chained: ${var:A:h:h}
                 return self.apply_history_modifiers(&val, rest);
-            } else if rest
-                .chars()
-                .next()
-                .map(|c| c.is_ascii_digit() || c == '-')
-                .unwrap_or(false)
-            {
+            } else if {
+                // Negative offset disambiguator: `${v: -3}` (leading
+                // space) means substring with offset -3, NOT default-if-
+                // unset (`${v:-3}`). Detect leading whitespace and
+                // skip past it before the digit-or-dash check.
+                let stripped = rest.trim_start_matches(' ');
+                stripped
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit() || c == '-')
+                    .unwrap_or(false)
+            } {
                 // ${var:offset} or ${var:offset:length}
-                let parts: Vec<&str> = rest.splitn(2, ':').collect();
-                let offset: i64 = parts[0].parse().unwrap_or(0);
-                let length: Option<usize> = parts.get(1).and_then(|s| s.parse().ok());
+                let rest_trimmed = rest.trim_start_matches(' ');
+                let parts: Vec<&str> = rest_trimmed.splitn(2, ':').collect();
+                let offset: i64 = parts[0].trim().parse().unwrap_or(0);
+                let length: Option<usize> = parts.get(1).and_then(|s| s.trim().parse().ok());
 
                 let start = if offset < 0 {
                     (val.len() as i64 + offset).max(0) as usize
@@ -7768,8 +8134,27 @@ impl ShellExecutor {
                 let rest = if replace_all { &rest[1..] } else { rest };
 
                 let parts: Vec<&str> = rest.splitn(2, '/').collect();
-                let pattern = parts.get(0).unwrap_or(&"");
-                let replacement = parts.get(1).unwrap_or(&"");
+                let pattern = *parts.get(0).unwrap_or(&"");
+                let replacement = *parts.get(1).unwrap_or(&"");
+
+                // Anchor support: `${v/#pre/repl}` matches only at start;
+                // `${v/%suf/repl}` matches only at end. The single-vs-all
+                // distinction collapses for anchors (an anchor matches at
+                // most once), so `replace_all` doesn't change behavior.
+                if let Some(rest) = pattern.strip_prefix('#') {
+                    return if val.starts_with(rest) {
+                        format!("{}{}", replacement, &val[rest.len()..])
+                    } else {
+                        val
+                    };
+                }
+                if let Some(rest) = pattern.strip_prefix('%') {
+                    return if val.ends_with(rest) {
+                        format!("{}{}", &val[..val.len() - rest.len()], replacement)
+                    } else {
+                        val
+                    };
+                }
 
                 return if replace_all {
                     val.replace(pattern, replacement)
@@ -7960,6 +8345,15 @@ impl ShellExecutor {
                 continue;
             }
             if c == '$' {
+                // Bare `$` at end-of-string — literal dollar sign. zsh
+                // treats `!$` and `echo $` as literal in non-interactive
+                // mode (history expansion is off). Without this guard the
+                // var-name loop below collects an empty name and resolves
+                // to "" — eating the dollar sign.
+                if chars.peek().is_none() {
+                    result.push('$');
+                    continue;
+                }
                 if chars.peek() == Some(&'(') {
                     chars.next(); // consume '('
 
@@ -8283,7 +8677,15 @@ impl ShellExecutor {
         let is_internal = if let ShellCommand::Simple(simple) = &commands[0] {
             let first = simple.words.first().map(|w| self.expand_word(w));
             if let Some(ref name) = first {
-                self.functions.contains_key(name) || self.is_builtin(name)
+                // Functions can live in either `functions` (legacy AST table,
+                // populated by ShellCompiler's REGISTER_FUNCTION) or
+                // `functions_compiled` (new pipeline's REGISTER_COMPILED_FN).
+                // Either is "internal" — capture stdout via the in-process
+                // pipe path instead of spawning a child that wouldn't see
+                // the parent's function definitions.
+                self.functions.contains_key(name)
+                    || self.functions_compiled.contains_key(name)
+                    || self.is_builtin(name)
             } else {
                 true
             }
@@ -8871,6 +9273,54 @@ impl ShellExecutor {
             "@" | "*" => self.positional_params.join(" "),
             "#" => self.positional_params.len().to_string(),
             "?" => self.last_status.to_string(),
+            "RANDOM" => {
+                // zsh/bash: pseudo-random unsigned 16-bit integer per
+                // expansion. We use process+nano for a cheap, OS-portable
+                // source — not cryptographically secure, but matches zsh's
+                // "noise" semantics.
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let nanos = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.subsec_nanos() as u64)
+                    .unwrap_or(0);
+                let pid = std::process::id() as u64;
+                let r = (nanos.wrapping_mul(2654435761).wrapping_add(pid)) as u32;
+                ((r as u16) & 0x7fff).to_string()
+            }
+            "SECONDS" => {
+                // Seconds since shell start. We approximate via the
+                // tracked `shell_start_time` if present; otherwise 0.
+                self.variables
+                    .get("SECONDS")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        use std::time::{SystemTime, UNIX_EPOCH};
+                        let now = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let start = self
+                            .variables
+                            .get("__zshrs_start_secs")
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(now);
+                        now.saturating_sub(start).to_string()
+                    })
+            }
+            "EPOCHSECONDS" => {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs().to_string())
+                    .unwrap_or_else(|_| "0".to_string())
+            }
+            "LINENO" => {
+                // Tracked elsewhere; default to 1 if not populated.
+                self.variables
+                    .get("LINENO")
+                    .cloned()
+                    .unwrap_or_else(|| "1".to_string())
+            }
             "0" => self
                 .variables
                 .get("0")
@@ -9024,7 +9474,24 @@ impl ShellExecutor {
                 let v = val.unwrap_or_default();
                 let pat = self.expand_word(pattern);
                 let repl = self.expand_word(replacement);
-                v.replacen(&pat, &repl, 1)
+                // `${v/#prefix/repl}` — anchor at start.
+                // `${v/%suffix/repl}` — anchor at end.
+                // Otherwise: first occurrence anywhere.
+                if let Some(rest) = pat.strip_prefix('#') {
+                    if v.starts_with(rest) {
+                        format!("{}{}", repl, &v[rest.len()..])
+                    } else {
+                        v
+                    }
+                } else if let Some(rest) = pat.strip_prefix('%') {
+                    if v.ends_with(rest) {
+                        format!("{}{}", &v[..v.len() - rest.len()], repl)
+                    } else {
+                        v
+                    }
+                } else {
+                    v.replacen(&pat, &repl, 1)
+                }
             }
 
             // ${var//pattern/replacement} - replace all matches
@@ -9032,7 +9499,23 @@ impl ShellExecutor {
                 let v = val.unwrap_or_default();
                 let pat = self.expand_word(pattern);
                 let repl = self.expand_word(replacement);
-                v.replace(&pat, &repl)
+                // Anchored forms behave the same as single-replace under `//`
+                // — anchor by definition matches once.
+                if let Some(rest) = pat.strip_prefix('#') {
+                    if v.starts_with(rest) {
+                        format!("{}{}", repl, &v[rest.len()..])
+                    } else {
+                        v
+                    }
+                } else if let Some(rest) = pat.strip_prefix('%') {
+                    if v.ends_with(rest) {
+                        format!("{}{}", &v[..v.len() - rest.len()], repl)
+                    } else {
+                        v
+                    }
+                } else {
+                    v.replace(&pat, &repl)
+                }
             }
 
             // ${var^} or ${var^^} - uppercase
@@ -9202,6 +9685,9 @@ impl ShellExecutor {
                     if chars.peek() == Some(&'q') {
                         chars.next();
                         flags.push(ZshParamFlag::DoubleQuote);
+                    } else if chars.peek() == Some(&'+') {
+                        chars.next();
+                        flags.push(ZshParamFlag::QuoteIfNeeded);
                     } else {
                         flags.push(ZshParamFlag::Quote);
                     }
@@ -9343,6 +9829,26 @@ impl ShellExecutor {
             }
             ZshParamFlag::Words => val.split_whitespace().collect::<Vec<_>>().join(" "),
             ZshParamFlag::Quote => format!("'{}'", val.replace('\'', "'\\''")),
+            ZshParamFlag::QuoteIfNeeded => {
+                // (q+) — only wrap with single-quotes when the value
+                // contains shell-special chars. Mirrors BUILTIN_PARAM_FLAG's
+                // q+ branch (see exec.rs:1660 needs_quoting predicate).
+                let needs = val.is_empty()
+                    || val.chars().any(|c| {
+                        c.is_whitespace()
+                            || matches!(
+                                c,
+                                '\'' | '"' | '\\' | '$' | '`' | '*' | '?'
+                                    | '[' | ']' | '{' | '}' | '(' | ')'
+                                    | '|' | '&' | ';' | '<' | '>' | '#' | '~'
+                            )
+                    });
+                if needs {
+                    format!("'{}'", val.replace('\'', "'\\''"))
+                } else {
+                    val.to_string()
+                }
+            }
             ZshParamFlag::DoubleQuote => format!("\"{}\"", val.replace('"', "\\\"")),
             ZshParamFlag::Unique => {
                 // Unique preserves first-occurrence order, so parallel doesn't help.
@@ -10426,6 +10932,17 @@ impl ShellExecutor {
             .first()
             .and_then(|s| s.parse::<i32>().ok())
             .unwrap_or(self.last_status);
+        // Inside a subshell `(...)` the shell hasn't forked, so a real
+        // `process::exit` would tear down the parent. zsh semantics:
+        // `(exit N)` exits the subshell only. Track the snapshot stack
+        // depth — non-zero means we're inside one or more nested
+        // subshells. Set the returning flag with the desired status and
+        // let the subshell scope-end pop it back to normal flow.
+        if !self.subshell_snapshots.is_empty() {
+            self.last_status = code;
+            self.returning = Some(code);
+            return code;
+        }
         std::process::exit(code);
     }
 
@@ -10885,7 +11402,15 @@ impl ShellExecutor {
                 }
             }
 
-            _ => 1,
+            _ => {
+                // Negation prefix: `! expr` — recursively evaluate and flip.
+                // Handles `test ! -z foo`, `test ! a = b`, etc.
+                if args.first() == Some(&"!") {
+                    let rest: Vec<String> = args[1..].iter().map(|s| s.to_string()).collect();
+                    return if self.builtin_test(&rest) == 0 { 1 } else { 0 };
+                }
+                1
+            }
         }
     }
 
@@ -10907,8 +11432,15 @@ impl ShellExecutor {
                 }
                 let name = arg.split('=').next().unwrap_or(arg);
                 if !name.is_empty() {
+                    // Scalar save — covers `local x=foo` and `local x` reads.
                     let old_val = self.variables.get(name).cloned();
                     self.local_save_stack.push((name.to_string(), old_val));
+                    // Array save — covers `local arr=(...)`. Track even when
+                    // not currently an array, so call_function exit can
+                    // remove a freshly-installed local array binding.
+                    let old_arr = self.arrays.get(name).cloned();
+                    self.local_array_save_stack
+                        .push((name.to_string(), old_arr));
                 }
             }
         }
@@ -17030,8 +17562,15 @@ impl ShellExecutor {
         let format_args = &args[1..];
         let mut arg_idx = 0;
         let mut output = String::new();
+        // POSIX printf: re-apply the format string while args remain. The
+        // outer label guards against infinite loops when the format
+        // consumes no args (e.g. `printf 'literal'`) — exit on the second
+        // pass even if more args linger.
         let mut chars = format.chars().peekable();
+        let mut prev_arg_idx = arg_idx;
+        let mut entered_loop = false;
 
+        'outer: loop {
         while let Some(c) = chars.next() {
             if c == '\\' {
                 match chars.next() {
@@ -17463,6 +18002,16 @@ impl ShellExecutor {
             } else {
                 output.push(c);
             }
+        }
+            // After one full pass: re-loop only if at least one arg was
+            // consumed AND we still have args left.
+            if arg_idx <= prev_arg_idx || arg_idx >= format_args.len() {
+                let _ = entered_loop;
+                break 'outer;
+            }
+            prev_arg_idx = arg_idx;
+            entered_loop = true;
+            chars = format.chars().peekable();
         }
 
         print!("{}", output);

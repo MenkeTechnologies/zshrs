@@ -26,10 +26,10 @@ use std::collections::HashMap;
 /// The shell is exclusively fusevm-executed — no tree-walker fallback.
 /// arithmetic, loops, functions.
 pub struct ShellCompiler {
-    builder: ChunkBuilder,
+    pub builder: ChunkBuilder,
     /// Variable name → slot index
-    slots: HashMap<String, u16>,
-    next_slot: u16,
+    pub slots: HashMap<String, u16>,
+    pub next_slot: u16,
     /// Break target stack — each loop pushes a fresh patch list. `break`
     /// inside the loop body emits an `Op::Jump(0)` and pushes the op index
     /// onto this list; the loop's exit code patches them all to loop_exit.
@@ -2453,7 +2453,7 @@ impl ShellCompiler {
     /// into this compiler's builder. Result is left on the stack.
     /// Variables are mapped into the parent's slot table so `i` in
     /// init/cond/step/body all resolve to the same slot.
-    fn compile_arith_inline(&mut self, expr: &str) {
+    pub fn compile_arith_inline(&mut self, expr: &str) {
         let mut ac = ArithCompiler::new(expr);
         // Share the parent's slot table
         ac.slots = self.slots.clone();
@@ -2637,7 +2637,44 @@ impl<'a> ArithCompiler<'a> {
         let mut i = 0;
         while i < bytes.len() {
             let b = bytes[i];
-            if b.is_ascii_alphabetic() || b == b'_' {
+            // Strip an optional leading `$` (and `${...}` braces) — `(( $1 ))`,
+            // `(( $x ))`, `(( ${count} ))` should all pre-load just like
+            // `(( x ))`.
+            let with_dollar = b == b'$';
+            if with_dollar {
+                if i + 1 >= bytes.len() {
+                    i += 1;
+                    continue;
+                }
+                if bytes[i + 1] == b'{' {
+                    i += 2;
+                    let start = i;
+                    while i < bytes.len() && bytes[i] != b'}' {
+                        i += 1;
+                    }
+                    let name = expr[start..i].to_string();
+                    if !name.is_empty() && !names.contains(&name) {
+                        names.push(name);
+                    }
+                    if i < bytes.len() {
+                        i += 1; // skip `}`
+                    }
+                    continue;
+                }
+                i += 1;
+                let start = i;
+                if bytes.get(i).copied().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                    while i < bytes.len() && bytes[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                    let name = expr[start..i].to_string();
+                    if !names.contains(&name) {
+                        names.push(name);
+                    }
+                    continue;
+                }
+            }
+            if b.is_ascii_alphabetic() || b == b'_' || (with_dollar && i < bytes.len()) {
                 let start = i;
                 while i < bytes.len()
                     && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
@@ -2645,7 +2682,7 @@ impl<'a> ArithCompiler<'a> {
                     i += 1;
                 }
                 let name = expr[start..i].to_string();
-                if !names.contains(&name) {
+                if !name.is_empty() && !names.contains(&name) {
                     names.push(name);
                 }
             } else {
@@ -2757,6 +2794,49 @@ impl<'a> ArithCompiler<'a> {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let name = self.read_ident();
                 (Tok::Ident, name)
+            }
+            b'$' => {
+                // `$NAME` / `${NAME}` / `$N` in arithmetic: consume the `$`
+                // and read the var name as a normal identifier. zsh
+                // accepts both `$x` and `x` in `(( ))`; the value is loaded
+                // from the variable table either way (positional `$1`,
+                // `$2` are stored under those names too).
+                self.pos += 1;
+                if self.peek_char() == Some(b'{') {
+                    self.pos += 1;
+                    let mut name = String::new();
+                    while let Some(b) = self.peek_char() {
+                        if b == b'}' {
+                            self.pos += 1;
+                            break;
+                        }
+                        name.push(b as char);
+                        self.pos += 1;
+                    }
+                    (Tok::Ident, name)
+                } else if let Some(b) = self.peek_char() {
+                    if b.is_ascii_digit() {
+                        // Positional `$N` — read all digits as the name.
+                        let mut name = String::new();
+                        while let Some(d) = self.peek_char() {
+                            if !d.is_ascii_digit() {
+                                break;
+                            }
+                            name.push(d as char);
+                            self.pos += 1;
+                        }
+                        (Tok::Ident, name)
+                    } else if b.is_ascii_alphabetic() || b == b'_' {
+                        let name = self.read_ident();
+                        (Tok::Ident, name)
+                    } else {
+                        // `$` followed by special char — not a meaningful
+                        // arith form; emit zero.
+                        (Tok::Num(0), String::new())
+                    }
+                } else {
+                    (Tok::Num(0), String::new())
+                }
             }
             b'+' => {
                 self.pos += 1;
