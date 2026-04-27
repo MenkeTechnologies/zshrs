@@ -87,6 +87,7 @@ impl ZshCompiler {
                             body: Box::new(body.clone()),
                             tracing: false,
                             auto_call_args: None,
+                            body_source: None,
                         };
                         self.compile_funcdef(&synthesized);
                         i += 2;
@@ -1480,26 +1481,28 @@ impl ZshCompiler {
     }
 
     fn compile_funcdef(&mut self, f: &crate::parser::ZshFuncDef) {
-        // Compile the body as a fusevm sub-chunk and register it as a
-        // pre-compiled function via BUILTIN_REGISTER_COMPILED_FN. This
-        // bypasses the JSON-serialized-ShellCommand path used by
-        // BUILTIN_REGISTER_FUNCTION and works directly with ZshProgram.
-        //
-        // For now use the bridge: compile the body to a Chunk via
-        // ZshCompiler, encode via bincode, push name + bytes, register
-        // through a new builtin BUILTIN_REGISTER_COMPILED_FN.
+        // Compile the body to a fusevm sub-chunk and register via
+        // BUILTIN_REGISTER_COMPILED_FN with three args:
+        //   [name, base64(bincode(chunk)), body_source]
+        // The handler stores the chunk in functions_compiled and the source
+        // text in function_source so introspection (whence, which, typeset
+        // -f, ${functions[name]}) returns canonical body text.
         let body_compiler = ZshCompiler::new();
         let body_chunk = body_compiler.compile(&f.body);
         let body_bytes = bincode::serialize(&body_chunk).unwrap_or_default();
         let body_str = base64_encode(&body_bytes);
+        let source_text = f.body_source.clone().unwrap_or_default();
 
         for name in &f.names {
             let name_const = self.builder.add_constant(Value::str(name.as_str()));
             self.builder.emit(Op::LoadConst(name_const), 0);
             let body_const = self.builder.add_constant(Value::str(body_str.as_str()));
             self.builder.emit(Op::LoadConst(body_const), 0);
+            let source_const =
+                self.builder.add_constant(Value::str(source_text.as_str()));
+            self.builder.emit(Op::LoadConst(source_const), 0);
             self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_REGISTER_COMPILED_FN, 2),
+                Op::CallBuiltin(crate::exec::BUILTIN_REGISTER_COMPILED_FN, 3),
                 0,
             );
             self.builder.emit(Op::SetStatus, 0);

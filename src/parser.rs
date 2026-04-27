@@ -241,6 +241,15 @@ pub struct ZshFuncDef {
     /// with these args.
     #[serde(default)]
     pub auto_call_args: Option<Vec<String>>,
+    /// Original source text of the function body (the bytes between
+    /// `{` and `}`, without the braces themselves), captured at parse
+    /// time. Populated for `function name { body }` and `function name() { body }`
+    /// forms; left None for the synthesized inline-funcdef recovery
+    /// path. ZshCompiler::compile_funcdef forwards it to
+    /// `BUILTIN_REGISTER_COMPILED_FN` so introspection (`whence`, `which`,
+    /// `${functions[name]}`) has canonical source text.
+    #[serde(default)]
+    pub body_source: Option<String>,
 }
 
 /// Conditional expression [[ ... ]]
@@ -3905,6 +3914,7 @@ impl<'a> ZshParser<'a> {
             body: Box::new(body),
             tracing: false,
             auto_call_args: Some(args),
+            body_source: None,
         }))
     }
 
@@ -3979,7 +3989,21 @@ impl<'a> ZshParser<'a> {
         // Parse body
         if self.lexer.tok == LexTok::Inbrace {
             self.lexer.zshlex();
+            let body_start = self.lexer.pos;
             let body = self.parse_program();
+            let body_end = if self.lexer.tok == LexTok::Outbrace {
+                // Lexer has just consumed `}`; pos is past it. Body content
+                // ends one byte before pos.
+                self.lexer.pos.saturating_sub(1)
+            } else {
+                self.lexer.pos
+            };
+            let body_source = self
+                .lexer
+                .input
+                .get(body_start..body_end)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
             if self.lexer.tok == LexTok::Outbrace {
                 self.lexer.zshlex();
             }
@@ -3988,6 +4012,7 @@ impl<'a> ZshParser<'a> {
                 body: Box::new(body),
                 tracing,
                 auto_call_args: None,
+                body_source,
             }))
         } else {
             // Short form
@@ -3997,6 +4022,7 @@ impl<'a> ZshParser<'a> {
                     body: Box::new(ZshProgram { lists: vec![list] }),
                     tracing,
                     auto_call_args: None,
+                    body_source: None,
                 })),
                 None => None,
             }
@@ -4015,7 +4041,19 @@ impl<'a> ZshParser<'a> {
         // Parse body
         if self.lexer.tok == LexTok::Inbrace {
             self.lexer.zshlex();
+            let body_start = self.lexer.pos;
             let body = self.parse_program();
+            let body_end = if self.lexer.tok == LexTok::Outbrace {
+                self.lexer.pos.saturating_sub(1)
+            } else {
+                self.lexer.pos
+            };
+            let body_source = self
+                .lexer
+                .input
+                .get(body_start..body_end)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
             if self.lexer.tok == LexTok::Outbrace {
                 self.lexer.zshlex();
             }
@@ -4024,6 +4062,7 @@ impl<'a> ZshParser<'a> {
                 body: Box::new(body),
                 tracing: false,
                 auto_call_args: None,
+                body_source,
             }))
         } else {
             match self.parse_cmd() {
@@ -4046,6 +4085,7 @@ impl<'a> ZshParser<'a> {
                         body: Box::new(ZshProgram { lists: vec![list] }),
                         tracing: false,
                         auto_call_args: None,
+                        body_source: None,
                     }))
                 }
                 None => None,
