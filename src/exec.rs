@@ -2440,9 +2440,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
 
     // Runtime function registration. `FunctionDef(name, body)` lowers to a
     // CallBuiltin(BUILTIN_REGISTER_FUNCTION, 2) with [name, body_json] on
-    // stack. We compile the body AST to a Chunk and store it in
-    // executor.functions_compiled, also stashing the AST in executor.functions
-    // for the legacy tree-walker callers (autoload, intercepts, etc.).
+    // the stack. The handler decodes the JSON ShellCommand body, then:
+    //   1. Reconstructs source text via `text::getpermtext` and tries
+    //      ZshParser + ZshCompiler — when it succeeds, the new pipeline's
+    //      Chunk is used (keeps the new pipeline as the source of truth).
+    //   2. Falls back to ShellCompiler.compile(&ast) when re-parse fails.
+    //   3. Always populates `function_source` (introspection canonical) and
+    //      `self.functions` (legacy AST surface for code paths that still
+    //      consume `&ShellCommand`).
     vm.register_builtin(BUILTIN_REGISTER_FUNCTION, |vm, argc| {
         let args = pop_args(vm, argc);
         let mut iter = args.into_iter();
@@ -2451,8 +2456,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let status = with_executor(|exec| {
             match serde_json::from_str::<crate::parser::ShellCommand>(&body_json) {
                 Ok(body_ast) => {
-                    let compiler = crate::shell_compiler::ShellCompiler::new();
-                    let chunk = compiler.compile(std::slice::from_ref(&body_ast));
+                    let body_text = crate::text::getpermtext(&body_ast);
+                    let chunk = crate::parser::ZshParser::new(&body_text)
+                        .parse()
+                        .ok()
+                        .filter(|p| !p.lists.is_empty())
+                        .map(|p| crate::compile_zsh::ZshCompiler::new().compile(&p))
+                        .unwrap_or_else(|| {
+                            crate::shell_compiler::ShellCompiler::new()
+                                .compile(std::slice::from_ref(&body_ast))
+                        });
+                    exec.function_source.insert(name.clone(), body_text);
                     exec.functions_compiled.insert(name.clone(), chunk);
                     exec.functions.insert(name, body_ast);
                     0
