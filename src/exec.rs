@@ -2441,10 +2441,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // Runtime function registration. `FunctionDef(name, body)` lowers to a
     // CallBuiltin(BUILTIN_REGISTER_FUNCTION, 2) with [name, body_json] on
     // the stack. The handler decodes the JSON ShellCommand body, then:
-    //   1. Reconstructs source text via `text::getpermtext` and tries
-    //      ZshParser + ZshCompiler — when it succeeds, the new pipeline's
-    //      Chunk is used (keeps the new pipeline as the source of truth).
-    //   2. Falls back to ShellCompiler.compile(&ast) when re-parse fails.
+    //   1. Reconstructs source text via `text::getpermtext` and parses it
+    //      via `ZshParser` + `ZshCompiler` (the only pipeline) to land a
+    //      Chunk in `functions_compiled`.
+    //   2. Logs and skips registration if the round-trip parse fails
+    //      (surfacing parser/getpermtext bugs rather than masking them).
     //   3. Always populates `function_source` (introspection canonical) and
     //      `self.functions` (legacy AST surface for code paths that still
     //      consume `&ShellCommand`).
@@ -6025,21 +6026,22 @@ impl ShellExecutor {
     /// handlers (which already have the context active) don't double-enter.
     ///
     /// Compile path: round-trip through `text::getpermtext` →
-    /// `ZshParser` + `ZshCompiler` so the executed command runs under the
-    /// new pipeline. Falls back to `ShellCompiler::new()` only when the
-    /// reconstructed text fails to re-parse — that fallback is what the
-    /// `tree_walker_absent` invariant pins as the minimum-viable shape.
+    /// `ZshParser` + `ZshCompiler` (the only pipeline). On round-trip parse
+    /// failure, returns an error rather than falling back to the legacy
+    /// compiler — surfacing the parser/getpermtext bug instead of masking it.
     pub fn execute_command(&mut self, cmd: &ShellCommand) -> Result<i32, String> {
         let cmd_text = crate::text::getpermtext(cmd);
-        let chunk = crate::parser::ZshParser::new(&cmd_text)
+        let program = crate::parser::ZshParser::new(&cmd_text)
             .parse()
-            .ok()
-            .filter(|p| !p.lists.is_empty())
-            .map(|p| crate::compile_zsh::ZshCompiler::new().compile(&p))
-            .unwrap_or_else(|| {
-                let compiler = crate::shell_compiler::ShellCompiler::new();
-                compiler.compile(std::slice::from_ref(cmd))
-            });
+            .map_err(|errs| {
+                errs.first()
+                    .map(|e| format!("execute_command round-trip parse: {}", e))
+                    .unwrap_or_else(|| "execute_command round-trip parse failed".into())
+            })?;
+        if program.lists.is_empty() {
+            return Ok(self.last_status);
+        }
+        let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
         if chunk.ops.is_empty() {
             return Ok(self.last_status);
         }
@@ -10346,24 +10348,24 @@ impl ShellExecutor {
     /// `ShellWord::CommandSub` for words inside JSON-AST runtime variants).
     ///
     /// Compile path: round-trip through `text::getpermtext` →
-    /// `ZshParser` + `ZshCompiler` so the captured command runs under the
-    /// new pipeline. Falls back to `ShellCompiler::new()` only when the
-    /// reconstructed text fails to re-parse — that fallback is what the
-    /// `tree_walker_absent` invariant pins as the minimum-viable shape.
+    /// `ZshParser` + `ZshCompiler` (the only pipeline). On round-trip parse
+    /// failure, returns the error rather than masking it via a legacy compiler.
     pub fn execute_command_capture(&mut self, cmd: &ShellCommand) -> Result<String, String> {
         use std::io::Read;
         use std::os::unix::io::AsRawFd;
 
         let cmd_text = crate::text::getpermtext(cmd);
-        let chunk = crate::parser::ZshParser::new(&cmd_text)
+        let program = crate::parser::ZshParser::new(&cmd_text)
             .parse()
-            .ok()
-            .filter(|p| !p.lists.is_empty())
-            .map(|p| crate::compile_zsh::ZshCompiler::new().compile(&p))
-            .unwrap_or_else(|| {
-                let compiler = crate::shell_compiler::ShellCompiler::new();
-                compiler.compile(std::slice::from_ref(cmd))
-            });
+            .map_err(|errs| {
+                errs.first()
+                    .map(|e| format!("capture round-trip parse: {}", e))
+                    .unwrap_or_else(|| "capture round-trip parse failed".into())
+            })?;
+        if program.lists.is_empty() {
+            return Ok(String::new());
+        }
+        let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
         if chunk.ops.is_empty() {
             return Ok(String::new());
         }
