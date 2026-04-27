@@ -6237,43 +6237,6 @@ impl ShellExecutor {
         }
     }
 
-    /// Expand a word with brace and glob expansion (for command arguments)
-    #[tracing::instrument(level = "trace", skip_all)]
-    fn expand_word_glob(&mut self, word: &ShellWord) -> Vec<String> {
-        match word {
-            ShellWord::SingleQuoted(s) => vec![s.clone()],
-            ShellWord::DoubleQuoted(parts) => {
-                // Double quotes prevent glob and brace expansion
-                vec![parts.iter().map(|p| self.expand_word(p)).collect()]
-            }
-            _ => {
-                let expanded = self.expand_word(word);
-
-                // First do brace expansion
-                let brace_expanded = self.expand_braces(&expanded);
-
-                // Then glob expansion on each result (unless noglob is set)
-                let noglob = self.options.get("noglob").copied().unwrap_or(false)
-                    || self.options.get("GLOB").map(|v| !v).unwrap_or(false);
-                brace_expanded
-                    .into_iter()
-                    .flat_map(|s| {
-                        if !noglob
-                            && (s.contains('*')
-                                || s.contains('?')
-                                || s.contains('[')
-                                || self.has_extglob_pattern(&s))
-                        {
-                            self.expand_glob(&s)
-                        } else {
-                            vec![s]
-                        }
-                    })
-                    .collect()
-            }
-        }
-    }
-
     /// Expand brace patterns like {a,b,c} and {1..10}
     fn expand_braces(&self, s: &str) -> Vec<String> {
         // Find a brace pattern
@@ -7448,67 +7411,6 @@ impl ShellExecutor {
         None
     }
 
-    /// Expand a word with word splitting (for contexts like `for x in $words`)
-    fn expand_word_split(&mut self, word: &ShellWord) -> Vec<String> {
-        match word {
-            ShellWord::Literal(s) => {
-                // First do brace expansion, then variable expansion on each result
-                let brace_expanded = self.expand_braces(s);
-                brace_expanded
-                    .into_iter()
-                    .flat_map(|item| self.expand_string_split(&item))
-                    .collect()
-            }
-            ShellWord::SingleQuoted(s) => vec![s.clone()],
-            ShellWord::DoubleQuoted(parts) => {
-                // Double quotes prevent word splitting
-                vec![parts.iter().map(|p| self.expand_word(p)).collect()]
-            }
-            ShellWord::Variable(name) => {
-                let val = env::var(name).unwrap_or_default();
-                self.split_words(&val)
-            }
-            ShellWord::VariableBraced(name, modifier) => {
-                let val = env::var(name).ok();
-                let expanded = self.apply_var_modifier(name, val, modifier.as_deref());
-                self.split_words(&expanded)
-            }
-            ShellWord::ArrayVar(name, index) => {
-                let idx_str = self.expand_word(index);
-                if idx_str == "@" || idx_str == "*" {
-                    // ${arr[@]} returns each element as separate word
-                    self.arrays.get(name).cloned().unwrap_or_default()
-                } else {
-                    vec![self.expand_array_access(name, index)]
-                }
-            }
-            ShellWord::Glob(pattern) => match glob::glob(pattern) {
-                Ok(paths) => {
-                    let expanded: Vec<String> = paths
-                        .filter_map(|p| p.ok())
-                        .map(|p| p.to_string_lossy().to_string())
-                        .collect();
-                    if expanded.is_empty() {
-                        vec![pattern.clone()]
-                    } else {
-                        expanded
-                    }
-                }
-                Err(_) => vec![pattern.clone()],
-            },
-            ShellWord::CommandSub(_) => {
-                // Command substitution results must be word-split for array context
-                let val = self.expand_word(word);
-                self.split_words(&val)
-            }
-            ShellWord::Concat(parts) => {
-                // Concat in split context — expand and split the result
-                let val = self.expand_concat_parallel(parts);
-                self.split_words(&val)
-            }
-            _ => vec![self.expand_word(word)],
-        }
-    }
 
     /// Expand string with word splitting - returns Vec for array expansions
     fn expand_string_split(&mut self, s: &str) -> Vec<String> {
