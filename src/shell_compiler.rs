@@ -30,10 +30,21 @@ pub struct ShellCompiler {
     /// Variable name → slot index
     slots: HashMap<String, u16>,
     next_slot: u16,
-    /// Break target stack — each loop pushes its exit address placeholder
+    /// Break target stack — each loop pushes a fresh patch list. `break`
+    /// inside the loop body emits an `Op::Jump(0)` and pushes the op index
+    /// onto this list; the loop's exit code patches them all to loop_exit.
     break_patches: Vec<Vec<usize>>,
-    /// Continue target stack — each loop pushes its continue address
-    continue_targets: Vec<usize>,
+    /// Continue target stack — symmetric to `break_patches`. Was previously a
+    /// `Vec<usize>` of pre-resolved targets, but `continue` inside a body
+    /// captured the placeholder `0` (set before the body compiled), causing
+    /// infinite loops. Now defers patching like break.
+    continue_patches: Vec<Vec<usize>>,
+    /// Patch sites for `return` / `exit` — `Op::Jump(0)` placeholders that
+    /// `compile()` patches to the end of the chunk. This effectively halts
+    /// the VM (ip past last op → run loop exits) without relying on
+    /// `Op::Return`, which restores ip to the initial frame's return_ip (0)
+    /// and would restart the body instead of halting.
+    return_patches: Vec<usize>,
 }
 
 impl ShellCompiler {
@@ -43,7 +54,8 @@ impl ShellCompiler {
             slots: HashMap::new(),
             next_slot: 0,
             break_patches: Vec::new(),
-            continue_targets: Vec::new(),
+            continue_patches: Vec::new(),
+            return_patches: Vec::new(),
         }
     }
 
@@ -56,6 +68,14 @@ impl ShellCompiler {
         }
         // Return the last exit status
         self.builder.emit(Op::GetStatus, 0);
+        // Patch all `return` / `exit` jumps to past the trailing GetStatus —
+        // ip lands at ops.len(), the run loop's `while self.ip < ops.len()`
+        // guard fails, VM exits naturally with last_status set by the builtin.
+        let end = self.builder.current_pos();
+        let returns = std::mem::take(&mut self.return_patches);
+        for p in returns {
+            self.builder.patch_jump(p, end);
+        }
         self.builder.build()
     }
 
@@ -84,17 +104,28 @@ impl ShellCompiler {
                 self.compile_list(items);
             }
             ShellCommand::FunctionDef(name, body) => {
-                // Register function: jump past body, record entry point
-                let skip_jump = self.builder.emit(Op::Jump(0), 0);
-                let entry_ip = self.builder.current_pos();
-                let name_idx = self.builder.add_name(name);
-                self.builder.add_sub_entry(name_idx, entry_ip);
-                self.builder.emit(Op::PushFrame, 0);
-                self.compile_command(body);
-                self.builder.emit(Op::PopFrame, 0);
-                self.builder.emit(Op::Return, 0);
-                let after = self.builder.current_pos();
-                self.builder.patch_jump(skip_jump, after);
+                // Register the function via runtime builtin so it persists in
+                // `executor.functions_compiled` and is callable across chunks
+                // (sourced files, autoload, future calls). The body is JSON-
+                // serialized; the BUILTIN_REGISTER_FUNCTION handler compiles
+                // it to a Chunk and stores it.
+                //
+                // This replaces the prior inline approach that registered a
+                // sub_entry and jumped past the body — that worked for in-
+                // chunk calls only. With Phase C, all calls go through
+                // Op::CallFunction, which dispatches via ShellHost into the
+                // compiled-function table regardless of which chunk defined
+                // the function.
+                let name_const = self.builder.add_constant(Value::str(name.as_str()));
+                let body_json = serde_json::to_string(body.as_ref()).unwrap_or_default();
+                let body_const = self.builder.add_constant(Value::str(body_json));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                self.builder.emit(Op::LoadConst(body_const), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_REGISTER_FUNCTION, 2),
+                    0,
+                );
+                self.builder.emit(Op::SetStatus, 0);
             }
         }
     }
@@ -107,15 +138,35 @@ impl ShellCompiler {
     ///   - If words: push each word, emit Exec(argc)
     ///   - Redirects: emit Redirect ops before Exec
     fn compile_simple(&mut self, simple: &crate::parser::SimpleCommand) {
-        // Assignments: VAR=value
+        // Assignments: VAR=value. Route through BUILTIN_SET_VAR so the value
+        // lands in `executor.variables` and is visible across nested VMs
+        // (function calls) and tree-walker code paths. The VM's `Op::SetVar`
+        // would otherwise stash it in this VM's per-instance globals, hidden
+        // from nested calls.
         for (var, val, _is_append) in &simple.assignments {
+            let name_const = self.builder.add_constant(Value::str(var.as_str()));
+            self.builder.emit(Op::LoadConst(name_const), 0);
             self.compile_word(val);
-            let var_idx = self.builder.add_name(var);
-            self.builder.emit(Op::SetVar(var_idx), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0); // discard the Status(0) result
         }
 
         if simple.words.is_empty() {
             return; // bare assignment, no command
+        }
+
+        // Bracket redirects in a WithRedirects scope so they're restored after
+        // the command runs. Without this, `cmd > out.txt` would leave fd 1
+        // pointing at out.txt for everything else in the script — breaking the
+        // very next `cat out.txt` (which would write its output to its own
+        // input file, then read from a now-empty fd).
+        let has_redirects = !simple.redirects.is_empty();
+        if has_redirects {
+            self.builder
+                .emit(Op::WithRedirectsBegin(simple.redirects.len() as u8), 0);
         }
 
         // Redirects before command
@@ -157,30 +208,86 @@ impl ShellCompiler {
             self.builder.emit(Op::Redirect(fd, op_byte), 0);
         }
 
-        // Check if first word is a literal builtin name
+        // Dispatch by first-word kind:
+        //   literal-builtin → CallBuiltin (fast: pre-registered handler table)
+        //   literal-other   → CallFunction (host: function-then-external)
+        //   anything else   → Exec (dynamic name; preserves in-chunk find_sub)
+        let mut emitted = false;
         if let ShellWord::Literal(cmd_name) = &simple.words[0] {
+            // `break` / `continue` are loop-control sentinels — they must emit
+            // a Jump into the active loop's patch list, not call a builtin
+            // that does nothing useful. Without this, `break` is a no-op and
+            // loops run to completion regardless.
+            match cmd_name.as_str() {
+                "break" => {
+                    if let Some(patches) = self.break_patches.last_mut() {
+                        let j = self.builder.emit(Op::Jump(0), 0);
+                        patches.push(j);
+                    }
+                    if has_redirects {
+                        self.builder.emit(Op::WithRedirectsEnd, 0);
+                    }
+                    return;
+                }
+                "continue" => {
+                    if let Some(patches) = self.continue_patches.last_mut() {
+                        let j = self.builder.emit(Op::Jump(0), 0);
+                        patches.push(j);
+                    }
+                    if has_redirects {
+                        self.builder.emit(Op::WithRedirectsEnd, 0);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+
             if let Some(builtin_id) = fusevm::shell_builtins::builtin_id(cmd_name) {
-                // Push arguments (skip command name itself)
                 let argc = (simple.words.len() - 1) as u8;
                 for word in &simple.words[1..] {
                     self.compile_word(word);
                 }
-                // CallBuiltin dispatches through the registered handler table
                 self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
                 self.builder.emit(Op::SetStatus, 0);
-                return;
+                // `return` / `exit` short-circuit the function/script. Emit a
+                // forward Jump that `compile()` patches to past the chunk end
+                // (effectively halting the VM). Op::Return doesn't work here
+                // because it restores ip to the initial frame's return_ip (0)
+                // and would restart the body from the top.
+                if cmd_name == "return" || cmd_name == "exit" {
+                    let j = self.builder.emit(Op::Jump(0), 0);
+                    self.return_patches.push(j);
+                }
+                emitted = true;
+            } else {
+                // Non-builtin literal name → Op::CallFunction. The host's
+                // call_function checks `executor.functions_compiled`, running
+                // it on a nested VM. If not a function, the host returns None
+                // and fusevm falls back to host.exec which spawns externally.
+                let name_idx = self.builder.add_name(cmd_name);
+                let argc = (simple.words.len() - 1) as u8;
+                for word in &simple.words[1..] {
+                    self.compile_word(word);
+                }
+                self.builder.emit(Op::CallFunction(name_idx, argc), 0);
+                self.builder.emit(Op::SetStatus, 0);
+                emitted = true;
             }
         }
 
-        // External command: push all words onto stack, emit Exec
-        let argc = simple.words.len() as u8;
-        for word in &simple.words {
-            self.compile_word(word);
+        if !emitted {
+            // Dynamic command name (variable, command-sub, etc.) → Op::Exec.
+            let argc = simple.words.len() as u8;
+            for word in &simple.words {
+                self.compile_word(word);
+            }
+            self.builder.emit(Op::Exec(argc), 0);
+            self.builder.emit(Op::SetStatus, 0);
         }
 
-        // Exec: pop argc words, spawn command, push exit status
-        self.builder.emit(Op::Exec(argc), 0);
-        self.builder.emit(Op::SetStatus, 0);
+        if has_redirects {
+            self.builder.emit(Op::WithRedirectsEnd, 0);
+        }
     }
 
     /// Compile a pipeline: cmd1 | cmd2 | cmd3
@@ -216,17 +323,24 @@ impl ShellCompiler {
             return;
         }
 
+        // Phase D pipeline lowering: compile each stage as its own sub-chunk
+        // (using fusevm 0.10.0's `Chunk::sub_chunks`), push the indices on the
+        // stack, then dispatch to BUILTIN_RUN_PIPELINE which forks per stage
+        // with stdin/stdout wired through pipes. This is bytecode-native — no
+        // tree-walker callback. The fork-per-stage approach keeps each stage
+        // isolated (matching POSIX subshell semantics) and lets builtins,
+        // functions, and compounds all participate in pipelines uniformly.
         let n = cmds.len() as u8;
-        self.builder.emit(Op::PipelineBegin(n), 0);
-
-        for (i, cmd) in cmds.iter().enumerate() {
-            self.compile_command(cmd);
-            if i < cmds.len() - 1 {
-                self.builder.emit(Op::PipelineStage, 0);
-            }
+        for cmd in cmds {
+            let stage_compiler = ShellCompiler::new();
+            let stage_chunk = stage_compiler.compile(std::slice::from_ref(cmd));
+            let idx = self.builder.add_sub_chunk(stage_chunk);
+            self.builder.emit(Op::LoadInt(idx as i64), 0);
         }
-
-        self.builder.emit(Op::PipelineEnd, 0);
+        self.builder.emit(
+            Op::CallBuiltin(crate::exec::BUILTIN_RUN_PIPELINE, n),
+            0,
+        );
         self.builder.emit(Op::SetStatus, 0);
 
         if negated {
@@ -246,44 +360,56 @@ impl ShellCompiler {
         }
     }
 
-    /// Compile a list: cmd1 && cmd2 || cmd3 ; cmd4 & cmd5
+    /// Compile a list: `cmd1 && cmd2 || cmd3 ; cmd4 & cmd5`.
+    ///
+    /// Each item in `items` is `(cmd_i, op_i)` where `op_i` applies *between*
+    /// `cmd_i` and `cmd_(i+1)`. So `&&`/`||` short-circuit the *next* command,
+    /// not the current one. We walk `items` once: for each non-tail position,
+    /// compile cmd_i, emit a conditional jump matching op_i, and continue —
+    /// the patch lands at the position right after cmd_(i+1) is compiled by
+    /// the next iteration. This avoids the double-compile that happened when
+    /// `&&`/`||` arms tried to emit their successor inline while the outer
+    /// loop also iterated to the successor.
     fn compile_list(&mut self, items: &[(ShellCommand, crate::parser::ListOp)]) {
+        // Pending short-circuit jumps: list of patch sites that need to be
+        // patched to the position right after the current command is compiled.
+        let mut pending_skip: Option<usize> = None;
+
         for (i, (cmd, op)) in items.iter().enumerate() {
+            self.compile_command(cmd);
+
+            // Patch the prior `&&`/`||` skip target to land here, after this
+            // command compiled. (The skip was emitted by the previous iteration
+            // and was conditional on the previous command's status.)
+            if let Some(skip_idx) = pending_skip.take() {
+                self.builder.patch_jump(skip_idx, self.builder.current_pos());
+            }
+
+            // Now look at op_i — what to do *between* this command and the next.
+            // Note: GetStatus pushes Value::Status(c). In fusevm's truthiness,
+            // Status(0) (success) is_truthy=true (shell semantics). So:
+            //   && — skip-next-if-current-failed → JumpIfFalse (status non-truthy)
+            //   || — skip-next-if-current-succeeded → JumpIfTrue (status truthy)
             match op {
-                crate::parser::ListOp::And => {
-                    // cmd1 && cmd2: run cmd2 only if cmd1 succeeds
-                    self.compile_command(cmd);
-                    if i + 1 < items.len() {
-                        self.builder.emit(Op::GetStatus, 0);
-                        let skip = self.builder.emit(Op::JumpIfTrue(0), 0);
-                        // Status 0 = success, nonzero = skip next
-                        // JumpIfTrue skips when status > 0 (failure)
-                        self.compile_command(&items[i + 1].0);
-                        self.builder.patch_jump(skip, self.builder.current_pos());
-                    }
+                crate::parser::ListOp::And if i + 1 < items.len() => {
+                    self.builder.emit(Op::GetStatus, 0);
+                    pending_skip = Some(self.builder.emit(Op::JumpIfFalse(0), 0));
                 }
-                crate::parser::ListOp::Or => {
-                    // cmd1 || cmd2: run cmd2 only if cmd1 fails
-                    self.compile_command(cmd);
-                    if i + 1 < items.len() {
-                        self.builder.emit(Op::GetStatus, 0);
-                        let skip = self.builder.emit(Op::JumpIfFalse(0), 0);
-                        // JumpIfFalse skips when status == 0 (success)
-                        self.compile_command(&items[i + 1].0);
-                        self.builder.patch_jump(skip, self.builder.current_pos());
-                    }
+                crate::parser::ListOp::Or if i + 1 < items.len() => {
+                    self.builder.emit(Op::GetStatus, 0);
+                    pending_skip = Some(self.builder.emit(Op::JumpIfTrue(0), 0));
                 }
-                crate::parser::ListOp::Semi => {
-                    // Sequential: just compile
-                    self.compile_command(cmd);
-                }
-                crate::parser::ListOp::Amp => {
-                    self.compile_command(cmd);
-                }
-                crate::parser::ListOp::Newline => {
-                    self.compile_command(cmd);
+                _ => {
+                    // Semi / Newline / Amp / trailing And-Or — no jump.
+                    // (Background `&` is a TODO for ExecBg lowering.)
                 }
             }
+        }
+
+        // Trailing pending_skip with no following command shouldn't occur
+        // (guarded by `i + 1 < items.len()` above), but patch defensively.
+        if let Some(skip_idx) = pending_skip {
+            self.builder.patch_jump(skip_idx, self.builder.current_pos());
         }
     }
 
@@ -361,29 +487,39 @@ impl ShellCompiler {
                 self.builder.emit(Op::NumLt, 0);
                 let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
-                // var = array[i] — get element from array at index i
+                // var = array[i] — get element, write to executor.variables
+                // via BUILTIN_SET_VAR so $var inside the body resolves to the
+                // current iteration value across nested VMs.
+                let var_name_const =
+                    self.builder.add_constant(Value::str(var.as_str()));
+                self.builder.emit(Op::LoadConst(var_name_const), 0);
                 self.builder.emit(Op::GetSlot(i_slot), 0);
                 self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
-                self.builder.emit(Op::SetVar(var_idx), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0); // discard Status(0) result
+                let _ = var_idx;
 
-                // Push break/continue targets
+                // Push fresh break/continue patch lists for this loop.
                 self.break_patches.push(Vec::new());
-                let continue_pos = self.builder.current_pos(); // will be patched
-                self.continue_targets.push(0); // placeholder
+                self.continue_patches.push(Vec::new());
 
                 // body
                 for cmd in body {
                     self.compile_command(cmd);
                 }
 
-                // loop_continue:
+                // loop_continue: patch all `continue` jumps to here, then run
+                // the increment + back-jump.
                 let continue_target = self.builder.current_pos();
-                // Patch continue target
-                if let Some(target) = self.continue_targets.last_mut() {
-                    *target = continue_target;
+                if let Some(continues) = self.continue_patches.pop() {
+                    for cp in continues {
+                        self.builder.patch_jump(cp, continue_target);
+                    }
                 }
 
-                // i++; jump loop_top
                 self.builder.emit(Op::PreIncSlotVoid(i_slot), 0);
                 self.builder.emit(Op::Jump(loop_top), 0);
 
@@ -391,13 +527,12 @@ impl ShellCompiler {
                 let loop_exit = self.builder.current_pos();
                 self.builder.patch_jump(exit_jump, loop_exit);
 
-                // Patch all break jumps
+                // Patch all break jumps to loop_exit.
                 if let Some(breaks) = self.break_patches.pop() {
                     for bp in breaks {
                         self.builder.patch_jump(bp, loop_exit);
                     }
                 }
-                self.continue_targets.pop();
             }
 
             // ── for ((init; cond; step)) do body done ──
@@ -423,9 +558,8 @@ impl ShellCompiler {
                 }
                 let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
-                // Push break/continue targets
                 self.break_patches.push(Vec::new());
-                self.continue_targets.push(0);
+                self.continue_patches.push(Vec::new());
 
                 // body
                 for cmd in body {
@@ -434,8 +568,10 @@ impl ShellCompiler {
 
                 // continue target = step expression
                 let continue_target = self.builder.current_pos();
-                if let Some(target) = self.continue_targets.last_mut() {
-                    *target = continue_target;
+                if let Some(continues) = self.continue_patches.pop() {
+                    for cp in continues {
+                        self.builder.patch_jump(cp, continue_target);
+                    }
                 }
 
                 // step expression
@@ -444,10 +580,8 @@ impl ShellCompiler {
                     self.builder.emit(Op::Pop, 0); // discard step result
                 }
 
-                // Jump back to loop_top
                 self.builder.emit(Op::Jump(loop_top), 0);
 
-                // loop_exit:
                 let loop_exit = self.builder.current_pos();
                 self.builder.patch_jump(exit_jump, loop_exit);
 
@@ -456,7 +590,6 @@ impl ShellCompiler {
                         self.builder.patch_jump(bp, loop_exit);
                     }
                 }
-                self.continue_targets.pop();
             }
 
             // ── while condition; do body; done ──
@@ -482,8 +615,9 @@ impl ShellCompiler {
                         self.compile_command(cmd);
                     }
                     self.builder.emit(Op::GetStatus, 0);
-                    // Status 0 = true in shell, so jump if nonzero (false)
-                    let skip_body = self.builder.emit(Op::JumpIfTrue(0), 0);
+                    // Shell: status 0 = success = truthy. Skip body when the
+                    // condition FAILED — i.e. when GetStatus is non-truthy.
+                    let skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
 
                     // Body
                     for cmd in body_cmds {
@@ -533,15 +667,17 @@ impl ShellCompiler {
                 let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
                 self.break_patches.push(Vec::new());
-                self.continue_targets.push(0);
+                self.continue_patches.push(Vec::new());
 
                 for cmd in body {
                     self.compile_command(cmd);
                 }
 
                 let cont = self.builder.current_pos();
-                if let Some(target) = self.continue_targets.last_mut() {
-                    *target = cont;
+                if let Some(continues) = self.continue_patches.pop() {
+                    for cp in continues {
+                        self.builder.patch_jump(cp, cont);
+                    }
                 }
 
                 self.builder.emit(Op::PreIncSlotVoid(i_slot), 0);
@@ -555,7 +691,6 @@ impl ShellCompiler {
                         self.builder.patch_jump(bp, loop_exit);
                     }
                 }
-                self.continue_targets.pop();
             }
 
             // ── { try } always { always } ──
@@ -609,8 +744,15 @@ impl ShellCompiler {
 
                     for pattern in patterns {
                         self.builder.emit(Op::GetSlot(word_slot), 0);
-                        self.compile_word(pattern);
-                        self.builder.emit(Op::StrEq, 0);
+                        // Case patterns must reach Op::StrMatch as the literal
+                        // pattern string — `compile_word` would otherwise glob-
+                        // expand `*` into the cwd listing. Push the pattern's
+                        // literal text via `compile_case_pattern` (no glob, no
+                        // tilde, no command sub — just $-vars and concatenation).
+                        self.compile_case_pattern(pattern);
+                        // Op::StrMatch routes through `ShellHost::str_match`
+                        // which uses zshrs's glob_match for `*`/`?`/`[...]`.
+                        self.builder.emit(Op::StrMatch, 0);
                         match_jumps.push(self.builder.emit(Op::JumpIfTrue(0), 0));
                     }
 
@@ -699,10 +841,61 @@ impl ShellCompiler {
                 self.compile_command(body);
             }
 
-            // ── cmd with redirects ──
-            CompoundCommand::WithRedirects(cmd, _redirects) => {
-                // TODO: emit Redirect ops before/after command
+            // ── compound-cmd > out.txt | < in.txt etc. ──
+            CompoundCommand::WithRedirects(cmd, redirects) => {
+                // Push a redirect scope so the host saves dup'd fds; emit each
+                // Redirect op (which pops target + calls host.redirect → host
+                // tracks saved fd in the top scope); compile the inner command;
+                // then pop the scope to restore. This mirrors how exec.rs
+                // handled WithRedirects (saved_fds Vec) but in bytecode.
+                self.builder
+                    .emit(Op::WithRedirectsBegin(redirects.len() as u8), 0);
+
+                for redir in redirects {
+                    let fd = redir.fd.unwrap_or(match redir.op {
+                        crate::parser::RedirectOp::Read
+                        | crate::parser::RedirectOp::HereDoc
+                        | crate::parser::RedirectOp::HereString
+                        | crate::parser::RedirectOp::ReadWrite => 0,
+                        _ => 1,
+                    }) as u8;
+
+                    let op_byte = match redir.op {
+                        crate::parser::RedirectOp::Write => fusevm::op::redirect_op::WRITE,
+                        crate::parser::RedirectOp::Append => fusevm::op::redirect_op::APPEND,
+                        crate::parser::RedirectOp::Read => fusevm::op::redirect_op::READ,
+                        crate::parser::RedirectOp::ReadWrite => {
+                            fusevm::op::redirect_op::READ_WRITE
+                        }
+                        crate::parser::RedirectOp::Clobber => fusevm::op::redirect_op::CLOBBER,
+                        crate::parser::RedirectOp::DupRead => fusevm::op::redirect_op::DUP_READ,
+                        crate::parser::RedirectOp::DupWrite => fusevm::op::redirect_op::DUP_WRITE,
+                        crate::parser::RedirectOp::WriteBoth => {
+                            fusevm::op::redirect_op::WRITE_BOTH
+                        }
+                        crate::parser::RedirectOp::AppendBoth => {
+                            fusevm::op::redirect_op::APPEND_BOTH
+                        }
+                        crate::parser::RedirectOp::HereDoc => {
+                            if let Some(ref content) = redir.heredoc_content {
+                                let idx = self.builder.add_constant(Value::str(content.as_str()));
+                                self.builder.emit(Op::HereDoc(idx), 0);
+                            }
+                            continue;
+                        }
+                        crate::parser::RedirectOp::HereString => {
+                            self.compile_word(&redir.target);
+                            self.builder.emit(Op::HereString, 0);
+                            continue;
+                        }
+                    };
+
+                    self.compile_word(&redir.target);
+                    self.builder.emit(Op::Redirect(fd, op_byte), 0);
+                }
+
                 self.compile_command(cmd);
+                self.builder.emit(Op::WithRedirectsEnd, 0);
             }
         }
     }
@@ -767,20 +960,27 @@ impl ShellCompiler {
                 self.builder.emit(Op::NumGt, 0);
             }
             CondExpr::StringEqual(a, b) => {
+                // zsh/bash: `[[ s = pat ]]` is glob-pattern match, not exact
+                // string compare. Push LHS via compile_word (full expansion)
+                // and RHS via compile_case_pattern (literal pattern, no glob/
+                // tilde expansion of the pattern itself). Op::StrMatch routes
+                // through ShellHost::str_match which uses zshrs's glob_match.
                 self.compile_word(a);
-                self.compile_word(b);
-                self.builder.emit(Op::StrEq, 0);
+                self.compile_case_pattern(b);
+                self.builder.emit(Op::StrMatch, 0);
             }
             CondExpr::StringNotEqual(a, b) => {
                 self.compile_word(a);
-                self.compile_word(b);
-                self.builder.emit(Op::StrNe, 0);
+                self.compile_case_pattern(b);
+                self.builder.emit(Op::StrMatch, 0);
+                self.builder.emit(Op::LogNot, 0);
             }
             CondExpr::StringMatch(a, b) => {
-                // =~ regex match — for now use StrEq as placeholder
+                // `[[ s =~ regex ]]` — POSIX extended regex. Routed to host
+                // via Op::RegexMatch which calls `ShellHost::regex_match`.
                 self.compile_word(a);
                 self.compile_word(b);
-                self.builder.emit(Op::StrEq, 0);
+                self.builder.emit(Op::RegexMatch, 0);
             }
             CondExpr::StringLess(a, b) => {
                 self.compile_word(a);
@@ -870,12 +1070,41 @@ impl ShellCompiler {
                 {
                     // Cheap inline path: only $VAR / ${VAR} and no glob/tilde.
                     self.compile_string_with_expansions(s);
+                } else if !trigger_dollar && !trigger_glob && trigger_tilde {
+                    // Pure tilde, e.g. `~/foo` or `~user/path` — push and
+                    // dispatch to host.tilde_expand directly (no JSON
+                    // roundtrip via expand_word).
+                    let idx = self.builder.add_constant(Value::str(s.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    self.builder.emit(Op::TildeExpand, 0);
+                } else if !trigger_dollar && trigger_glob && !trigger_tilde {
+                    // Pure glob, e.g. `*.rs` or `Cargo.*` — push pattern,
+                    // expand via host.glob, join the resulting Array into the
+                    // single argv-token form the word model expects.
+                    let idx = self.builder.add_constant(Value::str(s.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    self.builder.emit(Op::Glob, 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_JOIN, 1),
+                        0,
+                    );
+                } else if !trigger_dollar && trigger_glob && trigger_tilde {
+                    // Tilde + glob, e.g. `~/*.rs` — expand tilde first, then
+                    // glob the result. Both operate on the same string so we
+                    // can chain: TildeExpand pops/pushes string, Glob pops
+                    // string and pushes Array, ArrayJoin reduces to string.
+                    let idx = self.builder.add_constant(Value::str(s.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    self.builder.emit(Op::TildeExpand, 0);
+                    self.builder.emit(Op::Glob, 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_JOIN, 1),
+                        0,
+                    );
                 } else {
-                    // Complex literal: globs, tilde, $(...), $((...)), `...`,
-                    // ${VAR/x/y}, etc. Round-trip through runtime expand_word so
-                    // semantics match the tree walker. Phase B+ replaces specific
-                    // patterns with dedicated ops (Op::Glob, Op::TildeExpand,
-                    // Op::ExpandParam, Op::CmdSubst).
+                    // Mixed: $-expansion combined with glob/tilde, or
+                    // `$(...)`, `$((...))`, backticks, `${VAR/x/y}`. The
+                    // runtime expand_word handles every case correctly.
                     self.compile_word_runtime(word);
                 }
             }
@@ -884,8 +1113,15 @@ impl ShellCompiler {
                 self.builder.emit(Op::LoadConst(idx), 0);
             }
             ShellWord::Variable(name) => {
-                let var_idx = self.builder.add_name(name);
-                self.builder.emit(Op::GetVar(var_idx), 0);
+                // Route through BUILTIN_GET_VAR (executor.variables + special
+                // params + arrays + env) instead of Op::GetVar (per-VM
+                // globals). Same storage as expand_word so nested VMs see it.
+                let name_const = self.builder.add_constant(Value::str(name.as_str()));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1),
+                    0,
+                );
             }
             ShellWord::DoubleQuoted(parts) => {
                 if parts.is_empty() {
@@ -915,10 +1151,190 @@ impl ShellCompiler {
                     }
                 }
             }
-            // Dynamic word variants (Glob, Tilde, ArrayLiteral, ArrayVar,
-            // VariableBraced, CommandSub, ProcessSubIn/Out, ArithSub) — round-
-            // trip through the runtime expand_word builtin. See the helper.
+            // ── Native lowering for VariableBraced (${...}) ────────────────
+            ShellWord::VariableBraced(name, modifier_opt) => {
+                use crate::parser::VarModifier;
+                use fusevm::op::param_mod;
+
+                // Helper: push the variable name onto the stack.
+                let push_name = |c: &mut Self| {
+                    let idx = c.builder.add_constant(Value::str(name.as_str()));
+                    c.builder.emit(Op::LoadConst(idx), 0);
+                };
+
+                match modifier_opt.as_deref() {
+                    None => {
+                        // Plain ${var} — same as $var, route through GET_VAR.
+                        let idx = self.builder.add_constant(Value::str(name.as_str()));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1),
+                            0,
+                        );
+                    }
+                    Some(VarModifier::Default(w)) => {
+                        push_name(self);
+                        self.compile_word(w);
+                        self.builder.emit(Op::ExpandParam(param_mod::DEFAULT), 0);
+                    }
+                    Some(VarModifier::DefaultAssign(w)) => {
+                        push_name(self);
+                        self.compile_word(w);
+                        self.builder.emit(Op::ExpandParam(param_mod::ASSIGN), 0);
+                    }
+                    Some(VarModifier::Error(w)) => {
+                        push_name(self);
+                        self.compile_word(w);
+                        self.builder.emit(Op::ExpandParam(param_mod::ERROR), 0);
+                    }
+                    Some(VarModifier::Alternate(w)) => {
+                        push_name(self);
+                        self.compile_word(w);
+                        self.builder.emit(Op::ExpandParam(param_mod::ALTERNATE), 0);
+                    }
+                    Some(VarModifier::Length) => {
+                        push_name(self);
+                        self.builder.emit(Op::ExpandParam(param_mod::LENGTH), 0);
+                    }
+                    Some(VarModifier::Substring(off, len_opt)) => {
+                        push_name(self);
+                        self.builder.emit(Op::LoadInt(*off), 0);
+                        // -1 sentinel = no length specified (host inverts)
+                        self.builder.emit(Op::LoadInt(len_opt.unwrap_or(-1)), 0);
+                        self.builder.emit(Op::ExpandParam(param_mod::SLICE), 0);
+                    }
+                    Some(VarModifier::RemovePrefix(w)) => {
+                        push_name(self);
+                        self.compile_word(w);
+                        self.builder.emit(Op::ExpandParam(param_mod::STRIP_SHORT), 0);
+                    }
+                    Some(VarModifier::RemovePrefixLong(w)) => {
+                        push_name(self);
+                        self.compile_word(w);
+                        self.builder.emit(Op::ExpandParam(param_mod::STRIP_LONG), 0);
+                    }
+                    Some(VarModifier::RemoveSuffix(w)) => {
+                        push_name(self);
+                        self.compile_word(w);
+                        self.builder.emit(Op::ExpandParam(param_mod::RSTRIP_SHORT), 0);
+                    }
+                    Some(VarModifier::RemoveSuffixLong(w)) => {
+                        push_name(self);
+                        self.compile_word(w);
+                        self.builder.emit(Op::ExpandParam(param_mod::RSTRIP_LONG), 0);
+                    }
+                    Some(VarModifier::Replace(p, r)) => {
+                        push_name(self);
+                        self.compile_word(p);
+                        self.compile_word(r);
+                        self.builder.emit(Op::ExpandParam(param_mod::SUBST_FIRST), 0);
+                    }
+                    Some(VarModifier::ReplaceAll(p, r)) => {
+                        push_name(self);
+                        self.compile_word(p);
+                        self.compile_word(r);
+                        self.builder.emit(Op::ExpandParam(param_mod::SUBST_ALL), 0);
+                    }
+                    Some(VarModifier::Upper) => {
+                        push_name(self);
+                        self.builder.emit(Op::ExpandParam(param_mod::UPPER), 0);
+                    }
+                    Some(VarModifier::Lower) => {
+                        push_name(self);
+                        self.builder.emit(Op::ExpandParam(param_mod::LOWER), 0);
+                    }
+                    // ArrayLength/ArrayIndex/ArrayAll need real array semantics
+                    // (not yet wired). ZshFlags is zsh-specific (`(L)`, `(j: :)`,
+                    // etc.) — many flags, large surface, deferred.
+                    Some(_) => self.compile_word_runtime(word),
+                }
+            }
+
+            // ── Native lowering for the simple variants ─────────────────────
+            ShellWord::Tilde(user) => {
+                // ~ → $HOME, ~user → user's home. Push the literal "~..."
+                // and let Op::TildeExpand (host-routed to expand_tilde_named)
+                // resolve it. No JSON roundtrip.
+                let s = match user {
+                    Some(u) => format!("~{}", u),
+                    None => "~".to_string(),
+                };
+                let const_idx = self.builder.add_constant(Value::str(s));
+                self.builder.emit(Op::LoadConst(const_idx), 0);
+                self.builder.emit(Op::TildeExpand, 0);
+            }
+            ShellWord::CommandSub(inner) => {
+                // $(cmd) — compile inner as a sub-chunk and emit Op::CmdSubst
+                // which runs the sub-chunk on a nested VM and captures stdout.
+                // The host's cmd_subst implementation handles fd plumbing.
+                let sub_compiler = ShellCompiler::new();
+                let sub_chunk = sub_compiler.compile(std::slice::from_ref(inner.as_ref()));
+                let sub_idx = self.builder.add_sub_chunk(sub_chunk);
+                self.builder.emit(Op::CmdSubst(sub_idx), 0);
+            }
+            ShellWord::ProcessSubIn(inner) => {
+                let sub_compiler = ShellCompiler::new();
+                let sub_chunk = sub_compiler.compile(std::slice::from_ref(inner.as_ref()));
+                let sub_idx = self.builder.add_sub_chunk(sub_chunk);
+                self.builder.emit(Op::ProcessSubIn(sub_idx), 0);
+            }
+            ShellWord::ProcessSubOut(inner) => {
+                let sub_compiler = ShellCompiler::new();
+                let sub_chunk = sub_compiler.compile(std::slice::from_ref(inner.as_ref()));
+                let sub_idx = self.builder.add_sub_chunk(sub_chunk);
+                self.builder.emit(Op::ProcessSubOut(sub_idx), 0);
+            }
+            ShellWord::ArithSub(expr) => {
+                // $((expr)) — lower the arithmetic to bytecode via
+                // ArithCompiler, then coerce the integer result to a string
+                // (Op::Concat with an empty string forces to_str on both ops).
+                let empty = self.builder.add_constant(Value::str(""));
+                self.builder.emit(Op::LoadConst(empty), 0);
+                self.compile_arith_inline(expr);
+                self.builder.emit(Op::Concat, 0);
+            }
+            // ── Dynamic variants still routed through the runtime fallback ──
+            // VariableBraced (with all 19 VarModifier kinds), ArrayLiteral,
+            // ArrayVar, Glob (needs Array→String join). These get the JSON
+            // roundtrip until Phase E lowers them per-variant.
             _ => self.compile_word_runtime(word),
+        }
+    }
+
+    /// Push a case-arm pattern as a literal string with $-variable expansion
+    /// preserved but glob/tilde unexpanded. `case`/`[[ x = pat ]]` use the
+    /// pattern AS the matcher — globbing the pattern itself would turn `*`
+    /// into the cwd listing.
+    fn compile_case_pattern(&mut self, pat: &ShellWord) {
+        match pat {
+            ShellWord::Literal(s) | ShellWord::SingleQuoted(s) => {
+                let idx = self.builder.add_constant(Value::str(s.as_str()));
+                self.builder.emit(Op::LoadConst(idx), 0);
+            }
+            ShellWord::DoubleQuoted(parts) | ShellWord::Concat(parts) => {
+                if parts.is_empty() {
+                    let idx = self.builder.add_constant(Value::str(""));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    return;
+                }
+                self.compile_case_pattern(&parts[0]);
+                for p in &parts[1..] {
+                    self.compile_case_pattern(p);
+                    self.builder.emit(Op::Concat, 0);
+                }
+            }
+            ShellWord::Variable(name) => {
+                let idx = self.builder.add_constant(Value::str(name.as_str()));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1),
+                    0,
+                );
+            }
+            // Less common in case arms — fall back to compile_word, accept
+            // that something like `case x in $(generate_pattern)) ...` will
+            // glob-expand the pattern. Real shells don't allow this anyway.
+            _ => self.compile_word(pat),
         }
     }
 
@@ -1018,8 +1434,13 @@ impl ShellCompiler {
                     if i < chars.len() {
                         i += 1;
                     }
-                    let var_idx = self.builder.add_name(&var_name);
-                    self.builder.emit(Op::GetVar(var_idx), 0);
+                    // Route through BUILTIN_GET_VAR for consistent storage.
+                    let name_const = self.builder.add_constant(Value::str(var_name.as_str()));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1),
+                        0,
+                    );
                     if !first {
                         self.builder.emit(Op::Concat, 0);
                     }
@@ -1030,8 +1451,13 @@ impl ShellCompiler {
                         var_name.push(chars[i]);
                         i += 1;
                     }
-                    let var_idx = self.builder.add_name(&var_name);
-                    self.builder.emit(Op::GetVar(var_idx), 0);
+                    // Route through BUILTIN_GET_VAR for consistent storage.
+                    let name_const = self.builder.add_constant(Value::str(var_name.as_str()));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1),
+                        0,
+                    );
                     if !first {
                         self.builder.emit(Op::Concat, 0);
                     }
@@ -1071,6 +1497,15 @@ impl ShellCompiler {
         body: &[ShellCommand],
         is_until: bool,
     ) {
+        // Track the body's last-command exit status in a slot. POSIX: the
+        // loop's exit status is the body's last-command status, or 0 if the
+        // body never ran. Without this, the status would be the failing
+        // condition's status (1 for `while [[ i < N ]]` after exit).
+        let status_slot = self.next_slot;
+        self.next_slot += 1;
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetSlot(status_slot), 0);
+
         let loop_top = self.builder.current_pos();
 
         // Evaluate condition
@@ -1079,32 +1514,48 @@ impl ShellCompiler {
         }
         self.builder.emit(Op::GetStatus, 0);
 
-        // while: exit if status != 0 (JumpIfTrue since status>0 = failure)
-        // until: exit if status == 0 (JumpIfFalse since status 0 = success)
+        // Shell: status 0 = success = truthy.
+        //   while → exit when condition FAILS → JumpIfFalse on Status truthiness
+        //   until → exit when condition SUCCEEDS → JumpIfTrue
         let exit_jump = if is_until {
-            self.builder.emit(Op::JumpIfFalse(0), 0)
-        } else {
             self.builder.emit(Op::JumpIfTrue(0), 0)
+        } else {
+            self.builder.emit(Op::JumpIfFalse(0), 0)
         };
 
         self.break_patches.push(Vec::new());
-        self.continue_targets.push(loop_top);
+        self.continue_patches.push(Vec::new());
 
         for cmd in body {
             self.compile_command(cmd);
         }
 
+        // continue lands here — patch all in-body `continue` jumps to this
+        // point, then save body status + back-jump.
+        let continue_target = self.builder.current_pos();
+        if let Some(continues) = self.continue_patches.pop() {
+            for cp in continues {
+                self.builder.patch_jump(cp, continue_target);
+            }
+        }
+
+        // Save body's last-command status before the back-jump.
+        self.builder.emit(Op::GetStatus, 0);
+        self.builder.emit(Op::SetSlot(status_slot), 0);
         self.builder.emit(Op::Jump(loop_top), 0);
 
         let loop_exit = self.builder.current_pos();
         self.builder.patch_jump(exit_jump, loop_exit);
+
+        // Restore the saved body status as the loop's exit status.
+        self.builder.emit(Op::GetSlot(status_slot), 0);
+        self.builder.emit(Op::SetStatus, 0);
 
         if let Some(breaks) = self.break_patches.pop() {
             for bp in breaks {
                 self.builder.patch_jump(bp, loop_exit);
             }
         }
-        self.continue_targets.pop();
     }
 
     /// Extract a literal string from a ShellWord (for constant folding).

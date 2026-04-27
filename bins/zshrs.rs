@@ -1533,10 +1533,12 @@ fn run_interactive() {
 
     let compsys_cache = match CompsysCache::open(&cache_path) {
         Ok(mut cache) => {
-            // Index PATH executables on first run
+            // Index PATH executables on first run. This is one-time startup
+            // work — log it via tracing instead of printing to stderr where it
+            // pollutes user terminals (and tests, which see stderr noise).
             if !cache.has_executables().unwrap_or(false) {
-                eprint!("Indexing completions... ");
                 let path_var = std::env::var("PATH").unwrap_or_default();
+                let started = std::time::Instant::now();
                 let mut executables = Vec::new();
                 for dir in path_var.split(':') {
                     if let Ok(entries) = std::fs::read_dir(dir) {
@@ -1553,12 +1555,16 @@ fn run_interactive() {
                 }
                 let cmd_count = executables.len();
                 let _ = cache.set_executables_bulk(&executables);
-                eprintln!("{} commands indexed", cmd_count);
+                tracing::info!(
+                    commands = cmd_count,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "indexed PATH completions"
+                );
             }
             Some(cache)
         }
         Err(e) => {
-            eprintln!("Warning: compsys cache failed to initialize: {e}");
+            tracing::warn!(error = %e, "compsys cache failed to initialize");
             None
         }
     };
@@ -1574,7 +1580,7 @@ fn run_interactive() {
                 Some(std::sync::Arc::new(std::sync::Mutex::new(engine)))
             }
             Err(e) => {
-                eprintln!("Warning: history engine failed to initialize: {e}");
+                tracing::warn!(error = %e, "history engine failed to initialize");
                 None
             }
         };
@@ -1617,8 +1623,9 @@ fn run_interactive() {
     // Source startup files in correct zsh order per zshall(1)
     source_startup_files(&mut executor, is_login, is_interactive, no_rcs);
 
-    println!("zshrs {}", env!("CARGO_PKG_VERSION"));
-    println!("Type exit to quit\n");
+    // Banner goes to the log, not the user's terminal. A shell prompt should
+    // appear immediately on launch — no version stripe, no "type exit" hint.
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "interactive shell start");
 
     loop {
         // Non-blocking: merge background compinit results if ready
