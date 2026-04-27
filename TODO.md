@@ -317,3 +317,9 @@ This iteration's deltas:
 Net `ShellParser::new` references in `exec.rs`: **4 → 2**. The remaining 2 (cached-body fallback + filesystem fallback in `load_autoload_function`) are gated by the `executor.functions: HashMap<String, ShellCommand>` cascade — until function lookup, `whence`, `which`, `functions[name]=…`, and `unfunction` all migrate to a `functions_compiled`-only world, the autoload paths must keep producing `ShellCommand` for back-compat.
 
 Targeted-test gate (`zsh_construct_corpus` + `no_tree_walker_dispatch` + `ztst_runner`): **70 passed, 0 failed, 1 ignored** (the load-bearing 96-invariant + corpus + ztst suite).
+
+Subsequent loop iteration:
+
+- **`load_autoload_function` filesystem-fallback path** also populates `functions_compiled` via `ZshParser` + `ZshCompiler`. All three autoload entry points (ZWC, cached-body, fpath file) now feed the new pipeline.
+- **Legacy `compiler.rs` (828 LOC) + `ast_opt.rs` (236 LOC) deleted.** Both were orphan modules with zero call sites in `src/` or `tests/`. `compiler.rs`'s standalone `Compiler` struct was a predecessor of `ShellCompiler` in `shell_compiler.rs`; `ast_opt.rs`'s `optimize` AST-mutation pass was never invoked. Closes step 13 of the deletion plan partially — `text.rs::getpermtext` still required by `whence`/`which` so it stays.
+- **`ZshrsHost::call_function` re-checks `functions_compiled` after autoload triggers.** Was checked once before autoload, then fell through to legacy AST recompile even after autoload populated the new table. Now skips the recompile when the new pipeline already produced the Chunk.
