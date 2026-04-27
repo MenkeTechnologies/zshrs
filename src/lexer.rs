@@ -2281,8 +2281,12 @@ pub fn untokenize(s: &str) -> String {
 
     while i < chars.len() {
         let c = chars[i];
-        // Check if it's a token character (in the special range)
-        if (c as u32) < 32 {
+        // Token chars live in zsh's META range (0x83 = META through 0x9f =
+        // BNULL). Anything in that range needs un-mapping before display
+        // or downstream consumption. The original `< 32` test was wrong —
+        // none of zsh's tokens land in that range.
+        let cu = c as u32;
+        if cu >= 0x83 && cu <= 0x9f {
             // Convert token back to original character
             match c {
                 c if c == char_tokens::POUND => result.push('#'),
