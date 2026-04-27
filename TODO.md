@@ -324,6 +324,33 @@ Subsequent loop iteration:
 - **Legacy `compiler.rs` (828 LOC) + `ast_opt.rs` (236 LOC) deleted.** Both were orphan modules with zero call sites in `src/` or `tests/`. `compiler.rs`'s standalone `Compiler` struct was a predecessor of `ShellCompiler` in `shell_compiler.rs`; `ast_opt.rs`'s `optimize` AST-mutation pass was never invoked. Closes step 13 of the deletion plan partially — `text.rs::getpermtext` still required by `whence`/`which` so it stays.
 - **`ZshrsHost::call_function` re-checks `functions_compiled` after autoload triggers.** Was checked once before autoload, then fell through to legacy AST recompile even after autoload populated the new table. Now skips the recompile when the new pipeline already produced the Chunk.
 
+## Session 2026-04-27 — Phase 2 complete: production code is ShellParser-free
+
+Final cascade pushed through. `ShellParser::new` now appears in **zero production code or test files** outside the legacy modules slated for deletion themselves:
+
+- **Function-call legacy paths migrated to compiled dispatch.** New `ShellExecutor::dispatch_function_call(name, args) -> Option<i32>` mirrors `ZshrsHost::call_function`'s resolution order — `functions_compiled` first, then autoload, then legacy AST recompile. `run_original_command`, ZLE `WidgetResult::CallFunction`, and `commandnotfound()` now route through it. The legacy `call_function(&ShellCommand, args)` (57 LOC), `doshfunc(&ShellCommand)` (37 LOC), and `exectime(&ShellCommand)` (22 LOC) all deleted with zero remaining callers.
+- **`function_source: HashMap<String, String>` field added.** Holds canonical source text for autoloaded functions (raw cache-body / file-content). Introspection (`whence`, `which`, `typeset -f`, `functions`) reads from there first, falls back to `text::getpermtext(self.functions[name])` only when the legacy AST is the only source. New helpers: `function_exists(name)`, `function_definition_text(name)`, `function_names()`.
+- **`load_autoload_function` ShellParser parses dropped.** Both cached-body and filesystem-fallback paths now ONLY use `ZshParser` + `ZshCompiler` to populate `functions_compiled` + `function_source`. The legacy AST table `self.functions` is no longer touched by autoload at all. `maybe_autoload` was updated to treat `function_exists(name)` as the success signal so the contract change is invisible to callers.
+- **`tests/zpwr_parse_test.rs` migrated to `ZshParser`.** Exercises ~1000 .zsh files end-to-end through the parser; result-shape adapter is a one-liner since the test only cares about success/failure.
+- **`tests/zsh_parser_probe.rs`**: four ShellParser-vs-ZshParser comparison probes deleted (no longer meaningful).
+- **`exec.rs` drops `ShellParser` from its `use crate::parser::{...}` import.** All references now live in comments only.
+
+Counts after this iteration:
+- `ShellParser::new` in production code: **0** (was 4 → 2 → 0 across this session's iterations)
+- `ShellParser::new` in tests outside the legacy probes: **0**
+- `ShellParser::new` total in repo: **3** (parser.rs:2 internal recursive; shell_compiler.rs:1 internal nested-parse)
+
+The remaining 3 callers all live inside modules slated for deletion (`shell_compiler.rs` itself; `ShellParser`'s own impl). They cease to exist when those modules are removed.
+
+What still blocks the literal `pub struct ShellParser` deletion:
+1. `shell_compiler.rs::ShellCompiler` is still used by 6 sites in exec.rs that consume `&ShellCommand` (BUILTIN_REGISTER_FUNCTION, the AST-recompile fallbacks in `dispatch_function_call`/`ZshrsHost::call_function`, `load_function_from_zwc`, `execute_command`, `execute_command_capture`).
+2. `tree_walker_absent.rs` invariant tests pin the implementation of `execute_command` and `execute_command_capture` to use `ShellCompiler::new()`. Deleting `ShellCompiler` requires either relaxing those invariants or migrating those entry points to consume `ZshProgram`.
+3. `text::getpermtext` reads `&ShellCommand` for runtime-defined-but-not-autoloaded functions. Currently load-bearing for `whence`/`which`/etc. Removing `ShellCommand` requires either capturing source text at runtime FuncDef compile time, or reconstructing source from the parsed AST in some other form.
+
+Next session's high-leverage move: extract `ArithCompiler` from `shell_compiler.rs` into its own module so `compile_zsh.rs` no longer depends on the legacy module for arith. That closes one of the three blockers above.
+
+Targeted-test gate (`zsh_construct_corpus` + `no_tree_walker_dispatch` + `ztst_runner` + `tree_walker_absent`): **70 + 158 + 8 = 236 passes, 0 failures, 1 ignored**. The 96-test "no tree walker" invariant is still load-bearing.
+
 ## Session 2026-04-27 — `man zshall` gap audit (verified against binary)
 
 Probe: 47 constructs. Every entry below was verified by running zshrs (`./target/debug/zshrs -f -c '...'`) and comparing to expected zsh behavior. False positives the source-only audit produced (e.g. `${(j: :)arr}`, `${(t)var}`, `${(P)x}`, `<<<`, short-loop `for x in y; { ... }`, `repeat N ( ... )`, `zparseopts`) are NOT listed — they already work.
