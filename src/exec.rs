@@ -21508,9 +21508,11 @@ impl ShellExecutor {
             if files.len() > 1 {
                 // Compile specific functions
                 for name in &files[1..] {
-                    if let Some(func) = self.functions.get(name) {
-                        // Serialize the function (simplified - just store as comment for now)
-                        let source = format!("# Compiled function: {}\n# Body: {:?}", name, func);
+                    if let Some(body) = self.function_definition_text(name) {
+                        // Wrap as a `name() { body }` definition so the ZWC
+                        // contains a parseable function source the loader
+                        // can re-tokenize.
+                        let source = format!("{} () {{\n{}\n}}", name, body);
                         builder.add_source(name, &source);
                     } else if compile_auto && self.autoload_pending.contains_key(name) {
                         // Try to load autoload function source
