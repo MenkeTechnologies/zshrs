@@ -1775,7 +1775,7 @@ impl ZshCompiler {
 /// If `list` is a Simple with one word matching `name<INPAR><OUTPAR>`
 /// (i.e. `name()`), return the bare name. Used to detect inline function
 /// definitions that the port lexer misparsed.
-fn funcdef_name_pattern(list: &crate::parser::ZshList) -> Option<String> {
+pub fn funcdef_name_pattern(list: &crate::parser::ZshList) -> Option<String> {
     if list.sublist.next.is_some() || list.flags.async_ {
         return None;
     }
@@ -1805,7 +1805,7 @@ fn funcdef_name_pattern(list: &crate::parser::ZshList) -> Option<String> {
 }
 
 /// If `list` is a Cursh (brace group) with no chain, return its inner program.
-fn funcdef_body_pattern(list: &crate::parser::ZshList) -> Option<&crate::parser::ZshProgram> {
+pub fn funcdef_body_pattern(list: &crate::parser::ZshList) -> Option<&crate::parser::ZshProgram> {
     if list.sublist.next.is_some() {
         return None;
     }
