@@ -12411,40 +12411,28 @@ impl ShellExecutor {
     /// whole program (zsh-style autoload, where the file contents ARE the
     /// function body).
     ///
-    /// Two shapes are accepted:
-    ///   1. `function name { body }` parses as a single `ZshFuncDef`.
-    ///   2. `name() { body }` parses as a Simple `name<INPAR><OUTPAR>` plus a
-    ///      Cursh body (the lexer doesn't split `name(`/`)` from `name`).
-    ///      `funcdef_name_pattern` + `funcdef_body_pattern` from
-    ///      `compile_zsh` cover that synthesized shape.
+    /// Both `function name { body }` and `name() { body }` shapes parse to
+    /// a single `ZshFuncDef` (the parser synthesizes the latter at parse
+    /// time via the `simple_name_with_inoutpar` recovery in
+    /// `parse_program_until`).
     fn ksh_autoload_body<'a>(
         program: &'a crate::parser::ZshProgram,
         name: &str,
     ) -> Option<&'a crate::parser::ZshProgram> {
-        // Shape 1: `function name { body }` as a single FuncDef.
-        if program.lists.len() == 1 {
-            let list = &program.lists[0];
-            if !list.flags.async_ && list.sublist.next.is_none() {
-                let pipe = &list.sublist.pipe;
-                if pipe.next.is_none() {
-                    if let crate::parser::ZshCommand::FuncDef(f) = &pipe.cmd {
-                        if f.names.len() == 1 && f.names[0] == name {
-                            return Some(f.body.as_ref());
-                        }
-                    }
-                }
-            }
+        if program.lists.len() != 1 {
+            return None;
         }
-        // Shape 2: `name() { body }` synthesized as Simple + Cursh.
-        if program.lists.len() == 2 {
-            if let Some(detected) = crate::compile_zsh::funcdef_name_pattern(&program.lists[0]) {
-                if detected == name {
-                    if let Some(body) =
-                        crate::compile_zsh::funcdef_body_pattern(&program.lists[1])
-                    {
-                        return Some(body);
-                    }
-                }
+        let list = &program.lists[0];
+        if list.flags.async_ || list.sublist.next.is_some() {
+            return None;
+        }
+        let pipe = &list.sublist.pipe;
+        if pipe.next.is_some() {
+            return None;
+        }
+        if let crate::parser::ZshCommand::FuncDef(f) = &pipe.cmd {
+            if f.names.len() == 1 && f.names[0] == name {
+                return Some(f.body.as_ref());
             }
         }
         None
