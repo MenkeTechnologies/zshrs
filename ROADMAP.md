@@ -105,7 +105,17 @@ Critical path. Until G is done, zshrs cannot replace zsh on the maintainer's mac
 - **Acceptance:** zsh's `traps` testfile (W08traps) passes.
 - **Effort:** 2 days.
 
-**Phase G exit criteria:** maintainer's `.zshrc` + zpwr loads cleanly in zshrs with zero errors and zero behavioral differences from zsh.
+### G8 — Kill `BUILTIN_EXPAND_WORD_RUNTIME` (the last residual dup)
+- After G1 (arrays) and G4 (parameter flags) land, the only remaining users of `BUILTIN_EXPAND_WORD_RUNTIME` (the JSON-AST runtime fallback that delegates to tree-walker-era `expand_word_glob`) should be: mixed `$VAR + glob` literals, and any edge cases discovered during dogfood.
+- Lower the mixed-literal case to ops: chain `Op::ExpandParam` + `Op::Glob` + `BUILTIN_ARRAY_JOIN` for literals containing both `$` triggers and glob chars.
+- Audit all remaining call sites of `compile_word_runtime`. Any that exist after the lowering should either get a native op or be a documented "this case can't happen" assertion.
+- Delete `BUILTIN_EXPAND_WORD_RUNTIME` (id 281), delete `compile_word_runtime` helper, delete the JSON-roundtrip serialization path entirely.
+- `expand_word_glob` and `apply_var_modifier` either get inlined into the relevant host methods (where they're called by `Op::ExpandParam`) or deleted — they're tree-walker-era code that should not survive once nothing calls them.
+- **Acceptance:** grep for `BUILTIN_EXPAND_WORD_RUNTIME` returns zero matches in src/. `cargo build` succeeds with zero warnings about unused functions in the expansion module.
+- **Why this matters:** until G8 is done, zshrs has dual *implementations* of word expansion (native ops vs runtime fallback delegating to tree-walker code) even though dispatch is unified. That residual dup is the last debt from the rip-out. After G8, zshrs has literally one code path for every shell construct — no fallback, no alternative, no "if X then bytecode else tree walker" anywhere.
+- **Effort:** 2 days after G1+G4 land.
+
+**Phase G exit criteria:** maintainer's `.zshrc` + zpwr loads cleanly in zshrs with zero errors and zero behavioral differences from zsh. **Plus:** `BUILTIN_EXPAND_WORD_RUNTIME` is deleted from the codebase. zshrs has literally one code path for every shell construct.
 
 ---
 
