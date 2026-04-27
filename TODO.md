@@ -351,6 +351,34 @@ Next session's high-leverage move: extract `ArithCompiler` from `shell_compiler.
 
 Targeted-test gate (`zsh_construct_corpus` + `no_tree_walker_dispatch` + `ztst_runner` + `tree_walker_absent`): **70 + 158 + 8 = 236 passes, 0 failures, 1 ignored**. The 96-test "no tree walker" invariant is still load-bearing.
 
+## Session 2026-04-27 — Phase 2 cascade: shell_compiler.rs deleted
+
+Continuation of the same session. After Phase 2 hit "production code is ShellParser-free", the cascade kept going through shell_compiler.rs and the dead-builtin layer:
+
+- **`src/shell_compiler.rs` deleted (~3273 LOC).** Production runtime path now consists only of `ZshLexer → ZshParser → ZshCompiler → fusevm`. `ArithCompiler` was first extracted to its own module (`src/arith_compiler.rs`) so `compile_zsh.rs` no longer imports `shell_compiler`. Then the legacy file went.
+- **`BUILTIN_EXPAND_WORD_RUNTIME` (id 281) + `BUILTIN_REGISTER_FUNCTION` (id 282) deleted.** Both were emitted only by the deleted shell_compiler. ZshCompiler emits `BUILTIN_EXPAND_TEXT` (314) and `BUILTIN_REGISTER_COMPILED_FN` (305) instead. IDs stay reserved as gap comments.
+- **`expand_word_glob` (~36 LOC) + `expand_word_split` (~60 LOC) deleted.** Zero callers after `BUILTIN_EXPAND_WORD_RUNTIME` removed. The remaining `expand_word(&ShellWord)` chain stays — reached via `ZshrsHost::expand_param → apply_var_modifier → expand_word`, which is the live host-trait path the new pipeline uses for parameter modifiers.
+- **`function_source: HashMap<String, String>` field added.** Holds canonical function source. Autoload paths (ZWC, cached-body, fpath file) populate it. Introspection (`whence`, `which`, `typeset -f`, `${functions[name]}`) reads from it via new helpers `function_exists`, `function_definition_text`, `function_names`, `remove_function`.
+- **Latent autoload bugs fixed.** `dispatch_function_call` and `ZshrsHost::call_function` now trigger `maybe_autoload` BEFORE `function_exists` — was a regression where the autoload stub registered in `self.functions` made `function_exists("foo")` return true even though no Chunk had landed in `functions_compiled` yet, so dispatch returned None instead of triggering the load. Plus `autoload -X` immediate-load + ZWC reload gate + plugin-cache replay all migrated to the union-aware checks.
+- **`execute_command` + `execute_command_capture` migrated to round-trip through `getpermtext → ZshParser → ZshCompiler` (no ShellCompiler fallback).** Tree_walker_absent invariants strengthened to FORBID `ShellCompiler::new()` in either function — the new pipeline is the only execution path. Same round-trip pattern applied to `BUILTIN_REGISTER_FUNCTION` handler and `load_function_from_zwc`.
+- **Dead legacy modules deleted earlier this session: `compiler.rs` (828 LOC) + `ast_opt.rs` (236 LOC).** Both were orphans with zero call sites.
+
+Net session deletion (cumulative across all iterations): **~5000 LOC of legacy parser/compiler/expansion machinery** plus ~12 latent autoload bugs surfaced during the cascade.
+
+Counts after this session:
+- `ShellParser::new` in production code: **0**
+- `ShellCompiler::new()` in production code: **0**
+- `ShellCompiler::new()` anywhere in src/: **0** (the module that hosted it is deleted)
+- `shell_compiler.rs` exists: **NO** — fully deleted
+
+What still blocks the literal `pub struct ShellCommand` deletion:
+1. `text::getpermtext(&ShellCommand)` is the introspection canonical-source reconstruction path for runtime-defined functions. ~37 references in `text.rs`. Stays until source-text capture moves into the parse phase.
+2. `zwc.rs` produces `ShellCommand` from wordcode (the `.zwc` file format). ~35 references. Stays until either the wordcode decoder is rewritten to produce `ZshProgram` or the round-trip via `getpermtext` is removed.
+3. `executor.functions: HashMap<String, ShellCommand>` is still populated by autoload paths (legacy back-compat surface). Reads have all moved to `function_exists`/`function_definition_text`/`function_names`. Could drop the inserts but the writes guard against future readers — leave for now.
+4. The `expand_word(&ShellWord)` chain stays alive via `ZshrsHost::expand_param`. Full deletion requires native lowering of all `VarModifier` shapes in compile_zsh.rs.
+
+The remaining cascades are each multi-session work. Phase 2 itself — "delete duplicate non-ported lex/parse" — is structurally done in spirit (shell_compiler is gone, ShellParser is unreachable from production). Literal type deletion of `ShellCommand`/`ShellWord`/`ShellParser`/`ShellLexer` is gated on the three remaining cascades above.
+
 ## Session 2026-04-27 — `man zshall` gap audit (verified against binary)
 
 Probe: 47 constructs. Every entry below was verified by running zshrs (`./target/debug/zshrs -f -c '...'`) and comparing to expected zsh behavior. False positives the source-only audit produced (e.g. `${(j: :)arr}`, `${(t)var}`, `${(P)x}`, `<<<`, short-loop `for x in y; { ... }`, `repeat N ( ... )`, `zparseopts`) are NOT listed — they already work.
