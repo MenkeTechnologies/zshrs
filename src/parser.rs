@@ -2884,6 +2884,38 @@ fn resolve_redir(r: &mut ZshRedir, bodies: &[HereDocInfo]) {
     }
 }
 
+/// If `list` is a Simple containing one word that ends in the
+/// `<INPAR><OUTPAR>` token pair (the lexer-port encoding of `()`),
+/// return the bare name. Used by `parse_program_until` to detect
+/// `name() {body}` style function definitions where the lexer
+/// hasn't split the `()` from the name.
+fn simple_name_with_inoutpar(list: &ZshList) -> Option<String> {
+    if list.flags.async_ || list.sublist.next.is_some() {
+        return None;
+    }
+    let pipe = &list.sublist.pipe;
+    if pipe.next.is_some() {
+        return None;
+    }
+    let simple = match &pipe.cmd {
+        ZshCommand::Simple(s) => s,
+        _ => return None,
+    };
+    if simple.words.len() != 1 || !simple.assigns.is_empty() || !simple.redirs.is_empty() {
+        return None;
+    }
+    let w = &simple.words[0];
+    let suffix = "\u{88}\u{8a}"; // INPAR + OUTPAR
+    if !w.ends_with(suffix) {
+        return None;
+    }
+    let bare = &w[..w.len() - suffix.len()];
+    if bare.is_empty() {
+        return None;
+    }
+    Some(crate::lexer::untokenize(bare))
+}
+
 impl<'a> ZshParser<'a> {
     /// Create a new parser
     pub fn new(input: &'a str) -> Self {
@@ -2988,7 +3020,68 @@ impl<'a> ZshParser<'a> {
             }
 
             match self.parse_list() {
-                Some(list) => lists.push(list),
+                Some(list) => {
+                    let detected_name = simple_name_with_inoutpar(&list);
+                    lists.push(list);
+                    // Synthesize a FuncDef for the `name() { body }` shape
+                    // at parse time so body_source is captured while the
+                    // lexer still has the input. The lexer port emits
+                    // `name(` as a single Word ending in `<INPAR><OUTPAR>`,
+                    // so the Simple list is followed by an Inbrace once
+                    // separators are skipped.
+                    if let Some(name) = detected_name {
+                        // Skip separators on the real lexer; safe because
+                        // parse_program's next iteration would also skip them.
+                        while self.lexer.tok == LexTok::Seper
+                            || self.lexer.tok == LexTok::Newlin
+                        {
+                            self.lexer.zshlex();
+                        }
+                        if self.lexer.tok == LexTok::Inbrace {
+                            // Consume `{`, parse body, capture source.
+                            self.lexer.zshlex();
+                            let body_start = self.lexer.pos;
+                            let body = self.parse_program();
+                            let body_end = if self.lexer.tok == LexTok::Outbrace {
+                                self.lexer.pos.saturating_sub(1)
+                            } else {
+                                self.lexer.pos
+                            };
+                            let body_source = self
+                                .lexer
+                                .input
+                                .get(body_start..body_end)
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty());
+                            if self.lexer.tok == LexTok::Outbrace {
+                                self.lexer.zshlex();
+                            }
+                            // Replace the Simple list with a FuncDef list.
+                            lists.pop();
+                            let funcdef = ZshCommand::FuncDef(ZshFuncDef {
+                                names: vec![name],
+                                body: Box::new(body),
+                                tracing: false,
+                                auto_call_args: None,
+                                body_source,
+                            });
+                            let synthetic = ZshList {
+                                sublist: ZshSublist {
+                                    pipe: ZshPipe {
+                                        cmd: funcdef,
+                                        next: None,
+                                        lineno: self.lexer.lineno,
+                                        merge_stderr: false,
+                                    },
+                                    next: None,
+                                    flags: SublistFlags::default(),
+                                },
+                                flags: ListFlags::default(),
+                            };
+                            lists.push(synthetic);
+                        }
+                    }
+                }
                 None => break,
             }
         }

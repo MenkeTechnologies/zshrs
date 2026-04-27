@@ -69,34 +69,12 @@ impl ZshCompiler {
     }
 
     fn compile_program(&mut self, program: &ZshProgram) {
-        // ZshLexer port has a known gap: `name()` doesn't tokenize as
-        // Word("name") + Inoutpar — it emits ONE word "name<INPAR><OUTPAR>".
-        // parse_inline_funcdef therefore never fires and the parser splits
-        // `name() { body }` into THREE separate ZshLists (Simple "name()",
-        // Cursh body, then whatever follows). Detect that shape here and
-        // synthesize a FuncDef on the fly. The proper fix is in the lexer
-        // (stop word at `(`); this is a compile-side workaround until then.
-        let mut i = 0;
-        let lists = &program.lists;
-        while i < lists.len() {
-            if let Some(name) = funcdef_name_pattern(&lists[i]) {
-                if i + 1 < lists.len() {
-                    if let Some(body) = funcdef_body_pattern(&lists[i + 1]) {
-                        let synthesized = crate::parser::ZshFuncDef {
-                            names: vec![name],
-                            body: Box::new(body.clone()),
-                            tracing: false,
-                            auto_call_args: None,
-                            body_source: None,
-                        };
-                        self.compile_funcdef(&synthesized);
-                        i += 2;
-                        continue;
-                    }
-                }
-            }
-            self.compile_list(&lists[i]);
-            i += 1;
+        // The parser synthesizes a FuncDef for the `name() { body }` shape
+        // at parse time (ZshParser::parse_program_until detects the
+        // Simple<INPAR><OUTPAR> + Inbrace pattern and emits a FuncDef with
+        // body_source captured). No compile-side workaround is needed.
+        for list in &program.lists {
+            self.compile_list(list);
         }
     }
 
@@ -1772,53 +1750,6 @@ impl ZshCompiler {
         }
 
         self.builder.emit(Op::GetSlot(result_slot), 0);
-    }
-}
-
-/// If `list` is a Simple with one word matching `name<INPAR><OUTPAR>`
-/// (i.e. `name()`), return the bare name. Used to detect inline function
-/// definitions that the port lexer misparsed.
-pub fn funcdef_name_pattern(list: &crate::parser::ZshList) -> Option<String> {
-    if list.sublist.next.is_some() || list.flags.async_ {
-        return None;
-    }
-    let pipe = &list.sublist.pipe;
-    if pipe.next.is_some() {
-        return None;
-    }
-    let simple = match &pipe.cmd {
-        crate::parser::ZshCommand::Simple(s) => s,
-        _ => return None,
-    };
-    if simple.words.len() != 1 || !simple.assigns.is_empty() || !simple.redirs.is_empty()
-    {
-        return None;
-    }
-    let w = &simple.words[0];
-    // Look for `\u{88}\u{8a}` (INPAR + OUTPAR tokens) at the end.
-    let suffix = "\u{88}\u{8a}";
-    if !w.ends_with(suffix) {
-        return None;
-    }
-    let bare = &w[..w.len() - suffix.len()];
-    if bare.is_empty() {
-        return None;
-    }
-    Some(crate::lexer::untokenize(bare))
-}
-
-/// If `list` is a Cursh (brace group) with no chain, return its inner program.
-pub fn funcdef_body_pattern(list: &crate::parser::ZshList) -> Option<&crate::parser::ZshProgram> {
-    if list.sublist.next.is_some() {
-        return None;
-    }
-    let pipe = &list.sublist.pipe;
-    if pipe.next.is_some() {
-        return None;
-    }
-    match &pipe.cmd {
-        crate::parser::ZshCommand::Cursh(body) => Some(body),
-        _ => None,
     }
 }
 
