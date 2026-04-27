@@ -5920,6 +5920,15 @@ impl ShellExecutor {
             .map(crate::text::getpermtext)
     }
 
+    /// Remove a function from all three tables (compiled chunk, legacy AST,
+    /// canonical source). Returns true iff at least one table held it.
+    pub fn remove_function(&mut self, name: &str) -> bool {
+        let a = self.functions_compiled.remove(name).is_some();
+        let b = self.functions.remove(name).is_some();
+        let c = self.function_source.remove(name).is_some();
+        a || b || c
+    }
+
     /// Sorted list of every known function name (union of compiled + AST + source).
     pub fn function_names(&self) -> Vec<String> {
         let mut set: std::collections::BTreeSet<String> =
@@ -8855,14 +8864,9 @@ impl ShellExecutor {
             // === FUNCTIONS ===
             "functions" => {
                 if key == "@" || key == "*" {
-                    let names: Vec<String> = self.functions.keys().cloned().collect();
-                    return Some(names.join(" "));
+                    return Some(self.function_names().join(" "));
                 }
-                if let Some(body) = self.functions.get(key) {
-                    Some(format!("{:?}", body))
-                } else {
-                    Some(String::new())
-                }
+                Some(self.function_definition_text(key).unwrap_or_default())
             }
             "functions_source" => {
                 // We don't track source locations, return empty
@@ -10778,7 +10782,7 @@ impl ShellExecutor {
     /// Snapshot executor state before sourcing a plugin (for delta computation).
     fn snapshot_state(&self) -> PluginSnapshot {
         PluginSnapshot {
-            functions: self.functions.keys().cloned().collect(),
+            functions: self.function_names().into_iter().collect(),
             aliases: self.aliases.keys().cloned().collect(),
             global_aliases: self.global_aliases.keys().cloned().collect(),
             suffix_aliases: self.suffix_aliases.keys().cloned().collect(),
@@ -14310,7 +14314,7 @@ impl ShellExecutor {
         if fpath_missing > 0 {
             println!("  {} {} missing fpath directories", red("!"), fpath_missing);
         }
-        println!("  functions:   {} loaded", self.functions.len());
+        println!("  functions:   {} loaded", self.function_names().len());
         println!("  autoload:    {} pending", self.autoload_pending.len());
         println!();
 
@@ -18140,7 +18144,7 @@ impl ShellExecutor {
                 self.aliases.remove(&name);
             }
             if disable_functions {
-                self.functions.remove(&name);
+                self.remove_function(&name);
             }
             if disable_builtins {
                 // Store disabled builtins
@@ -19577,7 +19581,7 @@ impl ShellExecutor {
                 self.aliases.remove(name);
             }
             if remove_functions {
-                self.functions.remove(name);
+                self.remove_function(name);
             }
             if remove_dirs {
                 // Remove from named directories (TODO)
@@ -21064,7 +21068,7 @@ impl ShellExecutor {
     /// unfunction - remove function definitions
     fn builtin_unfunction(&mut self, args: &[String]) -> i32 {
         for name in args {
-            if self.functions.remove(name).is_none() {
+            if !self.remove_function(name) {
                 eprintln!("unfunction: no such function: {}", name);
             }
         }
