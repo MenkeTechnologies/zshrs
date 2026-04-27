@@ -6,7 +6,6 @@
 //! Cache key: (canonical_path, mtime_secs, mtime_nsecs)
 //! Cache invalidation: mtime mismatch → re-source, update cache.
 
-use crate::parser::ShellCommand;
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
