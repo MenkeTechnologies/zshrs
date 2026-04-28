@@ -135,6 +135,170 @@ where
     })
 }
 
+/// Parse a `(flags)pat` subscript prefix. Returns `Some((flags, pat))`
+/// when `idx` opens with `(` and contains a matching `)` (with no `[` /
+/// `]` inside the flag run, which would mean a literal char class).
+/// Used by BUILTIN_ARRAY_INDEX for `${arr[(r)pat]}` and similar.
+fn parse_subscript_flags(idx: &str) -> Option<(&str, &str)> {
+    let rest = idx.strip_prefix('(')?;
+    let end = rest.find(')')?;
+    let flags = &rest[..end];
+    // Reject anything that looks like a char-class subscript: `[abc]`
+    // doesn't match this prefix, but `(...)` containing brackets is
+    // probably alternation — let it fall through to runtime instead.
+    if flags.is_empty() || flags.contains('[') || flags.contains(']') {
+        return None;
+    }
+    // Flags must be the recognized single-char subscript flag set —
+    // anything else means this `(...)` is something else (alternation).
+    if !flags.chars().all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'n')) {
+        return None;
+    }
+    Some((flags, &rest[end + 1..]))
+}
+
+/// Apply zsh subscript flags to an indexed array. `flags` is the
+/// single-char flag set parsed by `parse_subscript_flags`. `pat` is
+/// the search pattern (or literal when `e` flag is present).
+///
+/// Semantics (from zshparam(1) "Subscript Flags"):
+/// - `r` — first matching value (forward search)
+/// - `R` — last matching value (reverse search)
+/// - `i` — first matching index (1-based; 0 if none)
+/// - `I` — last matching index (1-based; 0 if none)
+/// - `e` — exact (literal) match instead of glob match
+/// - `re` / `Re` / `ie` / `Ie` — combine with `e` for literal search
+fn array_subscript_flag(arr: &[String], flags: &str, pat: &str) -> fusevm::Value {
+    use fusevm::Value;
+    let exact = flags.contains('e');
+    let match_one = |s: &str| -> bool {
+        if exact {
+            s == pat
+        } else {
+            ShellExecutor::glob_match_static(s, pat)
+        }
+    };
+    let return_index = flags.contains('i') || flags.contains('I');
+    let reverse = flags.contains('R') || flags.contains('I');
+    let iter: Box<dyn Iterator<Item = (usize, &String)>> = if reverse {
+        Box::new(arr.iter().enumerate().rev())
+    } else {
+        Box::new(arr.iter().enumerate())
+    };
+    for (i, s) in iter {
+        if match_one(s) {
+            if return_index {
+                return Value::str((i + 1).to_string());
+            } else {
+                return Value::str(s.clone());
+            }
+        }
+    }
+    if return_index {
+        // zsh: `i` returns len+1 if not found, `I` returns 0.
+        if flags.contains('I') {
+            Value::str("0")
+        } else {
+            Value::str((arr.len() + 1).to_string())
+        }
+    } else {
+        Value::str("")
+    }
+}
+
+/// Apply zsh subscript flags to an associative array. The semantics
+/// mirror `array_subscript_flag` but `r`/`R` search values, while
+/// `i`/`I` return matching keys (zsh `i` flag for assoc returns the
+/// matching key, not a numeric index).
+fn assoc_subscript_flag(
+    map: &std::collections::HashMap<String, String>,
+    flags: &str,
+    pat: &str,
+) -> fusevm::Value {
+    use fusevm::Value;
+    let exact = flags.contains('e');
+    let return_key = flags.contains('i') || flags.contains('I');
+    let reverse = flags.contains('R') || flags.contains('I');
+    let mut entries: Vec<(&String, &String)> = map.iter().collect();
+    if reverse {
+        entries.reverse();
+    }
+    for (k, v) in entries {
+        let hit = if exact { v == pat } else { ShellExecutor::glob_match_static(v, pat) };
+        if hit {
+            return Value::str(if return_key { k.clone() } else { v.clone() });
+        }
+    }
+    Value::str("")
+}
+
+/// Parse a single subscript-side index. Accepts plain integers (fast
+/// path) and falls back to arithmetic eval for bare variable names
+/// and expressions (`i`, `i+1`, `len-1`, etc.). Returns None when
+/// the input is empty (caller treats it as "no slice").
+fn parse_subscript_index(exec: &mut ShellExecutor, s: &str) -> Option<i64> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(i) = trimmed.parse::<i64>() {
+        return Some(i);
+    }
+    Some(exec.eval_arith_expr(trimmed))
+}
+
+/// Slice an indexed array using zsh 1-based inclusive semantics.
+/// Negative indices count from the end (`-1` is the last element).
+/// Out-of-range bounds clamp to the array; `start > end` returns empty.
+fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<String> {
+    let len = arr.len() as i64;
+    if len == 0 {
+        return Vec::new();
+    }
+    let resolve = |i: i64| -> i64 {
+        if i < 0 {
+            (len + i + 1).max(1)
+        } else if i == 0 {
+            1
+        } else {
+            i.min(len)
+        }
+    };
+    let s = resolve(start);
+    let e = resolve(end);
+    if s > e {
+        return Vec::new();
+    }
+    let s_idx = (s - 1) as usize;
+    let e_idx = e as usize;
+    arr[s_idx..e_idx.min(arr.len())].to_vec()
+}
+
+/// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
+/// inclusive, char-aware (not byte). Negative indices count from end.
+fn slice_scalar(s: &str, start: i64, end: i64) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len() as i64;
+    if len == 0 {
+        return String::new();
+    }
+    let resolve = |i: i64| -> i64 {
+        if i < 0 {
+            (len + i + 1).max(1)
+        } else if i == 0 {
+            1
+        } else {
+            i.min(len)
+        }
+    };
+    let s = resolve(start);
+    let e = resolve(end);
+    if s > e {
+        return String::new();
+    }
+    chars[(s - 1) as usize..e as usize].iter().collect()
+}
+
 /// Register all zsh builtins with the VM.
 fn register_builtins(vm: &mut fusevm::VM) {
     use fusevm::shell_builtins::*;
@@ -1609,27 +1773,86 @@ fn register_builtins(vm: &mut fusevm::VM) {
             _ => {
                 // Assoc lookup wins if the name is in assoc_arrays — the user
                 // declared it via `typeset -A` or assigned via foo[key]=val.
+                // Subscript flags (k)/(v) on assoc handled separately by
+                // BUILTIN_PARAM_FLAG; (r)/(R)/(i)/(I) on assoc would search
+                // values/keys, supported below.
                 if let Some(map) = exec.assoc_arrays.get(&name) {
+                    if let Some((flags, pat)) = parse_subscript_flags(&idx) {
+                        return assoc_subscript_flag(map, flags, pat);
+                    }
                     return Value::str(map.get(&idx).cloned().unwrap_or_default());
                 }
-                match idx.parse::<i64>() {
-                    Ok(i) => {
-                        let arr = exec.arrays.get(&name);
-                        let v = arr.and_then(|a| {
-                            let len = a.len() as i64;
-                            let resolved = if i > 0 {
-                                (i - 1) as usize
-                            } else if i < 0 {
-                                ((len + i) as usize).min(len.saturating_sub(1) as usize)
-                            } else {
-                                return None;
-                            };
-                            a.get(resolved).cloned()
-                        });
-                        Value::str(v.unwrap_or_default())
+
+                let arr = match exec.arrays.get(&name) {
+                    Some(a) => a.clone(),
+                    None => {
+                        // Fall back to scalar subscripting on `variables`.
+                        // zsh treats `${str[N]}` and `${str[N,M]}` as
+                        // 1-based char indexing. Only handles plain int /
+                        // slice forms here; subscript flags on a scalar
+                        // are very rarely used and route through bridge.
+                        let scalar = exec.get_variable(&name);
+                        if scalar.is_empty() {
+                            return Value::str("");
+                        }
+                        if let Some((start_s, end_s)) = idx.split_once(',') {
+                            let s_opt = parse_subscript_index(exec, start_s);
+                            let e_opt = parse_subscript_index(exec, end_s);
+                            if let (Some(s), Some(e)) = (s_opt, e_opt) {
+                                return Value::str(slice_scalar(&scalar, s, e));
+                            }
+                        }
+                        let i = match idx.parse::<i64>() {
+                            Ok(i) => i,
+                            Err(_) => exec.eval_arith_expr(&idx),
+                        };
+                        return Value::str(slice_scalar(&scalar, i, i));
                     }
-                    Err(_) => Value::str(""),
+                };
+
+                // Subscript flag form: (r)pat / (R)pat / (i)pat / (I)pat
+                // / (e)str / (n:N:)pat. Returns first/last matching value
+                // or first/last matching index per zsh semantics.
+                if let Some((flags, pat)) = parse_subscript_flags(&idx) {
+                    return array_subscript_flag(&arr, flags, pat);
                 }
+
+                // Slice form `N,M`: comma separator with int-or-arith
+                // operands on each side. Returns Value::Array of the slice.
+                // Negative indices count from end.
+                if let Some((start_s, end_s)) = idx.split_once(',') {
+                    let start = parse_subscript_index(exec, start_s);
+                    let end = parse_subscript_index(exec, end_s);
+                    if let (Some(s), Some(e)) = (start, end) {
+                        return Value::Array(
+                            slice_indexed_array(&arr, s, e)
+                                .into_iter()
+                                .map(Value::str)
+                                .collect(),
+                        );
+                    }
+                }
+
+                // Single index — try literal int first (fast), then fall
+                // back to arithmetic eval which handles bare variable
+                // names (`arr[i]`), expressions (`arr[i+1]`), etc.
+                let i = match idx.parse::<i64>() {
+                    Ok(i) => i,
+                    Err(_) => exec.eval_arith_expr(&idx),
+                };
+                let len = arr.len() as i64;
+                let resolved = if i > 0 {
+                    (i - 1) as usize
+                } else if i < 0 {
+                    let off = len + i;
+                    if off < 0 {
+                        return Value::str("");
+                    }
+                    off as usize
+                } else {
+                    return Value::str("");
+                };
+                Value::str(arr.get(resolved).cloned().unwrap_or_default())
             }
         })
     });
