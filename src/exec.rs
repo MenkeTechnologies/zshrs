@@ -10591,7 +10591,57 @@ impl ShellExecutor {
                             break;
                         }
                     }
-                    result.push_str(&self.get_variable(&var_name));
+                    // `$NAME[subscript]` in DQ context — zsh treats the
+                    // bracketed subscript as part of the expansion
+                    // (assoc lookup or array index). Without this, the
+                    // `[...]` was emitted as literal text.
+                    if chars.peek() == Some(&'[') {
+                        chars.next(); // consume `[`
+                        let mut sub = String::new();
+                        let mut depth = 1;
+                        while let Some(c) = chars.next() {
+                            if c == '[' {
+                                depth += 1;
+                                sub.push(c);
+                            } else if c == ']' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                                sub.push(c);
+                            } else {
+                                sub.push(c);
+                            }
+                        }
+                        // Honor `$` inside the subscript (e.g. `$m[$k]`).
+                        let sub_resolved = if sub.contains('$') {
+                            self.expand_string(&sub)
+                        } else {
+                            sub
+                        };
+                        if let Some(assoc) = self.assoc_arrays.get(&var_name) {
+                            if let Some(v) = assoc.get(&sub_resolved) {
+                                result.push_str(v);
+                            }
+                        } else if let Some(arr) = self.arrays.get(&var_name) {
+                            if let Ok(idx) = sub_resolved.parse::<i64>() {
+                                let len = arr.len() as i64;
+                                let i = if idx < 0 { len + idx } else { idx - 1 };
+                                if i >= 0 && (i as usize) < arr.len() {
+                                    result.push_str(&arr[i as usize]);
+                                }
+                            } else if sub_resolved == "@" || sub_resolved == "*" {
+                                result.push_str(&arr.join(" "));
+                            }
+                        } else {
+                            // Scalar with subscript — emit the value
+                            // (subscript indexes characters, but without
+                            // braces it's rare; punt to scalar dump).
+                            result.push_str(&self.get_variable(&var_name));
+                        }
+                    } else {
+                        result.push_str(&self.get_variable(&var_name));
+                    }
                 }
             } else if c == '`' {
                 // Backtick command substitution
@@ -11535,16 +11585,42 @@ impl ShellExecutor {
                 }
             }
             _ => {
-                // Check local variables first, then arrays, then env
-                self.variables
+                // Check local variables first, then arrays, then env.
+                // With `set -u` / `setopt nounset`, looking up an
+                // unbound name is fatal: emit the same diagnostic
+                // mainline zsh prints and exit 1 (mirrors zsh's
+                // non-interactive behaviour).
+                let resolved = self.variables
                     .get(name)
                     .cloned()
                     .or_else(|| {
-                        // In zsh, $arr expands to space-joined array elements
                         self.arrays.get(name).map(|a| a.join(" "))
                     })
-                    .or_else(|| env::var(name).ok())
-                    .unwrap_or_default()
+                    .or_else(|| {
+                        self.assoc_arrays.get(name).and_then(|h| {
+                            // No bare assoc-as-scalar — but presence
+                            // means the name IS bound.
+                            if h.is_empty() { None } else { Some(String::new()) }
+                        })
+                    })
+                    .or_else(|| env::var(name).ok());
+                match resolved {
+                    Some(v) => v,
+                    None => {
+                        // zsh stores the option as "unset" (default ON =
+                        // silently empty). `set -u` / `setopt nounset` /
+                        // `set -o nounset` all turn it OFF. Different
+                        // code paths in zshrs persist either key, so
+                        // honor either signal.
+                        let nounset_on = self.options.get("nounset").copied().unwrap_or(false)
+                            || !self.options.get("unset").copied().unwrap_or(true);
+                        if nounset_on {
+                            eprintln!("zshrs:1: {}: parameter not set", name);
+                            std::process::exit(1);
+                        }
+                        String::new()
+                    }
+                }
             }
         }
     }
