@@ -324,19 +324,13 @@ pub enum ListOp {
 /// Shell word - can be simple literal or complex expansion
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ShellWord {
+    /// Plain text token. Most ZWC-decoded words land here. Goes through
+    /// `expand_string` (plus glob/tilde/etc. as text-level transforms) for
+    /// final output.
     Literal(String),
-    SingleQuoted(String),
-    DoubleQuoted(Vec<ShellWord>),
-    Variable(String),
-    VariableBraced(String, Option<Box<VarModifier>>),
-    ArrayVar(String, Box<ShellWord>),
-    CommandSub(Box<ShellCommand>),
-    ProcessSubIn(Box<ShellCommand>),
-    ProcessSubOut(Box<ShellCommand>),
-    ArithSub(String),
-    ArrayLiteral(Vec<ShellWord>),
-    Glob(String),
-    Tilde(Option<String>),
+    /// Concatenation of sub-words. ZWC array decoding produces this with
+    /// child Literals; nothing else constructs it now that the legacy
+    /// hand-rolled parser is gone.
     Concat(Vec<ShellWord>),
 }
 
