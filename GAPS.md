@@ -2,6 +2,15 @@
 
 Probe: 47 constructs. Every entry below was verified by running zshrs (`./target/debug/zshrs -f -c '...'`) and comparing to expected zsh behavior. False positives the source-only audit produced (e.g. `${(j: :)arr}`, `${(t)var}`, `${(P)x}`, `<<<`, short-loop `for x in y; { ... }`, `repeat N ( ... )`, `zparseopts`) are NOT listed — they already work.
 
+### Closed (this session, verified against binary)
+
+- `${(f)str}` — split on newlines into array. Works (was always working; audit was wrong).
+- `$argv` — array alias for positional params. `set -- a b c; echo $argv` → "a b c".
+- `$EPOCHREALTIME` — sub-second epoch. Now emits `SECS.UUUUUU`.
+- `[[ a -ef b ]]` — same-inode test. New `BUILTIN_SAME_FILE` (id 315) compares (dev, inode) via `fs::metadata`.
+- `*(D)` glob qualifier — per-pattern dotglob. `expand_glob` activates `dotglob` when 'D' appears in the qualifier string.
+- `typeset -Z N x=val` / `-L N` / `-R N` — width as a separate arg now parsed (the in-flag form `-Z5` was already working). Width applied at assignment time.
+
 ### Grammar (parser-shape gaps)
 
 - `{ body } always { finally }` — try/finally block. Parser doesn't recognize `always`; entire construct silently no-ops, neither body nor finally runs. (zshmisc/Complex Commands.)
