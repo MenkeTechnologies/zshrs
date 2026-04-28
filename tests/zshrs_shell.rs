@@ -1762,3 +1762,42 @@ fn test_cond_neg_literal_without_extendedglob() {
         run_zshrs("[[ apple = ^a* ]] && echo y || echo n");
     assert_eq!(output.trim(), "n", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `wait $!` with empty pid is a silent no-op (matches zsh)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_wait_empty_pid_is_silent_zero() {
+    // When `$!` is empty (no bg job has been started), `wait $!` runs
+    // with an empty arg. zsh silently returns 0; bash errors. Match zsh.
+    let (status, _, stderr) = run_zshrs("wait $!; echo \"exit=$?\"");
+    assert_eq!(status, 0, "should exit 0");
+    assert!(
+        !stderr.contains("invalid pid"),
+        "should not error on empty pid, got: {stderr:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `print -m PATTERN args...` — glob-match filter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_print_m_glob_filter() {
+    let (_, output, _) = run_zshrs("print -m 'h*' hello world hi");
+    assert_eq!(output.trim(), "hello hi", "got: {output:?}");
+}
+
+#[test]
+fn test_print_m_extension_filter() {
+    let (_, output, _) =
+        run_zshrs("print -m '*.txt' a.txt b.log c.txt");
+    assert_eq!(output.trim(), "a.txt c.txt", "got: {output:?}");
+}
+
+#[test]
+fn test_print_m_no_match_empty_line() {
+    let (_, output, _) = run_zshrs("print -m 'z' a b c");
+    assert_eq!(output, "\n", "got: {output:?}");
+}
