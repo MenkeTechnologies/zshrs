@@ -3929,7 +3929,7 @@ fn shell_quote_value(s: &str) -> String {
 
 use crate::jobs::{continue_job, wait_for_child, wait_for_job, JobState, JobTable};
 use crate::parser::{
-    CondExpr, Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag,
+    Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag,
 };
 use crate::zwc::ZwcFile;
 use std::collections::HashMap;

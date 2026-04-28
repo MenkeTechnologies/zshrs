@@ -10,8 +10,8 @@
 //! - Debugging output
 
 use crate::parser::{
-    CaseTerminator, CompoundCommand, CondExpr, ListOp, Redirect, RedirectOp, ShellCommand,
-    ShellWord, SimpleCommand,
+    CaseTerminator, CompoundCommand, ListOp, Redirect, RedirectOp, ShellCommand, ShellWord,
+    SimpleCommand,
 };
 
 /// Binary operators in conditions (order matches COND_STREQ et seq.)
@@ -357,11 +357,6 @@ impl TextFormatter {
                 }
                 self.format_command(body);
             }
-            CompoundCommand::Cond(expr) => {
-                self.add_str("[[ ");
-                self.format_cond_expr(expr);
-                self.add_str(" ]]");
-            }
             CompoundCommand::Arith(expr) => {
                 self.add_str("((");
                 self.add_str(expr);
@@ -374,122 +369,6 @@ impl TextFormatter {
         }
     }
 
-    fn format_cond_expr(&mut self, expr: &CondExpr) {
-        match expr {
-            CondExpr::Not(inner) => {
-                self.add_str("! ");
-                self.format_cond_expr(inner);
-            }
-            CondExpr::And(left, right) => {
-                self.format_cond_expr(left);
-                self.add_str(" && ");
-                self.format_cond_expr(right);
-            }
-            CondExpr::Or(left, right) => {
-                self.format_cond_expr(left);
-                self.add_str(" || ");
-                self.format_cond_expr(right);
-            }
-            // File tests
-            CondExpr::FileExists(w) => {
-                self.add_str("-e ");
-                self.format_word(w);
-            }
-            CondExpr::FileRegular(w) => {
-                self.add_str("-f ");
-                self.format_word(w);
-            }
-            CondExpr::FileDirectory(w) => {
-                self.add_str("-d ");
-                self.format_word(w);
-            }
-            CondExpr::FileSymlink(w) => {
-                self.add_str("-L ");
-                self.format_word(w);
-            }
-            CondExpr::FileReadable(w) => {
-                self.add_str("-r ");
-                self.format_word(w);
-            }
-            CondExpr::FileWritable(w) => {
-                self.add_str("-w ");
-                self.format_word(w);
-            }
-            CondExpr::FileExecutable(w) => {
-                self.add_str("-x ");
-                self.format_word(w);
-            }
-            CondExpr::FileNonEmpty(w) => {
-                self.add_str("-s ");
-                self.format_word(w);
-            }
-            // String tests
-            CondExpr::StringEmpty(w) => {
-                self.add_str("-z ");
-                self.format_word(w);
-            }
-            CondExpr::StringNonEmpty(w) => {
-                self.add_str("-n ");
-                self.format_word(w);
-            }
-            CondExpr::StringEqual(l, r) => {
-                self.format_word(l);
-                self.add_str(" == ");
-                self.format_word(r);
-            }
-            CondExpr::StringNotEqual(l, r) => {
-                self.format_word(l);
-                self.add_str(" != ");
-                self.format_word(r);
-            }
-            CondExpr::StringMatch(l, r) => {
-                self.format_word(l);
-                self.add_str(" =~ ");
-                self.format_word(r);
-            }
-            CondExpr::StringLess(l, r) => {
-                self.format_word(l);
-                self.add_str(" < ");
-                self.format_word(r);
-            }
-            CondExpr::StringGreater(l, r) => {
-                self.format_word(l);
-                self.add_str(" > ");
-                self.format_word(r);
-            }
-            // Numeric tests
-            CondExpr::NumEqual(l, r) => {
-                self.format_word(l);
-                self.add_str(" -eq ");
-                self.format_word(r);
-            }
-            CondExpr::NumNotEqual(l, r) => {
-                self.format_word(l);
-                self.add_str(" -ne ");
-                self.format_word(r);
-            }
-            CondExpr::NumLess(l, r) => {
-                self.format_word(l);
-                self.add_str(" -lt ");
-                self.format_word(r);
-            }
-            CondExpr::NumLessEqual(l, r) => {
-                self.format_word(l);
-                self.add_str(" -le ");
-                self.format_word(r);
-            }
-            CondExpr::NumGreater(l, r) => {
-                self.format_word(l);
-                self.add_str(" -gt ");
-                self.format_word(r);
-            }
-            CondExpr::NumGreaterEqual(l, r) => {
-                self.format_word(l);
-                self.add_str(" -ge ");
-                self.format_word(r);
-            }
-        }
-    }
 
     fn format_for(&mut self, var: &str, words: &Option<Vec<ShellWord>>, body: &[ShellCommand]) {
         self.add_str("for ");

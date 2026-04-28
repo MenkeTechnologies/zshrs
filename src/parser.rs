@@ -448,7 +448,6 @@ pub enum CompoundCommand {
         try_body: Vec<ShellCommand>,
         always_body: Vec<ShellCommand>,
     },
-    Cond(CondExpr),
     Arith(String),
     WithRedirects(Box<ShellCommand>, Vec<Redirect>),
 }
@@ -459,35 +458,6 @@ pub enum CaseTerminator {
     Break,
     Fallthrough,
     Continue,
-}
-
-/// Conditional expression for [[ ]]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CondExpr {
-    FileExists(ShellWord),
-    FileRegular(ShellWord),
-    FileDirectory(ShellWord),
-    FileSymlink(ShellWord),
-    FileReadable(ShellWord),
-    FileWritable(ShellWord),
-    FileExecutable(ShellWord),
-    FileNonEmpty(ShellWord),
-    StringEmpty(ShellWord),
-    StringNonEmpty(ShellWord),
-    StringEqual(ShellWord, ShellWord),
-    StringNotEqual(ShellWord, ShellWord),
-    StringMatch(ShellWord, ShellWord),
-    StringLess(ShellWord, ShellWord),
-    StringGreater(ShellWord, ShellWord),
-    NumEqual(ShellWord, ShellWord),
-    NumNotEqual(ShellWord, ShellWord),
-    NumLess(ShellWord, ShellWord),
-    NumLessEqual(ShellWord, ShellWord),
-    NumGreater(ShellWord, ShellWord),
-    NumGreaterEqual(ShellWord, ShellWord),
-    Not(Box<CondExpr>),
-    And(Box<CondExpr>, Box<CondExpr>),
-    Or(Box<CondExpr>, Box<CondExpr>),
 }
 
 /// Parse errors
