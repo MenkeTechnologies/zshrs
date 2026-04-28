@@ -6050,135 +6050,18 @@ impl ShellExecutor {
         &mut self,
         cmd: &str,
         args: &[String],
-        redirects: &[Redirect],
+        _redirects: &[Redirect],
         background: bool,
     ) -> Result<i32, String> {
         tracing::trace!(cmd, bg = background, "exec external");
         let mut command = Command::new(cmd);
         command.args(args);
 
-        // Apply redirections
-        for redir in redirects {
-            let target = self.expand_word(&redir.target);
-            match redir.op {
-                RedirectOp::Read => match File::open(&target) {
-                    Ok(f) => {
-                        command.stdin(Stdio::from(f));
-                    }
-                    Err(e) => return Err(format!("Cannot open {}: {}", target, e)),
-                },
-                RedirectOp::Write => match File::create(&target) {
-                    Ok(f) => {
-                        command.stdout(Stdio::from(f));
-                    }
-                    Err(e) => return Err(format!("Cannot create {}: {}", target, e)),
-                },
-                RedirectOp::Append => {
-                    match OpenOptions::new().create(true).append(true).open(&target) {
-                        Ok(f) => {
-                            command.stdout(Stdio::from(f));
-                        }
-                        Err(e) => return Err(format!("Cannot open {}: {}", target, e)),
-                    }
-                }
-                RedirectOp::WriteBoth => match File::create(&target) {
-                    Ok(f) => {
-                        let f2 = f
-                            .try_clone()
-                            .map_err(|e| format!("Cannot clone fd: {}", e))?;
-                        command.stdout(Stdio::from(f));
-                        command.stderr(Stdio::from(f2));
-                    }
-                    Err(e) => return Err(format!("Cannot create {}: {}", target, e)),
-                },
-                RedirectOp::AppendBoth => {
-                    match OpenOptions::new().create(true).append(true).open(&target) {
-                        Ok(f) => {
-                            let f2 = f
-                                .try_clone()
-                                .map_err(|e| format!("Cannot clone fd: {}", e))?;
-                            command.stdout(Stdio::from(f));
-                            command.stderr(Stdio::from(f2));
-                        }
-                        Err(e) => return Err(format!("Cannot open {}: {}", target, e)),
-                    }
-                }
-                RedirectOp::HereDoc => {
-                    // Here-document - provide content as stdin
-                    if let Some(ref content) = redir.heredoc_content {
-                        // Expand variables in content (unless delimiter was quoted)
-                        let expanded = self.expand_string(content);
-                        command.stdin(Stdio::piped());
-                        // Store the content to write after spawn
-                        // For now, create a temp file
-                        use std::io::Write;
-                        let mut temp_file = tempfile::NamedTempFile::new()
-                            .map_err(|e| format!("Cannot create temp file: {}", e))?;
-                        temp_file
-                            .write_all(expanded.as_bytes())
-                            .map_err(|e| format!("Cannot write to temp file: {}", e))?;
-                        let temp_path = temp_file.into_temp_path();
-                        let f = File::open(&temp_path)
-                            .map_err(|e| format!("Cannot open temp file: {}", e))?;
-                        command.stdin(Stdio::from(f));
-                    }
-                }
-                RedirectOp::HereString => {
-                    // Here-string - provide target as stdin
-                    use std::io::Write;
-                    let content = format!("{}\n", target);
-                    let mut temp_file = tempfile::NamedTempFile::new()
-                        .map_err(|e| format!("Cannot create temp file: {}", e))?;
-                    temp_file
-                        .write_all(content.as_bytes())
-                        .map_err(|e| format!("Cannot write to temp file: {}", e))?;
-                    let temp_path = temp_file.into_temp_path();
-                    let f = File::open(&temp_path)
-                        .map_err(|e| format!("Cannot open temp file: {}", e))?;
-                    command.stdin(Stdio::from(f));
-                }
-                _ => {
-                    // Other redirections handled simply
-                }
-            }
-
-            // Handle {varname}>file syntax - store FD in variable
-            if let Some(ref var_name) = redir.fd_var {
-                // For {varname}>file, we open the file and store the fd number
-                // This is typically used with exec, but we'll handle it for commands too
-                #[cfg(unix)]
-                {
-                    use std::os::unix::io::AsRawFd;
-                    let fd = match redir.op {
-                        RedirectOp::Write | RedirectOp::Append => {
-                            let f = if redir.op == RedirectOp::Write {
-                                File::create(&target)
-                            } else {
-                                OpenOptions::new().create(true).append(true).open(&target)
-                            };
-                            match f {
-                                Ok(file) => {
-                                    let raw_fd = file.as_raw_fd();
-                                    std::mem::forget(file); // Don't close the file
-                                    raw_fd
-                                }
-                                Err(e) => return Err(format!("Cannot open {}: {}", target, e)),
-                            }
-                        }
-                        RedirectOp::Read => match File::open(&target) {
-                            Ok(file) => {
-                                let raw_fd = file.as_raw_fd();
-                                std::mem::forget(file);
-                                raw_fd
-                            }
-                            Err(e) => return Err(format!("Cannot open {}: {}", target, e)),
-                        },
-                        _ => continue,
-                    };
-                    self.variables.insert(var_name.clone(), fd.to_string());
-                }
-            }
-        }
+        // Redirect handling moved entirely to fusevm's WithRedirectsBegin/End
+        // ops at compile time; the `_redirects` slice arrives empty in every
+        // production code path. The legacy `for redir in redirects { ... }`
+        // block (~120 LOC of file/pipe/heredoc/herestring/fd_var handling)
+        // is gone.
 
         if background {
             match command.spawn() {
