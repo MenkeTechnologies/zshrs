@@ -2052,19 +2052,47 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             St::S(s) => St::S(s),
                         };
                     } else {
+                        // (s) splits both scalars and array elements per
+                        // zsh semantics. `(@s:,:)` runs `@` first which
+                        // wraps a scalar in a 1-elem array; `s` must
+                        // still split that element. Same goes for true
+                        // arrays — flat-map split each element.
                         state = match state {
                             St::S(s) if sep.is_empty() => {
                                 St::A(s.chars().map(|c| c.to_string()).collect())
                             }
                             St::S(s) => St::A(s.split(sep.as_str()).map(String::from).collect()),
-                            St::A(a) => St::A(a),
+                            St::A(a) => {
+                                let mut out: Vec<String> = Vec::with_capacity(a.len());
+                                for elem in a {
+                                    if sep.is_empty() {
+                                        for c in elem.chars() {
+                                            out.push(c.to_string());
+                                        }
+                                    } else {
+                                        for part in elem.split(sep.as_str()) {
+                                            out.push(part.to_string());
+                                        }
+                                    }
+                                }
+                                St::A(out)
+                            }
                         };
                     }
                 }
                 'f' => {
                     state = match state {
                         St::S(s) => St::A(s.split('\n').map(String::from).collect()),
-                        St::A(a) => St::A(a),
+                        St::A(a) => {
+                            // Same flat-map rule as (s): split each element.
+                            let mut out: Vec<String> = Vec::with_capacity(a.len());
+                            for elem in a {
+                                for line in elem.split('\n') {
+                                    out.push(line.to_string());
+                                }
+                            }
+                            St::A(out)
+                        }
                     };
                 }
                 'z' => {
