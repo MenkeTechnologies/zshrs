@@ -339,9 +339,31 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Only the colon variants (`${var:-X}`, `${var:=X}`, `${var:?X}`, `${var:+X}`) were recognized — those treat empty-string-set the same as unset. The POSIX no-colon forms (`${var-X}`, `${var=X}`, `${var?X}`, `${var+X}`) fire only when truly unset (not just empty). Added op codes 4-7 in `BUILTIN_PARAM_DEFAULT_FAMILY` plus matching parser arms in `parse_param_modifier`. Five tests cover default/assign/error/alt for both unset and empty-set cases.
 
-## Still open
+### `$status` alias for `$?`
 
-(none — all probed gaps closed)
+- `get_variable` now treats `status` as an alias for `?` — both return `last_status`. zsh exposes both names; `$status` was empty in zshrs.
+
+### `$pipestatus[N]` / `$PIPESTATUS[N]` after single command
+
+- `BUILTIN_ARRAY_INDEX` now special-cases `pipestatus`/`PIPESTATUS`: if no array has been populated (e.g. after a single non-pipeline command), synthesizes `[last_status]` so `true; echo $pipestatus[1]` returns `0`. Real pipelines continue to use the per-stage array set by `BUILTIN_PIPELINE_EXEC`.
+
+### `[[ -c path ]]`, `[[ -b path ]]`, `[[ -p path ]]`, `[[ -S path ]]` file-type tests
+
+- `compile_zsh::emit_file_test` had no arms for character device, block device, FIFO, or socket. Added four new builtins (`BUILTIN_IS_CHARDEV/BLOCKDEV/FIFO/SOCKET`, ids 332-335) using `std::os::unix::fs::FileTypeExt`. `[[ -c /dev/null ]]` → true on macOS as expected.
+
+### `unset -f NAME` removes function
+
+- `builtin_unset` now parses `-f` (function mode) and `-v` (var mode, default). With `-f`, removes from `functions_compiled`, `function_source`, and `autoload_pending`. Mirrors `unfunction NAME`.
+
+### `for w in $scalar` no-IFS-split (zsh default)
+
+- `BUILTIN_ARRAY_ALL` was IFS-splitting scalars in for-list contexts (bash semantics). zsh's default is to NOT split — `for w in $s` iterates ONCE with the scalar value. Now scalars produce a 1-element array unless `setopt shwordsplit` (the bash-compat option) is on, in which case the old IFS-split behavior fires. Two tests cover both modes.
+
+## Still open (seventh-pass — remaining)
+
+- **`${var//#pat/repl}` and `${var//%pat/repl}`** — anchored replace-all forms (prefix `/#` and suffix `/%` combined with global `//`).
+- **`foo() echo hello`** — one-line function body without braces; parser errors.
+- **`alias x` query output** — emits `x='ls'` (single-quoted), zsh emits `x=ls` (bare).
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.

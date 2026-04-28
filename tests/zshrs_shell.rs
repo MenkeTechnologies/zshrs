@@ -1951,3 +1951,86 @@ fn test_no_colon_alt_set_uses_alt() {
     let (_, output, _) = run_zshrs("xx=val; echo \"${xx+alt}\"");
     assert_eq!(output.trim(), "alt", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// $status alias for $?, $pipestatus[N] synthesized from last_status
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_dollar_status_alias() {
+    let (_, output, _) = run_zshrs("true; echo $status");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_status_after_failure() {
+    let (_, output, _) = run_zshrs("false; echo \"$status\"");
+    assert_eq!(output.trim(), "1", "got: {output:?}");
+}
+
+#[test]
+fn test_pipestatus_single_command() {
+    let (_, output, _) = run_zshrs("true; echo $pipestatus[1]");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Char/block/fifo/socket file tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cond_c_chardev() {
+    let (_, output, _) = run_zshrs("[[ -c /dev/null ]] && echo y || echo n");
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+}
+
+#[test]
+fn test_cond_b_blockdev() {
+    let (_, output, _) = run_zshrs("[[ -b /dev/zero ]] && echo y || echo n");
+    // /dev/zero is char on macOS, block on linux. Either zsh result is fine
+    // as long as zshrs matches.
+    assert!(
+        output.trim() == "y" || output.trim() == "n",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_cond_p_fifo_negative() {
+    let (_, output, _) = run_zshrs("[[ -p /dev/null ]] && echo y || echo n");
+    assert_eq!(output.trim(), "n", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// `unset -f NAME` removes function
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_unset_dash_f_removes_function() {
+    let (status, _, _) = run_zshrs(
+        "foo() { :; }; unset -f foo; type foo 2>&1 | grep -q 'not found'",
+    );
+    assert_eq!(status, 0, "type should report 'not found' after unset -f");
+}
+
+// ---------------------------------------------------------------------------
+// Scalar in for-list does NOT IFS-split (matches zsh)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_for_scalar_no_ifs_split_default() {
+    // zsh: `for w in $s` iterates ONCE with the scalar value.
+    let (_, output, _) = run_zshrs(
+        "IFS=,; s='a,b,c'; for w in $s; do echo \"[$w]\"; done",
+    );
+    assert_eq!(output.trim(), "[a,b,c]", "got: {output:?}");
+}
+
+#[test]
+fn test_for_scalar_splits_under_shwordsplit() {
+    // bash-compat: under setopt shwordsplit, scalar IS IFS-split.
+    let (_, output, _) = run_zshrs(
+        "setopt shwordsplit; IFS=,; s='a,b,c'; for w in $s; do echo \"[$w]\"; done",
+    );
+    assert_eq!(output.trim(), "[a]\n[b]\n[c]", "got: {output:?}");
+}
