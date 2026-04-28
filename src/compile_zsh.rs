@@ -235,6 +235,15 @@ impl ZshCompiler {
                     0,
                 );
             }
+            ParamModifierKind::FilterRemoveMatching { pattern } => {
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                let pat_const = self.builder.add_constant(Value::str(pattern));
+                self.builder.emit(Op::LoadConst(pat_const), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FILTER, 2),
+                    0,
+                );
+            }
         }
     }
 
@@ -2230,6 +2239,10 @@ pub(crate) enum ParamModifierKind {
     /// indexed/assoc array. Dispatched at runtime by inspecting the var
     /// type.
     Length,
+    /// `${var:#pattern}` — filter: remove matching elements (or whole
+    /// scalar if it matches). For arrays, returns a Value::Array of the
+    /// non-matching elements.
+    FilterRemoveMatching { pattern: String },
 }
 
 /// Parse `${...}` and detect a Phase 1 param-modifier shape. Returns
@@ -2308,6 +2321,16 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
                 kind: ParamModifierKind::DefaultFamily { op, rhs },
             });
         }
+    }
+
+    // `${var:#pattern}` — filter: remove matching elements.
+    if let Some(pat) = rest.strip_prefix(":#") {
+        return Some(ParamModifier {
+            name,
+            kind: ParamModifierKind::FilterRemoveMatching {
+                pattern: pat.to_string(),
+            },
+        });
     }
 
     // `${var:offset[:length]}` substring. The post-`:` text must lead
