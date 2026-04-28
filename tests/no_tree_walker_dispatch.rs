@@ -1329,13 +1329,10 @@ fn assoc_missing_key_returns_empty() {
 
 #[test]
 fn select_with_eof_stdin_exits_zero_no_body() {
-    // Pre-fix: `select` was unrecognized by ShellParser, fell through to
-    // parse_simple_command which treated `select` as an external command name
-    // and hung trying to spawn it. Post-fix: parse_select wires a
-    // CompoundCommand::Select; compile path emits BUILTIN_RUN_SELECT which
-    // prints menu to stderr, reads stdin, exits 0 on EOF without running the
-    // body. Test pipes empty stdin (`< /dev/null` via run_stdin's empty
-    // input) — body should never execute, "done" should print.
+    // `parse_select` wires a CompoundCommand::Select; compile path emits
+    // BUILTIN_RUN_SELECT which prints the menu to stderr, reads stdin,
+    // and exits 0 on EOF without running the body. Test pipes empty
+    // stdin — body should never execute, "done" should print.
     let (status, stdout) = run_stdin(
         r#"select x in a b c; do echo "got=$x"; done; echo done"#,
         "",

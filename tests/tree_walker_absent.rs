@@ -1,24 +1,24 @@
 //! Source-level proof that the tree-walker AST-dispatch functions are gone.
 //!
-//! Phase F deleted `execute_simple`, `execute_pipeline`, `execute_list`,
-//! `execute_compound`, and `execute_command_bg` from `src/exec.rs`. These were
-//! the recursive AST-walking functions that pattern-matched `ShellCommand`
-//! variants and called themselves on sub-commands. Their existence in the
-//! source would mean an interpreter is still present — even if currently
-//! unreachable from `execute_command`. We assert literal absence here so a
-//! future refactor can't silently bring them back.
+//! `execute_simple`, `execute_pipeline`, `execute_list`,
+//! `execute_compound`, and `execute_command_bg` were the recursive
+//! AST-walking functions that pattern-matched the legacy AST and
+//! called themselves on sub-commands. Their existence in the source
+//! would mean an interpreter is still present — even if currently
+//! unreachable from `execute_command`. We assert literal absence here
+//! so a future refactor can't silently bring them back.
 //!
 //! What we *don't* assert dead:
-//!   - `execute_command` itself: kept as a public entry point that compiles to
-//!     a fusevm `Chunk` and runs on the bytecode VM. The body must contain a
-//!     `ShellCompiler` invocation; if it goes back to a `match cmd`-style
-//!     dispatch, the `bytecode_dispatch_signature` test fails.
-//!   - `execute_command_substitution` / `execute_command_capture`: kept, but
-//!     bytecode-routed (compile + run + pipe-capture stdout). Asserted to use
-//!     `ShellCompiler` and `os_pipe`, not a hand-rolled match dispatch.
-//!   - `execute_external` / `execute_external_bg`: these are the actual
-//!     fork-exec mechanism — *not* a tree walker. They're the leaf operation
-//!     a bytecode `Op::Exec` should ultimately route to.
+//!   - `execute_command` itself: kept as a public entry point that
+//!     compiles to a fusevm `Chunk` and runs on the bytecode VM. The
+//!     body must compile via `ZshParser` + `ZshCompiler`; if it goes
+//!     back to a `match cmd`-style dispatch, this test fails.
+//!   - `execute_command_capture`: kept, but bytecode-routed (compile +
+//!     run + pipe-capture stdout). Asserted to use `ZshCompiler` and
+//!     `os_pipe`, not a hand-rolled match dispatch.
+//!   - `execute_external` / `execute_external_bg`: these are the
+//!     actual fork-exec mechanism — *not* a tree walker. They're the
+//!     leaf operation a bytecode `Op::Exec` should ultimately route to.
 
 use std::fs;
 use std::path::PathBuf;
@@ -69,13 +69,10 @@ fn execute_command_bg_is_deleted() {
 
 #[test]
 fn execute_command_dispatches_via_compiler_or_is_absent() {
-    // Phase 2 cascade goal: execute_command (the legacy
-    // ShellCommand-based entry point) becomes unreachable from production
-    // code as ZshParser+ZshCompiler take over the entire execution path.
-    // If it still exists in src/exec.rs, the body MUST round-trip the AST
-    // through `text::getpermtext` → `ZshParser` → `ZshCompiler` and run
-    // the chunk on a fusevm VM — never match-dispatch to a tree walker
-    // or fall back to the deleted ShellCompiler.
+    // `execute_command` is the legacy AST-based entry point. If it
+    // still exists in src/exec.rs, the body MUST compile via
+    // `ZshParser` + `ZshCompiler` and run the chunk on a fusevm VM —
+    // never match-dispatch to a tree walker.
     let src = read_exec_rs();
     let Some(entry) = src.find("pub fn execute_command(&mut self, cmd: &ShellCommand)") else {
         // execute_command was deleted entirely — invariant trivially satisfied.
@@ -85,11 +82,6 @@ fn execute_command_dispatches_via_compiler_or_is_absent() {
     assert!(
         window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
         "execute_command must compile via ZshParser+ZshCompiler:\n{}",
-        window
-    );
-    assert!(
-        !window.contains("ShellCompiler::new()"),
-        "execute_command must NOT use the legacy ShellCompiler fallback anymore:\n{}",
         window
     );
     assert!(
@@ -105,13 +97,10 @@ fn execute_command_dispatches_via_compiler_or_is_absent() {
 
 #[test]
 fn execute_command_substitution_uses_pipe_capture_or_is_absent() {
-    // If execute_command_capture exists, it MUST compile via
-    // ZshParser+ZshCompiler with no ShellCompiler fallback and no
-    // hand-rolled `echo`/`printf`/`pwd` shortcuts (the bridge-era
-    // shape that this test was written to forbid). If the function
-    // is gone entirely (Phase 2 cascade endpoint — the
-    // ShellWord::CommandSub variant that used to feed it has been
-    // deleted), the invariant is trivially satisfied.
+    // If `execute_command_capture` exists, it MUST compile via
+    // `ZshParser` + `ZshCompiler` and capture stdout via `os_pipe`,
+    // with no hand-rolled `echo`/`printf`/`pwd` shortcut. If the
+    // function is gone entirely, the invariant is trivially satisfied.
     let src = read_exec_rs();
     let Some(entry) = src.find("pub fn execute_command_capture") else {
         return;
@@ -120,10 +109,6 @@ fn execute_command_substitution_uses_pipe_capture_or_is_absent() {
     assert!(
         window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
         "capture must compile via ZshParser+ZshCompiler"
-    );
-    assert!(
-        !window.contains("ShellCompiler::new()"),
-        "capture must NOT use the legacy ShellCompiler fallback anymore"
     );
     assert!(
         window.contains("os_pipe::pipe()"),
@@ -145,14 +130,14 @@ fn execute_command_substitution_uses_pipe_capture_or_is_absent() {
 
 #[test]
 fn no_match_shellcommand_outside_compiler() {
-    // The only place a `match cmd {` over `ShellCommand` variants should now
-    // appear is in `src/shell_compiler.rs` (the lowering). `src/exec.rs`
-    // should not contain such a match — that would be a tree walker.
+    // `src/exec.rs` must not contain a `match cmd { ShellCommand::… }`
+    // dispatch — that would be a tree walker.
     let src = read_exec_rs();
-    // Strict check: the specific pattern that used to appear in execute_command
-    // is `ShellCommand::Simple(simple) => self.execute_simple(simple)`. Even if
-    // a future refactor doesn't use that exact name, dispatching by ShellCommand
-    // variant from exec.rs is a regression.
+    // Strict check: the specific pattern that used to appear in
+    // execute_command is `ShellCommand::Simple(simple) =>
+    // self.execute_simple(simple)`. Even if a future refactor doesn't
+    // use that exact name, dispatching by AST variant from exec.rs is
+    // a regression.
     assert!(
         !src.contains("ShellCommand::Simple(simple) => self.execute_simple"),
         "tree-walker dispatch pattern resurfaced in exec.rs"

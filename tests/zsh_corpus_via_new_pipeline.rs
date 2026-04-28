@@ -1,7 +1,6 @@
-//! Run the full construct corpus through the new ZshLexer + ZshParser +
-//! ZshCompiler pipeline. Same scripts as `zsh_construct_corpus.rs` but
-//! with `ZSHRS_NEW_PIPELINE=1` set. Failures here are the punch list for
-//! the next iteration of `compile_zsh.rs`.
+//! Run the full construct corpus through the ZshLexer + ZshParser +
+//! ZshCompiler pipeline. Same scripts as `zsh_construct_corpus.rs`.
+//! Failures here are the punch list for `compile_zsh.rs`.
 
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -18,7 +17,6 @@ static FORK_SERIAL: Mutex<()> = Mutex::new(());
 fn run(code: &str) -> (i32, String) {
     let mut child = Command::new(zshrs_bin())
         .args(["-f", "-c", code])
-        .env("ZSHRS_NEW_PIPELINE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
