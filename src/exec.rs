@@ -3871,6 +3871,7 @@ static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "false",
         "test",
         "local",
+        "private",
         "declare",
         "typeset",
         "read",
@@ -4825,6 +4826,9 @@ impl ShellExecutor {
             "zpty" => return self.builtin_zpty(&rest_vec),
             "ztcp" => return self.builtin_ztcp(&rest_vec),
             "zsocket" => return self.builtin_zsocket(&rest_vec),
+            "private" => return self.builtin_local(&rest_vec),
+            "zformat" => return self.builtin_zformat(&rest_vec),
+            "zregexparse" => return self.builtin_zregexparse(&rest_vec),
             _ => {}
         }
 
@@ -16019,6 +16023,7 @@ impl ShellExecutor {
             ":" => 0,
             "test" | "[" => self.builtin_test(cmd_args),
             "local" => self.builtin_local(cmd_args),
+            "private" => self.builtin_local(cmd_args),
             "declare" | "typeset" => self.builtin_declare(cmd_args),
             "read" => self.builtin_read(cmd_args),
             "shift" => self.builtin_shift(cmd_args),
@@ -21312,7 +21317,7 @@ impl ShellExecutor {
     }
 
     /// zformat - format strings
-    fn builtin_zformat(&self, args: &[String]) -> i32 {
+    fn builtin_zformat(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
             eprintln!("zformat: not enough arguments");
             return 1;
@@ -21324,7 +21329,7 @@ impl ShellExecutor {
                 if args.len() < 3 {
                     return 1;
                 }
-                let _var_name = &args[1];
+                let var_name = args[1].clone();
                 let format = &args[2];
                 let specs: HashMap<char, &str> = args[3..]
                     .iter()
@@ -21353,7 +21358,7 @@ impl ShellExecutor {
                     }
                     result.push(c);
                 }
-                println!("{}", result);
+                self.variables.insert(var_name, result);
             }
             "-a" => {
                 // Format into array elements: zformat -a array sep specs...
@@ -21362,7 +21367,7 @@ impl ShellExecutor {
                     eprintln!("zformat -a: need array, separator, and specs");
                     return 1;
                 }
-                let _array_name = &args[1];
+                let array_name = args[1].clone();
                 let sep = &args[2];
 
                 let mut results = Vec::new();
@@ -21386,9 +21391,7 @@ impl ShellExecutor {
                     }
                 }
 
-                for r in results {
-                    println!("{}", r);
-                }
+                self.arrays.insert(array_name, results);
             }
             _ => {
                 eprintln!("zformat: unknown option: {}", args[0]);
