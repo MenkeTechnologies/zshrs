@@ -2452,3 +2452,59 @@ fn test_tilde_unknown_user_errors() {
         "stderr: {stderr:?}"
     );
 }
+
+#[test]
+fn test_empty_heredoc_succeeds() {
+    // The fix: an empty heredoc body must not be re-processed on the
+    // second `process_heredocs` pass. Pre-fix, content emptiness was
+    // the "not yet processed" marker; we now use a separate `processed`
+    // flag. Compare exit status against /bin/zsh; both should succeed
+    // and produce the same output.
+    let (status, output, _) = run_zshrs("cat <<EOF\nEOF");
+    assert_eq!(status, 0, "empty heredoc should succeed");
+    let zsh = std::process::Command::new("/bin/zsh")
+        .args(["-f", "-c", "cat <<EOF\nEOF"])
+        .output()
+        .expect("zsh failed");
+    let zsh_out = String::from_utf8_lossy(&zsh.stdout).to_string();
+    assert_eq!(output, zsh_out, "empty heredoc should match zsh");
+}
+
+#[test]
+fn test_echo_dash_e_interprets_octal_escape() {
+    // `echo -e "\033[1mB\033[0m"` should interpret `\033` as ESC.
+    let (_, output, _) = run_zshrs(r#"echo -e "\033[1mB\033[0m""#);
+    assert_eq!(output, "\x1b[1mB\x1b[0m\n", "got: {output:?}");
+}
+
+#[test]
+fn test_alias_listing_unquoted_for_simple_values() {
+    // zsh emits `x=1` not `x='1'` when the value has no shell specials.
+    let (_, output, _) = run_zshrs("alias x=1 y=2; alias | sort");
+    assert!(
+        output.contains("x=1\n") && output.contains("y=2\n"),
+        "expected unquoted bare values, got: {output:?}"
+    );
+    assert!(
+        !output.contains("x='1'"),
+        "should not quote bare numeric values, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_substring_with_var_offset() {
+    let (_, output, _) = run_zshrs(r#"s=abcdef; n=2; echo "${s:$n:2}""#);
+    assert_eq!(output.trim(), "cd", "got: {output:?}");
+}
+
+#[test]
+fn test_substring_with_arith_offset() {
+    let (_, output, _) = run_zshrs(r#"s=abcdef; echo "${s:$((1+1)):2}""#);
+    assert_eq!(output.trim(), "cd", "got: {output:?}");
+}
+
+#[test]
+fn test_substring_with_var_offset_and_length() {
+    let (_, output, _) = run_zshrs(r#"s=abcdef; n=2; m=3; echo "${s:$n:$m}""#);
+    assert_eq!(output.trim(), "cde", "got: {output:?}");
+}

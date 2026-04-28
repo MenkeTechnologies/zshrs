@@ -223,6 +223,23 @@ impl ZshCompiler {
                     0,
                 );
             }
+            ParamModifierKind::SubstringExpr { offset_expr, length_expr } => {
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                let off_const = self.builder.add_constant(Value::str(offset_expr));
+                self.builder.emit(Op::LoadConst(off_const), 0);
+                let len_const = self.builder.add_constant(Value::str(
+                    length_expr.as_deref().unwrap_or(""),
+                ));
+                self.builder.emit(Op::LoadConst(len_const), 0);
+                // Sentinel so the runtime can tell `length=""` (no
+                // length given, take rest) from `length="0"` (zero).
+                let has_len_const = self.builder.add_constant(Value::Bool(length_expr.is_some()));
+                self.builder.emit(Op::LoadConst(has_len_const), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_SUBSTRING_EXPR, 4),
+                    0,
+                );
+            }
             ParamModifierKind::Strip { op, pattern } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let pat_const = self.builder.add_constant(Value::str(pattern));
@@ -598,6 +615,14 @@ impl ZshCompiler {
         if matches!(redir.rtype, RedirType::Heredoc | RedirType::HeredocDash) {
             if let Some(hd) = &redir.heredoc {
                 let content_clean = crate::lexer::untokenize(&hd.content);
+                // Empty heredoc body — route through HereDoc op (no
+                // trailing-newline append) regardless of quoting, so
+                // the consumer sees zero bytes (matches zsh).
+                if content_clean.is_empty() {
+                    let idx = self.builder.add_constant(Value::str(""));
+                    self.builder.emit(Op::HereDoc(idx), 0);
+                    return;
+                }
                 if hd.quoted {
                     // Quoted-terminator form: pass body verbatim.
                     let idx = self.builder
@@ -2475,6 +2500,9 @@ pub(crate) enum ParamModifierKind {
     DefaultFamily { op: u8, rhs: String },
     /// `${var:offset}` or `${var:offset:length}` (length=None for "rest")
     Substring { offset: i64, length: Option<i64> },
+    /// Same as Substring but offset/length are arbitrary expressions
+    /// (e.g. `$n`, `$((1+1))`) that need runtime arithmetic evaluation.
+    SubstringExpr { offset_expr: String, length_expr: Option<String> },
     /// `${var#pat}` (op=0), `##` (1), `%` (2), `%%` (3)
     Strip { op: u8, pattern: String },
     /// `${var/pat/repl}` (op=0), `//` (1), `/#` (2), `/%` (3)
@@ -2596,22 +2624,68 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     }
 
     // `${var:offset[:length]}` substring. The post-`:` text must lead
-    // with a digit, `-`, or single space (zsh's negative-offset
-    // disambiguator).
+    // with a digit, `-`, single space (negative-offset disambiguator),
+    // OR `$`/`(` (variable / arith expression — runtime-evaluated).
     if rest.starts_with(':') {
         let after = &rest[1..];
         let trimmed = after.trim_start_matches(' ');
         let first_ch = trimmed.chars().next();
-        if matches!(first_ch, Some(c) if c.is_ascii_digit() || c == '-') {
-            // Split on the next `:` (length separator)
-            let mut iter = trimmed.splitn(2, ':');
-            let off_str = iter.next()?.trim();
-            let len_str = iter.next();
-            let offset: i64 = off_str.parse().ok()?;
-            let length: Option<i64> = len_str.and_then(|s| s.trim().parse().ok());
+        if matches!(first_ch, Some(c) if c.is_ascii_digit() || c == '-' || c == '$' || c == '(') {
+            // Split on the FIRST top-level `:` so `${s:$n:2}` keeps
+            // `$n` whole. We don't have nested `${...}` here (the outer
+            // parse_param_modifier already rejects those), so a simple
+            // depth tracker on `(` is enough.
+            let chars: Vec<char> = trimmed.chars().collect();
+            let mut depth = 0i32;
+            let mut split_at: Option<usize> = None;
+            for (i, &c) in chars.iter().enumerate() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    ':' if depth == 0 => {
+                        split_at = Some(i);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let off_str: String = match split_at {
+                Some(i) => chars[..i].iter().collect(),
+                None => chars.iter().collect(),
+            };
+            let len_str: Option<String> = split_at.map(|i| chars[i + 1..].iter().collect());
+            let off_str = off_str.trim().to_string();
+            let len_str = len_str.map(|s| s.trim().to_string());
+            // Literal-only fast path: integer offset (and length).
+            if let (Ok(offset), len_opt) = (
+                off_str.parse::<i64>(),
+                len_str
+                    .as_deref()
+                    .map(|s| s.parse::<i64>().ok()),
+            ) {
+                let length: Option<i64> = match len_opt {
+                    None => None,
+                    Some(Some(v)) => Some(v),
+                    Some(None) => return Some(ParamModifier {
+                        name,
+                        kind: ParamModifierKind::SubstringExpr {
+                            offset_expr: offset.to_string(),
+                            length_expr: len_str,
+                        },
+                    }),
+                };
+                return Some(ParamModifier {
+                    name,
+                    kind: ParamModifierKind::Substring { offset, length },
+                });
+            }
+            // Variable / arith case — defer to runtime.
             return Some(ParamModifier {
                 name,
-                kind: ParamModifierKind::Substring { offset, length },
+                kind: ParamModifierKind::SubstringExpr {
+                    offset_expr: off_str,
+                    length_expr: len_str,
+                },
             });
         }
     }

@@ -503,10 +503,34 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `expand_tilde_named` previously returned the literal `~name` string when `getpwnam` failed. zsh emits `zsh:1: no such user or named directory: name` and exits 1. zshrs now matches with a `zshrs:1:` diagnostic and `std::process::exit(1)`. Test: `test_tilde_unknown_user_errors`.
 
-## Still open (fifteenth-pass — remaining)
+## Closed (sixteenth-pass — heredoc + echo + alias + substring expr)
+
+### Empty heredoc — don't error and don't trail a newline
+
+- Two compounding bugs:
+  - `process_heredocs` used "content empty" as the "not yet processed" marker, so an empty heredoc was re-processed on every subsequent newline; the second pass found EOF and errored "here document too large or unterminated". Added a separate `processed: bool` field on `HereDoc` to disambiguate.
+  - The unquoted heredoc emit path always routed through `Op::HereString`, which appends a newline. For an empty body this leaked a stray `\n` into the consumer (`cat <<EOF\nEOF` printed a blank line vs zsh's silent). Empty bodies now route through `Op::HereDoc` regardless of quoting.
+- Test: `test_empty_heredoc_succeeds` (compares to `/bin/zsh` output for portability).
+
+### `echo -e` — full backslash-escape decoder
+
+- Only `\n` and `\t` were interpreted; `\033` / `\xNN` / `\NNN` / `\a` / `\b` / `\e` were emitted literally. Routed `echo -e` through the existing `expand_printf_escapes` helper that already handles the full set. Test: `test_echo_dash_e_interprets_octal_escape`.
+
+### `alias` listing — bare values stay unquoted
+
+- The list output path hardcoded `'{}'` quoting around every value, so `alias x=1` listed as `x='1'` instead of `x=1`. Replaced with the existing `format_alias_kv` helper which only adds quotes when the value contains shell specials/whitespace. Also sorted output to match zsh's deterministic listing. Test: `test_alias_listing_unquoted_for_simple_values`.
+
+### `${s:$n:2}` — substring with variable / arith offset
+
+- The substring parser only accepted literal digits/`-` after the colon, so `${s:$n:2}` and `${s:$((1+1)):2}` returned empty. Added:
+  - New `ParamModifierKind::SubstringExpr { offset_expr, length_expr }` variant.
+  - New runtime helper `BUILTIN_PARAM_SUBSTRING_EXPR` (id 337) that evaluates each expression at runtime via `eval_arith_expr`. Stack layout includes a `has_length` sentinel to distinguish "no length given" from "length=0".
+  - Top-level `:` split that respects `(...)` depth so `${s:$((1+1)):2}` keeps `$((1+1))` intact.
+- Tests: `test_substring_with_var_offset`, `test_substring_with_arith_offset`, `test_substring_with_var_offset_and_length`.
+
+## Still open (sixteenth-pass — remaining)
 
 (none — all probed gaps closed)
-- **`${s:$n:2}` substring with var/arith offset** — the offset/length parser only accepts literal digits and `-` after the colon. `$n` (variable) and `$((expr))` (arith) inside the offset slot fall through to other modifier paths and return empty. Needs a runtime-evaluated offset path.
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.

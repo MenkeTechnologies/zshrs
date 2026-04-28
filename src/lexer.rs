@@ -95,6 +95,10 @@ pub struct HereDoc {
     /// `<<"EOF"`, or `<<\EOF`). Disables variable expansion / command
     /// substitution / arithmetic in the body.
     pub quoted: bool,
+    /// True once `process_heredocs` has read the body. Distinct from
+    /// "content is empty" because an empty heredoc legitimately has
+    /// empty content.
+    pub processed: bool,
 }
 
 /// The Zsh Lexer
@@ -380,6 +384,7 @@ impl<'a> ZshLexer<'a> {
                     strip_tabs,
                     content: String::new(),
                     quoted,
+                    processed: false,
                 });
             }
             self.heredoc_pending = 0;
@@ -490,10 +495,11 @@ impl<'a> ZshLexer<'a> {
     fn process_heredocs(&mut self) {
         let n = self.heredocs.len();
         for i in 0..n {
-            // Skip heredocs we've already processed (content non-empty
-            // means we filled it on a prior newline). Empty terminator is
-            // an error/empty case — skip.
-            if !self.heredocs[i].content.is_empty() || self.heredocs[i].terminator.is_empty() {
+            // Skip heredocs we've already processed AND those without
+            // a terminator (early-error case). The `processed` bool
+            // distinguishes "filled with empty body" from "not yet
+            // visited" — both have empty `content`.
+            if self.heredocs[i].processed || self.heredocs[i].terminator.is_empty() {
                 continue;
             }
             let strip_tabs = self.heredocs[i].strip_tabs;
@@ -538,6 +544,7 @@ impl<'a> ZshLexer<'a> {
             }
 
             self.heredocs[i].content = content;
+            self.heredocs[i].processed = true;
         }
     }
 
@@ -2035,6 +2042,7 @@ impl<'a> ZshLexer<'a> {
             strip_tabs,
             content: String::new(),
             quoted: false,
+            processed: false,
         });
     }
 
