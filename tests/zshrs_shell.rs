@@ -1801,3 +1801,25 @@ fn test_print_m_no_match_empty_line() {
     let (_, output, _) = run_zshrs("print -m 'z' a b c");
     assert_eq!(output, "\n", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `integer i=EXPR` runs arithmetic evaluation on the RHS
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_integer_init_arith() {
+    let (_, output, _) = run_zshrs("integer i=5+3; echo $i");
+    assert_eq!(output.trim(), "8", "got: {output:?}");
+}
+
+#[test]
+fn test_integer_init_complex_expr() {
+    let (_, output, _) = run_zshrs("integer i=2*3+1; echo $i");
+    assert_eq!(output.trim(), "7", "got: {output:?}");
+}
+
+#[test]
+fn test_integer_init_division_truncates() {
+    let (_, output, _) = run_zshrs("integer i=10/3; echo $i");
+    assert_eq!(output.trim(), "3", "got: {output:?}");
+}
