@@ -493,6 +493,22 @@ fn apply_subst_modifier(
     };
 }
 
+/// Format `name=value` for alias listing the way zsh does: bare value
+/// when it's a single safe word, single-quoted (with escaped inner
+/// quotes) when it contains whitespace or shell metachars.
+fn format_alias_kv(name: &str, value: &str) -> String {
+    let needs_quote = value.is_empty()
+        || value.chars().any(|c| {
+            c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c)
+        });
+    if needs_quote {
+        let escaped = value.replace('\'', "'\\''");
+        format!("{}='{}'", name, escaped)
+    } else {
+        format!("{}={}", name, value)
+    }
+}
+
 /// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
 /// inclusive, char-aware (not byte). Negative indices count from end.
 fn slice_scalar(s: &str, start: i64, end: i64) -> String {
@@ -15904,28 +15920,31 @@ impl ShellExecutor {
         if print_global || print_suffix || print_regular {
             if print_regular {
                 for (name, value) in &self.aliases {
+                    let s = format_alias_kv(name, value);
                     if list_form {
-                        println!("alias {}='{}'", name, value);
+                        println!("alias {}", s);
                     } else {
-                        println!("{}='{}'", name, value);
+                        println!("{}", s);
                     }
                 }
             }
             if print_global {
                 for (name, value) in &self.global_aliases {
+                    let s = format_alias_kv(name, value);
                     if list_form {
-                        println!("alias -g {}='{}'", name, value);
+                        println!("alias -g {}", s);
                     } else {
-                        println!("{}='{}'", name, value);
+                        println!("{}", s);
                     }
                 }
             }
             if print_suffix {
                 for (name, value) in &self.suffix_aliases {
+                    let s = format_alias_kv(name, value);
                     if list_form {
-                        println!("alias -s {}='{}'", name, value);
+                        println!("alias -s {}", s);
                     } else {
-                        println!("{}='{}'", name, value);
+                        println!("{}", s);
                     }
                 }
             }
@@ -16026,7 +16045,19 @@ impl ShellExecutor {
                     self.aliases.get(arg.as_str()).cloned()
                 };
                 if let Some(v) = value {
-                    println!("{}='{}'", arg, v);
+                    // zsh emits bare value if no shell metas / spaces;
+                    // single-quoted otherwise. Match that exactly so
+                    // `alias x=ls` prints `x=ls` not `x='ls'`.
+                    let needs_quote = v.is_empty()
+                        || v.chars().any(|c| {
+                            c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c)
+                        });
+                    if needs_quote {
+                        let escaped = v.replace('\'', "'\\''");
+                        println!("{}='{}'", arg, escaped);
+                    } else {
+                        println!("{}={}", arg, v);
+                    }
                 } else {
                     eprintln!("zshrs: alias: {}: not found", arg);
                     return 1;
