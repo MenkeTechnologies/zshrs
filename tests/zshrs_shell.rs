@@ -653,3 +653,38 @@ fn test_function_keyword_anonymous_local_scope() {
     );
     assert_eq!(output.trim(), "inner\nouter", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// =(cmd) process substitution — temp-file flavor
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_eq_process_sub_basic() {
+    let (_, output, _) = run_zshrs("cat =(echo hello)");
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+}
+
+#[test]
+fn test_eq_process_sub_multiline() {
+    let (_, output, _) = run_zshrs("cat =(printf '%s\\n' a b c)");
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+}
+
+#[test]
+fn test_eq_process_sub_two_inputs() {
+    // diff returns 1 on differences; we just check it produces the
+    // expected unified-style change marker.
+    let (_, output, _) = run_zshrs("diff =(echo a) =(echo b) | head -1");
+    assert_eq!(output.trim(), "1c1", "got: {output:?}");
+}
+
+#[test]
+fn test_eq_process_sub_path_emitted() {
+    // `echo =(cmd)` should print a temp-file path (no command runs
+    // against it). Just verify it looks like an absolute path.
+    let (_, output, _) = run_zshrs("echo =(echo hi)");
+    assert!(
+        output.trim().starts_with('/') && !output.trim().contains("=("),
+        "got: {output:?}"
+    );
+}
