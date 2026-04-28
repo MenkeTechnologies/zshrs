@@ -274,6 +274,85 @@ fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<String> {
     arr[s_idx..e_idx.min(arr.len())].to_vec()
 }
 
+/// Strip the leading `(#flags)` block from a zsh pattern (if any).
+/// Returns `(remaining_pattern, case_insensitive, l_flag, approx_n)`.
+/// If no flag block is present, the input pattern is returned unchanged
+/// with all flags off.
+fn parse_pattern_flags(pat: &str) -> (String, bool, bool, Option<usize>) {
+    if !pat.starts_with("(#") {
+        return (pat.to_string(), false, false, None);
+    }
+    let after = &pat[2..];
+    let close = match after.find(')') {
+        Some(i) => i,
+        None => return (pat.to_string(), false, false, None),
+    };
+    let flag_str = &after[..close];
+    let rest = &after[close + 1..];
+    let mut case_i = false;
+    let mut l = false;
+    let mut approx: Option<usize> = None;
+    let bytes = flag_str.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'i' => { case_i = true; i += 1; }
+            b'I' => { case_i = false; i += 1; }
+            b'l' => { l = true; i += 1; }
+            b'a' => {
+                // `a` may be followed by digits indicating max errors;
+                // bare `a` defaults to 1.
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                let n: usize = if i > start {
+                    flag_str[start..i].parse().unwrap_or(1)
+                } else {
+                    1
+                };
+                approx = Some(n);
+            }
+            _ => {
+                // Unknown flag — bail out, treat the whole thing as
+                // literal pattern (don't strip).
+                return (pat.to_string(), false, false, None);
+            }
+        }
+    }
+    (rest.to_string(), case_i, l, approx)
+}
+
+/// Approximate match: returns true if `s` matches `pat` with up to `n`
+/// edit-distance errors. Uses the Wagner-Fischer dynamic-programming
+/// algorithm to compute Levenshtein distance, then compares against
+/// the budget. Glob metacharacters in `pat` are NOT honored — zsh's
+/// `(#a)` form combines with literal patterns; combining with `*`/`?`
+/// is rare and not supported here.
+fn approximate_match(s: &str, pat: &str, n: usize) -> bool {
+    let s_chars: Vec<char> = s.chars().collect();
+    let p_chars: Vec<char> = pat.chars().collect();
+    let m = s_chars.len();
+    let k = p_chars.len();
+    if m.abs_diff(k) > n {
+        return false;
+    }
+    let mut prev: Vec<usize> = (0..=k).collect();
+    let mut curr: Vec<usize> = vec![0; k + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=k {
+            let cost = if s_chars[i - 1] == p_chars[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1)
+                .min(curr[j - 1] + 1)
+                .min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[k] <= n
+}
+
 /// Match `s` against zsh-extended glob `pat`. When the `extendedglob`
 /// shell option is set, a leading `^` inverts the match of the rest
 /// of the pattern (zsh negation operator). Falls through to plain
@@ -6115,6 +6194,23 @@ impl ShellExecutor {
     /// Static glob match — same logic as glob_match but callable without &self,
     /// needed for Rayon parallel iterators that can't capture &self.
     pub fn glob_match_static(s: &str, pattern: &str) -> bool {
+        // Inline pattern flags `(#i)` / `(#I)` / `(#l)` / `(#a<n>)` per
+        // zshexpn(1) "Globbing Flags". They prefix a pattern and modify
+        // matching semantics for the rest.
+        //   (#i) — case insensitive
+        //   (#I) — case sensitive (turn (#i) back off)
+        //   (#l) — lowercase pattern char matches both cases in input;
+        //          uppercase pattern char is exact-match
+        //   (#a<n>) — approximate match: up to <n> errors (Levenshtein
+        //          distance, insert/delete/substitute)
+        let (pattern, case_insensitive, l_flag, approx_n) = parse_pattern_flags(pattern);
+
+        if let Some(n) = approx_n {
+            return approximate_match(s, &pattern, n);
+        }
+
+        // Build the regex. For (#l) we need to inflate lowercase chars
+        // to character classes that match either case.
         let mut regex_pattern = String::from("^");
         let mut chars = pattern.chars().peekable();
         while let Some(c) = chars.next() {
@@ -6138,11 +6234,25 @@ impl ShellExecutor {
                     regex_pattern.push('\\');
                     regex_pattern.push(c);
                 }
-                _ => regex_pattern.push(c),
+                _ => {
+                    if l_flag && c.is_ascii_lowercase() {
+                        regex_pattern.push('[');
+                        regex_pattern.push(c);
+                        regex_pattern.push(c.to_ascii_uppercase());
+                        regex_pattern.push(']');
+                    } else {
+                        regex_pattern.push(c);
+                    }
+                }
             }
         }
         regex_pattern.push('$');
-        regex::Regex::new(&regex_pattern)
+        let final_pattern = if case_insensitive {
+            format!("(?i){}", regex_pattern)
+        } else {
+            regex_pattern
+        };
+        regex::Regex::new(&final_pattern)
             .map(|re| re.is_match(s))
             .unwrap_or(false)
     }
