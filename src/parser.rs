@@ -976,6 +976,39 @@ impl<'a> ZshParser<'a> {
                     if words.len() == 1 && self.peek_inoutpar() {
                         return self.parse_inline_funcdef(words.pop().unwrap());
                     }
+                    // `{name}>file` named-fd redirect: the lexer doesn't
+                    // recognize this shape, so the bare word `{name}`
+                    // arrives as a String. If it matches `{IDENT}` and
+                    // the NEXT token is a redirop, pop it off as the
+                    // varid for that redir.
+                    if !words.is_empty() && self.lexer.tok.is_redirop() {
+                        let last = words.last().unwrap();
+                        let untoked = crate::lexer::untokenize(last);
+                        if untoked.starts_with('{')
+                            && untoked.ends_with('}')
+                            && untoked.len() > 2
+                        {
+                            let name = &untoked[1..untoked.len() - 1];
+                            if !name.is_empty()
+                                && name
+                                    .chars()
+                                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
+                                && name
+                                    .chars()
+                                    .next()
+                                    .map(|c| c == '_' || c.is_ascii_alphabetic())
+                                    .unwrap_or(false)
+                            {
+                                let varid = name.to_string();
+                                words.pop();
+                                if let Some(mut redir) = self.parse_redir() {
+                                    redir.varid = Some(varid);
+                                    redirs.push(redir);
+                                }
+                                continue;
+                            }
+                        }
+                    }
                 }
                 _ if self.lexer.tok.is_redirop() => {
                     match self.parse_redir() {

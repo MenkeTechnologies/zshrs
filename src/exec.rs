@@ -2510,6 +2510,46 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
+    // `{name}>file` / `{name}<file` / `{name}>>file` — named-fd allocator.
+    // Stack: [path, varid, op_byte]. Opens path with the appropriate mode
+    // and stores the resulting fd number in $varid as a string. We use
+    // a high starting fd (10+) by allocating then dup'ing — matches zsh's
+    // "fresh fd >= 10" promise so subsequent commands don't collide on
+    // stdin/out/err.
+    vm.register_builtin(BUILTIN_OPEN_NAMED_FD, |vm, _argc| {
+        let op_byte = vm.pop().to_int() as u8;
+        let varid = vm.pop().to_str();
+        let path = vm.pop().to_str();
+        let path_c = match std::ffi::CString::new(path.clone()) {
+            Ok(c) => c,
+            Err(_) => return Value::Status(1),
+        };
+        let flags = match op_byte {
+            b if b == fusevm::op::redirect_op::READ => libc::O_RDONLY,
+            b if b == fusevm::op::redirect_op::WRITE
+                || b == fusevm::op::redirect_op::CLOBBER => libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+            b if b == fusevm::op::redirect_op::APPEND => libc::O_WRONLY | libc::O_CREAT | libc::O_APPEND,
+            b if b == fusevm::op::redirect_op::READ_WRITE => libc::O_RDWR | libc::O_CREAT,
+            _ => return Value::Status(1),
+        };
+        let fd = unsafe { libc::open(path_c.as_ptr(), flags, 0o644) };
+        if fd < 0 {
+            return Value::Status(1);
+        }
+        // Re-dup to fd >= 10 so positional fds (0/1/2/etc.) stay free.
+        let new_fd = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
+        let final_fd = if new_fd >= 10 {
+            unsafe { libc::close(fd) };
+            new_fd
+        } else {
+            fd
+        };
+        with_executor(|exec| {
+            exec.variables.insert(varid, final_fd.to_string());
+        });
+        Value::Status(0)
+    });
+
     // `[[ a -ef b ]]` — same-inode test. Resolves both paths via fs::metadata
     // (follows symlinks the way zsh's -ef does) and compares (dev, inode).
     // Returns false on any I/O error (path missing, permission denied, etc.).
@@ -3111,6 +3151,13 @@ pub const BUILTIN_SAME_FILE: u16 = 315;
 /// on the current VM (so positional/local state is shared) and prints
 /// the timing summary to stderr in zsh's format. Pushes Status.
 pub const BUILTIN_TIME_SUBLIST: u16 = 316;
+
+/// `{name}>file` / `{name}<file` / `{name}>>file` — named-fd allocation.
+/// Stack: [path, varid, op_byte]. Opens `path` per `op_byte`, gets the
+/// new fd (≥10 in zsh; we use libc::open with O_CLOEXEC bit cleared so
+/// the inherited fd survives Command::new spawns), stores the fd number
+/// as a string in `$varid`. Pushes Status (0 success, 1 error).
+pub const BUILTIN_OPEN_NAMED_FD: u16 = 317;
 
 /// `${(flags)name}` — zsh parameter expansion flags. Stack: [name, flags].
 /// Flags applied left-to-right. Supported subset (high-value, used by zpwr):
