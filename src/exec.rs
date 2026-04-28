@@ -4108,7 +4108,6 @@ pub struct SubshellSnapshot {
 }
 
 pub struct ShellExecutor {
-    pub functions: HashMap<String, ShellCommand>,
     pub aliases: HashMap<String, String>,
     pub global_aliases: HashMap<String, String>, // alias -g: expand anywhere
     pub suffix_aliases: HashMap<String, String>, // alias -s: expand by file extension
@@ -4264,7 +4263,6 @@ impl ShellExecutor {
         );
 
         Self {
-            functions: HashMap::new(),
             aliases: HashMap::new(),
             global_aliases: HashMap::new(),
             suffix_aliases: HashMap::new(),
@@ -5914,43 +5912,38 @@ impl ShellExecutor {
         }
     }
 
-    /// Whether `name` is a known function. Checks both the new
-    /// `functions_compiled` table and the legacy `self.functions` AST table.
-    /// Doesn't trigger autoload — use `maybe_autoload` first if needed.
+    /// Whether `name` is a known function. Checks the compiled-functions
+    /// table and the autoload-pending registry — `autoload foo` should
+    /// make `whence foo`/`type foo`/`functions foo` recognize `foo` as
+    /// a function before it's actually loaded. Doesn't trigger autoload
+    /// itself; use `maybe_autoload` first if you need to load before
+    /// introspecting.
     pub fn function_exists(&self, name: &str) -> bool {
-        self.functions_compiled.contains_key(name) || self.functions.contains_key(name)
+        self.functions_compiled.contains_key(name)
+            || self.autoload_pending.contains_key(name)
     }
 
-    /// Canonical source text for a function. Returns the autoload-captured
-    /// raw source (`function_source`) if available, otherwise reconstructs
-    /// from the legacy AST via `text::getpermtext`. Returns `None` only if
-    /// the function isn't known.
+    /// Canonical source text for a function. Returns from `function_source`
+    /// (populated by autoload paths and runtime FuncDef registration via
+    /// BUILTIN_REGISTER_COMPILED_FN with body_source). Returns `None` if
+    /// no canonical source is on file.
     pub fn function_definition_text(&self, name: &str) -> Option<String> {
-        if let Some(src) = self.function_source.get(name) {
-            return Some(src.clone());
-        }
-        self.functions
-            .get(name)
-            .map(crate::text::getpermtext)
+        self.function_source.get(name).cloned()
     }
 
-    /// Remove a function from all three tables (compiled chunk, legacy AST,
-    /// canonical source). Returns true iff at least one table held it.
+    /// Remove a function from both tables (compiled chunk + canonical
+    /// source). Returns true iff at least one table held it.
     pub fn remove_function(&mut self, name: &str) -> bool {
         let a = self.functions_compiled.remove(name).is_some();
-        let b = self.functions.remove(name).is_some();
         let c = self.function_source.remove(name).is_some();
-        a || b || c
+        a || c
     }
 
-    /// Sorted list of every known function name (union of compiled + AST + source).
+    /// Sorted list of every known function name (union of compiled + source).
     pub fn function_names(&self) -> Vec<String> {
         let mut set: std::collections::BTreeSet<String> =
             std::collections::BTreeSet::new();
         for k in self.functions_compiled.keys() {
-            set.insert(k.clone());
-        }
-        for k in self.functions.keys() {
             set.insert(k.clone());
         }
         for k in self.function_source.keys() {
@@ -10817,12 +10810,11 @@ impl ShellExecutor {
         use crate::plugin_cache::{AliasKind, PluginDelta};
         let mut delta = PluginDelta::default();
 
-        // New functions — serialize AST to bincode for instant replay
-        for (name, body) in &self.functions {
+        // New functions — serialize canonical source text (UTF-8 bytes)
+        // for instant replay. Replay parses + compiles via the new pipeline.
+        for (name, source) in &self.function_source {
             if !snap.functions.contains(name) {
-                if let Ok(bytes) = bincode::serialize(body) {
-                    delta.functions.push((name.clone(), bytes));
-                }
+                delta.functions.push((name.clone(), source.as_bytes().to_vec()));
             }
         }
 
@@ -10974,22 +10966,20 @@ impl ShellExecutor {
         }
 
         // Plugin cache replay: each bincode blob is a ShellCommand AST.
-        // Round-trip through getpermtext → ZshParser → ZshCompiler so the
-        // function lands in functions_compiled for dispatch and
-        // function_source for introspection. Matches the autoload + runtime
-        // FuncDef shape from the cascade.
+        // Replay each function's source text through ZshParser + ZshCompiler.
+        // Delta format: name → UTF-8 source bytes (no AST round-trip needed).
         for (name, bytes) in &delta.functions {
-            if let Ok(ast) = bincode::deserialize::<crate::parser::ShellCommand>(bytes) {
-                let body_text = crate::text::getpermtext(&ast);
-                if let Some(program) = crate::parser::ZshParser::new(&body_text)
-                    .parse()
-                    .ok()
-                    .filter(|p| !p.lists.is_empty())
-                {
-                    let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
-                    self.functions_compiled.insert(name.clone(), chunk);
-                    self.function_source.insert(name.clone(), body_text);
-                }
+            let Ok(source) = std::str::from_utf8(bytes) else {
+                continue;
+            };
+            if let Some(program) = crate::parser::ZshParser::new(source)
+                .parse()
+                .ok()
+                .filter(|p| !p.lists.is_empty())
+            {
+                let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
+                self.functions_compiled.insert(name.clone(), chunk);
+                self.function_source.insert(name.clone(), source.to_string());
             }
         }
     }
@@ -12318,47 +12308,13 @@ impl ShellExecutor {
 
             self.autoload_pending.insert(func_name.clone(), flags);
 
-            // Create a stub function: `builtin autoload -Xz funcname && funcname "$@"`
-            // When called, this loads the real function and re-calls it
-            let autoload_opts = if zsh_style && no_alias {
-                "-XUz"
-            } else if zsh_style {
-                "-Xz"
-            } else if no_alias {
-                "-XU"
-            } else {
-                "-X"
-            };
-
-            // The stub: builtin autoload -Xz funcname && funcname "$@"
-            let stub = ShellCommand::List(vec![
-                (
-                    ShellCommand::Simple(SimpleCommand {
-                        assignments: vec![],
-                        words: vec![
-                            ShellWord::Literal("builtin".to_string()),
-                            ShellWord::Literal("autoload".to_string()),
-                            ShellWord::Literal(autoload_opts.to_string()),
-                            ShellWord::Literal(func_name.clone()),
-                        ],
-                        redirects: vec![],
-                    }),
-                    ListOp::And,
-                ),
-                (
-                    ShellCommand::Simple(SimpleCommand {
-                        assignments: vec![],
-                        words: vec![
-                            ShellWord::Literal(func_name.clone()),
-                            ShellWord::DoubleQuoted(vec![ShellWord::Variable("@".to_string())]),
-                        ],
-                        redirects: vec![],
-                    }),
-                    ListOp::Semi,
-                ),
-            ]);
-
-            self.functions.insert(func_name.clone(), stub);
+            // No stub function needed: `function_exists(name)` checks
+            // `autoload_pending` so introspection (whence, which, type)
+            // recognizes `name` as a function before it's loaded. The
+            // dispatch path (`ZshrsHost::call_function`,
+            // `dispatch_function_call`) calls `maybe_autoload(name)` first
+            // when `autoload_pending` has the name, which loads the body
+            // chunk into `functions_compiled` and clears the pending entry.
 
             // If -r or -R, resolve the path now to verify it exists
             if resolve {
@@ -12560,15 +12516,16 @@ impl ShellExecutor {
     }
 
     /// Check if a function is autoload pending and load it if so. The new
-    /// pipeline populates `functions_compiled` + `function_source` directly,
-    /// so success is signaled by `function_exists(name)` after the load
-    /// side effect.
+    /// pipeline populates `functions_compiled` directly via `load_autoload_function`'s
+    /// side effects; success is `functions_compiled.contains_key(name)`
+    /// (not `function_exists`, which is now true for autoload-pending names
+    /// regardless of load outcome).
     pub fn maybe_autoload(&mut self, name: &str) -> bool {
         if !self.autoload_pending.contains_key(name) {
             return false;
         }
         self.load_autoload_function(name);
-        if self.function_exists(name) {
+        if self.functions_compiled.contains_key(name) {
             self.autoload_pending.remove(name);
             return true;
         }
@@ -21519,9 +21476,11 @@ impl ShellExecutor {
                 }
             } else {
                 // Compile all functions
-                for (name, func) in &self.functions {
-                    let source = format!("# Compiled function: {}\n# Body: {:?}", name, func);
-                    builder.add_source(name, &source);
+                for name in self.function_names() {
+                    if let Some(body) = self.function_definition_text(&name) {
+                        let source = format!("{} () {{\n{}\n}}", name, body);
+                        builder.add_source(&name, &source);
+                    }
                 }
             }
 
