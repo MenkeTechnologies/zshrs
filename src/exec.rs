@@ -3732,6 +3732,82 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(same)
     });
 
+    // `[[ -k path ]]` / `-u` / `-g` — sticky / setuid / setgid bit.
+    vm.register_builtin(BUILTIN_HAS_STICKY, |vm, _argc| {
+        use std::os::unix::fs::PermissionsExt;
+        let path = vm.pop().to_str();
+        let result = std::fs::metadata(&path)
+            .map(|m| m.permissions().mode() & libc::S_ISVTX as u32 != 0)
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+    vm.register_builtin(BUILTIN_HAS_SETUID, |vm, _argc| {
+        use std::os::unix::fs::PermissionsExt;
+        let path = vm.pop().to_str();
+        let result = std::fs::metadata(&path)
+            .map(|m| m.permissions().mode() & libc::S_ISUID as u32 != 0)
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+    vm.register_builtin(BUILTIN_HAS_SETGID, |vm, _argc| {
+        use std::os::unix::fs::PermissionsExt;
+        let path = vm.pop().to_str();
+        let result = std::fs::metadata(&path)
+            .map(|m| m.permissions().mode() & libc::S_ISGID as u32 != 0)
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+    vm.register_builtin(BUILTIN_OWNED_BY_USER, |vm, _argc| {
+        use std::os::unix::fs::MetadataExt;
+        let path = vm.pop().to_str();
+        let euid = unsafe { libc::geteuid() };
+        let result = std::fs::metadata(&path)
+            .map(|m| m.uid() == euid)
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+    vm.register_builtin(BUILTIN_OWNED_BY_GROUP, |vm, _argc| {
+        use std::os::unix::fs::MetadataExt;
+        let path = vm.pop().to_str();
+        let egid = unsafe { libc::getegid() };
+        let result = std::fs::metadata(&path)
+            .map(|m| m.gid() == egid)
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+
+    // `[[ a -nt b ]]` — true if `a`'s mtime is strictly later than `b`'s.
+    // If either path is missing the result follows zsh: false unless only
+    // `b` is missing (then true), per the man page.
+    vm.register_builtin(BUILTIN_FILE_NEWER, |vm, _argc| {
+        use std::os::unix::fs::MetadataExt;
+        let b = vm.pop().to_str();
+        let a = vm.pop().to_str();
+        let ma = std::fs::metadata(&a);
+        let mb = std::fs::metadata(&b);
+        let result = match (ma, mb) {
+            (Ok(ma), Ok(mb)) => ma.mtime() > mb.mtime(),
+            (Ok(_), Err(_)) => true,  // zsh: a exists, b doesn't → newer
+            _ => false,
+        };
+        fusevm::Value::Bool(result)
+    });
+
+    // `[[ a -ot b ]]` — mirror of -nt.
+    vm.register_builtin(BUILTIN_FILE_OLDER, |vm, _argc| {
+        use std::os::unix::fs::MetadataExt;
+        let b = vm.pop().to_str();
+        let a = vm.pop().to_str();
+        let ma = std::fs::metadata(&a);
+        let mb = std::fs::metadata(&b);
+        let result = match (ma, mb) {
+            (Ok(ma), Ok(mb)) => ma.mtime() < mb.mtime(),
+            (Err(_), Ok(_)) => true,  // zsh: a missing, b exists → older
+            _ => false,
+        };
+        fusevm::Value::Bool(result)
+    });
+
     // `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`
     // Pops [name, op_byte, rhs] (rhs popped first). Returns the modified
     // value as Value::Str. Handles unset/empty distinction (`:-` etc.
@@ -4326,6 +4402,27 @@ pub const BUILTIN_EXPAND_TEXT: u16 = 314;
 /// `[[ a -ef b ]]` — same-inode test. Stack: [a, b]. Pushes Bool true iff
 /// both paths resolve to the same `(dev, inode)` pair (zsh + bash semantics).
 pub const BUILTIN_SAME_FILE: u16 = 315;
+
+/// `[[ a -nt b ]]` — file `a` newer than file `b` (mtime strict).
+/// Stack: [path_a, path_b]. Pushes Bool. zsh-compatible "missing"
+/// rules: if both exist, compare mtime; if only `a` exists → true;
+/// otherwise false.
+pub const BUILTIN_FILE_NEWER: u16 = 324;
+
+/// `[[ a -ot b ]]` — mirror of `-nt`. If both exist, compare mtime;
+/// if only `b` exists → true; otherwise false.
+pub const BUILTIN_FILE_OLDER: u16 = 325;
+
+/// `[[ -k path ]]` — sticky bit (S_ISVTX) set on path.
+pub const BUILTIN_HAS_STICKY: u16 = 326;
+/// `[[ -u path ]]` — setuid bit (S_ISUID).
+pub const BUILTIN_HAS_SETUID: u16 = 327;
+/// `[[ -g path ]]` — setgid bit (S_ISGID).
+pub const BUILTIN_HAS_SETGID: u16 = 328;
+/// `[[ -O path ]]` — owned by effective UID.
+pub const BUILTIN_OWNED_BY_USER: u16 = 329;
+/// `[[ -G path ]]` — owned by effective GID.
+pub const BUILTIN_OWNED_BY_GROUP: u16 = 330;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
 /// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk

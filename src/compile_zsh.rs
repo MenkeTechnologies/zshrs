@@ -1787,6 +1787,37 @@ impl ZshCompiler {
             "-x" => file_test::IS_EXECUTABLE,
             "-s" => file_test::IS_NONEMPTY,
             "-L" | "-h" => file_test::IS_SYMLINK,
+            "-k" => {
+                // Sticky bit (S_ISVTX). Not in fusevm's file_test set;
+                // route through a thin host-side builtin.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_HAS_STICKY, 1), 0);
+                return;
+            }
+            "-u" => {
+                // Setuid bit (S_ISUID).
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_HAS_SETUID, 1), 0);
+                return;
+            }
+            "-g" => {
+                // Setgid bit (S_ISGID).
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_HAS_SETGID, 1), 0);
+                return;
+            }
+            "-O" => {
+                // Owned by effective UID.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_OWNED_BY_USER, 1), 0);
+                return;
+            }
+            "-G" => {
+                // Owned by effective GID.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_OWNED_BY_GROUP, 1), 0);
+                return;
+            }
             "-z" => {
                 self.builder.emit(Op::StringLen, 0);
                 self.builder.emit(Op::LoadInt(0), 0);
@@ -1848,6 +1879,14 @@ impl ZshCompiler {
             "-ef" => {
                 self.builder
                     .emit(Op::CallBuiltin(crate::exec::BUILTIN_SAME_FILE, 2), 0)
+            }
+            "-nt" => {
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_FILE_NEWER, 2), 0)
+            }
+            "-ot" => {
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_FILE_OLDER, 2), 0)
             }
             _ => {
                 tracing::debug!(op, "compile_zsh: unknown binary test op");
