@@ -217,12 +217,15 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `noglob print "*"` errored "command not found: print" because `builtin_noglob` routed unconditionally through `builtin_command` (PATH-only lookup). Now dispatches via `builtin_builtin` first when the name `is_builtin`, falling back to `builtin_command` for functions and externals. `noglob echo "*.txt"`, `noglob ls`, etc. continue to work.
 
+### Bare `$arr[N]` subscript (no braces)
+
+- `print $arr[2]` was lexing as `$arr` (whole array) + literal `[2]`, producing `x y z[2]`. New `bare_subscript_ref` matches the bare `$NAME[KEY]` shape and emits `BUILTIN_ARRAY_INDEX` directly. Companion `bare_subscript_with_suffix` handles `$arr[2]extra` (literal suffix concatenated via `Op::Concat`). Works for indexed (numeric key), assoc (string key), and with literal suffixes — `$arr[2]extra` → `yextra`, matching zsh.
+
 ## Still open (second-pass — deferred)
 
 - **Recursive glob `**/` (directories-only)** — trailing-slash recursive form not expanded.
 - **Glob qualifier `(mh-N)` / `(mm)` / `(ms)`** — modified-recent age qualifiers not implemented (only `(L)` size and `(D)` dotglob exist today).
 - **`(t)` typeset flag returns wrong type for `integer i=5`** — needs persistent attribute tracking on declared variables (full plumbing through `typeset -i` / `integer` / `float`).
-- **Bare `$arr[N]` subscript** — without braces, lexes as `$arr` + literal `[N]`. Forces use of `${arr[N]}`.
 
 The "Stub modules (loaded but limited)" section below remains as documented deferrals (`zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp`, `zsh/db_gdbm`) — these are niche features whose `zmodload` call currently no-ops, with the corresponding builtins not registered. They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
 
