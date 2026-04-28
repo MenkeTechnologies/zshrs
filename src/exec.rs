@@ -4141,6 +4141,41 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::str(result)
     });
 
+    // `${var:offset[:length]}` with arith/var-based offset/length —
+    // the literal-int variant above can't represent `${s:$n:2}`.
+    // Stack layout (top→bottom): has_length, length_expr, offset_expr,
+    // name. has_length distinguishes "no length given" from
+    // "length=0".
+    vm.register_builtin(BUILTIN_PARAM_SUBSTRING_EXPR, |vm, _argc| {
+        let has_len = vm.pop().to_int() != 0;
+        let len_expr = vm.pop().to_str();
+        let off_expr = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        let result = with_executor(|exec| {
+            let val = exec.get_variable(&name);
+            let chars: Vec<char> = val.chars().collect();
+            let len = chars.len() as i64;
+            let offset = exec.eval_arith_expr(&off_expr);
+            let start = if offset < 0 {
+                (len + offset).max(0) as usize
+            } else {
+                (offset as usize).min(chars.len())
+            };
+            let take = if !has_len {
+                chars.len().saturating_sub(start)
+            } else {
+                let length = exec.eval_arith_expr(&len_expr);
+                if length < 0 {
+                    chars.len().saturating_sub(start)
+                } else {
+                    (length as usize).min(chars.len().saturating_sub(start))
+                }
+            };
+            chars.iter().skip(start).take(take).collect::<String>()
+        });
+        fusevm::Value::str(result)
+    });
+
     // `${var#pat}` / `${var##pat}` / `${var%pat}` / `${var%%pat}`
     // Pops [name, pattern, op_byte]. op: 0=`#` short-prefix, 1=`##` long,
     // 2=`%` short-suffix, 3=`%%` long. Glob-pattern matching via the
@@ -4719,6 +4754,7 @@ pub const BUILTIN_IS_FIFO: u16 = 334;
 /// `[[ -S path ]]` — socket.
 pub const BUILTIN_IS_SOCKET: u16 = 335;
 pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
+pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
 /// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk
@@ -13094,7 +13130,9 @@ impl ShellExecutor {
 
         let output = args[start..].join(" ");
         if interpret_escapes {
-            print!("{}", output.replace("\\n", "\n").replace("\\t", "\t"));
+            // Use the shared escape decoder so `\033`, `\xNN`, `\NNN`,
+            // `\a`, `\b`, `\e` etc. all work — not just `\n` and `\t`.
+            print!("{}", self.expand_printf_escapes(&output));
         } else {
             print!("{}", output);
         }
@@ -16480,11 +16518,15 @@ impl ShellExecutor {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect()
             };
+            // Sort for deterministic listing (matches zsh's order).
+            let mut alias_map = alias_map;
+            alias_map.sort_by(|a, b| a.0.cmp(&b.0));
             for (name, value) in alias_map {
+                let formatted = format_alias_kv(&name, &value);
                 if list_form {
-                    println!("{}{}='{}'", prefix, name, value);
+                    println!("{}{}", prefix, formatted);
                 } else {
-                    println!("{}='{}'", name, value);
+                    println!("{}", formatted);
                 }
             }
             return 0;
