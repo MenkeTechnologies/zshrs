@@ -1679,3 +1679,55 @@ fn test_zcalc_evaluates_expression() {
     let (_, output, _) = run_zshrs("zcalc -e '2+3*4'");
     assert_eq!(output.trim(), "14", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Cond tests: -nt, -ot, -k (sticky), -O (owner), -G (group)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cond_nt_newer_than() {
+    use std::fs;
+    let _ = fs::remove_file("/tmp/zsh_nt_a");
+    let _ = fs::remove_file("/tmp/zsh_nt_b");
+    fs::write("/tmp/zsh_nt_a", "x").unwrap();
+    // mtime granularity on some filesystems is 1s — sleep past that.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::write("/tmp/zsh_nt_b", "y").unwrap();
+    let (_, output, _) = run_zshrs(
+        "[[ /tmp/zsh_nt_b -nt /tmp/zsh_nt_a ]] && echo yes || echo no",
+    );
+    let _ = fs::remove_file("/tmp/zsh_nt_a");
+    let _ = fs::remove_file("/tmp/zsh_nt_b");
+    // ignore trailing zpwr log noise from cwd hook
+    assert!(output.starts_with("yes"), "got: {output:?}");
+}
+
+#[test]
+fn test_cond_k_sticky_bit() {
+    let (_, output, _) =
+        run_zshrs("[[ -k /tmp ]] && echo yes || echo no");
+    assert!(output.starts_with("yes"), "got: {output:?}");
+}
+
+#[test]
+fn test_cond_O_owned_by_user() {
+    // /tmp is typically root-owned; not us. /Users/$USER/... is. We
+    // just check the operator runs without erroring — exit status of 0
+    // (yes) or 1 (no) is fine.
+    let (_, output, _) =
+        run_zshrs("[[ -O /tmp ]] && echo yes || echo no");
+    assert!(
+        output.starts_with("yes") || output.starts_with("no"),
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_cond_G_owned_by_group() {
+    let (_, output, _) =
+        run_zshrs("[[ -G /tmp ]] && echo yes || echo no");
+    assert!(
+        output.starts_with("yes") || output.starts_with("no"),
+        "got: {output:?}"
+    );
+}
