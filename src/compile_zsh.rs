@@ -807,7 +807,15 @@ impl ZshCompiler {
         let trigger_dollar = unquoted(&untoked, '$') || unquoted(&untoked, '`');
         let trigger_glob = unquoted(&untoked, '*')
             || unquoted(&untoked, '?')
-            || unquoted(&untoked, '[');
+            || unquoted(&untoked, '[')
+            // zsh glob qualifiers: `*(.)` / `path(mh-1)` etc. The `(...)`
+            // suffix triggers globbing even when the body has no other
+            // glob metachar — needed for `/etc/hosts(mh-100)` style.
+            // Conservative: require closing `)` at end and a bare `(`
+            // somewhere before (no other meta chars in between).
+            || (untoked.ends_with(')')
+                && untoked.contains('(')
+                && !untoked.contains('|'));
         let trigger_tilde = untoked.starts_with('~')
             || untoked.contains(":~")
             || untoked.contains("=~");

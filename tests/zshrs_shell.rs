@@ -1218,3 +1218,42 @@ fn test_t_flag_scalar_export() {
     let (_, output, _) = run_zshrs("export E=foo; print \"${(t)E}\"");
     assert_eq!(output.trim(), "scalar-export", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Glob qualifier `(mh-N)` / `(ah-N)` / `(ch-N)` time qualifiers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_glob_qualifier_mh_recent_file() {
+    use std::fs;
+    let path = "/tmp/zshrs_glob_mh_test.txt";
+    fs::write(path, "x").unwrap();
+    let (_, output, _) = run_zshrs(&format!("print {}(mh-100)", path));
+    assert_eq!(output.trim(), path, "got: {output:?}");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_glob_qualifier_mh_too_old_excludes() {
+    use std::fs;
+    let path = "/tmp/zshrs_glob_mh_old.txt";
+    fs::write(path, "x").unwrap();
+    // (mh+10000) = older than 10000 hours; a just-touched file fails
+    // the filter so the resolved path is NOT printed. (zshrs falls back
+    // to the literal pattern instead of erroring "no matches found";
+    // either way the resolved /tmp/... shouldn't appear bare.)
+    let (_, stdout, _) =
+        run_zshrs(&format!("print {}(mh+10000) 2>/dev/null", path));
+    let _ = fs::remove_file(path);
+    let line = stdout.trim();
+    assert!(
+        line != path,
+        "filter should remove just-touched file, got: {stdout:?}"
+    );
+}
+
+#[test]
+fn test_glob_qualifier_path_dot() {
+    let (_, output, _) = run_zshrs("print /etc/hosts(.)");
+    assert_eq!(output.trim(), "/etc/hosts", "got: {output:?}");
+}
