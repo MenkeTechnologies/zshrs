@@ -7,8 +7,6 @@
 use crate::lexer::ZshLexer;
 use crate::tokens::LexTok;
 use serde::{Deserialize, Serialize};
-use std::iter::Peekable;
-use std::str::Chars;
 
 /// AST node for a complete program (list of commands)
 #[derive(Debug, Clone, Serialize, Deserialize)]
