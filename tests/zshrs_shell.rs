@@ -1731,3 +1731,34 @@ fn test_cond_G_owned_by_group() {
         "got: {output:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Extendedglob `^pat` negation in `[[ str = pat ]]` cond test
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cond_neg_pattern_excludes_match() {
+    // `[[ apple = ^a* ]]` with extendedglob → false (apple DOES match a*).
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ apple = ^a* ]] && echo y || echo n",
+    );
+    assert_eq!(output.trim(), "n", "got: {output:?}");
+}
+
+#[test]
+fn test_cond_neg_pattern_includes_non_match() {
+    // `[[ banana = ^a* ]]` with extendedglob → true.
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ banana = ^a* ]] && echo y || echo n",
+    );
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+}
+
+#[test]
+fn test_cond_neg_literal_without_extendedglob() {
+    // Without extendedglob, `^` is a literal char and `^a*` doesn't
+    // match `apple`.
+    let (_, output, _) =
+        run_zshrs("[[ apple = ^a* ]] && echo y || echo n");
+    assert_eq!(output.trim(), "n", "got: {output:?}");
+}

@@ -6849,6 +6849,20 @@ impl ShellExecutor {
     /// Static glob match — same logic as glob_match but callable without &self,
     /// needed for Rayon parallel iterators that can't capture &self.
     pub fn glob_match_static(s: &str, pattern: &str) -> bool {
+        // Extendedglob `^pat` negation: when extendedglob is on AND
+        // the pattern starts with a literal `^`, strip it and invert
+        // the match of the remainder. Already done in
+        // `extendedglob_match` for the param-filter path; do it here
+        // too so `[[ str = ^pat ]]` works via the cond `=` matcher.
+        let extendedglob_on = with_executor(|e| {
+            e.options.get("extendedglob").copied().unwrap_or(false)
+        });
+        if extendedglob_on {
+            if let Some(rest) = pattern.strip_prefix('^') {
+                return !ShellExecutor::glob_match_static(s, rest);
+            }
+        }
+
         // ksh-style negation `!(p)` (gated on `setopt kshglob`): when
         // the entire pattern is `!(<body>)`, match anything that does
         // NOT match `<body>`. This handles the standalone case (the
