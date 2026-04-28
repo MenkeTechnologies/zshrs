@@ -1609,3 +1609,73 @@ fn test_export_p_lists_var() {
         run_zshrs("export X=hello; export -p 2>&1 | grep '^export X='");
     assert_eq!(output.trim(), "export X=hello", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `zmv` / `zcp` / `zln` / `zcalc` native bundled functions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_zmv_dry_run_capture_substitution() {
+    use std::fs;
+    let dir = "/tmp/zshrs_zmv_dry";
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(dir).unwrap();
+    fs::write(format!("{}/a.txt", dir), "x").unwrap();
+    fs::write(format!("{}/b.txt", dir), "y").unwrap();
+    let (_, output, _) = run_zshrs(&format!(
+        "cd {} && zmv -n '(*).txt' '$1.bak'",
+        dir
+    ));
+    let _ = fs::remove_dir_all(dir);
+    let mut lines: Vec<&str> = output.lines().collect();
+    lines.sort();
+    assert_eq!(
+        lines,
+        vec!["mv -- a.txt a.bak", "mv -- b.txt b.bak"],
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_zmv_real_renames() {
+    use std::fs;
+    let dir = "/tmp/zshrs_zmv_real";
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(dir).unwrap();
+    fs::write(format!("{}/foo.txt", dir), "x").unwrap();
+    let (_, _, _) = run_zshrs(&format!(
+        "cd {} && zmv '(*).txt' '$1.bak'",
+        dir
+    ));
+    let exists_bak = std::path::Path::new(&format!("{}/foo.bak", dir)).exists();
+    let exists_orig = std::path::Path::new(&format!("{}/foo.txt", dir)).exists();
+    let _ = fs::remove_dir_all(dir);
+    assert!(exists_bak && !exists_orig, "bak={} orig={}", exists_bak, exists_orig);
+}
+
+#[test]
+fn test_zmv_collision_detection() {
+    // Two files mapping to the same dest should error before any rename.
+    use std::fs;
+    let dir = "/tmp/zshrs_zmv_clash";
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(dir).unwrap();
+    fs::write(format!("{}/a.txt", dir), "1").unwrap();
+    fs::write(format!("{}/b.txt", dir), "2").unwrap();
+    let (status, _, stderr) = run_zshrs(&format!(
+        "cd {} && zmv '*.txt' 'merged.bak'",
+        dir
+    ));
+    let _ = fs::remove_dir_all(dir);
+    assert_eq!(status, 1, "should exit 1 on collision");
+    assert!(
+        stderr.contains("both map to"),
+        "stderr should mention collision, got: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_zcalc_evaluates_expression() {
+    let (_, output, _) = run_zshrs("zcalc -e '2+3*4'");
+    assert_eq!(output.trim(), "14", "got: {output:?}");
+}

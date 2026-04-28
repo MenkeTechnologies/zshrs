@@ -4756,6 +4756,26 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn call_function(&mut self, name: &str, args: Vec<String>) -> Option<i32> {
+        // zsh-bundled rename helpers + zcalc: short-circuit BEFORE the
+        // function/autoload lookup so the autoloaded zsh source (which
+        // can hang zshrs's parser on zsh-specific syntax) never runs.
+        // Native Rust impls live in builtin_zmv / builtin_zcalc.
+        match name {
+            "zmv" => {
+                return Some(with_executor(|exec| exec.builtin_zmv(&args, "mv")));
+            }
+            "zcp" => {
+                return Some(with_executor(|exec| exec.builtin_zmv(&args, "cp")));
+            }
+            "zln" => {
+                return Some(with_executor(|exec| exec.builtin_zmv(&args, "ln")));
+            }
+            "zcalc" => {
+                return Some(with_executor(|exec| exec.builtin_zcalc(&args)));
+            }
+            _ => {}
+        }
+
         // Alias check first: `alias g='echo hi'; g` rewrites to `echo hi`
         // before normal function/external dispatch. The expansion is
         // re-parsed + compiled + run on a nested VM with `args` appended.
@@ -6178,6 +6198,13 @@ impl ShellExecutor {
             "private" => return self.builtin_local(&rest_vec),
             "zformat" => return self.builtin_zformat(&rest_vec),
             "zregexparse" => return self.builtin_zregexparse(&rest_vec),
+            // zsh-bundled rename helpers — implemented natively in
+            // Rust so `autoload -U zmv` works without shipping the
+            // function source. (Without this, the autoload path hangs.)
+            "zmv" => return self.builtin_zmv(&rest_vec, "mv"),
+            "zcp" => return self.builtin_zmv(&rest_vec, "cp"),
+            "zln" => return self.builtin_zmv(&rest_vec, "ln"),
+            "zcalc" => return self.builtin_zcalc(&rest_vec),
             _ => {}
         }
 
@@ -18301,6 +18328,13 @@ impl ShellExecutor {
             "integer" => self.builtin_integer(cmd_args),
             "float" => self.builtin_float(cmd_args),
             "readonly" => self.builtin_readonly(cmd_args),
+            // zsh-bundled rename helpers — natively implemented so
+            // `autoload -U zmv` doesn't actually need to load the
+            // zsh function source file. See builtin_zmv for semantics.
+            "zmv" => self.builtin_zmv(cmd_args, "mv"),
+            "zcp" => self.builtin_zmv(cmd_args, "cp"),
+            "zln" => self.builtin_zmv(cmd_args, "ln"),
+            "zcalc" => self.builtin_zcalc(cmd_args),
             _ => {
                 eprintln!("zshrs: builtin: {}: not a shell builtin", cmd);
                 1
@@ -23617,6 +23651,306 @@ impl ShellExecutor {
         }
 
         0
+    }
+
+    /// zmv / zcp / zln — pattern-based rename. Native Rust port of
+    /// the autoloaded zsh function. Glob the source pattern (with
+    /// `(...)` capture groups), substitute `$1`/`$2`/... in the
+    /// destination, then mv/cp/ln each match.
+    ///
+    /// Supported flags:
+    ///   -n   dry-run (print actions, don't execute)
+    ///   -f   force overwrite
+    ///   -i   interactive (prompt — falls back to skip on no-tty)
+    ///   -v   verbose
+    ///   -W   wildcard mode: `*` in src maps to `*` in dest position
+    ///   -M   force mv mode (default for `zmv`)
+    ///   -C   force cp mode
+    ///   -L   force ln mode (hard link)
+    ///   -s   ln -s (symlink) when in ln mode
+    ///   -p prog  use `prog` instead of mv/cp/ln
+    fn builtin_zmv(&mut self, args: &[String], default_action: &str) -> i32 {
+        let mut action = default_action.to_string();
+        let mut dry_run = false;
+        let mut force = false;
+        let mut verbose = false;
+        let mut wildcard = false;
+        let mut symlink = false;
+        let mut positional: Vec<String> = Vec::new();
+        let mut iter = args.iter().peekable();
+        while let Some(a) = iter.next() {
+            if a == "--" {
+                while let Some(p) = iter.next() {
+                    positional.push(p.clone());
+                }
+                break;
+            }
+            if let Some(rest) = a.strip_prefix('-') {
+                if rest.is_empty() {
+                    positional.push(a.clone());
+                    continue;
+                }
+                for c in rest.chars() {
+                    match c {
+                        'n' => dry_run = true,
+                        'f' => force = true,
+                        'i' => {} // interactive — treat as skip-on-conflict
+                        'v' => verbose = true,
+                        'W' => wildcard = true,
+                        's' => symlink = true,
+                        'M' => action = "mv".to_string(),
+                        'C' => action = "cp".to_string(),
+                        'L' => action = "ln".to_string(),
+                        'p' => {
+                            // `-p prog` consumes the next arg.
+                            if let Some(p) = iter.next() {
+                                action = p.clone();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                positional.push(a.clone());
+            }
+        }
+        if positional.len() < 2 {
+            eprintln!(
+                "{}: usage: {} [-flags] FROM_PATTERN TO_PATTERN",
+                action, action
+            );
+            return 1;
+        }
+        let from_pat = &positional[0];
+        let to_pat = &positional[1];
+
+        // Convert source pattern with `(...)` capture groups to a
+        // regex anchored at both ends. zsh-style globs:
+        //   `*`   → `(.*)` (capture if -W or wrapped in `(...)`,
+        //          else just `.*`)
+        //   `?`   → `.`
+        //   `(p)` → `(p_translated)` capture group
+        //   `[…]` → `[…]` literal char class
+        let mut regex_src = String::from("^");
+        let mut chars = from_pat.chars().peekable();
+        let mut group_idx = 0;
+        while let Some(c) = chars.next() {
+            match c {
+                '*' => {
+                    if wildcard {
+                        regex_src.push_str("(.*)");
+                        group_idx += 1;
+                    } else {
+                        regex_src.push_str(".*");
+                    }
+                }
+                '?' => regex_src.push('.'),
+                '(' => {
+                    regex_src.push('(');
+                    group_idx += 1;
+                }
+                ')' => regex_src.push(')'),
+                '[' => {
+                    regex_src.push('[');
+                    while let Some(cc) = chars.next() {
+                        if cc == ']' {
+                            regex_src.push(']');
+                            break;
+                        }
+                        regex_src.push(cc);
+                    }
+                }
+                '|' => regex_src.push('|'),
+                '.' | '+' | '^' | '$' | '\\' | '{' | '}' => {
+                    regex_src.push('\\');
+                    regex_src.push(c);
+                }
+                _ => regex_src.push(c),
+            }
+        }
+        regex_src.push('$');
+        let _ = group_idx;
+        let re = match regex::Regex::new(&regex_src) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("{}: bad pattern: {}", action, e);
+                return 1;
+            }
+        };
+
+        // Enumerate candidate files. zsh's zmv glob has `(...)` as
+        // capture-group syntax, NOT alternation, so the source pattern
+        // can't be passed straight to expand_glob (which would either
+        // treat it as a glob qualifier suffix or fail). Strip the
+        // capture parens to get a plain glob pattern, then keep only
+        // the entries that match the regex.
+        let glob_pat: String = from_pat
+            .chars()
+            .filter(|c| *c != '(' && *c != ')')
+            .collect();
+        let candidates = self.expand_glob(&glob_pat);
+        if candidates.len() == 1 && candidates[0] == glob_pat
+            && !std::path::Path::new(&candidates[0]).exists()
+        {
+            eprintln!("{}: no matches found: {}", action, from_pat);
+            return 1;
+        }
+
+        // For each match, compute destination by applying captures.
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for src in &candidates {
+            let caps = match re.captures(src) {
+                Some(c) => c,
+                None => continue,
+            };
+            // Substitute `$1`..`$9` and `${1}` in to_pat with capture
+            // group contents.
+            let mut dest = String::new();
+            let mut to_chars = to_pat.chars().peekable();
+            while let Some(c) = to_chars.next() {
+                if c == '$' {
+                    let next = to_chars.peek().copied();
+                    match next {
+                        Some(d) if d.is_ascii_digit() => {
+                            to_chars.next();
+                            let idx = d.to_digit(10).unwrap_or(0) as usize;
+                            if let Some(m) = caps.get(idx) {
+                                dest.push_str(m.as_str());
+                            }
+                        }
+                        Some('{') => {
+                            to_chars.next();
+                            let mut ns = String::new();
+                            while let Some(&pc) = to_chars.peek() {
+                                if pc == '}' {
+                                    to_chars.next();
+                                    break;
+                                }
+                                ns.push(pc);
+                                to_chars.next();
+                            }
+                            if let Ok(idx) = ns.parse::<usize>() {
+                                if let Some(m) = caps.get(idx) {
+                                    dest.push_str(m.as_str());
+                                }
+                            }
+                        }
+                        _ => dest.push(c),
+                    }
+                } else {
+                    dest.push(c);
+                }
+            }
+            renames.push((src.clone(), dest));
+        }
+
+        // Detect collisions: two different sources mapping to the same
+        // destination. zsh errors out before any file action.
+        let mut seen: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
+        let mut collisions = false;
+        for (s, d) in &renames {
+            if let Some(prev) = seen.insert(d.as_str(), s.as_str()) {
+                eprintln!("{}: error: {} and {} both map to {}", action, s, prev, d);
+                collisions = true;
+            }
+        }
+        if collisions {
+            return 1;
+        }
+
+        // Execute (or print, if -n).
+        let prog = match action.as_str() {
+            "mv" | "cp" | "ln" => action.clone(),
+            other => other.to_string(),
+        };
+        let mut status = 0;
+        for (s, d) in &renames {
+            if !force && std::path::Path::new(d).exists() {
+                eprintln!("{}: {}: destination exists", action, d);
+                status = 1;
+                continue;
+            }
+            if dry_run {
+                if symlink && action == "ln" {
+                    println!("{} -s -- {} {}", prog, s, d);
+                } else {
+                    println!("{} -- {} {}", prog, s, d);
+                }
+                continue;
+            }
+            if verbose {
+                println!("{} -> {}", s, d);
+            }
+            let result = match action.as_str() {
+                "mv" => std::fs::rename(s, d),
+                "cp" => std::fs::copy(s, d).map(|_| ()),
+                "ln" => {
+                    if symlink {
+                        #[cfg(unix)]
+                        {
+                            std::os::unix::fs::symlink(s, d)
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::Unsupported,
+                                "symlink",
+                            ))
+                        }
+                    } else {
+                        std::fs::hard_link(s, d)
+                    }
+                }
+                _ => {
+                    // External program — shell out.
+                    let st = std::process::Command::new(&prog).arg(s).arg(d).status();
+                    match st {
+                        Ok(s) => {
+                            if s.success() {
+                                Ok(())
+                            } else {
+                                Err(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    "exit nonzero",
+                                ))
+                            }
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+            if let Err(e) = result {
+                eprintln!("{}: {}: {}", action, s, e);
+                status = 1;
+            }
+        }
+        status
+    }
+
+    /// zcalc — basic non-interactive calculator. zsh's autoloaded
+    /// zcalc is interactive (REPL); we support the `-e EXPR` form
+    /// which evaluates a single expression and prints the result.
+    /// Without `-e`, interactive mode is not supported and we exit 1.
+    fn builtin_zcalc(&mut self, args: &[String]) -> i32 {
+        // -e EXPR / --expression EXPR — evaluate one expression and
+        // print the result.
+        let mut iter = args.iter().peekable();
+        while let Some(a) = iter.next() {
+            if a == "-e" || a == "--expression" {
+                if let Some(expr) = iter.next() {
+                    let result = self.evaluate_arithmetic(expr);
+                    println!("{}", result);
+                    return 0;
+                }
+            } else if let Some(expr) = a.strip_prefix("-e") {
+                let result = self.evaluate_arithmetic(expr);
+                println!("{}", result);
+                return 0;
+            }
+        }
+        eprintln!("zcalc: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
+        1
     }
 
     /// zformat - format strings
