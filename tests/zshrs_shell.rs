@@ -2090,3 +2090,76 @@ fn test_inline_funcdef_colon_body() {
     let (_, output, _) = run_zshrs("foo() :; foo; echo $?");
     assert_eq!(output.trim(), "0", "got: {output:?}");
 }
+
+#[test]
+fn test_amp_redir_restores_stderr() {
+    // `&> file` clobbers both fd 1 and fd 2 — both must be saved+restored
+    // by the redirect scope. Otherwise a following `cat` would write its
+    // output back into the file, leaking the redirect across commands.
+    let tmp = std::env::temp_dir().join("zr_test_amp_redir_restores.out");
+    let _ = std::fs::remove_file(&tmp);
+    let path = tmp.to_string_lossy().into_owned();
+    let code = format!("{{ echo out; echo err >&2; }} &> {p}; echo done; cat {p}", p = path);
+    let (_, output, _) = run_zshrs(&code);
+    assert_eq!(output.trim(), "done\nout\nerr", "got: {output:?}");
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn test_typeset_m_glob_lists_matching() {
+    // `typeset -m PAT` filters the variable listing by glob pattern.
+    let (_, output, _) = run_zshrs("foo=a; foobar=b; bar=c; typeset -m 'foo*'");
+    let mut lines: Vec<&str> = output.trim().lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["foo=a", "foobar=b"], "got: {output:?}");
+}
+
+#[test]
+fn test_print_stops_flag_processing_at_first_non_option() {
+    // `print "rest:$@"` with positionals `-a -b foo` must not interpret
+    // `-b` as a print flag once a non-flag arg has been seen.
+    let (_, output, _) = run_zshrs(
+        "set -- -a -b foo; print \"rest:$@\"",
+    );
+    assert_eq!(output.trim(), "rest:-a -b foo", "got: {output:?}");
+}
+
+#[test]
+fn test_zparseopts_dash_d_removes_only_consumed() {
+    // `zparseopts -D a=opta` consumes `-a` only — `-b foo` must remain
+    // in the positional params untouched.
+    let (_, output, _) = run_zshrs(
+        "zmodload zsh/zutil; set -- -a -b foo; zparseopts -D a=opta; echo \"rest:$@\"",
+    );
+    assert_eq!(output.trim(), "rest:-b foo", "got: {output:?}");
+}
+
+#[test]
+fn test_zparseopts_dash_m_alias_redirects_to_canonical() {
+    // `-M f=optf -foo=f` aliases `--foo` to the `f` spec; the actual
+    // `--foo` arg lands in `optf`.
+    let (_, output, _) = run_zshrs(
+        "zmodload zsh/zutil; set -- --foo; zparseopts -M f=optf -foo=f; echo \"f:$optf\"",
+    );
+    assert_eq!(output.trim(), "f:--foo", "got: {output:?}");
+}
+
+#[test]
+fn test_zformat_width_padding() {
+    // zformat `%-Ns` right-aligns (pads on left) and `%Ns` left-aligns
+    // (pads on right) — opposite of printf, matches zsh observed.
+    let (_, output, _) = run_zshrs(
+        "zmodload zsh/zutil; zformat -f r \"%-10s|%10s\" \"s:foo\"; echo \"[$r]\"",
+    );
+    assert_eq!(output.trim(), "[       foo|foo       ]", "got: {output:?}");
+}
+
+#[test]
+fn test_getopts_unknown_uses_zsh_format() {
+    // Zsh emits `zsh:1: bad option: -X` for unknown opts when the
+    // optstring isn't quiet (no leading `:`). We mirror with `zshrs:1:`.
+    let (_, _, stderr) = run_zshrs(
+        "set -- -x; while getopts \"ab\" opt; do :; done",
+    );
+    assert!(stderr.contains("bad option: -x"), "stderr: {stderr:?}");
+}

@@ -371,7 +371,37 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - The lexer collapses `foo()` into a single String token whose suffix is `\u{88}\u{8a}` (INPAR + OUTPAR). For `foo() echo hello`, parse_simple consumed `foo()`, `echo`, `hello` as a 3-word Simple. The funcdef synthesizer in parse_program required `words.len() == 1`, so the multi-word case was lost. Updated `simple_name_with_inoutpar` to return `(name, body_argv)`: when `body_argv` is non-empty, the synthesizer wraps `body_argv` as a Simple body and emits the FuncDef. Brace-body path (existing) and 1-word `foo()` followed by `{...}` continue to work. Three tests cover one-line/colon/arg-passing variants.
 
-## Still open (seventh-pass — remaining)
+## Closed (eighth-pass — non-interactive batch)
+
+### `&>` / `&>>` redirect — restore both fd 1 and fd 2 after the body
+
+- The lexer clamps `tokfd` to ≥ 0 for `&>`, so the parser handed the host `fd=0` for what should be "both stdout and stderr". `host_apply_redirect` only saved that single `fd` into the redirect scope, leaving fd 2 permanently aimed at the file. After `{ cmd } &> file; echo done`, the trailing `echo done` wrote into the file too. Fixed: when op is `WRITE_BOTH`/`APPEND_BOTH`, force the primary fd to 1 (so stdout is saved), then explicitly dup-and-stash fd 2 into the same scope. `WithRedirectsEnd` then restores both. Test: `test_amp_redir_restores_stderr`.
+
+### `typeset -m PAT` — glob-pattern listing of variables
+
+- The flag was parsed and immediately discarded with `let _ = pattern_match`. Wired it: with `-m` and one or more glob patterns, expand patterns against the live name space (variables + arrays + assocs, or `function_names()` under `-f`), dedup, and emit the matching listings. Honors `-p` for re-executable form, scalar/array/assoc per-name shape. Test: `test_typeset_m_glob_lists_matching`.
+
+### `print` flag-processing must stop at first non-option
+
+- `print "rest:$@"` with positionals `-a -b foo` was treating `-b` as a print flag mid-args. Fixed: introduce `accept_flags` toggle, flip it off on the first non-flag arg or any token whose chars aren't all known print flags. `print -- -n foo` and `print -n hello` paths unchanged. Test: `test_print_stops_flag_processing_at_first_non_option`.
+
+### `zparseopts -D` — only remove consumed indices
+
+- The previous removal logic used a single `parsed_count` and dropped contiguous positions `1..=N`, which broke whenever `-E` skipped non-options or when only some specs matched. Switched to per-match `consumed_indices: Vec<usize>` and rebuild `positional_params` by filtering. Also moved positional source from synthetic `$1..$99` reads to `self.positional_params` directly. Test: `test_zparseopts_dash_d_removes_only_consumed`.
+
+### `zparseopts -M` — alias spec redirection
+
+- `-M f=optf -foo=f` now treats `-foo`'s `f` target as another spec name, not an array name. When `--foo` is seen, it matches the alias spec, resolves to the canonical `f` spec for arg-handling, and records the actual `--foo` arg into `f`'s target array (`optf`). Required adding canonical-name routing into the per-spec output bucket. Test: `test_zparseopts_dash_m_alias_redirects_to_canonical`.
+
+### `zformat -f` width specifiers `%[-]Ns`
+
+- Format loop was strictly `%X → spec` with no width handling. Added a parser for optional `-` (alignment sigil) + decimal width + spec char. Padding semantics MATCH ZSH OBSERVED BEHAVIOR (which is the inverse of printf): no `-` left-aligns, `-` right-aligns. Test: `test_zformat_width_padding`.
+
+### `getopts` unknown-option message format
+
+- Was `zshrs: getopts: illegal option -- X`. zsh emits `zsh:N: bad option: -X`. Switched to `zshrs:1: bad option: -X` to mirror the format with the program name swapped. Test: `test_getopts_unknown_uses_zsh_format`.
+
+## Still open (eighth-pass — remaining)
 
 (none — all probed gaps closed)
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
@@ -379,6 +409,7 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.
 - **`declare -ra` (readonly array)** — silent vs zsh's "inconsistent type for assignment". Cosmetic.
 - **`$!` unset after `cmd &`** — backgrounded process pid not recorded into `$!`. Job-control plumbing scope.
+- **`select` non-interactive prompt format** — uses `?# ` instead of zsh's `?> ` style; users may set PS3 to override. Cosmetic in non-interactive `-c` mode.
 
 The following items from the fifth-pass probe were inspected and turned out to be false positives or test artifacts:
 
