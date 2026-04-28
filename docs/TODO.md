@@ -1,3 +1,69 @@
+## Session 2026-04-28 — daemon architecture locked
+
+Architectural reset of the cache + cross-shell coordination layer. Three world-firsts secured on a single substrate. See `AOT_DESIGN.md` §0x13, `memory/cache_architecture_rkyv.md`, `memory/aot_patent_strategy.md` for full spec.
+
+**The locked architecture:**
+
+- **zshrs-daemon (singleton, spawn-on-demand)** owns ALL bytecode-cache mutation: fsnotify (one watcher across the machine), compile workers, image writes, `index.rkyv` rewrites, catalog hydration, log rotation, integrity scans, shell registry, IPC routing.
+- **N (typically 100+ in tmux) thin zshrs clients** mmap daemon outputs (data plane, ~150-200ns lookup, NO IPC per call) and signal daemon via JSON-over-Unix-socket IPC for control plane (rebuild, fpath_changed, stats_flush, cross-shell dispatch, subscribe events).
+- **Cache lives in `~/.cache/zshrs/`** (single dir): `index.rkyv` + `images/{hash8}-{slug}.rkyv` per source root + `catalog.db` + `history.db` + `zshrs.log` + `daemon.sock` + `daemon.pid`.
+- **Three personality modes share one binary:** POSIX (`--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash` — no daemon, no cache), Vanilla zsh (argv[0] basename `zsh` — zsh extensions on, no cache), Turbocharged zshrs (argv[0] basename `zshrs`, default — full feature set + daemon).
+
+**Hard invariants:**
+
+1. Nothing blocks the shell. All compile, image write, catalog hydration runs in daemon worker pool. Main client thread NEVER calls compile pass synchronously.
+2. Source files = source of truth. Image cache is opportunistic accelerator. Image miss / malformed shard / corruption / daemon-down → client falls through to source-interp silently. Daemon-down does NOT break shells.
+3. Strict thin clients. ZERO cache-related background threads, polling loops, timers, or SQLite handles in clients. Per-client cache overhead <5 MB. (Clients DO have a general worker pool for `async`/`await`/`pmap`, just never for cache.)
+4. NO fsnotify in clients. 100×-watcher thundering herd is fatal at user's scale.
+5. Strict shard rebuild ordering: atomic-rename shard FIRST, then rewrite index. Generation counter on each shard header drives client re-mmap on stale handles.
+6. Custom builtins use `z*` prefix, no clash with upstream zsh `z*`. Build-time anti-collision check.
+7. Force-wipe always available: `rm -rf ~/.cache/zshrs/` (full nuke), per-file `rm`, or `zcache clean` builtin.
+
+**`z*` builtin family planned:**
+
+- `zcache <verb>` — cache management (info, jobs, clean, rebuild, verify, compact). Thin IPC wrapper.
+- `zls`, `zid`, `zping`, `ztag`, `zuntag` — shell registry / introspection / liveness
+- `zsend`, `znotify` — cross-shell command/notification dispatch
+- `zsubscribe`, `zunsubscribe` — pub/sub on shell events (`shell:N.commands`, `*.chpwd`, `tag:prod.git_changes`)
+- `zjob` (planned) — `submit` / `status` / `list` / `attach` / `output` / `kill` for session-persistent supervised jobs surviving shell exit
+
+**Three stacked world-firsts on the daemon:**
+
+1. **First shell with a dedicated companion daemon spanning bytecode cache + supervised jobs + cross-shell IPC + federation.** No prior art in any active shell — fish's `fishd` was scoped to var-sync only and removed in 2014. All other shells (bash, zsh, fish 3.x+, nu, elvish, dash, ksh, tcsh, mksh, xonsh, ion, oil, murex) are daemonless.
+2. **First shell with native session-persistent job supervision** — `zjob` makes long-running jobs survive shell exit at process-granularity (vs tmux's terminal-granularity). No shell has had this built in.
+3. **First shell with native cross-shell pub/sub + dispatch + federation as first-class primitives** — zconvey was a polling-based plugin workaround; daemon makes it native.
+
+**Patent significance:** locked in `memory/aot_patent_strategy.md` as the **second omnibus claim** (independent of the unified-AOT claim). Two omnibus claims filed under same priority date secure a wider moat.
+
+**Implementation milestones added to `ROADMAP.md`:**
+
+- **G2** — sharded rkyv image cache + zcache builtins (full spec)
+- **G2a** — daemon spawn + lifecycle + IPC protocol (5 days)
+- **G2b** — cross-shell coordination builtins (zls/zsend/ztag/znotify/zsubscribe — 4 days)
+- **G2c** — cross-host federation over SSH multiplex (7 days)
+- **G2d** — session-persistent supervised jobs (zjob — 6 days)
+
+Total daemon-track effort: ~22 days on top of G2's 8-day cache foundation. ~30 days for the full daemon-architecture phase.
+
+**What this kills:** the entire userspace optimization graveyard zsh users built for 30 years — zinit-turbo, p10k instant prompt, zinit-style async load, INC_APPEND_HISTORY file-lock contention, direnv polling hooks, autoenv, ssh-agent (replaced by daemon vending), cron (replaced by `zsched` planned), tmux resurrect (daemon survives anyway), pueue (replaced by `zjob`), zconvey (replaced by `zsend`/`zsubscribe`), Atuin (replaced by daemon federation), nohup/disown/setsid for jobs (replaced by `zjob submit`), .zwc reading paths (replaced by rkyv image), .zcompdump (replaced by image entries), plugin_cache.db / compsys.db legacy SQLite caches (dead).
+
+**Forward-looking expansions (post-v1) the daemon enables** — captured for marketing/roadmap continuity, not yet scoped:
+
+- Shell as live process (state survives terminal close)
+- Realtime cross-shell history broker
+- Hot config reload without `exec zshrs`
+- Built-in scheduler (`zsched at 3pm 'gsync'`) replacing crontab
+- Distributed execution (`zjob submit --cluster build`)
+- Encrypted secret store (ssh-agent generalized)
+- AI-assist hooks with cached LLM context
+- Time travel via command-bytecode journal
+- Resource quotas (kill runaway shells)
+- Reactive event bus (`zsubscribe chpwd 'aws_profile_for_dir'`)
+
+Each expansion is months of work but trivial-by-comparison once the daemon substrate exists. zshrs becomes a multi-year capability ladder competitors cannot catch up to without their own daemon.
+
+---
+
 **HARD PERFORMANCE TARGETS (load-bearing, not aspirational):** Per his own framing: *"Sub 100ms start, hell no — has it less than HUMAN REACTION SPEED, < 30ms, ideally 10-20ms FULLY FEATURED, blink of eye. FULL POWER INSTANTLY. NO LAG EVER. FULL UTILIZATION OF ALL CORES. NATIVE SPEED. NO COMPROMISES, NO EXCUSES. GAMECHANGING ENDGAME SHELL!"* Concrete numbers: cold start with full features (16k completions, full .zshrc, full zpwr) targets **10-20ms** (one 60fps frame + slack), **hard ceiling 30ms** (below human reaction threshold, perceptually instantaneous). Warm start <5ms. First-keystroke responsiveness <1ms. Tab completion at 10k matches <10ms. Full multicore utilization at runtime (compinit pre-warm, parallel builtins, glob fan-out). For comparison: bash with bash-completion ~80-150ms, vanilla zsh 30-50ms, zsh with full plugin stack 100ms-2s, fish ~100ms with plugins, nushell ~30ms minimal. **zshrs at 10-20ms FULLY FEATURED beats every existing shell at full feature parity — that's the world's-fastest leg of the project bar made concrete.** Architectural constraints these targets impose (not optional): (1) cache everything at install/update time not startup time, (2) mmap-based SQLite access not cold open, (3) lazy worker pool init (don't spawn N threads at startup), (4) zero synchronous external commands at startup (no `git rev-parse`, no kubectl/aws calls), (5) bytecode-of-`.zshrc` mmap'd from `~/.cache/zshrs/init.bc`, (6) no DNS at startup ever, (7) no directory scans at startup (fpath/PATH indexed in SQLite at install time), (8) startup is single-threaded fast path, (9) minimize allocations on the hot path, (10) NEVER instant-prompt fakery — first paint = full functionality. **Phase M perf bench MUST measure on his actual hardware with full config; numbers above 100ms block merge as regression, numbers between 30-100ms need investigation, numbers below 30ms pass.**
 
   - **As of session 2026-04-26 (Phase F complete):** tree-walker dispatch (`execute_simple/pipeline/list/compound/command_bg`) physically deleted from `src/exec.rs` (~1,275 LOC removed). All `ShellCommand` variants now route through `fusevm::VM::run()` via Phase A-F lowering: `compile_word` lowers VariableBraced (15 of 19 VarModifier variants), Tilde, Glob, CommandSub, ProcessSub, ArithSub natively to fusevm 0.10.0 ops; `compile_compound` covers If/While/Until/For/Case/[[/((/{/WithRedirects; pipelines fork-per-stage via `Chunk::sub_chunks`. `ZshrsHost` trait routes 14 shell ops (glob/tilde/expand_param/cmd_subst/redirect/pipeline/etc.) into the executor. New zshrs builtins: `BUILTIN_EXPAND_WORD_RUNTIME` (281, AST-roundtrip fallback), `BUILTIN_REGISTER_FUNCTION` (282), `BUILTIN_GET_VAR` (283), `BUILTIN_SET_VAR` (284), `BUILTIN_RUN_PIPELINE` (285, fork-per-stage), `BUILTIN_ARRAY_JOIN` (286). 96 hand-crafted tests in `tests/no_tree_walker_dispatch.rs` (88 behavioral) + `tests/tree_walker_absent.rs` (8 source-level absence checks) make "no tree walker" a load-bearing invariant — any reintroduction fails CI before behavior regresses. The 70 ztst tests are still wired but he flagged them as "fake passing, ignore" — the new tests are the real gate.

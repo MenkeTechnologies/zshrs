@@ -6340,7 +6340,14 @@ impl ShellExecutor {
     pub fn host_apply_redirect(&mut self, fd: u8, op_byte: u8, target: &str) {
         use fusevm::op::redirect_op as r;
         use std::os::unix::io::IntoRawFd;
-        let fd = fd as i32;
+        // `&>` / `&>>` always target both fd 1 and fd 2 regardless of the
+        // fd byte the parser supplied (the lexer's tokfd clamp makes the
+        // raw value unreliable for these forms).
+        let fd: i32 = if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
+            1
+        } else {
+            fd as i32
+        };
         let saved = unsafe { libc::dup(fd) };
         if saved >= 0 {
             if let Some(top) = self.redirect_scope_stack.last_mut() {
@@ -6350,6 +6357,18 @@ impl ShellExecutor {
                 // reclaim it. (Caller without a scope leaks the dup; this
                 // matches `WithRedirects` parser construction always wrapping.)
                 unsafe { libc::close(saved) };
+            }
+        }
+        // For `&>` / `&>>` also save fd 2 so the scope restores it after
+        // the body. Otherwise stderr stays redirected past the command.
+        if matches!(op_byte, r::WRITE_BOTH | r::APPEND_BOTH) {
+            let saved2 = unsafe { libc::dup(2) };
+            if saved2 >= 0 {
+                if let Some(top) = self.redirect_scope_stack.last_mut() {
+                    top.push((2, saved2));
+                } else {
+                    unsafe { libc::close(saved2) };
+                }
             }
         }
         match op_byte {
@@ -13860,8 +13879,83 @@ impl ShellExecutor {
         let _ = is_hidden;
         let _ = is_hide_val;
         let _ = is_trace;
-        let _ = pattern_match;
         let _ = precision;
+
+        // `typeset -m PAT [PAT...]` — treat each var_arg as a glob pattern
+        // and list matching variables. With no flags besides -m it acts as
+        // a filter on the listing output. The patterns may match scalars,
+        // arrays, assocs, and (with -f) functions.
+        if pattern_match && !var_args.is_empty() {
+            let patterns = std::mem::take(&mut var_args);
+            let mut matched: Vec<String> = Vec::new();
+            let mut seen: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            let names: Vec<String> = if is_function {
+                self.function_names()
+            } else {
+                let mut all: Vec<String> = self.variables.keys().cloned().collect();
+                for k in self.arrays.keys() {
+                    all.push(k.clone());
+                }
+                for k in self.assoc_arrays.keys() {
+                    all.push(k.clone());
+                }
+                all
+            };
+            for p in &patterns {
+                for n in &names {
+                    if ShellExecutor::glob_match_static(n, p)
+                        && seen.insert(n.clone())
+                    {
+                        matched.push(n.clone());
+                    }
+                }
+            }
+            matched.sort();
+            var_args = matched;
+            // With patterns and no other declarative flags, force listing.
+            if !is_array
+                && !is_assoc
+                && !is_export
+                && !is_integer
+                && !is_readonly
+                && !is_lower
+                && !is_upper
+                && !is_left_pad
+                && !is_right_pad
+                && !is_zero_pad
+                && !is_float
+                && !is_float_exp
+                && !is_tied
+            {
+                if is_function {
+                    for name in &var_args {
+                        if let Some(body) = self.function_definition_text(name) {
+                            println!("{} () {{\n\t{}\n}}", name, body.trim());
+                        }
+                    }
+                } else {
+                    let prefix = if print_mode { "typeset " } else { "" };
+                    for name in &var_args {
+                        if let Some(arr) = self.arrays.get(name) {
+                            let attrs = if print_mode { "-a " } else { "" };
+                            println!("{}{}{}=( {} )", prefix, attrs, name, arr.iter().map(|v| shell_quote_value(v)).collect::<Vec<_>>().join(" "));
+                        } else if let Some(assoc) = self.assoc_arrays.get(name) {
+                            let attrs = if print_mode { "-A " } else { "" };
+                            let mut pairs: Vec<_> = assoc.iter().collect();
+                            pairs.sort_by_key(|(k, _)| (*k).clone());
+                            let formatted: Vec<String> = pairs.iter()
+                                .map(|(k, v)| format!("[{}]={}", shell_quote_value(k), shell_quote_value(v)))
+                                .collect();
+                            println!("{}{}{}=( {} )", prefix, attrs, name, formatted.join(" "));
+                        } else if let Some(val) = self.variables.get(name) {
+                            println!("{}{}={}", prefix, name, val);
+                        }
+                    }
+                }
+                return 0;
+            }
+        }
 
         // `typeset -T VAR var [sep]` — tied scalar/array. Take the
         // current $VAR (or assignment value if VAR=val on the cmdline),
@@ -18189,7 +18283,8 @@ impl ShellExecutor {
                 None => {
                     // Unknown option
                     if !optstring.starts_with(':') {
-                        eprintln!("zshrs: getopts: illegal option -- {}", c);
+                        // zsh format: `zsh:1: bad option: -X`
+                        eprintln!("zshrs:1: bad option: -{}", c);
                     }
                     self.variables.insert(varname.to_string(), "?".to_string());
                     self.variables.insert("OPTARG".to_string(), c.to_string());
@@ -21033,6 +21128,7 @@ impl ShellExecutor {
         let mut output_args: Vec<String> = Vec::new();
 
         let mut i = 0;
+        let mut accept_flags = true;
         while i < args.len() {
             let arg = &args[i];
 
@@ -21045,7 +21141,8 @@ impl ShellExecutor {
                 break;
             }
 
-            if arg.starts_with('-')
+            if accept_flags
+                && arg.starts_with('-')
                 && arg.len() > 1
                 && !arg
                     .chars()
@@ -21053,6 +21150,21 @@ impl ShellExecutor {
                     .map(|c| c.is_ascii_digit())
                     .unwrap_or(false)
             {
+                // Validate every char is a real print flag — if any char
+                // isn't recognised, treat the whole token as a positional
+                // arg (matches zsh behaviour for `-foo`, `-b` mid-args).
+                let body = &arg[1..];
+                let all_known = body.chars().all(|c| matches!(c,
+                    'n' | 'l' | 'r' | 'R' | 'e' | 'E' | 'P' | 'N' | 'z'
+                    | 's' | 'o' | 'O' | 'D' | 'c' | 'm' | 'a' | 'b' | 'i'
+                    | 'p' | 'S' | 'x' | 'X' | 'u' | 'C' | 'v' | 'f'
+                ));
+                if !all_known {
+                    accept_flags = false;
+                    output_args.push(arg.clone());
+                    i += 1;
+                    continue;
+                }
                 let mut chars = arg[1..].chars().peekable();
                 while let Some(ch) = chars.next() {
                     match ch {
@@ -21134,6 +21246,7 @@ impl ShellExecutor {
                     }
                 }
             } else {
+                accept_flags = false;
                 output_args.push(arg.clone());
             }
             i += 1;

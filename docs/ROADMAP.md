@@ -51,14 +51,82 @@ Critical path. Until G is done, zshrs cannot replace zsh on the maintainer's mac
 - **Acceptance:** every zsh array idiom in zpwr's source compiles + runs identically.
 - **Effort:** 3 days.
 
-### G2 — Autoload + fpath scan via sharded rkyv image cache
-- Per `AOT_DESIGN.md` §0x13: daily-driver bytecode lives in `~/.cache/zshrs/images/{shard}.rkyv` (one image per source root) with top-level `~/.cache/zshrs/index.rkyv` for two-level lookup. Wire `fn autoload_function` (exec.rs:2907) to: hash fq_name → `index.rkyv` lookup → `(shard_id, byte_offset)` → get-or-mmap the shard image (LRU shard-handle cache) → typed pointer → JIT/interp the chunk in place. ~150-200ns end-to-end. No SQLite hit on the hot path.
-- Per-shard rebuild: `fsnotify` watches each known source root; on source change, recompile only that root's image, atomic-rename, update `index.rkyv` (small file rewrite), enqueue per-shard catalog hydrate. `git pull` in zpwr rebuilds only `zpwr.rkyv` (~3-5s); `zinit update foo` rebuilds only `plugin-foo.rkyv` (~100-500ms).
-- Worker pool hydrates `~/.cache/zshrs/catalog.db` per-shard (`DELETE FROM entries WHERE plugin_id = '{shard}'` then INSERT). `entry_stats` survives shard rebuilds via `ON CONFLICT DO UPDATE` keyed on `fq_name` so personal usage analytics aren't reset every plugin update. Hydration logs to `~/.cache/zshrs/zshrs.log` via `tracing::info!`. Never on hot path; dbview consumer only.
-- Legacy `plugin_cache.db` / `compsys.db` SQLite caches and `.zwc` reading paths are dead-on-arrival for new investment — see "What dies" in `AOT_DESIGN.md` §0x13.
-- **Test:** install a plugin via `zshrs --rebuild-cache --shard plugin-foo`, call its function, verify it resolves through the rkyv path (not tree-walker) by asserting the dispatch hits the index → shard mmap chain. dbview returns the entry within ≤ shard rebuild duration. Edit one zpwr function, verify only `zpwr.rkyv` (not the full corpus) rebuilds.
-- **Acceptance:** full-corpus rebuild <30s clean; per-shard rebuild ~3-5s for large shards (zpwr, completions-corpus) and ~100-500ms for single plugin shards; cold shell launch <5ms; 16 parallel shells share <30 MB RSS attributable to images; Tab completion lookup ~150-200ns.
-- **Effort:** 6 days (sharded image format + index.rkyv + perfect-hash + LRU shard-handle cache + per-shard worker hydrate + fsnotify wiring + dbview integration).
+### G2 — Autoload + fpath scan via sharded rkyv image cache + zcache builtins
+- Per `AOT_DESIGN.md` §0x13: daily-driver bytecode lives in `~/.cache/zshrs/images/{hash8}-{slug}.rkyv` (one image per source root, hash-prefix collision-proof) with top-level `~/.cache/zshrs/index.rkyv` for two-level lookup. Wire `fn autoload_function` (exec.rs:2907) to: hash fq_name → `index.rkyv` lookup → `(shard_id, generation, byte_offset)` → get-or-mmap the shard image (LRU shard-handle cache; munmap+remmap on generation mismatch) → typed pointer → JIT/interp the chunk in place. ~150-200ns end-to-end. No SQLite hit on the hot path.
+- **Source-truth fallback:** image miss / malformed shard / version mismatch / file missing / corruption → main thread silently falls through to source-interp path AND enqueues compile job. User never blocked. Source files are authoritative; image is opportunistic accelerator.
+- **Single cache directory** — everything (images, index, catalog, history, log) under `~/.cache/zshrs/`. No XDG split. Full nuke = `rm -rf ~/.cache/zshrs/` (user accepts loss); surgical resets via per-file `rm` or `zcache clean` builtin.
+- **Hard invariant: nothing blocks the shell.** All rkyv shard compilation, image writes, index rewrites, catalog hydration, SQLite VACUUM run in the worker pool. Main thread NEVER calls compile pass synchronously. All `zcache` write operations are async by default; `--wait` opts in to blocking.
+- **NO fsnotify** — user runs 60+ parallel zshrs (Cursor workflow); fsnotify per process = 60+ watchers thundering-herding every edit. Cache rebuild is **explicit-only** via `zcache rebuild [shard <name>]`, matching existing `zpwr regen` workflow.
+- **Per-shard flock** — `images/{name}.rkyv.lock` advisory lock coordinates concurrent rebuilds across the 60-shell environment. Workers without the lock log "rebuild already in progress" and skip.
+- **Strict shard-rename-then-index-update ordering** — atomic-rename `{name}.rkyv.tmp.{pid}.{tid}` → `{name}.rkyv` FIRST, then rewrite `index.rkyv`. Reverse order would let main read new-index → deref into OLD mmap → corrupt reads. Generation counter on each shard header drives main's munmap+remmap on stale handles.
+- **Worker pool partitioned** — general pool (high-priority, `nproc - 1` threads) for user pipelines; cache pool (low-priority, 1-2 threads, yields between work units) for `zcache` jobs. Prevents `zcache rebuild` from starving `xargs -P 16` and vice versa.
+- **Cross-shard JIT inlining DISABLED in v1** — inlining a callee from another shard creates stale-on-rebuild dependency. Cross-shard calls go through index lookup every time. Revisit only if benchmarked as hot.
+- **Orphaned `.tmp.{pid}.{tid}` cleanup at startup** — worker job scans `images/` for `.tmp.*` files older than 1 minute and unlinks. Surfaced in `zcache verify`.
+- **Log rotation built-in** — `zshrs.log` capped at 10 MB; rotates to `zshrs.log.1`. Configurable via `ZSHRS_LOG_MAX_SIZE` / `ZSHRS_LOG_MAX_FILES`.
+- **Personality vs emulation scope** — personality mode (POSIX / vanilla zsh / turbocharged) is process-lifetime immutable; controls cache activation. `emulate -L` is per-function parser-flag scope only — fully supported, doesn't tear down cache. Two separate code paths.
+- **POSIX mode gates entire layer off** — no `~/.cache/zshrs/` created, no catalog open, no `zcache` builtins available, no worker cache jobs. Single `if !exec.posix_mode` check at each entry point.
+- Worker pool hydrates `~/.cache/zshrs/catalog.db` per-shard (`DELETE FROM entries WHERE plugin_id = '{shard}'` then INSERT). `entry_stats` survives via `ON CONFLICT DO UPDATE` keyed on `fq_name`. Hydration logs to `~/.cache/zshrs/zshrs.log` via `tracing::info!` with `zcache_op` event shape.
+- **`zcache <verb>` builtin family** — `info` / `jobs` / `clean [--all|shards|shard <name>|catalog|index|stats|log]` / `rebuild [shard <name>|--parallel N]` / `verify` / `compact`. All async write ops default to non-blocking; `--wait` for explicit sync. `zcache verify` runs `PRAGMA integrity_check` on demand (not every startup); on corruption prints `zcache clean catalog && zcache rebuild` recovery (entry_stats lost on recovery — single-dir trade).
+- **Custom builtin namespace = `z*` prefix, no upstream-zsh clash** — `zcache` is the first; all future zshrs builtins follow same rule. Build-time anti-collision check.
+- Legacy `plugin_cache.db` / `compsys.db` SQLite caches and `.zwc` reading paths are dead-on-arrival.
+- **Test:** install a plugin via `zcache rebuild shard plugin-foo`, call its function, verify it resolves through the rkyv path (index → shard mmap chain). dbview returns entry within ≤ shard rebuild duration. Edit one zpwr function, verify only `zpwr.rkyv` rebuilds. `zcache clean catalog` preserves `entry_stats` rows; `--no-stats` drops them. Spawn 60 parallel zshrs each calling `zcache rebuild shard plugin-foo` simultaneously; verify per-shard flock serializes (one rebuild, 59 skip-and-log) and final shard is intact.
+- **Acceptance:** full-corpus rebuild <30s clean; per-shard ~3-5s large / ~100-500ms small; cold shell launch <5ms; 60 parallel shells share <30 MB RSS attributable to images; lookup ~150-200ns; `zcache info` <100ms; `zcache verify` integrity scan in seconds.
+- **Effort:** 8 days (sharded image format + hash-prefix naming + index.rkyv + perfect-hash + LRU shard-handle cache + generation counter + per-shard flock + per-shard worker hydrate + worker pool partition + log rotation + tmp cleanup + dbview integration + `zcache <verb>` builtin family + POSIX gating).
+
+### G2a — zshrs-daemon spawn + lifecycle + IPC protocol
+Per `AOT_DESIGN.md` §0x13 daemon architecture. G2 above ships the cache layer; G2a wires the daemon process around it.
+- New `zshrs --daemon` mode in `bins/zshrs.rs` — same binary, daemon-mode entry point.
+- Spawn-on-demand: in turbocharged mode, first client checks for `~/.cache/zshrs/daemon.sock`; if absent or unresponsive, fork-spawns daemon, waits ~50ms, retries connect.
+- Singleton: daemon takes `flock(LOCK_EX)` on `~/.cache/zshrs/daemon.pid` at startup. Second instance sees lock held, exits.
+- IPC: length-prefixed JSON over Unix domain socket. Versioned protocol; daemon and client negotiate at connect.
+- POSIX-mode gating: zero daemon spawn under `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash`. Single `if !exec.posix_mode` check at every cache entry point.
+- Migrate G2's compile worker pool from per-client to daemon-only. Clients become read-only mmap consumers + IPC senders.
+- Strict thin-client cap: per-client cache overhead <5 MB beyond zsh interpreter; ZERO cache-related background threads / polling loops / timers / SQLite handles in clients. Stats flush is event-driven (piggybacks on existing shell wake-ups).
+- Crash recovery: if daemon dies, next client to fail socket connect kills stale pidfile, respawns. No state loss — everything reproducible from sources + on-disk shards.
+- Logs to `~/.cache/zshrs/zshrs.log` via `tracing::info!`. Built-in log rotation (10 MB cap, configurable via `ZSHRS_LOG_MAX_SIZE` / `ZSHRS_LOG_MAX_FILES`).
+- **Tests:** spawn daemon via first client; second client connects without spawning; kill daemon mid-session, verify clients fall through to source-interp without crashing; respawn via next client; 100 parallel clients each connect (no spawn race); POSIX-mode invocation never spawns daemon, never creates `~/.cache/zshrs/`.
+- **Acceptance:** daemon spawn-on-demand <50ms; client connect <5ms; 100 parallel clients share <30 MB RSS attributable to images; daemon-down doesn't break shells; POSIX mode is daemon-free.
+- **Effort:** 5 days (daemon-mode binary + spawn-on-demand + flock singleton + IPC framing + POSIX gating + crash recovery + log rotation).
+
+### G2b — Cross-shell coordination builtins (zconvey replacement)
+Per `AOT_DESIGN.md` §0x13 "Daemon as cross-shell coordinator". Adds the `z*` builtin family for cross-shell registry, dispatch, notification, and pub/sub. All thin IPC wrappers — clients send JSON to daemon, daemon does the work.
+- New IPC verbs in daemon protocol: `register`, `unregister`, `list_shells`, `dispatch`, `tag`, `notify`, `subscribe`, `unsubscribe`, `event_publish`.
+- New `z*` builtins (all checked clean against upstream zsh):
+  - `zls` — list active shells: id, pid, tty, cwd, tags, login_time
+  - `zid` — print this shell's daemon-assigned ID
+  - `zping` — daemon liveness + roundtrip latency probe
+  - `ztag <name…>` / `zuntag <name…>` — self-tag this shell
+  - `zsend <shell_id|--all|--tag <name>|--user <user>> <cmd>` — dispatch command/string
+  - `znotify <shell_id> <message>` — status-line / OSC-9 notification (queues if target busy)
+  - `zsubscribe <pattern>` / `zunsubscribe <pattern>` — pub/sub with `<shell_id_or_tag>.<event>` glob patterns
+- Subscription model uses epoll-able fd in client's existing event loop — no dedicated thread.
+- Shell registry maintained authoritatively by daemon via socket-connect enrollment (replaces filesystem-based registries used by zconvey).
+- Plugins this replaces: zconvey, direnv (via daemon `chpwd` subscription set once globally), autoenv, zsh-history-substring-search shared state.
+- **Tests:** spawn 5 zshrs clients, verify `zls` from any client lists all 5 with correct pid/tty; `zsend shell:2 'echo hi'` lands in shell 2; `ztag prod` then `zsend --tag prod 'echo'` reaches only tagged shells; `zsubscribe shell:1.commands` from shell 2 receives every command run in shell 1; `znotify` queues if target is busy; daemon-down → builtins fail gracefully with clear error.
+- **Acceptance:** dispatch latency sub-ms (vs zconvey's ~1-prompt-cycle polling); zero per-client polling overhead; subscriptions work via existing event loop without spawning threads.
+- **Effort:** 4 days (IPC verbs + builtin family + subscription pub/sub + tests).
+
+### G2c — Cross-host federation (daemon-to-daemon over SSH multiplex)
+Per `AOT_DESIGN.md` §0x13 — federation as forward-looking but architecturally enabled.
+- Daemon-to-daemon protocol over SSH ControlMaster multiplexed connection. Local daemon discovers peer daemons via per-user known-hosts list (`~/.config/zshrs/peers`).
+- New `zsend laptop:shell1 'open ~/notes.md'` — cross-host shell dispatch routes through local daemon → remote daemon → remote client.
+- Cross-host history federation: remote daemon streams history events to local; local merges into history.db with origin tagging.
+- Cross-host secret vending: local daemon holds secret; remote command requests via remote daemon → local daemon roundtrip; secret vended once to specific command, never written to disk on remote.
+- `zls --all-hosts` lists shells across all federated daemons.
+- **Tests:** SSH from laptop to server; spawn zshrs on server; verify local daemon sees remote shell in `zls --all-hosts`; dispatch command across hosts; secret vending works without disk write on remote; federation degrades gracefully when peer daemon unreachable.
+- **Acceptance:** cross-host dispatch latency <100ms over LAN; secret vending leaves zero disk trace on remote; federation off by default (opt-in via `~/.config/zshrs/peers`).
+- **Effort:** 7 days (peer discovery + daemon-to-daemon protocol + SSH multiplex integration + history federation + secret vending + auth/trust model).
+
+### G2d — Session-persistent supervised jobs (zjob)
+Per `AOT_DESIGN.md` §0x13 "Daemon as session-persistent supervisor".
+- New `zjob` builtin family: `submit <cmd>`, `status [id|--all]`, `list`, `attach <id>`, `output <id>`, `kill <id>`.
+- Daemon supervises jobs: spawns subprocess, captures stdout/stderr to log, retains job state for configurable retention period.
+- Jobs survive originating-shell exit (the killer property). User opens shell B, runs `zjob submit 'long-build'`, exits shell B, opens shell C the next day, runs `zjob output <id>` — captured output displays.
+- Output streaming: `zjob attach <id>` opens a stream of live job output to calling client (epoll-driven, no polling).
+- IPC verbs in daemon protocol: `job_submit`, `job_status`, `job_list`, `job_attach`, `job_output`, `job_kill`.
+- **Tests:** submit a 60s sleep + echo; exit submitting shell; new shell sees job in `zjob list`; `zjob output <id>` shows captured output after job completes; `zjob attach <id>` streams live; `zjob kill <id>` terminates cleanly; daemon survives client exit (job keeps running).
+- **Acceptance:** jobs survive any/all client exit; output capture is loss-free; `zjob attach` latency <10ms.
+- **Effort:** 6 days (job-supervisor logic in daemon + IPC verbs + builtin family + output capture/streaming + retention + tests).
 
 ### G3 — ZLE hooks + user widgets + completion firing
 - `zle/main.rs:496` (hook system stub): implement `precmd`/`preexec`/`chpwd` hook dispatch — call `executor.hook_functions[name]` via `execute_command` (now bytecode).

@@ -113,25 +113,61 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 │  │  Extended: jq, yq, http, async/await, pmap, ...         ││
 │  └─────────────────────────────────────────────────────────┘│
 │                           ↓                                  │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │  Sharded rkyv image cache (~/.cache/zshrs/)             ││
-│  │  ┌──────────────┐ ┌──────────────────────────────────┐  ││
-│  │  │ index.rkyv   │ │  images/{shard}.rkyv …           │  ││
-│  │  │ fq_name →    │ │  zpwr / completions-corpus /     │  ││
-│  │  │ (shard, off) │ │  plugin-{name} / system          │  ││
-│  │  │ ~50ns        │ │  zero-copy mmap, demand-paged    │  ││
-│  │  └──────────────┘ └──────────────────────────────────┘  ││
-│  │  Two-level lookup ~150-200ns; per-shard rebuild on      ││
-│  │  source change (git pull in zpwr → zpwr.rkyv only)      ││
-│  │  ┌─────────────────────────────────────────────────┐    ││
-│  │  │ catalog.db (SQLite, worker-hydrated per-shard)  │    ││
-│  │  │ entries / hooks / plugins / entry_stats         │    ││
-│  │  │ entry_stats survives shard rebuilds; dbview     │    ││
-│  │  │ target — never on hot path                      │    ││
-│  │  └─────────────────────────────────────────────────┘    ││
-│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+
+      ↑ data plane: direct mmap, ~150-200ns, NO IPC per call
+      │
+~/.cache/zshrs/
+├── index.rkyv          ← clients mmap this (small, ~1-2 MB)
+├── images/             ← clients lazy-mmap shards on demand
+│   ├── {hash8}-zpwr.rkyv
+│   ├── {hash8}-system.rkyv
+│   ├── {hash8}-completions-corpus.rkyv
+│   └── {hash8}-plugin-{name}.rkyv …
+├── catalog.db          ← daemon-owned (SQLite, WAL):
+│                         entries / hooks / plugins / entry_stats
+├── history.db          ← shell history
+├── zshrs.log           ← tracing output (10 MB cap, daemon rotates)
+├── daemon.sock         ← Unix socket: control plane
+└── daemon.pid          ← singleton flock
+      │
+      ↓ control plane: JSON-over-Unix-socket IPC, ~µs, rare events
+┌─────────────────────────────────────────────────────────────┐
+│  zshrs-daemon  (singleton; spawned on demand by first client) │
+│                                                                │
+│  fsnotify thread (ONE watcher across the machine)             │
+│  cache worker pool (compile / hydrate / vacuum / verify)       │
+│  accept() socket thread (serves N clients)                     │
+│  ticker thread (compact + log rotation)                        │
+│                                                                │
+│  Owns: ALL bytecode-cache mutation, image writes, index        │
+│        rewrites, catalog hydration, log rotation, integrity    │
+│        scans, shell registry, IPC routing, federation          │
+│                                                                │
+│  Future expansion: supervised long-running jobs (zjob), cross-│
+│  shell pub/sub (zsend/zsubscribe), cross-host federation      │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Architectural commitments visible in this diagram:**
+
+- **Client/server with data-plane / control-plane split.** Clients (the N zshrs interpreter processes) read bytecode via direct mmap — sub-µs lookups, no IPC per call. The daemon never sits in the lookup path. IPC is reserved for cache mutation, configuration changes, cross-shell coordination, and job supervision.
+- **Singleton daemon, N thin clients.** First zshrs to launch spawns the daemon (`flock` on `daemon.pid` enforces singleton). 99 subsequent clients just connect to the running daemon. Tested at 100x scale (user's typical tmux workload).
+- **POSIX mode gates entire layer off.** `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash` → no daemon spawn, no `~/.cache/zshrs/` created, no `z*` builtins. Pure POSIX shell, lean drop-in for `/bin/sh`.
+- **Three personality modes share one binary:** POSIX, Vanilla zsh, Turbocharged zshrs. Cache + daemon active only in turbocharged mode.
+
+### World-first capabilities (verified prior-art survey)
+
+zshrs targets four stacked world-firsts on a single substrate, none of which exist in any active shell as of 2026:
+
+| Capability | Prior art in any shell? |
+|---|---|
+| AOT-compiled shell scripts to native binaries (deploy as static artifact) | No — zsh's `.zwc` is bytecode for interpretation, not native code; no shell compiles to standalone binaries |
+| Sharded rkyv-mmap'd bytecode image cache with two-level lookup (~150-200ns) | No — zsh `.zwc` is per-file static; bash has no compiled form |
+| Companion daemon spanning bytecode cache + supervised jobs + cross-shell IPC + federation | No — fish had `fishd` for var-sync only (removed 2014); no other shell ever shipped a daemon |
+| Native cross-shell pub/sub + dispatch + federation as first-class primitives | No — zconvey is a zsh plugin built on filesystem-IPC + per-prompt polling; not native to any shell |
+
+The combination of all four in one shell is what's defended in the patent strategy (`memory/aot_patent_strategy.md`) as two omnibus claims: (1) unified-AOT, (2) daemon architecture.
 
 ### Execution Modes
 
