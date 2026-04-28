@@ -1186,8 +1186,35 @@ impl<'a> ZshParser<'a> {
         // Skip newlines
         self.skip_separators();
 
-        // Get list
-        let list = if self.lexer.tok == LexTok::String {
+        // Get list. The lexer-port quirk: `for x (a b c)` arrives as a
+        // single String token with the parens lexed-as-content
+        // (`<INPAR>a b c<OUTPAR>`) instead of as separate Inpar/String/
+        // Outpar tokens. Detect that shape and split it manually.
+        let list = if self.lexer.tok == LexTok::String
+            && self
+                .lexer
+                .tokstr
+                .as_ref()
+                .map(|s| s.starts_with('\u{88}') && s.ends_with('\u{8a}'))
+                .unwrap_or(false)
+        {
+            let raw = self.lexer.tokstr.clone().unwrap_or_default();
+            // Strip leading INPAR + trailing OUTPAR, then untokenize the
+            // inner content and split on whitespace for the word list.
+            let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
+                ..raw
+                    .char_indices()
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(raw.len())];
+            let cleaned = crate::lexer::untokenize(inner);
+            let words: Vec<String> = cleaned
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect();
+            self.lexer.zshlex();
+            ForList::Words(words)
+        } else if self.lexer.tok == LexTok::String {
             let s = self.lexer.tokstr.as_ref();
             if s.map(|s| s == "in").unwrap_or(false) {
                 self.lexer.zshlex();
