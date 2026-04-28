@@ -319,10 +319,13 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - New `match_pattern_flag` in `builtin_print`: when `-m` is set, the first positional is a glob pattern; `output_args.retain` keeps only args that match. `print -m 'h*' hello world hi` → `hello hi`.
 
+### `integer i=EXPR` runs arith eval on RHS
+
+- `builtin_integer` was using `value.parse::<i64>().unwrap_or(0)` so anything beyond a literal int became 0. Replaced with `self.eval_arith_expr(value)` so `integer i=5+3` stores 8, `i=2*3+1` stores 7, etc. — matches zsh's "RHS goes through arithmetic" rule for `integer`-typed declarations.
+
 ## Still open (sixth-pass probe — remaining)
 
 - **`for f in $arr`** — bare `$arr` in a for list joins instead of splicing; `for f in $arr; do ...` iterates ONCE with `f` set to the joined string. Workaround: `for f in "${arr[@]}"`. Parser/compiler scope.
-- **`integer i=5+3`** — declaration-with-assignment doesn't run arith-eval on the value; stores 0 instead of 8.
 - **`arr+=y` (push single, no parens)** — appends to scalar interpretation instead of pushing element.
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.

@@ -20690,7 +20690,10 @@ impl ShellExecutor {
             if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
                 let value = &arg[eq_pos + 1..];
-                let int_val: i64 = value.parse().unwrap_or(0);
+                // zsh: `integer i=5+3` runs the RHS through arithmetic
+                // evaluation (so `i` becomes 8). Plain `value.parse`
+                // gave 0 for any non-numeric expression.
+                let int_val = self.eval_arith_expr(value);
                 self.variables.insert(name.to_string(), int_val.to_string());
                 self.options.insert(format!("_integer_{}", name), true);
                 self.var_attrs.insert(
