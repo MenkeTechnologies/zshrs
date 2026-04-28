@@ -9998,106 +9998,6 @@ impl ShellExecutor {
         }
     }
 
-    fn eval_cond_expr(&mut self, expr: &CondExpr) -> bool {
-        match expr {
-            CondExpr::FileExists(w) => std::path::Path::new(&self.expand_word(w)).exists(),
-            CondExpr::FileRegular(w) => std::path::Path::new(&self.expand_word(w)).is_file(),
-            CondExpr::FileDirectory(w) => std::path::Path::new(&self.expand_word(w)).is_dir(),
-            CondExpr::FileSymlink(w) => std::path::Path::new(&self.expand_word(w)).is_symlink(),
-            CondExpr::FileReadable(w) => std::path::Path::new(&self.expand_word(w)).exists(),
-            CondExpr::FileWritable(w) => std::path::Path::new(&self.expand_word(w)).exists(),
-            CondExpr::FileExecutable(w) => std::path::Path::new(&self.expand_word(w)).exists(),
-            CondExpr::FileNonEmpty(w) => std::fs::metadata(&self.expand_word(w))
-                .map(|m| m.len() > 0)
-                .unwrap_or(false),
-            CondExpr::StringEmpty(w) => self.expand_word(w).is_empty(),
-            CondExpr::StringNonEmpty(w) => !self.expand_word(w).is_empty(),
-            CondExpr::StringEqual(a, b) => {
-                let left = self.expand_word(a);
-                let right = self.expand_word(b);
-                // In [[ ]], == does glob pattern matching on the right side
-                if right.contains('*') || right.contains('?') || right.contains('[') {
-                    crate::glob::pattern_match(&right, &left, true, true)
-                } else {
-                    left == right
-                }
-            }
-            CondExpr::StringNotEqual(a, b) => {
-                let left = self.expand_word(a);
-                let right = self.expand_word(b);
-                if right.contains('*') || right.contains('?') || right.contains('[') {
-                    !crate::glob::pattern_match(&right, &left, true, true)
-                } else {
-                    left != right
-                }
-            }
-            CondExpr::StringMatch(a, b) => {
-                let val = self.expand_word(a);
-                let pattern = self.expand_word(b);
-                if let Some(re) = cached_regex(&pattern) {
-                    if let Some(caps) = re.captures(&val) {
-                        // Set $MATCH to the full match
-                        if let Some(m) = caps.get(0) {
-                            self.variables
-                                .insert("MATCH".to_string(), m.as_str().to_string());
-                        }
-                        // Set $match array with capture groups
-                        let mut match_arr = Vec::new();
-                        for i in 1..caps.len() {
-                            if let Some(g) = caps.get(i) {
-                                match_arr.push(g.as_str().to_string());
-                            }
-                        }
-                        if !match_arr.is_empty() {
-                            self.arrays.insert("match".to_string(), match_arr);
-                        }
-                        true
-                    } else {
-                        self.variables.remove("MATCH");
-                        self.arrays.remove("match");
-                        false
-                    }
-                } else {
-                    false
-                }
-            }
-            CondExpr::StringLess(a, b) => self.expand_word(a) < self.expand_word(b),
-            CondExpr::StringGreater(a, b) => self.expand_word(a) > self.expand_word(b),
-            CondExpr::NumEqual(a, b) => {
-                let a_val = self.expand_word(a).parse::<i64>().unwrap_or(0);
-                let b_val = self.expand_word(b).parse::<i64>().unwrap_or(0);
-                a_val == b_val
-            }
-            CondExpr::NumNotEqual(a, b) => {
-                let a_val = self.expand_word(a).parse::<i64>().unwrap_or(0);
-                let b_val = self.expand_word(b).parse::<i64>().unwrap_or(0);
-                a_val != b_val
-            }
-            CondExpr::NumLess(a, b) => {
-                let a_val = self.expand_word(a).parse::<i64>().unwrap_or(0);
-                let b_val = self.expand_word(b).parse::<i64>().unwrap_or(0);
-                a_val < b_val
-            }
-            CondExpr::NumLessEqual(a, b) => {
-                let a_val = self.expand_word(a).parse::<i64>().unwrap_or(0);
-                let b_val = self.expand_word(b).parse::<i64>().unwrap_or(0);
-                a_val <= b_val
-            }
-            CondExpr::NumGreater(a, b) => {
-                let a_val = self.expand_word(a).parse::<i64>().unwrap_or(0);
-                let b_val = self.expand_word(b).parse::<i64>().unwrap_or(0);
-                a_val > b_val
-            }
-            CondExpr::NumGreaterEqual(a, b) => {
-                let a_val = self.expand_word(a).parse::<i64>().unwrap_or(0);
-                let b_val = self.expand_word(b).parse::<i64>().unwrap_or(0);
-                a_val >= b_val
-            }
-            CondExpr::Not(inner) => !self.eval_cond_expr(inner),
-            CondExpr::And(a, b) => self.eval_cond_expr(a) && self.eval_cond_expr(b),
-            CondExpr::Or(a, b) => self.eval_cond_expr(a) || self.eval_cond_expr(b),
-        }
-    }
 
     // Builtins
     // Ported from zsh/Src/builtin.c
@@ -22927,16 +22827,6 @@ impl ShellExecutor {
             1
         } else {
             0
-        }
-    }
-
-    /// Execute conditional expression
-    /// Port of execcond() from exec.c
-    pub fn execcond(&mut self, cond: &CondExpr) -> i32 {
-        if self.eval_cond_expr(cond) {
-            0
-        } else {
-            1
         }
     }
 
