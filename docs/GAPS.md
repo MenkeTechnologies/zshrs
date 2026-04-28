@@ -185,10 +185,13 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Set at `ShellExecutor::new` to `*?_-.[]~=/&;!#$%^(){}<>` — the mainline-zsh default for ZLE word boundary chars.
 
+### `<lo-hi>` numeric range globbing
+
+- `[[ file5 = file<1-10> ]]` and friends now match. New `parse_numeric_range` scans `<lo-hi>` (with `lo` and/or `hi` optional — `<->`, `<5->`, `<-10>`, `<5-10>` all supported). `glob_match_static` translates each occurrence to a `(\d+)` capture group, remembers the bounds, and after `Regex::captures` succeeds it parses each capture and verifies the numeric range. Falls back to literal `<` for malformed forms.
+
 ## Still open (second-pass — deferred)
 
 - **`noglob` precommand modifier** — `noglob print "*"` errors "command not found: print" instead of disabling glob and running `print *` literally. Needs parser-level recognition as a reserved word, not a command name.
-- **`<N-M>` numeric range globbing** — `[[ file5 = file<1-10> ]]` returns false. Needs glob-matcher support for the `<a-b>` numeric-range syntax.
 - **Recursive glob `**/` (directories-only)** — trailing-slash recursive form not expanded.
 - **Glob qualifier `(mh-N)` / `(mm)` / `(ms)`** — modified-recent age qualifiers not implemented (only `(L)` size and `(D)` dotglob exist today).
 - **`(t)` typeset flag returns wrong type for `integer i=5`** — needs persistent attribute tracking on declared variables (full plumbing through `typeset -i` / `integer` / `float`).

@@ -904,3 +904,52 @@ fn test_wordchars_default() {
     let (_, output, _) = run_zshrs("print -- \"$WORDCHARS\"");
     assert_eq!(output.trim(), "*?_-.[]~=/&;!#$%^(){}<>", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Numeric range globbing <a-b>
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_numeric_range_inclusive_match() {
+    let (_, output, _) =
+        run_zshrs("[[ file5 = file<1-10> ]] && echo match || echo nomatch");
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_numeric_range_out_of_bounds() {
+    let (_, output, _) =
+        run_zshrs("[[ file20 = file<1-10> ]] && echo match || echo nomatch");
+    assert_eq!(output.trim(), "nomatch", "got: {output:?}");
+}
+
+#[test]
+fn test_numeric_range_open_lo() {
+    // `<-10>` means ≤ 10.
+    let (_, output, _) =
+        run_zshrs("[[ 7 = <-10> ]] && echo match || echo nomatch");
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_numeric_range_open_hi() {
+    // `<50->` means ≥ 50.
+    let (_, output, _) =
+        run_zshrs("[[ 100 = <50-> ]] && echo match || echo nomatch");
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_numeric_range_any_integer() {
+    // `<->` matches any non-negative integer.
+    let (_, output, _) =
+        run_zshrs("[[ 42 = <-> ]] && echo match || echo nomatch");
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_numeric_range_rejects_non_digits() {
+    let (_, output, _) =
+        run_zshrs("[[ abc = <-> ]] && echo match || echo nomatch");
+    assert_eq!(output.trim(), "nomatch", "got: {output:?}");
+}
