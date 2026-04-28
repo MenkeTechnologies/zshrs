@@ -464,10 +464,28 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
   - `OLDPWD` is now seeded from the previous `$PWD` (logical), not `current_dir()` — so `cd -` round-trips the user-typed path.
 - `builtin_pwd` now reads `$PWD` for default/`-L` output (still honors `-P` to realpath via `current_dir()`). Tests: `test_cd_preserves_logical_path`, `test_cd_dash_p_realpaths` (the latter delegates the expected-value to /bin/zsh so it passes on both macOS and plain Linux).
 
-## Still open (twelfth-pass — remaining)
+## Closed (thirteenth-pass — set -e enforcement + readonly + lexer errors)
+
+### `set -e` / `setopt errexit` — exit on command failure
+
+- Wired full POSIX/zsh-compatible errexit. Required four pieces:
+  - `BUILTIN_ERREXIT_CHECK` (id 336): runtime helper that reads `vm.last_status`, the `errexit` option, and `local_scope_depth`. If errexit is on AND status != 0 AND not inside a function call, `std::process::exit(status)`.
+  - Compiler emits the check after every top-level `SetStatus` (CallBuiltin / CallFunction). The `return` and `exit` builtins skip it (their status is intentional).
+  - `errexit_suppress_depth: i32` field on `ZshCompiler` tracks suppression contexts. Bumped around `if`/`elif`/`while`/`until` test bodies and around any sublist that has `&&`/`||` chaining or `!` negation.
+  - The full sublist (everything before `;` or newline) is exempt when it contains `&&`/`||` connectors — POSIX rule that AND-OR list failures are "consumed" by the connector and don't trigger errexit even at the chain's end.
+- Tests: `test_set_e_exits_on_failure`, `test_set_e_suppressed_in_if_test`, `test_set_e_suppressed_in_and_chain`, `test_set_e_suppressed_in_or_chain`, `test_set_e_suppressed_in_negation`, `test_set_e_suppressed_in_while_test`.
+
+### `readonly` / `typeset -r` — block subsequent assignments
+
+- The `readonly_vars` set was populated by the builtin but never consulted at assignment time. `BUILTIN_SET_VAR` now checks both `readonly_vars` and `var_attrs[name].readonly`. On hit: emit `zshrs:1: read-only variable: NAME` and `std::process::exit(1)` (mirrors zsh's "fatal in -c" behaviour). Closes the two pre-existing failing tests `test_readonly_variable` and `test_typeset_readonly`.
+
+### Lexer-level parse errors surface to the caller
+
+- `ZshLexer.error` (e.g. `unmatched '`) was set during lexing but the parser ignored it. After `parse_program_until` succeeds, `parse()` now checks `self.lexer.error` and returns it as a `ParseError`. The execute path then exits with the diagnostic on stderr. Closes `test_error_syntax` (now uses `echo 'unclosed` — a real lexer error that mainline zsh also rejects).
+
+## Still open (thirteenth-pass — remaining)
 
 (none — all probed gaps closed)
-- **`set -e` / errexit** — flag is recognised but never enforced; failure of any command should propagate to script exit. Implementation requires either per-statement post-checks or VM-level instrumentation (subtle: errexit is suppressed inside `if`/`while`/`&&`/`||` conditionals).
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.
