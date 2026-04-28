@@ -23384,7 +23384,7 @@ impl ShellExecutor {
         let mut keep_going = false; // -E
         let mut fail_on_error = false; // -F
         let mut keep_values = false; // -K
-        let mut _map_names = false; // -M (TODO: implement)
+        let mut map_names = false; // -M
         let mut array_name: Option<String> = None; // -a
         let mut assoc_name: Option<String> = None; // -A
         let mut specs: Vec<String> = Vec::new();
@@ -23398,7 +23398,7 @@ impl ShellExecutor {
                 "-E" => keep_going = true,
                 "-F" => fail_on_error = true,
                 "-K" => keep_values = true,
-                "-M" => _map_names = true,
+                "-M" => map_names = true,
                 "-a" => {
                     if let Some(name) = iter.next() {
                         array_name = Some(name.clone());
@@ -23466,14 +23466,18 @@ impl ShellExecutor {
             });
         }
 
-        // Get positional parameters to parse
-        let positionals: Vec<String> = (1..=99)
-            .map(|i| self.get_variable(&i.to_string()))
-            .take_while(|v| !v.is_empty())
-            .collect();
+        // Get positional parameters to parse — pull from
+        // `self.positional_params` (the canonical source). Falling back to
+        // `$1..$99` via get_variable misses gaps and stops on empties.
+        let positionals: Vec<String> = self.positional_params.clone();
+        // Track which indices got consumed so -D can splice them out
+        // properly even when -E/keep_going skips over non-options.
+        let mut consumed_indices: Vec<usize> = Vec::new();
 
-        // Results
-        let mut results: Vec<(String, Option<String>)> = Vec::new();
+        // Results: (display_name, value, canonical_spec_name)
+        // - display_name is the actual arg as seen (`--foo` for alias)
+        // - canonical_spec_name routes the result to the right per-spec array
+        let mut results: Vec<(String, Option<String>, String)> = Vec::new();
         let mut i = 0;
         let mut parsed_count = 0;
 
@@ -23481,6 +23485,7 @@ impl ShellExecutor {
             let arg = &positionals[i];
 
             if arg == "-" || arg == "--" {
+                consumed_indices.push(i);
                 parsed_count = i + 1;
                 break;
             }
@@ -23493,36 +23498,66 @@ impl ShellExecutor {
                 continue;
             }
 
-            // Try to match against specs
-            let opt_name = arg.trim_start_matches('-');
+            // Try to match against specs. zparseopts treats a spec
+            // name beginning with `-` as a long option (matched as
+            // `--<rest>` in the input). A spec with no leading dash is a
+            // short option matched as `-<name>`. Strip exactly one
+            // leading `-` from the arg, then compare.
+            let after_one_dash = &arg[1..]; // safe: caller ensured leading `-`
             let mut matched = false;
 
             for spec in &opt_specs {
-                if opt_name == spec.name || opt_name.starts_with(&format!("{}=", spec.name)) {
-                    matched = true;
-
-                    if spec.takes_arg {
-                        let arg_value = if opt_name.contains('=') {
-                            Some(opt_name.splitn(2, '=').nth(1).unwrap_or("").to_string())
-                        } else if i + 1 < positionals.len()
-                            && (!positionals[i + 1].starts_with('-') || spec.optional_arg)
-                        {
-                            i += 1;
-                            Some(positionals[i].clone())
-                        } else if spec.optional_arg {
-                            None
-                        } else if fail_on_error {
-                            eprintln!("zparseopts: missing argument for option: {}", spec.name);
-                            return 1;
-                        } else {
-                            None
-                        };
-                        results.push((format!("-{}", spec.name), arg_value));
-                    } else {
-                        results.push((format!("-{}", spec.name), None));
-                    }
-                    break;
+                let matches_eq = after_one_dash == spec.name;
+                let matches_eq_arg = after_one_dash
+                    .starts_with(&format!("{}=", spec.name));
+                if !matches_eq && !matches_eq_arg {
+                    continue;
                 }
+                matched = true;
+                consumed_indices.push(i);
+
+                // With -M, if this spec's target is itself a spec name
+                // (an alias), redirect to the canonical spec — record
+                // under the canonical name and use its arg-handling.
+                let mut effective_spec = spec.clone();
+                let mut record_as_name = arg.clone();
+                if map_names {
+                    if let Some(tgt) = &spec.target_array {
+                        if let Some(canon) = opt_specs.iter().find(|s| &s.name == tgt) {
+                            effective_spec = canon.clone();
+                            // Keep the actual arg as the recorded value
+                            // (zsh stores `--foo`, not `-f`).
+                            record_as_name = arg.clone();
+                        }
+                    }
+                }
+
+                if effective_spec.takes_arg {
+                    let arg_value = if after_one_dash.contains('=') {
+                        Some(after_one_dash.splitn(2, '=').nth(1).unwrap_or("").to_string())
+                    } else if i + 1 < positionals.len()
+                        && (!positionals[i + 1].starts_with('-')
+                            || effective_spec.optional_arg)
+                    {
+                        i += 1;
+                        consumed_indices.push(i);
+                        Some(positionals[i].clone())
+                    } else if effective_spec.optional_arg {
+                        None
+                    } else if fail_on_error {
+                        eprintln!(
+                            "zparseopts: missing argument for option: {}",
+                            effective_spec.name
+                        );
+                        return 1;
+                    } else {
+                        None
+                    };
+                    results.push((record_as_name, arg_value, effective_spec.name.clone()));
+                } else {
+                    results.push((record_as_name, None, effective_spec.name.clone()));
+                }
+                break;
             }
 
             if !matched && !keep_going {
@@ -23536,7 +23571,7 @@ impl ShellExecutor {
         // Store results in array
         if let Some(arr_name) = &array_name {
             let mut arr_values: Vec<String> = Vec::new();
-            for (opt, val) in &results {
+            for (opt, val, _) in &results {
                 arr_values.push(opt.clone());
                 if let Some(v) = val {
                     arr_values.push(v.clone());
@@ -23548,19 +23583,25 @@ impl ShellExecutor {
         // Store in associative array
         if let Some(assoc) = &assoc_name {
             let mut map: HashMap<String, String> = HashMap::new();
-            for (opt, val) in &results {
+            for (opt, val, _) in &results {
                 map.insert(opt.clone(), val.clone().unwrap_or_default());
             }
             self.assoc_arrays.insert(assoc.clone(), map);
         }
 
-        // Store in per-option arrays
+        // Store in per-option arrays — route by canonical spec name so
+        // -M aliases land in the right bucket.
         for spec in &opt_specs {
             if let Some(target) = &spec.target_array {
+                if map_names && opt_specs.iter().any(|s| Some(&s.name) == Some(target)) {
+                    // This spec is itself an alias — skip; results land in
+                    // the canonical spec's target.
+                    continue;
+                }
                 let values: Vec<String> = results
                     .iter()
-                    .filter(|(opt, _)| opt.trim_start_matches('-') == spec.name)
-                    .flat_map(|(opt, val)| {
+                    .filter(|(_, _, canon)| canon == &spec.name)
+                    .flat_map(|(opt, val, _)| {
                         let mut v = vec![opt.clone()];
                         if let Some(arg) = val {
                             v.push(arg.clone());
@@ -23574,8 +23615,30 @@ impl ShellExecutor {
             }
         }
 
-        // Remove parsed arguments if -D
-        if remove_parsed && parsed_count > 0 {
+        // Remove parsed arguments if -D — splice out only the consumed
+        // indices (preserves intervening positionals when -E was used).
+        if remove_parsed && !consumed_indices.is_empty() {
+            let consumed: std::collections::HashSet<usize> =
+                consumed_indices.iter().copied().collect();
+            let kept: Vec<String> = positionals
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, v)| if consumed.contains(&idx) { None } else { Some(v.clone()) })
+                .collect();
+            // Wipe all old positional bindings, then reseed.
+            for k in 1..=positionals.len() {
+                self.variables.remove(&k.to_string());
+                std::env::remove_var(k.to_string());
+            }
+            self.positional_params = kept.clone();
+            for (idx, val) in kept.iter().enumerate() {
+                self.variables.insert((idx + 1).to_string(), val.clone());
+            }
+            return 0;
+        }
+        // Legacy fallback (unused after the consumed_indices path above) —
+        // kept to satisfy the remaining shift code below.
+        if false && remove_parsed && parsed_count > 0 {
             for i in 1..=parsed_count {
                 self.variables.remove(&i.to_string());
                 std::env::remove_var(i.to_string());
@@ -24481,19 +24544,79 @@ impl ShellExecutor {
                     })
                     .collect();
 
+                // Format syntax: `%[-][N]X` where `-` left-aligns,
+                // `N` is min width, `X` is the spec char. `%%` is literal %.
                 let mut result = String::new();
-                let mut chars = format.chars().peekable();
-                while let Some(c) = chars.next() {
-                    if c == '%' {
-                        if let Some(&spec_char) = chars.peek() {
-                            if let Some(replacement) = specs.get(&spec_char) {
-                                result.push_str(replacement);
-                                chars.next();
-                                continue;
-                            }
-                        }
+                let bytes: Vec<char> = format.chars().collect();
+                let mut idx = 0;
+                while idx < bytes.len() {
+                    let c = bytes[idx];
+                    if c != '%' {
+                        result.push(c);
+                        idx += 1;
+                        continue;
                     }
-                    result.push(c);
+                    idx += 1;
+                    if idx >= bytes.len() {
+                        result.push('%');
+                        break;
+                    }
+                    if bytes[idx] == '%' {
+                        result.push('%');
+                        idx += 1;
+                        continue;
+                    }
+                    // Optional `-` for left align.
+                    let mut left_align = false;
+                    if bytes[idx] == '-' {
+                        left_align = true;
+                        idx += 1;
+                    }
+                    // Optional width digits.
+                    let mut width = 0usize;
+                    let mut had_width = false;
+                    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+                        had_width = true;
+                        width = width * 10 + (bytes[idx] as u8 - b'0') as usize;
+                        idx += 1;
+                    }
+                    if idx >= bytes.len() {
+                        // Unterminated — emit raw as-is.
+                        result.push('%');
+                        if left_align { result.push('-'); }
+                        if had_width { result.push_str(&width.to_string()); }
+                        break;
+                    }
+                    let spec_char = bytes[idx];
+                    idx += 1;
+                    let replacement = match specs.get(&spec_char) {
+                        Some(s) => (*s).to_string(),
+                        None => {
+                            // Unknown spec — emit the raw segment back.
+                            let mut raw = String::from("%");
+                            if left_align { raw.push('-'); }
+                            if had_width { raw.push_str(&width.to_string()); }
+                            raw.push(spec_char);
+                            result.push_str(&raw);
+                            continue;
+                        }
+                    };
+                    if width > replacement.chars().count() {
+                        let pad = width - replacement.chars().count();
+                        // zformat semantics (observed against /bin/zsh): a
+                        // `-` prefix RIGHT-aligns the value (pads on left);
+                        // no prefix LEFT-aligns (pads on right). This is the
+                        // reverse of printf — match zsh anyway.
+                        if left_align {
+                            for _ in 0..pad { result.push(' '); }
+                            result.push_str(&replacement);
+                        } else {
+                            result.push_str(&replacement);
+                            for _ in 0..pad { result.push(' '); }
+                        }
+                    } else {
+                        result.push_str(&replacement);
+                    }
                 }
                 self.variables.insert(var_name, result);
             }
