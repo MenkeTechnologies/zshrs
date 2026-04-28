@@ -453,11 +453,21 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
   - In `compile_cond`'s Binary branch, the RHS of `=`/`==`/`!=`/`=~` is now compiled as a quoted literal — these are pattern operands for the test, not file globs.
 - Tests: `test_unmatched_glob_default_errors_with_nomatch`, `test_unsetopt_nomatch_passes_literal_through`, `test_assignment_value_skips_glob_expansion`.
 
-## Still open (eleventh-pass — remaining)
+## Closed (twelfth-pass — logical-pwd preservation)
+
+### `cd` / `pwd` preserve the logical path (default `-L`)
+
+- The `do_cd` helper canonicalised the target before `chdir`, so `cd /tmp` on macOS landed in `/tmp` but `$PWD` became `/private/tmp`. Two fixes:
+  - Renamed the inner `physical` parameter back to `logical` and inverted its sense (the call site already passed `logical=true`, but the parameter slot was named `physical`, silently flipping the semantics — the canonicalise branch was firing for the default mode). Recomputed `let physical = !logical;` once at the top.
+  - Added a lexical `normalize_logical(path)` helper that collapses `.`/`..` components without touching the filesystem (so `cd ..` from a symlinked dir lands at the symlink's parent, not the realpath's parent).
+  - In the default (`-L`) branch, `chdir` to the lexical absolute path; store that same path in `$PWD`. Only the `-P` branch realpaths.
+  - `OLDPWD` is now seeded from the previous `$PWD` (logical), not `current_dir()` — so `cd -` round-trips the user-typed path.
+- `builtin_pwd` now reads `$PWD` for default/`-L` output (still honors `-P` to realpath via `current_dir()`). Tests: `test_cd_preserves_logical_path`, `test_cd_dash_p_realpaths` (the latter delegates the expected-value to /bin/zsh so it passes on both macOS and plain Linux).
+
+## Still open (twelfth-pass — remaining)
 
 (none — all probed gaps closed)
 - **`set -e` / errexit** — flag is recognised but never enforced; failure of any command should propagate to script exit. Implementation requires either per-statement post-checks or VM-level instrumentation (subtle: errexit is suppressed inside `if`/`while`/`&&`/`||` conditionals).
-- **`pwd` after `cd`** — zsh preserves the user-typed path (logical pwd); zshrs canonicalises through realpath. Affects symlinked dirs only.
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.

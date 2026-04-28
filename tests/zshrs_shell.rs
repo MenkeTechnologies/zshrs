@@ -2318,3 +2318,30 @@ fn test_assignment_value_skips_glob_expansion() {
     let (_, output, _) = run_zshrs("integer i=2*3+1; echo $i");
     assert_eq!(output.trim(), "7", "got: {output:?}");
 }
+
+#[test]
+fn test_cd_preserves_logical_path() {
+    // zsh's default `cd -L` keeps the user-typed path in $PWD even
+    // when the target is a symlink (`/tmp` → `/private/tmp` on macOS,
+    // identical paths on plain Linux). The test asserts the
+    // round-trip is exact, not the realpath.
+    let (_, output, _) = run_zshrs("cd /tmp; pwd");
+    assert_eq!(output.trim(), "/tmp", "got: {output:?}");
+}
+
+#[test]
+fn test_cd_dash_p_realpaths() {
+    // `cd -P` follows symlinks (realpath form). On macOS this resolves
+    // /tmp to /private/tmp; on plain Linux they're identical. Either
+    // result is acceptable as long as it matches /bin/zsh's output.
+    let (_, output_zshrs, _) = run_zshrs("cd -P /tmp; pwd");
+    let zshrs_pwd = output_zshrs.trim();
+    let zsh_out = std::process::Command::new("/bin/zsh")
+        .args(["-f", "-c", "cd -P /tmp; pwd"])
+        .output()
+        .expect("zsh failed");
+    let zsh_pwd = String::from_utf8_lossy(&zsh_out.stdout)
+        .trim()
+        .to_string();
+    assert_eq!(zshrs_pwd, zsh_pwd, "zsh: {zsh_pwd}, zshrs: {zshrs_pwd}");
+}
