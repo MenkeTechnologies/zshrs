@@ -359,11 +359,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `BUILTIN_ARRAY_ALL` was IFS-splitting scalars in for-list contexts (bash semantics). zsh's default is to NOT split — `for w in $s` iterates ONCE with the scalar value. Now scalars produce a 1-element array unless `setopt shwordsplit` (the bash-compat option) is on, in which case the old IFS-split behavior fires. Two tests cover both modes.
 
+### `${var//#pat/repl}` and `${var//%pat/repl}` anchored replace-all
+
+- `parse_param_modifier` only checked `//` before `/#` / `/%`, so `${s//#hel/HEL}` was parsed as `//` (replace-all) with literal pattern `#hel`. Reordered the prefix matchers so `//#` and `//%` win first. Both produce the same result as `/#`/`/%` for non-overlapping matches (anchor-at-start matches once; replace-all is moot).
+
+### `alias x` query output format
+
+- Was always emitting `name='value'` (single-quoted). zsh's rule: bare value when it's a single safe word, single-quoted when it contains whitespace or shell metachars. New `format_alias_kv` helper applies the rule; both the `alias NAME` query and the `alias` listing path use it.
+
 ## Still open (seventh-pass — remaining)
 
-- **`${var//#pat/repl}` and `${var//%pat/repl}`** — anchored replace-all forms (prefix `/#` and suffix `/%` combined with global `//`).
-- **`foo() echo hello`** — one-line function body without braces; parser errors.
-- **`alias x` query output** — emits `x='ls'` (single-quoted), zsh emits `x=ls` (bare).
+- **`foo() echo hello`** — one-line function body without braces; parser errors. Needs grammar work.
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.

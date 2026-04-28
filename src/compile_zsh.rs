@@ -2541,7 +2541,16 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // `${var/pat/repl}` family. Detect leading `/`/`//`/`/#`/`/%`,
     // then split on the second `/`.
     if rest.starts_with('/') {
-        let (op, body) = if let Some(b) = rest.strip_prefix("//") {
+        // Note: longer prefixes must be checked FIRST so `//#`/`//%`
+        // win over `//`. zsh treats `//#` as "anchor at start, replace
+        // all" (effectively single since the anchor matches once);
+        // `//%` is the suffix-anchor analog. Both produce the same
+        // result as `/#`/`/%` for non-overlapping matches.
+        let (op, body) = if let Some(b) = rest.strip_prefix("//#") {
+            (2u8, b)
+        } else if let Some(b) = rest.strip_prefix("//%") {
+            (3u8, b)
+        } else if let Some(b) = rest.strip_prefix("//") {
             (1u8, b)
         } else if let Some(b) = rest.strip_prefix("/#") {
             (2u8, b)

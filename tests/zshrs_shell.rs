@@ -2034,3 +2034,35 @@ fn test_for_scalar_splits_under_shwordsplit() {
     );
     assert_eq!(output.trim(), "[a]\n[b]\n[c]", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `${var//#pat/repl}` / `${var//%pat/repl}` anchored replace-all
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_replace_anchored_prefix_global() {
+    let (_, output, _) = run_zshrs("s=hellohello; echo \"${s//#hel/HEL}\"");
+    assert_eq!(output.trim(), "HELlohello", "got: {output:?}");
+}
+
+#[test]
+fn test_replace_anchored_suffix_global() {
+    let (_, output, _) = run_zshrs("s=foofoo; echo \"${s//%foo/BAR}\"");
+    assert_eq!(output.trim(), "fooBAR", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// `alias x` query output: bare value when safe, single-quoted when meta
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_alias_query_bare_value() {
+    let (_, output, _) = run_zshrs("alias x=ls; alias x");
+    assert_eq!(output.trim(), "x=ls", "got: {output:?}");
+}
+
+#[test]
+fn test_alias_query_quoted_value() {
+    let (_, output, _) = run_zshrs("alias x='ls -la'; alias x");
+    assert_eq!(output.trim(), "x='ls -la'", "got: {output:?}");
+}
