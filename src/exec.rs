@@ -11310,12 +11310,41 @@ impl ShellExecutor {
         }
 
         let _ = is_global;
-        let _ = is_tied;
         let _ = is_hidden;
         let _ = is_hide_val;
         let _ = is_trace;
         let _ = pattern_match;
         let _ = precision;
+
+        // `typeset -T VAR var [sep]` — tied scalar/array. Take the
+        // current $VAR (or assignment value if VAR=val on the cmdline),
+        // split on `sep` (default ":"), store as array `var`. zsh keeps
+        // the two synchronized; this initial-assignment binding handles
+        // the common idiom (`typeset -T PATH path`); subsequent updates
+        // to either side get out of sync until re-tied.
+        if is_tied && var_args.len() >= 2 {
+            let scalar_name = var_args[0].split('=').next().unwrap_or(&var_args[0]).to_string();
+            let array_name = &var_args[1];
+            // If the scalar arg has =val form, use that as the initial value.
+            let scalar_val = if let Some(eq_pos) = var_args[0].find('=') {
+                var_args[0][eq_pos + 1..].to_string()
+            } else {
+                self.variables.get(&scalar_name).cloned().unwrap_or_default()
+            };
+            let sep = var_args
+                .get(2)
+                .map(|s| s.as_str())
+                .unwrap_or(":")
+                .to_string();
+            let parts: Vec<String> = if scalar_val.is_empty() {
+                Vec::new()
+            } else {
+                scalar_val.split(&sep).map(String::from).collect()
+            };
+            self.variables.insert(scalar_name, scalar_val);
+            self.arrays.insert(array_name.clone(), parts);
+            return 0;
+        }
 
         // If -f (function mode) with no args, list functions
         if is_function && var_args.is_empty() {
