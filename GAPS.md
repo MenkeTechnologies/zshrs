@@ -21,12 +21,16 @@ Probe: 47 constructs. Every entry below was verified by running zshrs (`./target
 
 ### Still open (requires deeper work)
 
-- `exec {fd}>file` — needs lexer support for `{var}>` redirect prefix.
 - `RC_EXPAND_PARAM` option — `X${arr}Y` element-wise distribution requires changing array-in-string concat semantics; affects compile_word.
 - `${(z)"literal string"}` — variable form `${(z)var}` works; literal-string form needs different compile path.
 - `typeset -T` bidirectional sync — initial bind works; subsequent assignments to either side don't auto-sync (would require hooking every `variables.insert` site).
-- History expansion (`!!`, `!$`, `^old^new^`) — interactive-only by design; the audit notes this is academic for `-c` mode.
+- History expansion (`!!`, `!$`, `^old^new^`) — `expand_history` is wired into `execute_script` but gated on `atty::is(Stream::Stdin)`. Works in interactive mode; correctly no-op in `-c` (where the audit claimed broken).
 - `$RANDOM_FILE` — not actually a bug; mainline zsh also leaves it empty without `zmodload zsh/random`.
+
+### Closed (this session, continued)
+
+- `exec {fd}>file` — parser detects `{NAME}` followed by a redirop and pops it as varid. New `BUILTIN_OPEN_NAMED_FD` (id 317) opens the path with the right libc flags, dups to fd ≥ 10 via `F_DUPFD_CLOEXEC`, stores the fd number in `$varid`. Verified for read/write/append.
+- `sched`, `echotc`, `echoti`, `getln`, `zpty`, `ztcp`, `zsocket` — routed through `host_exec_external` so they hit local handlers instead of "command not found".
 
 ### Sched + 6 stubbed builtins routed (this session)
 
