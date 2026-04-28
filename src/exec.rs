@@ -4735,11 +4735,18 @@ impl ShellExecutor {
         };
         let rest_vec: Vec<String> = rest.to_vec();
 
-        // Builtins not in fusevm's name→id table (e.g. `sched`) fall
-        // through to host.exec. Catch them here before the OS-level
-        // exec attempts to spawn a non-existent binary.
-        if cmd == "sched" {
-            return self.builtin_sched(&rest_vec);
+        // Builtins not in fusevm's name→id table fall through to
+        // host.exec. Catch them here before the OS-level exec attempts
+        // to spawn a non-existent binary.
+        match cmd.as_str() {
+            "sched" => return self.builtin_sched(&rest_vec),
+            "echotc" => return self.builtin_echotc(&rest_vec),
+            "echoti" => return self.builtin_echoti(&rest_vec),
+            "getln" => return self.builtin_getln(&rest_vec),
+            "zpty" => return self.builtin_zpty(&rest_vec),
+            "ztcp" => return self.builtin_ztcp(&rest_vec),
+            "zsocket" => return self.builtin_zsocket(&rest_vec),
+            _ => {}
         }
 
         // AOP intercepts: when an `intercept :before/:around/:after foo` block
