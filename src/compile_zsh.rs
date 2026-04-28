@@ -697,6 +697,31 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0);
             }
             ZshAssignValue::Array(elements) => {
+                // Subscripted-array assign: `a[i]=(elements)`,
+                // `a[i,j]=(elements)`, or `a[i]=()` (delete element).
+                // The Scalar branch above only handles single-value
+                // assigns; this branch handles the array-literal form
+                // including the empty-list delete idiom.
+                if let Some((base, key)) = split_subscript(&untoked_name) {
+                    for elem in elements {
+                        self.compile_word_str(elem);
+                        if has_unquoted_expansion(elem) {
+                            self.builder
+                                .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
+                        }
+                    }
+                    let name_const = self.builder.add_constant(Value::str(base));
+                    let key_const = self.builder.add_constant(Value::str(key));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    let argc = (elements.len() + 2) as u8;
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::exec::BUILTIN_SET_SUBSCRIPT_RANGE, argc),
+                        0,
+                    );
+                    self.builder.emit(Op::Pop, 0);
+                    return;
+                }
                 // arr=(a b c) / arr+=(d e).
                 for elem in elements {
                     self.compile_word_str(elem);

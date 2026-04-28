@@ -766,3 +766,141 @@ fn test_history_expansion_literal_in_c_mode() {
     let (_, output, _) = run_zshrs("echo first; echo !!");
     assert_eq!(output.trim(), "first\n!!", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Indexed array element / slice / delete assignment
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_indexed_array_element_assign() {
+    let (_, output, _) = run_zshrs("a=(x y z); a[2]=YY; print \"${a[*]}\"");
+    assert_eq!(output.trim(), "x YY z", "got: {output:?}");
+}
+
+#[test]
+fn test_indexed_array_negative_assign() {
+    let (_, output, _) = run_zshrs("a=(x y z); a[-1]=Z; print \"${a[*]}\"");
+    assert_eq!(output.trim(), "x y Z", "got: {output:?}");
+}
+
+#[test]
+fn test_indexed_array_grow_on_assign() {
+    let (_, output, _) =
+        run_zshrs("a=(x y z); a[5]=E; print -l \"${a[@]}\"");
+    assert_eq!(output.trim(), "x\ny\nz\n\nE", "got: {output:?}");
+}
+
+#[test]
+fn test_indexed_array_append_at_index() {
+    let (_, output, _) = run_zshrs("a=(x y z); a[2]+=BB; print \"${a[*]}\"");
+    assert_eq!(output.trim(), "x yBB z", "got: {output:?}");
+}
+
+#[test]
+fn test_indexed_array_slice_assign() {
+    let (_, output, _) =
+        run_zshrs("a=(x y z w v); a[2,4]=(YY ZZ WW); print \"${a[*]}\"");
+    assert_eq!(output.trim(), "x YY ZZ WW v", "got: {output:?}");
+}
+
+#[test]
+fn test_indexed_array_element_delete() {
+    let (_, output, _) = run_zshrs("a=(x y z); a[2]=(); print \"${a[*]}\"");
+    assert_eq!(output.trim(), "x z", "got: {output:?}");
+}
+
+#[test]
+fn test_indexed_array_slice_delete() {
+    let (_, output, _) =
+        run_zshrs("a=(x y z w v); a[2,4]=(); print \"${a[*]}\"");
+    assert_eq!(output.trim(), "x v", "got: {output:?}");
+}
+
+#[test]
+fn test_unset_indexed_element_clears_to_empty() {
+    // zsh `unset 'arr[N]'` for indexed arrays sets the slot to "" but
+    // does NOT remove it (slot count preserved). Differs from `a[N]=()`.
+    let (_, output, _) = run_zshrs(
+        "arr=(a b c); unset 'arr[2]'; print \"len=${#arr}\"; print -l \"${arr[@]}\"",
+    );
+    assert_eq!(output.trim(), "len=3\na\n\nc", "got: {output:?}");
+}
+
+#[test]
+fn test_unset_assoc_element() {
+    let (_, output, _) = run_zshrs(
+        "typeset -A m=(a 1 b 2); unset 'm[a]'; print \"${(k)m[@]}\"",
+    );
+    assert_eq!(output.trim(), "b", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Regex `=~` capture groups: $MATCH, $match[N], $mbegin, $mend
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_regex_match_full_match_var() {
+    let (_, output, _) = run_zshrs(
+        "[[ \"hello\" =~ ll ]] && print \"$MATCH\"",
+    );
+    assert_eq!(output.trim(), "ll", "got: {output:?}");
+}
+
+#[test]
+fn test_regex_match_capture_groups() {
+    let (_, output, _) = run_zshrs(
+        "[[ \"a1b2\" =~ ([a-z])([0-9]) ]] && print \"${match[1]}|${match[2]}\"",
+    );
+    assert_eq!(output.trim(), "a|1", "got: {output:?}");
+}
+
+#[test]
+fn test_regex_match_offsets() {
+    let (_, output, _) = run_zshrs(
+        "[[ \"abc123\" =~ ^([a-z]+)([0-9]+)$ ]] && print \"${mbegin[1]}:${mend[1]} ${mbegin[2]}:${mend[2]}\"",
+    );
+    assert_eq!(output.trim(), "1:3 4:6", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Tilde expansion: ~+, ~-, ~user, named directories
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_tilde_named_dir() {
+    let (_, output, _) = run_zshrs("hash -d foo=/tmp; print ~foo/x");
+    assert_eq!(output.trim(), "/tmp/x", "got: {output:?}");
+}
+
+#[test]
+fn test_tilde_user() {
+    // `~root` should resolve via getpwnam to /var/root (macOS) or
+    // /root (Linux). Just verify it's an absolute path containing
+    // "root", not the literal `~root`.
+    let (_, output, _) = run_zshrs("print ~root");
+    let out = output.trim();
+    assert!(
+        out.starts_with('/') && out.contains("root") && !out.contains('~'),
+        "got: {output:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// builtin head -c byte count
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_head_c_byte_count() {
+    let (_, output, _) = run_zshrs("echo abcdef | head -c 3");
+    assert_eq!(output, "abc", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// WORDCHARS default value
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_wordchars_default() {
+    let (_, output, _) = run_zshrs("print -- \"$WORDCHARS\"");
+    assert_eq!(output.trim(), "*?_-.[]~=/&;!#$%^(){}<>", "got: {output:?}");
+}

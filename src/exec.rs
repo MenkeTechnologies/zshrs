@@ -2744,6 +2744,55 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
         with_executor(|exec| {
+            // Indexed array element assign `a[N]=val`. Routes here when
+            // `name` is already an indexed array. For unset names, only
+            // treat as indexed if the key is unambiguously numeric (a
+            // literal int) — `foo[key]=val` with no prior storage and
+            // a string key should create an assoc (zsh default), not an
+            // indexed array. zsh's rule: numeric subscript on an
+            // indexed array (or new var with numeric key) assigns to
+            // the 1-based slot, growing the array if needed. Negative
+            // indices count from the end.
+            let is_indexed = exec.arrays.contains_key(&name);
+            let is_assoc = exec.assoc_arrays.contains_key(&name);
+            let key_literal_int = key.trim().parse::<i64>().ok();
+            // For an existing indexed array, fall back to arith eval so
+            // `a[i+1]=v` works when `i` is set.
+            let key_int_for_indexed = if is_indexed {
+                key_literal_int.or_else(|| Some(exec.eval_arith_expr(&key)))
+            } else {
+                key_literal_int
+            };
+            let route_indexed = if is_assoc {
+                false
+            } else if is_indexed {
+                key_int_for_indexed.is_some()
+            } else {
+                key_literal_int.is_some()
+            };
+            if route_indexed && key_int_for_indexed.is_some() {
+                let i = key_int_for_indexed.unwrap();
+                let arr = exec.arrays.entry(name.clone()).or_insert_with(Vec::new);
+                let len = arr.len() as i64;
+                let idx = if i > 0 {
+                    (i - 1) as usize
+                } else if i < 0 {
+                    let off = len + i;
+                    if off < 0 {
+                        return;
+                    }
+                    off as usize
+                } else {
+                    return;
+                };
+                while arr.len() <= idx {
+                    arr.push(String::new());
+                }
+                arr[idx] = value;
+                exec.variables.remove(&name);
+                return;
+            }
+            // Default: assoc set.
             exec.variables.remove(&name);
             exec.assoc_arrays
                 .entry(name)
@@ -3295,6 +3344,89 @@ fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             fusevm::Value::str(val)
         }
+    });
+
+    // `a[i]=(elements)` / `a[i,j]=(elements)` / `a[i]=()`
+    // — subscripted-array assign with array RHS. Stack pushed by
+    // compile_assign as: [elem0, elem1, …, elemN-1, name, key].
+    vm.register_builtin(BUILTIN_SET_SUBSCRIPT_RANGE, |vm, argc| {
+        let n = argc as usize;
+        let mut popped: Vec<fusevm::Value> = Vec::with_capacity(n);
+        for _ in 0..n {
+            popped.push(vm.pop());
+        }
+        popped.reverse();
+        if popped.len() < 2 {
+            return fusevm::Value::Status(1);
+        }
+        let key = popped.pop().unwrap().to_str();
+        let name = popped.pop().unwrap().to_str();
+        let mut values: Vec<String> = Vec::new();
+        for v in popped {
+            match v {
+                fusevm::Value::Array(items) => {
+                    for it in items {
+                        values.push(it.to_str());
+                    }
+                }
+                other => values.push(other.to_str()),
+            }
+        }
+        with_executor(|exec| {
+            let arr = exec.arrays.entry(name.clone()).or_insert_with(Vec::new);
+            // Slice form `a[i,j]=(values)` — replace the inclusive
+            // slice. Negative bounds count from end. Out-of-range high
+            // bound clamps to len; low bound below 1 clamps to 1.
+            if let Some((s_str, e_str)) = key.split_once(',') {
+                let len = arr.len() as i64;
+                let resolve = |s: &str| -> i64 {
+                    let t = s.trim();
+                    if let Ok(i) = t.parse::<i64>() {
+                        i
+                    } else {
+                        0
+                    }
+                };
+                let s_raw = resolve(s_str);
+                let e_raw = resolve(e_str);
+                let lo = if s_raw < 0 { (len + s_raw + 1).max(1) } else { s_raw.max(1) };
+                let hi = if e_raw < 0 { (len + e_raw + 1).max(0) } else { e_raw.max(0) };
+                let lo_idx = (lo - 1) as usize;
+                let hi_idx = ((hi as usize).min(arr.len())).max(lo_idx);
+                let _: Vec<String> = arr.splice(lo_idx..hi_idx, values).collect();
+                exec.variables.remove(&name);
+                return;
+            }
+            // Single-int key. `a[i]=()` (empty values) removes the
+            // element at that index. Otherwise treat as a multi-element
+            // splice starting at i.
+            let i: i64 = match key.trim().parse::<i64>() {
+                Ok(n) => n,
+                Err(_) => return,
+            };
+            let len = arr.len() as i64;
+            let idx = if i > 0 {
+                (i - 1) as usize
+            } else if i < 0 {
+                let off = len + i;
+                if off < 0 {
+                    return;
+                }
+                off as usize
+            } else {
+                return;
+            };
+            if values.is_empty() {
+                if idx < arr.len() {
+                    arr.remove(idx);
+                }
+            } else {
+                let end = (idx + 1).min(arr.len());
+                let _: Vec<String> = arr.splice(idx..end, values).collect();
+            }
+            exec.variables.remove(&name);
+        });
+        fusevm::Value::Status(0)
     });
 
     // BUILTIN_CONCAT_SPLICE — word-segment concat with first/last
@@ -4067,6 +4199,12 @@ pub const BUILTIN_OPTION_SET: u16 = 321;
 /// non-matching elements.
 pub const BUILTIN_PARAM_FILTER: u16 = 322;
 
+/// `a[i]=(elements)` / `a[i,j]=(elements)` / `a[i]=()` —
+/// subscripted-array assign with array-literal RHS. Stack:
+/// [...elements, name, key]. Empty elements + single-int key `a[i]=()`
+/// removes that element. Comma-key `a[i,j]=(...)` splices.
+pub const BUILTIN_SET_SUBSCRIPT_RANGE: u16 = 323;
+
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)
 /// where prefix sticks to first element only and suffix to last only.
@@ -4199,17 +4337,58 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn regex_match(&mut self, s: &str, regex: &str) -> bool {
+        // Compile (cached) and run captures so we can populate the
+        // zsh-side magic vars: `$MATCH` (full match), `$match[N]`
+        // (capture groups), and `$mbegin`/`$mend` (1-based offsets).
         let mut cache = REGEX_CACHE.lock();
-        if let Some(re) = cache.get(regex) {
-            return re.is_match(s);
-        }
-        match regex::Regex::new(regex) {
-            Ok(re) => {
-                let m = re.is_match(s);
-                cache.insert(regex.to_string(), re);
-                m
+        let re = if let Some(re) = cache.get(regex) {
+            re.clone()
+        } else {
+            match regex::Regex::new(regex) {
+                Ok(re) => {
+                    cache.insert(regex.to_string(), re.clone());
+                    re
+                }
+                Err(_) => return false,
             }
-            Err(_) => false,
+        };
+        drop(cache);
+        match re.captures(s) {
+            Some(caps) => {
+                let full = caps.get(0).map(|m| m.as_str().to_string()).unwrap_or_default();
+                let full_begin = caps
+                    .get(0)
+                    .map(|m| (s[..m.start()].chars().count() + 1).to_string())
+                    .unwrap_or_else(|| "0".to_string());
+                let full_end = caps
+                    .get(0)
+                    .map(|m| s[..m.end()].chars().count().to_string())
+                    .unwrap_or_else(|| "0".to_string());
+                let mut group_strs: Vec<String> = Vec::new();
+                let mut begins: Vec<String> = Vec::new();
+                let mut ends: Vec<String> = Vec::new();
+                for i in 1..caps.len() {
+                    if let Some(m) = caps.get(i) {
+                        group_strs.push(m.as_str().to_string());
+                        begins.push((s[..m.start()].chars().count() + 1).to_string());
+                        ends.push(s[..m.end()].chars().count().to_string());
+                    } else {
+                        group_strs.push(String::new());
+                        begins.push("0".to_string());
+                        ends.push("0".to_string());
+                    }
+                }
+                with_executor(|exec| {
+                    exec.variables.insert("MATCH".to_string(), full);
+                    exec.variables.insert("MBEGIN".to_string(), full_begin);
+                    exec.variables.insert("MEND".to_string(), full_end);
+                    exec.arrays.insert("match".to_string(), group_strs);
+                    exec.arrays.insert("mbegin".to_string(), begins);
+                    exec.arrays.insert("mend".to_string(), ends);
+                });
+                true
+            }
+            None => false,
         }
     }
 
@@ -5356,6 +5535,11 @@ impl ShellExecutor {
             "zsh-5.9-0-g73d3173".to_string(),
         );
         variables.insert("ZSH_NAME".to_string(), "zsh".to_string());
+        // ZLE word boundary chars — matches mainline zsh's default.
+        variables.insert(
+            "WORDCHARS".to_string(),
+            "*?_-.[]~=/&;!#$%^(){}<>".to_string(),
+        );
         variables.insert(
             "SHLVL".to_string(),
             env::var("SHLVL")
@@ -5771,8 +5955,56 @@ impl ShellExecutor {
                 if let Ok(home) = std::env::var("HOME") {
                     return format!("{}{}", home, suffix);
                 }
+            } else if name == "+" {
+                // `~+` — current directory ($PWD).
+                if let Ok(pwd) = std::env::var("PWD") {
+                    return format!("{}{}", pwd, suffix);
+                }
+            } else if name == "-" {
+                // `~-` — previous directory ($OLDPWD).
+                if let Ok(oldpwd) = std::env::var("OLDPWD") {
+                    return format!("{}{}", oldpwd, suffix);
+                }
+            } else if let Some(stripped) = name.strip_prefix('+') {
+                // `~+N` — Nth entry on dir stack (1-indexed; 0 = $PWD).
+                if let Ok(n) = stripped.parse::<usize>() {
+                    if n == 0 {
+                        if let Ok(pwd) = std::env::var("PWD") {
+                            return format!("{}{}", pwd, suffix);
+                        }
+                    } else if let Some(d) = self.dir_stack.get(n - 1) {
+                        return format!("{}{}", d.display(), suffix);
+                    }
+                }
+            } else if let Some(stripped) = name.strip_prefix('-') {
+                // `~-N` — Nth entry from bottom of dir stack.
+                if let Ok(n) = stripped.parse::<usize>() {
+                    let len = self.dir_stack.len();
+                    if n < len {
+                        if let Some(d) = self.dir_stack.get(len - 1 - n) {
+                            return format!("{}{}", d.display(), suffix);
+                        }
+                    }
+                }
             } else if let Some(dir) = self.named_dirs.get(name) {
                 return format!("{}{}", dir.display(), suffix);
+            } else {
+                // `~user` — try libc getpwnam to resolve user home.
+                use std::ffi::CString;
+                if let Ok(cname) = CString::new(name) {
+                    unsafe {
+                        let pw = libc::getpwnam(cname.as_ptr());
+                        if !pw.is_null() {
+                            let home_ptr = (*pw).pw_dir;
+                            if !home_ptr.is_null() {
+                                let home = std::ffi::CStr::from_ptr(home_ptr)
+                                    .to_string_lossy()
+                                    .into_owned();
+                                return format!("{}{}", home, suffix);
+                            }
+                        }
+                    }
+                }
             }
         }
         path.to_string()
@@ -9424,11 +9656,21 @@ impl ShellExecutor {
                 let cmd_str = Self::collect_until_paren(&mut chars);
                 result.push_str(&self.run_process_sub_out(&cmd_str));
             } else if c == '~' && result.is_empty() {
-                if let Some(home) = dirs::home_dir() {
-                    result.push_str(&home.to_string_lossy());
-                } else {
-                    result.push(c);
+                // Collect the tilde-name suffix (until /, end-of-string,
+                // or another shell special). Then dispatch through
+                // expand_tilde_named which knows about `~+`, `~-`,
+                // `~+N`, `~-N`, named dirs (`hash -d` / `nameddirs`),
+                // and `~user` via libc getpwnam.
+                let mut name = String::from("~");
+                while let Some(&pc) = chars.peek() {
+                    if pc == '/' || pc.is_whitespace() {
+                        break;
+                    }
+                    name.push(pc);
+                    chars.next();
                 }
+                let expanded = self.expand_tilde_named(&name);
+                result.push_str(&expanded);
             } else {
                 result.push(c);
             }
@@ -11410,8 +11652,51 @@ impl ShellExecutor {
 
     fn builtin_unset(&mut self, args: &[String]) -> i32 {
         for arg in args {
+            // `unset 'arr[i]'` / `unset 'm[k]'` — element delete. Detect
+            // the subscript form and dispatch instead of nuking the
+            // whole variable. zsh treats indexed elements as delete-by-
+            // index (1-based, negative-from-end) and assoc elements as
+            // delete-by-key.
+            if let Some(lb) = arg.find('[') {
+                if arg.ends_with(']') {
+                    let name = &arg[..lb];
+                    let key = &arg[lb + 1..arg.len() - 1];
+                    if !name.is_empty() && !key.is_empty() {
+                        if let Some(map) = self.assoc_arrays.get_mut(name) {
+                            map.remove(key);
+                            continue;
+                        }
+                        if let Some(arr) = self.arrays.get_mut(name) {
+                            if let Ok(i) = key.parse::<i64>() {
+                                let len = arr.len() as i64;
+                                let idx = if i > 0 {
+                                    (i - 1) as usize
+                                } else if i < 0 {
+                                    let off = len + i;
+                                    if off < 0 {
+                                        continue;
+                                    }
+                                    off as usize
+                                } else {
+                                    continue;
+                                };
+                                // zsh's `unset 'arr[i]'` for indexed
+                                // sets the slot to empty string (slot
+                                // count preserved), unlike `arr[i]=()`
+                                // which removes the slot.
+                                if idx < arr.len() {
+                                    arr[idx] = String::new();
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
             env::remove_var(arg);
             self.variables.remove(arg);
+            self.arrays.remove(arg);
+            self.assoc_arrays.remove(arg);
         }
         0
     }
@@ -24393,9 +24678,11 @@ impl ShellExecutor {
     }
 
     fn builtin_head(&self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
+        use std::io::{BufRead, BufReader, Read, Write};
 
         let mut lines = 10usize;
+        // Some(N) when -c N was given — switches to byte-count mode.
+        let mut bytes: Option<usize> = None;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
 
@@ -24406,6 +24693,11 @@ impl ShellExecutor {
                 lines = args[i].parse().unwrap_or(10);
             } else if arg.starts_with("-n") {
                 lines = arg[2..].parse().unwrap_or(10);
+            } else if arg == "-c" && i + 1 < args.len() {
+                i += 1;
+                bytes = args[i].parse::<usize>().ok();
+            } else if arg.starts_with("-c") && arg.len() > 2 {
+                bytes = arg[2..].parse::<usize>().ok();
             } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
                 lines = arg[1..].parse().unwrap_or(10);
             } else if !arg.starts_with('-') {
@@ -24419,13 +24711,41 @@ impl ShellExecutor {
         }
 
         let show_headers = files.len() > 1;
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
 
         for (idx, file) in files.iter().enumerate() {
             if show_headers {
                 if idx > 0 {
-                    println!();
+                    let _ = writeln!(out);
                 }
-                println!("==> {} <==", file);
+                let _ = writeln!(out, "==> {} <==", file);
+            }
+
+            if let Some(n) = bytes {
+                // -c N: byte-count mode. Read up to N bytes and write.
+                let mut reader: Box<dyn Read> = if *file == "-" {
+                    Box::new(std::io::stdin())
+                } else {
+                    match std::fs::File::open(file) {
+                        Ok(f) => Box::new(f),
+                        Err(e) => {
+                            eprintln!("head: {}: {}", file, e);
+                            return 1;
+                        }
+                    }
+                };
+                let mut buf = vec![0u8; n];
+                let mut total = 0usize;
+                while total < n {
+                    match reader.read(&mut buf[total..]) {
+                        Ok(0) => break,
+                        Ok(k) => total += k,
+                        Err(_) => break,
+                    }
+                }
+                let _ = out.write_all(&buf[..total]);
+                continue;
             }
 
             let reader: Box<dyn BufRead> = if *file == "-" {
@@ -24442,7 +24762,9 @@ impl ShellExecutor {
 
             for line in reader.lines().take(lines) {
                 match line {
-                    Ok(l) => println!("{}", l),
+                    Ok(l) => {
+                        let _ = writeln!(out, "{}", l);
+                    }
                     Err(_) => break,
                 }
             }

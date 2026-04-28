@@ -157,9 +157,48 @@ Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array
 
 - The original audit flagged `!!` / `!$` / `^old^new^` as missing in `-c` mode. Verified this is the documented zsh behavior: history expansion only fires in interactive (TTY-stdin) mode; `-c` script mode treats `!!` literally. zshrs's `expand_history` correctly gates on `atty::is(Stream::Stdin)`, matching mainline zsh. Added `test_history_expansion_literal_in_c_mode` regression test (echo "first; echo !!" → "first\n!!").
 
-## Still open
+## Closed (second-pass audit, this session)
 
-(none — all probed gaps closed)
+A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The high-impact ones are now closed:
+
+### Indexed-array element / slice / delete assignment
+
+- `a[2]=YY` (single element), `a[-1]=Z` (negative subscript), `a[5]=E` (grow on assign), `a[2]+=BB` (append at index), `a[2,4]=(YY ZZ WW)` (slice replace), `a[2]=()` (single-element delete), `a[2,4]=()` (slice delete) — all now mutate the indexed array in place. `BUILTIN_SET_ASSOC` was extended with an indexed-array dispatch that routes when the name already names an indexed array OR (for unset names) when the key is a literal integer; otherwise still falls through to assoc. New `BUILTIN_SET_SUBSCRIPT_RANGE` (id 323) handles the array-RHS form so `a[i]=(elements)` and `a[i,j]=(elements)` use one-shot splice semantics. Empty values + comma-key delete the whole slice.
+
+### `=~` regex match captures (`$MATCH`, `$match`, `$mbegin`, `$mend`)
+
+- `regex_match` now uses `Regex::captures` and writes `$MATCH` (full match), `$MBEGIN`/`$MEND` (1-based char offsets), and `$match[]` / `$mbegin[]` / `$mend[]` arrays for each capture group. `[[ "a1b2" =~ ([a-z])([0-9]) ]]; print $match[1]$match[2]` now prints `a1`, matching zsh. (Bare `$match[1]` without braces is still a separate gap — bare-`$NAME[KEY]` doesn't lex as subscript.)
+
+### Tilde expansion `~+`, `~-`, `~+N`, `~-N`, `~user`, named dirs
+
+- `expand_tilde_named` extended with dir-stack-aware `~+` (= `$PWD`), `~-` (= `$OLDPWD`), `~+N` / `~-N` (Nth dir-stack entry from top/bottom), and `~user` via libc `getpwnam`. The runtime `expand_string` now collects the full tilde-name suffix (until `/` or whitespace) and dispatches through the helper instead of using `dirs::home_dir()` for bare `~` only.
+
+### `unset 'arr[i]'` / `unset 'm[k]'` element delete
+
+- `builtin_unset` detects the subscripted form. For assoc: removes the key. For indexed: clears the slot to empty string but preserves the slot count (matches zsh: `unset 'arr[2]'` produces a 3-element array with `arr[2]=""`, distinct from `arr[2]=()` which removes the slot entirely).
+
+### `head -c N` byte-count flag in builtin
+
+- Added `-c N` (and `-c<N>` glommed form) to `builtin_head`. Reads up to N bytes verbatim from the input stream and writes to stdout. Tested with `echo abcdef | head -c 3` → `abc`.
+
+### `WORDCHARS` default
+
+- Set at `ShellExecutor::new` to `*?_-.[]~=/&;!#$%^(){}<>` — the mainline-zsh default for ZLE word boundary chars.
+
+## Still open (second-pass — deferred)
+
+- **`noglob` precommand modifier** — `noglob print "*"` errors "command not found: print" instead of disabling glob and running `print *` literally. Needs parser-level recognition as a reserved word, not a command name.
+- **`<N-M>` numeric range globbing** — `[[ file5 = file<1-10> ]]` returns false. Needs glob-matcher support for the `<a-b>` numeric-range syntax.
+- **Recursive glob `**/` (directories-only)** — trailing-slash recursive form not expanded.
+- **Glob qualifier `(mh-N)` / `(mm)` / `(ms)`** — modified-recent age qualifiers not implemented (only `(L)` size and `(D)` dotglob exist today).
+- **`(t)` typeset flag returns wrong type for `integer i=5`** — needs persistent attribute tracking on declared variables (full plumbing through `typeset -i` / `integer` / `float`).
+- **`let "a=1.0+2.0"` returns integer instead of float** — `let` doesn't preserve float result formatting.
+- **`print -P %F{red}` extra `\e[0m` reset prefix** — cosmetic diff, both render identically in terminals.
+- **`print -P %D{fmt}`** — strftime format support.
+- **`print -P %h`** history-line-number format.
+- **`where ls` output format** — zshrs uses `which` style (`ls is /bin/ls`); zsh prints just the path.
+- **`fc -l` empty-history behavior** — zsh prints "no such event"; zshrs leaks a stray history entry.
+- **Bare `$arr[N]` subscript** — without braces, lexes as `$arr` + literal `[N]`. Forces use of `${arr[N]}`.
 
 The "Stub modules (loaded but limited)" section below remains as documented deferrals (`zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp`, `zsh/db_gdbm`) — these are niche features whose `zmodload` call currently no-ops, with the corresponding builtins not registered. They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
 
