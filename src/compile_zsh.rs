@@ -967,6 +967,32 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: `${(flags)NAME[KEY]}` with a real (non-`@`/`*`)
+        // subscript. Resolve the subscripted value first via
+        // BUILTIN_ARRAY_INDEX, then prepend the `\u{01}` literal-value
+        // sentinel so BUILTIN_PARAM_FLAG treats the operand as a
+        // pre-resolved scalar instead of doing a name lookup. Closes
+        // the `${(f)mapfile[/path]}` and `${(s:,:)assoc[k]}` shapes.
+        if !has_bnull {
+            if let Some((flags, base, key)) = parse_zsh_flag_subscript(&untoked) {
+                let name_const = self.builder.add_constant(Value::str(base));
+                let key_const = self.builder.add_constant(Value::str(key));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                self.builder.emit(Op::LoadConst(key_const), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                let sentinel = self.builder.add_constant(Value::str("\u{01}"));
+                self.builder.emit(Op::LoadConst(sentinel), 0);
+                self.builder.emit(Op::Swap, 0);
+                self.builder.emit(Op::Concat, 0);
+                let flags_const = self.builder.add_constant(Value::str(flags));
+                self.builder.emit(Op::LoadConst(flags_const), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FLAG, 2), 0);
+                return;
+            }
+        }
+
         // Phase 1 native param-modifier lowerings. Each replaces a
         // bridge case. The matcher is greedy from least-ambiguous to
         // most: `:-`, `:=`, `:?`, `:+` first (modifier ops), then
@@ -2491,6 +2517,60 @@ fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((flags, name))
+}
+
+/// Match `${(flags)NAME[KEY]}` where KEY is a non-`@`/`*` literal
+/// subscript (assoc key, file path, etc.). The compile path resolves
+/// the subscripted value first via BUILTIN_ARRAY_INDEX, then feeds the
+/// scalar into BUILTIN_PARAM_FLAG via the `\u{01}` literal-value
+/// sentinel. Excludes nested `${…}` and dynamic `$`-keys (those need
+/// a different lowering — runtime expand-then-flag).
+fn parse_zsh_flag_subscript(s: &str) -> Option<(&str, &str, &str)> {
+    let inner = s.strip_prefix("${")?.strip_suffix('}')?;
+    if inner.contains("${") {
+        return None;
+    }
+    let inner_b = inner.as_bytes();
+    if inner_b.first()? != &b'(' {
+        return None;
+    }
+    let mut depth = 0;
+    let mut close = None;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let flags = &inner[1..close];
+    let after = &inner[close + 1..];
+    let lb = after.find('[')?;
+    if !after.ends_with(']') {
+        return None;
+    }
+    let base = &after[..lb];
+    let key = &after[lb + 1..after.len() - 1];
+    if base.is_empty() || key.is_empty() || key == "@" || key == "*" {
+        return None;
+    }
+    if !base.chars().next()?.is_ascii_alphabetic() && !base.starts_with('_') {
+        return None;
+    }
+    if !base.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
+        return None;
+    }
+    Some((flags, base, key))
 }
 
 /// Split a subscripted name like `m[k]` or `arr[1]` into (base, key).

@@ -688,3 +688,81 @@ fn test_eq_process_sub_path_emitted() {
         "got: {output:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// zsh/mapfile assoc array — magic ${mapfile[/path]} read form
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_mapfile_basic_read() {
+    use std::fs;
+    let path = "/tmp/zshrs_mapfile_basic.txt";
+    fs::write(path, "hello\n").unwrap();
+    let (_, output, _) = run_zshrs(&format!(
+        "zmodload zsh/mapfile; print \"${{mapfile[{}]}}\"",
+        path
+    ));
+    // print appends a newline; mapfile preserves the file's trailing
+    // newline, so output is "hello\n\n" → trim gives "hello".
+    assert_eq!(output.trim_end(), "hello", "got: {output:?}");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_mapfile_preserves_trailing_newline() {
+    use std::fs;
+    let path = "/tmp/zshrs_mapfile_len.txt";
+    fs::write(path, "test\n").unwrap();
+    let (_, output, _) = run_zshrs(&format!(
+        "zmodload zsh/mapfile; v=\"${{mapfile[{}]}}\"; print \"len=${{#v}}\"",
+        path
+    ));
+    assert_eq!(output.trim(), "len=5", "got: {output:?}");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_mapfile_with_f_flag_split_lines() {
+    use std::fs;
+    let path = "/tmp/zshrs_mapfile_lines.txt";
+    fs::write(path, "a\nb\nc\n").unwrap();
+    let (_, output, _) = run_zshrs(&format!(
+        "zmodload zsh/mapfile; print -l ${{(f)mapfile[{}]}}",
+        path
+    ));
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn test_mapfile_missing_file_is_empty() {
+    let (_, output, _) = run_zshrs(
+        "zmodload zsh/mapfile; print \"len=${#mapfile[/no/such/path/here]}\"",
+    );
+    assert_eq!(output.trim(), "len=0", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// ${(flags)NAME[KEY]} — flag + literal subscript composition
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_flag_with_assoc_subscript_split() {
+    let (_, output, _) = run_zshrs(
+        "typeset -A m=(k1 'a:b:c'); print -l \"${(s.:.)m[k1]}\"",
+    );
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// History expansion: -c mode is correctly literal (matches zsh)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_history_expansion_literal_in_c_mode() {
+    // In `-c` mode (non-interactive, no TTY), `!!` is literal — same as
+    // zsh. Pulling from the persistent history db would inject random
+    // commands from prior sessions.
+    let (_, output, _) = run_zshrs("echo first; echo !!");
+    assert_eq!(output.trim(), "first\n!!", "got: {output:?}");
+}
