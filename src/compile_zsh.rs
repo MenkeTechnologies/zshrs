@@ -1803,6 +1803,30 @@ impl ZshCompiler {
             "-x" => file_test::IS_EXECUTABLE,
             "-s" => file_test::IS_NONEMPTY,
             "-L" | "-h" => file_test::IS_SYMLINK,
+            "-c" => {
+                // Character device. Not in fusevm's file_test set.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_CHARDEV, 1), 0);
+                return;
+            }
+            "-b" => {
+                // Block device.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_BLOCKDEV, 1), 0);
+                return;
+            }
+            "-p" => {
+                // FIFO (named pipe).
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_FIFO, 1), 0);
+                return;
+            }
+            "-S" => {
+                // Socket.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_SOCKET, 1), 0);
+                return;
+            }
             "-k" => {
                 // Sticky bit (S_ISVTX). Not in fusevm's file_test set;
                 // route through a thin host-side builtin.

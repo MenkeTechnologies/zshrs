@@ -2020,6 +2020,36 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let idx = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // `${pipestatus[N]}` / `${PIPESTATUS[N]}` — pipeline exit
+        // status array. Populated by BUILTIN_PIPELINE_EXEC after a
+        // real pipeline; for single commands fall back to a synthetic
+        // [last_status] list so `true; echo $pipestatus[1]` prints 0.
+        if name == "pipestatus" || name == "PIPESTATUS" {
+            let arr = with_executor(|exec| {
+                exec.arrays.get(&name).cloned().unwrap_or_else(|| {
+                    vec![exec.last_status.to_string()]
+                })
+            });
+            if let Ok(i) = idx.parse::<i64>() {
+                let len = arr.len() as i64;
+                let resolved = if i > 0 {
+                    (i - 1) as usize
+                } else if i < 0 {
+                    let off = len + i;
+                    if off < 0 {
+                        return Value::str("");
+                    }
+                    off as usize
+                } else {
+                    return Value::str("");
+                };
+                return Value::str(arr.get(resolved).cloned().unwrap_or_default());
+            }
+            if idx == "@" || idx == "*" {
+                return Value::Array(arr.into_iter().map(Value::str).collect());
+            }
+        }
+
         // Special-name positional-param indexing. `${@[N]}`, `${@[N,M]}`,
         // `${*[N]}`, `${argv[N]}` all index the positional-param array
         // 1-based (zsh semantics). Without this, `@`/`*`/`argv` fall
@@ -3221,18 +3251,25 @@ fn register_builtins(vm: &mut fusevm::VM) {
             match exec.arrays.get(&name) {
                 Some(v) => Value::Array(v.iter().map(Value::str).collect()),
                 None => {
-                    // Fall back to scalar lookup so for-list code that
-                    // emits ARRAY_ALL for a bare `$NAME` (where NAME is
-                    // a scalar) gets the value as a 1-element array.
+                    // Fall back to scalar lookup. zsh (unlike bash)
+                    // does NOT IFS-split a scalar variable in a for
+                    // list — `for w in $scalar` iterates ONCE with the
+                    // scalar value. Word-splitting requires either
+                    // sh_word_split option or explicit `${(s.,.)scalar}`.
                     let val = exec.get_variable(&name);
                     if val.is_empty()
                         && !exec.variables.contains_key(&name)
                         && std::env::var(&name).is_err()
                     {
                         Value::Array(vec![])
-                    } else {
-                        // For scalars, IFS-split (zsh's for-list
-                        // word-splits unquoted `$scalar`).
+                    } else if exec
+                        .options
+                        .get("shwordsplit")
+                        .copied()
+                        .unwrap_or(false)
+                    {
+                        // bash-compat: under setopt sh_word_split, do
+                        // split scalars on IFS chars.
                         let ifs = exec
                             .variables
                             .get("IFS")
@@ -3244,6 +3281,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             .map(Value::str)
                             .collect();
                         Value::Array(parts)
+                    } else {
+                        Value::Array(vec![Value::str(val)])
                     }
                 }
             }
@@ -3827,6 +3866,43 @@ fn register_builtins(vm: &mut fusevm::VM) {
             _ => false,
         };
         fusevm::Value::Bool(same)
+    });
+
+    // `[[ -c path ]]` — character device.
+    vm.register_builtin(BUILTIN_IS_CHARDEV, |vm, _argc| {
+        use std::os::unix::fs::FileTypeExt;
+        let path = vm.pop().to_str();
+        let result = std::fs::metadata(&path)
+            .map(|m| m.file_type().is_char_device())
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+    // `[[ -b path ]]` — block device.
+    vm.register_builtin(BUILTIN_IS_BLOCKDEV, |vm, _argc| {
+        use std::os::unix::fs::FileTypeExt;
+        let path = vm.pop().to_str();
+        let result = std::fs::metadata(&path)
+            .map(|m| m.file_type().is_block_device())
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+    // `[[ -p path ]]` — FIFO (named pipe).
+    vm.register_builtin(BUILTIN_IS_FIFO, |vm, _argc| {
+        use std::os::unix::fs::FileTypeExt;
+        let path = vm.pop().to_str();
+        let result = std::fs::metadata(&path)
+            .map(|m| m.file_type().is_fifo())
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+    // `[[ -S path ]]` — socket.
+    vm.register_builtin(BUILTIN_IS_SOCKET, |vm, _argc| {
+        use std::os::unix::fs::FileTypeExt;
+        let path = vm.pop().to_str();
+        let result = std::fs::symlink_metadata(&path)
+            .map(|m| m.file_type().is_socket())
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
     });
 
     // `[[ -k path ]]` / `-u` / `-g` — sticky / setuid / setgid bit.
@@ -4542,6 +4618,15 @@ pub const BUILTIN_OWNED_BY_GROUP: u16 = 330;
 /// If name is an assoc array → error (zsh requires `(k v)` form).
 /// Else → scalar concat (existing SET_VAR behavior).
 pub const BUILTIN_APPEND_SCALAR_OR_PUSH: u16 = 331;
+
+/// `[[ -c path ]]` — character device.
+pub const BUILTIN_IS_CHARDEV: u16 = 332;
+/// `[[ -b path ]]` — block device.
+pub const BUILTIN_IS_BLOCKDEV: u16 = 333;
+/// `[[ -p path ]]` — FIFO / named pipe.
+pub const BUILTIN_IS_FIFO: u16 = 334;
+/// `[[ -S path ]]` — socket.
+pub const BUILTIN_IS_SOCKET: u16 = 335;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
 /// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk
@@ -11242,7 +11327,7 @@ impl ShellExecutor {
             "#" | "#@" | "#*" => self.positional_params.len().to_string(),
             // zsh alias: $ARGC also equals $#.
             "ARGC" => self.positional_params.len().to_string(),
-            "?" => self.last_status.to_string(),
+            "?" | "status" => self.last_status.to_string(),
             "EUID" => unsafe { libc::geteuid() }.to_string(),
             "UID" => unsafe { libc::getuid() }.to_string(),
             "EGID" => unsafe { libc::getegid() }.to_string(),
@@ -12631,7 +12716,31 @@ impl ShellExecutor {
     }
 
     fn builtin_unset(&mut self, args: &[String]) -> i32 {
+        // `unset -f NAME...` — remove functions (mirror of `unfunction`).
+        // Walk the arg list once: if we see -f, mark function-mode for
+        // the remaining names. zsh allows `-v` to explicitly target
+        // variables (the default), and `-m` for pattern matching.
+        let mut function_mode = false;
+        let mut names: Vec<String> = Vec::new();
         for arg in args {
+            match arg.as_str() {
+                "-f" => function_mode = true,
+                "-v" => function_mode = false,
+                "-m" => {} // pattern-match mode (TODO)
+                _ if arg.starts_with('-') => {} // unknown flag, ignore
+                _ => names.push(arg.clone()),
+            }
+        }
+        if function_mode {
+            for name in &names {
+                self.functions_compiled.remove(name);
+                self.function_source.remove(name);
+                self.autoload_pending.remove(name);
+            }
+            return 0;
+        }
+        for arg in &names {
+            let arg = arg;
             // `unset 'arr[i]'` / `unset 'm[k]'` — element delete. Detect
             // the subscript form and dispatch instead of nuking the
             // whole variable. zsh treats indexed elements as delete-by-
