@@ -423,3 +423,25 @@ fn test_subscript_flag_I_no_match() {
     let (_, output, _) = run_zshrs("arr=(a b c); print ${arr[(I)zzz]}");
     assert_eq!(output.trim(), "0", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `typeset -A` two-statement assoc init: declare then array-literal-assign
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_typeset_a_two_statement_init() {
+    let (_, output, _) = run_zshrs(
+        "typeset -A m; m=(a 1 b 2 c 3); print \"${m[a]}-${m[b]}-${m[c]}\"",
+    );
+    assert_eq!(output.trim(), "1-2-3", "got: {output:?}");
+}
+
+#[test]
+fn test_typeset_a_then_indexed_assoc_remains_assoc() {
+    // After `typeset -A m; m=(...)`, `m` should still respond to assoc
+    // syntax. Test by appending another key/val pair.
+    let (_, output, _) = run_zshrs(
+        "typeset -A m; m=(a 1 b 2); m[c]=3; print \"${m[a]}|${m[b]}|${m[c]}\"",
+    );
+    assert_eq!(output.trim(), "1|2|3", "got: {output:?}");
+}
