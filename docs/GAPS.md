@@ -133,10 +133,13 @@ Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array
 
 - `(@s:sep:)` previously failed inside `"…"` because `@` runs first (wrapping the scalar into a 1-elem array), then the `s` arm in `BUILTIN_PARAM_FLAG` was a no-op on `St::A` — leaving `["a,b,c"]` which DQ joined back into `"a,b,c"`. Fixed by making `s` and `f` flat-map split each element of an array (not just scalars). Also handles the genuine "array of CSV strings" case `arr=("a,b" "c,d"); ${(@s:,:)arr}` → 4-element flat result, matching zsh.
 
+### `${(kv)a[@]}` — flag prefix + `[@]` subscript composition
+
+- `parse_zsh_flag` rejected names with `[`, so `${(kv)m[@]}` fell through to a bridge path that returned just values (the (k) flag never applied). Fix is one line in the matcher: strip a trailing `[@]` or `[*]` suffix from the name before validating; the result is the same name we'd use for the flag-only form, and `BUILTIN_PARAM_FLAG` already returns `Value::Array` for array-producing flags. Also fixes `${(k)a[@]}`, `${(v)a[@]}`, `${(o)a[@]}`, `${(O)a[@]}`, etc.
+
 ## Still open
 
 - **History expansion** (`!!`, `!$`, `^old^new^`) — `expand_history` is wired into `execute_script` but gated on `atty::is(Stream::Stdin)`. Works in interactive mode; correctly no-op in `-c` mode (where the original audit claimed broken — false positive).
-- **`${(kv)a[@]}` with `[@]` subscript** — flag prefix + `[@]` subscript composition: `[@]` goes through `BUILTIN_ARRAY_INDEX` which doesn't apply (kv) flag. Without subscript (`${(kv)a}`) works.
 - **`function () { ... }` anonymous form with `function` keyword** — bare `() { ... }` form already works; the `function` keyword variant compiles to a no-op (parser drops the body when no name follows the keyword). Fix needs parser pass that recognizes the empty-name shape.
 - **`=(...)` process substitution** — temp-file process sub still missing (only `<(...)` / `>(...)` named-pipe form is implemented). `cat =(echo hi)` errors with "No such file or directory".
 - **Stub modules** — `zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp` builtins not registered (zmodload no-ops). `zsh/mapfile` assoc-array form not implemented (the bash-compat `readarray` builtin works for the common case).
