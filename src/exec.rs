@@ -2802,6 +2802,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Status(0)
     });
 
+    vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let normalized = name.to_lowercase().replace('_', "");
+        let is_set = with_executor(|exec| {
+            exec.options.get(&normalized).copied().unwrap_or(false)
+        });
+        fusevm::Value::Bool(is_set)
+    });
+
     // BUILTIN_CONCAT_SPLICE — word-segment concat with first/last
     // sticking (default zsh splice semantics for `${arr[@]}`, `$@`).
     vm.register_builtin(BUILTIN_CONCAT_SPLICE, |vm, _argc| {
@@ -3557,6 +3566,11 @@ pub const BUILTIN_CONCAT_DISTRIBUTE: u16 = 318;
 /// Emitted between the try block and the always block of `{ … } always
 /// { … }` so the finally arm can read $TRY_BLOCK_ERROR.
 pub const BUILTIN_SET_TRY_BLOCK_ERROR: u16 = 320;
+
+/// `[[ -o option ]]` — shell-option-set test. Stack: [option_name].
+/// Normalizes the name (strip underscores, lowercase) and reads
+/// `exec.options`. Pushes Bool.
+pub const BUILTIN_OPTION_SET: u16 = 321;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)
@@ -12130,7 +12144,21 @@ impl ShellExecutor {
                         's' => silent = true,
                         'z' => to_history = true,
                         'A' => use_array = true,
-                        'c' | 'l' | 'n' | 'e' | 'E' => {} // TODO
+                        'c' | 'l' | 'e' | 'E' => {} // TODO
+                        'n' => {
+                            // bash-compat: -n N reads exactly N characters
+                            // (zsh uses -k for the same; we accept both).
+                            let rest: String = chars.collect();
+                            if !rest.is_empty() {
+                                nchars = Some(rest.parse().unwrap_or(1));
+                            } else if i + 1 < args.len()
+                                && args[i + 1].chars().all(|c| c.is_ascii_digit())
+                            {
+                                i += 1;
+                                nchars = Some(args[i].parse().unwrap_or(1));
+                            }
+                            break;
+                        }
                         'q' => quiet = true,
                         't' => {
                             let rest: String = chars.collect();
@@ -15807,6 +15835,29 @@ impl ShellExecutor {
             return 0;
         }
 
+        // `setopt -p` / `setopt -L` — print currently-set options in
+        // a form that can be sourced to restore the state. Bash uses -p,
+        // zsh accepts both. Output: `setopt OPTION` per line for each
+        // currently-set non-default option.
+        if args.iter().any(|a| a == "-p" || a == "-L") {
+            let defaults_on = Self::default_on_options();
+            let mut diff_opts: Vec<String> = Vec::new();
+            for &opt in Self::all_zsh_options() {
+                let enabled = self.options.get(opt).copied().unwrap_or(false);
+                let is_default_on = defaults_on.contains(&opt);
+                if is_default_on && !enabled {
+                    diff_opts.push(format!("setopt no{}", opt));
+                } else if !is_default_on && enabled {
+                    diff_opts.push(format!("setopt {}", opt));
+                }
+            }
+            diff_opts.sort();
+            for line in diff_opts {
+                println!("{}", line);
+            }
+            return 0;
+        }
+
         let mut use_pattern = false;
         let mut iter = args.iter().peekable();
 
@@ -17747,14 +17798,21 @@ impl ShellExecutor {
     }
 
     /// printf builtin - format and print data (zsh/bash compatible)
-    fn builtin_printf(&self, args: &[String]) -> i32 {
+    fn builtin_printf(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
             eprintln!("printf: usage: printf format [arguments]");
             return 1;
         }
 
-        let format = &args[0];
-        let format_args = &args[1..];
+        // bash-compat `printf -v VAR fmt args...`: assign formatted output
+        // to VAR instead of printing. Strip the flag + var, format the
+        // rest, insert into self.variables.
+        let (assign_var, format, format_args): (Option<String>, &String, &[String]) =
+            if args.first().map(String::as_str) == Some("-v") && args.len() >= 3 {
+                (Some(args[1].clone()), &args[2], &args[3..])
+            } else {
+                (None, &args[0], &args[1..])
+            };
         let mut arg_idx = 0;
         let mut output = String::new();
         // POSIX printf: re-apply the format string while args remain. The
@@ -18209,7 +18267,11 @@ impl ShellExecutor {
             chars = format.chars().peekable();
         }
 
-        print!("{}", output);
+        if let Some(var) = assign_var {
+            self.variables.insert(var, output);
+        } else {
+            print!("{}", output);
+        }
         0
     }
 

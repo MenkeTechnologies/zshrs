@@ -1711,6 +1711,14 @@ impl ZshCompiler {
                     .emit(Op::CallBuiltin(crate::exec::BUILTIN_VAR_EXISTS, 1), 0);
                 return;
             }
+            "-o" => {
+                // `[[ -o option ]]` — shell-option-set check. Routes
+                // through BUILTIN_OPTION_SET which normalizes the name
+                // (strip _, lowercase) and reads exec.options.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_OPTION_SET, 1), 0);
+                return;
+            }
             _ => {
                 tracing::debug!(op, "compile_zsh: unknown unary test op");
                 self.builder.emit(Op::Pop, 0);
