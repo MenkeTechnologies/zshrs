@@ -1915,3 +1915,39 @@ fn test_scalar_append_still_concats() {
     let (_, output, _) = run_zshrs("s=hi; s+=world; echo $s");
     assert_eq!(output.trim(), "hiworld", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `${var-default}` no-colon (unset-only) default family
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_no_colon_default_unset() {
+    let (_, output, _) = run_zshrs("unset xx; echo \"${xx-default}\"");
+    assert_eq!(output.trim(), "default", "got: {output:?}");
+}
+
+#[test]
+fn test_no_colon_default_empty_keeps_empty() {
+    // `${var-X}` does NOT fire on empty-but-set; only unset.
+    let (_, output, _) = run_zshrs("xx=; echo \"[${xx-default}]\"");
+    assert_eq!(output.trim(), "[]", "got: {output:?}");
+}
+
+#[test]
+fn test_no_colon_assign() {
+    let (_, output, _) =
+        run_zshrs("unset xx; echo \"${xx=set-and-use}\"; echo \"$xx\"");
+    assert_eq!(output.trim(), "set-and-use\nset-and-use", "got: {output:?}");
+}
+
+#[test]
+fn test_no_colon_alt_unset_empty() {
+    let (_, output, _) = run_zshrs("unset xx; echo \"[${xx+alt}]\"");
+    assert_eq!(output.trim(), "[]", "got: {output:?}");
+}
+
+#[test]
+fn test_no_colon_alt_set_uses_alt() {
+    let (_, output, _) = run_zshrs("xx=val; echo \"${xx+alt}\"");
+    assert_eq!(output.trim(), "alt", "got: {output:?}");
+}

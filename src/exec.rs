@@ -3913,20 +3913,35 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let rhs = vm.pop().to_str();
         let op = vm.pop().to_int() as u8;
         let name = vm.pop().to_str();
+        // Op codes:
+        //   0 :-  1 :=  2 :?  3 :+   (treat-empty-as-unset variants)
+        //   4 -   5 =   6 ?   7 +    (no-colon: only fire if truly unset)
         let val = with_executor(|exec| exec.get_variable(&name));
+        let is_set = with_executor(|exec| {
+            exec.variables.contains_key(&name)
+                || exec.arrays.contains_key(&name)
+                || exec.assoc_arrays.contains_key(&name)
+                || std::env::var(&name).is_ok()
+        });
         let is_empty = val.is_empty();
+        // For colon variants, "missing" = unset OR empty.
+        // For no-colon variants, "missing" = unset only.
+        let missing = match op {
+            0 | 1 | 2 | 3 => is_empty,
+            _ => !is_set,
+        };
         match op {
-            0 => {
-                // `:-` use default if empty
-                if is_empty {
+            0 | 4 => {
+                // `:-` / `-` use default if missing
+                if missing {
                     fusevm::Value::str(rhs)
                 } else {
                     fusevm::Value::str(val)
                 }
             }
-            1 => {
-                // `:=` assign default if empty, then use it
-                if is_empty {
+            1 | 5 => {
+                // `:=` / `=` assign default if missing, then use it
+                if missing {
                     with_executor(|exec| {
                         exec.variables.insert(name, rhs.clone());
                     });
@@ -3935,18 +3950,19 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     fusevm::Value::str(val)
                 }
             }
-            2 => {
-                // `:?` error if empty (matches zsh — print msg to stderr)
-                if is_empty {
+            2 | 6 => {
+                // `:?` / `?` error if missing
+                if missing {
                     eprintln!("zshrs: {}: {}", name, rhs);
                     fusevm::Value::str("")
                 } else {
                     fusevm::Value::str(val)
                 }
             }
-            3 => {
-                // `:+` use alt if non-empty
-                if is_empty {
+            3 | 7 => {
+                // `:+` / `+` use alt if NOT missing (set-and-non-empty
+                // for colon variant; just set for no-colon variant).
+                if missing {
                     fusevm::Value::str("")
                 } else {
                     fusevm::Value::str(rhs)

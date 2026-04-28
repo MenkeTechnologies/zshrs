@@ -2447,7 +2447,9 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         return None;
     }
 
-    // `${var:-…}` / `${var:=…}` / `${var:?…}` / `${var:+…}`
+    // `${var:-…}` / `${var:=…}` / `${var:?…}` / `${var:+…}` and the
+    // no-colon variants `${var-…}` / `${var=…}` / `${var?…}` / `${var+…}`
+    // which fire only when `var` is truly unset (not just empty).
     if rest.len() >= 2 {
         let op_byte = match &rest[..2] {
             ":-" => Some(0u8),
@@ -2458,6 +2460,22 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         };
         if let Some(op) = op_byte {
             let rhs = rest[2..].to_string();
+            return Some(ParamModifier {
+                name,
+                kind: ParamModifierKind::DefaultFamily { op, rhs },
+            });
+        }
+    }
+    if !rest.is_empty() {
+        let op_byte = match &rest[..1] {
+            "-" => Some(4u8),
+            "=" => Some(5u8),
+            "?" => Some(6u8),
+            "+" => Some(7u8),
+            _ => None,
+        };
+        if let Some(op) = op_byte {
+            let rhs = rest[1..].to_string();
             return Some(ParamModifier {
                 name,
                 kind: ParamModifierKind::DefaultFamily { op, rhs },

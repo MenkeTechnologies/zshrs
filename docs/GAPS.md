@@ -335,7 +335,11 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was treating `name+=val` as scalar concat unconditionally, clobbering the array. New `BUILTIN_APPEND_SCALAR_OR_PUSH` (id 331) runtime-dispatches: if `name` is an indexed array, push `val` as a new element; if assoc, error (zsh requires `(k v)` form for assoc append); else scalar concat (existing behavior). Three tests cover array push, multi-element push, and scalar concat.
 
-## Still open (sixth-pass probe — remaining)
+### `${var-default}` no-colon default family
+
+- Only the colon variants (`${var:-X}`, `${var:=X}`, `${var:?X}`, `${var:+X}`) were recognized — those treat empty-string-set the same as unset. The POSIX no-colon forms (`${var-X}`, `${var=X}`, `${var?X}`, `${var+X}`) fire only when truly unset (not just empty). Added op codes 4-7 in `BUILTIN_PARAM_DEFAULT_FAMILY` plus matching parser arms in `parse_param_modifier`. Five tests cover default/assign/error/alt for both unset and empty-set cases.
+
+## Still open
 
 (none — all probed gaps closed)
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
