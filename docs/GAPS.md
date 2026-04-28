@@ -323,6 +323,10 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `builtin_integer` was using `value.parse::<i64>().unwrap_or(0)` so anything beyond a literal int became 0. Replaced with `self.eval_arith_expr(value)` so `integer i=5+3` stores 8, `i=2*3+1` stores 7, etc. — matches zsh's "RHS goes through arithmetic" rule for `integer`-typed declarations.
 
+### Positional-param subscript: `${@[N]}`, `${@[N,M]}`, `${*[N,M]}`, `$@[N]`, `${argv[N]}`
+
+- Three fixes: (1) `BUILTIN_ARRAY_INDEX` now recognizes `@`/`*`/`argv` as special names that index `positional_params` directly (1-based, with negative-from-end and slice forms). (2) `braced_subscript_ref` accepts `@`/`*` as base (was rejecting because they're not alphabetic). (3) `bare_subscript_ref` accepts the same special names so `$@[N]` (no braces) routes through `BUILTIN_ARRAY_INDEX`. Without these, all four shapes fell through to the scalar-slice path which sliced the IFS-joined string.
+
 ## Still open (sixth-pass probe — remaining)
 
 - **`for f in $arr`** — bare `$arr` in a for list joins instead of splicing; `for f in $arr; do ...` iterates ONCE with `f` set to the joined string. Workaround: `for f in "${arr[@]}"`. Parser/compiler scope.
