@@ -1450,17 +1450,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
             A(Vec<String>),
         }
 
-        let mut state = with_executor(|exec| {
-            if let Some(map) = exec.assoc_arrays.get(&name) {
-                // For assoc, default to value list (no flag) — `(k)`/`(v)`
-                // override.
-                St::A(map.values().cloned().collect())
-            } else if let Some(arr) = exec.arrays.get(&name) {
-                St::A(arr.clone())
-            } else {
-                St::S(exec.get_variable(&name))
-            }
-        });
+        // Literal-string operand sentinel: `${(flags)"text"}` compiles to a
+        // name prefixed with `\u{01}` followed by the literal value. Skip
+        // the lookup and seed state with the literal scalar.
+        let mut state = if let Some(literal) = name.strip_prefix('\u{01}') {
+            St::S(literal.to_string())
+        } else {
+            with_executor(|exec| {
+                if let Some(map) = exec.assoc_arrays.get(&name) {
+                    // For assoc, default to value list (no flag) — `(k)`/`(v)`
+                    // override.
+                    St::A(map.values().cloned().collect())
+                } else if let Some(arr) = exec.arrays.get(&name) {
+                    St::A(arr.clone())
+                } else {
+                    St::S(exec.get_variable(&name))
+                }
+            })
+        };
 
         let chars: Vec<char> = flags.chars().collect();
         let mut i = 0;
