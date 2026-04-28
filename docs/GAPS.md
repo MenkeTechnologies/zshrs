@@ -193,6 +193,10 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `builtin_where` was passing `-a -v` (verbose, all matches) which produced `ls is /bin/ls` instead of zsh's bare `/bin/ls`. Now passes `-c -a` and `builtin_whence` honors `csh_style` (`-c`) for aliases (`name: aliased to BODY`), functions (full `name () { … }` body via `function_source`), and missing-name stderr message (`name not found`). Matches zsh `where` exactly for external/alias/function/not-found.
 
+### `print -P` byte-exact ANSI output
+
+- `print -P "%F{red}hi%f"` previously emitted the readline cursor-width markers (`\x01` / `\x02`) plus a leading `\e[0m` reset, producing different bytes from zsh's bare `\e[31mhi\e[39m`. Three fixes: (1) new `expand_prompt_string_for_print` strips `\x01`/`\x02` markers and the spurious leading-reset preamble; `print -P` routes through it. (2) `apply_attrs` no longer emits an unconditional `\e[0m` preamble — only the new SGR codes (matches zsh's incremental approach). (3) `%f` now emits `\e[39m` (default-fg) instead of full `\e[0m`; `%u` emits `\e[24m` (underline off); `%s` emits `\e[27m` (standout off). `%B`/`%b` and `%F{c}` paths verified byte-exact against zsh.
+
 ## Still open (second-pass — deferred)
 
 - **`noglob` precommand modifier** — `noglob print "*"` errors "command not found: print" instead of disabling glob and running `print *` literally. Needs parser-level recognition as a reserved word, not a command name.
@@ -200,7 +204,6 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 - **Glob qualifier `(mh-N)` / `(mm)` / `(ms)`** — modified-recent age qualifiers not implemented (only `(L)` size and `(D)` dotglob exist today).
 - **`(t)` typeset flag returns wrong type for `integer i=5`** — needs persistent attribute tracking on declared variables (full plumbing through `typeset -i` / `integer` / `float`).
 - **`let "a=1.0+2.0"` returns integer instead of float** — `let` doesn't preserve float result formatting.
-- **`print -P %F{red}` extra `\e[0m` reset prefix** — cosmetic diff, both render identically in terminals.
 - **`print -P %D{fmt}`** — strftime format support.
 - **`print -P %h`** history-line-number format.
 - **`fc -l` empty-history behavior** — zsh prints "no such event"; zshrs leaks a stray history entry.

@@ -11363,6 +11363,62 @@ impl ShellExecutor {
         expand_prompt(s, &ctx)
     }
 
+    /// Same as `expand_prompt_string` but strips the readline cursor-
+    /// width markers (`\x01` / `\x02`) and any spurious leading-reset
+    /// `\e[0m` that the prompt expander emits before its first
+    /// real-attr block. Used by `print -P` (zsh's `print -P` produces
+    /// raw ANSI bytes for terminal display, not PS1-style markers).
+    fn expand_prompt_string_for_print(&self, s: &str) -> String {
+        let raw = self.expand_prompt_string(s);
+        let mut out = String::with_capacity(raw.len());
+        let mut chars = raw.chars().peekable();
+        let mut emitted_anything = false;
+        while let Some(c) = chars.next() {
+            if c == '\x01' || c == '\x02' {
+                continue;
+            }
+            // Strip a leading `\e[0m` that immediately precedes another
+            // `\e[?` — it's the apply_attrs preamble, not a user-asked
+            // reset. Conservative: only strip when nothing real has
+            // been emitted yet.
+            if !emitted_anything && c == '\x1b' {
+                if chars.peek() == Some(&'[') {
+                    let mut lookahead = String::new();
+                    let mut iter = chars.clone();
+                    while let Some(ch) = iter.next() {
+                        lookahead.push(ch);
+                        if ch.is_ascii_alphabetic() {
+                            break;
+                        }
+                        if lookahead.len() > 8 {
+                            break;
+                        }
+                    }
+                    if lookahead == "[0m" {
+                        // Skip the `[0m` (3 chars: `[`, `0`, `m`).
+                        let mut peek2 = chars.clone();
+                        peek2.next(); // [
+                        peek2.next(); // 0
+                        peek2.next(); // m
+                        if peek2.peek() == Some(&'\x1b') {
+                            // Confirm followed by another escape — the
+                            // suppression is safe.
+                            chars.next(); // [
+                            chars.next(); // 0
+                            chars.next(); // m
+                            continue;
+                        }
+                    }
+                }
+            }
+            out.push(c);
+            if !c.is_whitespace() && c != '\x1b' {
+                emitted_anything = true;
+            }
+        }
+        out
+    }
+
     /// Build a PromptContext from current executor state
     fn build_prompt_context(&self) -> PromptContext {
         let pwd = env::current_dir()
@@ -19988,7 +20044,10 @@ impl ShellExecutor {
             .map(|s| {
                 let mut result = s.clone();
                 if prompt_expand {
-                    result = self.expand_prompt_string(&result);
+                    // print -P emits raw terminal bytes; suppress the
+                    // SOH/STX readline-marker pair and the apply_attrs
+                    // preamble reset.
+                    result = self.expand_prompt_string_for_print(&result);
                 }
                 if interpret_escapes && !raw_mode {
                     result = self.expand_printf_escapes(&result);
