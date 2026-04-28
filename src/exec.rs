@@ -2652,23 +2652,28 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 't' => {
-                    // Type query. Returns one of: scalar, array, association,
-                    // integer (concatenated with attribute markers in zsh,
-                    // but we keep it simple).
+                    // Type query. zsh's `(t)` flag returns the base
+                    // type plus any attribute markers separated by `-`.
+                    // Examples: `integer`, `float`, `scalar-readonly`,
+                    // `scalar-export`, `scalar-left` (typeset -L N),
+                    // `scalar-right_blanks`, `array`, `association`.
                     let kind = with_executor(|exec| {
+                        if let Some(attr) = exec.var_attrs.get(&name) {
+                            return attr.format_zsh();
+                        }
                         if exec.assoc_arrays.contains_key(&name) {
-                            "association"
+                            "association".to_string()
                         } else if exec.arrays.contains_key(&name) {
-                            "array"
+                            "array".to_string()
                         } else if exec.variables.contains_key(&name)
                             || std::env::var(&name).is_ok()
                         {
-                            "scalar"
+                            "scalar".to_string()
                         } else {
-                            ""
+                            String::new()
                         }
                     });
-                    state = St::S(kind.to_string());
+                    state = St::S(kind);
                 }
                 '%' => {
                     // Prompt expansion: process %F %B %f %{ %} etc. via the
@@ -5429,6 +5434,70 @@ pub struct SubshellSnapshot {
     pub cwd: Option<std::path::PathBuf>,
 }
 
+/// Variable attribute record for `(t)` flag introspection. Mirrors
+/// the type+flag bitmask zsh tracks per Param. Each instance picks
+/// exactly one base kind plus zero-or-more attribute markers.
+#[derive(Debug, Clone, Default)]
+pub struct VarAttr {
+    pub kind: VarKind,
+    pub readonly: bool,
+    pub export: bool,
+    pub left_pad: Option<usize>,
+    pub right_pad: Option<usize>,
+    pub zero_pad: Option<usize>,
+    pub uppercase: bool,
+    pub lowercase: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum VarKind {
+    #[default]
+    Scalar,
+    Integer,
+    Float,
+    Array,
+    Association,
+}
+
+impl VarAttr {
+    /// Format the attribute as zsh's `(t)` output: a base kind
+    /// (`scalar`, `integer`, `float`, `array`, `association`) followed
+    /// by hyphen-joined modifiers (`-readonly`, `-export`, `-left`,
+    /// `-right_blanks`, `-zero`, `-upper`, `-lower`).
+    pub fn format_zsh(&self) -> String {
+        let base = match self.kind {
+            VarKind::Scalar => "scalar",
+            VarKind::Integer => "integer",
+            VarKind::Float => "float",
+            VarKind::Array => "array",
+            VarKind::Association => "association",
+        };
+        let mut out = String::from(base);
+        if self.left_pad.is_some() {
+            out.push_str("-left");
+        }
+        if self.right_pad.is_some() {
+            out.push_str("-right_blanks");
+        }
+        if self.zero_pad.is_some() {
+            out.push_str("-zero");
+        }
+        if self.lowercase {
+            out.push_str("-lower");
+        }
+        if self.uppercase {
+            out.push_str("-upper");
+        }
+        if self.readonly {
+            out.push_str("-readonly");
+        }
+        if self.export {
+            out.push_str("-export");
+        }
+        out
+    }
+}
+
 pub struct ShellExecutor {
     pub aliases: HashMap<String, String>,
     pub global_aliases: HashMap<String, String>, // alias -g: expand anywhere
@@ -5473,6 +5542,11 @@ pub struct ShellExecutor {
     pub comp_iprefix: String,         // IPREFIX parameter
     pub comp_isuffix: String,         // ISUFFIX parameter
     pub readonly_vars: std::collections::HashSet<String>, // Read-only variables
+    /// Per-variable attribute table. Tracks the type/flag declared via
+    /// `typeset -i / -F / -E / -L / -R / -Z / -r / -x / -A / -a` so the
+    /// `(t)` parameter flag can return the canonical zsh type string
+    /// (`integer`, `float`, `scalar-left`, `scalar-readonly-export`, …).
+    pub var_attrs: std::collections::HashMap<String, VarAttr>,
     /// Stack for `local` variable save/restore (name, old_value).
     pub local_save_stack: Vec<(String, Option<String>)>,
     /// Parallel stack for `local arr=(...)` array save/restore.
@@ -5644,6 +5718,7 @@ impl ShellExecutor {
             comp_iprefix: String::new(),
             comp_isuffix: String::new(),
             readonly_vars: std::collections::HashSet::new(),
+            var_attrs: std::collections::HashMap::new(),
             local_save_stack: Vec::new(),
             local_array_save_stack: Vec::new(),
             local_scope_depth: 0,
@@ -11792,14 +11867,22 @@ impl ShellExecutor {
 
     fn builtin_export(&mut self, args: &[String]) -> i32 {
         for arg in args {
-            if let Some((key, value)) = arg.split_once('=') {
+            let key_owned = if let Some((key, value)) = arg.split_once('=') {
                 self.variables.insert(key.to_string(), value.to_string());
                 env::set_var(key, value);
+                key.to_string()
             } else {
                 // export VAR (no value) — mark existing var as exported
                 let val = self.get_variable(arg);
                 env::set_var(arg, &val);
-            }
+                arg.clone()
+            };
+            // Mark the export attribute for `(t)` flag.
+            let entry = self
+                .var_attrs
+                .entry(key_owned)
+                .or_insert_with(VarAttr::default);
+            entry.export = true;
         }
         0
     }
@@ -13140,6 +13223,55 @@ impl ShellExecutor {
                     arg.clone()
                 };
                 self.readonly_vars.insert(name);
+            }
+
+            // Record per-variable attributes for `(t)` flag introspection.
+            // Skip in plus_mode (attribute removal) — clear instead.
+            let attr_name = if let Some(eq_pos) = arg.find('=') {
+                arg[..eq_pos].to_string()
+            } else {
+                arg.clone()
+            };
+            if !attr_name.is_empty() {
+                if plus_mode {
+                    // `+i name` strips integer; for now drop entire entry.
+                    self.var_attrs.remove(&attr_name);
+                } else if is_integer
+                    || is_float
+                    || is_float_exp
+                    || is_left_pad
+                    || is_right_pad
+                    || is_zero_pad
+                    || is_lower
+                    || is_upper
+                    || is_readonly
+                    || is_export
+                    || is_array
+                    || is_assoc
+                {
+                    let kind = if is_integer {
+                        VarKind::Integer
+                    } else if is_float || is_float_exp {
+                        VarKind::Float
+                    } else if is_assoc {
+                        VarKind::Association
+                    } else if is_array {
+                        VarKind::Array
+                    } else {
+                        VarKind::Scalar
+                    };
+                    let attr = VarAttr {
+                        kind,
+                        readonly: is_readonly,
+                        export: is_export,
+                        left_pad: if is_left_pad { width } else { None },
+                        right_pad: if is_right_pad { width } else { None },
+                        zero_pad: if is_zero_pad { width } else { None },
+                        lowercase: is_lower,
+                        uppercase: is_upper,
+                    };
+                    self.var_attrs.insert(attr_name, attr);
+                }
             }
         }
         0
@@ -19840,9 +19972,17 @@ impl ShellExecutor {
                 self.variables
                     .insert(name.to_string(), float_val.to_string());
                 self.options.insert(format!("_float_{}", name), true);
+                self.var_attrs.insert(
+                    name.to_string(),
+                    VarAttr { kind: VarKind::Float, ..Default::default() },
+                );
             } else {
                 self.variables.insert(arg.clone(), "0.0".to_string());
                 self.options.insert(format!("_float_{}", arg), true);
+                self.var_attrs.insert(
+                    arg.clone(),
+                    VarAttr { kind: VarKind::Float, ..Default::default() },
+                );
             }
         }
         0
@@ -19860,9 +20000,17 @@ impl ShellExecutor {
                 let int_val: i64 = value.parse().unwrap_or(0);
                 self.variables.insert(name.to_string(), int_val.to_string());
                 self.options.insert(format!("_integer_{}", name), true);
+                self.var_attrs.insert(
+                    name.to_string(),
+                    VarAttr { kind: VarKind::Integer, ..Default::default() },
+                );
             } else {
                 self.variables.insert(arg.clone(), "0".to_string());
                 self.options.insert(format!("_integer_{}", arg), true);
+                self.var_attrs.insert(
+                    arg.clone(),
+                    VarAttr { kind: VarKind::Integer, ..Default::default() },
+                );
             }
         }
         0
