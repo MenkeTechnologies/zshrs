@@ -353,6 +353,51 @@ fn approximate_match(s: &str, pat: &str, n: usize) -> bool {
     prev[k] <= n
 }
 
+/// Parse a `<lo-hi>` numeric-range glob suffix. Called after the `<`
+/// has already been consumed. Returns `(lo, hi, chars_consumed)` on a
+/// successful parse, `None` otherwise. Both bounds are optional: `<->`
+/// means any integer, `<5->` means ≥5, `<-10>` means ≤10, `<5-10>`
+/// means inclusive 5..=10. Caller advances `chars` past the closing
+/// `>` when this returns `Some`.
+fn parse_numeric_range<I: Iterator<Item = char> + Clone>(
+    chars: &mut std::iter::Peekable<I>,
+) -> Option<(Option<i64>, Option<i64>, usize)> {
+    // Speculative scan into a buffer; only commit (advance the real
+    // iterator) on success.
+    let mut buf = String::new();
+    let mut peek_iter = chars.clone();
+    while let Some(c) = peek_iter.next() {
+        buf.push(c);
+        if c == '>' {
+            break;
+        }
+        if buf.len() > 64 {
+            return None;
+        }
+    }
+    if !buf.ends_with('>') {
+        return None;
+    }
+    let inner = &buf[..buf.len() - 1];
+    let (lo_str, hi_str) = inner.split_once('-')?;
+    let lo: Option<i64> = if lo_str.is_empty() {
+        None
+    } else {
+        Some(lo_str.parse().ok()?)
+    };
+    let hi: Option<i64> = if hi_str.is_empty() {
+        None
+    } else {
+        Some(hi_str.parse().ok()?)
+    };
+    // Commit: advance the real iterator past what we consumed.
+    let n = buf.chars().count();
+    for _ in 0..n {
+        chars.next();
+    }
+    Some((lo, hi, n))
+}
+
 /// Match `s` against zsh-extended glob `pat`. When the `extendedglob`
 /// shell option is set, a leading `^` inverts the match of the rest
 /// of the pattern (zsh negation operator). Falls through to plain
@@ -6476,13 +6521,28 @@ impl ShellExecutor {
         }
 
         // Build the regex. For (#l) we need to inflate lowercase chars
-        // to character classes that match either case.
+        // to character classes that match either case. Also detect
+        // zsh's numeric-range glob `<a-b>` (or `<->` for any number,
+        // `<a->` / `<-b>` for one-sided ranges) — translate to a
+        // capture group and remember the bounds for a post-match check.
         let mut regex_pattern = String::from("^");
+        let mut numeric_ranges: Vec<(Option<i64>, Option<i64>)> = Vec::new();
         let mut chars = pattern.chars().peekable();
         while let Some(c) = chars.next() {
             match c {
                 '*' => regex_pattern.push_str(".*"),
                 '?' => regex_pattern.push('.'),
+                '<' => {
+                    // Try to parse `<lo-hi>`. If the form doesn't
+                    // match, fall back to literal `<`.
+                    if let Some((lo, hi, consumed)) = parse_numeric_range(&mut chars) {
+                        regex_pattern.push_str("(\\d+)");
+                        numeric_ranges.push((lo, hi));
+                        let _ = consumed;
+                    } else {
+                        regex_pattern.push('<');
+                    }
+                }
                 '[' => {
                     regex_pattern.push('[');
                     while let Some(cc) = chars.next() {
@@ -6518,6 +6578,38 @@ impl ShellExecutor {
         } else {
             regex_pattern
         };
+        if !numeric_ranges.is_empty() {
+            // Need captures + per-group numeric range checks.
+            let re = match regex::Regex::new(&final_pattern) {
+                Ok(re) => re,
+                Err(_) => return false,
+            };
+            let caps = match re.captures(s) {
+                Some(c) => c,
+                None => return false,
+            };
+            for (i, (lo, hi)) in numeric_ranges.iter().enumerate() {
+                let cap = match caps.get(i + 1) {
+                    Some(m) => m.as_str(),
+                    None => return false,
+                };
+                let n: i64 = match cap.parse() {
+                    Ok(n) => n,
+                    Err(_) => return false,
+                };
+                if let Some(l) = lo {
+                    if n < *l {
+                        return false;
+                    }
+                }
+                if let Some(h) = hi {
+                    if n > *h {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
         regex::Regex::new(&final_pattern)
             .map(|re| re.is_match(s))
             .unwrap_or(false)
