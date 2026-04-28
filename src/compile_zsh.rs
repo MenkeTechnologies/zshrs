@@ -628,6 +628,20 @@ impl ZshCompiler {
         };
 
         self.compile_word_str(&redir.name);
+        // `{varid}>file` named-fd allocation: instead of dup2'ing onto
+        // a fixed fd, BUILTIN_OPEN_NAMED_FD opens the file fresh, dup's
+        // to fd >= 10, and stores the fd number in $varid.
+        if let Some(ref vid) = redir.varid {
+            let vid_const = self.builder.add_constant(Value::str(vid.as_str()));
+            self.builder.emit(Op::LoadConst(vid_const), 0);
+            self.builder.emit(Op::LoadInt(op_byte as i64), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::exec::BUILTIN_OPEN_NAMED_FD, 3),
+                0,
+            );
+            self.builder.emit(Op::SetStatus, 0);
+            return;
+        }
         self.builder.emit(Op::Redirect(fd, op_byte), 0);
     }
 
