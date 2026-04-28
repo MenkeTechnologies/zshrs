@@ -429,9 +429,23 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
   - `(q+)`   single-quote if needed
   zshrs had `(q)`→single-quote, `(qq)`→double-quote, etc. (off-by-one). Re-mapped both q-flag handlers (the Phase-2 `BUILTIN_PARAM_FLAG` path at exec.rs:2516 and the parser-flag path at exec.rs:11904). Added `ZshParamFlag::DollarQuote` for the `qqqq` level. `(q+)` now correctly promotes to single-quote when the value needs quoting (was emitting backslash-escape before). Updated 7 affected tests in `tests/no_tree_walker_dispatch.rs` to match real zsh output. Tests: `test_zsh_param_q_flag_backslash_only`, `test_zsh_param_q_flag_gradient`.
 
-## Still open (ninth-pass — remaining)
+## Closed (tenth-pass — DQ subscripts + nounset)
+
+### `$NAME[subscript]` in double-quoted context
+
+- `"$m[a] $m[b]"` was emitting `[a] [b]` literal text after each `$m`. Two changes: (1) extended `find_expansion_end` (in `compile_zsh.rs`) so a trailing `[...]` after an identifier is pulled into the same expansion segment — handles both META-INBRACK (`\u{91}`) and bare `[`, since DQ-context lex paths leave the bracket unwrapped. (2) Added a subscript handler in `expand_string` (in `exec.rs`) for assoc lookups, array indexing (1-based, negative-from-end), and `@`/`*` splice. Composes with `$`-expansion inside the subscript (`$m[$k]`). Tests: `test_assoc_subscript_in_double_quotes`, `test_array_subscript_in_double_quotes`, `test_assoc_subscript_with_dynamic_key_in_dq`.
+
+### `set -u` / `setopt nounset` — error on unbound parameter
+
+- The option flag was set but never checked. Wired the check into `get_variable` for the catch-all (non-special) branch: when the resolved name isn't in `variables`/`arrays`/`assoc_arrays`/env AND nounset is on, print `zshrs:1: NAME: parameter not set` and `std::process::exit(1)` (mirrors zsh's `-c` behaviour). Subtlety: zsh stores the option as `unset` (default ON = silently empty), and `setopt nounset` sets the inverted name. Different code paths in zshrs persisted either `nounset=true` or `unset=false`, so the check honors either signal. Tests: `test_set_dash_u_exits_on_unbound_variable`, `test_setopt_nounset_exits_on_unbound`.
+
+## Still open (tenth-pass — remaining)
 
 (none — all probed gaps closed)
+- **`set -e` / errexit** — flag is recognised but never enforced; failure of any command should propagate to script exit. Implementation requires either per-statement post-checks or VM-level instrumentation (subtle: errexit is suppressed inside `if`/`while`/`&&`/`||` conditionals).
+- **NOMATCH default** — zsh defaults to "no matches found" error on globs that match nothing; zshrs passes the literal pattern through (bash-style). Need to honor `nomatch` option default-ON.
+- **`${x:?msg}` exits** — currently emits the message but doesn't exit the shell (zsh exits in `-c` mode).
+- **`pwd` after `cd`** — zsh preserves the user-typed path (logical pwd); zshrs canonicalises through realpath. Affects symlinked dirs only.
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.

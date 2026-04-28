@@ -2216,3 +2216,53 @@ fn test_zsh_param_q_flag_gradient() {
     );
     assert_eq!(output.trim(), "hi|'hi'|\"hi\"|$'hi'", "got: {output:?}");
 }
+
+#[test]
+fn test_assoc_subscript_in_double_quotes() {
+    // `"$m[a]"` (no braces, in DQ context) should expand to the assoc
+    // value, not append the literal `[a]` after `$m`.
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A m; m[a]=1; m[b]=2; echo "$m[a] $m[b]""#,
+    );
+    assert_eq!(output.trim(), "1 2", "got: {output:?}");
+}
+
+#[test]
+fn test_array_subscript_in_double_quotes() {
+    let (_, output, _) = run_zshrs(r#"a=(x y z); echo "$a[2] $a[-1]""#);
+    assert_eq!(output.trim(), "y z", "got: {output:?}");
+}
+
+#[test]
+fn test_assoc_subscript_with_dynamic_key_in_dq() {
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A m; m[a]=1; k=a; echo "$m[$k]""#,
+    );
+    assert_eq!(output.trim(), "1", "got: {output:?}");
+}
+
+#[test]
+fn test_set_dash_u_exits_on_unbound_variable() {
+    // `set -u` aka `setopt nounset` makes unbound-variable lookups
+    // fatal. The shell prints `…: parameter not set` and exits.
+    let (status, _, stderr) = run_zshrs(r#"set -u; echo "${undef}"; echo done"#);
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(
+        stderr.contains("undef: parameter not set"),
+        "stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_setopt_nounset_exits_on_unbound() {
+    // `setopt nounset` and `set -u` both turn the same option off
+    // (zsh stores the inverted-name `unset` internally).
+    let (status, _, stderr) = run_zshrs(
+        r#"setopt nounset; echo "${undef}"; echo done"#,
+    );
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(
+        stderr.contains("undef: parameter not set"),
+        "stderr: {stderr:?}"
+    );
+}

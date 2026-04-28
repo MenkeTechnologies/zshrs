@@ -2338,13 +2338,33 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             j
         }
-        // Identifier: $NAME
+        // Identifier: $NAME (optionally followed by [subscript])
         Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {
             let mut j = i + 1;
             while j < chars.len()
                 && (chars[j].is_ascii_alphanumeric() || chars[j] == '_')
             {
                 j += 1;
+            }
+            // Pull a trailing `[subscript]` into the same expansion so
+            // `$NAME[idx]` (especially in DQ context) is one piece, not
+            // `$NAME` + literal `[idx]`. The lexer emits INBRACK
+            // (`\u{91}`) / OUTBRACK (`\u{92}`) for top-level `[]`, but
+            // some lex paths leave bare `[`/`]` (DQ context, etc.).
+            if j < chars.len() && (chars[j] == '\u{91}' || chars[j] == '[') {
+                let in_b = chars[j];
+                let out_b = if in_b == '\u{91}' { '\u{92}' } else { ']' };
+                let mut depth = 1;
+                let mut k = j + 1;
+                while k < chars.len() && depth > 0 {
+                    if chars[k] == in_b {
+                        depth += 1;
+                    } else if chars[k] == out_b {
+                        depth -= 1;
+                    }
+                    k += 1;
+                }
+                j = k;
             }
             j
         }
