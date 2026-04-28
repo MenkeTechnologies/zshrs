@@ -1366,6 +1366,23 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         with_executor(|exec| {
+            // Two-statement assoc init: `typeset -A m; m=(k v k v ...)`.
+            // The first statement inserts an empty HashMap into
+            // `assoc_arrays` (the type marker); the array literal in the
+            // second statement is an alternating k/v list, NOT an indexed
+            // array. Without this branch the assignment silently re-types
+            // `m` as indexed and drops the `-A` attribute.
+            if exec.assoc_arrays.contains_key(&name) {
+                let mut map = std::collections::HashMap::new();
+                let mut it = values.into_iter();
+                while let Some(k) = it.next() {
+                    if let Some(v) = it.next() {
+                        map.insert(k, v);
+                    }
+                }
+                exec.assoc_arrays.insert(name, map);
+                return;
+            }
             // Mirror array→scalar if name is the array side of a typeset -T tie.
             if let Some((scalar_name, sep)) = exec.tied_array_to_scalar.get(&name).cloned() {
                 let joined = values.join(&sep);
