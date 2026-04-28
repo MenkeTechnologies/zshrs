@@ -2066,3 +2066,27 @@ fn test_alias_query_quoted_value() {
     let (_, output, _) = run_zshrs("alias x='ls -la'; alias x");
     assert_eq!(output.trim(), "x='ls -la'", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// One-line function body without braces: `foo() echo hello`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_inline_funcdef_one_line_body() {
+    let (_, output, _) = run_zshrs("foo() echo hello; foo");
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+}
+
+#[test]
+fn test_inline_funcdef_one_line_body_args() {
+    let (_, output, _) = run_zshrs(
+        "foo() echo \"args:\" \"$@\"; foo a b",
+    );
+    assert_eq!(output.trim(), "args: a b", "got: {output:?}");
+}
+
+#[test]
+fn test_inline_funcdef_colon_body() {
+    let (_, output, _) = run_zshrs("foo() :; foo; echo $?");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}

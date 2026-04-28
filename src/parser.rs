@@ -571,7 +571,11 @@ fn resolve_redir(r: &mut ZshRedir, bodies: &[HereDocInfo]) {
 /// return the bare name. Used by `parse_program_until` to detect
 /// `name() {body}` style function definitions where the lexer
 /// hasn't split the `()` from the name.
-fn simple_name_with_inoutpar(list: &ZshList) -> Option<String> {
+/// Detect the `name() …` shape inside a Simple. Returns the function
+/// name and (when the body was already inlined into the same Simple,
+/// e.g. `foo() echo hi`) the rest of the words as the body's argv.
+/// Returns None for non-funcdef shapes.
+fn simple_name_with_inoutpar(list: &ZshList) -> Option<(String, Vec<String>)> {
     if list.flags.async_ || list.sublist.next.is_some() {
         return None;
     }
@@ -583,7 +587,7 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<String> {
         ZshCommand::Simple(s) => s,
         _ => return None,
     };
-    if simple.words.len() != 1 || !simple.assigns.is_empty() || !simple.redirs.is_empty() {
+    if simple.words.is_empty() || !simple.assigns.is_empty() {
         return None;
     }
     let w = &simple.words[0];
@@ -595,7 +599,8 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<String> {
     if bare.is_empty() {
         return None;
     }
-    Some(crate::lexer::untokenize(bare))
+    let rest = simple.words[1..].to_vec();
+    Some((crate::lexer::untokenize(bare), rest))
 }
 
 impl<'a> ZshParser<'a> {
@@ -703,15 +708,66 @@ impl<'a> ZshParser<'a> {
 
             match self.parse_list() {
                 Some(list) => {
-                    let detected_name = simple_name_with_inoutpar(&list);
+                    let detected = simple_name_with_inoutpar(&list);
                     lists.push(list);
                     // Synthesize a FuncDef for the `name() { body }` shape
                     // at parse time so body_source is captured while the
                     // lexer still has the input. The lexer port emits
                     // `name(` as a single Word ending in `<INPAR><OUTPAR>`,
                     // so the Simple list is followed by an Inbrace once
-                    // separators are skipped.
-                    if let Some(name) = detected_name {
+                    // separators are skipped. For `name() cmd args` the
+                    // body has already been swallowed into the same
+                    // Simple's words tail — synthesize directly from there.
+                    if let Some((name, body_argv)) = detected {
+                        if !body_argv.is_empty() {
+                            // One-line body already in the Simple. Build
+                            // a Simple from body_argv as the function body.
+                            lists.pop();
+                            let body_simple = ZshCommand::Simple(ZshSimple {
+                                assigns: Vec::new(),
+                                words: body_argv,
+                                redirs: Vec::new(),
+                            });
+                            let body_list = ZshList {
+                                sublist: ZshSublist {
+                                    pipe: ZshPipe {
+                                        cmd: body_simple,
+                                        next: None,
+                                        lineno: self.lexer.lineno,
+                                        merge_stderr: false,
+                                    },
+                                    next: None,
+                                    flags: SublistFlags::default(),
+                                },
+                                flags: ListFlags::default(),
+                            };
+                            let funcdef = ZshCommand::FuncDef(ZshFuncDef {
+                                names: vec![name],
+                                body: Box::new(ZshProgram {
+                                    lists: vec![body_list],
+                                }),
+                                tracing: false,
+                                auto_call_args: None,
+                                body_source: None,
+                            });
+                            let synthetic = ZshList {
+                                sublist: ZshSublist {
+                                    pipe: ZshPipe {
+                                        cmd: funcdef,
+                                        next: None,
+                                        lineno: self.lexer.lineno,
+                                        merge_stderr: false,
+                                    },
+                                    next: None,
+                                    flags: SublistFlags::default(),
+                                },
+                                flags: ListFlags::default(),
+                            };
+                            lists.push(synthetic);
+                            continue;
+                        }
+                        // Else: words.len() == 1, brace body follows.
+                        let name = name;
                         // Skip separators on the real lexer; safe because
                         // parse_program's next iteration would also skip them.
                         while self.lexer.tok == LexTok::Seper
@@ -761,6 +817,55 @@ impl<'a> ZshParser<'a> {
                                 flags: ListFlags::default(),
                             };
                             lists.push(synthetic);
+                        } else if !matches!(
+                            self.lexer.tok,
+                            LexTok::Endinput
+                                | LexTok::Outbrace
+                                | LexTok::Seper
+                                | LexTok::Newlin
+                        ) {
+                            // No-brace one-line body: `foo() echo hello`.
+                            // Parse a single command for the body.
+                            let body_cmd = self.parse_cmd();
+                            if let Some(cmd) = body_cmd {
+                                let body_list = ZshList {
+                                    sublist: ZshSublist {
+                                        pipe: ZshPipe {
+                                            cmd,
+                                            next: None,
+                                            lineno: self.lexer.lineno,
+                                            merge_stderr: false,
+                                        },
+                                        next: None,
+                                        flags: SublistFlags::default(),
+                                    },
+                                    flags: ListFlags::default(),
+                                };
+                                lists.pop();
+                                let funcdef = ZshCommand::FuncDef(ZshFuncDef {
+                                    names: vec![name],
+                                    body: Box::new(ZshProgram {
+                                        lists: vec![body_list],
+                                    }),
+                                    tracing: false,
+                                    auto_call_args: None,
+                                    body_source: None,
+                                });
+                                let synthetic = ZshList {
+                                    sublist: ZshSublist {
+                                        pipe: ZshPipe {
+                                            cmd: funcdef,
+                                            next: None,
+                                            lineno: self.lexer.lineno,
+                                            merge_stderr: false,
+                                        },
+                                        next: None,
+                                        flags: SublistFlags::default(),
+                                    },
+                                    flags: ListFlags::default(),
+                                };
+                                lists.push(synthetic);
+                            }
                         }
                     }
                 }

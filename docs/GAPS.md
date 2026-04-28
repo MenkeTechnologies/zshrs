@@ -367,9 +367,13 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was always emitting `name='value'` (single-quoted). zsh's rule: bare value when it's a single safe word, single-quoted when it contains whitespace or shell metachars. New `format_alias_kv` helper applies the rule; both the `alias NAME` query and the `alias` listing path use it.
 
+### `foo() echo hello` one-line function body
+
+- The lexer collapses `foo()` into a single String token whose suffix is `\u{88}\u{8a}` (INPAR + OUTPAR). For `foo() echo hello`, parse_simple consumed `foo()`, `echo`, `hello` as a 3-word Simple. The funcdef synthesizer in parse_program required `words.len() == 1`, so the multi-word case was lost. Updated `simple_name_with_inoutpar` to return `(name, body_argv)`: when `body_argv` is non-empty, the synthesizer wraps `body_argv` as a Simple body and emits the FuncDef. Brace-body path (existing) and 1-word `foo()` followed by `{...}` continue to work. Three tests cover one-line/colon/arg-passing variants.
+
 ## Still open (seventh-pass — remaining)
 
-- **`foo() echo hello`** — one-line function body without braces; parser errors. Needs grammar work.
+(none — all probed gaps closed)
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.
