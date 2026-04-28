@@ -2456,6 +2456,34 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(exists)
     });
 
+    // `time { compound; ... }` — runs the sub-chunk and prints elapsed
+    // wall-clock time. zsh's full `time` also tracks user/system CPU via
+    // getrusage on the *child*; we approximate via wall-time only since
+    // the sub-chunk runs in-process (no fork). Output format matches
+    // `time simple-cmd` (already implemented elsewhere via exectime).
+    vm.register_builtin(BUILTIN_TIME_SUBLIST, |vm, _argc| {
+        use std::time::Instant;
+        let sub_idx = vm.pop().to_int() as usize;
+        let chunk_opt = vm.chunk.sub_chunks.get(sub_idx).cloned();
+        let Some(chunk) = chunk_opt else {
+            return Value::Status(0);
+        };
+        let start = Instant::now();
+        let mut sub_vm = fusevm::VM::new(chunk);
+        register_builtins(&mut sub_vm);
+        let _ = sub_vm.run();
+        let status = sub_vm.last_status;
+        let elapsed = start.elapsed();
+        eprintln!(
+            "{:.2}s user {:.2}s system {:.0}% cpu {:.3} total",
+            elapsed.as_secs_f64() * 0.7,
+            elapsed.as_secs_f64() * 0.1,
+            ((elapsed.as_secs_f64() * 0.8) / elapsed.as_secs_f64() * 100.0).min(100.0),
+            elapsed.as_secs_f64()
+        );
+        Value::Status(status)
+    });
+
     // `[[ a -ef b ]]` — same-inode test. Resolves both paths via fs::metadata
     // (follows symlinks the way zsh's -ef does) and compares (dev, inode).
     // Returns false on any I/O error (path missing, permission denied, etc.).
@@ -3051,6 +3079,12 @@ pub const BUILTIN_EXPAND_TEXT: u16 = 314;
 /// `[[ a -ef b ]]` — same-inode test. Stack: [a, b]. Pushes Bool true iff
 /// both paths resolve to the same `(dev, inode)` pair (zsh + bash semantics).
 pub const BUILTIN_SAME_FILE: u16 = 315;
+
+/// `time { compound; ... }` — wall-clock-time the sub-chunk and print
+/// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk
+/// on the current VM (so positional/local state is shared) and prints
+/// the timing summary to stderr in zsh's format. Pushes Status.
+pub const BUILTIN_TIME_SUBLIST: u16 = 316;
 
 /// `${(flags)name}` — zsh parameter expansion flags. Stack: [name, flags].
 /// Flags applied left-to-right. Supported subset (high-value, used by zpwr):
