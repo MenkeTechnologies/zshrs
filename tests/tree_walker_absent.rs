@@ -104,16 +104,18 @@ fn execute_command_dispatches_via_compiler_or_is_absent() {
 }
 
 #[test]
-fn execute_command_substitution_uses_pipe_capture() {
-    // The capture machinery: compile via ZshParser+ZshCompiler → dup2
-    // stdout to a pipe → run VM → read pipe. The old version had a giant
-    // `match cmd { Simple => ... }` with hand-rolled `echo`/`printf`/`pwd`
-    // shortcuts; the bridge era used `ShellCompiler` here as a fallback.
-    // Both are gone.
+fn execute_command_substitution_uses_pipe_capture_or_is_absent() {
+    // If execute_command_capture exists, it MUST compile via
+    // ZshParser+ZshCompiler with no ShellCompiler fallback and no
+    // hand-rolled `echo`/`printf`/`pwd` shortcuts (the bridge-era
+    // shape that this test was written to forbid). If the function
+    // is gone entirely (Phase 2 cascade endpoint — the
+    // ShellWord::CommandSub variant that used to feed it has been
+    // deleted), the invariant is trivially satisfied.
     let src = read_exec_rs();
-    let entry = src
-        .find("pub fn execute_command_capture")
-        .expect("execute_command_capture missing");
+    let Some(entry) = src.find("pub fn execute_command_capture") else {
+        return;
+    };
     let window = &src[entry..entry + 2200];
     assert!(
         window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
