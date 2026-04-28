@@ -953,3 +953,39 @@ fn test_numeric_range_rejects_non_digits() {
         run_zshrs("[[ abc = <-> ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `where` builtin output format (zsh `whence -ca`)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_where_external_command_bare_path() {
+    let (_, output, _) = run_zshrs("where ls");
+    // Path may differ across systems but must be absolute and end /ls.
+    let line = output.lines().next().unwrap_or("").trim();
+    assert!(
+        line.starts_with('/') && line.ends_with("/ls"),
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_where_function_prints_definition() {
+    let (_, output, _) = run_zshrs("foo() { :; }; where foo");
+    assert!(
+        output.contains("foo () {") && output.contains(":"),
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_where_alias_csh_style() {
+    let (_, output, _) = run_zshrs("alias gst='git status'; where gst");
+    assert_eq!(output.trim(), "gst: aliased to git status", "got: {output:?}");
+}
+
+#[test]
+fn test_where_not_found_status_one() {
+    let (status, _, _) = run_zshrs("where nonexistentxxxprobe");
+    assert_eq!(status, 1, "exit status should be 1 when not found");
+}

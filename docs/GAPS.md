@@ -189,6 +189,10 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `[[ file5 = file<1-10> ]]` and friends now match. New `parse_numeric_range` scans `<lo-hi>` (with `lo` and/or `hi` optional — `<->`, `<5->`, `<-10>`, `<5-10>` all supported). `glob_match_static` translates each occurrence to a `(\d+)` capture group, remembers the bounds, and after `Regex::captures` succeeds it parses each capture and verifies the numeric range. Falls back to literal `<` for malformed forms.
 
+### `where` builtin output format
+
+- `builtin_where` was passing `-a -v` (verbose, all matches) which produced `ls is /bin/ls` instead of zsh's bare `/bin/ls`. Now passes `-c -a` and `builtin_whence` honors `csh_style` (`-c`) for aliases (`name: aliased to BODY`), functions (full `name () { … }` body via `function_source`), and missing-name stderr message (`name not found`). Matches zsh `where` exactly for external/alias/function/not-found.
+
 ## Still open (second-pass — deferred)
 
 - **`noglob` precommand modifier** — `noglob print "*"` errors "command not found: print" instead of disabling glob and running `print *` literally. Needs parser-level recognition as a reserved word, not a command name.
@@ -199,7 +203,6 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 - **`print -P %F{red}` extra `\e[0m` reset prefix** — cosmetic diff, both render identically in terminals.
 - **`print -P %D{fmt}`** — strftime format support.
 - **`print -P %h`** history-line-number format.
-- **`where ls` output format** — zshrs uses `which` style (`ls is /bin/ls`); zsh prints just the path.
 - **`fc -l` empty-history behavior** — zsh prints "no such event"; zshrs leaks a stray history entry.
 - **Bare `$arr[N]` subscript** — without braces, lexes as `$arr` + literal `[N]`. Forces use of `${arr[N]}`.
 
