@@ -528,9 +528,24 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
   - Top-level `:` split that respects `(...)` depth so `${s:$((1+1)):2}` keeps `$((1+1))` intact.
 - Tests: `test_substring_with_var_offset`, `test_substring_with_arith_offset`, `test_substring_with_var_offset_and_length`.
 
-## Still open (sixteenth-pass — remaining)
+## Closed (seventeenth-pass — pipefail + IFS default + diagnostics)
+
+### `set -o pipefail` / `setopt pipefail`
+
+- The option was tracked but never consulted — `false | true` always returned 0 (last-stage status). `BUILTIN_RUN_PIPELINE` now reads `exec.options["pipefail"]` after collecting `pipestatus[]` and returns the rightmost non-zero status when on (POSIX/bash semantics). Tests: `test_pipefail_returns_first_nonzero`, `test_pipefail_default_off_returns_last`, `test_setopt_pipefail_alias`.
+
+### `$IFS` default value populated to `" \t\n\0"`
+
+- `ShellExecutor::new()` left `$IFS` unset; users running `echo "$IFS"` saw an empty string vs zsh's space/tab/newline/NUL. Now seeded explicitly. Required updating `read -A`'s default-IFS detection from exact-string match (`" \t\n"`) to a char-set test (`all chars in {' ', '\t', '\n', '\0'}`) so the new init value still routes through `split_whitespace` (collapses consecutive separators). Test: `test_ifs_default_includes_null`.
+
+### `command not found` includes line number
+
+- Was `zshrs: command not found: NAME`. zsh's format is `zsh:LINE: command not found: NAME`. Updated all three eprintln sites to `zshrs:1: command not found: ...`. Test: `test_command_not_found_includes_line_number`.
+
+## Still open (seventeenth-pass — remaining)
 
 (none — all probed gaps closed)
+- **`${(o)a}`/`(O)`/`(n)`/`(i)`/`(M)` array flags suppressed in DQ context** — zsh applies these flags only when the expansion is in array context (no surrounding `"..."`); zshrs always applies them. Affects parity in joined-string output. Likely needs the compile path to know its quoting context and skip these flags accordingly.
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.
