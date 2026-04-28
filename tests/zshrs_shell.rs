@@ -9,7 +9,6 @@ use std::time::Duration;
 /// Locate the debug-built `zshrs` binary.
 fn zshrs_bin() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.pop(); // up from zsh/ to workspace root
     p.push("target/debug/zshrs");
     p
 }
@@ -324,4 +323,103 @@ fn test_read_delimiter() {
         output.contains("a"),
         "read -d, should read up to comma, got: {output}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Subscript: slice forms ${arr[N,M]} / ${str[N,M]}
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_array_slice_positive() {
+    let (_, output, _) = run_zshrs("arr=(a b c d e); print ${arr[2,4]}");
+    assert_eq!(output.trim(), "b c d", "got: {output:?}");
+}
+
+#[test]
+fn test_array_slice_negative() {
+    let (_, output, _) = run_zshrs("arr=(a b c d e); print ${arr[-2,-1]}");
+    assert_eq!(output.trim(), "d e", "got: {output:?}");
+}
+
+#[test]
+fn test_array_slice_full() {
+    let (_, output, _) = run_zshrs("arr=(a b c d e); print ${arr[1,-1]}");
+    assert_eq!(output.trim(), "a b c d e", "got: {output:?}");
+}
+
+#[test]
+fn test_scalar_slice() {
+    let (_, output, _) = run_zshrs("str='hello world'; print ${str[1,5]}");
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+}
+
+#[test]
+fn test_scalar_slice_negative() {
+    let (_, output, _) = run_zshrs("str='hello world'; print ${str[-5,-1]}");
+    assert_eq!(output.trim(), "world", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Subscript: bare variable / arithmetic in subscript context
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_subscript_bare_var() {
+    let (_, output, _) = run_zshrs("arr=(a b c d); i=2; print ${arr[i]}");
+    assert_eq!(output.trim(), "b", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_arith_expr() {
+    let (_, output, _) = run_zshrs("arr=(a b c d); i=2; print ${arr[i+1]}");
+    assert_eq!(output.trim(), "c", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Subscript flags: (r), (R), (i), (I), (e)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_subscript_flag_r_first_match() {
+    let (_, output, _) = run_zshrs("arr=(apple banana cherry); print ${arr[(r)b*]}");
+    assert_eq!(output.trim(), "banana", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_R_last_match() {
+    let (_, output, _) = run_zshrs("arr=(apple banana cherry); print ${arr[(R)*an*]}");
+    assert_eq!(output.trim(), "banana", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_i_first_index() {
+    let (_, output, _) = run_zshrs("arr=(apple banana cherry); print ${arr[(i)b*]}");
+    assert_eq!(output.trim(), "2", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_I_last_index() {
+    let (_, output, _) =
+        run_zshrs("arr=(apple banana cherry banana); print ${arr[(I)b*]}");
+    assert_eq!(output.trim(), "4", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_e_exact() {
+    let (_, output, _) = run_zshrs("arr=(foo bar foo); print ${arr[(ie)foo]}");
+    assert_eq!(output.trim(), "1", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_i_no_match() {
+    // zsh `(i)` returns len+1 when no match; arr has 3 elements → 4.
+    let (_, output, _) = run_zshrs("arr=(a b c); print ${arr[(i)zzz]}");
+    assert_eq!(output.trim(), "4", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_flag_I_no_match() {
+    // zsh `(I)` returns 0 when no match.
+    let (_, output, _) = run_zshrs("arr=(a b c); print ${arr[(I)zzz]}");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
 }

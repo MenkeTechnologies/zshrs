@@ -89,12 +89,41 @@ Originally probed 47 constructs from the `man zshall` reference. Each entry belo
 - `X${arr[@]}Y` first/last sticking — new `BUILTIN_CONCAT_SPLICE` (id 319): `print -l X${arr[@]}Y` → 3 args ("Xa", "b", "cY").
 - `X${arr}Y` with `RC_EXPAND_PARAM` cartesian — new `BUILTIN_CONCAT_DISTRIBUTE` (id 318): same input → 3 args ("XaY", "XbY", "XcY"). Without option, joins to scalar (zsh default).
 
+## Closed (this session — subscript pass)
+
+Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array Subscripts). All implemented inside `BUILTIN_ARRAY_INDEX` and a small set of module-level helpers in `src/exec.rs`.
+
+### Array slice `${arr[N,M]}`
+
+- Indexed array slice with positive, negative, and mixed bounds. `${arr[2,4]}`, `${arr[-2,-1]}`, `${arr[1,-1]}`. Returns `Value::Array` so downstream `print -l` / `for` consumes per-element.
+- `slice_indexed_array` helper: zsh 1-based inclusive semantics, negative-from-end, out-of-range clamp.
+
+### Scalar slice `${str[N,M]}` / `${str[N]}`
+
+- Char-aware (UTF-8 char count, not byte index). Both single-index `${str[1]}` and slice forms supported. Falls through from `BUILTIN_ARRAY_INDEX` when `name` isn't an indexed/assoc array. New `slice_scalar` helper.
+
+### Bare-variable / arithmetic subscript `${arr[i]}`
+
+- Subscript context is arithmetic in zsh — bare names resolve as variables, full expressions evaluate. `${arr[i]}`, `${arr[i+1]}`, `${arr[len-1]}` all work. Implemented by replacing `idx.parse::<i64>()` Err arm with `eval_arith_expr` fallback.
+
+### Subscript flags `(r)` `(R)` `(i)` `(I)` `(e)` (combinable)
+
+- `(r)pat` — first matching value; `(R)pat` — last matching value (reverse).
+- `(i)pat` — first matching index (1-based; len+1 if no match); `(I)pat` — last matching index (0 if no match).
+- `(e)str` — exact (literal) instead of glob match. Combinable: `(re)`, `(ie)`, `(Ie)`, etc.
+- For assoc arrays, `r`/`R` searches values; `i`/`I` returns the matching key. Implementation: `parse_subscript_flags` + `array_subscript_flag` / `assoc_subscript_flag`.
+
 ## Still open
 
 - **History expansion** (`!!`, `!$`, `^old^new^`) — `expand_history` is wired into `execute_script` but gated on `atty::is(Stream::Stdin)`. Works in interactive mode; correctly no-op in `-c` mode (where the original audit claimed broken — false positive).
-- **`^pat` extendedglob negation** — pattern-prefix `^` for "match all NOT matching pat" needs glob-matcher support.
+- **`^pat` extendedglob negation** — pattern-prefix `^` for "match all NOT matching pat" needs glob-matcher support. Verified still missing: `${arr:#^*.txt}` returns all elements unfiltered instead of dropping non-`.txt`.
 - **`${(kv)a[@]}` with `[@]` subscript** — flag prefix + `[@]` subscript composition: `[@]` goes through `BUILTIN_ARRAY_INDEX` which doesn't apply (kv) flag. Without subscript (`${(kv)a}`) works.
 - **`${(@s.,.)str}` literal split with `@` flag** — `(s)` alone works; combined with `(@)` doesn't split. Edge case.
+- **`function () { ... }` anonymous form with `function` keyword** — bare `() { ... }` form already works; the `function` keyword variant compiles to a no-op (parser drops the body when no name follows the keyword). Fix needs parser pass that recognizes the empty-name shape.
+- **`=(...)` process substitution** — temp-file process sub still missing (only `<(...)` / `>(...)` named-pipe form is implemented). `cat =(echo hi)` errors with "No such file or directory".
+- **`typeset -A m; m=(k v ...)` two-statement assoc init** — declaring assoc then assigning array literal silently re-types `m` as indexed array, dropping the `-A` attribute. Workaround: `typeset -A m=(k v ...)` (combined form) works correctly.
+- **Assoc subscript with `$`-expansion key**: `${m[$k]}` returns empty for assocs even though `$k` resolves correctly elsewhere. The `braced_subscript_ref` fast-path rejects keys containing `$`, falling back to a bridge that doesn't perform the assoc lookup. Indexed-array form (`${arr[$i]}`) does work.
+- **Extendedglob inline flags** `(#i)`, `(#l)`, `(#a)` — case/approx-insensitive pattern flags inside a pattern. `[[ ABC = (#i)abc ]]` returns nomatch.
 - **Stub modules** — `zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp` builtins not registered (zmodload no-ops). `zsh/mapfile` assoc-array form not implemented (the bash-compat `readarray` builtin works for the common case).
 
 ## Stub modules (loaded but limited)
