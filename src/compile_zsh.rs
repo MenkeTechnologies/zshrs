@@ -678,18 +678,10 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.compile_word_str(s);
                 let bid = if assign.append {
-                    // Scalar append: NAME+=tail concats. Use SET_VAR after
-                    // GET_VAR + Concat. Simpler: add a builtin or do it
-                    // inline. Inline:
-                    let name_again = self.builder.add_constant(Value::str(assign.name.as_str()));
-                    self.builder.emit(Op::LoadConst(name_again), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1),
-                        0,
-                    );
-                    self.builder.emit(Op::Swap, 0);
-                    self.builder.emit(Op::Concat, 0);
-                    crate::exec::BUILTIN_SET_VAR
+                    // `name+=val` — runtime-dispatch via APPEND_SCALAR_OR_PUSH:
+                    // if `name` is an indexed array, push the value as a new
+                    // element; if assoc, refuse (zsh errors); else scalar concat.
+                    crate::exec::BUILTIN_APPEND_SCALAR_OR_PUSH
                 } else {
                     crate::exec::BUILTIN_SET_VAR
                 };

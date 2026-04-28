@@ -1891,3 +1891,27 @@ fn test_for_quoted_array_joins() {
     // zsh joins with first char of $IFS (default space)
     assert_eq!(output.trim(), "got=a b c", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `arr+=val` (no parens) — push as new element (runtime-dispatched)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_array_append_single_no_parens() {
+    let (_, output, _) =
+        run_zshrs("a=(x); a+=y; echo \"${a[@]} ${#a}\"");
+    assert_eq!(output.trim(), "x y 2", "got: {output:?}");
+}
+
+#[test]
+fn test_array_append_to_multi_element() {
+    let (_, output, _) =
+        run_zshrs("a=(x y); a+=z; echo \"${a[@]} ${#a}\"");
+    assert_eq!(output.trim(), "x y z 3", "got: {output:?}");
+}
+
+#[test]
+fn test_scalar_append_still_concats() {
+    let (_, output, _) = run_zshrs("s=hi; s+=world; echo $s");
+    assert_eq!(output.trim(), "hiworld", "got: {output:?}");
+}
