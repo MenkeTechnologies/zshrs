@@ -566,3 +566,37 @@ fn test_pattern_flag_approximate_insertion() {
     );
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// (@s:sep:) / (@f) flag composition: @ + split must keep array shape in DQ
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_at_s_flag_split_in_double_quotes() {
+    let (_, output, _) =
+        run_zshrs("str='a,b,c'; print -l \"${(@s:,:)str}\"");
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+}
+
+#[test]
+fn test_at_s_flag_capture_into_array() {
+    let (_, output, _) = run_zshrs(
+        "str='a:b:c'; arr=(\"${(@s.:.)str}\"); print \"len=${#arr}\"; print -l \"${arr[@]}\"",
+    );
+    assert_eq!(output.trim(), "len=3\na\nb\nc", "got: {output:?}");
+}
+
+#[test]
+fn test_at_f_flag_split_newlines_in_dq() {
+    let (_, output, _) =
+        run_zshrs("str=$'a\\nb\\nc'; print -l \"${(@f)str}\"");
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+}
+
+#[test]
+fn test_s_flag_splits_each_array_element() {
+    let (_, output, _) = run_zshrs(
+        "arr=('a,b' 'c,d'); print -l \"${(@s:,:)arr}\"",
+    );
+    assert_eq!(output.trim(), "a\nb\nc\nd", "got: {output:?}");
+}
