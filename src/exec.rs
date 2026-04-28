@@ -7890,6 +7890,8 @@ impl ShellExecutor {
         // Split pattern at the first **/ into (base_dir, file_glob)
         // e.g. "src/**/*.rs" → ("src", "*.rs")
         //      "**/*.rs"     → (".", "*.rs")
+        //      "**/"         → (".", "")  with dirs_only=true
+        //      "**/*"        → (".", "*") with both files+dirs
         let (base, file_glob) = if let Some(pos) = pattern.find("**/") {
             let base = if pos == 0 {
                 "."
@@ -7901,6 +7903,11 @@ impl ShellExecutor {
         } else {
             return vec![];
         };
+
+        // Trailing-slash form `**/`: zsh enumerates matching directories
+        // (with the trailing slash preserved). Empty file_glob means
+        // "match every dir under base, no file mask".
+        let dirs_only = file_glob.is_empty();
 
         // If file_glob itself contains **/, fall back to single-threaded glob
         // (nested recursive patterns are rare, not worth the complexity)
@@ -7919,16 +7926,27 @@ impl ShellExecutor {
             };
         }
 
-        // Build the glob::Pattern for matching filenames
+        // Build the glob::Pattern for matching filenames. For
+        // `dirs_only` (trailing-slash `**/`) we don't have a file mask
+        // — every directory matches.
         let match_opts = glob::MatchOptions {
             case_sensitive: !nocaseglob,
             require_literal_separator: false,
             require_literal_leading_dot: !dotglob,
         };
-        let file_pat = match glob::Pattern::new(&file_glob) {
-            Ok(p) => p,
-            Err(_) => return vec![],
+        let file_pat = if dirs_only {
+            None
+        } else {
+            match glob::Pattern::new(&file_glob) {
+                Ok(p) => Some(p),
+                Err(_) => return vec![],
+            }
         };
+        // For `**/*` (file_glob = "*"), zsh matches both files and
+        // directories. For `**/foo` (specific file pattern), still
+        // match either type — zsh doesn't restrict to file-type unless
+        // a `(.)` qualifier is appended.
+        let match_dirs_too = !dirs_only;
 
         // Enumerate top-level entries in base dir to fan out across workers
         let top_entries: Vec<std::path::PathBuf> = match std::fs::read_dir(&base) {
@@ -7936,13 +7954,29 @@ impl ShellExecutor {
             Err(_) => return vec![],
         };
 
-        // Also check files directly in base (not in subdirs)
+        // Also check files (and dirs in dirs_only / match_dirs_too mode)
+        // directly in base (not in subdirs).
         let mut results: Vec<String> = Vec::new();
         for entry in &top_entries {
-            if entry.is_file() || entry.is_symlink() {
+            let is_dir = entry.is_dir();
+            let is_file = entry.is_file() || entry.is_symlink();
+            let want = if dirs_only {
+                is_dir
+            } else {
+                is_file || (match_dirs_too && is_dir)
+            };
+            if want {
                 if let Some(name) = entry.file_name().and_then(|n| n.to_str()) {
-                    if file_pat.matches_with(name, match_opts) {
-                        results.push(entry.to_string_lossy().to_string());
+                    let matches = match &file_pat {
+                        None => true,
+                        Some(p) => p.matches_with(name, match_opts),
+                    };
+                    if matches {
+                        let mut s = entry.to_string_lossy().to_string();
+                        if dirs_only {
+                            s.push('/');
+                        }
+                        results.push(s);
                     }
                 }
             }
@@ -7973,6 +8007,8 @@ impl ShellExecutor {
             let subdir = subdir.clone();
             let file_pat = file_pat.clone();
             let skip_dot = !dotglob;
+            let dirs_only_w = dirs_only;
+            let match_dirs_too_w = match_dirs_too;
             self.worker_pool.submit(move || {
                 let mut matches = Vec::new();
                 let walker = WalkDir::new(&subdir)
@@ -7990,10 +8026,31 @@ impl ShellExecutor {
                         true
                     });
                 for entry in walker.filter_map(|e| e.ok()) {
-                    if entry.file_type().is_file() || entry.file_type().is_symlink() {
+                    let is_file = entry.file_type().is_file()
+                        || entry.file_type().is_symlink();
+                    let is_dir = entry.file_type().is_dir();
+                    // Skip the subdir root itself — it was already added
+                    // by the top-level loop.
+                    if entry.depth() == 0 {
+                        continue;
+                    }
+                    let want = if dirs_only_w {
+                        is_dir
+                    } else {
+                        is_file || (match_dirs_too_w && is_dir)
+                    };
+                    if want {
                         if let Some(name) = entry.file_name().to_str() {
-                            if file_pat.matches_with(name, match_opts) {
-                                matches.push(entry.path().to_string_lossy().to_string());
+                            let matches_pat = match &file_pat {
+                                None => true,
+                                Some(p) => p.matches_with(name, match_opts),
+                            };
+                            if matches_pat {
+                                let mut s = entry.path().to_string_lossy().to_string();
+                                if dirs_only_w {
+                                    s.push('/');
+                                }
+                                matches.push(s);
                             }
                         }
                     }
@@ -8008,6 +8065,18 @@ impl ShellExecutor {
         // Collect results from all workers
         for batch in rx {
             results.extend(batch);
+        }
+
+        // When base was the implicit "." (the user wrote `**/...`,
+        // not `./**/...`), zsh emits relative paths without the `./`
+        // prefix. Strip it here for parity.
+        if base == "." {
+            results = results
+                .into_iter()
+                .map(|s| {
+                    s.strip_prefix("./").map(|t| t.to_string()).unwrap_or(s)
+                })
+                .collect();
         }
 
         results
