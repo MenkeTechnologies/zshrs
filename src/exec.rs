@@ -2009,6 +2009,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // the request.
                     tracing::debug!("PARAM_FLAG ~ — no-op pass-through (no match-context state)");
                 }
+                'b' | 'B' => {
+                    // (b)/(B) — backslash-escape shell + pattern metas
+                    // (whitespace, glob/redirect/quote/expansion specials).
+                    let escape = |s: &str| -> String {
+                        let mut r = String::new();
+                        for c in s.chars() {
+                            if "\\*?[]{}()<>&|;\"'$`!#~ \t\n".contains(c) {
+                                r.push('\\');
+                            }
+                            r.push(c);
+                        }
+                        r
+                    };
+                    state = match state {
+                        St::S(s) => St::S(escape(&s)),
+                        St::A(a) => St::A(a.iter().map(|s| escape(s)).collect()),
+                    };
+                }
                 _ => {
                     // Unknown flag — silently skip. The maintainer's "no
                     // friendly nags" rule means we don't print "unsupported
@@ -3204,11 +3222,12 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn process_sub_out(&mut self, sub: &fusevm::Chunk) -> String {
-        // Same idea reversed: consumer reads stdin from the file we'll
-        // produce when the parent writes. For simplicity, return an
-        // ephemeral path; the parent writes to it and the sub-chunk reads.
-        // This is a simpler model than zsh's bidirectional FIFO and works
-        // for the common `tee >(cmd)` idiom.
+        // `>(cmd)` — consumer reads stdin from a FIFO that the parent
+        // writes to. Create a real named pipe, fork a child that
+        // dup2s the read end onto stdin and runs the sub-chunk; return
+        // the FIFO path to the parent so it writes there.
+        use std::ffi::CString;
+        use std::os::unix::io::AsRawFd;
         let fifo_path = format!(
             "/tmp/zshrs_psub_out_{}_{}",
             std::process::id(),
@@ -3219,10 +3238,41 @@ impl fusevm::ShellHost for ZshrsHost {
             })
         );
         let _ = std::fs::remove_file(&fifo_path);
-        // Create empty file so writers can open it. The sub-chunk reads
-        // from it AFTER parent writes — order isn't enforced but matches
-        // the >(cmd) common-case usage.
-        let _ = std::fs::write(&fifo_path, "");
+        let cpath = match CString::new(fifo_path.clone()) {
+            Ok(c) => c,
+            Err(_) => return fifo_path,
+        };
+        if unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) } != 0 {
+            // Fall back to plain file if mkfifo fails.
+            let _ = std::fs::write(&fifo_path, "");
+            return fifo_path;
+        }
+        let sub = sub.clone();
+        let fifo_for_child = fifo_path.clone();
+        match unsafe { libc::fork() } {
+            -1 => {
+                let _ = std::fs::remove_file(&fifo_path);
+            }
+            0 => {
+                // Child: open FIFO for read, dup onto stdin, run sub-chunk, exit.
+                if let Ok(f) = std::fs::OpenOptions::new().read(true).open(&fifo_for_child) {
+                    let fd = f.as_raw_fd();
+                    unsafe {
+                        libc::dup2(fd, libc::STDIN_FILENO);
+                    }
+                }
+                let mut vm = fusevm::VM::new(sub);
+                register_builtins(&mut vm);
+                vm.set_shell_host(Box::new(ZshrsHost));
+                let _ = vm.run();
+                unsafe { libc::_exit(0) };
+            }
+            _ => {
+                // Parent — return path; child handles cleanup of the FIFO
+                // once stdin EOFs. (The path may leak if the parent never
+                // writes; acceptable for common `>(cmd)` idioms.)
+            }
+        }
         fifo_path
     }
 
@@ -9366,6 +9416,14 @@ impl ShellExecutor {
                 't' => flags.push(ZshParamFlag::Type),
                 'w' => flags.push(ZshParamFlag::Words),
                 'b' => flags.push(ZshParamFlag::QuoteBackslash),
+                // `(B)` — backslash-escape characters that are special to
+                // the shell (whitespace + glob/redirect/quote metas). Same
+                // backslash mechanism as `(b)` (which is for pattern
+                // contexts); the only difference is which charset gets
+                // escaped. Map to the same enum variant; the shell-meta
+                // expansion below handles both since it covers a strict
+                // superset of pattern metas.
+                'B' => flags.push(ZshParamFlag::QuoteBackslash),
                 'q' => {
                     if chars.peek() == Some(&'q') {
                         chars.next();
@@ -9645,10 +9703,14 @@ impl ShellExecutor {
                 val.split_whitespace().collect::<Vec<_>>().join(" ")
             }
             ZshParamFlag::QuoteBackslash => {
-                // Quote special pattern chars with backslashes
+                // Backslash-escape shell + pattern metas. `(b)` and `(B)`
+                // share this handler — their charsets overlap heavily and
+                // the strict superset is fine for both contexts (extra
+                // escapes never harm pattern matching, and shell parsing
+                // is what `(B)` needs).
                 let mut result = String::new();
                 for c in val.chars() {
-                    if "\\*?[]{}()".contains(c) {
+                    if "\\*?[]{}()<>&|;\"'$`!#~ \t\n".contains(c) {
                         result.push('\\');
                     }
                     result.push(c);
@@ -10965,8 +11027,16 @@ impl ShellExecutor {
 
     fn builtin_typeset(&mut self, args: &[String]) -> i32 {
         // Save old values when inside a function scope (local variable support).
-        // Restored by call_function on function exit.
-        if self.local_scope_depth > 0 {
+        // Restored by call_function on function exit. The `-g` flag opts out
+        // of localization — `declare -g x=val` from inside a function should
+        // bind `x` at the global scope, so don't push to local_save_stack.
+        let has_g = args.iter().any(|a| {
+            a.starts_with('-')
+                && !a.starts_with("--")
+                && a.len() > 1
+                && a[1..].chars().any(|c| c == 'g')
+        });
+        if self.local_scope_depth > 0 && !has_g {
             for arg in args {
                 if arg.starts_with('-') || arg.starts_with('+') {
                     continue;
