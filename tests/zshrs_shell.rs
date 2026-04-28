@@ -1257,3 +1257,60 @@ fn test_glob_qualifier_path_dot() {
     let (_, output, _) = run_zshrs("print /etc/hosts(.)");
     assert_eq!(output.trim(), "/etc/hosts", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Recursive glob `**/` (dirs-only) and `**/*` (files+dirs)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_recursive_glob_dirs_only() {
+    use std::fs;
+    let root = "/tmp/zshrs_recglob_dirs";
+    let _ = fs::remove_dir_all(root);
+    fs::create_dir_all(format!("{}/a", root)).unwrap();
+    fs::create_dir_all(format!("{}/b/c", root)).unwrap();
+    let (_, output, _) =
+        run_zshrs(&format!("cd {} && print -l **/", root));
+    let _ = fs::remove_dir_all(root);
+    let mut lines: Vec<&str> = output.lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["a/", "b/", "b/c/"], "got: {output:?}");
+}
+
+#[test]
+fn test_recursive_glob_files_and_dirs() {
+    use std::fs;
+    let root = "/tmp/zshrs_recglob_all";
+    let _ = fs::remove_dir_all(root);
+    fs::create_dir_all(format!("{}/a", root)).unwrap();
+    fs::create_dir_all(format!("{}/b/c", root)).unwrap();
+    fs::write(format!("{}/a/x.txt", root), "x").unwrap();
+    let (_, output, _) =
+        run_zshrs(&format!("cd {} && print -l **/*", root));
+    let _ = fs::remove_dir_all(root);
+    let mut lines: Vec<&str> = output.lines().collect();
+    lines.sort();
+    assert_eq!(
+        lines,
+        vec!["a", "a/x.txt", "b", "b/c"],
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_recursive_glob_filter_by_extension() {
+    use std::fs;
+    let root = "/tmp/zshrs_recglob_ext";
+    let _ = fs::remove_dir_all(root);
+    fs::create_dir_all(format!("{}/a", root)).unwrap();
+    fs::create_dir_all(format!("{}/b/c", root)).unwrap();
+    fs::write(format!("{}/a/x.txt", root), "x").unwrap();
+    fs::write(format!("{}/b/c/y.txt", root), "y").unwrap();
+    fs::write(format!("{}/a/skip.log", root), "z").unwrap();
+    let (_, output, _) =
+        run_zshrs(&format!("cd {} && print -l **/*.txt", root));
+    let _ = fs::remove_dir_all(root);
+    let mut lines: Vec<&str> = output.lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["a/x.txt", "b/c/y.txt"], "got: {output:?}");
+}
