@@ -20244,7 +20244,13 @@ impl ShellExecutor {
             i += 1;
         }
 
-        let _ = csh_style; // TODO: implement csh-style output
+        // `-c` / csh-style affects two output paths:
+        //  - alias: zsh prints `name: aliased to BODY` instead of just BODY
+        //  - function: zsh prints the full `name () { … }` body, like
+        //    `typeset -f`, instead of just the name
+        //  - not found: stderr message `name not found` (default verbose
+        //    is off but `where` requests both -c and -a, so the absence
+        //    of the "not found" line is a real diff vs zsh)
         let _ = pattern_mode; // TODO: implement glob pattern matching
         let _ = tab_expand;
 
@@ -20278,6 +20284,9 @@ impl ShellExecutor {
                         println!("{}: {}", name, word);
                     } else if verbose {
                         println!("{} is an alias for {}", name, alias_val);
+                    } else if csh_style {
+                        // zsh `whence -c` for alias: `name: aliased to BODY`.
+                        println!("{}: aliased to {}", name, alias_val);
                     } else {
                         println!("{}", alias_val);
                     }
@@ -20294,6 +20303,16 @@ impl ShellExecutor {
                         println!("{}: {}", name, word);
                     } else if verbose {
                         println!("{} is a shell function", name);
+                    } else if csh_style {
+                        // zsh `whence -c` for function: full `typeset -f`
+                        // body. Use `function_source` if registered, else
+                        // `name () { ... }` shell stub.
+                        let body = self
+                            .function_source
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| ":".to_string());
+                        println!("{} () {{\n\t{}\n}}", name, body);
                     } else {
                         println!("{}", name);
                     }
@@ -20382,8 +20401,11 @@ impl ShellExecutor {
             if !found {
                 if word_type {
                     println!("{}: none", name);
-                } else if verbose {
-                    println!("{} not found", name);
+                } else if verbose || csh_style {
+                    // zsh `where` (= `whence -ca`) emits the not-found
+                    // line for missing names; suppress only when caller
+                    // asked for a pure machine-readable form (no flags).
+                    eprintln!("{} not found", name);
                 }
                 status = 1;
             }
@@ -20422,8 +20444,12 @@ impl ShellExecutor {
 
     /// where - show all locations of a command
     fn builtin_where(&self, args: &[String]) -> i32 {
-        // where is like whence -ca
-        let mut new_args = vec!["-a".to_string(), "-v".to_string()];
+        // `where` is equivalent to `whence -ca` — c-shell style (just
+        // the path / alias body, not the verbose `name is /path` form),
+        // -a = list all matches in PATH (not just the first). Old impl
+        // used `-a -v` which produced `ls is /bin/ls` instead of zsh's
+        // bare `/bin/ls`.
+        let mut new_args = vec!["-c".to_string(), "-a".to_string()];
         new_args.extend(args.iter().cloned());
         self.builtin_whence(&new_args)
     }
