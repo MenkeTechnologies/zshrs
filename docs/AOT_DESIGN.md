@@ -470,44 +470,83 @@ The earlier "binary IS the database" framing — bake every plugin and every com
 
 ### Decision
 
-The daily-driver bytecode lives in **three files** in `~/.cache/zshrs/`:
+The daily-driver bytecode lives in a **sharded layout** under `~/.cache/zshrs/`. One image file per source root, plus a top-level index, plus the SQLite catalog and history:
 
-| File | Format | Role | Hot path? |
-|------|--------|------|-----------|
-| `image.rkyv` | rkyv mmap'd blob, perfect-hash header | All compiled bytecode (compsys + plugins + autoloads + zpwr) keyed by fully-qualified name | Yes — ~50-100ns lookup |
-| `catalog.db` | SQLite (WAL) | Derived view + orchestrator state + entry stats. dbview target. | No — introspection only |
-| `history.db` | SQLite | Shell history (already this) | Append-only |
+```
+~/.cache/zshrs/
+├── index.rkyv                              ← top-level fq_name → (shard_id, byte_offset)
+├── images/
+│   ├── system.rkyv                         ← /usr/share/zsh, dist completions
+│   ├── completions-corpus.rkyv             ← zsh-more-completions (rare updates)
+│   ├── zpwr.rkyv                           ← his framework (frequent commits)
+│   ├── plugin-zsh-syntax-highlighting.rkyv
+│   ├── plugin-zsh-autosuggestions.rkyv
+│   ├── plugin-{name}.rkyv …                ← one per zinit plugin
+├── catalog.db                              ← worker-hydrated mirror, dbview target
+└── history.db                              ← unchanged
+```
 
-**Three files total, regardless of installed plugin count.** No per-plugin blob litter; no fpath forest of `.zwc` files; no `.zcompdump`.
+**Why sharded, not monolithic:** a single `image.rkyv` would have to be rebuilt every time any source file changed. With user-frequency commits to zpwr + plugin-update churn (`zinit update foo`, `git pull` in any plugin tree), this loops in seconds-to-minutes of full-corpus rebuild that's >99% redundant. Sharding the image by source root reduces the rebuild blast radius to "just the touched root" — typically 100-500ms vs 30s full.
 
-### How runtime lookup works
+The cache directory now has more files than the previous "exactly three" layout. That's an explicit trade — bounded litter (one image per plugin, capped naturally at install count) buys per-shard rebuild and parallelism. The user's iterate-on-zpwr loop is the load-bearing constraint that drove this trade.
 
-1. Shell process opens `image.rkyv` once, mmap's the whole file into VSZ.
-2. Function call → perfect-hash on fully-qualified name → byte offset in the mmap region → typed pointer (rkyv = zero-copy deserialize).
-3. JIT or interp runs the bytecode chunk directly from the mmap region.
-4. Kernel demand-pages cold regions in, evicts them under memory pressure. Working set tracks actual call hot-set.
+### How runtime lookup works (two-level)
 
-Per-shell RSS attributable to `image.rkyv`:
+1. Shell process opens `index.rkyv` once at startup, mmap's it (small, ~1-2 MB for 50k entries).
+2. Function call → hash `fq_name` → `index.rkyv` lookup → `(shard_id, byte_offset)`.
+3. Get-or-mmap the shard image (LRU cache of shard handles; close fd after mmap since POSIX keeps the mapping alive) → typed pointer at offset.
+4. JIT or interp runs the bytecode chunk directly from the mmap region.
+5. Kernel demand-pages cold regions, evicts under pressure. Working set tracks actual call hot-set, per-shard.
+
+**Lookup cost:** ~150-200ns end-to-end (one extra index dereference vs the monolithic ~100ns). Negligible — Tab completion and prompt firing both fit well under any human-perceptible budget.
+
+**fd / mmap pressure:** 100-200 shards × 1 mmap region each = trivial. macOS has no `vm.max_map_count`; Linux defaults to 65530. Closing fds after mmap drops fd cost to zero. Cold shards never get mmap'd; LRU-evicted handles get unmapped under memory pressure (rarely needed; mmaps are cheap to keep).
+
+Per-shell RSS attributable to images:
 
 | Scenario | Resident |
 |----------|----------|
-| Cold script (`zshrs -c 'echo hi'`) | 1-3 MB |
-| Empty interactive shell after first prompt | 5-15 MB |
-| 1hr interactive session | 10-30 MB |
+| Cold script (`zshrs -c 'echo hi'`) | 1-3 MB (index + 1-2 shards touched) |
+| Empty interactive shell after first prompt | 5-15 MB (index + system + zpwr + a few plugin shards) |
+| 1hr interactive session | 10-30 MB (warm shards stay; cold ones never mmap'd) |
 | 16 parallel zshrs (Cursor workflow) | **same 10-30 MB total** — page cache shares physical pages across all 16 |
 
-VSZ ~250 MB but free on 64-bit. Same property AOT-into-binary advertised but with kernel-managed eviction the AOT route can't do.
+VSZ ~250 MB across all mmap'd shards (free on 64-bit). Same property AOT-into-binary advertised but with kernel-managed eviction the AOT route can't do.
 
-### How the catalog stays fresh — worker-pool hydration
+### Per-shard rebuild semantics
 
-After any `image.rkyv` rebuild (plugin install/update, source-on-change recompile, manual `zshrs --rebuild-cache`, fsnotify-detected out-of-band rebuild), the worker pool enqueues a hydrate job:
+`fsnotify` watches each known source root. On any source change:
 
-1. Worker thread mmap's `image.rkyv`, walks the perfect-hash header.
-2. For each entry: `INSERT INTO entries (fq_name, plugin_id, kind, image_offset, source_loc) …` into `~/.cache/zshrs/catalog.db.tmp`.
-3. Atomic `rename(2)` over `catalog.db`. Readers (dbview) never see a half-baked file thanks to SQLite WAL + atomic rename.
-4. All steps log to `~/.cache/zshrs/zshrs.log` via `tracing::info!` — `hydrate_start { entries: N }`, `hydrate_progress { done, total }`, `hydrate_complete { duration_ms }`. Never to terminal (per `DESIGN_GOALS.md` "informational chatter goes to log only").
+1. Identify the affected source root → its `images/{name}.rkyv` shard.
+2. Re-walk *only that root*; recompile *only its functions*; write `images/{name}.rkyv.tmp`; atomic rename.
+3. Compute the new entry list for that shard; UPDATE `index.rkyv` (small file, ~10-50ms rewrite + atomic rename).
+4. Worker pool enqueues a per-shard hydrate job for `catalog.db`.
 
-Cost: ~100-500ms with one worker thread for ~50k entries; 17 other worker threads remain available. Plugin updates are infrequent and user-triggered. Effectively free.
+Rebuild cost matrix:
+
+| Event | Old (monolithic image.rkyv) | New (sharded) |
+|---|---|---|
+| `git pull` in zpwr tree | ~30s full corpus rebuild | ~3-5s zpwr.rkyv only |
+| `zinit update foo` (single plugin) | ~30s | ~100-500ms plugin-foo.rkyv only |
+| `zinit update-all` (200 plugins) | ~30s batched, much worse if serial | parallel: ~10-30s for all 200 (worker pool) |
+| Edit one .zshrc helper | ~30s | ~100ms (zpwr.rkyv or wherever it lives) |
+| Fresh install on new machine | ~30s | ~30s same — full corpus must compile once |
+| `zshrs --rebuild-cache --shard zpwr` | n/a | ~3-5s, surgical |
+
+**Plugin install/update commands** (zinit/oh-my-zsh wrappers) trigger the affected shard's rebuild + hydrate atomically.
+
+### How the catalog stays fresh — per-shard worker-pool hydration
+
+After any shard rebuild, the worker pool enqueues a hydrate job scoped to that shard:
+
+1. Worker thread mmap's `images/{shard}.rkyv`, walks its entries.
+2. `DELETE FROM entries WHERE plugin_id = '{shard}'` then INSERT the new rows. Same for `hooks`. Plugin metadata in `plugins` table is untouched (orchestrator manages that directly).
+3. SQLite WAL absorbs the per-shard rewrite without blocking concurrent dbview readers.
+4. All steps log to `~/.cache/zshrs/zshrs.log` via `tracing::info!` — `hydrate_shard_start { shard, entries: N }`, `hydrate_shard_complete { shard, duration_ms }`. Never to terminal (per `DESIGN_GOALS.md` "informational chatter goes to log only").
+
+Per-shard hydrate cost: ~10-100ms typical (single zinit plugin) vs 100-500ms for a large shard like `completions-corpus`. 17 other worker threads remain available; multiple shard rebuilds parallelize naturally.
+
+`entry_stats` (call counts, ns timing) is partition-stable — entries keyed by `fq_name` survive shard rebuilds since the fq_name doesn't change unless the source did. Worker preserves stats across rebuilds via `ON CONFLICT DO UPDATE`.
 
 ### catalog.db schema
 
@@ -546,23 +585,29 @@ Estimated LOC eliminated from zshrs: 5,000-10,000 across legacy `plugin_cache.rs
 ### Daily workflow
 
 ```
-$ vim ~/.config/zshrs/zshrc      # edit shell config
-$ zshrs --rebuild-cache           # ~500ms incremental, rebuilds image.rkyv
-                                  # worker pool hydrates catalog.db in background
-$ exec ~/bin/zshrs                # picks up new image
+$ vim ~/zpwr/zpwrTop                          # edit a zpwr subcommand
+                                              # fsnotify identifies zpwr root → enqueues
+                                              # zpwr.rkyv rebuild on next idle
+$ zshrs --rebuild-cache --shard zpwr          # explicit; ~3-5s (zpwr only, not full corpus)
+                                              # worker pool hydrates catalog.db delta in background
+$ exec ~/bin/zshrs                            # picks up new index + zpwr shard
 ```
 
-`zinit update` / plugin install commands implicitly trigger a rebuild + hydrate. fsnotify on the source trees catches edits and schedules a rebuild on next idle.
+`zinit update` / plugin install commands implicitly trigger the affected shard's rebuild + hydrate. fsnotify schedules per-shard rebuilds on next idle. `zshrs --rebuild-cache` (no shard) does the full corpus rebuild for a fresh install or full reset.
 
 ### Acceptance criterion (revised, supersedes §0x0B for daily-driver mode)
 
 The cache architecture has succeeded when:
-- `zshrs --rebuild-cache` over full daily-driver corpus (zshrc + zinit plugins + zsh-more-completions) produces `image.rkyv` in <30 seconds clean / <500ms incremental.
-- Cold shell launch: <5ms (mmap + first-prompt hooks only).
-- 16 parallel shells share <30 MB total RSS attributable to image (page-cache hot-set, not 16× per-process).
-- Tab completion lookup: ~100ns end-to-end (rkyv pointer deref + JIT call).
-- No SQLite hit on the hot path. Only `history.db` (append) and `catalog.db` (when dbview is invoked or worker hydrate is running) are touched.
-- `dbview` always opens to a current view (worker keeps it warm; staleness window ≤ rebuild duration).
+- Full-corpus rebuild (`zshrs --rebuild-cache`) over zshrc + zinit plugins + zsh-more-completions: <30 seconds clean.
+- Per-shard rebuild (`zshrs --rebuild-cache --shard zpwr`): ~3-5s for a large shard, ~100-500ms for a single plugin shard.
+- `git pull` in zpwr → only `zpwr.rkyv` rebuilds (~3-5s, not 30s).
+- `zinit update foo` → only `plugin-foo.rkyv` rebuilds (~100-500ms).
+- Cold shell launch: <5ms (index.rkyv mmap + first-prompt hook shards mmap'd lazily).
+- 16 parallel shells share <30 MB total RSS attributable to images (page-cache hot-set, not 16× per-process).
+- Tab completion lookup: ~150-200ns end-to-end (index lookup + shard-cache hit + JIT call).
+- No SQLite hit on the hot path. Only `history.db` (append) and `catalog.db` (when dbview is invoked or per-shard worker hydrate is running) are touched.
+- `dbview` always opens to a current view (worker keeps it warm per-shard; staleness window ≤ shard rebuild duration).
+- `entry_stats` survives shard rebuilds — `fq_name`-keyed rows preserved via `ON CONFLICT DO UPDATE` so personal usage analytics aren't reset every plugin update.
 
 ### Why not AOT-into-binary at this layer
 
@@ -602,6 +647,7 @@ This doc is the source of truth for AOT design. Changes require an entry below.
 | 2026-04-28 | §0x10 Memory model added — no GC, ever. Hard rule. Inherited from Rust ownership for free; verified against bash/zsh/dash/fish/nu/Perl5/Raku as world-first GC-free shell. Closed-world AOT lets escape analysis prove allocations stay scope-local. Locked in feedback memory: any future proposal that introduces GC is wrong by construction. | initial draft |
 | 2026-04-28 | §0x13 Unified AOT pivot — collapsed source-mode shell + AOT deploy into one product. Daily shell is the AOT binary; plugins/compsys/zstyle/bindkeys/intercepts all bake in at build time; SQLite caches die (`plugin_cache.db`, `compsys.db`, `.zcompdump`); only `history.db` remains external. Image-as-binary persistence model (Pharo/Smalltalk lineage). Acceptance criterion supersedes §0x0B perf targets — one binary, <5ms cold launch, sub-µs Tab, byte-identical between daily-driver and deploy use cases. Estimated 5-10k LOC eliminated. Five additional world-firsts stack on this pivot. §0x0C "interactive shell out of scope" bullet reversed. Memory rule "AOT-deploy vs JIT-source-mode are separate products" superseded — they are now one product. | initial draft |
 | 2026-04-28 | §0x13 corrected — "binary IS the database" reversed for the daily-driver layer. AOT-into-binary for plugins/compsys fails the working-set test at zpwr scale (200-400 MB bytecode → 50-100 MB pinned `.text` per shell, kernel can't evict `PROT_EXEC` pages). Replaced with rkyv-mmap'd `image.rkyv` + worker-hydrated `catalog.db` mirror. Three-file cache layout (`image.rkyv`, `catalog.db`, `history.db`); zero per-plugin litter; ~10-30 MB RSS in normal use; 16 parallel shells share via page cache. `entry_stats` table tracks call counts + ns timing for always-on profiling queryable via dbview. Hydration runs on idle worker thread, logs to `~/.cache/zshrs/zshrs.log` via `tracing::info!`. Script-AOT (§0x00–§0x12) capability unchanged — that's a different workload (deploy individual scripts as static binaries) where bounded code size makes AOT-into-binary correct. | correction |
+| 2026-04-28 | §0x13 sharded — monolithic `image.rkyv` reversed in favor of one-image-per-source-root layout under `~/.cache/zshrs/images/`. Reason: monolithic image forces full-corpus rebuild on any source change, killing the iterate-on-zpwr loop (~30s per `git pull` even for a one-line change). Sharded layout reduces rebuild blast radius to the touched root: `git pull` in zpwr → ~3-5s `zpwr.rkyv` only; `zinit update foo` → ~100-500ms `plugin-foo.rkyv` only; `zinit update-all` parallelizes across the worker pool. New top-level `index.rkyv` provides fq_name → (shard_id, byte_offset) lookup; per-shard mmap with LRU shard-handle cache. Lookup cost ~150-200ns vs the monolithic ~100ns (extra index dereference, negligible). Cache directory now has bounded litter (one image per plugin) — explicit trade for rebuild speed and parallelism. Per-shard worker hydration keys catalog `entries`/`hooks` by `plugin_id` partition; `entry_stats` survives rebuilds via `ON CONFLICT DO UPDATE`. fsnotify schedules per-shard rebuilds. | correction |
 
 ---
 

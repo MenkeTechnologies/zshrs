@@ -51,14 +51,14 @@ Critical path. Until G is done, zshrs cannot replace zsh on the maintainer's mac
 - **Acceptance:** every zsh array idiom in zpwr's source compiles + runs identically.
 - **Effort:** 3 days.
 
-### G2 — Autoload + fpath scan via rkyv image cache
-- Per `AOT_DESIGN.md` §0x13: daily-driver bytecode lives in `~/.cache/zshrs/image.rkyv` (single mmap'd blob, perfect-hash header, ~50-100ns lookup). Wire `fn autoload_function` (exec.rs:2907) to: hash fully-qualified name → mmap-region offset → typed pointer → JIT/interp the chunk in place. No SQLite hit on the hot path.
-- Image rebuild (plugin install/update, fsnotify on source trees, `zshrs --rebuild-cache`) walks fpath + zinit dirs + zsh-more-completions, compiles each function, writes `image.rkyv.tmp`, atomic-renames over `image.rkyv`.
-- Worker pool hydrates `~/.cache/zshrs/catalog.db` (SQLite mirror — entries / hooks / plugins / entry_stats) after every image rebuild. Hydration logs to `~/.cache/zshrs/zshrs.log` via `tracing::info!`. Never on hot path; dbview consumer only.
-- Legacy `plugin_cache.db` / `compsys.db` SQLite caches are dead-on-arrival for new investment — see "What dies" in `AOT_DESIGN.md` §0x13.
-- **Test:** install a plugin via `zshrs --rebuild-cache`, call its function, verify it resolves through `image.rkyv` (not tree-walker) by asserting the dispatch hits the rkyv path. dbview returns the entry within ≤ rebuild duration.
-- **Acceptance:** full daily-driver corpus (zshrc + zinit plugins + zsh-more-completions) compiles to one `image.rkyv` in <30 seconds clean / <500ms incremental; cold shell launch <5ms; 16 parallel shells share <30 MB RSS attributable to image.
-- **Effort:** 5 days (image format + perfect-hash + worker hydrate + dbview integration).
+### G2 — Autoload + fpath scan via sharded rkyv image cache
+- Per `AOT_DESIGN.md` §0x13: daily-driver bytecode lives in `~/.cache/zshrs/images/{shard}.rkyv` (one image per source root) with top-level `~/.cache/zshrs/index.rkyv` for two-level lookup. Wire `fn autoload_function` (exec.rs:2907) to: hash fq_name → `index.rkyv` lookup → `(shard_id, byte_offset)` → get-or-mmap the shard image (LRU shard-handle cache) → typed pointer → JIT/interp the chunk in place. ~150-200ns end-to-end. No SQLite hit on the hot path.
+- Per-shard rebuild: `fsnotify` watches each known source root; on source change, recompile only that root's image, atomic-rename, update `index.rkyv` (small file rewrite), enqueue per-shard catalog hydrate. `git pull` in zpwr rebuilds only `zpwr.rkyv` (~3-5s); `zinit update foo` rebuilds only `plugin-foo.rkyv` (~100-500ms).
+- Worker pool hydrates `~/.cache/zshrs/catalog.db` per-shard (`DELETE FROM entries WHERE plugin_id = '{shard}'` then INSERT). `entry_stats` survives shard rebuilds via `ON CONFLICT DO UPDATE` keyed on `fq_name` so personal usage analytics aren't reset every plugin update. Hydration logs to `~/.cache/zshrs/zshrs.log` via `tracing::info!`. Never on hot path; dbview consumer only.
+- Legacy `plugin_cache.db` / `compsys.db` SQLite caches and `.zwc` reading paths are dead-on-arrival for new investment — see "What dies" in `AOT_DESIGN.md` §0x13.
+- **Test:** install a plugin via `zshrs --rebuild-cache --shard plugin-foo`, call its function, verify it resolves through the rkyv path (not tree-walker) by asserting the dispatch hits the index → shard mmap chain. dbview returns the entry within ≤ shard rebuild duration. Edit one zpwr function, verify only `zpwr.rkyv` (not the full corpus) rebuilds.
+- **Acceptance:** full-corpus rebuild <30s clean; per-shard rebuild ~3-5s for large shards (zpwr, completions-corpus) and ~100-500ms for single plugin shards; cold shell launch <5ms; 16 parallel shells share <30 MB RSS attributable to images; Tab completion lookup ~150-200ns.
+- **Effort:** 6 days (sharded image format + index.rkyv + perfect-hash + LRU shard-handle cache + per-shard worker hydrate + fsnotify wiring + dbview integration).
 
 ### G3 — ZLE hooks + user widgets + completion firing
 - `zle/main.rs:496` (hook system stub): implement `precmd`/`preexec`/`chpwd` hook dispatch — call `executor.hook_functions[name]` via `execute_command` (now bytecode).
