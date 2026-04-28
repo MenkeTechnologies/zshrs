@@ -14579,6 +14579,17 @@ impl ShellExecutor {
                 }
             };
 
+            // In non-interactive (`-c`) mode session history is empty
+            // — zsh's `fc -l` errors with "no such event: <N>". atty
+            // on stdin is the cleanest "is this a real interactive
+            // session?" signal that survives `-c` mode (matches the
+            // gating used by expand_history elsewhere).
+            if !atty::is(atty::Stream::Stdin) {
+                let event = if first > 0 { first.to_string() } else { "1".to_string() };
+                eprintln!("zsh:fc:1: no such event: {}", event);
+                return 1;
+            }
+
             let count = if first < 0 { (-first) as usize } else { 16 };
             match engine.recent(count.max(100)) {
                 Ok(mut entries) => {
