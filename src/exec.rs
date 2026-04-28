@@ -15055,6 +15055,10 @@ impl ShellExecutor {
                     eprintln!("wait: {}: no such job", arg);
                     status = 127;
                 }
+            } else if arg.is_empty() {
+                // `wait $!` with no background job: $! is empty. zsh
+                // silently returns 0; bash errors. Match zsh.
+                continue;
             } else {
                 let pid: u32 = match arg.parse() {
                     Ok(p) => p,
@@ -20761,6 +20765,7 @@ impl ShellExecutor {
         let mut sort_asc = false;
         let mut sort_desc = false;
         let mut named_dir_subst = false;
+        let mut match_pattern_flag = false;
         let mut store_var: Option<String> = None;
         let mut format_string: Option<String> = None;
         let mut output_args: Vec<String> = Vec::new();
@@ -20809,7 +20814,8 @@ impl ShellExecutor {
                         'O' => sort_desc = true,
                         'D' => named_dir_subst = true,
                         'c' => columns = 1,
-                        'a' | 'b' | 'i' | 'm' | 'p' | 'S' | 'x' | 'X' => {} // TODO
+                        'm' => match_pattern_flag = true,
+                        'a' | 'b' | 'i' | 'p' | 'S' | 'x' | 'X' => {} // TODO
                         'u' => {
                             // -u n: output to fd n
                             let rest: String = chars.collect();
@@ -20873,6 +20879,14 @@ impl ShellExecutor {
 
         let _ = push_to_stack; // TODO: implement push to buffer stack
         let _ = fd; // TODO: implement fd selection
+
+        // `print -m PATTERN args…` — first positional is a glob pattern;
+        // only print the args that match. zsh: bare `print -m '*.txt'
+        // a.txt b.log c.txt` → prints `a.txt c.txt`.
+        if match_pattern_flag && !output_args.is_empty() {
+            let pattern = output_args.remove(0);
+            output_args.retain(|a| Self::glob_match_static(a, &pattern));
+        }
 
         // Sort if requested
         if sort_asc {

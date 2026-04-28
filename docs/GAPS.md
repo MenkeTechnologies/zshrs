@@ -311,19 +311,24 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Already worked for `${arr:#pat}` filter via `extendedglob_match`, but the cond `=` matcher (which goes through `glob_match_static` directly) didn't apply the negation. Added a leading-`^` strip + recurse-with-negate at the top of `glob_match_static`, gated on `setopt extendedglob`. `[[ apple = ^a* ]]` → false; `[[ banana = ^a* ]]` → true. Without extendedglob, `^` stays literal as before.
 
-## Still open (sixth-pass probe — fresh batch)
+### `wait $!` silent-on-empty-pid
+
+- When `$!` is unset (no bg job has been started), `wait $!` runs with an empty arg. zsh silently returns 0; bash errors with "wait: : not a pid". `builtin_wait` now skips the empty-arg branch and continues — match zsh.
+
+### `print -m PATTERN args…` glob-match filter
+
+- New `match_pattern_flag` in `builtin_print`: when `-m` is set, the first positional is a glob pattern; `output_args.retain` keeps only args that match. `print -m 'h*' hello world hi` → `hello hi`.
+
+## Still open (sixth-pass probe — remaining)
 
 - **`for f in $arr`** — bare `$arr` in a for list joins instead of splicing; `for f in $arr; do ...` iterates ONCE with `f` set to the joined string. Workaround: `for f in "${arr[@]}"`. Parser/compiler scope.
 - **`integer i=5+3`** — declaration-with-assignment doesn't run arith-eval on the value; stores 0 instead of 8.
 - **`arr+=y` (push single, no parens)** — appends to scalar interpretation instead of pushing element.
-- **`${(ou)a}` ordered-unique** — `o` (sort) + `u` (unique) flag combination doesn't dedup.
-- **`print -m PATTERN args...`** — match-arg flag still missing.
-- **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped).
-- **`wait $!`** — empty `$!` (no background job started) errors with "invalid pid"; should be silent and return 0.
+- **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
+- **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.
-- **`declare -ra` (readonly array)** — silent vs zsh's "inconsistent type for assignment".
-
-(False-positive notes from earlier passes carried over — see commit history.)
+- **`declare -ra` (readonly array)** — silent vs zsh's "inconsistent type for assignment". Cosmetic.
+- **`$!` unset after `cmd &`** — backgrounded process pid not recorded into `$!`. Job-control plumbing scope.
 
 The following items from the fifth-pass probe were inspected and turned out to be false positives or test artifacts:
 
