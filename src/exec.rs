@@ -1847,6 +1847,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 "patchars" => Some(Value::str("*?[]<>(){}|^&;")),
+                "mapfile" => {
+                    // zsh/mapfile module: `${mapfile[/path]}` reads a
+                    // file's bytes verbatim. Trailing newline is
+                    // preserved (verified against real zsh: a one-line
+                    // "test\n" file gives len=5, not 4). Downstream
+                    // (f)/(@f) flags handle the trailing-newline split.
+                    if idx == "@" || idx == "*" {
+                        // Splice: not meaningful for mapfile (the whole
+                        // filesystem isn't enumerable). Return empty.
+                        return Some(Value::Array(vec![]));
+                    }
+                    match std::fs::read_to_string(idx) {
+                        Ok(s) => Some(Value::str(s)),
+                        Err(_) => Some(Value::str("")),
+                    }
+                }
                 _ => None,
             }
         })
