@@ -1987,6 +1987,26 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         Err(_) => Some(Value::str("")),
                     }
                 }
+                "sysparams" => {
+                    // zsh/system module: `${sysparams[KEY]}` magic
+                    // assoc with three keys per zshmodules(1): `pid`,
+                    // `ppid`, `procsubstpid`. Returns the appropriate
+                    // process ID. Splice form returns the value list.
+                    let pid_str = std::process::id().to_string();
+                    let ppid_str = unsafe { libc::getppid() }.to_string();
+                    if idx == "@" || idx == "*" {
+                        return Some(Value::Array(vec![
+                            Value::str(pid_str),
+                            Value::str(ppid_str),
+                        ]));
+                    }
+                    match idx {
+                        "pid" => Some(Value::str(pid_str)),
+                        "ppid" => Some(Value::str(ppid_str)),
+                        "procsubstpid" => Some(Value::str("0")),
+                        _ => Some(Value::str("")),
+                    }
+                }
                 _ => None,
             }
         })
@@ -2232,6 +2252,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             }
                             St::A(out)
                         }
+                    };
+                }
+                'F' => {
+                    // (F) — join array elements with newlines (mirror
+                    // of (j:\n:) but as a one-letter shorthand).
+                    state = match state {
+                        St::A(a) => St::S(a.join("\n")),
+                        s => s,
                     };
                 }
                 'z' => {
@@ -6697,6 +6725,40 @@ impl ShellExecutor {
     /// Static glob match — same logic as glob_match but callable without &self,
     /// needed for Rayon parallel iterators that can't capture &self.
     pub fn glob_match_static(s: &str, pattern: &str) -> bool {
+        // ksh-style negation `!(p)` (gated on `setopt kshglob`): when
+        // the entire pattern is `!(<body>)`, match anything that does
+        // NOT match `<body>`. This handles the standalone case (the
+        // overwhelmingly common form); embedded `!()` inside a larger
+        // pattern still falls through and is left literal — full
+        // zsh-style negation needs lookahead which `regex` lacks.
+        let kshglob_on = with_executor(|e| {
+            e.options.get("kshglob").copied().unwrap_or(false)
+        });
+        if kshglob_on {
+            if let Some(body) = pattern.strip_prefix("!(").and_then(|r| r.strip_suffix(')')) {
+                // Don't recurse if body itself contains an unmatched
+                // `(` that would change the meaning.
+                let mut depth = 0;
+                let mut balanced = true;
+                for c in body.chars() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            if depth == 0 {
+                                balanced = false;
+                                break;
+                            }
+                            depth -= 1;
+                        }
+                        _ => {}
+                    }
+                }
+                if balanced && depth == 0 {
+                    return !ShellExecutor::glob_match_static(s, body);
+                }
+            }
+        }
+
         // Inline pattern flags `(#i)` / `(#I)` / `(#l)` / `(#a<n>)` per
         // zshexpn(1) "Globbing Flags". They prefix a pattern and modify
         // matching semantics for the rest.
@@ -10920,10 +10982,45 @@ impl ShellExecutor {
             "" => String::new(), // Empty name returns empty
             "$" => std::process::id().to_string(),
             "@" | "*" => self.positional_params.join(" "),
-            "#" => self.positional_params.len().to_string(),
-            // zsh aliases: $ARGC and $#@ both equal $#.
+            "#" | "#@" | "#*" => self.positional_params.len().to_string(),
+            // zsh alias: $ARGC also equals $#.
             "ARGC" => self.positional_params.len().to_string(),
             "?" => self.last_status.to_string(),
+            "EUID" => unsafe { libc::geteuid() }.to_string(),
+            "UID" => unsafe { libc::getuid() }.to_string(),
+            "EGID" => unsafe { libc::getegid() }.to_string(),
+            "GID" => unsafe { libc::getgid() }.to_string(),
+            "PPID" => unsafe { libc::getppid() }.to_string(),
+            "ZSH_SUBSHELL" => self
+                .variables
+                .get("ZSH_SUBSHELL")
+                .cloned()
+                .unwrap_or_else(|| "0".to_string()),
+            "HOST" => {
+                // libc gethostname → up to 256 bytes.
+                let mut buf = [0u8; 256];
+                let r = unsafe {
+                    libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len())
+                };
+                if r == 0 {
+                    let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                    String::from_utf8_lossy(&buf[..nul]).into_owned()
+                } else {
+                    String::new()
+                }
+            }
+            "HOSTNAME" => {
+                let mut buf = [0u8; 256];
+                let r = unsafe {
+                    libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len())
+                };
+                if r == 0 {
+                    let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                    String::from_utf8_lossy(&buf[..nul]).into_owned()
+                } else {
+                    String::new()
+                }
+            }
             "RANDOM" => {
                 // zsh/bash: pseudo-random unsigned 16-bit integer per
                 // expansion. We use process+nano for a cheap, OS-portable
@@ -12237,7 +12334,25 @@ impl ShellExecutor {
     }
 
     fn builtin_export(&mut self, args: &[String]) -> i32 {
+        // `export -p` (with no other args) — print every exported var
+        // as a re-executable `export NAME=value` line. Matches POSIX +
+        // zsh behavior. Skips ARG-less / ARG-with-flag iteration only
+        // when -p is the sole flag.
+        let only_print = args.len() == 1 && args[0] == "-p";
+        if only_print {
+            let mut keys: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
+            keys.sort();
+            for k in keys {
+                if let Ok(v) = std::env::var(&k) {
+                    println!("export {}={}", k, shell_quote_value(&v));
+                }
+            }
+            return 0;
+        }
         for arg in args {
+            if arg == "-p" {
+                continue;
+            }
             let key_owned = if let Some((key, value)) = arg.split_once('=') {
                 self.variables.insert(key.to_string(), value.to_string());
                 env::set_var(key, value);
@@ -13476,6 +13591,64 @@ impl ShellExecutor {
                     println!("{}={}", name, "*".repeat(val.len().min(8)));
                 } else {
                     println!("{}={}", name, val);
+                }
+            }
+            return 0;
+        }
+
+        // `typeset -p NAME...` (or `declare -p`): print re-executable
+        // declarations for the named vars. Routes here before the
+        // assignment loop so plain names don't get treated as bare
+        // declarations (which would set them to empty).
+        if print_mode {
+            for arg in &var_args {
+                if arg.contains('=') {
+                    continue;
+                }
+                let name = arg.as_str();
+                let mut attrs = String::new();
+                let attr = self.var_attrs.get(name).cloned();
+                if let Some(ref a) = attr {
+                    match a.kind {
+                        VarKind::Integer => attrs.push('i'),
+                        VarKind::Float => attrs.push('F'),
+                        VarKind::Array => attrs.push('a'),
+                        VarKind::Association => attrs.push('A'),
+                        VarKind::Scalar => {}
+                    }
+                    if a.readonly {
+                        attrs.push('r');
+                    }
+                    if a.export {
+                        attrs.push('x');
+                    }
+                } else if self.assoc_arrays.contains_key(name) {
+                    attrs.push('A');
+                } else if self.arrays.contains_key(name) {
+                    attrs.push('a');
+                }
+                let prefix = if attrs.is_empty() {
+                    "typeset".to_string()
+                } else {
+                    format!("typeset -{}", attrs)
+                };
+                if let Some(map) = self.assoc_arrays.get(name) {
+                    let mut pairs: Vec<_> = map.iter().collect();
+                    pairs.sort_by_key(|(k, _)| (*k).clone());
+                    let formatted: Vec<String> = pairs
+                        .iter()
+                        .map(|(k, v)| {
+                            format!("[{}]={}", shell_quote_value(k), shell_quote_value(v))
+                        })
+                        .collect();
+                    println!("{} {}=( {} )", prefix, name, formatted.join(" "));
+                } else if let Some(arr) = self.arrays.get(name) {
+                    let formatted: Vec<String> =
+                        arr.iter().map(|v| shell_quote_value(v)).collect();
+                    println!("{} {}=( {} )", prefix, name, formatted.join(" "));
+                } else if self.variables.contains_key(name) || env::var(name).is_ok() {
+                    let val = self.get_variable(name);
+                    println!("{} {}={}", prefix, name, shell_quote_value(&val));
                 }
             }
             return 0;
