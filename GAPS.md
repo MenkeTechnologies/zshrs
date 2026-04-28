@@ -23,9 +23,14 @@ Probe: 47 constructs. Every entry below was verified by running zshrs (`./target
 
 - `exec {fd}>file` — needs lexer support for `{var}>` redirect prefix.
 - `RC_EXPAND_PARAM` option — `X${arr}Y` element-wise distribution requires changing array-in-string concat semantics; affects compile_word.
-- `sched` builtin — would require bumping fusevm dependency to add `BUILTIN_SCHED` to the name→id table. Currently falls through to external dispatch.
+- `${(z)"literal string"}` — variable form `${(z)var}` works; literal-string form needs different compile path.
+- `typeset -T` bidirectional sync — initial bind works; subsequent assignments to either side don't auto-sync (would require hooking every `variables.insert` site).
 - History expansion (`!!`, `!$`, `^old^new^`) — interactive-only by design; the audit notes this is academic for `-c` mode.
 - `$RANDOM_FILE` — not actually a bug; mainline zsh also leaves it empty without `zmodload zsh/random`.
+
+### Sched + 6 stubbed builtins routed (this session)
+
+`sched`, `echotc`, `echoti`, `getln`, `zpty`, `ztcp`, `zsocket` were defined as `builtin_*` handlers in exec.rs but never reached because they're absent from fusevm's `shell_builtins::builtin_id` table — script-level dispatch fell through to external command spawn and "command not found". `host_exec_external` now intercepts these names before the OS-level exec attempt and routes to the local handler. Each handler's behavior varies (sched + getln work properly; zpty/ztcp/zsocket are still skeletons), but no more "command not found".
 
 ### Grammar (parser-shape gaps)
 
