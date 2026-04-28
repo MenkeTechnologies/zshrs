@@ -1095,3 +1095,29 @@ fn test_print_p_date_format() {
         "got: {output:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `fc -l` empty-history behavior in non-interactive mode
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_fc_l_empty_history_no_event_error() {
+    // In `-c` mode session history is empty; zsh emits "no such event"
+    // and exits 1. Persistent disk history should NOT leak through.
+    let (status, _, stderr) = run_zshrs("fc -l");
+    assert_eq!(status, 1, "exit status should be 1");
+    assert!(
+        stderr.contains("no such event"),
+        "stderr should mention 'no such event', got: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_fc_l_explicit_index_no_event_error() {
+    let (status, _, stderr) = run_zshrs("fc -l 5");
+    assert_eq!(status, 1, "exit status should be 1");
+    assert!(
+        stderr.contains("no such event: 5"),
+        "stderr should mention 'no such event: 5', got: {stderr:?}"
+    );
+}
