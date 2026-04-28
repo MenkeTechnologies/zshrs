@@ -3211,9 +3211,42 @@ fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_ARRAY_ALL, |vm, _argc| {
         let name = vm.pop().to_str();
-        with_executor(|exec| match exec.arrays.get(&name) {
-            Some(v) => Value::Array(v.iter().map(Value::str).collect()),
-            None => Value::Array(vec![]),
+        with_executor(|exec| {
+            // Special positional names — splice the positional list.
+            if name == "@" || name == "*" || name == "argv" {
+                return Value::Array(
+                    exec.positional_params.iter().map(Value::str).collect(),
+                );
+            }
+            match exec.arrays.get(&name) {
+                Some(v) => Value::Array(v.iter().map(Value::str).collect()),
+                None => {
+                    // Fall back to scalar lookup so for-list code that
+                    // emits ARRAY_ALL for a bare `$NAME` (where NAME is
+                    // a scalar) gets the value as a 1-element array.
+                    let val = exec.get_variable(&name);
+                    if val.is_empty()
+                        && !exec.variables.contains_key(&name)
+                        && std::env::var(&name).is_err()
+                    {
+                        Value::Array(vec![])
+                    } else {
+                        // For scalars, IFS-split (zsh's for-list
+                        // word-splits unquoted `$scalar`).
+                        let ifs = exec
+                            .variables
+                            .get("IFS")
+                            .cloned()
+                            .unwrap_or_else(|| " \t\n".to_string());
+                        let parts: Vec<Value> = val
+                            .split(|c: char| ifs.contains(c))
+                            .filter(|s| !s.is_empty())
+                            .map(Value::str)
+                            .collect();
+                        Value::Array(parts)
+                    }
+                }
+            }
         })
     });
 
