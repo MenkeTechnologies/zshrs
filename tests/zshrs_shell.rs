@@ -1868,3 +1868,26 @@ fn test_bare_at_subscript() {
     let (_, output, _) = run_zshrs("set -- a b c d e; echo $@[2,4]");
     assert_eq!(output.trim(), "b c d", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `for f in $arr` splices array elements (one iteration per element)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_for_in_array_splices() {
+    let (_, output, _) = run_zshrs(
+        "arr=(apple banana cherry); for f in $arr; do echo \"$f\"; done",
+    );
+    assert_eq!(output.trim(), "apple\nbanana\ncherry", "got: {output:?}");
+}
+
+#[test]
+fn test_for_quoted_array_joins() {
+    // "$arr" (DQ) joins to a scalar — single iteration with the joined
+    // string. Matches zsh DQ-array semantics.
+    let (_, output, _) = run_zshrs(
+        "arr=(a b c); for f in \"$arr\"; do echo \"got=$f\"; done",
+    );
+    // zsh joins with first char of $IFS (default space)
+    assert_eq!(output.trim(), "got=a b c", "got: {output:?}");
+}

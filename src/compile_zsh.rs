@@ -1430,6 +1430,30 @@ impl ZshCompiler {
         self.next_slot += 1;
 
         for word in words {
+            // Unquoted bare `$NAME` in a for-list — when NAME is an
+            // array, zsh splices each element as one iteration. Detect
+            // this shape (no DQ markers, no other shell metas) and emit
+            // BUILTIN_ARRAY_ALL which always returns Value::Array (for
+            // arrays) or a single-element Array (for scalars). Without
+            // this, BUILTIN_GET_VAR returns the IFS-joined string for
+            // arrays and `for f in $arr` iterates ONCE.
+            let untoked = crate::lexer::untokenize(word);
+            let is_bare_var_dollar = untoked.starts_with('$')
+                && !word.contains('\u{9d}')   // no SQ
+                && !word.contains('\u{9e}')   // no DQ
+                && untoked[1..]
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
+                && !untoked[1..].is_empty()
+                && !untoked.contains('[');
+            if is_bare_var_dollar {
+                let name = &untoked[1..];
+                let name_const = self.builder.add_constant(Value::str(name));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_ALL, 0), 0);
+                continue;
+            }
             self.compile_word_str(word);
             // Unquoted command/variable substitution in a for-list should
             // IFS-split. zsh's for-list naturally word-splits the result
