@@ -2715,11 +2715,17 @@ fn braced_subscript_ref(s: &str) -> Option<(&str, &str)> {
     if base.is_empty() || key.is_empty() || key == "@" || key == "*" {
         return None;
     }
-    if !base.chars().next()?.is_ascii_alphabetic() && !base.starts_with('_') {
-        return None;
-    }
-    if !base.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
-        return None;
+    // Special-name positionals `@` and `*` — accept as base so
+    // `${@[N,M]}` / `${*[N]}` route through BUILTIN_ARRAY_INDEX which
+    // has a positional-param branch.
+    let is_special = base == "@" || base == "*";
+    if !is_special {
+        if !base.chars().next()?.is_ascii_alphabetic() && !base.starts_with('_') {
+            return None;
+        }
+        if !base.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+            return None;
+        }
     }
     // Reject keys that themselves contain `[` or `]` (nested subscript)
     // OR a `$`-expansion (must be evaluated at runtime, not compile time).
@@ -2871,12 +2877,15 @@ fn bare_subscript_ref(s: &str) -> Option<(&str, &str)> {
     if name.is_empty() || key.is_empty() || key == "@" || key == "*" {
         return None;
     }
-    let first = name.chars().next()?;
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return None;
-    }
-    if !name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
-        return None;
+    let is_special = name == "@" || name == "*";
+    if !is_special {
+        let first = name.chars().next()?;
+        if !(first == '_' || first.is_ascii_alphabetic()) {
+            return None;
+        }
+        if !name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+            return None;
+        }
     }
     if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
         return None;

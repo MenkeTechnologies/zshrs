@@ -2020,6 +2020,43 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let idx = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // Special-name positional-param indexing. `${@[N]}`, `${@[N,M]}`,
+        // `${*[N]}`, `${argv[N]}` all index the positional-param array
+        // 1-based (zsh semantics). Without this, `@`/`*`/`argv` fall
+        // through to the scalar-slice path which slices the joined
+        // string instead.
+        if matches!(name.as_str(), "@" | "*" | "argv") {
+            let arr = with_executor(|exec| exec.positional_params.clone());
+            // Slice form `N,M`.
+            if let Some((s_str, e_str)) = idx.split_once(',') {
+                let s_opt: Option<i64> = s_str.trim().parse().ok();
+                let e_opt: Option<i64> = e_str.trim().parse().ok();
+                if let (Some(s), Some(e)) = (s_opt, e_opt) {
+                    return Value::Array(
+                        slice_indexed_array(&arr, s, e)
+                            .into_iter()
+                            .map(Value::str)
+                            .collect(),
+                    );
+                }
+            }
+            // Single index.
+            if let Ok(i) = idx.parse::<i64>() {
+                let len = arr.len() as i64;
+                let resolved = if i > 0 {
+                    (i - 1) as usize
+                } else if i < 0 {
+                    let off = len + i;
+                    if off < 0 {
+                        return Value::str("");
+                    }
+                    off as usize
+                } else {
+                    return Value::str("");
+                };
+                return Value::str(arr.get(resolved).cloned().unwrap_or_default());
+            }
+        }
         // Magic special-parameter assoc lookups — synthesized from shell
         // state on access. zsh exposes shell-introspection assocs like
         // `${commands[ls]}`, `${aliases[ll]}`, `${functions[foo]}`,

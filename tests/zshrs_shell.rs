@@ -1823,3 +1823,48 @@ fn test_integer_init_division_truncates() {
     let (_, output, _) = run_zshrs("integer i=10/3; echo $i");
     assert_eq!(output.trim(), "3", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Positional-param subscript: ${@[N,M]}, ${*[N]}, $@[N], ${argv[N]}
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_at_subscript_slice() {
+    let (_, output, _) =
+        run_zshrs("set -- a b c d e; echo \"${@[2,3]}\"");
+    assert_eq!(output.trim(), "b c", "got: {output:?}");
+}
+
+#[test]
+fn test_at_subscript_single() {
+    let (_, output, _) =
+        run_zshrs("set -- a b c d e; echo \"${@[1]}\"");
+    assert_eq!(output.trim(), "a", "got: {output:?}");
+}
+
+#[test]
+fn test_at_subscript_negative() {
+    let (_, output, _) =
+        run_zshrs("set -- a b c d e; echo \"${@[-1]}\"");
+    assert_eq!(output.trim(), "e", "got: {output:?}");
+}
+
+#[test]
+fn test_star_subscript_slice() {
+    let (_, output, _) =
+        run_zshrs("set -- a b c d e; echo \"${*[2,4]}\"");
+    assert_eq!(output.trim(), "b c d", "got: {output:?}");
+}
+
+#[test]
+fn test_argv_subscript_slice() {
+    let (_, output, _) =
+        run_zshrs("set -- a b c d e; echo \"${argv[2,4]}\"");
+    assert_eq!(output.trim(), "b c d", "got: {output:?}");
+}
+
+#[test]
+fn test_bare_at_subscript() {
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo $@[2,4]");
+    assert_eq!(output.trim(), "b c d", "got: {output:?}");
+}
