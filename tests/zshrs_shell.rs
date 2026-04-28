@@ -2163,3 +2163,56 @@ fn test_getopts_unknown_uses_zsh_format() {
     );
     assert!(stderr.contains("bad option: -x"), "stderr: {stderr:?}");
 }
+
+#[test]
+fn test_print_f_format_cycles_args() {
+    // POSIX printf semantics: when args remain after one pass through
+    // the format, cycle the format until args are exhausted.
+    let (_, output, _) = run_zshrs(
+        r#"print -f "%-5s|%-5s\n" a b c d"#,
+    );
+    assert_eq!(output, "a    |b    \nc    |d    \n", "got: {output:?}");
+}
+
+#[test]
+fn test_printf_width_left_align() {
+    let (_, output, _) = run_zshrs(r#"printf "%-10s|%10s\n" hello world"#);
+    assert_eq!(output, "hello     |     world\n", "got: {output:?}");
+}
+
+#[test]
+fn test_functions_dash_m_glob_lists_matching() {
+    let (_, output, _) = run_zshrs(
+        r#"fa() { :; }; fb() { :; }; functions -lm "f*""#,
+    );
+    let mut lines: Vec<&str> = output.trim().lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["fa", "fb"], "got: {output:?}");
+}
+
+#[test]
+fn test_zstyle_dash_l_uses_pattern_first_format() {
+    // `zstyle -L` emits `zstyle <pattern> <style> <values>...` — the
+    // pattern slot must be `:foo:bar`, not the style name.
+    let (_, output, _) = run_zshrs(
+        r#"zstyle ":foo:bar" key value; zstyle -L"#,
+    );
+    assert_eq!(output.trim(), "zstyle :foo:bar key value", "got: {output:?}");
+}
+
+#[test]
+fn test_zsh_param_q_flag_backslash_only() {
+    // `(q)` per zshexpn(1) = backslash-escape shell-specials, no
+    // surrounding quotes. Prior bug emitted `'hi'` (qq behaviour).
+    let (_, output, _) = run_zshrs(r#"a=hi; print "${(q)a}""#);
+    assert_eq!(output.trim(), "hi", "got: {output:?}");
+}
+
+#[test]
+fn test_zsh_param_q_flag_gradient() {
+    // q→\ , qq→single-quote, qqq→double-quote, qqqq→$'...'
+    let (_, output, _) = run_zshrs(
+        r#"a=hi; print "${(q)a}|${(qq)a}|${(qqq)a}|${(qqqq)a}""#,
+    );
+    assert_eq!(output.trim(), "hi|'hi'|\"hi\"|$'hi'", "got: {output:?}");
+}

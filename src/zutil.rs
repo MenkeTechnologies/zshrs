@@ -150,6 +150,8 @@ impl StyleTable {
         }
     }
 
+    /// Returns `(pattern, style, values)` triples — the order matches
+    /// how zsh prints `zstyle -L` lines (`zstyle <pattern> <style> ...`).
     pub fn list(&self, context: Option<&str>) -> Vec<(String, String, Vec<String>)> {
         let mut result = Vec::new();
         for (style, patterns) in &self.styles {
@@ -159,7 +161,7 @@ impl StyleTable {
                         continue;
                     }
                 }
-                result.push((style.clone(), pat.pattern.clone(), pat.values.clone()));
+                result.push((pat.pattern.clone(), style.clone(), pat.values.clone()));
             }
         }
         result

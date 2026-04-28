@@ -281,10 +281,11 @@ pub enum ZshParamFlag {
     SplitWords,            // z - split into words (shell parsing)
     Type,                  // t - type of variable
     Words,                 // w - word splitting
-    Quote,                 // q - quote result
-    QuoteIfNeeded,         // q+ - quote only if value contains shell-specials
-    DoubleQuote,           // qq - double quote
-    QuoteBackslash,        // b - quote with backslashes for patterns
+    Quote,                 // qq - single-quote always
+    QuoteIfNeeded,         // q+ - single-quote only if needed
+    DoubleQuote,           // qqq - double-quote
+    DollarQuote,           // qqqq - $'...' style
+    QuoteBackslash,        // q / b / B - backslash-escape special chars
     Unique,                // u - unique elements only
     Reverse,               // O - reverse sort
     Sort,                  // o - sort

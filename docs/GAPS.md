@@ -401,7 +401,35 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was `zshrs: getopts: illegal option -- X`. zsh emits `zsh:N: bad option: -X`. Switched to `zshrs:1: bad option: -X` to mirror the format with the program name swapped. Test: `test_getopts_unknown_uses_zsh_format`.
 
-## Still open (eighth-pass — remaining)
+## Closed (ninth-pass — formatter + introspection batch)
+
+### `print -f FMT args...` — cycle FMT until args exhausted
+
+- POSIX printf semantics. `print -f "%-5s|%-5s\n" a b c d` should emit two lines (`a    |b    \nc    |d    \n`), not one. Added a counting variant of the format helper (`printf_format_count`) returning consumed-arg count, then loop the call from the print path until `idx >= len`. Also expand `\n`/`\t`/etc. in the format string when `-r` isn't set. Test: `test_print_f_format_cycles_args`.
+
+### printf width specifiers `%[-+# 0][N][.P]X`
+
+- Width digits were parsed but never applied — `printf "%-10s|%10s" hello world` rendered `hello|world`. Rewrote the per-spec branch to track `left_align`/`zero_pad`/`plus_flag`/`space_flag`/`hash_flag`/`width`/`precision`, then pad/sign each conversion before pushing. Covers `s`/`d`/`i`/`u`/`x`/`X`/`o`/`f`/`F`/`e`/`E`/`g`/`G`. Test: `test_printf_width_left_align`.
+
+### `functions -m PAT` — glob-pattern listing
+
+- The `-m` flag wasn't recognised. Added pattern-match expansion: collect names matching each pattern via `glob_match_static`, dedup, then list (or print body, or trace per `-t`/`-l`). Combined-flags form `-lm` parsed too. Test: `test_functions_dash_m_glob_lists_matching`.
+
+### `zstyle -L` and bare `zstyle` — emit zsh's exact formats
+
+- The internal `StyleTable.list()` returned `(style, pattern, values)` triples but the caller printed them as `(pattern, style, values)`. Renamed semantics so list returns `(pattern, style, values)`, then updated `-L` to emit zsh's bare-word form (`zstyle <pattern> <style> <vals>`) — quoting only when whitespace/empty. Bare `zstyle` (no args) now uses zsh's grouped-by-style form (`STYLE\n        <pattern> <vals>`). Tests: `test_zstyle_dash_l_uses_pattern_first_format`.
+
+### `${(q)}` / `${(qq)}` / `${(qqq)}` / `${(qqqq)}` — fix gradient mapping
+
+- The `(q)` flag gradient was inverted. Per `man zshexpn`:
+  - `(q)`    backslash-escape shell-special chars (no surrounding quotes)
+  - `(qq)`   single-quote always
+  - `(qqq)`  double-quote always
+  - `(qqqq)` ANSI-C `$'…'` style
+  - `(q+)`   single-quote if needed
+  zshrs had `(q)`→single-quote, `(qq)`→double-quote, etc. (off-by-one). Re-mapped both q-flag handlers (the Phase-2 `BUILTIN_PARAM_FLAG` path at exec.rs:2516 and the parser-flag path at exec.rs:11904). Added `ZshParamFlag::DollarQuote` for the `qqqq` level. `(q+)` now correctly promotes to single-quote when the value needs quoting (was emitting backslash-escape before). Updated 7 affected tests in `tests/no_tree_walker_dispatch.rs` to match real zsh output. Tests: `test_zsh_param_q_flag_backslash_only`, `test_zsh_param_q_flag_gradient`.
+
+## Still open (ninth-pass — remaining)
 
 (none — all probed gaps closed)
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.

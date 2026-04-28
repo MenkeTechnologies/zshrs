@@ -1039,23 +1039,27 @@ fn zshflag_stacked_split_then_upper() {
 
 #[test]
 fn zshflag_q_single_quote_escapes_inner() {
+    // (q) per zshexpn(1): backslash-escape shell-special chars (no
+    // surrounding quotes). Verified against /bin/zsh.
     ok(
         r##"x="hi 'world'"; echo "${(q)x}""##,
-        "'hi '\\''world'\\'''\n",
+        "hi\\ \\'world\\'\n",
     );
 }
 
 #[test]
 fn zshflag_qq_double_quote() {
-    ok(r#"x=hello; echo "${(qq)x}""#, "\"hello\"\n");
+    // (qq) per zshexpn(1): single-quote always.
+    ok(r#"x=hello; echo "${(qq)x}""#, "'hello'\n");
 }
 
 #[test]
 fn zshflag_qqq_ansi_c_quoting() {
-    // Tab → \\t in $'…' form.
+    // (qqq) per zshexpn(1): double-quote always — tab stays literal
+    // inside "...".
     ok(
         r#"s=$(printf 'a\tb'); echo "${(qqq)s}""#,
-        "$'a\\tb'\n",
+        "\"a\tb\"\n",
     );
 }
 
@@ -1108,27 +1112,28 @@ fn zshflag_q_plus_skips_safe_values() {
 
 #[test]
 fn zshflag_q_minus_strips_trailing_newlines() {
-    // `(q-)` strips trailing newlines before quoting. Common with cmd-subst
-    // values that come back with a trailing \n.
+    // `(q-)` is `(q)` + strip trailing newlines first. Since `val` has
+    // no specials, the trimmed value emits unquoted.
     ok(
         r#"x=$(printf 'val\n\n'); echo "${(q-)x}""#,
-        "'val'\n",
+        "val\n",
     );
 }
 
 #[test]
 fn zshflag_q_star_escapes_glob_chars() {
-    // `(q*)` escapes `*` and `?` in addition to the level's normal escapes.
+    // `(q*)` is `(q)` with `*`/`?` also escaped. `*.rs` has no spaces,
+    // so the output is just `\*.rs` (no surrounding quotes).
     ok(
         r#"x="*.rs"; echo "${(q*)x}""#,
-        "'\\*.rs'\n",
+        "\\*.rs\n",
     );
 }
 
 #[test]
 fn zshflag_qqqq_backslash_no_quotes() {
-    // `(qqqq)` backslash-escapes shell-specials without surrounding quotes.
-    ok(r#"x="has space"; echo "${(qqqq)x}""#, "has\\ space\n");
+    // (qqqq) per zshexpn(1): ANSI-C $'…' form.
+    ok(r#"x="has space"; echo "${(qqqq)x}""#, "$'has space'\n");
 }
 
 #[test]
