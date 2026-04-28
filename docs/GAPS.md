@@ -307,7 +307,23 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `compile_zsh::emit_binary_test` had no arms for `-nt`/`-ot` — they fell through to the unknown handler returning false. Added `BUILTIN_FILE_NEWER` (id 324) and `BUILTIN_FILE_OLDER` (id 325) that compare `mtime()` via libc, with zsh-compatible "missing file" rules. Similarly `emit_file_test` lacked `-k`/`-u`/`-g`/`-O`/`-G`; added five new builtins (`BUILTIN_HAS_STICKY`/`SETUID`/`SETGID`/`OWNED_BY_USER`/`OWNED_BY_GROUP`) reading via `std::os::unix::fs::{PermissionsExt,MetadataExt}`. Verified `[[ -k /tmp ]]` returns true on macOS, `-O`/`-G` route correctly, `-nt` correctly compares 1s-granularity mtime.
 
-## Still open (fifth-pass probe — remaining)
+### Extendedglob `^pat` negation in `[[ str = pat ]]` cond test
+
+- Already worked for `${arr:#pat}` filter via `extendedglob_match`, but the cond `=` matcher (which goes through `glob_match_static` directly) didn't apply the negation. Added a leading-`^` strip + recurse-with-negate at the top of `glob_match_static`, gated on `setopt extendedglob`. `[[ apple = ^a* ]]` → false; `[[ banana = ^a* ]]` → true. Without extendedglob, `^` stays literal as before.
+
+## Still open (sixth-pass probe — fresh batch)
+
+- **`for f in $arr`** — bare `$arr` in a for list joins instead of splicing; `for f in $arr; do ...` iterates ONCE with `f` set to the joined string. Workaround: `for f in "${arr[@]}"`. Parser/compiler scope.
+- **`integer i=5+3`** — declaration-with-assignment doesn't run arith-eval on the value; stores 0 instead of 8.
+- **`arr+=y` (push single, no parens)** — appends to scalar interpretation instead of pushing element.
+- **`${(ou)a}` ordered-unique** — `o` (sort) + `u` (unique) flag combination doesn't dedup.
+- **`print -m PATTERN args...`** — match-arg flag still missing.
+- **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped).
+- **`wait $!`** — empty `$!` (no background job started) errors with "invalid pid"; should be silent and return 0.
+- **`${@:1:2}` / `$@[2,4]`** positional slice forms.
+- **`declare -ra` (readonly array)** — silent vs zsh's "inconsistent type for assignment".
+
+(False-positive notes from earlier passes carried over — see commit history.)
 
 The following items from the fifth-pass probe were inspected and turned out to be false positives or test artifacts:
 
