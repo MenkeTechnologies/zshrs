@@ -1202,8 +1202,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         with_executor(|exec| {
-            exec.variables.remove(&name);
-            exec.arrays.insert(name, values);
+            // Mirror array→scalar if name is the array side of a typeset -T tie.
+            if let Some((scalar_name, sep)) = exec.tied_array_to_scalar.get(&name).cloned() {
+                let joined = values.join(&sep);
+                exec.variables.insert(scalar_name, joined);
+                exec.arrays.insert(name, values);
+            } else {
+                exec.variables.remove(&name);
+                exec.arrays.insert(name, values);
+            }
         });
         Value::Status(0)
     });
@@ -2453,6 +2460,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let name = iter.next().unwrap_or_default();
         let value = iter.next().unwrap_or_default();
         with_executor(|exec| {
+            // Mirror scalar→array if name is the scalar side of a typeset -T tie.
+            if let Some((arr_name, sep)) = exec.tied_scalar_to_array.get(&name).cloned() {
+                let parts: Vec<String> = if value.is_empty() {
+                    Vec::new()
+                } else {
+                    value.split(&sep).map(String::from).collect()
+                };
+                exec.arrays.insert(arr_name, parts);
+            }
             exec.variables.insert(name, value);
         });
         Value::Status(0)
@@ -4402,6 +4418,13 @@ pub struct ShellExecutor {
     /// function is in `functions_compiled` but not here, introspection falls
     /// back to `text::getpermtext(self.functions[name])`.
     pub function_source: HashMap<String, String>,
+    /// Scalar→(array, sep) tie table set up by `typeset -T VAR var [SEP]`.
+    /// Used by BUILTIN_SET_VAR to split the assigned scalar on `sep` and
+    /// mirror it into `array`.
+    pub tied_scalar_to_array: HashMap<String, (String, String)>,
+    /// Array→(scalar, sep) reverse-tie table. Used by BUILTIN_SET_ARRAY to
+    /// join the array elements with `sep` and mirror to the scalar side.
+    pub tied_array_to_scalar: HashMap<String, (String, String)>,
 }
 
 impl ShellExecutor {
@@ -4562,6 +4585,8 @@ impl ShellExecutor {
             pending_stdin: None,
             functions_compiled: HashMap::new(),
             function_source: HashMap::new(),
+            tied_scalar_to_array: HashMap::new(),
+            tied_array_to_scalar: HashMap::new(),
         }
     }
 
@@ -11402,8 +11427,12 @@ impl ShellExecutor {
             } else {
                 scalar_val.split(&sep).map(String::from).collect()
             };
-            self.variables.insert(scalar_name, scalar_val);
+            self.variables.insert(scalar_name.clone(), scalar_val);
             self.arrays.insert(array_name.clone(), parts);
+            self.tied_scalar_to_array
+                .insert(scalar_name.clone(), (array_name.clone(), sep.clone()));
+            self.tied_array_to_scalar
+                .insert(array_name.clone(), (scalar_name, sep));
             return 0;
         }
 
