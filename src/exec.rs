@@ -12457,36 +12457,27 @@ impl ShellExecutor {
             if let Some(ref cache) = self.compsys_cache {
                 // FASTEST: try cached bytecodes (skip lex+parse+compile entirely)
                 if let Ok(Some(bc_blob)) = cache.get_autoload_bytecode(name) {
-                    // Try fusevm::Chunk first (new format — actual bytecodes)
+                    // Cache hit: deserialize the fusevm::Chunk and stash it in
+                    // functions_compiled. Returning None tells maybe_autoload
+                    // to use function_exists as the success signal — the outer
+                    // dispatch then runs the chunk with the caller's positional
+                    // params + local-scope save/restore, the same way an
+                    // already-loaded function would dispatch.
                     if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
                         if !chunk.ops.is_empty() {
                             tracing::trace!(
                                 name,
                                 bytes = bc_blob.len(),
                                 ops = chunk.ops.len(),
-                                "autoload: bytecode cache hit → VM"
+                                "autoload: bytecode cache hit"
                             );
-                            // Execute directly on fusevm — no parse, no compile
-                            let mut vm = fusevm::VM::new(chunk);
-                            let _ = vm.run();
-                            self.last_status = vm.last_status;
-                            // Return a no-op so the caller doesn't try to execute again
-                            return Some(ShellCommand::Simple(crate::parser::SimpleCommand {
-                                assignments: Vec::new(),
-                                words: Vec::new(),
-                                redirects: Vec::new(),
-                            }));
-                        }
-                    }
-                    // Fallback: try legacy Vec<ShellCommand> format (migration)
-                    if let Ok(commands) = bincode::deserialize::<Vec<ShellCommand>>(&bc_blob) {
-                        if !commands.is_empty() {
-                            tracing::trace!(
-                                name,
-                                bytes = bc_blob.len(),
-                                "autoload: legacy AST cache hit"
-                            );
-                            return Some(self.wrap_autoload_commands(name, commands));
+                            self.functions_compiled.insert(name.to_string(), chunk);
+                            // Pull source text too if cached so introspection
+                            // works without re-reading from disk.
+                            if let Ok(Some(body)) = cache.get_autoload_body(name) {
+                                self.function_source.insert(name.to_string(), body);
+                            }
+                            return None;
                         }
                     }
                 }
@@ -12578,27 +12569,6 @@ impl ShellExecutor {
         }
 
         None
-    }
-
-    /// Convert parsed commands into a FunctionDef, handling ksh vs zsh style.
-    fn wrap_autoload_commands(&self, name: &str, commands: Vec<ShellCommand>) -> ShellCommand {
-        // ksh style: file contains a single function definition for this name
-        if commands.len() == 1 {
-            if let ShellCommand::FunctionDef(ref fn_name, _) = commands[0] {
-                if fn_name == name {
-                    return commands.into_iter().next().unwrap();
-                }
-            }
-        }
-        // zsh style: file body IS the function body
-        let body = if commands.len() == 1 {
-            commands.into_iter().next().unwrap()
-        } else {
-            let list_cmds: Vec<(ShellCommand, ListOp)> =
-                commands.into_iter().map(|c| (c, ListOp::Semi)).collect();
-            ShellCommand::List(list_cmds)
-        };
-        ShellCommand::FunctionDef(name.to_string(), Box::new(body))
     }
 
     /// Check if a function is autoload pending and load it if so. The new
