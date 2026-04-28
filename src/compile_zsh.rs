@@ -1779,7 +1779,23 @@ impl ZshCompiler {
                     return;
                 }
                 self.compile_word_str(left);
-                self.compile_word_str(right);
+                // For string-comparison ops (`=`, `==`, `!=`, `=~`)
+                // the RHS is a PATTERN/REGEX to match against the LHS,
+                // not a path glob to expand against the filesystem.
+                // Routing through compile_word_str triggers expand_glob
+                // (now NOMATCH-strict). Compile RHS as a quoted literal
+                // so the pattern reaches the test runtime intact.
+                let is_pattern_op = matches!(
+                    op_clean.as_str(),
+                    "=" | "==" | "!=" | "=~"
+                );
+                if is_pattern_op {
+                    let right_clean = crate::lexer::untokenize(right);
+                    let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                } else {
+                    self.compile_word_str(right);
+                }
                 self.emit_binary_test(&op_clean);
             }
             ZshCond::Regex(left, regex) => {

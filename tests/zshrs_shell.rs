@@ -2266,3 +2266,55 @@ fn test_setopt_nounset_exits_on_unbound() {
         "stderr: {stderr:?}"
     );
 }
+
+#[test]
+fn test_param_colon_question_exits_on_empty() {
+    // ${x:?msg} should print the diagnostic and exit non-zero — not
+    // silently continue. Mirrors zsh's -c contract.
+    let (status, _, stderr) = run_zshrs(r#"x=""; echo "${x:?missing}"; echo done"#);
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(stderr.contains("x: missing"), "stderr: {stderr:?}");
+}
+
+#[test]
+fn test_param_question_exits_on_unset() {
+    let (status, _, stderr) = run_zshrs(r#"unset x; echo "${x?gone}"; echo done"#);
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(stderr.contains("x: gone"), "stderr: {stderr:?}");
+}
+
+#[test]
+fn test_param_colon_question_passes_through_value() {
+    let (status, output, _) = run_zshrs(r#"x=val; echo "${x:?msg}""#);
+    assert_eq!(status, 0);
+    assert_eq!(output.trim(), "val", "got: {output:?}");
+}
+
+#[test]
+fn test_unmatched_glob_default_errors_with_nomatch() {
+    // zsh defaults to setopt nomatch — unmatched globs abort the shell
+    // with "no matches found" rather than passing the literal through.
+    let (status, _, stderr) = run_zshrs("echo /tmp/zr_no_such_pattern_*");
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(
+        stderr.contains("no matches found"),
+        "stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_unsetopt_nomatch_passes_literal_through() {
+    let (status, output, _) = run_zshrs(
+        "unsetopt nomatch; echo /tmp/zr_no_such_pattern_*",
+    );
+    assert_eq!(status, 0);
+    assert_eq!(output.trim(), "/tmp/zr_no_such_pattern_*", "got: {output:?}");
+}
+
+#[test]
+fn test_assignment_value_skips_glob_expansion() {
+    // `integer i=2*3+1` — the `*` is arithmetic, not a path glob. With
+    // NOMATCH default-on, the previous code would error out on `*`.
+    let (_, output, _) = run_zshrs("integer i=2*3+1; echo $i");
+    assert_eq!(output.trim(), "7", "got: {output:?}");
+}

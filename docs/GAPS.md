@@ -439,12 +439,24 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - The option flag was set but never checked. Wired the check into `get_variable` for the catch-all (non-special) branch: when the resolved name isn't in `variables`/`arrays`/`assoc_arrays`/env AND nounset is on, print `zshrs:1: NAME: parameter not set` and `std::process::exit(1)` (mirrors zsh's `-c` behaviour). Subtlety: zsh stores the option as `unset` (default ON = silently empty), and `setopt nounset` sets the inverted name. Different code paths in zshrs persisted either `nounset=true` or `unset=false`, so the check honors either signal. Tests: `test_set_dash_u_exits_on_unbound_variable`, `test_setopt_nounset_exits_on_unbound`.
 
-## Still open (tenth-pass — remaining)
+## Closed (eleventh-pass — error-on-unset family)
+
+### `${x:?msg}` / `${x?msg}` — exit on null/unset
+
+- The `BUILTIN_PARAM_DEFAULT_FAMILY` op codes 2 and 6 (`:?` / `?`) emitted the diagnostic to stderr but returned an empty string and continued execution. zsh in `-c` mode aborts the whole shell. Now emits `zshrs:1: NAME: msg` (with `parameter null or not set` as the default if no message text) and `std::process::exit(1)`. Tests: `test_param_colon_question_exits_on_empty`, `test_param_question_exits_on_unset`, `test_param_colon_question_passes_through_value`.
+
+### NOMATCH default — unmatched globs abort
+
+- zsh's default option set includes `nomatch`, which makes unmatched globs an error: `echo /tmp/no_such_*` prints `no matches found: /tmp/no_such_*` on stderr and the shell exits 1. zshrs's `expand_glob` was returning `vec![pattern]` (bash semantics). Wired the option check: if `nomatch` is on (default true), no match found, AND the pattern truly looks like a glob → emit the diagnostic and exit. `looks_like_glob` rejects bare `[` (the test builtin) by requiring a matching `]`. The `(N)` qualifier and `setopt nullglob` continue to silence the error.
+- Required two protective fixes to keep internal callers from spuriously erroring:
+  - `BUILTIN_EXPAND_TEXT` mode 0 now skips glob expansion for assignment-shaped words (`NAME=value`) so `integer i=2*3+1` doesn't trip on the `*`.
+  - In `compile_cond`'s Binary branch, the RHS of `=`/`==`/`!=`/`=~` is now compiled as a quoted literal — these are pattern operands for the test, not file globs.
+- Tests: `test_unmatched_glob_default_errors_with_nomatch`, `test_unsetopt_nomatch_passes_literal_through`, `test_assignment_value_skips_glob_expansion`.
+
+## Still open (eleventh-pass — remaining)
 
 (none — all probed gaps closed)
 - **`set -e` / errexit** — flag is recognised but never enforced; failure of any command should propagate to script exit. Implementation requires either per-statement post-checks or VM-level instrumentation (subtle: errexit is suppressed inside `if`/`while`/`&&`/`||` conditionals).
-- **NOMATCH default** — zsh defaults to "no matches found" error on globs that match nothing; zshrs passes the literal pattern through (bash-style). Need to honor `nomatch` option default-ON.
-- **`${x:?msg}` exits** — currently emits the message but doesn't exit the shell (zsh exits in `-c` mode).
 - **`pwd` after `cd`** — zsh preserves the user-typed path (logical pwd); zshrs canonicalises through realpath. Affects symlinked dirs only.
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
