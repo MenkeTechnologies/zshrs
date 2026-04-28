@@ -1121,3 +1121,28 @@ fn test_fc_l_explicit_index_no_event_error() {
         "stderr should mention 'no such event: 5', got: {stderr:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `noglob` precommand modifier dispatches to builtins
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_noglob_print_builtin() {
+    // Previously errored "command not found: print" because noglob
+    // routed only through builtin_command (PATH-only lookup). Now
+    // dispatches via builtin_builtin first.
+    let (_, output, _) = run_zshrs("noglob print '*'");
+    assert_eq!(output.trim(), "*", "got: {output:?}");
+}
+
+#[test]
+fn test_noglob_print_multi_args() {
+    let (_, output, _) = run_zshrs("noglob print foo bar baz");
+    assert_eq!(output.trim(), "foo bar baz", "got: {output:?}");
+}
+
+#[test]
+fn test_noglob_echo_glob_literal() {
+    let (_, output, _) = run_zshrs("noglob echo '*.txt'");
+    assert_eq!(output.trim(), "*.txt", "got: {output:?}");
+}
