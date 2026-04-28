@@ -7495,177 +7495,19 @@ impl ShellExecutor {
     #[tracing::instrument(level = "trace", skip_all)]
     fn expand_word(&mut self, word: &ShellWord) -> String {
         match word {
-            ShellWord::Literal(s) => {
-                let expanded = self.expand_string(s);
-                // Don't glob-expand here, that's done in expand_word_glob
-                expanded
-            }
-            ShellWord::SingleQuoted(s) => s.clone(),
-            ShellWord::DoubleQuoted(parts) => parts.iter().map(|p| self.expand_word(p)).collect(),
-            ShellWord::Variable(name) => self.get_variable(name),
-            ShellWord::VariableBraced(name, modifier) => {
-                let val = env::var(name).ok();
-                self.apply_var_modifier(name, val, modifier.as_deref())
-            }
-            ShellWord::Tilde(user) => {
-                if let Some(u) = user {
-                    // ~user expansion (simplified)
-                    format!("/home/{}", u)
-                } else {
-                    dirs::home_dir()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "~".to_string())
-                }
-            }
-            ShellWord::Glob(pattern) => {
-                // Expand glob
-                match glob::glob(pattern) {
-                    Ok(paths) => {
-                        let expanded: Vec<String> = paths
-                            .filter_map(|p| p.ok())
-                            .map(|p| p.to_string_lossy().to_string())
-                            .collect();
-                        if expanded.is_empty() {
-                            pattern.clone()
-                        } else {
-                            expanded.join(" ")
-                        }
-                    }
-                    Err(_) => pattern.clone(),
-                }
-            }
+            ShellWord::Literal(s) => self.expand_string(s),
             ShellWord::Concat(parts) => self.expand_concat_parallel(parts),
-            ShellWord::CommandSub(cmd) => self.execute_command_substitution(cmd),
-            ShellWord::ProcessSubIn(cmd) => self.execute_process_sub_in(cmd),
-            ShellWord::ProcessSubOut(cmd) => self.execute_process_sub_out(cmd),
-            ShellWord::ArithSub(expr) => self.evaluate_arithmetic(expr),
-            ShellWord::ArrayVar(name, index) => self.expand_array_access(name, index),
-            ShellWord::ArrayLiteral(elements) => elements
-                .iter()
-                .map(|e| self.expand_word(e))
-                .collect::<Vec<_>>()
-                .join(" "),
         }
     }
 
     /// Pre-launch external command substitutions from a word list onto the worker pool.
     /// Returns a Vec aligned with `words` — Some(receiver) for pre-launched externals, None otherwise.
-    fn preflight_command_subs(
-        &mut self,
-        words: &[ShellWord],
-    ) -> Vec<Option<crossbeam_channel::Receiver<String>>> {
-        use crate::parser::ShellWord;
-        use std::process::{Command, Stdio};
-
-        let mut receivers = Vec::with_capacity(words.len());
-
-        // Count external command subs — don't bother with pool overhead for just one
-        let external_count = words
-            .iter()
-            .filter(|w| {
-                if let ShellWord::CommandSub(cmd) = w {
-                    if let ShellCommand::Simple(simple) = cmd.as_ref() {
-                        if let Some(first) = simple.words.first() {
-                            let name = self.expand_word(first);
-                            return !self.function_exists(&name) && !self.is_builtin(&name);
-                        }
-                    }
-                }
-                false
-            })
-            .count();
-
-        if external_count < 2 {
-            // Not worth parallelizing — fall through to sequential
-            return vec![None; words.len()];
-        }
-
-        for word in words {
-            if let ShellWord::CommandSub(cmd) = word {
-                if let ShellCommand::Simple(simple) = cmd.as_ref() {
-                    let first = simple.words.first().map(|w| self.expand_word(w));
-                    if let Some(ref name) = first {
-                        if !self.function_exists(name) && !self.is_builtin(name) {
-                            let expanded: Vec<String> =
-                                simple.words.iter().map(|w| self.expand_word(w)).collect();
-                            let rx = self.worker_pool.submit_with_result(move || {
-                                let output = Command::new(&expanded[0])
-                                    .args(&expanded[1..])
-                                    .stdout(Stdio::piped())
-                                    .stderr(Stdio::inherit())
-                                    .output();
-                                match output {
-                                    Ok(out) => String::from_utf8_lossy(&out.stdout)
-                                        .trim_end_matches('\n')
-                                        .to_string(),
-                                    Err(_) => String::new(),
-                                }
-                            });
-                            receivers.push(Some(rx));
-                            continue;
-                        }
-                    }
-                }
-            }
-            receivers.push(None);
-        }
-
-        receivers
-    }
-
-    /// Expand a Concat word list, launching external command substitutions in parallel.
-    /// Internal subs (builtins/functions) still run sequentially on the main thread.
+    /// Expand a Concat word list. The parallel-CommandSub pre-launch logic
+    /// that used to live here is gone — `ShellWord::CommandSub` was deleted
+    /// alongside the legacy parser in Phase 2, and ZWC produces only
+    /// `Literal`/`Concat` so concat parts never contain command subs now.
     fn expand_concat_parallel(&mut self, parts: &[ShellWord]) -> String {
-        use crate::parser::ShellWord;
-        use std::process::{Command, Stdio};
-
-        // Phase 1: identify external command subs and pre-launch them
-        let mut preflight: Vec<Option<crossbeam_channel::Receiver<String>>> =
-            Vec::with_capacity(parts.len());
-
-        for part in parts {
-            if let ShellWord::CommandSub(cmd) = part {
-                if let ShellCommand::Simple(simple) = cmd.as_ref() {
-                    let first = simple.words.first().map(|w| self.expand_word(w));
-                    if let Some(ref name) = first {
-                        if !self.function_exists(name) && !self.is_builtin(name) {
-                            // External command — pre-launch on background thread
-                            let words: Vec<String> =
-                                simple.words.iter().map(|w| self.expand_word(w)).collect();
-                            let rx = self.worker_pool.submit_with_result(move || {
-                                let output = Command::new(&words[0])
-                                    .args(&words[1..])
-                                    .stdout(Stdio::piped())
-                                    .stderr(Stdio::inherit())
-                                    .output();
-                                match output {
-                                    Ok(out) => String::from_utf8_lossy(&out.stdout)
-                                        .trim_end_matches('\n')
-                                        .to_string(),
-                                    Err(_) => String::new(),
-                                }
-                            });
-                            preflight.push(Some(rx));
-                            continue;
-                        }
-                    }
-                }
-            }
-            preflight.push(None); // not pre-launched
-        }
-
-        // Phase 2: collect results in order, using pre-launched receivers where available
-        let mut result = String::new();
-        for (i, part) in parts.iter().enumerate() {
-            if let Some(rx) = preflight[i].take() {
-                // Pre-launched external command sub — collect result
-                result.push_str(&rx.recv().unwrap_or_default());
-            } else {
-                // Everything else — expand sequentially (may be internal sub, variable, literal)
-                result.push_str(&self.expand_word(part));
-            }
-        }
-        result
+        parts.iter().map(|p| self.expand_word(p)).collect()
     }
 
     fn expand_braced_variable(&mut self, content: &str) -> String {
