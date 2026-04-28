@@ -1314,3 +1314,146 @@ fn test_recursive_glob_filter_by_extension() {
     lines.sort();
     assert_eq!(lines, vec!["a/x.txt", "b/c/y.txt"], "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `:s/old/new/` and `:gs/old/new/` substitution modifier
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_subst_modifier_first_only() {
+    let (_, output, _) =
+        run_zshrs("p=hello; echo ${p:s/l/L/}");
+    assert_eq!(output.trim(), "heLlo", "got: {output:?}");
+}
+
+#[test]
+fn test_subst_modifier_global() {
+    let (_, output, _) =
+        run_zshrs("p=hello; echo ${p:gs/l/L/}");
+    assert_eq!(output.trim(), "heLLo", "got: {output:?}");
+}
+
+#[test]
+fn test_subst_modifier_chained_with_t() {
+    let (_, output, _) =
+        run_zshrs("p=/a/b.txt; echo ${p:s/b/B/:t}");
+    assert_eq!(output.trim(), "B.txt", "got: {output:?}");
+}
+
+#[test]
+fn test_q_modifier_backslash_quote() {
+    // zsh `:q` uses backslash escaping, not single-quote wrapping.
+    let (_, output, _) = run_zshrs("p='hi there'; echo ${p:q}");
+    assert_eq!(output.trim(), "hi\\ there", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// $0 inside function = function name; $funcstack array
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_dollar_zero_in_function() {
+    let (_, output, _) = run_zshrs("foo() { echo $0; }; foo");
+    assert_eq!(output.trim(), "foo", "got: {output:?}");
+}
+
+#[test]
+fn test_funcstack_top_is_current_fn() {
+    let (_, output, _) =
+        run_zshrs("foo() { echo $funcstack[1]; }; foo");
+    assert_eq!(output.trim(), "foo", "got: {output:?}");
+}
+
+#[test]
+fn test_funcstack_nested() {
+    let (_, output, _) = run_zshrs(
+        "foo() { bar() { echo \"${funcstack[*]}\"; }; bar; }; foo",
+    );
+    assert_eq!(output.trim(), "bar foo", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// $ARGC alias for $#
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_argc_equals_positional_count() {
+    let (_, output, _) = run_zshrs("set -- a b c d; echo $ARGC");
+    assert_eq!(output.trim(), "4", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// `print -N` null separator between args
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_print_n_null_between_args() {
+    let (_, output, _) = run_zshrs("print -N a b c");
+    // a\0b\0c\0
+    assert_eq!(output, "a\0b\0c\0", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// kshglob extended patterns ?(p)/+(p)/@(p) — gated on `setopt kshglob`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_kshglob_question_alternation() {
+    let (_, output, _) = run_zshrs(
+        "setopt kshglob; [[ a = ?(a|b) ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_kshglob_plus_one_or_more() {
+    let (_, output, _) = run_zshrs(
+        "setopt kshglob; [[ aaa = +(a) ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_kshglob_at_exactly_one() {
+    let (_, output, _) = run_zshrs(
+        "setopt kshglob; [[ foo = @(foo|bar) ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_kshglob_off_no_match() {
+    // Without `setopt kshglob`, ?(a|b) is the default zsh-glob shape
+    // and doesn't match the bare letter `a` (literal `?(...)`).
+    let (_, output, _) =
+        run_zshrs("[[ a = ?(a|b) ]] && echo match || echo nomatch");
+    assert_eq!(output.trim(), "nomatch", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Pattern repetition `(#cN)` and `(#cN,M)`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_pattern_repeat_exact() {
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ aa = a(#c2) ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_pattern_repeat_range() {
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ aaa = a(#c2,3) ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_pattern_repeat_out_of_range() {
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ aaaa = a(#c2,3) ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "nomatch", "got: {output:?}");
+}

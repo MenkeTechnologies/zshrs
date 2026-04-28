@@ -233,9 +233,49 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `**/` previously returned the literal pattern; `**/*` matched only files. zsh's `**/` enumerates directories with the trailing slash preserved; `**/*` matches both files and directories. Three fixes in `expand_glob_parallel`: (1) detect `dirs_only` when `file_glob` is empty (the trailing-slash form) and skip the file-pattern check entirely. (2) When `match_dirs_too` is on (every non-`dirs_only` `**/` walk), include directory entries from the walker. (3) Strip the `./` prefix when base was the implicit `.` so output matches zsh's relative-path style. Worker walkers now `continue` on `depth() == 0` to avoid double-adding the subdir root that the top-level loop already emitted. Three tests cover dirs-only, files+dirs, and extension filter.
 
-## Still open
+## Closed (third-pass audit, this session)
 
-(none — all probed gaps closed)
+### `${var:s/old/new/}` and `${var:gs/old/new/}` substitution modifier
+
+- `is_history_modifier` was missing `s` and `g` so `${p:s/l/L/}` and `${p:gs/l/L/}` fell through unrecognized and returned empty. Added both. New `apply_subst_modifier` helper consumes the delimiter, old text, new text, then rewrites in place (single replace for `:s`, global for `:gs`). `apply_history_modifiers` now dispatches via `s` and the `g` prefix arms. Stops on `:` so chained modifiers (`:s/x/y/:t`) compose correctly.
+
+### `${var:q}` backslash quoting
+
+- `:q` was wrapping the whole value in single quotes (`'hi there'`); zsh emits backslash-escaped form (`hi\ there`). Replaced the wrapping with per-char escape: any of ` \t\n'"\\$\`;|&<>()[]{}*?#~!` gets a `\` prefix.
+
+### `$0` inside a function = function name
+
+- `call_function` now saves the previous `$0`, installs the called-function's name into `variables["0"]` for the duration of the call, and restores on exit. Matches zsh's default `FUNCTION_ARGZERO` behavior.
+
+### `$funcstack` array
+
+- `call_function` now also maintains the `funcstack` array — each call prepends the function name (top-of-stack first), pop on return. Standard zsh introspection used by frameworks for traceback / debugging.
+
+### `$ARGC` alias for `$#`
+
+- `get_variable` recognizes `ARGC` as a special parameter that returns `positional_params.len().to_string()` — same value as `$#`. zsh's `$ARGC` was empty in zshrs.
+
+### `print -N` null between args
+
+- `print -N a b c` previously emitted `a b c\0` (NUL only at end). zsh uses NUL as both separator AND terminator → `a\0b\0c\0`. Fixed `builtin_print` to use `\0` as the separator when `null_terminate` is set.
+
+### kshglob extended patterns `?(p)` `*(p)` `+(p)` `@(p)` (gated)
+
+- New `ksh_extglob_body_to_regex` translator. `glob_match_static` detects `?(...)`, `*(...)`, `+(...)`, `@(...)` after looking ahead for the `(` and emits `(?:body){suffix}` regex (suffix = `?`/`*`/`+`/empty). Gated on `setopt kshglob` so the default-off behavior matches zsh. `!(p)` (negative) needs lookahead which the `regex` crate doesn't support — left literal.
+
+### Pattern repetition `(#cN)` and `(#cN,M)`
+
+- `glob_match_static` peeks at `(#c...)` after `(` and emits a regex `{N}` or `{N,M}` quantifier. `a(#c2)` matches `aa` only; `a(#c2,3)` matches `aa` or `aaa`.
+
+## Still open (third-pass audit)
+
+Remaining items from the third-pass probe (deferred):
+
+- **`!(p)` kshglob negation** — needs regex negative lookahead, not supported by the `regex` crate. Workaround possible via custom matcher; deferred.
+- **`$#@` alternative count syntax** — `$#@` should equal `$#`; the bare-`$NAME` matcher treats it as `$#` followed by literal `@`. Parser-level fix.
+- **`$sysparams[pid]`** — `zsh/system` module's magic assoc array. zmodload no-ops; assoc not registered. Niche.
+- **`zmv` autoload** — built-in autoload dispatches to a generic handler that errors "action %N not recognised". The `zmv` rename-by-pattern function is auto-loadable in mainline zsh; not yet bundled.
+- **`zcalc` autoload** — niche calculator function not bundled.
 
 The "Stub modules (loaded but limited)" section below remains as documented deferrals (`zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp`, `zsh/db_gdbm`) — these are niche features whose `zmodload` call currently no-ops, with the corresponding builtins not registered. They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
 
