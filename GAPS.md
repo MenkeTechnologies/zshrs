@@ -18,12 +18,12 @@ Probe: 47 constructs. Every entry below was verified by running zshrs (`./target
 - `for var (a b c) cmd` and `for var (a b c) { ... }` — parse_for now handles the lexer-port quirk that emits the parens as a single String token (`\u{88}a b c\u{8a}`).
 - `>(...)` output process substitution — process_sub_out now creates a real named pipe via mkfifo and forks a child that reads it. untokenize was missing OUTANGPROC → '>' mapping (causing the detection in compile_word_str to fail). Both fixed; `tee >(cat)`, `echo > >(cat)` work. `tee >(cat) >/dev/null` still silent (child's stdout-vs-redirect interaction edge case).
 - `typeset -T VAR var [SEP]` — initial-bind only: takes current $VAR (or =VAL form), splits on SEP (default ":"), stores as array `var`. Bidirectional sync on subsequent assignments still requires a hook into set_variable; common idiom (`typeset -T PATH path`) works.
+- `typeset -T` bidirectional sync — `tied_scalar_to_array` / `tied_array_to_scalar` HashMaps in ShellExecutor record (peer, sep). `BUILTIN_SET_VAR` mirrors scalar→array (split on sep), `BUILTIN_SET_ARRAY` mirrors array→scalar (join on sep). `PATH=/a:/b; typeset -T PATH path; path=(/x /y); echo $PATH` → `/x:/y`.
 
 ### Still open (requires deeper work)
 
 - `RC_EXPAND_PARAM` option — `X${arr}Y` element-wise distribution requires changing array-in-string concat semantics; affects compile_word.
 - `${(z)"literal string"}` — variable form `${(z)var}` works; literal-string form needs different compile path.
-- `typeset -T` bidirectional sync — initial bind works; subsequent assignments to either side don't auto-sync (would require hooking every `variables.insert` site).
 - History expansion (`!!`, `!$`, `^old^new^`) — `expand_history` is wired into `execute_script` but gated on `atty::is(Stream::Stdin)`. Works in interactive mode; correctly no-op in `-c` (where the audit claimed broken).
 - `$RANDOM_FILE` — not actually a bug; mainline zsh also leaves it empty without `zmodload zsh/random`.
 
