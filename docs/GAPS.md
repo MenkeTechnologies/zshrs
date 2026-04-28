@@ -117,6 +117,10 @@ Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array
 
 - After `typeset -A` declares an empty HashMap entry in `assoc_arrays`, the array literal in the next statement is now interpreted as alternating k/v pairs and stored as assoc — previously the array assignment overwrote it as indexed and silently dropped the `-A` attribute. Implemented in `BUILTIN_SET_ARRAY` by checking `assoc_arrays.contains_key(&name)` before the indexed-array path.
 
+### Subscript with `$`-expansion key `${m[$k]}`
+
+- `braced_subscript_ref` rejected keys containing `$`, falling back to a bridge path that didn't perform the assoc lookup. Added `braced_subscript_dynamic_ref` which matches the same `${BASE[KEY]}` shape but allows `$` in `KEY`; the compile path emits `BUILTIN_EXPAND_TEXT` (mode 1, no glob/brace) to resolve the key at runtime, then `BUILTIN_ARRAY_INDEX` for the lookup. Works for both assoc and indexed arrays, plain refs (`$k`), and concat refs (`$pre$post`).
+
 ## Still open
 
 - **History expansion** (`!!`, `!$`, `^old^new^`) — `expand_history` is wired into `execute_script` but gated on `atty::is(Stream::Stdin)`. Works in interactive mode; correctly no-op in `-c` mode (where the original audit claimed broken — false positive).
@@ -125,7 +129,6 @@ Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array
 - **`${(@s.,.)str}` literal split with `@` flag** — `(s)` alone works; combined with `(@)` doesn't split. Edge case.
 - **`function () { ... }` anonymous form with `function` keyword** — bare `() { ... }` form already works; the `function` keyword variant compiles to a no-op (parser drops the body when no name follows the keyword). Fix needs parser pass that recognizes the empty-name shape.
 - **`=(...)` process substitution** — temp-file process sub still missing (only `<(...)` / `>(...)` named-pipe form is implemented). `cat =(echo hi)` errors with "No such file or directory".
-- **Assoc subscript with `$`-expansion key**: `${m[$k]}` returns empty for assocs even though `$k` resolves correctly elsewhere. The `braced_subscript_ref` fast-path rejects keys containing `$`, falling back to a bridge that doesn't perform the assoc lookup. Indexed-array form (`${arr[$i]}`) does work.
 - **Extendedglob inline flags** `(#i)`, `(#l)`, `(#a)` — case/approx-insensitive pattern flags inside a pattern. `[[ ABC = (#i)abc ]]` returns nomatch.
 - **Stub modules** — `zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp` builtins not registered (zmodload no-ops). `zsh/mapfile` assoc-array form not implemented (the bash-compat `readarray` builtin works for the common case).
 
