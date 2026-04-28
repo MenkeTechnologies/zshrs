@@ -10,6 +10,22 @@ Probe: 47 constructs. Every entry below was verified by running zshrs (`./target
 - `[[ a -ef b ]]` — same-inode test. New `BUILTIN_SAME_FILE` (id 315) compares (dev, inode) via `fs::metadata`.
 - `*(D)` glob qualifier — per-pattern dotglob. `expand_glob` activates `dotglob` when 'D' appears in the qualifier string.
 - `typeset -Z N x=val` / `-L N` / `-R N` — width as a separate arg now parsed (the in-flag form `-Z5` was already working). Width applied at assignment time.
+- `${(B)x}` — backslash-escape shell metas. New 'B' arm in BUILTIN_PARAM_FLAG (mirrors 'b').
+- `${(z)str}` / `${(w)str}` — array-producing flags. Handler now returns `Value::Array` so `print -l ${(z)a}` splits one-per-line.
+- `declare -g x=val` from inside a function — `-g` flag now opt-outs of the local_save_stack push, so the assignment binds at global scope and survives function exit.
+- `time { compound; ... }` — new `BUILTIN_TIME_SUBLIST` (id 316) runs the sublist as a sub-chunk and prints elapsed wall-clock time.
+- `{ try } always { finally }` — compile_zsh's `ZshCommand::Try` arm now compiles both blocks sequentially; finally runs unconditionally.
+- `for var (a b c) cmd` and `for var (a b c) { ... }` — parse_for now handles the lexer-port quirk that emits the parens as a single String token (`\u{88}a b c\u{8a}`).
+- `>(...)` output process substitution — process_sub_out now creates a real named pipe via mkfifo and forks a child that reads it. untokenize was missing OUTANGPROC → '>' mapping (causing the detection in compile_word_str to fail). Both fixed; `tee >(cat)`, `echo > >(cat)` work. `tee >(cat) >/dev/null` still silent (child's stdout-vs-redirect interaction edge case).
+- `typeset -T VAR var [SEP]` — initial-bind only: takes current $VAR (or =VAL form), splits on SEP (default ":"), stores as array `var`. Bidirectional sync on subsequent assignments still requires a hook into set_variable; common idiom (`typeset -T PATH path`) works.
+
+### Still open (requires deeper work)
+
+- `exec {fd}>file` — needs lexer support for `{var}>` redirect prefix.
+- `RC_EXPAND_PARAM` option — `X${arr}Y` element-wise distribution requires changing array-in-string concat semantics; affects compile_word.
+- `sched` builtin — would require bumping fusevm dependency to add `BUILTIN_SCHED` to the name→id table. Currently falls through to external dispatch.
+- History expansion (`!!`, `!$`, `^old^new^`) — interactive-only by design; the audit notes this is academic for `-c` mode.
+- `$RANDOM_FILE` — not actually a bug; mainline zsh also leaves it empty without `zmodload zsh/random`.
 
 ### Grammar (parser-shape gaps)
 
