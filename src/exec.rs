@@ -2438,6 +2438,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(exists)
     });
 
+    // `[[ a -ef b ]]` — same-inode test. Resolves both paths via fs::metadata
+    // (follows symlinks the way zsh's -ef does) and compares (dev, inode).
+    // Returns false on any I/O error (path missing, permission denied, etc.).
+    vm.register_builtin(BUILTIN_SAME_FILE, |vm, _argc| {
+        use std::os::unix::fs::MetadataExt;
+        let b = vm.pop().to_str();
+        let a = vm.pop().to_str();
+        let same = match (std::fs::metadata(&a), std::fs::metadata(&b)) {
+            (Ok(ma), Ok(mb)) => ma.dev() == mb.dev() && ma.ino() == mb.ino(),
+            _ => false,
+        };
+        fusevm::Value::Bool(same)
+    });
+
     // `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`
     // Pops [name, op_byte, rhs] (rhs popped first). Returns the modified
     // value as Value::Str. Handles unset/empty distinction (`:-` etc.
@@ -3015,6 +3029,10 @@ pub const BUILTIN_CMD_SUBST_TEXT: u16 = 313;
 /// dependence on the runtime side. The text-walking `expand_string` is
 /// the same code that ShellWord::Literal eventually called.
 pub const BUILTIN_EXPAND_TEXT: u16 = 314;
+
+/// `[[ a -ef b ]]` — same-inode test. Stack: [a, b]. Pushes Bool true iff
+/// both paths resolve to the same `(dev, inode)` pair (zsh + bash semantics).
+pub const BUILTIN_SAME_FILE: u16 = 315;
 
 /// `${(flags)name}` — zsh parameter expansion flags. Stack: [name, flags].
 /// Flags applied left-to-right. Supported subset (high-value, used by zpwr):
@@ -6249,7 +6267,10 @@ impl ShellExecutor {
         }
 
         let nullglob = self.options.get("nullglob").copied().unwrap_or(false);
-        let dotglob = self.options.get("dotglob").copied().unwrap_or(false);
+        // `(D)` glob qualifier — per-pattern dotglob. Same effect as
+        // `setopt dotglob` but scoped to this expansion only.
+        let dotglob = self.options.get("dotglob").copied().unwrap_or(false)
+            || qualifiers.contains('D');
         let nocaseglob = self.options.get("nocaseglob").copied().unwrap_or(false);
 
         // Parallel recursive glob: when pattern contains **/ we split the
@@ -8982,6 +9003,16 @@ impl ShellExecutor {
                     .map(|d| d.as_secs().to_string())
                     .unwrap_or_else(|_| "0".to_string())
             }
+            "EPOCHREALTIME" => {
+                // zsh/datetime: fractional seconds since the epoch with
+                // microsecond resolution. Format: SECS.UUUUUU.
+                use std::time::{SystemTime, UNIX_EPOCH};
+                match SystemTime::now().duration_since(UNIX_EPOCH) {
+                    Ok(d) => format!("{}.{:06}", d.as_secs(), d.subsec_micros()),
+                    Err(_) => "0.000000".to_string(),
+                }
+            }
+            "argv" => self.positional_params.join(" "),
             "LINENO" => {
                 // Tracked elsewhere; default to 1 if not populated.
                 self.variables
@@ -11129,6 +11160,18 @@ impl ShellExecutor {
                         'm' => pattern_match = true,
                         _ => {}
                     }
+                }
+                // `-Z 5`, `-L 5`, `-R 5` — width as a separate arg. The
+                // in-flag form `-Z5` is handled inside the char-loop above;
+                // the separate-arg form needs a peek at args[i+1].
+                if width.is_none()
+                    && (is_left_pad || is_right_pad || is_zero_pad || is_float || is_float_exp)
+                    && i + 1 < args.len()
+                    && args[i + 1].chars().all(|c| c.is_ascii_digit())
+                    && !args[i + 1].is_empty()
+                {
+                    width = args[i + 1].parse().ok();
+                    i += 1;
                 }
             } else {
                 var_args.push(arg.clone());

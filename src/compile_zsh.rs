@@ -1640,6 +1640,10 @@ impl ZshCompiler {
             "-le" => self.builder.emit(Op::NumLe, 0),
             "-gt" => self.builder.emit(Op::NumGt, 0),
             "-ge" => self.builder.emit(Op::NumGe, 0),
+            "-ef" => {
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SAME_FILE, 2), 0)
+            }
             _ => {
                 tracing::debug!(op, "compile_zsh: unknown binary test op");
                 self.builder.emit(Op::Pop, 0);
