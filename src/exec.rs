@@ -9308,20 +9308,6 @@ impl ShellExecutor {
 
             // ${var,} or ${var,,} - lowercase
             Some(VarModifier::Lower) => val.map(|v| v.to_lowercase()).unwrap_or_default(),
-
-            // ${(flags)var} - zsh parameter expansion flags
-            Some(VarModifier::ZshFlags(flags)) => {
-                let mut result = val.unwrap_or_default();
-                for flag in flags {
-                    result = self.apply_zsh_param_flag(&result, name, flag);
-                }
-                result
-            }
-
-            // Array-related modifiers are handled elsewhere
-            Some(VarModifier::ArrayLength)
-            | Some(VarModifier::ArrayIndex(_))
-            | Some(VarModifier::ArrayAll) => val.unwrap_or_default(),
         }
     }
 

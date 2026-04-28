@@ -342,9 +342,6 @@ pub enum VarModifier {
     Error(ShellWord),
     Alternate(ShellWord),
     Length,
-    ArrayLength,
-    ArrayIndex(String),
-    ArrayAll,
     Substring(i64, Option<i64>),
     RemovePrefix(ShellWord),
     RemovePrefixLong(ShellWord),
@@ -354,7 +351,6 @@ pub enum VarModifier {
     ReplaceAll(ShellWord, ShellWord),
     Upper,
     Lower,
-    ZshFlags(Vec<ZshParamFlag>),
 }
 
 /// Shell command - the old shell_ast compatible type
