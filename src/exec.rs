@@ -6741,6 +6741,10 @@ impl ShellExecutor {
                         }
                     }
                 }
+                // No such user / named dir — zsh emits a fatal error
+                // and exits 1 in -c mode.
+                eprintln!("zshrs:1: no such user or named directory: {}", name);
+                std::process::exit(1);
             }
         }
         path.to_string()
@@ -14883,7 +14887,22 @@ impl ShellExecutor {
 
         if use_array {
             let var = &var_names[0];
-            let words: Vec<String> = processed.split_whitespace().map(String::from).collect();
+            let ifs = self
+                .variables
+                .get("IFS")
+                .cloned()
+                .unwrap_or_else(|| " \t\n".to_string());
+            // Custom IFS (e.g. `IFS=,`) splits on every IFS char.
+            // Default IFS (whitespace) collapses consecutive seps —
+            // matches zsh `read -A` behaviour.
+            let words: Vec<String> = if ifs == " \t\n" || ifs == "\t\n " || ifs == "\n \t" {
+                processed.split_whitespace().map(String::from).collect()
+            } else {
+                processed
+                    .split(|c| ifs.contains(c))
+                    .map(String::from)
+                    .collect()
+            };
             self.arrays.insert(var.clone(), words);
         } else if var_names.len() == 1 {
             let var = &var_names[0];

@@ -2426,3 +2426,29 @@ fn test_arith_array_subscript() {
     let (_, output, _) = run_zshrs("a=(10 20 30); echo $((a[2] + 5))");
     assert_eq!(output.trim(), "25", "got: {output:?}");
 }
+
+#[test]
+fn test_read_dash_a_honors_custom_ifs() {
+    let (_, output, _) = run_zshrs(
+        r#"IFS=, read -A arr <<< "1,2,3"; echo "${#arr[@]}"; echo "${arr[1]}/${arr[2]}/${arr[3]}""#,
+    );
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(lines.first().copied(), Some("3"), "len: {output:?}");
+    assert_eq!(lines.get(1).copied(), Some("1/2/3"), "values: {output:?}");
+}
+
+#[test]
+fn test_read_dash_a_default_ifs_collapses_whitespace() {
+    let (_, output, _) = run_zshrs(r#"read -A arr <<< "a   b   c"; echo "${#arr[@]}""#);
+    assert_eq!(output.trim(), "3", "got: {output:?}");
+}
+
+#[test]
+fn test_tilde_unknown_user_errors() {
+    let (status, _, stderr) = run_zshrs("echo ~nonexistent_user_zrs");
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(
+        stderr.contains("no such user"),
+        "stderr: {stderr:?}"
+    );
+}
