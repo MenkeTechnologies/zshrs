@@ -473,3 +473,33 @@ fn test_indexed_subscript_dynamic_key_in_loop() {
     );
     assert_eq!(output.trim(), "1:x\n2:y\n3:z", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Extendedglob `^pat` negation in `${arr:#pat}` filter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_extendedglob_negation_in_filter() {
+    // `:#^*.txt` removes elements matching the negation of `*.txt`
+    // → keeps only `*.txt` elements.
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; arr=(foo.txt bar.log baz.txt); print -l ${arr:#^*.txt}",
+    );
+    assert_eq!(output.trim(), "foo.txt\nbaz.txt", "got: {output:?}");
+}
+
+#[test]
+fn test_extendedglob_negation_literal_inverse() {
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; arr=(a b c); print -l ${arr:#^a}");
+    assert_eq!(output.trim(), "a", "got: {output:?}");
+}
+
+#[test]
+fn test_extendedglob_negation_off_when_option_unset() {
+    // Without `extendedglob`, `^a` is a literal pattern (no element
+    // matches the literal char `^a`), so all 3 stay.
+    let (_, output, _) =
+        run_zshrs("arr=(a b c); print -l ${arr:#^a}");
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+}

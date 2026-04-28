@@ -121,10 +121,13 @@ Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array
 
 - `braced_subscript_ref` rejected keys containing `$`, falling back to a bridge path that didn't perform the assoc lookup. Added `braced_subscript_dynamic_ref` which matches the same `${BASE[KEY]}` shape but allows `$` in `KEY`; the compile path emits `BUILTIN_EXPAND_TEXT` (mode 1, no glob/brace) to resolve the key at runtime, then `BUILTIN_ARRAY_INDEX` for the lookup. Works for both assoc and indexed arrays, plain refs (`$k`), and concat refs (`$pre$post`).
 
+### Extendedglob `^pat` negation in `${arr:#pat}`
+
+- New module-level helper `extendedglob_match` reads the `extendedglob` option at match time; when set, a leading `^` strips itself and inverts the result of the underlying glob_match. Wired into both `BUILTIN_PARAM_FILTER` (compile-path filter) and the legacy `(M)` flag path in `expand_word_glob`. `${arr:#^*.txt}` now keeps only `*.txt` elements; `${(M)arr:#^a}` keeps the inverse. Without `extendedglob` set, `^` stays literal.
+
 ## Still open
 
 - **History expansion** (`!!`, `!$`, `^old^new^`) — `expand_history` is wired into `execute_script` but gated on `atty::is(Stream::Stdin)`. Works in interactive mode; correctly no-op in `-c` mode (where the original audit claimed broken — false positive).
-- **`^pat` extendedglob negation** — pattern-prefix `^` for "match all NOT matching pat" needs glob-matcher support. Verified still missing: `${arr:#^*.txt}` returns all elements unfiltered instead of dropping non-`.txt`.
 - **`${(kv)a[@]}` with `[@]` subscript** — flag prefix + `[@]` subscript composition: `[@]` goes through `BUILTIN_ARRAY_INDEX` which doesn't apply (kv) flag. Without subscript (`${(kv)a}`) works.
 - **`${(@s.,.)str}` literal split with `@` flag** — `(s)` alone works; combined with `(@)` doesn't split. Edge case.
 - **`function () { ... }` anonymous form with `function` keyword** — bare `() { ... }` form already works; the `function` keyword variant compiles to a no-op (parser drops the body when no name follows the keyword). Fix needs parser pass that recognizes the empty-name shape.

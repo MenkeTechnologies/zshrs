@@ -274,6 +274,22 @@ fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<String> {
     arr[s_idx..e_idx.min(arr.len())].to_vec()
 }
 
+/// Match `s` against zsh-extended glob `pat`. When the `extendedglob`
+/// shell option is set, a leading `^` inverts the match of the rest
+/// of the pattern (zsh negation operator). Falls through to plain
+/// glob_match otherwise.
+fn extendedglob_match(s: &str, pat: &str) -> bool {
+    let extendedglob = with_executor(|exec| {
+        exec.options.get("extendedglob").copied().unwrap_or(false)
+    });
+    if extendedglob {
+        if let Some(neg) = pat.strip_prefix('^') {
+            return !ShellExecutor::glob_match_static(s, neg);
+        }
+    }
+    ShellExecutor::glob_match_static(s, pat)
+}
+
 /// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
 /// inclusive, char-aware (not byte). Negative indices count from end.
 fn slice_scalar(s: &str, start: i64, end: i64) -> String {
@@ -3132,13 +3148,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
         let arr_val = with_executor(|exec| exec.arrays.get(&name).cloned());
+        // extendedglob_match handles the leading-`^` negation operator
+        // when the `extendedglob` option is set. Plain literal-equal
+        // path retained for the no-meta-char case (cheaper than running
+        // a regex compile on every element).
         let matches_glob = |s: &str, pat: &str| -> bool {
-            // Simple glob: * matches any sequence, ? matches one char.
-            // For now use a basic implementation; zshrs has glob_match
-            // helpers but they require &mut exec — use string contains
-            // for the no-glob case as a baseline.
-            if pat.contains('*') || pat.contains('?') || pat.contains('[') {
-                with_executor(|exec| exec.glob_match(s, pat))
+            let starts_neg = pat.starts_with('^');
+            if pat.contains('*') || pat.contains('?') || pat.contains('[') || starts_neg {
+                extendedglob_match(s, pat)
             } else {
                 s == pat
             }
@@ -8554,7 +8571,7 @@ impl ShellExecutor {
                             let pattern = pattern.to_string();
                             arr.into_par_iter()
                                 .filter(|elem| {
-                                    let m = Self::glob_match_static(elem, &pattern);
+                                    let m = extendedglob_match(elem, &pattern);
                                     if has_match_flag {
                                         m
                                     } else {
@@ -8565,7 +8582,7 @@ impl ShellExecutor {
                         } else {
                             arr.into_iter()
                                 .filter(|elem| {
-                                    let m = self.glob_match(elem, pattern);
+                                    let m = extendedglob_match(elem, pattern);
                                     if has_match_flag {
                                         m
                                     } else {
@@ -8579,7 +8596,7 @@ impl ShellExecutor {
 
                     // Scalar path: original behavior
                     let val = self.get_variable(var_name);
-                    let matches = self.glob_match(&val, pattern);
+                    let matches = extendedglob_match(&val, pattern);
 
                     return if has_match_flag {
                         if matches {
