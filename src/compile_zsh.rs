@@ -931,6 +931,30 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: `${NAME[KEY]}` where KEY contains `$` expansions
+        // (e.g. `${m[$k]}`, `${m[$prefix$suffix]}`). Resolve the key
+        // text at runtime via BUILTIN_EXPAND_TEXT (mode 1 = inner-string
+        // expansion, no glob/brace), then index. Mirrors the static-key
+        // fast path above except the key is computed instead of loaded
+        // as a constant. Without this, the assoc-array case falls back
+        // to a bridge path that doesn't perform the assoc lookup.
+        if !has_bnull {
+            if let Some((base, key)) = braced_subscript_dynamic_ref(&untoked) {
+                let name_const = self.builder.add_constant(Value::str(base));
+                let key_const = self.builder.add_constant(Value::str(key));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                self.builder.emit(Op::LoadConst(key_const), 0);
+                // mode 1 → DoubleQuoted-style: expand $-refs only, no
+                // glob/brace pollution of the key.
+                self.builder.emit(Op::LoadInt(1), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                return;
+            }
+        }
+
         // Fast path: `${(flags)"literal"}` — zsh parameter flags applied
         // to a literal string operand. Detection runs on the original `s`
         // (with quote markers intact) so we can distinguish a quoted
@@ -2536,6 +2560,39 @@ fn braced_subscript_ref(s: &str) -> Option<(&str, &str)> {
     // Reject keys that themselves contain `[` or `]` (nested subscript)
     // OR a `$`-expansion (must be evaluated at runtime, not compile time).
     if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
+        return None;
+    }
+    Some((base, key))
+}
+
+/// Same shape as `braced_subscript_ref` but allows the key to contain
+/// `$`-expansions (`${m[$k]}`, `${m[$pre$post]}`). The compile path
+/// resolves the key text at runtime via BUILTIN_EXPAND_TEXT before
+/// looking it up. Excludes nested `${…}` (which would need recursive
+/// compilation), backticks (cmd-sub), and `[`/`]` (nested subscript).
+fn braced_subscript_dynamic_ref(s: &str) -> Option<(&str, &str)> {
+    let inner = s.strip_prefix("${")?.strip_suffix('}')?;
+    if inner.contains("${") || inner.contains('}') {
+        return None;
+    }
+    let (base, rest) = inner.split_once('[')?;
+    let key = rest.strip_suffix(']')?;
+    if base.is_empty() || key.is_empty() || key == "@" || key == "*" {
+        return None;
+    }
+    if !base.chars().next()?.is_ascii_alphabetic() && !base.starts_with('_') {
+        return None;
+    }
+    if !base.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    if key.contains('[') || key.contains(']') || key.contains('`') {
+        return None;
+    }
+    // Only kick in when the key actually has a `$` expansion — the
+    // pure-literal case is handled by the static `braced_subscript_ref`
+    // matcher above us in the compile path.
+    if !key.contains('$') {
         return None;
     }
     Some((base, key))

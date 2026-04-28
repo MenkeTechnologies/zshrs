@@ -445,3 +445,31 @@ fn test_typeset_a_then_indexed_assoc_remains_assoc() {
     );
     assert_eq!(output.trim(), "1|2|3", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Subscript with $-expanded key: ${m[$k]} for assoc, ${arr[$i]} for indexed
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_assoc_subscript_dynamic_key() {
+    let (_, output, _) = run_zshrs(
+        "typeset -A m=(foo 1 bar 2); k=foo; print \"${m[$k]}\"",
+    );
+    assert_eq!(output.trim(), "1", "got: {output:?}");
+}
+
+#[test]
+fn test_assoc_subscript_dynamic_key_loop() {
+    let (_, output, _) = run_zshrs(
+        "typeset -A m=(a 1 b 2); for k in a b; do print \"$k=${m[$k]}\"; done",
+    );
+    assert_eq!(output.trim(), "a=1\nb=2", "got: {output:?}");
+}
+
+#[test]
+fn test_indexed_subscript_dynamic_key_in_loop() {
+    let (_, output, _) = run_zshrs(
+        "arr=(x y z); for i in 1 2 3; do print \"$i:${arr[$i]}\"; done",
+    );
+    assert_eq!(output.trim(), "1:x\n2:y\n3:z", "got: {output:?}");
+}
