@@ -3410,6 +3410,33 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::str(val)
     });
 
+    // `name+=val` (no parens) — runtime dispatch:
+    //   - if `name` is in `arrays` → push `val` as new element
+    //   - if `name` is in `assoc_arrays` → refuse (zsh errors here)
+    //   - else → scalar concat (existing behavior)
+    // Stack: [name, value].
+    vm.register_builtin(BUILTIN_APPEND_SCALAR_OR_PUSH, |vm, argc| {
+        let args = pop_args(vm, argc);
+        let mut iter = args.into_iter();
+        let name = iter.next().unwrap_or_default();
+        let value = iter.next().unwrap_or_default();
+        with_executor(|exec| {
+            if let Some(arr) = exec.arrays.get_mut(&name) {
+                arr.push(value);
+                return;
+            }
+            if exec.assoc_arrays.contains_key(&name) {
+                eprintln!("zshrs: {}: cannot use += on assoc without (key val)", name);
+                return;
+            }
+            // Scalar concat.
+            let prev = exec.get_variable(&name);
+            let combined = format!("{}{}", prev, value);
+            exec.variables.insert(name, combined);
+        });
+        Value::Status(0)
+    });
+
     vm.register_builtin(BUILTIN_SET_VAR, |vm, argc| {
         let args = pop_args(vm, argc);
         let mut iter = args.into_iter();
@@ -4493,6 +4520,12 @@ pub const BUILTIN_HAS_SETGID: u16 = 328;
 pub const BUILTIN_OWNED_BY_USER: u16 = 329;
 /// `[[ -G path ]]` — owned by effective GID.
 pub const BUILTIN_OWNED_BY_GROUP: u16 = 330;
+
+/// `name+=val` (no parens) — runtime-dispatched append.
+/// If name is an indexed array → push val as element.
+/// If name is an assoc array → error (zsh requires `(k v)` form).
+/// Else → scalar concat (existing SET_VAR behavior).
+pub const BUILTIN_APPEND_SCALAR_OR_PUSH: u16 = 331;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
 /// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk
