@@ -1,28 +1,14 @@
 //! Bytecode compiler for the ported `ZshProgram` AST.
 //!
 //! Consumes the 4-tier port grammar (`ZshProgram → ZshList → ZshSublist →
-//! ZshPipe → ZshCommand`) and emits fusevm bytecode. This is the
-//! replacement for `shell_compiler::ShellCompiler`, which consumed the
-//! hand-rolled `ShellCommand` AST. The port is the single source of truth
-//! for parsing; this compiler does the speed work (compile-time word
-//! decomposition + native ops where possible, runtime fallback for the
-//! long tail).
-//!
-//! Migration plan:
-//!   1. Build skeleton with ZshSimple + ZshList + ZshSublist + ZshPipe.
-//!   2. Cover ZshFor, ZshIf, ZshWhile, ZshCase progressively.
-//!   3. Cover ZshFuncDef, ZshCond, ZshArith.
-//!   4. Wire `execute_script` to use this path.
-//!   5. Run all 398 tests; fix divergences.
-//!   6. Delete `shell_compiler.rs` + `ShellParser` + `ShellLexer` +
-//!      `ShellCommand` + `ShellWord`.
+//! ZshPipe → ZshCommand`) and emits fusevm bytecode. The ported parser
+//! is the single source of truth for parsing; this compiler does the
+//! speed work (compile-time word decomposition + native ops where
+//! possible, runtime fallback for the long tail).
 //!
 //! Word handling: `ZshSimple::words` are raw `Vec<String>`. We decompose
 //! at compile time into typed expansion ops (`Op::ExpandParam`,
-//! `Op::Glob`, `Op::TildeExpand`, `Op::CmdSubst`, etc.) using the same
-//! detection logic that lives in `shell_compiler.rs::compile_word`. This
-//! keeps the speed of the existing pipeline while sourcing the AST from
-//! the faithful port.
+//! `Op::Glob`, `Op::TildeExpand`, `Op::CmdSubst`, etc.).
 
 use crate::parser::{
     ZshAssign, ZshAssignValue, ZshCommand, ZshList, ZshPipe, ZshProgram, ZshSimple,
@@ -58,8 +44,7 @@ impl ZshCompiler {
     pub fn compile(mut self, program: &ZshProgram) -> fusevm::Chunk {
         self.compile_program(program);
 
-        // Patch return/exit jumps to past chunk end. Same mechanism as
-        // shell_compiler.rs's compile().
+        // Patch return/exit jumps to past chunk end.
         let end_pos = self.builder.current_pos();
         for patch in std::mem::take(&mut self.return_patches) {
             self.builder.patch_jump(patch, end_pos);
@@ -82,7 +67,7 @@ impl ZshCompiler {
         // ZshList = sublist + flags (async / disown).
         if list.flags.async_ {
             // Background: compile the sublist into a sub-chunk + emit
-            // BUILTIN_RUN_BG just like the ShellCompiler path.
+            // BUILTIN_RUN_BG.
             let mut sub = ZshCompiler::new();
             sub.compile_sublist(&list.sublist);
             let sub_end = sub.builder.current_pos();
@@ -463,8 +448,7 @@ impl ZshCompiler {
         }
 
         // ── Dispatch by first-word kind ───────────────────────────────
-        // Same logic as shell_compiler.rs::compile_simple but operating
-        // on raw &str inputs. We decompose at compile time.
+        // Operates on raw &str inputs and decomposes at compile time.
         let first = &simple.words[0];
 
         // Dynamic command name: first word contains an unquoted expansion
@@ -559,7 +543,6 @@ impl ZshCompiler {
     fn compile_redir(&mut self, redir: &crate::parser::ZshRedir) {
         use crate::parser::RedirType;
         // Default fd: stdin for read-side redirects, stdout for write-side.
-        // Matches shell_compiler's rules.
         let fd_default: u8 = match redir.rtype {
             RedirType::Read
             | RedirType::Heredoc
@@ -714,7 +697,7 @@ impl ZshCompiler {
                 self.builder.emit(Op::Pop, 0);
             }
             ZshAssignValue::Array(elements) => {
-                // arr=(a b c) / arr+=(d e) — same shape as ShellCompiler.
+                // arr=(a b c) / arr+=(d e).
                 for elem in elements {
                     self.compile_word_str(elem);
                     // Same IFS-split rule as for-list words: unquoted
@@ -739,22 +722,10 @@ impl ZshCompiler {
         }
     }
 
-    /// Compile a raw word string. This does at compile time what
-    /// ShellParser was doing during parse — detect $-triggers, glob,
-    /// tilde, brace, ZshFlag, array-access — and emit native ops where
-    /// possible.
-    ///
-    /// Migration status: this is a literal-only stub today. The next
-    /// passes will incrementally add fast paths matching what
-    /// `shell_compiler.rs::compile_word` does for each ShellWord variant,
-    /// re-implemented to take a `&str` directly.
-    ///
-    /// For words that contain $ / glob / tilde / brace / etc., we
-    /// currently fall through to a runtime expand_word call via
-    /// BUILTIN_EXPAND_WORD_RUNTIME. That keeps semantics correct (the
-    /// tree-walker era expansion engine handles every form) at the cost
-    /// of compile-time decomposition speed. Each subsequent migration
-    /// pass replaces one variant's runtime fallback with native ops.
+    /// Compile a raw word string. Detects $-triggers, glob, tilde,
+    /// brace, ZshFlag, array-access at compile time and emits native
+    /// ops where possible. Words that hit no fast path fall through
+    /// to a runtime expand call via BUILTIN_EXPAND_TEXT.
     fn compile_word_str(&mut self, s: &str) {
         // ANSI-C quoted form: `$'a\tb'` arrives from the lexer as
         // `<META-$><SNULL>a\tb<SNULL>` = `\u{85}\u{9d}a\tb\u{9d}`. Detect
@@ -802,9 +773,9 @@ impl ZshCompiler {
         // BNULL marker (`\u{9f}`) means "the next char is literal" — used
         // by the lexer for backslash-escaped specials (`\$`, `\`, etc.).
         // Fast-paths that match `$NAME` shapes on the un-tokenized form
-        // would mis-route here (the `$` was escaped). Force the bridge so
-        // ShellParser sees the original `"\$..."` form via
-        // untokenize_preserve_quotes.
+        // would mis-route here (the `$` was escaped). Skip the fast paths
+        // and fall through to the runtime expand which honors the original
+        // `"\$..."` form via untokenize_preserve_quotes.
         let has_bnull = s.contains('\u{9f}');
 
         // Trigger detection on the un-tokenized form.
@@ -880,7 +851,7 @@ impl ZshCompiler {
         // Fast path: single bare `$NAME` (no braces, no concat, no idx,
         // no modifier). Covers `$x`, `$1`, `$#`, `$?`, `$!`, etc. — the
         // most common case in real scripts. Emits BUILTIN_GET_VAR
-        // directly, bypassing the legacy ShellParser bridge.
+        // directly without going through the runtime expand path.
         if !has_bnull {
             if let Some(name) = bare_var_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
@@ -977,9 +948,7 @@ impl ZshCompiler {
         }
 
         // Fast path: `${(flags)NAME}` — zsh parameter flags. Emit
-        // BUILTIN_PARAM_FLAG with [name, flags] on the stack. Mirrors
-        // shell_compiler::try_lower_zsh_flag so behavior is identical
-        // between pipelines.
+        // BUILTIN_PARAM_FLAG with [name, flags] on the stack.
         if !has_bnull {
             if let Some((flags, name)) = parse_zsh_flag(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(name));
@@ -1027,13 +996,11 @@ impl ZshCompiler {
             }
         }
 
-        // Phase 1 step 3: `$(cmd)` command substitution. Push the
-        // command text and call BUILTIN_CMD_SUBST_TEXT which routes
-        // through `run_command_substitution` (uses ShellParser + an
-        // in-process pipe capture). The ShellParser inner dependency
-        // can be migrated to ZshParser as a follow-up — fixing the
-        // current path's "$(printf "a\nb")" → "anb" quoting bug
-        // independently is the harder problem.
+        // `$(cmd)` command substitution. Push the command text and
+        // call BUILTIN_CMD_SUBST_TEXT which routes through
+        // `run_command_substitution` (compile + sub-VM + in-process
+        // pipe capture). Avoids the raw Op::CmdSubst path's
+        // "$(printf "a\nb")" → "anb" quoting bug.
         if !has_bnull {
             let preserved_for_cmdsub = crate::lexer::untokenize_preserve_quotes(s);
             if let Some(inner) = strip_cmd_subst(&preserved_for_cmdsub) {
@@ -1113,8 +1080,6 @@ impl ZshCompiler {
         // - Backquote-wrapped (`` `…` ``) → AltBackquote, runs as
         //   command substitution.
         // - Else → Default, full expand_string + braces + glob.
-        //
-        // No more ShellParser → ShellWord → JSON round-trip.
         let preserved = crate::lexer::untokenize_preserve_quotes(s);
         let mode = expand_text_mode(s, &preserved);
         let idx = self.builder.add_constant(Value::str(preserved.as_str()));
@@ -1812,11 +1777,10 @@ impl ZshCompiler {
         self.builder.patch_jump(end_jump, end);
     }
 
-    /// Compile arithmetic expression text. Leaves the result on stack as
-    /// Value::Int. Inlines the same pre-load → arith ops → post-sync
-    /// pattern that `ShellCompiler::compile_arith_inline` uses, but
-    /// targets this ZshCompiler's builder + slot table directly so no
-    /// `ShellCompiler` instance is constructed.
+    /// Compile arithmetic expression text. Leaves the result on stack
+    /// as Value::Int. Pre-loads variable slots, emits arith ops via
+    /// ArithCompiler against this compiler's builder + slot table,
+    /// then post-syncs slots back to vars.
     fn compile_arith_str(&mut self, expr: &str) {
         // ZshLexer tokenizes operator chars (`<`, `>`, `=`, `&`, `|`,
         // `*`, `?`, etc.) into the META range. ArithCompiler can't parse
@@ -2431,8 +2395,8 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
 
 /// Parse `${(flags)NAME}` and return (flags, name). The name must be a
 /// plain identifier; nested expansions or subscripted names disqualify
-/// this fast-path and route to the bridge instead. Mirrors
-/// shell_compiler::try_lower_zsh_flag.
+/// this fast-path and route through the runtime expand instead.
+///
 /// Detect `${(flags)"literal"}` or `${(flags)'literal'}` shape. Caller
 /// passes the untokenize_preserve_quotes form so brace/paren markers are
 /// already mapped back to ASCII and DNULL/SNULL are mapped to `"`/`'`.

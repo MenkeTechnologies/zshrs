@@ -1427,8 +1427,7 @@ echo done"#;
 #[test] fn dynamic_var_via_var_name() {
     // ${(P)var} in zsh — nameref / indirect lookup. Both bash's
     // `${!ref}` and zsh's `${(P)ref}` use a different name in each
-    // dialect; only test if the pattern matches what shell_compiler
-    // already supports.
+    // dialect; only test the zsh form here.
     let (status, _out) = run("ref=target; target=hello; echo ${(P)ref}");
     // We allow either "hello\n" (P-flag working) OR exit non-zero
     // (P-flag not yet implemented). Just ensure no panic.

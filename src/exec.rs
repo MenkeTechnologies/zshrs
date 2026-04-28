@@ -1227,11 +1227,10 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    // BUILTIN_EXPAND_WORD_RUNTIME (id 281) was the JSON-ShellWord round-trip
-    // bridge emitted by the deleted shell_compiler.rs. With shell_compiler.rs
-    // gone, no chunk emits this op. The constant + handler are removed; the
-    // ID stays reserved in the gap before BUILTIN_REGISTER_FUNCTION so future
-    // remaps don't reuse it.
+    // BUILTIN_EXPAND_WORD_RUNTIME (id 281) was a legacy JSON round-trip
+    // bridge that no chunk emits anymore. The constant + handler are
+    // removed; the ID stays reserved in the gap before
+    // BUILTIN_REGISTER_FUNCTION so future remaps don't reuse it.
 
     // Pipeline execution — bytecode-native fork-per-stage. Pops N sub-chunk
     // indices, forks N children with stdin/stdout wired through N-1 pipes,
@@ -3139,11 +3138,10 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    // BUILTIN_REGISTER_FUNCTION (id 282) was the JSON-ShellCommand body bridge
-    // emitted by the deleted shell_compiler.rs. ZshCompiler emits
-    // BUILTIN_REGISTER_COMPILED_FN (id 305) instead, which carries a base64
-    // bincode of an already-compiled Chunk. The constant + handler are
-    // removed; the ID stays reserved.
+    // BUILTIN_REGISTER_FUNCTION (id 282) was a legacy JSON-AST body
+    // bridge. ZshCompiler emits BUILTIN_REGISTER_COMPILED_FN (id 305)
+    // instead, which carries a base64 bincode of an already-compiled
+    // Chunk. The constant + handler are removed; the ID stays reserved.
 
     // Pre-compiled function registration — used by compile_zsh.rs's
     // FuncDef path. Stack: [name, base64-bincode-of-Chunk]. We decode
@@ -3577,8 +3575,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     // `$(cmd)` — pops [cmd_string], routes through
-    // run_command_substitution which uses ShellParser + an in-process
-    // pipe-capture. Avoids the Op::CmdSubst sub-chunk word-emit bug
+    // run_command_substitution which performs an in-process pipe-capture.
+    // Avoids the Op::CmdSubst sub-chunk word-emit bug
     // (`printf "a\nb"` produced "anb" via that path). Returns trimmed
     // output (trailing newlines stripped per POSIX cmd-sub semantics).
     vm.register_builtin(BUILTIN_CMD_SUBST_TEXT, |vm, _argc| {
@@ -3587,7 +3585,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::str(result)
     });
 
-    // Text-based bridge replacement. Pops [preserved_text, mode_byte].
+    // Text-based word expansion. Pops [preserved_text, mode_byte].
     // mode_byte:
     //   0 = Default — expand_string + expand_braces + expand_glob
     //   1 = DoubleQuoted — strip outer `"…"`, expand_string only
@@ -3596,11 +3594,6 @@ fn register_builtins(vm: &mut fusevm::VM) {
     //         (kept for symmetry; SNULL early-return covers most SQ)
     //   3 = AltBackquote — strip backticks, run as cmd-sub
     // Single result → Value::str; multi → Value::Array.
-    //
-    // Replaces the legacy ShellParser → ShellWord → JSON → expand_word
-    // bridge target. The ShellWord layer was pure overhead — its
-    // DoubleQuoted/Literal distinction is the only semantic bit, and
-    // we encode that in the mode byte at compile time.
     vm.register_builtin(BUILTIN_EXPAND_TEXT, |vm, _argc| {
         let mode = vm.pop().to_int() as u8;
         let text = vm.pop().to_str();
@@ -3836,10 +3829,10 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
 }
 
 // IDs 281 (was BUILTIN_EXPAND_WORD_RUNTIME) and 282 (was
-// BUILTIN_REGISTER_FUNCTION) were the JSON-AST bridges emitted by the
-// deleted shell_compiler.rs. ZshCompiler emits BUILTIN_EXPAND_TEXT (314)
-// and BUILTIN_REGISTER_COMPILED_FN (305) instead. The IDs stay reserved
-// in this gap so future builtins don't reuse them.
+// BUILTIN_REGISTER_FUNCTION) were legacy JSON-AST bridges. ZshCompiler
+// emits BUILTIN_EXPAND_TEXT (314) and BUILTIN_REGISTER_COMPILED_FN
+// (305) instead. The IDs stay reserved in this gap so future builtins
+// don't reuse them.
 
 /// Builtin ID for `${name}` reads — routes through `ShellExecutor::get_variable`
 /// which knows about special params (`$?`, `$@`, `$#`, `$1..$9`), shell vars
@@ -4003,19 +3996,16 @@ pub const BUILTIN_PARAM_LENGTH: u16 = 311;
 /// `$((10/3))` returns "3" not "3.333...".
 pub const BUILTIN_ARITH_EVAL: u16 = 312;
 /// `$(cmd)` command substitution. Pops [cmd_string], runs through
-/// `run_command_substitution` which uses ShellParser to parse and
-/// captures stdout via in-process pipe. Returns trimmed output as
-/// Value::Str. Avoids the sub-chunk word-emit quoting bug in the
+/// `run_command_substitution` which compiles via ZshParser+ZshCompiler
+/// and captures stdout via an in-process pipe. Returns trimmed output
+/// as Value::Str. Avoids the sub-chunk word-emit quoting bug in the
 /// raw Op::CmdSubst path.
 pub const BUILTIN_CMD_SUBST_TEXT: u16 = 313;
-/// Text-based bridge replacement. Pops [preserved_text]: the word with
+/// Text-based word expansion. Pops [preserved_text]: the word with
 /// quotes preserved (DNULL→`"`, SNULL→`'`, BNULL→`\`), runs
 /// `expand_string` (variable + cmd-sub + arith) then `expand_braces`
 /// then `expand_glob`. Returns Value::str (single match) or
-/// Value::Array (multi-match brace/glob). Replaces the JSON-ShellWord
-/// roundtrip via BUILTIN_EXPAND_WORD_RUNTIME — no ShellParser/ShellWord
-/// dependence on the runtime side. The text-walking `expand_string` is
-/// the same code that ShellWord::Literal eventually called.
+/// Value::Array (multi-match brace/glob).
 pub const BUILTIN_EXPAND_TEXT: u16 = 314;
 
 /// `[[ a -ef b ]]` — same-inode test. Stack: [a, b]. Pushes Bool true iff
@@ -6327,11 +6317,8 @@ impl ShellExecutor {
         }
 
         // Cache miss — read, parse, compile, execute, then cache.
-        // Phase 2 migration: parse via ZshParser + compile via
-        // ZshCompiler (was ShellParser + ShellCompiler). The cached
-        // chunk format is the same (fusevm::Chunk) — agnostic to which
-        // frontend produced it. Old cached chunks still load via the
-        // BYTECODE_VERSION gate.
+        // Parse via ZshParser + compile via ZshCompiler. The cached
+        // chunk format (fusevm::Chunk) is gated by BYTECODE_VERSION.
         let content =
             std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
         let expanded = self.expand_history(&content);
@@ -6379,9 +6366,8 @@ impl ShellExecutor {
         Ok(self.last_status)
     }
 
-    /// Execute via the new ZshLexer + ZshParser + ZshCompiler pipeline.
-    /// Migration entry point; opt-in until the corpus passes through this
-    /// path. Switch by setting `ZSHRS_NEW_PIPELINE=1`.
+    /// Execute via the ZshLexer + ZshParser + ZshCompiler pipeline.
+    /// This is the only execution path; `execute_script` delegates here.
     pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
         let expanded = self.expand_history(script);
         let mut parser = crate::parser::ZshParser::new(&expanded);
@@ -6426,11 +6412,7 @@ impl ShellExecutor {
 
     #[tracing::instrument(skip(self, script), fields(len = script.len()))]
     pub fn execute_script(&mut self, script: &str) -> Result<i32, String> {
-        // The new ZshLexer + ZshParser + ZshCompiler pipeline is the
-        // only execution path. The legacy `ZSHRS_OLD_PIPELINE=1` opt-out
-        // and its ShellParser+ShellCompiler body were removed in Phase 2
-        // of the bridge-deletion sweep — both pipelines reached parity on
-        // 876 tests across 9 suites before the cut.
+        // ZshLexer + ZshParser + ZshCompiler is the only execution path.
         self.execute_script_zsh_pipeline(script)
     }
 
@@ -9524,8 +9506,8 @@ impl ShellExecutor {
                 .words
                 .iter()
                 .map(|w| {
-                    // Untokenize then variable-expand. Mimics
-                    // shell_compiler's expand_word but text-based.
+                    // Untokenize then variable-expand — text-based
+                    // word expansion for the spawned argv.
                     let untoked = crate::lexer::untokenize(w);
                     self.expand_string(&untoked)
                 })
@@ -9621,16 +9603,14 @@ impl ShellExecutor {
     }
 
     pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
-        // Port of getoutput() from Src/exec.c. Phase 2 migration: parse
-        // and compile via the new ZshLexer + ZshParser + ZshCompiler
-        // pipeline (was ShellParser + ShellCompiler), run on a sub-VM
-        // with the host wired up. Stdout is captured through an
-        // in-process pipe via dup2 — no fork.
+        // Port of getoutput() from Src/exec.c. Parse and compile via
+        // the ZshLexer + ZshParser + ZshCompiler pipeline, run on a
+        // sub-VM with the host wired up. Stdout is captured through
+        // an in-process pipe via dup2 — no fork.
         //
         // This single path replaces the prior "internal vs external"
         // fast-path split: the sub-VM emits Op::Exec for unknown
-        // command names, which forks/execs through the host. Result
-        // is identical to the old code; one less ShellParser caller.
+        // command names, which forks/execs through the host.
 
         // Set up the stdout-capture pipe. We dup the original stdout
         // so post-run we can restore it; the write end is dup2'd onto

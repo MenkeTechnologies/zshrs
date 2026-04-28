@@ -2312,8 +2312,8 @@ pub fn parse_subst_string(s: &str) -> Result<String, String> {
 ///
 /// Port of untokenize() from exec.c (but used by lexer too)
 /// Like `untokenize`, but maps SNULL → `'` and DNULL → `"` instead of
-/// stripping them. Used by callers (e.g. compile_zsh's bridge to
-/// ShellParser) that need the source form including quoting.
+/// stripping them. Used by callers that need the source form including
+/// quoting (e.g. arithmetic-substitution detection in compile_zsh).
 pub fn untokenize_preserve_quotes(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
     for c in s.chars() {

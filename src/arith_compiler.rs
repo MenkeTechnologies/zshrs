@@ -1,6 +1,5 @@
 //! ArithCompiler — lowers zsh arithmetic expressions ($((...))) into
-//! fusevm bytecodes. Used by both the legacy ShellCompiler (in
-//! shell_compiler.rs) and the ported ZshCompiler (in compile_zsh.rs).
+//! fusevm bytecodes. Used by ZshCompiler (in compile_zsh.rs).
 //!
 //! Port of MathEval from zsh/src/math.rs — same tokenizer, but emits
 //! ops instead of evaluating.

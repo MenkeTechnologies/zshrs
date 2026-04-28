@@ -1,10 +1,9 @@
-//! Smoke tests for the new ZshParser → ZshCompiler → fusevm::VM pipeline.
+//! Smoke tests for the ZshParser → ZshCompiler → fusevm::VM pipeline.
 //!
-//! These run the real zshrs binary with `ZSHRS_NEW_PIPELINE=1` to route
-//! through the port AST end-to-end (no ShellParser involvement). As
-//! `compile_zsh.rs` matures, more constructs migrate. Once parity is
-//! reached with the corpus, ShellParser/ShellLexer/ShellCommand get
-//! deleted and these become the canonical path.
+//! These run the real zshrs binary, which routes every script through
+//! the port AST end-to-end. The pipeline is the canonical execution
+//! path; these tests pin a representative slice of constructs against
+//! regressions.
 
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -18,7 +17,6 @@ fn zshrs_bin() -> std::path::PathBuf {
 fn run_via_zsh_pipeline(src: &str) -> (i32, String) {
     let mut child = Command::new(zshrs_bin())
         .args(["-f", "-c", src])
-        .env("ZSHRS_NEW_PIPELINE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

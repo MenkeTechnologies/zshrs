@@ -118,9 +118,7 @@ Autoload function    ──► SQLite ──► deserialize Chunk ──► VM::
                          (microseconds)
 ```
 
-The lexer and parser are direct ports from zsh's C source (`Src/lex.c`, `Src/parse.c`); only the bytecode compiler is original Rust. The 4-tier `ZshProgram → ZshList → ZshSublist → ZshPipe → ZshCommand` AST is preserved verbatim from zsh, ensuring per-construct behavior parity. The shell compiler targets the same `Op` enum that [strykelang](https://github.com/MenkeTechnologies/strykelang) uses. Both frontends share fused superinstructions, extension dispatch, and the Cranelift JIT path.
-
-The legacy hand-rolled `ShellLexer + ShellParser + ShellCompiler` path remains as an emergency escape hatch (`ZSHRS_OLD_PIPELINE=1`) and is scheduled for deletion once the `ZshrsHost::expand_word` fallback is fully native.
+The lexer and parser are direct ports from zsh's C source (`Src/lex.c`, `Src/parse.c`); only the bytecode compiler is original Rust. The 4-tier `ZshProgram → ZshList → ZshSublist → ZshPipe → ZshCommand` AST is preserved verbatim from zsh, ensuring per-construct behavior parity. The bytecode compiler targets the same `Op` enum that [strykelang](https://github.com/MenkeTechnologies/strykelang) uses. Both frontends share fused superinstructions, extension dispatch, and the Cranelift JIT path.
 
 ### Execution Pipeline
 
@@ -137,7 +135,7 @@ The legacy hand-rolled `ShellLexer + ShellParser + ShellCompiler` path remains a
 │       ├─── HIT (100x faster) ────────────────────────┐                 │
 │       │                                               │                 │
 │       ▼ MISS                                          ▼                 │
-│  Lexer → Parser → ShellCompiler ────────────► fusevm::Chunk            │
+│  ZshLexer → ZshParser → ZshCompiler ────────► fusevm::Chunk            │
 │                         │                             │                 │
 │                         ▼                             │                 │
 │                  store_bytecode()                     │                 │
