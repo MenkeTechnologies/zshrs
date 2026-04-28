@@ -19,11 +19,11 @@ Probe: 47 constructs. Every entry below was verified by running zshrs (`./target
 - `>(...)` output process substitution — process_sub_out now creates a real named pipe via mkfifo and forks a child that reads it. untokenize was missing OUTANGPROC → '>' mapping (causing the detection in compile_word_str to fail). Both fixed; `tee >(cat)`, `echo > >(cat)` work. `tee >(cat) >/dev/null` still silent (child's stdout-vs-redirect interaction edge case).
 - `typeset -T VAR var [SEP]` — initial-bind only: takes current $VAR (or =VAL form), splits on SEP (default ":"), stores as array `var`. Bidirectional sync on subsequent assignments still requires a hook into set_variable; common idiom (`typeset -T PATH path`) works.
 - `typeset -T` bidirectional sync — `tied_scalar_to_array` / `tied_array_to_scalar` HashMaps in ShellExecutor record (peer, sep). `BUILTIN_SET_VAR` mirrors scalar→array (split on sep), `BUILTIN_SET_ARRAY` mirrors array→scalar (join on sep). `PATH=/a:/b; typeset -T PATH path; path=(/x /y); echo $PATH` → `/x:/y`.
+- `${(flags)"literal"}` / `${(flags)'literal'}` — flag operand may now be a quoted string literal instead of a variable name. New `parse_zsh_flag_literal` runs untokenize_preserve_quotes on the lexer-marked word, detects the `${(F)"…"}` shape, and emits a `\u{01}`-prefixed operand to BUILTIN_PARAM_FLAG; the handler strips the sentinel and seeds state with the literal scalar. Verified for `(U)`/`(z)`/`(s)`/`(f)` literal forms.
 
 ### Still open (requires deeper work)
 
 - `RC_EXPAND_PARAM` option — `X${arr}Y` element-wise distribution requires changing array-in-string concat semantics; affects compile_word.
-- `${(z)"literal string"}` — variable form `${(z)var}` works; literal-string form needs different compile path.
 - History expansion (`!!`, `!$`, `^old^new^`) — `expand_history` is wired into `execute_script` but gated on `atty::is(Stream::Stdin)`. Works in interactive mode; correctly no-op in `-c` (where the audit claimed broken).
 - `$RANDOM_FILE` — not actually a bug; mainline zsh also leaves it empty without `zmodload zsh/random`.
 

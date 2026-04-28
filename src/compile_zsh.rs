@@ -918,6 +918,27 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: `${(flags)"literal"}` — zsh parameter flags applied
+        // to a literal string operand. Detection runs on the original `s`
+        // (with quote markers intact) so we can distinguish a quoted
+        // literal from a bare name. The literal value is prefixed with
+        // `\u{01}` so BUILTIN_PARAM_FLAG skips the variable lookup and
+        // treats the rest as a scalar value.
+        if !has_bnull {
+            if let Some((flags, literal)) = parse_zsh_flag_literal(s) {
+                let mut tagged = String::with_capacity(literal.len() + 1);
+                tagged.push('\u{01}');
+                tagged.push_str(&literal);
+                let name_const = self.builder.add_constant(Value::str(tagged));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                let flags_const = self.builder.add_constant(Value::str(flags));
+                self.builder.emit(Op::LoadConst(flags_const), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FLAG, 2), 0);
+                return;
+            }
+        }
+
         // Fast path: `${(flags)NAME}` — zsh parameter flags. Emit
         // BUILTIN_PARAM_FLAG with [name, flags] on the stack. Mirrors
         // shell_compiler::try_lower_zsh_flag so behavior is identical
@@ -2261,6 +2282,46 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
 /// plain identifier; nested expansions or subscripted names disqualify
 /// this fast-path and route to the bridge instead. Mirrors
 /// shell_compiler::try_lower_zsh_flag.
+/// Detect `${(flags)"literal"}` or `${(flags)'literal'}` shape. Caller
+/// passes the untokenize_preserve_quotes form so brace/paren markers are
+/// already mapped back to ASCII and DNULL/SNULL are mapped to `"`/`'`.
+/// Returns (flags, literal_value) on match.
+fn parse_zsh_flag_literal(raw: &str) -> Option<(String, String)> {
+    let pq = crate::lexer::untokenize_preserve_quotes(raw);
+    let inner = pq.strip_prefix("${")?.strip_suffix('}')?;
+    let inner_chars: Vec<char> = inner.chars().collect();
+    if inner_chars.first()? != &'(' {
+        return None;
+    }
+    let mut depth = 0;
+    let mut close_idx = None;
+    for (i, &c) in inner_chars.iter().enumerate() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close_idx = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close_idx?;
+    let flags: String = inner_chars[1..close].iter().collect();
+    let operand: Vec<char> = inner_chars[close + 1..].to_vec();
+    if operand.len() < 2 {
+        return None;
+    }
+    let (open, closec) = (operand[0], *operand.last().unwrap());
+    if !((open == '"' && closec == '"') || (open == '\'' && closec == '\'')) {
+        return None;
+    }
+    let literal: String = operand[1..operand.len() - 1].iter().collect();
+    Some((flags, literal))
+}
+
 fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {
     let inner = s.strip_prefix("${")?.strip_suffix('}')?;
     let inner_b = inner.as_bytes();
