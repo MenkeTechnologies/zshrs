@@ -141,10 +141,13 @@ Discovered as gaps when re-probing `man zshall` chapter 14 (Parameters → Array
 
 - `parse_funcdef` collected names then optionally consumed `()`, but never synthesized an anonymous-name placeholder when no name was given — `compile_funcdef` saw `names = []` and emitted nothing, so the body never registered or ran, AND any trailing args (`a b c`) were re-tokenized as a separate command list, producing "command not found" garbage. Fix: in `parse_funcdef`, when `names.is_empty() && saw_paren`, mirror `parse_anon_funcdef` — generate `_zshrs_anon_kw_N`, collect trailing args, set `auto_call_args` so the existing compile path registers + immediately invokes. Bare `() { … }` form was already handled by `parse_anon_funcdef`; this closes parity with the `function`-keyword variant.
 
+### `=(cmd)` process substitution (temp-file flavor)
+
+- `=(...)` is the temp-file flavor of process sub (zsh-only, vs `<(...)`'s FIFO). Both deliver a path to the consumer; the read-end implementation `process_sub_in` already creates a durable temp file (synchronous run, capture stdout to `/tmp/zshrs_psub_*`), so `=(...)` shares it via the same `Op::ProcessSubIn` emission. Compile-path detector adds an `is_eq_psub` branch alongside the existing `<(…)` / `>(…)` matchers. Verified against `cat`, `wc`, `diff`, `printf` consumers.
+
 ## Still open
 
 - **History expansion** (`!!`, `!$`, `^old^new^`) — `expand_history` is wired into `execute_script` but gated on `atty::is(Stream::Stdin)`. Works in interactive mode; correctly no-op in `-c` mode (where the original audit claimed broken — false positive).
-- **`=(...)` process substitution** — temp-file process sub still missing (only `<(...)` / `>(...)` named-pipe form is implemented). `cat =(echo hi)` errors with "No such file or directory".
 - **Stub modules** — `zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp` builtins not registered (zmodload no-ops). `zsh/mapfile` assoc-array form not implemented (the bash-compat `readarray` builtin works for the common case).
 
 ## Stub modules (loaded but limited)

@@ -796,10 +796,16 @@ impl ZshCompiler {
         // is `<(...)` / `>(...)`. Compile the inner program as a
         // sub-chunk and emit ProcessSubIn/Out which wires up the
         // FIFO/temp file at runtime.
-        if (untoked.starts_with("<(") || untoked.starts_with(">("))
+        // `=(cmd)` is the temp-file flavor of process substitution
+        // (zsh-only, vs `<(cmd)`'s FIFO). Both deliver a path to the
+        // consumer; process_sub_in already creates a durable temp file
+        // so `=(...)` shares the read-end implementation. Safe for the
+        // read-once consumers (cat/diff/comm) that drive `=(...)` use.
+        let is_eq_psub = untoked.starts_with("=(") && untoked.ends_with(')');
+        if (untoked.starts_with("<(") || untoked.starts_with(">(") || is_eq_psub)
             && untoked.ends_with(')')
         {
-            let is_in = untoked.starts_with("<(");
+            let is_in = untoked.starts_with("<(") || is_eq_psub;
             let inner = &untoked[2..untoked.len() - 1];
             let mut sub_parser = crate::parser::ZshParser::new(inner);
             if let Ok(prog) = sub_parser.parse() {
