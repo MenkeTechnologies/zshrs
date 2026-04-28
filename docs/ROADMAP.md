@@ -51,12 +51,14 @@ Critical path. Until G is done, zshrs cannot replace zsh on the maintainer's mac
 - **Acceptance:** every zsh array idiom in zpwr's source compiles + runs identically.
 - **Effort:** 3 days.
 
-### G2 — ZWC autoload + fpath scan via SQLite
-- Wire `fn autoload_function` (exec.rs:2907) to: query SQLite for compiled bytecode → if hit, deserialize → store in `functions_compiled` → mark loaded. If miss, read source file → compile → store both source AST and chunk → set as loaded.
-- Background pre-compile: on shell start, kick a worker to pre-compile all autoload-marked names so first invocation is hot.
-- **Test:** source a `.zwc`'d plugin, call its function, verify it resolves through bytecode (not tree-walker) by asserting `functions_compiled.contains_key(name)` after first call.
-- **Acceptance:** `compinit; my_plugin_function` works without sourcing a `.zsh` file at runtime.
-- **Effort:** 2 days.
+### G2 — Autoload + fpath scan via rkyv image cache
+- Per `AOT_DESIGN.md` §0x13: daily-driver bytecode lives in `~/.cache/zshrs/image.rkyv` (single mmap'd blob, perfect-hash header, ~50-100ns lookup). Wire `fn autoload_function` (exec.rs:2907) to: hash fully-qualified name → mmap-region offset → typed pointer → JIT/interp the chunk in place. No SQLite hit on the hot path.
+- Image rebuild (plugin install/update, fsnotify on source trees, `zshrs --rebuild-cache`) walks fpath + zinit dirs + zsh-more-completions, compiles each function, writes `image.rkyv.tmp`, atomic-renames over `image.rkyv`.
+- Worker pool hydrates `~/.cache/zshrs/catalog.db` (SQLite mirror — entries / hooks / plugins / entry_stats) after every image rebuild. Hydration logs to `~/.cache/zshrs/zshrs.log` via `tracing::info!`. Never on hot path; dbview consumer only.
+- Legacy `plugin_cache.db` / `compsys.db` SQLite caches are dead-on-arrival for new investment — see "What dies" in `AOT_DESIGN.md` §0x13.
+- **Test:** install a plugin via `zshrs --rebuild-cache`, call its function, verify it resolves through `image.rkyv` (not tree-walker) by asserting the dispatch hits the rkyv path. dbview returns the entry within ≤ rebuild duration.
+- **Acceptance:** full daily-driver corpus (zshrc + zinit plugins + zsh-more-completions) compiles to one `image.rkyv` in <30 seconds clean / <500ms incremental; cold shell launch <5ms; 16 parallel shells share <30 MB RSS attributable to image.
+- **Effort:** 5 days (image format + perfect-hash + worker hydrate + dbview integration).
 
 ### G3 — ZLE hooks + user widgets + completion firing
 - `zle/main.rs:496` (hook system stub): implement `precmd`/`preexec`/`chpwd` hook dispatch — call `executor.hook_functions[name]` via `execute_command` (now bytecode).

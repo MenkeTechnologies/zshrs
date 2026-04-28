@@ -59,7 +59,7 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 `zshrs` eliminates these costs through a fundamentally different architecture:
 
 1. **Bytecode compilation** — Scripts compile to register-based bytecode (fusevm, 129 opcodes)
-2. **Persistent cache** — SQLite-backed bytecode cache survives across invocations
+2. **rkyv-mmap'd image cache** — Single `~/.cache/zshrs/image.rkyv` blob holds all compiled bytecode (compsys + plugins + autoloads), zero-copy lookup ~50-100ns; sibling `catalog.db` (worker-hydrated) provides SQL-queryable view + entry stats
 3. **Tiered JIT** — Linear JIT for straight-line code, Block JIT for loops/conditionals, native x86-64/aarch64 via Cranelift
 4. **Anti-fork builtins** — 180+ commands execute in-process, zero fork (23 coreutils, 4 xattr, 6 parallel primitives)
 5. **Megafat binary** — Optional Stryke integration adds 3200+ additional builtins
@@ -114,8 +114,14 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 │  └─────────────────────────────────────────────────────────┘│
 │                           ↓                                  │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │              SQLite Bytecode Cache                       ││
-│  │  Key: (path, mtime) → Value: serialized Chunk           ││
+│  │     rkyv mmap'd image cache (~/.cache/zshrs/image.rkyv) ││
+│  │     Perfect-hash header → byte offset → typed pointer   ││
+│  │     ~50-100ns lookup, zero-copy, page-cache backed      ││
+│  │  ┌─────────────────────────────────────────────────┐    ││
+│  │  │ catalog.db (SQLite, worker-hydrated mirror)     │    ││
+│  │  │ entries / hooks / plugins / entry_stats         │    ││
+│  │  │ dbview target — never on hot path               │    ││
+│  │  └─────────────────────────────────────────────────┘    ││
 │  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
 ```
