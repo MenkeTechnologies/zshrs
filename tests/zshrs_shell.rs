@@ -1064,3 +1064,34 @@ fn test_arith_subst_integer_no_dot() {
     let (_, output, _) = run_zshrs("echo $((10+5))");
     assert_eq!(output.trim(), "15", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `print -P %h` / `%!` history line number — session-relative, not disk count
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_print_p_history_line_number_zero_in_c_mode() {
+    // In `-c` mode, no history is recorded; %h should be 0 (matches zsh).
+    let (_, output, _) = run_zshrs("print -P \"%h\"");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}
+
+#[test]
+fn test_print_p_bang_alias_for_history_line() {
+    let (_, output, _) = run_zshrs("print -P \"%!\"");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// `print -P %D{fmt}` strftime format
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_print_p_date_format() {
+    let (_, output, _) = run_zshrs("print -P \"%D{%Y}\"");
+    let s = output.trim();
+    assert!(
+        s.len() == 4 && s.chars().all(|c| c.is_ascii_digit()),
+        "got: {output:?}"
+    );
+}
