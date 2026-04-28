@@ -8162,33 +8162,6 @@ impl ShellExecutor {
         self.get_variable(content)
     }
 
-    fn expand_array_access(&mut self, name: &str, index: &ShellWord) -> String {
-        use crate::subscript::{get_array_by_subscript, get_array_element_by_subscript, getindex};
-
-        let idx_str = self.expand_word(index);
-        let ksh_arrays = self.options.get("ksh_arrays").copied().unwrap_or(false);
-
-        // Use the ported subscript module for index parsing
-        match getindex(&idx_str, false, ksh_arrays) {
-            Ok(v) => {
-                if let Some(arr) = self.arrays.get(name) {
-                    if v.is_all() {
-                        arr.join(" ")
-                    } else if v.start == v.end - 1 {
-                        // Single element
-                        get_array_element_by_subscript(arr, &v, ksh_arrays).unwrap_or_default()
-                    } else {
-                        // Range
-                        get_array_by_subscript(arr, &v, ksh_arrays).join(" ")
-                    }
-                } else {
-                    String::new()
-                }
-            }
-            Err(_) => String::new(),
-        }
-    }
-
     #[tracing::instrument(level = "trace", skip_all)]
     fn expand_string(&mut self, s: &str) -> String {
         let mut result = String::new();
@@ -8601,27 +8574,6 @@ impl ShellExecutor {
         output
     }
 
-    /// Process substitution <(cmd) - returns FIFO path
-    fn execute_process_sub_in(&mut self, cmd: &ShellCommand) -> String {
-        if let ShellCommand::Simple(simple) = cmd {
-            let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
-            let cmd_str = words.join(" ");
-            self.run_process_sub_in(&cmd_str)
-        } else {
-            String::new()
-        }
-    }
-
-    /// Process substitution >(cmd) - returns FIFO path
-    fn execute_process_sub_out(&mut self, cmd: &ShellCommand) -> String {
-        if let ShellCommand::Simple(simple) = cmd {
-            let words: Vec<String> = simple.words.iter().map(|w| self.expand_word(w)).collect();
-            let cmd_str = words.join(" ");
-            self.run_process_sub_out(&cmd_str)
-        } else {
-            String::new()
-        }
-    }
 
     /// Get value from zsh/parameter special arrays (options, commands, functions, etc.)
     /// Returns Some(value) if this is a special array access, None otherwise
@@ -9964,74 +9916,6 @@ impl ShellExecutor {
     /// Bytecode-routed: compiles `cmd` to a chunk, runs on a fresh VM with
     /// stdout dup2'd to a pipe write end. Reads the pipe to a String. POSIX
     /// trims trailing newlines.
-    pub fn execute_command_substitution(&mut self, cmd: &ShellCommand) -> String {
-        match self.execute_command_capture(cmd) {
-            Ok(output) => {
-                let mut s = output;
-                while s.ends_with('\n') {
-                    s.pop();
-                }
-                s
-            }
-            Err(_) => String::new(),
-        }
-    }
-
-    /// Execute a command and capture its stdout. Bytecode-routed via the
-    /// same machinery `ZshrsHost::cmd_subst` uses for `Op::CmdSubst(sub_idx)`,
-    /// but called from non-VM paths (the runtime expand_word fallback at
-    /// `ShellWord::CommandSub` for words inside JSON-AST runtime variants).
-    ///
-    /// Compile path: round-trip through `text::getpermtext` →
-    /// `ZshParser` + `ZshCompiler` (the only pipeline). On round-trip parse
-    /// failure, returns the error rather than masking it via a legacy compiler.
-    pub fn execute_command_capture(&mut self, cmd: &ShellCommand) -> Result<String, String> {
-        use std::io::Read;
-        use std::os::unix::io::AsRawFd;
-
-        let cmd_text = crate::text::getpermtext(cmd);
-        let program = crate::parser::ZshParser::new(&cmd_text)
-            .parse()
-            .map_err(|errs| {
-                errs.first()
-                    .map(|e| format!("capture round-trip parse: {}", e))
-                    .unwrap_or_else(|| "capture round-trip parse failed".into())
-            })?;
-        if program.lists.is_empty() {
-            return Ok(String::new());
-        }
-        let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
-        if chunk.ops.is_empty() {
-            return Ok(String::new());
-        }
-
-        let (read_end, write_end) =
-            os_pipe::pipe().map_err(|e| format!("os_pipe: {}", e))?;
-        let saved_stdout = unsafe { libc::dup(libc::STDOUT_FILENO) };
-        if saved_stdout < 0 {
-            return Err("dup(stdout) failed".into());
-        }
-        let write_fd = write_end.as_raw_fd();
-        unsafe { libc::dup2(write_fd, libc::STDOUT_FILENO) };
-        drop(write_end);
-
-        let mut vm = fusevm::VM::new(chunk);
-        register_builtins(&mut vm);
-        let _ctx = ExecutorContext::enter(self);
-        let _ = vm.run();
-        self.last_status = vm.last_status;
-
-        unsafe {
-            libc::dup2(saved_stdout, libc::STDOUT_FILENO);
-            libc::close(saved_stdout);
-        }
-
-        let mut buf = String::new();
-        let mut reader = read_end;
-        let _ = reader.read_to_string(&mut buf);
-        Ok(buf)
-    }
-
     /// Evaluate arithmetic expression using the full math module
     fn evaluate_arithmetic(&mut self, expr: &str) -> String {
         let expr = self.expand_string(expr);
