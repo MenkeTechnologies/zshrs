@@ -414,6 +414,85 @@ fn extendedglob_match(s: &str, pat: &str) -> bool {
     ShellExecutor::glob_match_static(s, pat)
 }
 
+/// Translate the body of a ksh-style extglob group `(p1|p2|...)`
+/// into a regex alternation. Each branch is glob-translated by the
+/// same rules as `glob_match_static` minus the wrapping anchors and
+/// minus the (#flags)/numeric-range support (those don't appear
+/// inside extglob bodies in practice).
+fn ksh_extglob_body_to_regex(body: &str) -> String {
+    let mut out = String::new();
+    let mut chars = body.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '|' => out.push('|'),
+            '*' => out.push_str(".*"),
+            '?' => out.push('.'),
+            '[' => {
+                out.push('[');
+                while let Some(cc) = chars.next() {
+                    if cc == ']' {
+                        out.push(']');
+                        break;
+                    }
+                    out.push(cc);
+                }
+            }
+            '.' | '+' | '^' | '$' | '\\' | '{' | '}' | '(' | ')' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Apply a `:s/old/new/` (or `:gs/old/new/`) substitution modifier
+/// to `result` in place. `chars` is positioned right after the `s`
+/// (or after `gs`). Reads delimiter, old text (until delim), new text
+/// (until delim or end), and rewrites `result`. zsh: when `global` is
+/// true, replace all occurrences; else replace first only.
+fn apply_subst_modifier(
+    result: &mut String,
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    global: bool,
+) {
+    let delim = match chars.next() {
+        Some(d) => d,
+        None => return,
+    };
+    let mut old = String::new();
+    while let Some(&c) = chars.peek() {
+        if c == delim {
+            chars.next();
+            break;
+        }
+        old.push(c);
+        chars.next();
+    }
+    let mut new = String::new();
+    while let Some(&c) = chars.peek() {
+        if c == delim || c == ':' {
+            // Matching closing delim → consume it. Colon → next
+            // modifier in chain, leave it for the outer loop.
+            if c == delim {
+                chars.next();
+            }
+            break;
+        }
+        new.push(c);
+        chars.next();
+    }
+    if old.is_empty() {
+        return;
+    }
+    *result = if global {
+        result.replace(&old, &new)
+    } else {
+        result.replacen(&old, &new, 1)
+    };
+}
+
 /// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
 /// inclusive, char-aware (not byte). Negative indices count from end.
 fn slice_scalar(s: &str, start: i64, end: i64) -> String {
@@ -4704,14 +4783,27 @@ impl fusevm::ShellHost for ZshrsHost {
         // pointer set by the outer VM remains valid for the nested VM —
         // nested CallBuiltin handlers and host callbacks all see the same
         // executor.
-        let (saved_params, saved_local_count, saved_local_arr_count) =
+        let fn_name = name.to_string();
+        let (saved_params, saved_local_count, saved_local_arr_count, saved_zero, saved_funcstack) =
             with_executor(|exec| {
                 let prev =
                     std::mem::replace(&mut exec.positional_params, args.clone());
                 let count = exec.local_save_stack.len();
                 let arr_count = exec.local_array_save_stack.len();
                 exec.local_scope_depth += 1;
-                (prev, count, arr_count)
+                // zsh's `$0` inside a function returns the function name
+                // (under the FUNCTION_ARGZERO option, default on). Save
+                // the previous `$0` and install the function name.
+                let prev_zero = exec.variables.insert("0".to_string(), fn_name.clone());
+                // funcstack: prepend the function name; outermost call
+                // is at the END of the stack per zsh.
+                let prev_stack = exec.arrays.get("funcstack").cloned();
+                let mut new_stack = vec![fn_name.clone()];
+                if let Some(ref s) = prev_stack {
+                    new_stack.extend_from_slice(s);
+                }
+                exec.arrays.insert("funcstack".to_string(), new_stack);
+                (prev, count, arr_count, prev_zero, prev_stack)
             });
 
         let mut vm = fusevm::VM::new(chunk);
@@ -4722,6 +4814,15 @@ impl fusevm::ShellHost for ZshrsHost {
         with_executor(|exec| {
             exec.positional_params = saved_params;
             exec.local_scope_depth -= 1;
+            // Restore `$0` and `$funcstack` to their pre-call values.
+            match saved_zero {
+                Some(v) => { exec.variables.insert("0".to_string(), v); }
+                None => { exec.variables.remove("0"); }
+            }
+            match saved_funcstack {
+                Some(s) => { exec.arrays.insert("funcstack".to_string(), s); }
+                None => { exec.arrays.remove("funcstack"); }
+            }
             // Unwind any `local` declarations made during the function call.
             while exec.local_save_stack.len() > saved_local_count {
                 if let Some((var_name, old_val)) = exec.local_save_stack.pop() {
@@ -6621,6 +6722,48 @@ impl ShellExecutor {
         let mut chars = pattern.chars().peekable();
         while let Some(c) = chars.next() {
             match c {
+                // ksh-style extglob: ?(p) *(p) +(p) @(p) — translate to
+                // (?:p)? (?:p)* (?:p)+ (?:p) respectively. Gated on
+                // the `kshglob` option (zsh's default is off). The
+                // !(p) (negative) form needs lookahead which the
+                // `regex` crate doesn't support; left literal.
+                '?' | '*' | '+' | '@'
+                    if chars.peek() == Some(&'(')
+                        && with_executor(|e| {
+                            e.options.get("kshglob").copied().unwrap_or(false)
+                        }) =>
+                {
+                    let op = c;
+                    chars.next(); // consume '('
+                    // Capture body until matching ')'. Track depth so
+                    // nested parens work.
+                    let mut depth = 1;
+                    let mut body = String::new();
+                    while let Some(&pc) = chars.peek() {
+                        chars.next();
+                        if pc == '(' {
+                            depth += 1;
+                            body.push(pc);
+                        } else if pc == ')' {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                            body.push(pc);
+                        } else {
+                            body.push(pc);
+                        }
+                    }
+                    let body_re = ksh_extglob_body_to_regex(&body);
+                    let suffix = match op {
+                        '?' => "?",
+                        '*' => "*",
+                        '+' => "+",
+                        '@' => "",
+                        _ => "",
+                    };
+                    regex_pattern.push_str(&format!("(?:{}){}", body_re, suffix));
+                }
                 '*' => regex_pattern.push_str(".*"),
                 '?' => regex_pattern.push('.'),
                 '<' => {
@@ -6644,7 +6787,37 @@ impl ShellExecutor {
                         regex_pattern.push(cc);
                     }
                 }
-                '(' => regex_pattern.push('('),
+                '(' => {
+                    // `(#cN)` and `(#cN,M)` post-subpattern repetition
+                    // qualifiers: the previous element gets a `{N}` or
+                    // `{N,M}` regex quantifier. Detect by peeking for
+                    // `#c` after the opening `(`.
+                    let peek_iter = chars.clone();
+                    let mut probe: Vec<char> = Vec::new();
+                    let mut p = peek_iter;
+                    while let Some(pc) = p.next() {
+                        probe.push(pc);
+                        if pc == ')' || probe.len() > 32 {
+                            break;
+                        }
+                    }
+                    let probe_str: String = probe.iter().collect();
+                    if probe_str.starts_with("#c") && probe_str.ends_with(')') {
+                        let body = &probe_str[2..probe_str.len() - 1];
+                        let quant = if let Some((lo, hi)) = body.split_once(',') {
+                            format!("{{{},{}}}", lo, hi)
+                        } else {
+                            format!("{{{}}}", body)
+                        };
+                        regex_pattern.push_str(&quant);
+                        // Advance the real iterator past the consumed chars.
+                        for _ in 0..probe.len() {
+                            chars.next();
+                        }
+                    } else {
+                        regex_pattern.push('(');
+                    }
+                }
                 ')' => regex_pattern.push(')'),
                 '|' => regex_pattern.push('|'),
                 '.' | '+' | '^' | '$' | '\\' | '{' | '}' => {
@@ -10748,6 +10921,8 @@ impl ShellExecutor {
             "$" => std::process::id().to_string(),
             "@" | "*" => self.positional_params.join(" "),
             "#" => self.positional_params.len().to_string(),
+            // zsh aliases: $ARGC and $#@ both equal $#.
+            "ARGC" => self.positional_params.len().to_string(),
             "?" => self.last_status.to_string(),
             "RANDOM" => {
                 // zsh/bash: pseudo-random unsigned 16-bit integer per
@@ -11075,7 +11250,9 @@ impl ShellExecutor {
         let first = s.chars().next().unwrap();
         matches!(
             first,
-            'A' | 'a' | 'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'P'
+            // `g` is the prefix for `:gs/.../.../` (global substitution).
+            // `s` is `:s/old/new/`.
+            'A' | 'a' | 'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'P' | 's' | 'g'
         )
     }
 
@@ -11142,7 +11319,18 @@ impl ShellExecutor {
                 }
                 'l' => result = result.to_lowercase(),
                 'u' => result = result.to_uppercase(),
-                'q' => result = format!("'{}'", result.replace('\'', "'\\''")),
+                'q' => {
+                    // zsh `:q` uses backslash quoting, not single-quote
+                    // wrapping. Each shell-meta char gets a `\` prefix.
+                    let mut out = String::with_capacity(result.len() + 8);
+                    for ch in result.chars() {
+                        if " \t\n'\"\\$`;|&<>()[]{}*?#~!".contains(ch) {
+                            out.push('\\');
+                        }
+                        out.push(ch);
+                    }
+                    result = out;
+                }
                 'Q' => {
                     if result.starts_with('\'') && result.ends_with('\'') && result.len() >= 2 {
                         result = result[1..result.len() - 1].to_string();
@@ -11155,6 +11343,29 @@ impl ShellExecutor {
                     if let Ok(real) = std::fs::canonicalize(&result) {
                         result = real.to_string_lossy().to_string();
                     }
+                }
+                'g' => {
+                    // `:g` is a prefix to `:s` (or `:&`) meaning "global
+                    // substitution". Peek next char — if `s` or `&`,
+                    // route through the substitution arm with global=true.
+                    let global = true;
+                    let next = chars.next();
+                    match next {
+                        Some('s') => {
+                            apply_subst_modifier(&mut result, &mut chars, global);
+                        }
+                        _ => {
+                            // Stray `:g` without `:s`/`:&` follow-up —
+                            // unrecognized in zsh, exit modifier loop.
+                            break;
+                        }
+                    }
+                }
+                's' => {
+                    // `:s/old/new/` — single substitution. Delimiter is
+                    // the char after `s` (typically `/`). Final delim
+                    // optional.
+                    apply_subst_modifier(&mut result, &mut chars, false);
                 }
                 _ => break,
             }
@@ -20397,8 +20608,17 @@ impl ShellExecutor {
             })
             .collect();
 
-        // Determine separator and terminator
-        let separator = if one_per_line { "\n" } else { " " };
+        // Determine separator and terminator. zsh's `-N` uses NUL as
+        // BOTH the separator between args AND the terminator after
+        // the last — so `print -N a b c` emits `a\0b\0c\0`, not
+        // `a b c\0`. -l (`one_per_line`) keeps `\n` for both.
+        let separator = if null_terminate {
+            "\0"
+        } else if one_per_line {
+            "\n"
+        } else {
+            " "
+        };
         let terminator = if null_terminate {
             "\0"
         } else if no_newline {
