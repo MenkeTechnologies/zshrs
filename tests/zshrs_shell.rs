@@ -628,3 +628,28 @@ fn test_o_sort_flag_with_at_subscript() {
         run_zshrs("arr=(c a b); print -l \"${(o)arr[@]}\"");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Anonymous function with `function` keyword: `function () { body } args...`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_function_keyword_anonymous() {
+    let (_, output, _) = run_zshrs("function () { echo anon }");
+    assert_eq!(output.trim(), "anon", "got: {output:?}");
+}
+
+#[test]
+fn test_function_keyword_anonymous_with_args() {
+    let (_, output, _) =
+        run_zshrs("function () { echo \"args:\" \"$@\" } a b c");
+    assert_eq!(output.trim(), "args: a b c", "got: {output:?}");
+}
+
+#[test]
+fn test_function_keyword_anonymous_local_scope() {
+    let (_, output, _) = run_zshrs(
+        "x=outer; function () { local x=inner; print \"$x\" } ; print \"$x\"",
+    );
+    assert_eq!(output.trim(), "inner\nouter", "got: {output:?}");
+}

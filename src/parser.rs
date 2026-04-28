@@ -1815,7 +1815,8 @@ impl<'a> ZshParser<'a> {
         }
 
         // Optional ()
-        if self.lexer.tok == LexTok::Inoutpar {
+        let saw_paren = self.lexer.tok == LexTok::Inoutpar;
+        if saw_paren {
             self.lexer.zshlex();
         }
 
@@ -1842,6 +1843,33 @@ impl<'a> ZshParser<'a> {
             if self.lexer.tok == LexTok::Outbrace {
                 self.lexer.zshlex();
             }
+
+            // Anonymous form `function () { body } a b c` — no name was
+            // collected, but `()` was present. Mirror parse_anon_funcdef:
+            // synthesize `_zshrs_anon_N`, collect trailing args, set
+            // auto_call_args so compile_funcdef registers + immediately
+            // calls the function with the args as positional params.
+            if names.is_empty() && saw_paren {
+                let mut args = Vec::new();
+                while self.lexer.tok == LexTok::String {
+                    if let Some(s) = self.lexer.tokstr.clone() {
+                        args.push(s);
+                    }
+                    self.lexer.zshlex();
+                }
+                use std::sync::atomic::{AtomicUsize, Ordering};
+                static ANON_COUNTER: AtomicUsize = AtomicUsize::new(0);
+                let n = ANON_COUNTER.fetch_add(1, Ordering::Relaxed);
+                let name = format!("_zshrs_anon_kw_{}", n);
+                return Some(ZshCommand::FuncDef(ZshFuncDef {
+                    names: vec![name],
+                    body: Box::new(body),
+                    tracing,
+                    auto_call_args: Some(args),
+                    body_source,
+                }));
+            }
+
             Some(ZshCommand::FuncDef(ZshFuncDef {
                 names,
                 body: Box::new(body),
