@@ -5065,7 +5065,13 @@ impl fusevm::ShellHost for ZshrsHost {
                 exec.assoc_arrays = snap.assoc_arrays;
                 exec.positional_params = snap.positional_params;
                 if let Some(cwd) = snap.cwd {
-                    let _ = std::env::set_current_dir(cwd);
+                    let _ = std::env::set_current_dir(&cwd);
+                    // Resync $PWD env so a parent `pwd` doesn't read
+                    // the cwd the subshell `cd`'d into. The snapshot
+                    // restored `self.variables`, but `env::set_var` had
+                    // also been called by the inner `cd` and leaks
+                    // unless re-set here.
+                    std::env::set_var("PWD", &cwd);
                 }
             }
         });
@@ -12668,8 +12674,95 @@ impl ShellExecutor {
     /// stdout dup2'd to a pipe write end. Reads the pipe to a String. POSIX
     /// trims trailing newlines.
     /// Evaluate arithmetic expression using the full math module
+    /// Pre-resolve `name[subscript]` references inside an arithmetic
+    /// expression. MathEval only knows about scalar variables, so
+    /// without this rewrite `m[k]` and `a[2]` evaluate to 0. We
+    /// substitute the actual values inline before handing to the
+    /// evaluator. Honors associative-array key lookups and 1-based
+    /// numeric array indexing (with negative-from-end).
+    fn pre_resolve_array_subscripts(&self, expr: &str) -> String {
+        let bytes: Vec<char> = expr.chars().collect();
+        let mut out = String::with_capacity(expr.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i];
+            // Identifier start?
+            if c.is_ascii_alphabetic() || c == '_' {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == '_') {
+                    i += 1;
+                }
+                let name: String = bytes[start..i].iter().collect();
+                if i < bytes.len() && bytes[i] == '[' {
+                    // Collect balanced [...]
+                    i += 1;
+                    let key_start = i;
+                    let mut depth = 1;
+                    while i < bytes.len() && depth > 0 {
+                        match bytes[i] {
+                            '[' => depth += 1,
+                            ']' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                    let key_str: String = bytes[key_start..i].iter().collect();
+                    if i < bytes.len() {
+                        i += 1; // skip closing ]
+                    }
+                    // Resolve sub-key (it may itself be an arith expr or
+                    // string literal); strip surrounding quotes and
+                    // expand $-refs.
+                    let key_resolved: String = if key_str.starts_with('"') && key_str.ends_with('"')
+                        || key_str.starts_with('\'') && key_str.ends_with('\'')
+                    {
+                        key_str[1..key_str.len() - 1].to_string()
+                    } else {
+                        key_str.clone()
+                    };
+                    let resolved = if let Some(assoc) = self.assoc_arrays.get(&name) {
+                        assoc.get(&key_resolved).cloned().unwrap_or_else(|| "0".to_string())
+                    } else if let Some(arr) = self.arrays.get(&name) {
+                        // Numeric subscript — can be a literal or an
+                        // expression. For simple int literals only here;
+                        // complex exprs are uncommon in real scripts.
+                        if let Ok(idx) = key_resolved.trim().parse::<i64>() {
+                            let len = arr.len() as i64;
+                            let pos = if idx < 0 { len + idx } else { idx - 1 };
+                            if pos >= 0 && (pos as usize) < arr.len() {
+                                arr[pos as usize].clone()
+                            } else {
+                                "0".to_string()
+                            }
+                        } else {
+                            "0".to_string()
+                        }
+                    } else {
+                        // Unrecognised — emit the original text so the
+                        // evaluator can complain naturally.
+                        format!("{}[{}]", name, key_str)
+                    };
+                    out.push_str(&resolved);
+                } else {
+                    out.push_str(&name);
+                }
+                continue;
+            }
+            out.push(c);
+            i += 1;
+        }
+        out
+    }
+
     fn evaluate_arithmetic(&mut self, expr: &str) -> String {
         let expr = self.expand_string(expr);
+        let expr = self.pre_resolve_array_subscripts(&expr);
         let force_float = self.options.get("forcefloat").copied().unwrap_or(false);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
@@ -12703,6 +12796,7 @@ impl ShellExecutor {
 
     fn eval_arith_expr(&mut self, expr: &str) -> i64 {
         let expr_expanded = self.expand_string(expr);
+        let expr_expanded = self.pre_resolve_array_subscripts(&expr_expanded);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
 
@@ -12725,6 +12819,7 @@ impl ShellExecutor {
 
     fn eval_arith_expr_float(&mut self, expr: &str) -> f64 {
         let expr_expanded = self.expand_string(expr);
+        let expr_expanded = self.pre_resolve_array_subscripts(&expr_expanded);
         let force_float = self.options.get("forcefloat").copied().unwrap_or(false);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
