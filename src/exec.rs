@@ -5451,6 +5451,11 @@ pub struct ShellExecutor {
     pub zwc_cache: HashMap<PathBuf, ZwcFile>,
     pub positional_params: Vec<String>,
     pub history: Option<HistoryEngine>,
+    /// Session-relative history line counter. Starts at 0; incremented
+    /// when an interactive command is recorded. Used by `%h`/`%!` in
+    /// prompt expansion (zsh's "current history line number"), distinct
+    /// from the persistent disk history total.
+    pub session_histnum: i64,
     process_sub_counter: u32,
     pub traps: HashMap<String, String>,
     pub options: HashMap<String, bool>,
@@ -5621,6 +5626,7 @@ impl ShellExecutor {
             zwc_cache: HashMap::new(),
             positional_params: Vec::new(),
             history,
+            session_histnum: 0,
             completions: HashMap::new(),
             dir_stack: Vec::new(),
             process_sub_counter: 0,
@@ -11450,11 +11456,12 @@ impl ShellExecutor {
             host_short,
             tty: String::new(),
             lastval: self.last_status,
-            histnum: self
-                .history
-                .as_ref()
-                .and_then(|h| h.count().ok())
-                .unwrap_or(1),
+            // zsh's `%h`/`%!` is the *current line* number — counted
+            // from session start, not the persistent on-disk history
+            // size. In `-c` (non-interactive) mode no command has been
+            // recorded yet, so zsh emits 0. Use a session counter on
+            // the executor instead of the disk count.
+            histnum: self.session_histnum,
             shlvl,
             num_jobs: self.jobs.list().len() as i32,
             is_root: unsafe { libc::geteuid() } == 0,

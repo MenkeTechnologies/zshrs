@@ -201,14 +201,20 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `let "a=1.0+2.0"; echo $a` previously gave `3` (lost the float-ness). New `MathNum::format_zsh` formats stored vars as `%.10f` so `$a` is `3.0000000000`, matching zsh. Separately `MathNum::format_zsh_subst` formats `$(( ))` substitution display as zsh's `%g`-ish form: integer-valued floats print as `4.` (trailing dot, no zeros — zsh's "this is float" marker), non-integer floats print at full f64 precision via Rust's shortest-roundtrip. `evaluate_arithmetic` extracts via `format_zsh` (storage) and returns via `format_zsh_subst` (substitution display) so both contexts match zsh. The bytecode `(( a=1.0+2.0 ))` ArithCompiler path remains a known float-collapse pre-existing issue (separate from this fix).
 
+### `print -P %h` / `%!` history line number
+
+- `%h` and `%!` previously printed the persistent disk history total (e.g. 7466) instead of zsh's session-relative line number (0 in `-c` mode, since no command has been recorded). New `session_histnum` field on `ShellExecutor` (default 0, incremented on interactive command record). `build_prompt_context` reads it instead of `history.count()`. Matches zsh in `-c` mode exactly.
+
+### `print -P %D{fmt}` strftime format
+
+- Verified working in current build — the previously-noted gap was a stale `head -c 4` chain artifact (`head -c` was missing the byte-count flag, now fixed). `%D` with default format (`%y-%m-%d`-ish) and `%D{fmt}` with explicit strftime both match zsh.
+
 ## Still open (second-pass — deferred)
 
 - **`noglob` precommand modifier** — `noglob print "*"` errors "command not found: print" instead of disabling glob and running `print *` literally. Needs parser-level recognition as a reserved word, not a command name.
 - **Recursive glob `**/` (directories-only)** — trailing-slash recursive form not expanded.
 - **Glob qualifier `(mh-N)` / `(mm)` / `(ms)`** — modified-recent age qualifiers not implemented (only `(L)` size and `(D)` dotglob exist today).
 - **`(t)` typeset flag returns wrong type for `integer i=5`** — needs persistent attribute tracking on declared variables (full plumbing through `typeset -i` / `integer` / `float`).
-- **`print -P %D{fmt}`** — strftime format support.
-- **`print -P %h`** history-line-number format.
 - **`fc -l` empty-history behavior** — zsh prints "no such event"; zshrs leaks a stray history entry.
 - **Bare `$arr[N]` subscript** — without braces, lexes as `$arr` + literal `[N]`. Forces use of `${arr[N]}`.
 
