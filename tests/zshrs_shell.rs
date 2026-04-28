@@ -600,3 +600,31 @@ fn test_s_flag_splits_each_array_element() {
     );
     assert_eq!(output.trim(), "a\nb\nc\nd", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Param flag with [@] subscript: ${(kv)m[@]}, ${(o)arr[@]}, etc.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_kv_flag_with_at_subscript() {
+    // Sort because assoc HashMap iteration order is non-deterministic.
+    let (_, output, _) = run_zshrs(
+        "typeset -A m=(a 1 b 2 c 3); print -l \"${(kv)m[@]}\" | sort",
+    );
+    assert_eq!(output.trim(), "1\n2\n3\na\nb\nc", "got: {output:?}");
+}
+
+#[test]
+fn test_k_flag_with_at_subscript() {
+    let (_, output, _) = run_zshrs(
+        "typeset -A m=(a 1 b 2 c 3); print -l \"${(k)m[@]}\" | sort",
+    );
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+}
+
+#[test]
+fn test_o_sort_flag_with_at_subscript() {
+    let (_, output, _) =
+        run_zshrs("arr=(c a b); print -l \"${(o)arr[@]}\"");
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+}

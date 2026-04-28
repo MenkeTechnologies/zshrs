@@ -2496,7 +2496,15 @@ fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {
     }
     let close = close?;
     let flags = &inner[1..close];
-    let name = &inner[close + 1..];
+    let mut name = &inner[close + 1..];
+    // Strip `[@]` / `[*]` suffix — `${(kv)m[@]}` should apply the flag
+    // to the whole array, same shape as `${(kv)m}` (which already
+    // returns Value::Array for the (kv) interleave). Without this strip
+    // the matcher rejected the name and the bridge path returned wrong
+    // results (just values, ignoring the (k) flag).
+    if let Some(stripped) = name.strip_suffix("[@]").or_else(|| name.strip_suffix("[*]")) {
+        name = stripped;
+    }
     if name.is_empty()
         || name.contains('$')
         || name.contains('{')
