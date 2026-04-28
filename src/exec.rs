@@ -4967,7 +4967,7 @@ impl ShellExecutor {
             // Try directory.zwc first
             let zwc_path = dir.with_extension("zwc");
             if zwc_path.exists()
-                && self.load_function_from_zwc(&zwc_path, name).is_some()
+                && self.load_function_from_zwc(&zwc_path, name)
             {
                 return true;
             }
@@ -4975,7 +4975,7 @@ impl ShellExecutor {
             // Try individual function.zwc
             let func_zwc = dir.join(format!("{}.zwc", name));
             if func_zwc.exists()
-                && self.load_function_from_zwc(&func_zwc, name).is_some()
+                && self.load_function_from_zwc(&func_zwc, name)
             {
                 return true;
             }
@@ -4986,7 +4986,7 @@ impl ShellExecutor {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.extension().map_or(false, |e| e == "zwc")
-                            && self.load_function_from_zwc(&path, name).is_some()
+                            && self.load_function_from_zwc(&path, name)
                         {
                             return true;
                         }
@@ -4998,35 +4998,42 @@ impl ShellExecutor {
         false
     }
 
-    /// Load a specific function from a ZWC file
-    fn load_function_from_zwc(&mut self, path: &Path, name: &str) -> Option<ShellCommand> {
+    /// Load a specific function from a ZWC file. Populates `functions_compiled`
+    /// + `function_source` as side effects; returns true iff the function
+    /// landed in those tables.
+    fn load_function_from_zwc(&mut self, path: &Path, name: &str) -> bool {
         // Check cache
         let zwc = if let Some(cached) = self.zwc_cache.get(path) {
             cached
         } else {
-            // Load and cache the ZWC file
-            let zwc = ZwcFile::load(path).ok()?;
+            let Ok(zwc) = ZwcFile::load(path) else {
+                return false;
+            };
             self.zwc_cache.insert(path.to_path_buf(), zwc);
-            self.zwc_cache.get(path)?
+            match self.zwc_cache.get(path) {
+                Some(z) => z,
+                None => return false,
+            }
         };
 
-        // Find the function
-        let func = zwc.get_function(name)?;
-        let decoded = zwc.decode_function(func)?;
+        let Some(func) = zwc.get_function(name) else {
+            return false;
+        };
+        let Some(decoded) = zwc.decode_function(func) else {
+            return false;
+        };
+        let Some(shell_func) = decoded.to_shell_function() else {
+            return false;
+        };
 
-        // Convert to shell command and cache
-        let shell_func = decoded.to_shell_function()?;
-
-        // Register the function. ZWC bodies arrive as a ShellCommand AST
-        // (the wordcode → AST decoder produces the legacy shape). Round-trip
-        // through `getpermtext` → ZshParser → ZshCompiler so the compiled
-        // chunk lives on the new pipeline. If the round-trip parse fails,
-        // skip the chunk and log. `function_source` carries the canonical
-        // text for introspection (`whence`, `which`, `${functions[name]}`)
-        // — the legacy `self.functions` AST table is no longer populated
-        // here since every reader has migrated to the helpers.
+        // ZWC bodies arrive as a ShellCommand AST (the wordcode → AST decoder
+        // produces the legacy shape). Round-trip through `getpermtext` →
+        // ZshParser → ZshCompiler so the compiled chunk lives on the new
+        // pipeline. function_source carries the canonical text for
+        // introspection.
         if let ShellCommand::FunctionDef(fname, body) = &shell_func {
             let body_text = crate::text::getpermtext(body.as_ref());
+            let mut compiled = false;
             if let Some(program) = crate::parser::ZshParser::new(&body_text)
                 .parse()
                 .ok()
@@ -5034,6 +5041,7 @@ impl ShellExecutor {
             {
                 let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
                 self.functions_compiled.insert(fname.clone(), chunk);
+                compiled = true;
             } else {
                 tracing::warn!(
                     function = %fname,
@@ -5042,9 +5050,9 @@ impl ShellExecutor {
                 );
             }
             self.function_source.insert(fname.clone(), body_text);
+            return compiled;
         }
-
-        Some(shell_func)
+        false
     }
 
     /// Add a directory to fpath
@@ -12274,7 +12282,7 @@ impl ShellExecutor {
         // ShellCommand return and use function_exists as the success signal.
         if execute_now {
             for func_name in &functions {
-                let _ = self.load_autoload_function(func_name);
+                self.load_autoload_function(func_name);
                 if self.function_exists(func_name) {
                     self.autoload_pending.remove(func_name);
                 } else {
@@ -12450,19 +12458,17 @@ impl ShellExecutor {
     }
 
     /// Load an autoloaded function from fpath - reads file and parses it
-    fn load_autoload_function(&mut self, name: &str) -> Option<ShellCommand> {
+    fn load_autoload_function(&mut self, name: &str) {
         // FAST PATH: Try SQLite cache first (no filesystem access)
         // Skip in zsh_compat mode - use traditional fpath scanning only
         if !self.zsh_compat {
             if let Some(ref cache) = self.compsys_cache {
                 // FASTEST: try cached bytecodes (skip lex+parse+compile entirely)
+                // FASTEST: cached fusevm::Chunk — skip lex+parse+compile.
+                // Insert into functions_compiled; the caller's outer dispatch
+                // runs the chunk with proper positional params + local-scope
+                // save/restore, identical to a freshly-loaded function.
                 if let Ok(Some(bc_blob)) = cache.get_autoload_bytecode(name) {
-                    // Cache hit: deserialize the fusevm::Chunk and stash it in
-                    // functions_compiled. Returning None tells maybe_autoload
-                    // to use function_exists as the success signal — the outer
-                    // dispatch then runs the chunk with the caller's positional
-                    // params + local-scope save/restore, the same way an
-                    // already-loaded function would dispatch.
                     if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
                         if !chunk.ops.is_empty() {
                             tracing::trace!(
@@ -12472,25 +12478,19 @@ impl ShellExecutor {
                                 "autoload: bytecode cache hit"
                             );
                             self.functions_compiled.insert(name.to_string(), chunk);
-                            // Pull source text too if cached so introspection
-                            // works without re-reading from disk.
                             if let Ok(Some(body)) = cache.get_autoload_body(name) {
                                 self.function_source.insert(name.to_string(), body);
                             }
-                            return None;
+                            return;
                         }
                     }
                 }
 
-                // FAST: cached source text — parse + compile (still no filesystem access)
+                // FAST: cached source text — parse + compile + cache the chunk.
+                // ksh-style autoload files (`name() { body }`) need their
+                // inner FuncDef body unwrapped before compile so the chunk
+                // runs the body when invoked instead of re-registering name.
                 if let Ok(Some(body)) = cache.get_autoload_body(name) {
-                    // New pipeline: ZshParser + ZshCompiler emits the persisted
-                    // Chunk that the bytecode-cache hit at the top of this fn
-                    // deserializes on the next invocation. ksh-style autoload
-                    // files (file = `name() { body }`) need the inner FuncDef
-                    // body extracted before compile — otherwise the chunk
-                    // re-registers `name` instead of running the body when the
-                    // function is invoked.
                     if let Ok(program) = crate::parser::ZshParser::new(&body).parse() {
                         if !program.lists.is_empty() {
                             let target =
@@ -12508,57 +12508,47 @@ impl ShellExecutor {
                             self.function_source.insert(name.to_string(), body.clone());
                         }
                     }
-                    // ShellParser parse for the legacy `self.functions` AST
-                    // table is no longer needed — `functions_compiled` and
-                    // `function_source` cover both call dispatch and
-                    // introspection. Returning None lets `maybe_autoload`
-                    // confirm via `function_exists(name)`.
-                    return None;
+                    return;
                 }
             }
         }
 
         // SLOW PATH: Try ZWC cache (but skip if we're reloading an existing function)
         if !self.function_exists(name) {
-            // Try to load from ZWC files
             for dir in &self.fpath.clone() {
-                // Try dir.zwc (e.g., /path/to/src.zwc for /path/to/src)
                 let zwc_path = dir.with_extension("zwc");
                 if zwc_path.exists() {
-                    // Function name in directory ZWC includes path prefix
                     let prefixed_name = format!(
                         "{}/{}",
                         dir.file_name().and_then(|n| n.to_str()).unwrap_or(""),
                         name
                     );
-                    if let Some(func) = self.load_function_from_zwc(&zwc_path, &prefixed_name) {
-                        return Some(func);
+                    if self.load_function_from_zwc(&zwc_path, &prefixed_name) {
+                        return;
                     }
-                    // Also try without prefix
-                    if let Some(func) = self.load_function_from_zwc(&zwc_path, name) {
-                        return Some(func);
+                    if self.load_function_from_zwc(&zwc_path, name) {
+                        return;
                     }
                 }
-                // Try individual function.zwc
                 let func_zwc = dir.join(format!("{}.zwc", name));
-                if func_zwc.exists() {
-                    if let Some(func) = self.load_function_from_zwc(&func_zwc, name) {
-                        return Some(func);
-                    }
+                if func_zwc.exists() && self.load_function_from_zwc(&func_zwc, name) {
+                    return;
                 }
             }
         }
 
         // SLOWEST PATH: Find the function file in fpath
-        let path = self.find_function_file(name)?;
+        let Some(path) = self.find_function_file(name) else {
+            return;
+        };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return;
+        };
 
-        // Read the file
-        let content = std::fs::read_to_string(&path).ok()?;
-
-        // New pipeline: ZshParser + ZshCompiler builds the persisted Chunk
-        // and `function_source` captures the raw file contents. ksh-style
+        // ZshParser + ZshCompiler builds the persisted Chunk and
+        // `function_source` captures the raw file contents. ksh-style
         // autoload files get their inner FuncDef body unwrapped before
-        // compile (see `ksh_autoload_body` for the shape detection).
+        // compile (see `ksh_autoload_body`).
         if let Ok(program) = crate::parser::ZshParser::new(&content).parse() {
             if !program.lists.is_empty() {
                 let target = Self::ksh_autoload_body(&program, name).unwrap_or(&program);
@@ -12567,24 +12557,17 @@ impl ShellExecutor {
                 self.function_source.insert(name.to_string(), content);
             }
         }
-
-        None
     }
 
     /// Check if a function is autoload pending and load it if so. The new
     /// pipeline populates `functions_compiled` + `function_source` directly,
-    /// so success is signaled by `function_exists(name)` regardless of
-    /// whether `load_autoload_function` produced a `ShellCommand` for the
-    /// legacy AST table.
+    /// so success is signaled by `function_exists(name)` after the load
+    /// side effect.
     pub fn maybe_autoload(&mut self, name: &str) -> bool {
         if !self.autoload_pending.contains_key(name) {
             return false;
         }
-        // Side effect: load_autoload_function populates functions_compiled
-        // + function_source via the ZWC / cached-body / fs paths. We don't
-        // care about the returned ShellCommand — function_exists is the
-        // success signal.
-        let _ = self.load_autoload_function(name);
+        self.load_autoload_function(name);
         if self.function_exists(name) {
             self.autoload_pending.remove(name);
             return true;
