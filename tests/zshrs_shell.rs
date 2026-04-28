@@ -503,3 +503,66 @@ fn test_extendedglob_negation_off_when_option_unset() {
         run_zshrs("arr=(a b c); print -l ${arr:#^a}");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Extendedglob inline pattern flags (#i) (#l) (#a<n>)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_pattern_flag_case_insensitive() {
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ \"ABC\" = (#i)abc ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_pattern_flag_case_insensitive_uppercase_pat() {
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ \"abc\" = (#i)ABC ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_pattern_flag_l_lowercase_matches_either_case() {
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ \"AbC\" = (#l)abc ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_pattern_flag_l_uppercase_must_match_exactly() {
+    // (#l) is asymmetric: uppercase pattern char requires exact case
+    // in input. So `(#l)ABC` does NOT match "abc".
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ \"abc\" = (#l)ABC ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "nomatch", "got: {output:?}");
+}
+
+#[test]
+fn test_pattern_flag_approximate_one_error() {
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ \"abcd\" = (#a1)abce ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_pattern_flag_approximate_zero_error_diff() {
+    // (#a0) requires exact match.
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ \"abcd\" = (#a0)abce ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "nomatch", "got: {output:?}");
+}
+
+#[test]
+fn test_pattern_flag_approximate_insertion() {
+    let (_, output, _) = run_zshrs(
+        "setopt extendedglob; [[ \"abc12\" = (#a1)abc1 ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
