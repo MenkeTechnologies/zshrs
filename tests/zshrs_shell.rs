@@ -1176,3 +1176,45 @@ fn test_bare_arr_no_subscript_still_splices() {
     let (_, output, _) = run_zshrs("arr=(x y z); print $arr");
     assert_eq!(output.trim(), "x y z", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `(t)` typeset flag — type + attribute introspection
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_t_flag_integer() {
+    let (_, output, _) = run_zshrs("integer i=5; print \"${(t)i}\"");
+    assert_eq!(output.trim(), "integer", "got: {output:?}");
+}
+
+#[test]
+fn test_t_flag_typeset_i() {
+    let (_, output, _) = run_zshrs("typeset -i n=5; print \"${(t)n}\"");
+    assert_eq!(output.trim(), "integer", "got: {output:?}");
+}
+
+#[test]
+fn test_t_flag_float() {
+    let (_, output, _) = run_zshrs("float f=1.5; print \"${(t)f}\"");
+    assert_eq!(output.trim(), "float", "got: {output:?}");
+}
+
+#[test]
+fn test_t_flag_scalar_left() {
+    let (_, output, _) =
+        run_zshrs("typeset -L 5 s=hello; print \"${(t)s}\"");
+    assert_eq!(output.trim(), "scalar-left", "got: {output:?}");
+}
+
+#[test]
+fn test_t_flag_scalar_readonly() {
+    let (_, output, _) =
+        run_zshrs("typeset -r ro=foo; print \"${(t)ro}\"");
+    assert_eq!(output.trim(), "scalar-readonly", "got: {output:?}");
+}
+
+#[test]
+fn test_t_flag_scalar_export() {
+    let (_, output, _) = run_zshrs("export E=foo; print \"${(t)E}\"");
+    assert_eq!(output.trim(), "scalar-export", "got: {output:?}");
+}
