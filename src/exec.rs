@@ -4735,6 +4735,13 @@ impl ShellExecutor {
         };
         let rest_vec: Vec<String> = rest.to_vec();
 
+        // Builtins not in fusevm's name→id table (e.g. `sched`) fall
+        // through to host.exec. Catch them here before the OS-level
+        // exec attempts to spawn a non-existent binary.
+        if cmd == "sched" {
+            return self.builtin_sched(&rest_vec);
+        }
+
         // AOP intercepts: when an `intercept :before/:around/:after foo` block
         // is registered, dynamic-command-name dispatch must consult it before
         // spawning. Without this, `cmd=ls; $cmd` bypasses every intercept that
@@ -20955,6 +20962,16 @@ impl ShellExecutor {
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
+                "-L" => {
+                    // List scheduled items (zsh syntax: `sched -L`).
+                    let now = SystemTime::now();
+                    for cmd in &self.scheduled_commands {
+                        let remaining =
+                            cmd.run_at.duration_since(now).unwrap_or(Duration::ZERO);
+                        println!("{:3}  +{:5}  {}", cmd.id, remaining.as_secs(), cmd.command);
+                    }
+                    return 0;
+                }
                 "-" => {
                     // Remove scheduled item
                     i += 1;
@@ -20990,8 +21007,11 @@ impl ShellExecutor {
                     return 0;
                 }
                 time_str => {
-                    // Parse HH:MM or HH:MM:SS
-                    let parts: Vec<&str> = time_str.split(':').collect();
+                    // Parse HH:MM, HH:MM:SS, or +H:M / +H:M:S relative form.
+                    // The leading `+` makes the time relative; we still
+                    // compute target_secs as duration from now (same path).
+                    let stripped = time_str.strip_prefix('+').unwrap_or(time_str);
+                    let parts: Vec<&str> = stripped.split(':').collect();
                     if parts.len() >= 2 {
                         let hour: u32 = parts[0].parse().unwrap_or(0);
                         let min: u32 = parts[1].parse().unwrap_or(0);
