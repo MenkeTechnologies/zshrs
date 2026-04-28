@@ -7437,6 +7437,68 @@ impl ShellExecutor {
                     negate = false;
                 }
 
+                // L[+-]N[k|m|g|p] — size qualifier. Default unit is 512-byte
+                // blocks; suffix 'k'/'K' = kilobytes, 'm'/'M' = megabytes,
+                // 'g'/'G' = gigabytes, 'p'/'P' = bytes (POSIX). +N matches
+                // larger, -N smaller, N matches exactly. e.g. L0 = exactly
+                // 0 bytes; L+10k = larger than 10 KB.
+                'L' => {
+                    let mut cmp = '=';
+                    if let Some(&peek) = chars.peek() {
+                        if peek == '+' || peek == '-' {
+                            cmp = peek;
+                            chars.next();
+                        }
+                    }
+                    let mut num_str = String::new();
+                    while let Some(&peek) = chars.peek() {
+                        if peek.is_ascii_digit() {
+                            num_str.push(peek);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    let n: u64 = num_str.parse().unwrap_or(0);
+                    let unit_mult: u64 = match chars.peek().copied() {
+                        Some('k') | Some('K') => {
+                            chars.next();
+                            1024
+                        }
+                        Some('m') | Some('M') => {
+                            chars.next();
+                            1024 * 1024
+                        }
+                        Some('g') | Some('G') => {
+                            chars.next();
+                            1024 * 1024 * 1024
+                        }
+                        Some('p') | Some('P') => {
+                            chars.next();
+                            1
+                        }
+                        _ => 512, // zsh default: 512-byte blocks
+                    };
+                    let target = n * unit_mult;
+                    result = result
+                        .into_iter()
+                        .filter(|f| {
+                            let size = meta_cache
+                                .get(f)
+                                .and_then(|(m, _)| m.as_ref())
+                                .map(|m| m.len())
+                                .unwrap_or(0);
+                            let pass = match cmp {
+                                '+' => size > target,
+                                '-' => size < target,
+                                _ => size == target,
+                            };
+                            if negate { !pass } else { pass }
+                        })
+                        .collect();
+                    negate = false;
+                }
+
                 // Permission qualifiers — all use prefetched metadata cache
                 'r' => {
                     result = self.filter_by_permission(result, 0o400, negate, &meta_cache);
