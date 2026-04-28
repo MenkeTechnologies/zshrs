@@ -1457,3 +1457,155 @@ fn test_pattern_repeat_out_of_range() {
     );
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Special parameters: $EUID, $UID, $PPID, $HOST, $ZSH_SUBSHELL, $#@, $#*
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_special_param_euid() {
+    let (_, output, _) = run_zshrs("echo $EUID");
+    assert!(
+        output.trim().chars().all(|c| c.is_ascii_digit())
+            && !output.trim().is_empty(),
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_special_param_uid() {
+    let (_, output, _) = run_zshrs("echo $UID");
+    assert!(
+        output.trim().chars().all(|c| c.is_ascii_digit())
+            && !output.trim().is_empty(),
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_special_param_ppid() {
+    let (_, output, _) = run_zshrs("echo $PPID");
+    assert!(
+        output.trim().chars().all(|c| c.is_ascii_digit())
+            && !output.trim().is_empty(),
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_special_param_host() {
+    let (_, output, _) = run_zshrs("print $HOST");
+    assert!(
+        !output.trim().is_empty(),
+        "$HOST should be set, got: {output:?}"
+    );
+}
+
+#[test]
+fn test_special_param_zsh_subshell_zero() {
+    let (_, output, _) = run_zshrs("echo $ZSH_SUBSHELL");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_hash_at_count() {
+    let (_, output, _) = run_zshrs("set -- a b c d; echo $#@");
+    assert_eq!(output.trim(), "4", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_hash_star_count() {
+    let (_, output, _) = run_zshrs("set -- a b c d; echo $#*");
+    assert_eq!(output.trim(), "4", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// $sysparams[pid] / [ppid] zsh/system magic assoc
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_sysparams_pid() {
+    let (_, output, _) =
+        run_zshrs("zmodload zsh/system; print $sysparams[pid]");
+    let pid = output.trim();
+    assert!(
+        pid.chars().all(|c| c.is_ascii_digit()) && !pid.is_empty(),
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_sysparams_ppid() {
+    let (_, output, _) =
+        run_zshrs("zmodload zsh/system; print $sysparams[ppid]");
+    let ppid = output.trim();
+    assert!(
+        ppid.chars().all(|c| c.is_ascii_digit()) && !ppid.is_empty(),
+        "got: {output:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// kshglob `!(p)` negation (standalone)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_kshglob_negation_match() {
+    let (_, output, _) = run_zshrs(
+        "setopt kshglob; [[ baz = !(foo|bar) ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "match", "got: {output:?}");
+}
+
+#[test]
+fn test_kshglob_negation_no_match() {
+    let (_, output, _) = run_zshrs(
+        "setopt kshglob; [[ foo = !(foo|bar) ]] && echo match || echo nomatch",
+    );
+    assert_eq!(output.trim(), "nomatch", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// `(F)` newline-join flag
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_F_flag_joins_array_with_newlines() {
+    let (_, output, _) =
+        run_zshrs("arr=(a b c); echo \"${(F)arr}\"");
+    assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// `typeset -p NAME` and `export -p`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_typeset_p_integer() {
+    let (_, output, _) = run_zshrs("integer i=5; typeset -p i");
+    assert_eq!(output.trim(), "typeset -i i=5", "got: {output:?}");
+}
+
+#[test]
+fn test_typeset_p_array() {
+    let (_, output, _) = run_zshrs("arr=(a b c); typeset -p arr");
+    assert_eq!(output.trim(), "typeset -a arr=( a b c )", "got: {output:?}");
+}
+
+#[test]
+fn test_typeset_p_assoc() {
+    let (_, output, _) =
+        run_zshrs("typeset -A m=(a 1 b 2); typeset -p m");
+    assert_eq!(
+        output.trim(),
+        "typeset -A m=( [a]=1 [b]=2 )",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_export_p_lists_var() {
+    let (_, output, _) =
+        run_zshrs("export X=hello; export -p 2>&1 | grep '^export X='");
+    assert_eq!(output.trim(), "export X=hello", "got: {output:?}");
+}

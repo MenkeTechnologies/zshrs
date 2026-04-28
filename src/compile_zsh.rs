@@ -2792,6 +2792,14 @@ fn bare_var_ref(s: &str) -> Option<&str> {
     {
         return Some(rest);
     }
+    // Two-char specials: `$#@` and `$#*` are zsh shorthand for
+    // `${#@}` / `${#*}` — count of positional params (same as `$#`).
+    if first == '#' && rest.chars().count() == 2 {
+        let second = rest.chars().nth(1)?;
+        if second == '@' || second == '*' {
+            return Some(rest);
+        }
+    }
     if first.is_ascii_digit() && rest.chars().all(|c| c.is_ascii_digit()) {
         return Some(rest);
     }

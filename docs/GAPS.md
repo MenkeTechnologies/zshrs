@@ -267,13 +267,40 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `glob_match_static` peeks at `(#c...)` after `(` and emits a regex `{N}` or `{N,M}` quantifier. `a(#c2)` matches `aa` only; `a(#c2,3)` matches `aa` or `aaa`.
 
-## Still open (third-pass audit)
+## Closed (fourth-pass batch — special params + module assocs + edge cases)
 
-Remaining items from the third-pass probe (deferred):
+### `$EUID`, `$UID`, `$EGID`, `$GID`, `$PPID`, `$HOST`, `$HOSTNAME`, `$ZSH_SUBSHELL`
 
-- **`!(p)` kshglob negation** — needs regex negative lookahead, not supported by the `regex` crate. Workaround possible via custom matcher; deferred.
-- **`$#@` alternative count syntax** — `$#@` should equal `$#`; the bare-`$NAME` matcher treats it as `$#` followed by literal `@`. Parser-level fix.
-- **`$sysparams[pid]`** — `zsh/system` module's magic assoc array. zmodload no-ops; assoc not registered. Niche.
+- New special-parameter handlers in `get_variable`: `EUID`/`UID` via libc `geteuid`/`getuid`; `EGID`/`GID` via `getegid`/`getgid`; `PPID` via `getppid`; `HOST`/`HOSTNAME` via `gethostname` (with NUL-trim); `ZSH_SUBSHELL` reads from `variables` with default 0.
+
+### `$#@` and `$#*` count forms
+
+- `bare_var_ref` extended to recognize the 2-char specials `#@` and `#*` (zsh shorthand for `${#@}`/`${#*}`, which equal `$#`). Routes through `get_variable` which returns `positional_params.len()` for either name.
+
+### `$sysparams[KEY]` zsh/system magic assoc
+
+- New `magic_assoc_lookup` arm for `sysparams`. Returns `pid` (process id), `ppid` (parent), `procsubstpid` ("0"). Splice form `${sysparams[@]}` returns the value list. Closes the `zmodload zsh/system; print $sysparams[pid]` daily-driver shape.
+
+### `!(p)` kshglob negation (standalone, gated)
+
+- `glob_match_static` now detects a fully-`!(<body>)` pattern and returns `!glob_match_static(s, body)` — the negation of recursing into the body. Composition like `prefix!(foo)suffix` would need negative lookahead and is left literal. Gated on `setopt kshglob` to match zsh.
+
+### `${(F)arr}` newline-join flag
+
+- New 'F' arm in `BUILTIN_PARAM_FLAG`: joins an array state with `\n` and produces a scalar. Mirrors the existing `(j:\n:)` form but as the standard one-letter shorthand.
+
+### `typeset -p NAME` re-executable declaration output
+
+- New `print_mode` early-return arm in `builtin_declare`: for each name arg without `=`, emits `typeset -<attrs> NAME=<quoted-value>`. Reads from `var_attrs` for kind/readonly/export modifiers; falls back to `assoc_arrays`/`arrays` membership for unmarked vars. Output format byte-exact against zsh: `typeset -i i=5`, `typeset -a arr=( a b c )`, `typeset -A m=( [a]=1 [b]=2 )`.
+
+### `export -p` lists every exported var
+
+- New early-return in `builtin_export`: when args are exactly `["-p"]`, walk `std::env::vars()`, sort, and emit `export NAME=<quoted-value>` lines. Matches POSIX + zsh format.
+
+## Still open
+
+Remaining items from the third-pass probe still deferred:
+
 - **`zmv` autoload** — built-in autoload dispatches to a generic handler that errors "action %N not recognised". The `zmv` rename-by-pattern function is auto-loadable in mainline zsh; not yet bundled.
 - **`zcalc` autoload** — niche calculator function not bundled.
 
