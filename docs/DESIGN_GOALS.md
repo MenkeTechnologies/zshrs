@@ -115,6 +115,32 @@ When designing new features, default to "this lives inside zshrs as a builtin or
 
 ---
 
+## [0x04a] zshrs-daemon — central architectural substrate
+
+Locked 2026-04-28: zshrs's runtime is a **client/server architecture**. A singleton `zshrs-daemon` companion process owns all bytecode-cache mutation, supervises long-running detached jobs, brokers cross-shell publish/subscribe, and federates with peer daemons over remote channels. N (typically 100+ in tmux) thin zshrs clients are paper-thin readers that mmap the daemon's bytecode outputs (data plane, ~150-200ns lookup) and signal the daemon via JSON-over-Unix-socket IPC for all configuration changes (control plane). See `AOT_DESIGN.md` §0x13 for the complete spec.
+
+**Why this is a foundational design goal, not an implementation detail:**
+
+- **The user runs 100+ concurrent zshrs in tmux.** Per-process fsnotify, per-process compile workers, per-process SQLite handles all multiply by 100 and kill the workstation. The daemon is the only architecture that scales to this load while remaining responsive.
+- **Three stacked world-firsts hang on the daemon:** (1) shell with a dedicated companion daemon spanning bytecode cache + jobs + IPC + federation (no prior art in any active shell — fish's `fishd` was scoped to var-sync only and removed in 2014); (2) native session-persistent shell-job supervision ("tmux at shell level, but at process granularity not terminal granularity"); (3) native cross-shell pub/sub + dispatch + cross-host federation as first-class shell primitives. Each meets both legs of the [§0x01] project bar.
+- **Data-plane / control-plane split is non-negotiable.** Lookups (Tab, prompt fire, alias expand) MUST stay on direct-mmap data plane (~150-200ns). Putting the daemon in the lookup path is 10-30µs per call (50-150× slower) and wrong by construction. Daemon handles only configuration mutation and async coordination.
+- **Source files remain authoritative.** Image cache is opportunistic accelerator, never required for execution. Image miss / malformed shard / corruption / daemon-down → client falls through to source-interp path silently. Daemon-down does NOT break shells.
+
+**Hard rules locked into the architecture (failure to enforce = regression):**
+
+1. **Nothing blocks the shell** — all rkyv shard compilation, image writes, catalog hydration, log rotation, integrity scans run in the daemon's worker pool. Main client thread NEVER calls compile pass synchronously.
+2. **Thin clients only** — clients have ZERO cache-related background threads, polling loops, timers, or SQLite handles. Per-client cache overhead <5 MB beyond the zsh interpreter footprint. (Clients DO have a general worker pool for concurrent primitives — `async`/`await`/`pmap` — but never for cache work.)
+3. **Single cache directory** — `~/.cache/zshrs/` holds index.rkyv + images/{hash8}-{slug}.rkyv shards + catalog.db + history.db + zshrs.log + daemon.sock + daemon.pid. Trade explicit: full `rm -rf ~/.cache/zshrs/` nukes everything; user accepts the loss.
+4. **POSIX mode gates the entire layer off** — `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash` → no daemon spawn, no cache dir created, no `z*` builtins available. Critical for `/bin/sh → zshrs` symlink in containers / cron / init.
+5. **Custom builtin namespace = `z*` prefix, no clash with upstream zsh `z*`** — `zcache`, `zls`, `zid`, `zping`, `ztag`, `zsend`, `znotify`, `zsubscribe`, `zjob` (planned). Build-time anti-collision check vs upstream zsh's z-namespace.
+6. **Shard rebuild ordering is strict** — atomic-rename shard FIRST, then rewrite index. Generation counter on each shard header drives client re-mmap on stale handles. Reverse order = corrupt reads.
+7. **Daemon spawn-on-demand** — first zshrs client to launch checks for `daemon.sock`; if absent, fork-spawns daemon. Subsequent N clients just connect. `flock` on `daemon.pid` enforces singleton.
+8. **fsnotify exclusively daemon-side** — clients never run a fsnotify watcher. 100×-watcher thundering-herd is fatal.
+
+**Patent significance:** the daemon architecture is the **second omnibus claim** in the patent strategy (`memory/aot_patent_strategy.md`), independently assertible from the unified-AOT claim. New work touching the daemon, IPC verbs, federation, or cross-shell semantics is patent-relevant dependent-claim material.
+
+---
+
 ## [0x05] Engineering ethic
 
 ### Upstream-first contributor, not a rewrite-junkie
