@@ -3852,8 +3852,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
+                        // Also trigger expand_glob when the word ends
+                        // with a `(...)` qualifier suffix even without
+                        // any other glob metachar — `/etc/hosts(mh-100)`,
+                        // `path(.)`, etc.
+                        let has_qual_suffix = s.ends_with(')')
+                            && s.contains('(')
+                            && !s.contains('|');
                         if !noglob
-                            && (s.contains('*') || s.contains('?') || s.contains('['))
+                            && (s.contains('*')
+                                || s.contains('?')
+                                || s.contains('[')
+                                || has_qual_suffix)
                         {
                             exec.expand_glob(&s)
                         } else {
@@ -8051,9 +8061,20 @@ impl ShellExecutor {
         if s.is_empty() {
             return false;
         }
-        // Valid qualifier chars: . / @ = p * % r w x A I E R W X s S t ^ - + :
-        // Also numbers for depth limits, and things like [1,5] for ranges
-        let valid_chars = "./@=p*%brwxAIERWXsStfedDLNnMmcaou^-+:0123456789,[]FT";
+        // Valid qualifier chars (zsh glob qualifier set):
+        //   type/perm: . / @ = p * % b r w x s A I E R W X
+        //   sort:      o O n L l a m c d N
+        //   time qual: a m c — followed by unit (s h m M d w) and op (+ -)
+        //   user/grp:  u g
+        //   nullglob:  N
+        //   dotglob:   D
+        //   T (path component)
+        //   numeric ranges and digits for depth/uid/gid: 0-9 + - , [ ] :
+        // Previously missing: `h` (hours unit), `g` (group qualifier),
+        // `H` (non-empty-dir alt), `U` (owned-by-user) — adding them
+        // unlocks `(mh-N)`, `(g+N)`, `(U)`, etc.
+        let valid_chars =
+            "./@=p*%bghirwxAIERWXsStfHedDLNnMmcaouUYHTk^-+:0123456789,[]F";
         s.chars()
             .all(|c| valid_chars.contains(c) || c.is_whitespace())
     }
@@ -8547,6 +8568,76 @@ impl ShellExecutor {
                 }
                 'N' => {
                     // Nullglob for this pattern
+                }
+
+                // Time qualifiers `m` (mtime), `a` (atime), `c` (ctime).
+                // Format: <qual><unit><op><N> e.g. `mh-100` =
+                //   mtime within last 100 hours. Units: s (sec), m (min,
+                //   default), h (hour), d (day, default for none),
+                //   w (week), M (month, 30d). Ops: `+N` = older than,
+                //   `-N` = newer than, no op = exactly N (within ±1 unit).
+                'm' | 'a' | 'c' => {
+                    let qual_kind = c;
+                    // Unit (optional, default = days)
+                    let unit_secs: i64 = match chars.peek().copied() {
+                        Some('s') => { chars.next(); 1 }
+                        Some('m') => { chars.next(); 60 }
+                        Some('h') => { chars.next(); 3600 }
+                        Some('d') => { chars.next(); 86400 }
+                        Some('w') => { chars.next(); 7 * 86400 }
+                        Some('M') => { chars.next(); 30 * 86400 }
+                        _ => 86400,
+                    };
+                    // Op (optional, default = exact)
+                    let op = match chars.peek().copied() {
+                        Some('+') => { chars.next(); '+' }
+                        Some('-') => { chars.next(); '-' }
+                        _ => '=',
+                    };
+                    // Numeric value
+                    let mut nstr = String::new();
+                    while let Some(&nc) = chars.peek() {
+                        if nc.is_ascii_digit() {
+                            nstr.push(nc);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    let n: i64 = nstr.parse().unwrap_or(0);
+                    let cutoff = n * unit_secs;
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    use std::os::unix::fs::MetadataExt;
+                    result = result
+                        .into_iter()
+                        .filter(|f| {
+                            let m = match meta_cache.get(f).and_then(|(m, _)| m.as_ref()) {
+                                Some(m) => m,
+                                None => return false,
+                            };
+                            let ts = match qual_kind {
+                                'm' => m.mtime(),
+                                'a' => m.atime(),
+                                'c' => m.ctime(),
+                                _ => 0,
+                            };
+                            let age = now - ts;
+                            let pass = match op {
+                                '+' => age > cutoff,
+                                '-' => age < cutoff,
+                                _ => age >= cutoff && age < cutoff + unit_secs,
+                            };
+                            if negate {
+                                !pass
+                            } else {
+                                pass
+                            }
+                        })
+                        .collect();
+                    negate = false;
                 }
 
                 // Unknown qualifier - ignore
