@@ -397,9 +397,13 @@ impl ZshCompiler {
                 // set (matches zsh: try's status is preserved unless the
                 // finally block sets a different one).
                 self.compile_program(&t.try_block);
-                // The try block sets last_status. Now run finally; its
-                // status overwrites only if non-empty (zsh: finally
-                // overrides on its own status set).
+                // Capture try-block's exit status into $TRY_BLOCK_ERROR so
+                // the always arm can read it (zsh's documented semantics).
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_SET_TRY_BLOCK_ERROR, 0),
+                    0,
+                );
+                self.builder.emit(Op::Pop, 0);
                 self.compile_program(&t.always);
             }
         }

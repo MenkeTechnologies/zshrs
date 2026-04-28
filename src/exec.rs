@@ -1384,6 +1384,199 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(last_status)
     });
 
+    // Magic special-parameter assoc lookup. Synthesizes values from
+    // shell state for zsh's shell-introspection assocs:
+    //   commands, aliases, galiases, saliases, dis_aliases, dis_galiases,
+    //   dis_saliases, functions, dis_functions, builtins, dis_builtins,
+    //   reswords, options, parameters, jobtexts, jobdirs, jobstates,
+    //   nameddirs, userdirs, modules.
+    // Returns None if `name` isn't a recognized magic name.
+    fn magic_assoc_lookup(name: &str, idx: &str) -> Option<Value> {
+        with_executor(|exec| -> Option<Value> {
+            match name {
+                "commands" => {
+                    if idx == "@" || idx == "*" {
+                        return Some(Value::Array(
+                            exec.command_hash.values().map(Value::str).collect(),
+                        ));
+                    }
+                    Some(Value::str(
+                        exec.command_hash.get(idx).cloned().unwrap_or_else(|| {
+                            // Fall back to PATH scan for first match
+                            for dir in env::var("PATH").unwrap_or_default().split(':') {
+                                let p = std::path::PathBuf::from(dir).join(idx);
+                                if p.is_file() {
+                                    return p.to_string_lossy().into_owned();
+                                }
+                            }
+                            String::new()
+                        }),
+                    ))
+                }
+                "aliases" => Some(Value::str(exec.aliases.get(idx).cloned().unwrap_or_default())),
+                "galiases" => Some(Value::str(
+                    exec.global_aliases.get(idx).cloned().unwrap_or_default(),
+                )),
+                "saliases" => Some(Value::str(
+                    exec.suffix_aliases.get(idx).cloned().unwrap_or_default(),
+                )),
+                "functions" => {
+                    if let Some(text) = exec.function_definition_text(idx) {
+                        Some(Value::str(text))
+                    } else {
+                        Some(Value::str(""))
+                    }
+                }
+                "dis_functions" => {
+                    // Disabled functions table — zshrs tracks via autoload_pending
+                    // for the autoload-but-not-loaded case; full disable list
+                    // would need a separate table. For now: empty unless
+                    // explicitly disabled.
+                    Some(Value::str(""))
+                }
+                "builtins" => {
+                    // Return "defined" for known builtins; empty for unknown
+                    let known = matches!(
+                        idx,
+                        "echo" | "print" | "printf" | "cd" | "pwd" | "exit" | "return"
+                            | "true" | "false" | ":" | "test" | "[" | "local"
+                            | "private" | "declare" | "typeset" | "read"
+                            | "shift" | "eval" | "alias" | "unalias" | "set"
+                            | "unset" | "export" | "source" | "."
+                            | "history" | "fc" | "jobs" | "fg" | "bg"
+                            | "kill" | "wait" | "trap" | "ulimit" | "umask"
+                            | "hash" | "unhash" | "type" | "whence" | "which"
+                            | "where" | "command" | "builtin" | "exec"
+                            | "getopts" | "let" | "shopt" | "setopt"
+                            | "unsetopt" | "emulate" | "zstyle" | "compdef"
+                            | "compadd" | "compinit" | "compset"
+                    );
+                    if known {
+                        Some(Value::str("defined"))
+                    } else {
+                        Some(Value::str(""))
+                    }
+                }
+                "reswords" => {
+                    let known = matches!(
+                        idx,
+                        "if" | "then" | "elif" | "else" | "fi" | "for" | "do"
+                            | "done" | "while" | "until" | "case" | "esac"
+                            | "in" | "function" | "select" | "time"
+                            | "{" | "}" | "[[" | "]]" | "!"
+                            | "coproc" | "always" | "foreach" | "end"
+                            | "repeat" | "nocorrect" | "noglob" | "declare"
+                            | "typeset" | "local" | "readonly" | "export"
+                            | "integer" | "float"
+                    );
+                    if known {
+                        Some(Value::str("reserved"))
+                    } else {
+                        Some(Value::str(""))
+                    }
+                }
+                "options" => {
+                    let opt_name = idx.to_lowercase().replace('_', "");
+                    Some(Value::str(if exec.options.get(&opt_name).copied().unwrap_or(false) {
+                        "on"
+                    } else {
+                        "off"
+                    }))
+                }
+                "parameters" => {
+                    if exec.assoc_arrays.contains_key(idx) {
+                        Some(Value::str("association"))
+                    } else if exec.arrays.contains_key(idx) {
+                        Some(Value::str("array"))
+                    } else if exec.variables.contains_key(idx) || env::var(idx).is_ok() {
+                        Some(Value::str("scalar"))
+                    } else {
+                        Some(Value::str(""))
+                    }
+                }
+                "jobtexts" => {
+                    let job_id: usize = idx.parse().ok()?;
+                    Some(Value::str(
+                        exec.jobs
+                            .get(job_id)
+                            .map(|j| j.command.clone())
+                            .unwrap_or_default(),
+                    ))
+                }
+                "jobdirs" => {
+                    let _job_id: usize = idx.parse().ok()?;
+                    // Per-job working dir not tracked; return current cwd as
+                    // a useful approximation (zsh tracks it; we don't yet).
+                    Some(Value::str(
+                        std::env::current_dir()
+                            .ok()
+                            .and_then(|p| p.to_str().map(String::from))
+                            .unwrap_or_default(),
+                    ))
+                }
+                "jobstates" => {
+                    let job_id: usize = idx.parse().ok()?;
+                    Some(Value::str(
+                        exec.jobs
+                            .get(job_id)
+                            .map(|j| match j.state {
+                                JobState::Running => "running".to_string(),
+                                JobState::Stopped => "stopped".to_string(),
+                                JobState::Done => "done".to_string(),
+                            })
+                            .unwrap_or_default(),
+                    ))
+                }
+                "nameddirs" => Some(Value::str(
+                    exec.named_dirs
+                        .get(idx)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                )),
+                "userdirs" => {
+                    // ~user → home dir lookup via /etc/passwd. No caching;
+                    // each lookup hits getpwnam.
+                    let c_user = match std::ffi::CString::new(idx) {
+                        Ok(c) => c,
+                        Err(_) => return Some(Value::str("")),
+                    };
+                    let pw = unsafe { libc::getpwnam(c_user.as_ptr()) };
+                    if pw.is_null() {
+                        Some(Value::str(""))
+                    } else {
+                        let home_ptr = unsafe { (*pw).pw_dir };
+                        if home_ptr.is_null() {
+                            return Some(Value::str(""));
+                        }
+                        let home = unsafe { std::ffi::CStr::from_ptr(home_ptr) };
+                        Some(Value::str(home.to_string_lossy().into_owned()))
+                    }
+                }
+                "modules" => {
+                    // Loaded modules — fixed list of modules zshrs always
+                    // exposes (compiled-in, not dlopen'd).
+                    let known_modules = [
+                        "zsh/datetime", "zsh/sched", "zsh/zutil", "zsh/parameter",
+                        "zsh/files", "zsh/complete", "zsh/complist", "zsh/regex",
+                        "zsh/system", "zsh/stat", "zsh/net/tcp", "zsh/net/socket",
+                        "zsh/private", "zsh/zftp", "zsh/zselect", "zsh/zle",
+                        "zsh/random", "zsh/pcre", "zsh/db/gdbm", "zsh/cap",
+                        "zsh/clone", "zsh/curses", "zsh/mapfile", "zsh/nearcolor",
+                        "zsh/newuser", "zsh/mathfunc", "zsh/termcap", "zsh/terminfo",
+                        "zsh/profiler",
+                    ];
+                    if known_modules.contains(&idx) {
+                        Some(Value::str("loaded"))
+                    } else {
+                        Some(Value::str(""))
+                    }
+                }
+                "patchars" => Some(Value::str("*?[]<>(){}|^&;")),
+                _ => None,
+            }
+        })
+    }
+
     // `${arr[idx]}` — pop name, then idx_str. zsh is 1-based for positive
     // indices; we honor that. `@`/`*` return the whole array as Value::Array
     // so Op::Exec splice produces N argv slots. For `${foo[key]}` where foo
@@ -1392,6 +1585,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
         let idx = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // Magic special-parameter assoc lookups — synthesized from shell
+        // state on access. zsh exposes shell-introspection assocs like
+        // `${commands[ls]}`, `${aliases[ll]}`, `${functions[foo]}`,
+        // `${options[interactive]}`, etc. None of these are stored in
+        // `assoc_arrays`; we generate the value at lookup time.
+        if let Some(v) = magic_assoc_lookup(&name, &idx) {
+            return v;
+        }
         with_executor(|exec| match idx.as_str() {
             "@" | "*" => {
                 // Splice: assoc → values list (zsh's `${foo[@]}` for assoc);
@@ -2590,6 +2791,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
+    // BUILTIN_SET_TRY_BLOCK_ERROR — capture the try-block's exit status
+    // into $TRY_BLOCK_ERROR so the always-arm can read it.
+    vm.register_builtin(BUILTIN_SET_TRY_BLOCK_ERROR, |vm, _argc| {
+        let vm_status = vm.last_status;
+        with_executor(|exec| {
+            exec.variables
+                .insert("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
+        });
+        fusevm::Value::Status(0)
+    });
+
     // BUILTIN_CONCAT_SPLICE — word-segment concat with first/last
     // sticking (default zsh splice semantics for `${arr[@]}`, `$@`).
     vm.register_builtin(BUILTIN_CONCAT_SPLICE, |vm, _argc| {
@@ -3340,6 +3552,11 @@ pub const BUILTIN_OPEN_NAMED_FD: u16 = 317;
 /// - lhs scalar, rhs Array: `Value::Array([lhs + b for b in rhs])`
 /// - both Array: cartesian product `[a + b for a in lhs for b in rhs]`
 pub const BUILTIN_CONCAT_DISTRIBUTE: u16 = 318;
+
+/// Capture current `last_status` into the `TRY_BLOCK_ERROR` variable.
+/// Emitted between the try block and the always block of `{ … } always
+/// { … }` so the finally arm can read $TRY_BLOCK_ERROR.
+pub const BUILTIN_SET_TRY_BLOCK_ERROR: u16 = 320;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)
@@ -9394,6 +9611,61 @@ impl ShellExecutor {
                 }
             }
             "argv" => self.positional_params.join(" "),
+            "TTY" => {
+                // Path to the controlling terminal (`$TTY` in zsh).
+                // ttyname(0) gives the device path. Returns "" if no tty.
+                let ptr = unsafe { libc::ttyname(0) };
+                if ptr.is_null() {
+                    String::new()
+                } else {
+                    unsafe { std::ffi::CStr::from_ptr(ptr) }
+                        .to_string_lossy()
+                        .into_owned()
+                }
+            }
+            "TTYIDLE" => {
+                // Idle time of stdin TTY in seconds — stat the tty, return
+                // (now - st_atime). Returns "-1" if not a tty per zsh docs.
+                let ptr = unsafe { libc::ttyname(0) };
+                if ptr.is_null() {
+                    return "-1".to_string();
+                }
+                let path = unsafe { std::ffi::CStr::from_ptr(ptr) };
+                let path_str = path.to_string_lossy().into_owned();
+                match std::fs::metadata(&path_str) {
+                    Ok(meta) => {
+                        use std::time::{SystemTime, UNIX_EPOCH};
+                        if let Ok(atime) = meta.accessed() {
+                            let now = SystemTime::now();
+                            let idle = now.duration_since(atime).unwrap_or_default();
+                            return idle.as_secs().to_string();
+                        }
+                        "0".to_string()
+                    }
+                    Err(_) => "-1".to_string(),
+                }
+            }
+            "TRY_BLOCK_ERROR" => {
+                // Set by `{ … } always { … }` — last status of the try
+                // block. Lives in self.variables under the same name when
+                // the try arm assigns it; default 0.
+                self.variables
+                    .get("TRY_BLOCK_ERROR")
+                    .cloned()
+                    .unwrap_or_else(|| "0".to_string())
+            }
+            "patchars" => "*?[]<>(){}|^&;".to_string(),
+            "RANDOM_FILE" => {
+                // Path to entropy source. Mainline zsh leaves empty
+                // unless `zmodload zsh/random` set it; we expose
+                // /dev/urandom as a useful default — matches the
+                // platform's actual entropy source.
+                if std::path::Path::new("/dev/urandom").exists() {
+                    "/dev/urandom".to_string()
+                } else {
+                    String::new()
+                }
+            }
             "LINENO" => {
                 // Tracked elsewhere; default to 1 if not populated.
                 self.variables
