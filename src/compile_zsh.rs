@@ -1016,6 +1016,31 @@ impl ZshCompiler {
         // chars resolve to their original ASCII).
         if !has_bnull {
             if let Some(segs) = split_word_segments(s) {
+                // Pick concat operator based on segment shape:
+                // - Default splice (`${arr[@]}`, `$@`, `$*`): FIRST/LAST
+                //   sticking — emit BUILTIN_CONCAT_SPLICE.
+                // - Distribute (`${^arr}`, `${(@)…}`, RC_EXPAND_PARAM):
+                //   cartesian — emit BUILTIN_CONCAT_DISTRIBUTE.
+                // - Pure scalar: plain Op::Concat (fastest path).
+                let has_splice_seg = segs.iter().any(|seg| match seg {
+                    WordSegment::Expansion(exp) => is_splice_expansion(exp),
+                    _ => false,
+                });
+                let has_distribute_seg = segs.iter().any(|seg| match seg {
+                    WordSegment::Expansion(exp) => is_distribute_expansion(exp),
+                    _ => false,
+                });
+                let concat_builtin = if has_splice_seg {
+                    Some(crate::exec::BUILTIN_CONCAT_SPLICE)
+                } else if has_distribute_seg {
+                    Some(crate::exec::BUILTIN_CONCAT_DISTRIBUTE)
+                } else {
+                    // Pure scalars OR `${arr}` plain — runtime check via
+                    // BUILTIN_CONCAT_DISTRIBUTE (handles scalar fast path
+                    // AND RC_EXPAND_PARAM cartesian when GET_VAR returns
+                    // Value::Array because the option is set).
+                    Some(crate::exec::BUILTIN_CONCAT_DISTRIBUTE)
+                };
                 for (i, seg) in segs.iter().enumerate() {
                     match seg {
                         WordSegment::Literal(lit) => {
@@ -1029,7 +1054,11 @@ impl ZshCompiler {
                         }
                     }
                     if i > 0 {
-                        self.builder.emit(Op::Concat, 0);
+                        if let Some(b) = concat_builtin {
+                            self.builder.emit(Op::CallBuiltin(b, 2), 0);
+                        } else {
+                            self.builder.emit(Op::Concat, 0);
+                        }
                     }
                 }
                 return;
@@ -1910,6 +1939,47 @@ enum WordSegment {
 /// Literal. NOTE: `\u{84}` is POUND (`#`), not a `$`-marker; including
 /// it here would treat `${#arr[@]}` as a concat with `#arr` as the
 /// expansion body.
+/// True for expansions that splice with FIRST/LAST sticking semantics:
+/// `${arr[@]}`, `${arr[*]}`, `$@`, `$*`. Surrounding text in the same
+/// word sticks only to the first or last array element.
+fn is_splice_expansion(s: &str) -> bool {
+    let pq = crate::lexer::untokenize_preserve_quotes(s);
+    if pq == "$@" || pq == "$*" || pq == "${@}" || pq == "${*}" {
+        return true;
+    }
+    if let Some(inner) = pq.strip_prefix("${").and_then(|t| t.strip_suffix('}')) {
+        if inner.contains("[@]") || inner.contains("[*]") {
+            return true;
+        }
+    }
+    false
+}
+
+/// True for expansions that DISTRIBUTE (cartesian) over surrounding
+/// text. Includes explicit forms (`${^arr}`, `${(@)…}`, `${(s.…)…}`)
+/// and array-producing flag expansions where every element pairs with
+/// every literal segment.
+fn is_distribute_expansion(s: &str) -> bool {
+    let pq = crate::lexer::untokenize_preserve_quotes(s);
+    if let Some(inner) = pq.strip_prefix("${").and_then(|t| t.strip_suffix('}')) {
+        if inner.starts_with('^') {
+            return true;
+        }
+        if let Some(rest) = inner.strip_prefix('(') {
+            if let Some(close) = rest.find(')') {
+                let flags = &rest[..close];
+                for c in flags.chars() {
+                    match c {
+                        'f' | 'z' | 'w' | 'A' | 'a' | 'P' | '@' | 's' => return true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len();
@@ -1931,7 +2001,29 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
             '\u{92}' => brack_depth = (brack_depth - 1).max(0), // OUTBRACK
             _ => {}
         }
-        let is_dollar = c == '\u{85}' || c == '\u{8c}';
+        // Recognize segment boundaries:
+        // - META-$ (\u{85}) and META-QSTRING (\u{8c}) — emitted by the
+        //   lexer for `$` outside / inside double quotes
+        // - Literal `$` (0x24) — emitted in some lexer paths where the
+        //   `$` survives untokenized but the surrounding braces / brackets
+        //   are META-marked. Followed by INBRACE/INPAR/alphanumeric to
+        //   distinguish from a literal trailing `$`.
+        let is_meta_dollar = c == '\u{85}' || c == '\u{8c}';
+        let is_literal_dollar_with_expansion = c == '$' && {
+            // peek next char — must be `{`-meta, `(`-meta, or ident-start
+            chars
+                .get(i + 1)
+                .map(|&n| {
+                    n == '\u{8f}'  // INBRACE
+                        || n == '\u{88}'  // INPAR
+                        || n == '_'
+                        || n.is_ascii_alphanumeric()
+                        || n == '@' || n == '*' || n == '#' || n == '?'
+                        || n == '!' || n == '$'
+                })
+                .unwrap_or(false)
+        };
+        let is_dollar = is_meta_dollar || is_literal_dollar_with_expansion;
         let is_backtick = c == '`';
         let at_top = brace_depth == 0 && brack_depth == 0;
         if !(is_dollar || is_backtick) || !at_top {

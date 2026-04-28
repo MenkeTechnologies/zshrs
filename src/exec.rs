@@ -2448,6 +2448,23 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 )
             });
         }
+        // RC_EXPAND_PARAM: when the option is set and `name` refers to
+        // an array, return Value::Array so the enclosing word's
+        // BUILTIN_CONCAT_DISTRIBUTE distributes element-wise. Without
+        // the option, arrays still join to a space-separated scalar
+        // (zsh's default unquoted-array-as-scalar semantics).
+        let rc_expand = with_executor(|exec| {
+            exec.options.get("rcexpandparam").copied().unwrap_or(false)
+        });
+        if rc_expand {
+            let arr_val = with_executor(|exec| {
+                exec.last_status = live_status;
+                exec.arrays.get(&name).cloned()
+            });
+            if let Some(arr) = arr_val {
+                return fusevm::Value::Array(arr.into_iter().map(fusevm::Value::str).collect());
+            }
+        }
         let val = with_executor(|exec| {
             exec.last_status = live_status;
             // If `name` refers to an indexed array, return as Array for
@@ -2571,6 +2588,138 @@ fn register_builtins(vm: &mut fusevm::VM) {
             exec.variables.insert(varid, final_fd.to_string());
         });
         Value::Status(0)
+    });
+
+    // BUILTIN_CONCAT_SPLICE — word-segment concat with first/last
+    // sticking (default zsh splice semantics for `${arr[@]}`, `$@`).
+    vm.register_builtin(BUILTIN_CONCAT_SPLICE, |vm, _argc| {
+        let rhs = vm.pop();
+        let lhs = vm.pop();
+        match (lhs, rhs) {
+            (fusevm::Value::Array(mut la), fusevm::Value::Array(ra)) => {
+                if la.is_empty() {
+                    return fusevm::Value::Array(ra);
+                }
+                if ra.is_empty() {
+                    return fusevm::Value::Array(la);
+                }
+                // Last of la merges with first of ra; rest unchanged.
+                let last_l = la.pop().unwrap();
+                let mut ra_iter = ra.into_iter();
+                let first_r = ra_iter.next().unwrap();
+                let l_s = last_l.as_str_cow();
+                let r_s = first_r.as_str_cow();
+                let mut merged = String::with_capacity(l_s.len() + r_s.len());
+                merged.push_str(&l_s);
+                merged.push_str(&r_s);
+                la.push(fusevm::Value::str(merged));
+                la.extend(ra_iter);
+                fusevm::Value::Array(la)
+            }
+            (fusevm::Value::Array(mut la), rhs_scalar) => {
+                if la.is_empty() {
+                    return fusevm::Value::str(rhs_scalar.as_str_cow().to_string());
+                }
+                let last = la.pop().unwrap();
+                let l_s = last.as_str_cow();
+                let r_s = rhs_scalar.as_str_cow();
+                let mut s = String::with_capacity(l_s.len() + r_s.len());
+                s.push_str(&l_s);
+                s.push_str(&r_s);
+                la.push(fusevm::Value::str(s));
+                fusevm::Value::Array(la)
+            }
+            (lhs_scalar, fusevm::Value::Array(mut ra)) => {
+                if ra.is_empty() {
+                    return fusevm::Value::str(lhs_scalar.as_str_cow().to_string());
+                }
+                let first = ra.remove(0);
+                let l_s = lhs_scalar.as_str_cow();
+                let r_s = first.as_str_cow();
+                let mut s = String::with_capacity(l_s.len() + r_s.len());
+                s.push_str(&l_s);
+                s.push_str(&r_s);
+                let mut out = Vec::with_capacity(ra.len() + 1);
+                out.push(fusevm::Value::str(s));
+                out.extend(ra);
+                fusevm::Value::Array(out)
+            }
+            (lhs_s, rhs_s) => {
+                let l = lhs_s.as_str_cow();
+                let r = rhs_s.as_str_cow();
+                let mut s = String::with_capacity(l.len() + r.len());
+                s.push_str(&l);
+                s.push_str(&r);
+                fusevm::Value::str(s)
+            }
+        }
+    });
+
+    // BUILTIN_CONCAT_DISTRIBUTE — word-segment concat that distributes
+    // over arrays. See doc on the constant for the distribution table.
+    vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE, |vm, _argc| {
+        let rhs = vm.pop();
+        let lhs = vm.pop();
+        match (lhs, rhs) {
+            (fusevm::Value::Array(la), fusevm::Value::Array(ra)) => {
+                // Cartesian product: [a + b for a in la for b in ra].
+                let mut out = Vec::with_capacity(la.len() * ra.len().max(1));
+                if ra.is_empty() {
+                    return fusevm::Value::Array(la);
+                }
+                if la.is_empty() {
+                    return fusevm::Value::Array(ra);
+                }
+                for a in &la {
+                    let a_s = a.as_str_cow();
+                    for b in &ra {
+                        let b_s = b.as_str_cow();
+                        let mut s = String::with_capacity(a_s.len() + b_s.len());
+                        s.push_str(&a_s);
+                        s.push_str(&b_s);
+                        out.push(fusevm::Value::str(s));
+                    }
+                }
+                fusevm::Value::Array(out)
+            }
+            (fusevm::Value::Array(la), rhs_scalar) => {
+                let r = rhs_scalar.as_str_cow();
+                let out: Vec<fusevm::Value> = la
+                    .into_iter()
+                    .map(|a| {
+                        let a_s = a.as_str_cow();
+                        let mut s = String::with_capacity(a_s.len() + r.len());
+                        s.push_str(&a_s);
+                        s.push_str(&r);
+                        fusevm::Value::str(s)
+                    })
+                    .collect();
+                fusevm::Value::Array(out)
+            }
+            (lhs_scalar, fusevm::Value::Array(ra)) => {
+                let l = lhs_scalar.as_str_cow();
+                let out: Vec<fusevm::Value> = ra
+                    .into_iter()
+                    .map(|b| {
+                        let b_s = b.as_str_cow();
+                        let mut s = String::with_capacity(l.len() + b_s.len());
+                        s.push_str(&l);
+                        s.push_str(&b_s);
+                        fusevm::Value::str(s)
+                    })
+                    .collect();
+                fusevm::Value::Array(out)
+            }
+            (lhs_s, rhs_s) => {
+                // Fast path: both scalar → identical to Op::Concat.
+                let l = lhs_s.as_str_cow();
+                let r = rhs_s.as_str_cow();
+                let mut s = String::with_capacity(l.len() + r.len());
+                s.push_str(&l);
+                s.push_str(&r);
+                fusevm::Value::str(s)
+            }
+        }
     });
 
     // `[[ a -ef b ]]` — same-inode test. Resolves both paths via fs::metadata
@@ -3181,6 +3330,31 @@ pub const BUILTIN_TIME_SUBLIST: u16 = 316;
 /// the inherited fd survives Command::new spawns), stores the fd number
 /// as a string in `$varid`. Pushes Status (0 success, 1 error).
 pub const BUILTIN_OPEN_NAMED_FD: u16 = 317;
+
+/// Word-segment concat that does cartesian-product distribution over
+/// arrays. Stack: [lhs, rhs]. Used for RC_EXPAND_PARAM `${arr}` and
+/// explicit-distribute forms (`${^arr}`, `${(@)…}`).
+///
+/// - both scalar: `Value::str(a + b)` (fast path, identical to Op::Concat)
+/// - lhs Array, rhs scalar: `Value::Array([a + rhs for a in lhs])`
+/// - lhs scalar, rhs Array: `Value::Array([lhs + b for b in rhs])`
+/// - both Array: cartesian product `[a + b for a in lhs for b in rhs]`
+pub const BUILTIN_CONCAT_DISTRIBUTE: u16 = 318;
+
+/// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
+/// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)
+/// where prefix sticks to first element only and suffix to last only.
+///
+/// Distribution table:
+/// - both scalar: `Value::str(a + b)` (fast path)
+/// - lhs scalar, rhs Array(b₀..bₙ): `Value::Array([lhs+b₀, b₁, …, bₙ])`
+/// - lhs Array(a₀..aₙ), rhs scalar: `Value::Array([a₀, …, aₙ₋₁, aₙ+rhs])`
+/// - both Array: `Value::Array([a₀, …, aₙ₋₁, aₙ+b₀, b₁, …, bₙ])`
+///   (last of lhs merges with first of rhs; the rest stay separate)
+///
+/// This is the default zsh semantics for `print -l X${arr[@]}Y` →
+/// "Xa", "b", "cY" — three distinct args, surrounding text only on ends.
+pub const BUILTIN_CONCAT_SPLICE: u16 = 319;
 
 /// `${(flags)name}` — zsh parameter expansion flags. Stack: [name, flags].
 /// Flags applied left-to-right. Supported subset (high-value, used by zpwr):
