@@ -1517,6 +1517,32 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         St::A(a) => St::A(a),
                     };
                 }
+                'z' => {
+                    // (z) — split by shell-word rules (whitespace, honor
+                    // simple quoting). For our purposes, whitespace split
+                    // is the common case; full quote-aware split is a
+                    // separate scanner pass.
+                    state = match state {
+                        St::S(s) => St::A(
+                            s.split_whitespace()
+                                .map(String::from)
+                                .collect(),
+                        ),
+                        St::A(a) => St::A(a),
+                    };
+                }
+                'w' => {
+                    // (w) — count words; in the array sense, just split
+                    // on whitespace and let downstream consumers count.
+                    state = match state {
+                        St::S(s) => St::A(
+                            s.split_whitespace()
+                                .map(String::from)
+                                .collect(),
+                        ),
+                        St::A(a) => St::A(a),
+                    };
+                }
                 'o' => {
                     state = match state {
                         St::A(mut a) => {
