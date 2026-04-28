@@ -201,11 +201,15 @@ fn test_zparseopts() {
 
 #[test]
 fn test_error_syntax() {
-    // "for in; do; done" is a syntax error — missing variable name after 'for'.
-    let (status, _, stderr) = run_zshrs("for in; do; done");
+    // Lexer-level syntax error (unmatched single quote). zsh treats
+    // `for in; do; done` as valid (`in` becomes the loop variable),
+    // so use a construct mainline zsh actually rejects so we test
+    // that zshrs surfaces the same error condition.
+    let (status, _, stderr) = run_zshrs("echo 'unclosed");
+    assert_ne!(status, 0, "should exit non-zero on parse error");
     assert!(
-        !stderr.is_empty() || status != 0,
-        "syntax error should produce stderr or nonzero exit"
+        stderr.contains("unmatched") || stderr.contains("parse error"),
+        "expected parse-error message on stderr, got: {stderr:?}"
     );
 }
 
@@ -2344,4 +2348,58 @@ fn test_cd_dash_p_realpaths() {
         .trim()
         .to_string();
     assert_eq!(zshrs_pwd, zsh_pwd, "zsh: {zsh_pwd}, zshrs: {zshrs_pwd}");
+}
+
+#[test]
+fn test_set_e_exits_on_failure() {
+    let (status, output, _) = run_zshrs("set -e; false; echo unreachable");
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(!output.contains("unreachable"), "got: {output:?}");
+}
+
+#[test]
+fn test_set_e_suppressed_in_if_test() {
+    let (status, output, _) = run_zshrs(
+        "set -e; if false; then echo nope; fi; echo got_here",
+    );
+    assert_eq!(status, 0);
+    assert!(output.contains("got_here"), "got: {output:?}");
+}
+
+#[test]
+fn test_set_e_suppressed_in_and_chain() {
+    // `false && cmd` returns 1 but doesn't trigger errexit (POSIX:
+    // failures inside an AND-OR list are consumed by the connector).
+    let (status, output, _) = run_zshrs(
+        "set -e; false && echo nope; echo got_here",
+    );
+    assert_eq!(status, 0);
+    assert!(output.contains("got_here"), "got: {output:?}");
+}
+
+#[test]
+fn test_set_e_suppressed_in_or_chain() {
+    let (status, output, _) = run_zshrs(
+        "set -e; false || true; echo got_here",
+    );
+    assert_eq!(status, 0);
+    assert!(output.contains("got_here"), "got: {output:?}");
+}
+
+#[test]
+fn test_set_e_suppressed_in_negation() {
+    let (status, output, _) = run_zshrs(
+        "set -e; ! false; echo got_here",
+    );
+    assert_eq!(status, 0);
+    assert!(output.contains("got_here"), "got: {output:?}");
+}
+
+#[test]
+fn test_set_e_suppressed_in_while_test() {
+    let (status, output, _) = run_zshrs(
+        "set -e; while false; do echo nope; done; echo got_here",
+    );
+    assert_eq!(status, 0);
+    assert!(output.contains("got_here"), "got: {output:?}");
 }

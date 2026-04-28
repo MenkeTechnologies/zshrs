@@ -26,6 +26,12 @@ pub struct ZshCompiler {
     break_patches: Vec<Vec<usize>>,
     continue_patches: Vec<Vec<usize>>,
     return_patches: Vec<usize>,
+    /// Depth tracker for errexit (`set -e`) suppression. Incremented
+    /// when entering a context where a non-zero status is part of the
+    /// control flow (if/while/until tests, `&&`/`||` LHS, `!` negation,
+    /// pipeline LHS). Decremented when leaving. The post-command
+    /// errexit check only fires when this is 0.
+    pub errexit_suppress_depth: i32,
 }
 
 impl ZshCompiler {
@@ -37,7 +43,22 @@ impl ZshCompiler {
             break_patches: Vec::new(),
             continue_patches: Vec::new(),
             return_patches: Vec::new(),
+            errexit_suppress_depth: 0,
         }
+    }
+
+    /// Emit a runtime errexit check. The host examines `set -e` and the
+    /// last command's status; if both fire and we're at the top level
+    /// (no enclosing conditional/pipeline LHS/etc.), `exit($status)`.
+    fn emit_errexit_check(&mut self) {
+        if self.errexit_suppress_depth > 0 {
+            return;
+        }
+        self.builder.emit(
+            Op::CallBuiltin(crate::exec::BUILTIN_ERREXIT_CHECK, 0),
+            0,
+        );
+        self.builder.emit(Op::Pop, 0);
     }
 
     /// Compile a parsed `ZshProgram` to a runnable Chunk.
@@ -132,12 +153,20 @@ impl ZshCompiler {
         // Emit pipe[0]. `!` (sublist.flags.not) applies to pipe[0] only,
         // then the && / || chain reads the negated status. This matches
         // zsh: `! false && echo y` runs echo because !false→success.
+        // For errexit: ANY `&&`/`||` chain or `!` negation makes the
+        // whole sublist exempt from errexit (POSIX/zsh rule — failures
+        // inside an AND-OR list are "consumed" by the connector). We
+        // still bump suppression so individual pipes don't trigger
+        // their own errexit checks; we do NOT emit a wrap-up check at
+        // the end either.
+        let has_chain_or_negate = sublist.flags.not || !ops.is_empty();
+        if has_chain_or_negate {
+            self.errexit_suppress_depth += 1;
+        }
         self.compile_pipe(pipes[0]);
         if sublist.flags.not {
             self.emit_negate_status();
         }
-        // For each subsequent pipe, emit the connector's skip jump that
-        // lands right after that pipe.
         for (i, op) in ops.iter().enumerate() {
             self.builder.emit(Op::GetStatus, 0);
             let skip = match op {
@@ -146,6 +175,9 @@ impl ZshCompiler {
             };
             self.compile_pipe(pipes[i + 1]);
             self.builder.patch_jump(skip, self.builder.current_pos());
+        }
+        if has_chain_or_negate {
+            self.errexit_suppress_depth -= 1;
         }
     }
 
@@ -524,6 +556,8 @@ impl ZshCompiler {
             if first == "return" || first == "exit" {
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
+            } else {
+                self.emit_errexit_check();
             }
         } else {
             // Treat as function/external dispatch via Op::CallFunction.
@@ -532,6 +566,7 @@ impl ZshCompiler {
             let name_idx = self.builder.add_name(first);
             self.builder.emit(Op::CallFunction(name_idx, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
+            self.emit_errexit_check();
         }
 
         if has_redirects {
@@ -1195,17 +1230,21 @@ impl ZshCompiler {
         // the whole if.
         let mut end_jumps = Vec::new();
 
-        // First branch
+        // First branch — the test is errexit-suppressed.
+        self.errexit_suppress_depth += 1;
         self.compile_program(&if_node.cond);
+        self.errexit_suppress_depth -= 1;
         self.builder.emit(Op::GetStatus, 0);
         let mut skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
         self.compile_program(&if_node.then);
         end_jumps.push(self.builder.emit(Op::Jump(0), 0));
         self.builder.patch_jump(skip_body, self.builder.current_pos());
 
-        // elif branches
+        // elif branches — same suppression for each cond.
         for (cond, body) in &if_node.elif {
+            self.errexit_suppress_depth += 1;
             self.compile_program(cond);
+            self.errexit_suppress_depth -= 1;
             self.builder.emit(Op::GetStatus, 0);
             skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
             self.compile_program(body);
@@ -1242,7 +1281,10 @@ impl ZshCompiler {
         self.builder.emit(Op::SetSlot(status_slot), 0);
 
         let loop_top = self.builder.current_pos();
+        // The while/until test is errexit-suppressed.
+        self.errexit_suppress_depth += 1;
         self.compile_program(&w.cond);
+        self.errexit_suppress_depth -= 1;
         self.builder.emit(Op::GetStatus, 0);
         let exit_jump = if w.until {
             // until — exit when status is truthy (success)

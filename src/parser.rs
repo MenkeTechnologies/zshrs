@@ -637,6 +637,15 @@ impl<'a> ZshParser<'a> {
         if !self.errors.is_empty() {
             return Err(std::mem::take(&mut self.errors));
         }
+        // Surface lexer-level errors (unmatched quote/heredoc/etc.)
+        // that the parser silently rolls past. zsh aborts with a
+        // diagnostic in this case; mirror it.
+        if let Some(msg) = self.lexer.error.clone() {
+            return Err(vec![ParseError {
+                message: msg,
+                line: 1,
+            }]);
+        }
 
         // Post-pass: wire heredoc bodies (collected by lexer.process_heredocs)
         // back into ZshRedir.heredoc fields via heredoc_idx.

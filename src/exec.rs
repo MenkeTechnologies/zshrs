@@ -3504,8 +3504,21 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let mut iter = args.into_iter();
         let name = iter.next().unwrap_or_default();
         let value = iter.next().unwrap_or_default();
-        with_executor(|exec| {
-            // Mirror scalar→array if name is the scalar side of a typeset -T tie.
+        let blocked = with_executor(|exec| {
+            let is_ro = exec.readonly_vars.contains(&name)
+                || exec
+                    .var_attrs
+                    .get(&name)
+                    .map(|a| a.readonly)
+                    .unwrap_or(false);
+            if is_ro {
+                eprintln!("zshrs:1: read-only variable: {}", name);
+                // Mirror zsh -c: read-only assignment failure aborts
+                // the shell with status 1, not just the command.
+                std::process::exit(1);
+            }
+            // Mirror scalar→array if name is the scalar side of a
+            // typeset -T tie.
             if let Some((arr_name, sep)) = exec.tied_scalar_to_array.get(&name).cloned() {
                 let parts: Vec<String> = if value.is_empty() {
                     Vec::new()
@@ -3514,9 +3527,10 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 };
                 exec.arrays.insert(arr_name, parts);
             }
-            exec.variables.insert(name, value);
+            exec.variables.insert(name.clone(), value.clone());
+            false
         });
-        Value::Status(0)
+        Value::Status(if blocked { 1 } else { 0 })
     });
 
     // BUILTIN_REGISTER_FUNCTION (id 282) was a legacy JSON-AST body
@@ -4002,6 +4016,32 @@ fn register_builtins(vm: &mut fusevm::VM) {
             _ => false,
         };
         fusevm::Value::Bool(result)
+    });
+
+    // `set -e` / `setopt errexit` post-command check. Compiler emits
+    // this after each top-level command's SetStatus (skipped inside
+    // conditionals/pipelines/&&||/`!`). If errexit is on AND the last
+    // command exited non-zero AND it's not a `return` from a function,
+    // exit the shell with that status.
+    vm.register_builtin(BUILTIN_ERREXIT_CHECK, |vm, _argc| {
+        let last = vm.last_status;
+        if last == 0 {
+            return fusevm::Value::Status(0);
+        }
+        let should_exit = with_executor(|exec| {
+            // zsh stores the option as `errexit` (default OFF). Honor
+            // both keys (`errexit=true` from `setopt errexit` /
+            // `set -o errexit`, and `set -e` which currently writes
+            // `errexit=true` too). Also suppress when inside a function
+            // call — zsh's errexit lets functions handle their own
+            // failures unless ERR_RETURN is also set.
+            let on = exec.options.get("errexit").copied().unwrap_or(false);
+            on && exec.local_scope_depth == 0
+        });
+        if should_exit {
+            std::process::exit(last);
+        }
+        fusevm::Value::Status(last)
     });
 
     // `${var:-default}` / `${var:=default}` / `${var:?error}` / `${var:+alt}`
@@ -4678,6 +4718,7 @@ pub const BUILTIN_IS_BLOCKDEV: u16 = 333;
 pub const BUILTIN_IS_FIFO: u16 = 334;
 /// `[[ -S path ]]` — socket.
 pub const BUILTIN_IS_SOCKET: u16 = 335;
+pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
 /// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk
