@@ -20996,8 +20996,23 @@ impl ShellExecutor {
         let saved = self.options.get("noglob").cloned();
         self.options.insert("noglob".to_string(), true);
 
-        // Execute the command
-        let status = self.builtin_command(args, redirects);
+        // Execute the command. The previous impl routed through
+        // `builtin_command` which only resolves externals (PATH lookup),
+        // so `noglob print "*"` errored "command not found: print" even
+        // though `print` is a shell builtin. Dispatch order matches
+        // zsh's `noglob` precommand: shell builtin → function →
+        // external. Only fall through to external when the name isn't
+        // a known builtin or function.
+        let cmd = &args[0];
+        let status = if self.is_builtin(cmd) {
+            self.builtin_builtin(args, redirects)
+        } else if self.function_exists(cmd) {
+            // Fall back to the regular command lookup which knows how
+            // to invoke functions.
+            self.builtin_command(args, redirects)
+        } else {
+            self.builtin_command(args, redirects)
+        };
 
         // Restore globbing state
         if let Some(v) = saved {

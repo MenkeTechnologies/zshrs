@@ -213,9 +213,12 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `fc -l` previously dumped the persistent disk history (e.g. 7000+ entries) in `-c` mode. zsh's behavior in non-interactive mode is "no such event: 1" with exit 1 — the persistent disk history shouldn't leak through. `builtin_fc` now gates on `atty::is(Stream::Stdin)` (same signal `expand_history` uses) and short-circuits with the `zsh:fc:1: no such event: <N>` error in non-interactive mode. Format byte-exact against zsh.
 
+### `noglob` precommand modifier dispatches to builtins
+
+- `noglob print "*"` errored "command not found: print" because `builtin_noglob` routed unconditionally through `builtin_command` (PATH-only lookup). Now dispatches via `builtin_builtin` first when the name `is_builtin`, falling back to `builtin_command` for functions and externals. `noglob echo "*.txt"`, `noglob ls`, etc. continue to work.
+
 ## Still open (second-pass — deferred)
 
-- **`noglob` precommand modifier** — `noglob print "*"` errors "command not found: print" instead of disabling glob and running `print *` literally. Needs parser-level recognition as a reserved word, not a command name.
 - **Recursive glob `**/` (directories-only)** — trailing-slash recursive form not expanded.
 - **Glob qualifier `(mh-N)` / `(mm)` / `(ms)`** — modified-recent age qualifiers not implemented (only `(L)` size and `(D)` dotglob exist today).
 - **`(t)` typeset flag returns wrong type for `integer i=5`** — needs persistent attribute tracking on declared variables (full plumbing through `typeset -i` / `integer` / `float`).
