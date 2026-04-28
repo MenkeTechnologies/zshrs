@@ -893,6 +893,40 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: bare `$NAME[KEY]` — without braces, zsh lexes
+        // `$NAME` as the variable name and `[KEY]` as a subscript that
+        // applies to it (NOT a literal `[KEY]` suffix). Emit name+key
+        // through BUILTIN_ARRAY_INDEX.
+        if !has_bnull {
+            if let Some((name, key)) = bare_subscript_ref(&untoked) {
+                let name_const = self.builder.add_constant(Value::str(name));
+                let key_const = self.builder.add_constant(Value::str(key));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                self.builder.emit(Op::LoadConst(key_const), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                return;
+            }
+        }
+
+        // Fast path: bare `$NAME[KEY]suffix` — same as above but with a
+        // literal suffix appended. Emit name+key, ARRAY_INDEX, then
+        // concat the suffix.
+        if !has_bnull {
+            if let Some((name, key, suffix)) = bare_subscript_with_suffix(&untoked) {
+                let name_const = self.builder.add_constant(Value::str(name));
+                let key_const = self.builder.add_constant(Value::str(key));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                self.builder.emit(Op::LoadConst(key_const), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                let suffix_const = self.builder.add_constant(Value::str(suffix));
+                self.builder.emit(Op::LoadConst(suffix_const), 0);
+                self.builder.emit(Op::Concat, 0);
+                return;
+            }
+        }
+
         // Fast path: `${NAME}` — braced bare ref, equivalent to `$NAME`.
         if !has_bnull {
             if let Some(name) = braced_var_ref(&untoked) {
@@ -2760,6 +2794,82 @@ fn bare_var_ref(s: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// Match bare `$NAME[KEY]` (no braces). zsh treats the `[KEY]` after
+/// a bare `$NAME` as a subscript (NOT a literal). Returns
+/// `(name, key)` for the simple no-suffix case. Excludes empty name,
+/// `[@]` / `[*]` (handled by other splice paths), and keys with
+/// nested `[` / `]` / `$` / `` ` ``.
+fn bare_subscript_ref(s: &str) -> Option<(&str, &str)> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 4 || bytes[0] != b'$' {
+        return None;
+    }
+    let rest = &s[1..];
+    let lb = rest.find('[')?;
+    if !s.ends_with(']') {
+        return None;
+    }
+    let name = &rest[..lb];
+    let key = &rest[lb + 1..rest.len() - 1];
+    if name.is_empty() || key.is_empty() || key == "@" || key == "*" {
+        return None;
+    }
+    let first = name.chars().next()?;
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    if !name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
+        return None;
+    }
+    Some((name, key))
+}
+
+/// Match bare `$NAME[KEY]suffix` — same as `bare_subscript_ref` but
+/// with a literal-text suffix appended. Returns `(name, key, suffix)`.
+/// `suffix` is the literal text after the closing `]` and must be
+/// plain — no `$`, no `[`, no metachars (else fall back to bridge).
+fn bare_subscript_with_suffix(s: &str) -> Option<(&str, &str, &str)> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 5 || bytes[0] != b'$' {
+        return None;
+    }
+    let rest = &s[1..];
+    let lb = rest.find('[')?;
+    let rb = rest.find(']')?;
+    if rb <= lb || rb == rest.len() - 1 {
+        return None;
+    }
+    let name = &rest[..lb];
+    let key = &rest[lb + 1..rb];
+    let suffix = &rest[rb + 1..];
+    if name.is_empty() || key.is_empty() || key == "@" || key == "*" {
+        return None;
+    }
+    let first = name.chars().next()?;
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return None;
+    }
+    if !name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
+        return None;
+    }
+    if suffix.contains('$')
+        || suffix.contains('[')
+        || suffix.contains(']')
+        || suffix.contains('`')
+        || suffix.contains('*')
+        || suffix.contains('?')
+    {
+        return None;
+    }
+    Some((name, key, suffix))
 }
 
 /// Walk a raw zsh-tokenized word; return true if it has an unquoted

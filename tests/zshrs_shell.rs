@@ -1146,3 +1146,33 @@ fn test_noglob_echo_glob_literal() {
     let (_, output, _) = run_zshrs("noglob echo '*.txt'");
     assert_eq!(output.trim(), "*.txt", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Bare `$arr[N]` subscript (no braces)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_bare_subscript_indexed_int() {
+    let (_, output, _) = run_zshrs("arr=(x y z); print $arr[2]");
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+}
+
+#[test]
+fn test_bare_subscript_assoc_string_key() {
+    let (_, output, _) =
+        run_zshrs("typeset -A m=(a 1 b 2); print $m[a]");
+    assert_eq!(output.trim(), "1", "got: {output:?}");
+}
+
+#[test]
+fn test_bare_subscript_with_literal_suffix() {
+    let (_, output, _) = run_zshrs("arr=(x y z); print $arr[2]extra");
+    assert_eq!(output.trim(), "yextra", "got: {output:?}");
+}
+
+#[test]
+fn test_bare_arr_no_subscript_still_splices() {
+    // Make sure the bare $arr (no subscript) still works as before.
+    let (_, output, _) = run_zshrs("arr=(x y z); print $arr");
+    assert_eq!(output.trim(), "x y z", "got: {output:?}");
+}
