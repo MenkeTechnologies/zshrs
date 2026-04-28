@@ -1029,3 +1029,38 @@ fn test_print_p_plain_no_markers() {
     let (_, output, _) = run_zshrs("print -P \"plain\"");
     assert_eq!(output, "plain\n", "got: {output:?}");
 }
+
+// ---------------------------------------------------------------------------
+// `let` and arithmetic-substitution float formatting
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_let_stores_float_with_ten_decimals() {
+    let (_, output, _) = run_zshrs(r#"let "a=1.0+2.0"; echo $a"#);
+    assert_eq!(output.trim(), "3.0000000000", "got: {output:?}");
+}
+
+#[test]
+fn test_let_integer_no_decimals() {
+    let (_, output, _) = run_zshrs(r#"let "a=5+3"; echo $a"#);
+    assert_eq!(output.trim(), "8", "got: {output:?}");
+}
+
+#[test]
+fn test_let_division_promotes_to_float() {
+    let (_, output, _) = run_zshrs(r#"let "a=10/3.0"; echo $a"#);
+    assert_eq!(output.trim(), "3.3333333333", "got: {output:?}");
+}
+
+#[test]
+fn test_arith_subst_whole_float_trailing_dot() {
+    // zsh quirk: $((1.5+2.5)) → "4." (trailing dot, no zeros)
+    let (_, output, _) = run_zshrs("echo $((1.5+2.5))");
+    assert_eq!(output.trim(), "4.", "got: {output:?}");
+}
+
+#[test]
+fn test_arith_subst_integer_no_dot() {
+    let (_, output, _) = run_zshrs("echo $((10+5))");
+    assert_eq!(output.trim(), "15", "got: {output:?}");
+}

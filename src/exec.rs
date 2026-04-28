@@ -11504,17 +11504,16 @@ impl ShellExecutor {
                     self.variables.insert(k.clone(), v.clone());
                     env::set_var(&k, &v);
                 }
-                match result {
-                    crate::math::MathNum::Integer(i) => i.to_string(),
-                    crate::math::MathNum::Float(f) => {
-                        if f.fract() == 0.0 && f.abs() < i64::MAX as f64 {
-                            (f as i64).to_string()
-                        } else {
-                            f.to_string()
-                        }
-                    }
-                    crate::math::MathNum::Unset => "0".to_string(),
-                }
+                // zsh splits formatting between the two contexts that
+                // share this code path:
+                //   - `$(())` arithmetic substitution → `%g`-ish: 4.0
+                //     prints as "4." (zsh quirk — keeps the dot to
+                //     mark "this is float", drops trailing zeros)
+                //   - storage from `let`/`(( a=… ))` → `%.10f`
+                // extract_string_variables (storage) already uses
+                // %.10f via format_zsh; here for the substitution
+                // return value emulate zsh's %g style.
+                result.format_zsh_subst()
             }
             Err(_) => "0".to_string(),
         }

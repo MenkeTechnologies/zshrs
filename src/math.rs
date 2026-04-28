@@ -63,6 +63,49 @@ impl MathNum {
     pub fn is_integer(&self) -> bool {
         matches!(self, MathNum::Integer(_))
     }
+
+    /// Format for stored variable values (zsh `let` / `(( a=… ))`):
+    /// integers as plain `i`, floats as `%.10f`.
+    pub fn format_zsh(&self) -> String {
+        match self {
+            MathNum::Integer(i) => i.to_string(),
+            MathNum::Float(f) => format!("{:.10}", f),
+            MathNum::Unset => "0".to_string(),
+        }
+    }
+
+    /// Format for `$(( ))` arithmetic substitution display. zsh
+    /// behavior:
+    ///   - Float with `fract()==0`: print as `<int>.` (trailing dot
+    ///     marks "this is float", no zeros after).
+    ///   - Float with non-zero fract: print at full f64 precision via
+    ///     Rust's shortest-roundtrip Display (matches zsh which prints
+    ///     16-digit-ish strings like "2.2000000000000002" for inexact
+    ///     values).
+    pub fn format_zsh_subst(&self) -> String {
+        match self {
+            MathNum::Integer(i) => i.to_string(),
+            MathNum::Float(f) => {
+                if f.fract() == 0.0 && f.is_finite() {
+                    format!("{}.", *f as i64)
+                } else {
+                    // Rust's `{}` for f64 is shortest-roundtrip, which
+                    // almost always agrees with zsh's full-precision
+                    // float display.
+                    let s = format!("{}", f);
+                    if s.contains('.') || s.contains('e') {
+                        s
+                    } else {
+                        // Edge case: Rust's Display dropped the dot
+                        // (shouldn't happen for non-integer-valued
+                        // floats, but be safe).
+                        format!("{}.0", s)
+                    }
+                }
+            }
+            MathNum::Unset => "0".to_string(),
+        }
+    }
 }
 
 /// Math tokens - from math.c
@@ -309,20 +352,7 @@ impl<'a> MathEval<'a> {
     pub fn extract_string_variables(&self) -> HashMap<String, String> {
         self.variables
             .iter()
-            .map(|(k, v)| {
-                let s = match v {
-                    MathNum::Integer(i) => i.to_string(),
-                    MathNum::Float(f) => {
-                        if f.fract() == 0.0 && f.abs() < i64::MAX as f64 {
-                            (*f as i64).to_string()
-                        } else {
-                            f.to_string()
-                        }
-                    }
-                    MathNum::Unset => "0".to_string(),
-                };
-                (k.clone(), s)
-            })
+            .map(|(k, v)| (k.clone(), v.format_zsh()))
             .collect()
     }
 

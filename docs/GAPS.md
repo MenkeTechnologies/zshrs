@@ -197,13 +197,16 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `print -P "%F{red}hi%f"` previously emitted the readline cursor-width markers (`\x01` / `\x02`) plus a leading `\e[0m` reset, producing different bytes from zsh's bare `\e[31mhi\e[39m`. Three fixes: (1) new `expand_prompt_string_for_print` strips `\x01`/`\x02` markers and the spurious leading-reset preamble; `print -P` routes through it. (2) `apply_attrs` no longer emits an unconditional `\e[0m` preamble — only the new SGR codes (matches zsh's incremental approach). (3) `%f` now emits `\e[39m` (default-fg) instead of full `\e[0m`; `%u` emits `\e[24m` (underline off); `%s` emits `\e[27m` (standout off). `%B`/`%b` and `%F{c}` paths verified byte-exact against zsh.
 
+### `let` and `$(())` float formatting
+
+- `let "a=1.0+2.0"; echo $a` previously gave `3` (lost the float-ness). New `MathNum::format_zsh` formats stored vars as `%.10f` so `$a` is `3.0000000000`, matching zsh. Separately `MathNum::format_zsh_subst` formats `$(( ))` substitution display as zsh's `%g`-ish form: integer-valued floats print as `4.` (trailing dot, no zeros — zsh's "this is float" marker), non-integer floats print at full f64 precision via Rust's shortest-roundtrip. `evaluate_arithmetic` extracts via `format_zsh` (storage) and returns via `format_zsh_subst` (substitution display) so both contexts match zsh. The bytecode `(( a=1.0+2.0 ))` ArithCompiler path remains a known float-collapse pre-existing issue (separate from this fix).
+
 ## Still open (second-pass — deferred)
 
 - **`noglob` precommand modifier** — `noglob print "*"` errors "command not found: print" instead of disabling glob and running `print *` literally. Needs parser-level recognition as a reserved word, not a command name.
 - **Recursive glob `**/` (directories-only)** — trailing-slash recursive form not expanded.
 - **Glob qualifier `(mh-N)` / `(mm)` / `(ms)`** — modified-recent age qualifiers not implemented (only `(L)` size and `(D)` dotglob exist today).
 - **`(t)` typeset flag returns wrong type for `integer i=5`** — needs persistent attribute tracking on declared variables (full plumbing through `typeset -i` / `integer` / `float`).
-- **`let "a=1.0+2.0"` returns integer instead of float** — `let` doesn't preserve float result formatting.
 - **`print -P %D{fmt}`** — strftime format support.
 - **`print -P %h`** history-line-number format.
 - **`fc -l` empty-history behavior** — zsh prints "no such event"; zshrs leaks a stray history entry.
