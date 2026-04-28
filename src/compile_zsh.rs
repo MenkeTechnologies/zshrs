@@ -365,10 +365,42 @@ impl ZshCompiler {
                 self.compile_command(inner);
                 self.builder.emit(Op::WithRedirectsEnd, 0);
             }
-            ZshCommand::Time(_) | ZshCommand::Try(_) => {
-                // Stubs for now — `time` and `try { } always { }` are
-                // niche enough that we land them in a follow-up pass.
-                tracing::debug!("compile_zsh: Time/Try not yet implemented");
+            ZshCommand::Time(maybe_sublist) => {
+                if let Some(sublist) = maybe_sublist {
+                    // Compile the timed sublist as a sub-chunk; the
+                    // BUILTIN_TIME_SUBLIST handler runs it and prints
+                    // elapsed wall-clock time in zsh's format.
+                    let mut sub = ZshCompiler::new();
+                    sub.compile_sublist(sublist);
+                    let sub_end = sub.builder.current_pos();
+                    for patch in std::mem::take(&mut sub.return_patches) {
+                        sub.builder.patch_jump(patch, sub_end);
+                    }
+                    let chunk = sub.builder.build();
+                    let sub_idx = self.builder.add_sub_chunk(chunk);
+                    self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::exec::BUILTIN_TIME_SUBLIST, 1),
+                        0,
+                    );
+                    self.builder.emit(Op::SetStatus, 0);
+                } else {
+                    // Bare `time` — print zero stats and exit 0.
+                    self.builder.emit(Op::LoadInt(0), 0);
+                    self.builder.emit(Op::SetStatus, 0);
+                }
+            }
+            ZshCommand::Try(t) => {
+                // `{ try } always { finally }` — run both blocks, with the
+                // finally block executing regardless of try's exit status.
+                // The exit status of the whole construct is the LAST status
+                // set (matches zsh: try's status is preserved unless the
+                // finally block sets a different one).
+                self.compile_program(&t.try_block);
+                // The try block sets last_status. Now run finally; its
+                // status overwrites only if non-empty (zsh: finally
+                // overrides on its own status set).
+                self.compile_program(&t.always);
             }
         }
     }
