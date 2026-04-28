@@ -2514,12 +2514,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'q' => {
-                    // Quoting flags. `q` runs together raise the quoting
-                    // level: q (POSIX single-quote), qq (double-quote),
-                    // qqq (ANSI-C $'…'), qqqq (backslash-escape, no quotes).
+                    // Quoting flags per zshexpn(1):
+                    //   q     backslash-escape special chars (no wrap)
+                    //   qq    single-quote always
+                    //   qqq   double-quote always
+                    //   qqqq  ANSI-C $'…' style
                     // zsh reads consecutive q's as a single multi-char flag.
                     //
-                    // Modifier suffixes per zshexpn(1):
+                    // Modifier suffixes:
                     //   q+ — wrap-with-quote-if-needed (heuristic)
                     //   q- — same as q but strip trailing newlines first
                     //   q* — same as q but escape `*` and `?` in addition
@@ -2611,9 +2613,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         } else {
                             raw
                         };
-                        if wrap_only_if_needed && !needs_quoting(s) {
-                            // q+: skip quoting if the value is "shell-safe".
-                            return s.to_string();
+                        if wrap_only_if_needed {
+                            // q+: skip quoting if the value is "shell-safe";
+                            // otherwise wrap with single-quotes (zsh's q+
+                            // promotes to single-quote level when needed).
+                            if !needs_quoting(s) {
+                                return s.to_string();
+                            }
+                            return format!("'{}'", s.replace('\'', "'\\''"));
                         }
                         if let Some(ref d) = explicit_delim {
                             // q:str: form — wrap value with the explicit
@@ -2624,57 +2631,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         }
                         match level {
                             1 => {
-                                // Single-quote: escape inner ' as '\''.
-                                let mut escaped = s.replace('\'', "'\\''");
-                                if escape_glob_chars {
-                                    escaped = escaped
-                                        .replace('*', "\\*")
-                                        .replace('?', "\\?");
-                                }
-                                format!("'{}'", escaped)
-                            }
-                            2 => {
-                                // Double-quote: escape $ ` " \\.
-                                let mut out = String::with_capacity(s.len() + 2);
-                                out.push('"');
-                                for c in s.chars() {
-                                    match c {
-                                        '$' | '`' | '"' | '\\' => {
-                                            out.push('\\');
-                                            out.push(c);
-                                        }
-                                        '*' | '?' if escape_glob_chars => {
-                                            out.push('\\');
-                                            out.push(c);
-                                        }
-                                        _ => out.push(c),
-                                    }
-                                }
-                                out.push('"');
-                                out
-                            }
-                            3 => {
-                                // ANSI-C $'…': escape control chars, ' and \\.
-                                let mut out = String::with_capacity(s.len() + 4);
-                                out.push_str("$'");
-                                for c in s.chars() {
-                                    match c {
-                                        '\\' => out.push_str("\\\\"),
-                                        '\'' => out.push_str("\\'"),
-                                        '\n' => out.push_str("\\n"),
-                                        '\t' => out.push_str("\\t"),
-                                        '\r' => out.push_str("\\r"),
-                                        c if (c as u32) < 0x20 => {
-                                            out.push_str(&format!("\\x{:02x}", c as u32));
-                                        }
-                                        c => out.push(c),
-                                    }
-                                }
-                                out.push('\'');
-                                out
-                            }
-                            _ => {
-                                // qqqq: backslash-escape every shell-special
+                                // q: backslash-escape every shell-special
                                 // char without surrounding quotes.
                                 let mut out = String::with_capacity(s.len() + 4);
                                 for c in s.chars() {
@@ -2706,6 +2663,56 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                     }
                                     out.push(c);
                                 }
+                                out
+                            }
+                            2 => {
+                                // qq: single-quote, escape inner ' as '\''.
+                                let mut escaped = s.replace('\'', "'\\''");
+                                if escape_glob_chars {
+                                    escaped = escaped
+                                        .replace('*', "\\*")
+                                        .replace('?', "\\?");
+                                }
+                                format!("'{}'", escaped)
+                            }
+                            3 => {
+                                // qqq: double-quote, escape $ ` " \\.
+                                let mut out = String::with_capacity(s.len() + 2);
+                                out.push('"');
+                                for c in s.chars() {
+                                    match c {
+                                        '$' | '`' | '"' | '\\' => {
+                                            out.push('\\');
+                                            out.push(c);
+                                        }
+                                        '*' | '?' if escape_glob_chars => {
+                                            out.push('\\');
+                                            out.push(c);
+                                        }
+                                        _ => out.push(c),
+                                    }
+                                }
+                                out.push('"');
+                                out
+                            }
+                            _ => {
+                                // qqqq: ANSI-C $'…' style.
+                                let mut out = String::with_capacity(s.len() + 4);
+                                out.push_str("$'");
+                                for c in s.chars() {
+                                    match c {
+                                        '\\' => out.push_str("\\\\"),
+                                        '\'' => out.push_str("\\'"),
+                                        '\n' => out.push_str("\\n"),
+                                        '\t' => out.push_str("\\t"),
+                                        '\r' => out.push_str("\\r"),
+                                        c if (c as u32) < 0x20 => {
+                                            out.push_str(&format!("\\x{:02x}", c as u32));
+                                        }
+                                        c => out.push(c),
+                                    }
+                                }
+                                out.push('\'');
                                 out
                             }
                         }
@@ -11902,14 +11909,27 @@ impl ShellExecutor {
                 // superset of pattern metas.
                 'B' => flags.push(ZshParamFlag::QuoteBackslash),
                 'q' => {
-                    if chars.peek() == Some(&'q') {
+                    // zsh's q-flag gradient (per `man zshparam`):
+                    //   (q)     backslash-escape shell-meta chars
+                    //   (qq)    single-quote
+                    //   (qqq)   double-quote
+                    //   (qqqq)  $'...' style
+                    //   (q+)    single-quote if needed
+                    let mut q_count = 1;
+                    while chars.peek() == Some(&'q') {
                         chars.next();
-                        flags.push(ZshParamFlag::DoubleQuote);
-                    } else if chars.peek() == Some(&'+') {
+                        q_count += 1;
+                    }
+                    if chars.peek() == Some(&'+') {
                         chars.next();
                         flags.push(ZshParamFlag::QuoteIfNeeded);
                     } else {
-                        flags.push(ZshParamFlag::Quote);
+                        match q_count {
+                            1 => flags.push(ZshParamFlag::QuoteBackslash),
+                            2 => flags.push(ZshParamFlag::Quote),
+                            3 => flags.push(ZshParamFlag::DoubleQuote),
+                            _ => flags.push(ZshParamFlag::DollarQuote),
+                        }
                     }
                 }
                 'u' => flags.push(ZshParamFlag::Unique),
@@ -12070,6 +12090,26 @@ impl ShellExecutor {
                 }
             }
             ZshParamFlag::DoubleQuote => format!("\"{}\"", val.replace('"', "\\\"")),
+            ZshParamFlag::DollarQuote => {
+                // (qqqq) — $'...' style escaping. Renders non-printable
+                // chars as \xHH and backslash-escapes specials.
+                let mut out = String::from("$'");
+                for c in val.chars() {
+                    match c {
+                        '\'' => out.push_str("\\'"),
+                        '\\' => out.push_str("\\\\"),
+                        '\n' => out.push_str("\\n"),
+                        '\t' => out.push_str("\\t"),
+                        '\r' => out.push_str("\\r"),
+                        c if (c as u32) < 0x20 => {
+                            out.push_str(&format!("\\x{:02x}", c as u32));
+                        }
+                        c => out.push(c),
+                    }
+                }
+                out.push('\'');
+                out
+            }
             ZshParamFlag::Unique => {
                 // Unique preserves first-occurrence order, so parallel doesn't help.
                 // For 1000+ elements, pre-allocate the HashSet for less rehashing.
@@ -19469,9 +19509,20 @@ impl ShellExecutor {
     /// zsh zstyle - configure styles for completion
     fn builtin_zstyle(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            // List all styles
+            // Bare `zstyle` lists styles grouped by name:
+            //   STYLE
+            //           pattern  val1 val2 ...
+            //           pattern  val1 ...
+            let mut grouped: std::collections::BTreeMap<String, Vec<(String, Vec<String>)>>
+                = std::collections::BTreeMap::new();
             for (pattern, style, values) in self.style_table.list(None) {
-                println!("zstyle '{}' {} {}", pattern, style, values.join(" "));
+                grouped.entry(style).or_default().push((pattern, values));
+            }
+            for (style, rows) in &grouped {
+                println!("{}", style);
+                for (pat, vals) in rows {
+                    println!("        {} {}", pat, vals.join(" "));
+                }
             }
             return 0;
         }
@@ -19527,14 +19578,31 @@ impl ShellExecutor {
                     return 1;
                 }
                 "-L" => {
-                    // List in re-usable format
+                    // List in re-usable format. zsh's exact form is:
+                    //   zstyle <pattern> <style> <val1> <val2>...
+                    // with patterns/styles/values as bare words (only
+                    // quoted when they contain whitespace or specials).
                     for (pattern, style, values) in self.style_table.list(None) {
-                        let values_str = values
-                            .iter()
-                            .map(|v| format!("'{}'", v.replace('\'', "'\\''")))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        println!("zstyle '{}' {} {}", pattern, style, values_str);
+                        let pat = if pattern.contains(' ') || pattern.is_empty() {
+                            format!("'{}'", pattern)
+                        } else {
+                            pattern.clone()
+                        };
+                        let sty = if style.contains(' ') || style.is_empty() {
+                            format!("'{}'", style)
+                        } else {
+                            style.clone()
+                        };
+                        let mut line = format!("zstyle {} {}", pat, sty);
+                        for v in &values {
+                            line.push(' ');
+                            if v.contains(' ') || v.is_empty() {
+                                line.push_str(&format!("'{}'", v.replace('\'', "'\\''")));
+                            } else {
+                                line.push_str(v);
+                            }
+                        }
+                        println!("{}", line);
                     }
                     return 0;
                 }
@@ -21070,15 +21138,55 @@ impl ShellExecutor {
     fn builtin_functions(&self, args: &[String]) -> i32 {
         let mut list_only = false;
         let mut show_trace = false;
+        let mut pattern_match = false;
         let mut names: Vec<&str> = Vec::new();
 
         for arg in args {
             match arg.as_str() {
                 "-l" => list_only = true,
                 "-t" => show_trace = true,
-                _ if arg.starts_with('-') => {}
+                "-m" => pattern_match = true,
+                _ if arg.starts_with('-') && arg.len() > 1 => {
+                    // Combined flags like `-lm`
+                    for c in arg[1..].chars() {
+                        match c {
+                            'l' => list_only = true,
+                            't' => show_trace = true,
+                            'm' => pattern_match = true,
+                            _ => {}
+                        }
+                    }
+                }
                 _ => names.push(arg),
             }
+        }
+
+        // With -m, treat each name as a glob pattern and expand to
+        // matching function names.
+        if pattern_match && !names.is_empty() {
+            let mut matched: Vec<String> = Vec::new();
+            for pat in &names {
+                for fname in self.function_names() {
+                    if Self::glob_match_static(&fname, pat)
+                        && !matched.contains(&fname)
+                    {
+                        matched.push(fname);
+                    }
+                }
+            }
+            if matched.is_empty() {
+                return 1;
+            }
+            for name in &matched {
+                if list_only {
+                    println!("{}", name);
+                } else if show_trace {
+                    println!("functions -t {}", name);
+                } else if let Some(body) = self.function_definition_text(name) {
+                    println!("{} () {{\n\t{}\n}}", name, body.trim());
+                }
+            }
+            return 0;
         }
 
         if names.is_empty() {
@@ -21270,9 +21378,33 @@ impl ShellExecutor {
             output_args.sort_by(|a, b| b.cmp(a));
         }
 
-        // Handle -f format
+        // Handle -f format — cycle the format string while args remain
+        // (POSIX printf semantics, also what zsh's `print -f` does).
+        // Also expand `\n`/`\t`/`\\` etc. in the format string so users
+        // can write `print -f "%s\n" a b c` and get one item per line.
         if let Some(fmt) = format_string {
-            let output = self.printf_format(&fmt, &output_args);
+            let fmt = if interpret_escapes && !raw_mode {
+                self.expand_printf_escapes(&fmt)
+            } else {
+                fmt.clone()
+            };
+            let mut output = String::new();
+            if output_args.is_empty() {
+                output.push_str(&self.printf_format(&fmt, &[]));
+            } else {
+                let mut idx = 0;
+                while idx < output_args.len() {
+                    let slice = &output_args[idx..];
+                    let prev_len = slice.len();
+                    let (chunk, consumed) = self.printf_format_count(&fmt, slice);
+                    output.push_str(&chunk);
+                    if consumed == 0 || consumed >= prev_len {
+                        idx += consumed.max(prev_len);
+                        break;
+                    }
+                    idx += consumed;
+                }
+            }
             if let Some(var) = store_var {
                 self.variables.insert(var, output);
             } else {
@@ -21378,6 +21510,13 @@ impl ShellExecutor {
     }
 
     fn printf_format(&self, format: &str, args: &[String]) -> String {
+        self.printf_format_count(format, args).0
+    }
+
+    /// Same as `printf_format` but also returns how many args were
+    /// consumed so callers can cycle the format until args run out
+    /// (POSIX printf / zsh `print -f` semantics).
+    fn printf_format_count(&self, format: &str, args: &[String]) -> (String, usize) {
         let mut result = String::new();
         let mut arg_idx = 0;
         let mut chars = format.chars().peekable();
@@ -21392,21 +21531,32 @@ impl ShellExecutor {
 
                 // Parse format specifier
                 let mut spec = String::from("%");
+                let mut left_align = false;
+                let mut zero_pad = false;
+                let mut plus_flag = false;
+                let mut space_flag = false;
+                let mut hash_flag = false;
 
                 // Flags
                 while let Some(&c) = chars.peek() {
-                    if c == '-' || c == '+' || c == ' ' || c == '#' || c == '0' {
-                        spec.push(c);
-                        chars.next();
-                    } else {
-                        break;
+                    match c {
+                        '-' => left_align = true,
+                        '+' => plus_flag = true,
+                        ' ' => space_flag = true,
+                        '#' => hash_flag = true,
+                        '0' => zero_pad = true,
+                        _ => break,
                     }
+                    spec.push(c);
+                    chars.next();
                 }
 
                 // Width
+                let mut width: Option<usize> = None;
                 while let Some(&c) = chars.peek() {
                     if c.is_ascii_digit() {
                         spec.push(c);
+                        width = Some(width.unwrap_or(0) * 10 + (c as u8 - b'0') as usize);
                         chars.next();
                     } else {
                         break;
@@ -21414,18 +21564,32 @@ impl ShellExecutor {
                 }
 
                 // Precision
+                let mut precision: Option<usize> = None;
                 if chars.peek() == Some(&'.') {
                     spec.push('.');
                     chars.next();
+                    let mut p = 0usize;
+                    let mut had_p = false;
                     while let Some(&c) = chars.peek() {
                         if c.is_ascii_digit() {
                             spec.push(c);
+                            p = p * 10 + (c as u8 - b'0') as usize;
+                            had_p = true;
                             chars.next();
                         } else {
                             break;
                         }
                     }
+                    if had_p { precision = Some(p); } else { precision = Some(0); }
                 }
+
+                let pad = |s: &str, w: usize, left: bool, zero: bool| -> String {
+                    let len = s.chars().count();
+                    if len >= w { return s.to_string(); }
+                    let fill = if zero && !left { '0' } else { ' ' };
+                    let extra: String = std::iter::repeat(fill).take(w - len).collect();
+                    if left { format!("{}{}", s, extra) } else { format!("{}{}", extra, s) }
+                };
 
                 // Conversion specifier
                 if let Some(conv) = chars.next() {
@@ -21433,30 +21597,84 @@ impl ShellExecutor {
                     arg_idx += 1;
 
                     match conv {
-                        's' => result.push_str(arg),
+                        's' => {
+                            let mut v = arg.to_string();
+                            if let Some(p) = precision {
+                                let trimmed: String = v.chars().take(p).collect();
+                                v = trimmed;
+                            }
+                            if let Some(w) = width {
+                                v = pad(&v, w, left_align, false);
+                            }
+                            result.push_str(&v);
+                        }
                         'd' | 'i' => {
                             let n: i64 = arg.parse().unwrap_or(0);
-                            result.push_str(&n.to_string());
+                            let mut v = n.to_string();
+                            if n >= 0 {
+                                if plus_flag { v = format!("+{}", v); }
+                                else if space_flag { v = format!(" {}", v); }
+                            }
+                            if let Some(w) = width {
+                                v = pad(&v, w, left_align, zero_pad);
+                            }
+                            result.push_str(&v);
                         }
                         'u' => {
                             let n: u64 = arg.parse().unwrap_or(0);
-                            result.push_str(&n.to_string());
+                            let mut v = n.to_string();
+                            if let Some(w) = width {
+                                v = pad(&v, w, left_align, zero_pad);
+                            }
+                            result.push_str(&v);
                         }
                         'x' => {
                             let n: i64 = arg.parse().unwrap_or(0);
-                            result.push_str(&format!("{:x}", n));
+                            let mut v = format!("{:x}", n);
+                            if hash_flag && n != 0 { v = format!("0x{}", v); }
+                            if let Some(w) = width {
+                                v = pad(&v, w, left_align, zero_pad);
+                            }
+                            result.push_str(&v);
                         }
                         'X' => {
                             let n: i64 = arg.parse().unwrap_or(0);
-                            result.push_str(&format!("{:X}", n));
+                            let mut v = format!("{:X}", n);
+                            if hash_flag && n != 0 { v = format!("0X{}", v); }
+                            if let Some(w) = width {
+                                v = pad(&v, w, left_align, zero_pad);
+                            }
+                            result.push_str(&v);
                         }
                         'o' => {
                             let n: i64 = arg.parse().unwrap_or(0);
-                            result.push_str(&format!("{:o}", n));
+                            let mut v = format!("{:o}", n);
+                            if hash_flag && n != 0 { v = format!("0{}", v); }
+                            if let Some(w) = width {
+                                v = pad(&v, w, left_align, zero_pad);
+                            }
+                            result.push_str(&v);
                         }
                         'f' | 'F' | 'e' | 'E' | 'g' | 'G' => {
                             let n: f64 = arg.parse().unwrap_or(0.0);
-                            result.push_str(&format!("{}", n));
+                            let mut v = match (conv, precision) {
+                                ('f', Some(p)) | ('F', Some(p)) => format!("{:.*}", p, n),
+                                ('e', Some(p)) | ('E', Some(p)) => format!("{:.*e}", p, n),
+                                ('f', None) | ('F', None) => format!("{:.6}", n),
+                                ('e', None) | ('E', None) => format!("{:.6e}", n),
+                                _ => format!("{}", n),
+                            };
+                            if matches!(conv, 'E' | 'G') {
+                                v = v.replace('e', "E");
+                            }
+                            if n >= 0.0 {
+                                if plus_flag { v = format!("+{}", v); }
+                                else if space_flag { v = format!(" {}", v); }
+                            }
+                            if let Some(w) = width {
+                                v = pad(&v, w, left_align, zero_pad);
+                            }
+                            result.push_str(&v);
                         }
                         'c' => {
                             if let Some(c) = arg.chars().next() {
@@ -21478,7 +21696,7 @@ impl ShellExecutor {
             }
         }
 
-        result
+        (result, arg_idx)
     }
 
     /// whence - show how a command would be interpreted
