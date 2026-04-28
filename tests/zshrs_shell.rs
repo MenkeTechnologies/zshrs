@@ -989,3 +989,43 @@ fn test_where_not_found_status_one() {
     let (status, _, _) = run_zshrs("where nonexistentxxxprobe");
     assert_eq!(status, 1, "exit status should be 1 when not found");
 }
+
+// ---------------------------------------------------------------------------
+// `print -P` byte-exact ANSI output (no readline markers, no spurious reset)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_print_p_color_bytes() {
+    let (_, output, _) = run_zshrs("print -P \"%F{red}hi%f\"");
+    // \e[31m hi \e[39m \n  — no \x01/\x02 wrappers, no leading reset.
+    assert_eq!(output, "\x1b[31mhi\x1b[39m\n", "got: {output:?}");
+}
+
+#[test]
+fn test_print_p_bold_bytes() {
+    let (_, output, _) = run_zshrs("print -P \"%Bbold%b\"");
+    assert_eq!(output, "\x1b[1mbold\x1b[0m\n", "got: {output:?}");
+}
+
+#[test]
+fn test_print_p_underline_bytes() {
+    let (_, output, _) = run_zshrs("print -P \"%Uunder%u\"");
+    // %u emits SGR-24 (underline off) instead of full reset.
+    assert_eq!(output, "\x1b[4munder\x1b[24m\n", "got: {output:?}");
+}
+
+#[test]
+fn test_print_p_color_chain() {
+    let (_, output, _) = run_zshrs("print -P \"%F{green}g%f%F{red}r%f\"");
+    assert_eq!(
+        output,
+        "\x1b[32mg\x1b[39m\x1b[31mr\x1b[39m\n",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_print_p_plain_no_markers() {
+    let (_, output, _) = run_zshrs("print -P \"plain\"");
+    assert_eq!(output, "plain\n", "got: {output:?}");
+}

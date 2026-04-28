@@ -413,13 +413,12 @@ impl<'a> PromptExpander<'a> {
         }
     }
 
-    /// Apply text attributes
+    /// Apply text attributes incrementally. zsh emits just the new
+    /// SGR codes (no leading `\e[0m`) when adding attrs to a default
+    /// state — only emit a reset when there's nothing to apply (rare,
+    /// covered by the explicit `%b`/`%f`/`%k`/`%u` reset handlers).
     fn apply_attrs(&mut self) {
         self.start_escape();
-
-        // Reset first
-        self.output.push_str("\x1b[0m");
-
         if self.attrs.bold {
             self.output.push_str("\x1b[1m");
         }
@@ -435,7 +434,6 @@ impl<'a> PromptExpander<'a> {
         if let Some(ref color) = self.attrs.bg_color {
             self.output.push_str(&color.to_ansi_bg());
         }
-
         self.end_escape();
     }
 
@@ -698,8 +696,14 @@ impl<'a> PromptExpander<'a> {
                 self.apply_attrs();
             }
             'b' => {
+                // zsh's %b emits a full SGR reset `\e[0m` (matches the
+                // raw bytes mainline zsh produces). The incremental
+                // SGR-22 (bold off) would also work but zsh chose the
+                // full reset.
                 self.attrs.bold = false;
-                self.apply_attrs();
+                self.start_escape();
+                self.output.push_str("\x1b[0m");
+                self.end_escape();
             }
             'U' => {
                 self.attrs.underline = true;
@@ -707,7 +711,9 @@ impl<'a> PromptExpander<'a> {
             }
             'u' => {
                 self.attrs.underline = false;
-                self.apply_attrs();
+                self.start_escape();
+                self.output.push_str("\x1b[24m");
+                self.end_escape();
             }
             'S' => {
                 self.attrs.standout = true;
@@ -715,7 +721,9 @@ impl<'a> PromptExpander<'a> {
             }
             's' => {
                 self.attrs.standout = false;
-                self.apply_attrs();
+                self.start_escape();
+                self.output.push_str("\x1b[27m");
+                self.end_escape();
             }
 
             // Colors
@@ -733,8 +741,14 @@ impl<'a> PromptExpander<'a> {
                 }
             }
             'f' => {
+                // zsh emits the default-foreground escape `\e[39m`
+                // (not a full `\e[0m` reset) — preserves background
+                // color and other attrs. Going through apply_attrs
+                // would emit a full reset which over-clears.
                 self.attrs.fg_color = None;
-                self.apply_attrs();
+                self.start_escape();
+                self.output.push_str("\x1b[39m");
+                self.end_escape();
             }
             'K' => {
                 let color = if let Some(name) = self.parse_braced_arg() {
