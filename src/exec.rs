@@ -3929,8 +3929,7 @@ fn shell_quote_value(s: &str) -> String {
 
 use crate::jobs::{continue_job, wait_for_child, wait_for_job, JobState, JobTable};
 use crate::parser::{
-    CondExpr, ListOp, Redirect, RedirectOp, ShellCommand, ShellWord, SimpleCommand,
-    VarModifier, ZshParamFlag,
+    CondExpr, Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag,
 };
 use crate::zwc::ZwcFile;
 use std::collections::HashMap;
@@ -5950,47 +5949,6 @@ impl ShellExecutor {
             set.insert(k.clone());
         }
         set.into_iter().collect()
-    }
-
-    #[tracing::instrument(level = "trace", skip_all)]
-    /// Execute a shell command via the bytecode VM. The tree-walker dispatch
-    /// (execute_simple/pipeline/list/compound) is gone — every command is
-    /// compiled to a fusevm chunk and run on a fresh VM with `ZshrsHost`
-    /// wired up.
-    ///
-    /// The executor context is set idempotently so callers from inside builtin
-    /// handlers (which already have the context active) don't double-enter.
-    ///
-    /// Compile path: round-trip through `text::getpermtext` →
-    /// `ZshParser` + `ZshCompiler` (the only pipeline). On round-trip parse
-    /// failure, returns an error rather than falling back to the legacy
-    /// compiler — surfacing the parser/getpermtext bug instead of masking it.
-    pub fn execute_command(&mut self, cmd: &ShellCommand) -> Result<i32, String> {
-        let cmd_text = crate::text::getpermtext(cmd);
-        let program = crate::parser::ZshParser::new(&cmd_text)
-            .parse()
-            .map_err(|errs| {
-                errs.first()
-                    .map(|e| format!("execute_command round-trip parse: {}", e))
-                    .unwrap_or_else(|| "execute_command round-trip parse failed".into())
-            })?;
-        if program.lists.is_empty() {
-            return Ok(self.last_status);
-        }
-        let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
-        if chunk.ops.is_empty() {
-            return Ok(self.last_status);
-        }
-        let mut vm = fusevm::VM::new(chunk);
-        register_builtins(&mut vm);
-        let _ctx = ExecutorContext::enter(self);
-        match vm.run() {
-            fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                self.last_status = vm.last_status;
-                Ok(vm.last_status)
-            }
-            fusevm::VMResult::Error(e) => Err(format!("VM error: {}", e)),
-        }
     }
 
     /// Dispatch a function by name through the new (compiled) pipeline.

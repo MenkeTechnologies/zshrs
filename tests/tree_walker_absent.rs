@@ -68,17 +68,19 @@ fn execute_command_bg_is_deleted() {
 }
 
 #[test]
-fn execute_command_dispatches_via_compiler() {
-    // The execute_command body must round-trip the AST through
-    // `text::getpermtext` → `ZshParser` → `ZshCompiler` and run the chunk
-    // on a fusevm VM. The legacy `ShellCompiler` is no longer reachable
-    // here — its only remaining users are inside shell_compiler.rs itself.
-    // If a future refactor reintroduces a `match cmd { Simple => ...`
-    // tree-walker dispatch, this test fails.
+fn execute_command_dispatches_via_compiler_or_is_absent() {
+    // Phase 2 cascade goal: execute_command (the legacy
+    // ShellCommand-based entry point) becomes unreachable from production
+    // code as ZshParser+ZshCompiler take over the entire execution path.
+    // If it still exists in src/exec.rs, the body MUST round-trip the AST
+    // through `text::getpermtext` → `ZshParser` → `ZshCompiler` and run
+    // the chunk on a fusevm VM — never match-dispatch to a tree walker
+    // or fall back to the deleted ShellCompiler.
     let src = read_exec_rs();
-    let entry = src
-        .find("pub fn execute_command(&mut self, cmd: &ShellCommand)")
-        .expect("execute_command entry point missing");
+    let Some(entry) = src.find("pub fn execute_command(&mut self, cmd: &ShellCommand)") else {
+        // execute_command was deleted entirely — invariant trivially satisfied.
+        return;
+    };
     let window = &src[entry..entry + 1800];
     assert!(
         window.contains("ZshParser::new") && window.contains("ZshCompiler::new()"),
