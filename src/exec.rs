@@ -1835,23 +1835,64 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'k' => {
-                    // Keys of assoc.
-                    let keys = with_executor(|exec| {
-                        exec.assoc_arrays
-                            .get(&name)
-                            .map(|m| m.keys().cloned().collect::<Vec<_>>())
-                            .unwrap_or_default()
-                    });
-                    state = St::A(keys);
+                    // Keys of assoc. If immediately followed by 'v' (or
+                    // earlier state was already 'v'-set), interleave key/value
+                    // pairs (zsh's `(kv)` form).
+                    if i < chars.len() && chars[i] == 'v' {
+                        i += 1; // consume the 'v'
+                        let pairs = with_executor(|exec| {
+                            exec.assoc_arrays
+                                .get(&name)
+                                .map(|m| {
+                                    let mut out = Vec::with_capacity(m.len() * 2);
+                                    for (k, v) in m {
+                                        out.push(k.clone());
+                                        out.push(v.clone());
+                                    }
+                                    out
+                                })
+                                .unwrap_or_default()
+                        });
+                        state = St::A(pairs);
+                    } else {
+                        let keys = with_executor(|exec| {
+                            exec.assoc_arrays
+                                .get(&name)
+                                .map(|m| m.keys().cloned().collect::<Vec<_>>())
+                                .unwrap_or_default()
+                        });
+                        state = St::A(keys);
+                    }
                 }
                 'v' => {
-                    let vals = with_executor(|exec| {
-                        exec.assoc_arrays
-                            .get(&name)
-                            .map(|m| m.values().cloned().collect::<Vec<_>>())
-                            .unwrap_or_default()
-                    });
-                    state = St::A(vals);
+                    // Values of assoc. If immediately followed by 'k',
+                    // interleave value/key pairs (zsh's `(vk)` form, less
+                    // common than `(kv)` but supported for symmetry).
+                    if i < chars.len() && chars[i] == 'k' {
+                        i += 1; // consume the 'k'
+                        let pairs = with_executor(|exec| {
+                            exec.assoc_arrays
+                                .get(&name)
+                                .map(|m| {
+                                    let mut out = Vec::with_capacity(m.len() * 2);
+                                    for (k, v) in m {
+                                        out.push(v.clone());
+                                        out.push(k.clone());
+                                    }
+                                    out
+                                })
+                                .unwrap_or_default()
+                        });
+                        state = St::A(pairs);
+                    } else {
+                        let vals = with_executor(|exec| {
+                            exec.assoc_arrays
+                                .get(&name)
+                                .map(|m| m.values().cloned().collect::<Vec<_>>())
+                                .unwrap_or_default()
+                        });
+                        state = St::A(vals);
+                    }
                 }
                 '#' => {
                     state = match state {
