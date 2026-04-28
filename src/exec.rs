@@ -4050,10 +4050,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
             2 | 6 => {
-                // `:?` / `?` error if missing
+                // `:?` / `?` error if missing — zsh in -c mode prints
+                // `zsh:LINE: NAME: msg` and exits 1. Mirror that: emit
+                // diagnostic on stderr and abort the shell.
                 if missing {
-                    eprintln!("zshrs: {}: {}", name, rhs);
-                    fusevm::Value::str("")
+                    let msg = if rhs.is_empty() {
+                        "parameter null or not set".to_string()
+                    } else {
+                        rhs.clone()
+                    };
+                    eprintln!("zshrs:1: {}: {}", name, msg);
+                    std::process::exit(1);
                 } else {
                     fusevm::Value::str(val)
                 }
@@ -4247,6 +4254,26 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
+                        // Skip glob expansion for assignment-shaped
+                        // words (`NAME=value`). zsh doesn't expand the
+                        // RHS of an assignment as a path glob unless
+                        // `setopt globassign` is set, and feeding such
+                        // words through expand_glob makes NOMATCH
+                        // (default ON) fire spuriously on
+                        // `integer i=2*3+1`, `path=*.rs`, etc.
+                        let is_assignment_shape = {
+                            let bytes = s.as_bytes();
+                            let mut i = 0;
+                            if !bytes.is_empty() && (bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
+                                i += 1;
+                                while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+                                    i += 1;
+                                }
+                                i < bytes.len() && bytes[i] == b'='
+                            } else {
+                                false
+                            }
+                        };
                         // Also trigger expand_glob when the word ends
                         // with a `(...)` qualifier suffix even without
                         // any other glob metachar — `/etc/hosts(mh-100)`,
@@ -4255,6 +4282,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             && s.contains('(')
                             && !s.contains('|');
                         if !noglob
+                            && !is_assignment_shape
                             && (s.contains('*')
                                 || s.contains('?')
                                 || s.contains('[')
@@ -8489,13 +8517,49 @@ impl ShellExecutor {
             // collapses to an empty list (silent) instead of the literal
             // pattern. Mirrors zsh's `*(N)` semantics.
             if nullglob || qualifiers.contains('N') {
-                vec![]
-            } else {
-                vec![pattern.to_string()]
+                return vec![];
             }
+            // zsh's default is `setopt nomatch`: an unmatched glob
+            // emits "no matches found" on stderr and aborts the command
+            // (the shell exits in -c mode). bash-style "pass literal
+            // through" is the opt-out via `unsetopt nomatch`.
+            let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
+            if nomatch && Self::looks_like_glob(pattern) {
+                eprintln!("zshrs:1: no matches found: {}", pattern);
+                std::process::exit(1);
+            }
+            vec![pattern.to_string()]
         } else {
             expanded
         }
+    }
+
+    /// True iff the literal `pattern` actually contains a glob metachar
+    /// in a position that would have triggered globbing. Used to avoid
+    /// spurious "no matches" errors when expand_glob is called on a
+    /// plain path that happened to route through this code (e.g. some
+    /// fast paths bridge unconditionally).
+    fn looks_like_glob(pattern: &str) -> bool {
+        // Strip trailing `(...)` qualifier so we test the pattern body.
+        let body = if let Some(open) = pattern.rfind('(') {
+            if pattern.ends_with(')') {
+                &pattern[..open]
+            } else {
+                pattern
+            }
+        } else {
+            pattern
+        };
+        // `[` is only a glob metachar when it has a matching `]` that
+        // forms a character class. A bare `[` (the test builtin) or
+        // `[unclosed` text isn't a glob.
+        let has_bracket_class = body
+            .find('[')
+            .and_then(|i| body[i + 1..].find(']'))
+            .is_some();
+        body.contains('*')
+            || body.contains('?')
+            || has_bracket_class
     }
 
     /// Parallel recursive glob using the worker pool.
@@ -11646,13 +11710,21 @@ impl ShellExecutor {
                 _ => self.expand_word(word),
             },
 
-            // ${var:?word} - error if null or unset
+            // ${var:?word} - error if null or unset. zsh in -c mode
+            // prints `zsh:LINE: NAME: msg` and exits 1. Mirror with
+            // `zshrs:1:` prefix and exit so subsequent commands don't
+            // run (mirror zsh's non-interactive contract).
             Some(VarModifier::Error(word)) => match &val {
                 Some(v) if !v.is_empty() => v.clone(),
                 _ => {
                     let msg = self.expand_word(word);
-                    eprintln!("zshrs: {}", msg);
-                    String::new()
+                    let display = if msg.is_empty() {
+                        "parameter null or not set".to_string()
+                    } else {
+                        msg
+                    };
+                    eprintln!("zshrs:1: {}: {}", name, display);
+                    std::process::exit(1);
                 }
             },
 

@@ -597,9 +597,12 @@ fn glob_expansion_matches_known_file() {
 
 #[test]
 fn glob_no_match_returns_pattern() {
-    // With nullglob unset (default), unmatched glob expands to itself.
+    // With nomatch unset (zsh default is `setopt nomatch`), unmatched
+    // globs pass the literal pattern through (bash-style). Without
+    // unsetopt, zsh aborts with `no matches found`. We mirror zsh's
+    // default + opt-out behaviour.
     ok(
-        "echo no_such_pattern_*.xyzzy",
+        "unsetopt nomatch; echo no_such_pattern_*.xyzzy",
         "no_such_pattern_*.xyzzy\n",
     );
 }
