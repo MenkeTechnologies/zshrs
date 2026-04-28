@@ -6903,17 +6903,39 @@ impl ShellExecutor {
 
         // Try numeric sequence
         if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
+            // Zero-padding: if either bound has a leading zero (e.g. `01`,
+            // `001`), pad each output to the max width of start/end.
+            let pad_width = {
+                let start_pad = start.starts_with('0') && start.len() > 1;
+                let end_pad = end.starts_with('0') && end.len() > 1;
+                if start_pad || end_pad {
+                    start.len().max(end.len())
+                } else {
+                    0
+                }
+            };
+            let format_num = |n: i64| -> String {
+                if pad_width > 0 {
+                    if n < 0 {
+                        format!("-{:0>w$}", -n, w = pad_width.saturating_sub(1))
+                    } else {
+                        format!("{:0>w$}", n, w = pad_width)
+                    }
+                } else {
+                    n.to_string()
+                }
+            };
             let mut results = Vec::new();
             if start_num <= end_num {
                 let mut i = start_num;
                 while i <= end_num {
-                    results.push(i.to_string());
+                    results.push(format_num(i));
                     i += step;
                 }
             } else {
                 let mut i = start_num;
                 while i >= end_num {
-                    results.push(i.to_string());
+                    results.push(format_num(i));
                     i -= step;
                 }
             }
