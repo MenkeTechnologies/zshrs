@@ -1776,6 +1776,42 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         s => s,
                     };
                 }
+                'u' => {
+                    // Unique: preserve first occurrence, drop later dupes.
+                    state = match state {
+                        St::A(a) => {
+                            let mut seen = std::collections::HashSet::new();
+                            let unique: Vec<String> = a
+                                .into_iter()
+                                .filter(|s| seen.insert(s.clone()))
+                                .collect();
+                            St::A(unique)
+                        }
+                        s => s,
+                    };
+                }
+                'C' => {
+                    // Capitalize first letter of each word; rest lowercase.
+                    let cap = |s: &str| -> String {
+                        s.split_whitespace()
+                            .map(|w| {
+                                let mut chars = w.chars();
+                                match chars.next() {
+                                    Some(first) => {
+                                        first.to_uppercase().collect::<String>()
+                                            + &chars.as_str().to_lowercase()
+                                    }
+                                    None => String::new(),
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    };
+                    state = match state {
+                        St::S(s) => St::S(cap(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| cap(&s)).collect()),
+                    };
+                }
                 'P' => {
                     // Indirect: current scalar value is another var name.
                     state = match state {
@@ -2811,6 +2847,37 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(is_set)
     });
 
+    vm.register_builtin(BUILTIN_PARAM_FILTER, |vm, _argc| {
+        let pattern = vm.pop().to_str();
+        let name = vm.pop().to_str();
+        let arr_val = with_executor(|exec| exec.arrays.get(&name).cloned());
+        let matches_glob = |s: &str, pat: &str| -> bool {
+            // Simple glob: * matches any sequence, ? matches one char.
+            // For now use a basic implementation; zshrs has glob_match
+            // helpers but they require &mut exec — use string contains
+            // for the no-glob case as a baseline.
+            if pat.contains('*') || pat.contains('?') || pat.contains('[') {
+                with_executor(|exec| exec.glob_match(s, pat))
+            } else {
+                s == pat
+            }
+        };
+        if let Some(arr) = arr_val {
+            let kept: Vec<fusevm::Value> = arr
+                .into_iter()
+                .filter(|elem| !matches_glob(elem, &pattern))
+                .map(fusevm::Value::str)
+                .collect();
+            return fusevm::Value::Array(kept);
+        }
+        let val = with_executor(|exec| exec.get_variable(&name));
+        if matches_glob(&val, &pattern) {
+            fusevm::Value::str(String::new())
+        } else {
+            fusevm::Value::str(val)
+        }
+    });
+
     // BUILTIN_CONCAT_SPLICE — word-segment concat with first/last
     // sticking (default zsh splice semantics for `${arr[@]}`, `$@`).
     vm.register_builtin(BUILTIN_CONCAT_SPLICE, |vm, _argc| {
@@ -3231,27 +3298,38 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let repl = vm.pop().to_str();
         let pattern = vm.pop().to_str();
         let name = vm.pop().to_str();
-        let val = with_executor(|exec| exec.get_variable(&name));
-        let result = match op {
-            0 => val.replacen(&pattern, &repl, 1),
-            1 => val.replace(&pattern, &repl),
-            2 => {
-                if val.starts_with(&pattern) {
-                    format!("{}{}", repl, &val[pattern.len()..])
-                } else {
-                    val
+        let one = |val: String| -> String {
+            match op {
+                0 => val.replacen(&pattern, &repl, 1),
+                1 => val.replace(&pattern, &repl),
+                2 => {
+                    if val.starts_with(&pattern) {
+                        format!("{}{}", repl, &val[pattern.len()..])
+                    } else {
+                        val
+                    }
                 }
-            }
-            3 => {
-                if val.ends_with(&pattern) {
-                    format!("{}{}", &val[..val.len() - pattern.len()], repl)
-                } else {
-                    val
+                3 => {
+                    if val.ends_with(&pattern) {
+                        format!("{}{}", &val[..val.len() - pattern.len()], repl)
+                    } else {
+                        val
+                    }
                 }
+                _ => val,
             }
-            _ => val,
         };
-        fusevm::Value::str(result)
+        // Array case: apply replacement to each element, return Array.
+        let arr_val = with_executor(|exec| exec.arrays.get(&name).cloned());
+        if let Some(arr) = arr_val {
+            let mapped: Vec<fusevm::Value> = arr
+                .into_iter()
+                .map(|s| fusevm::Value::str(one(s)))
+                .collect();
+            return fusevm::Value::Array(mapped);
+        }
+        let val = with_executor(|exec| exec.get_variable(&name));
+        fusevm::Value::str(one(val))
     });
 
     vm.register_builtin(BUILTIN_REGISTER_COMPILED_FN, |vm, argc| {
@@ -3571,6 +3649,12 @@ pub const BUILTIN_SET_TRY_BLOCK_ERROR: u16 = 320;
 /// Normalizes the name (strip underscores, lowercase) and reads
 /// `exec.options`. Pushes Bool.
 pub const BUILTIN_OPTION_SET: u16 = 321;
+
+/// `${var:#pattern}` — array filter: remove elements matching `pattern`.
+/// Stack: [name, pattern]. For scalar `var`, returns empty if it matches
+/// the pattern, else the value. For array `var`, returns Array of
+/// non-matching elements.
+pub const BUILTIN_PARAM_FILTER: u16 = 322;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)
