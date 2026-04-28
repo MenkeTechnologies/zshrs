@@ -493,9 +493,20 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `MathEval` only knows about scalar variables (`self.variables`), so `m[k]` resolved to 0. Added `pre_resolve_array_subscripts(expr)`: walks the expression, finds `name[subscript]` shapes, resolves them against `assoc_arrays` (key lookup) or `arrays` (1-based numeric index, negative-from-end), and inlines the literal value before handing to `MathEval`. Wired into `evaluate_arithmetic`, `eval_arith_expr`, `eval_arith_expr_float`. Tests: `test_arith_assoc_subscript`, `test_arith_array_subscript`.
 
-## Still open (fourteenth-pass — remaining)
+## Closed (fifteenth-pass — read -A IFS + tilde-user error)
+
+### `IFS=, read -A arr` — honor custom IFS for array split
+
+- The `-A` (read into array) branch unconditionally used `split_whitespace()`, ignoring `$IFS`. With a custom IFS like `,` the input `1,2,3` became one element. Branch now: if IFS is the default whitespace string, keep `split_whitespace()` (collapses consecutive separators); otherwise split on every IFS char (matches zsh `read -A` for custom IFS). Tests: `test_read_dash_a_honors_custom_ifs`, `test_read_dash_a_default_ifs_collapses_whitespace`.
+
+### `~nonexistent_user` — fatal error
+
+- `expand_tilde_named` previously returned the literal `~name` string when `getpwnam` failed. zsh emits `zsh:1: no such user or named directory: name` and exits 1. zshrs now matches with a `zshrs:1:` diagnostic and `std::process::exit(1)`. Test: `test_tilde_unknown_user_errors`.
+
+## Still open (fifteenth-pass — remaining)
 
 (none — all probed gaps closed)
+- **`${s:$n:2}` substring with var/arith offset** — the offset/length parser only accepts literal digits and `-` after the colon. `$n` (variable) and `$((expr))` (arith) inside the offset slot fall through to other modifier paths and return empty. Needs a runtime-evaluated offset path.
 - **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
 - **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
 - **`${@:1:2}` / `$@[2,4]`** positional slice forms.
