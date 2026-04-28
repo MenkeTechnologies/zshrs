@@ -2508,3 +2508,45 @@ fn test_substring_with_var_offset_and_length() {
     let (_, output, _) = run_zshrs(r#"s=abcdef; n=2; m=3; echo "${s:$n:$m}""#);
     assert_eq!(output.trim(), "cde", "got: {output:?}");
 }
+
+#[test]
+fn test_pipefail_returns_first_nonzero() {
+    // `set -o pipefail` makes a pipeline return the rightmost non-zero
+    // status — `false | true` returns 1 with pipefail on, 0 without.
+    let (status, _, _) = run_zshrs("set -o pipefail; false | true");
+    assert_eq!(status, 1, "pipefail-on should propagate failure");
+}
+
+#[test]
+fn test_pipefail_default_off_returns_last() {
+    let (status, _, _) = run_zshrs("false | true");
+    assert_eq!(status, 0, "default pipeline status is the last stage");
+}
+
+#[test]
+fn test_setopt_pipefail_alias() {
+    let (status, _, _) = run_zshrs("setopt pipefail; false | true");
+    assert_eq!(status, 1, "setopt pipefail should be equivalent to set -o");
+}
+
+#[test]
+fn test_ifs_default_includes_null() {
+    // POSIX/zsh default IFS = ` \t\n\0`. Test the bytes round-trip.
+    let (_, output, _) = run_zshrs(r#"echo "[$IFS]""#);
+    let zsh = std::process::Command::new("/bin/zsh")
+        .args(["-f", "-c", r#"echo "[$IFS]""#])
+        .output()
+        .expect("zsh failed");
+    let zsh_out = String::from_utf8_lossy(&zsh.stdout).to_string();
+    assert_eq!(output, zsh_out, "IFS bytes should match /bin/zsh");
+}
+
+#[test]
+fn test_command_not_found_includes_line_number() {
+    // `zsh:1: command not found: NAME` is the canonical format.
+    let (_, _, stderr) = run_zshrs("nonexistent_command_xyz_zr");
+    assert!(
+        stderr.contains(":1: command not found:"),
+        "stderr: {stderr:?}"
+    );
+}

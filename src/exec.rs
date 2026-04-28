@@ -1508,7 +1508,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
             };
             pipestatus.push(s);
         }
-        let last_status = *pipestatus.last().unwrap_or(&0);
+        // Pipeline exit status: by default, the LAST stage's status.
+        // With `setopt pipefail` (or `set -o pipefail`), use the
+        // first non-zero stage status (so failures earlier in the
+        // pipeline propagate even if the last stage succeeded).
+        let pipefail_on = with_executor(|exec| {
+            exec.options.get("pipefail").copied().unwrap_or(false)
+        });
+        let last_status = if pipefail_on {
+            pipestatus
+                .iter()
+                .copied()
+                .filter(|&s| s != 0)
+                .next_back()
+                .or_else(|| pipestatus.last().copied())
+                .unwrap_or(0)
+        } else {
+            *pipestatus.last().unwrap_or(&0)
+        };
 
         // Populate `pipestatus` (zsh) and `PIPESTATUS` (bash) arrays so
         // scripts can inspect per-stage exit codes. Both names are common
@@ -6294,6 +6311,11 @@ impl ShellExecutor {
                 })
                 .unwrap_or_else(|_| "1".to_string()),
         );
+        // POSIX/zsh default IFS is space, tab, newline, NUL. Splitters
+        // throughout the codebase fall back to ` \t\n` when IFS is
+        // missing; expose the actual default value so user code that
+        // inspects $IFS sees what zsh exposes.
+        variables.insert("IFS".to_string(), " \t\n\0".to_string());
 
         Self {
             aliases: HashMap::new(),
@@ -8397,7 +8419,7 @@ impl ShellExecutor {
                 }
                 Err(e) => {
                     if e.kind() == io::ErrorKind::NotFound {
-                        eprintln!("zshrs: command not found: {}", cmd);
+                        eprintln!("zshrs:1: command not found: {}", cmd);
                         Ok(127)
                     } else {
                         Err(format!("zshrs: {}: {}", cmd, e))
@@ -8409,7 +8431,7 @@ impl ShellExecutor {
                 Ok(status) => Ok(status.code().unwrap_or(1)),
                 Err(e) => {
                     if e.kind() == io::ErrorKind::NotFound {
-                        eprintln!("zshrs: command not found: {}", cmd);
+                        eprintln!("zshrs:1: command not found: {}", cmd);
                         Ok(127)
                     } else {
                         Err(format!("zshrs: {}: {}", cmd, e))
@@ -14931,9 +14953,13 @@ impl ShellExecutor {
                 .cloned()
                 .unwrap_or_else(|| " \t\n".to_string());
             // Custom IFS (e.g. `IFS=,`) splits on every IFS char.
-            // Default IFS (whitespace) collapses consecutive seps —
-            // matches zsh `read -A` behaviour.
-            let words: Vec<String> = if ifs == " \t\n" || ifs == "\t\n " || ifs == "\n \t" {
+            // Default IFS (whitespace + NUL) collapses consecutive seps
+            // — matches zsh `read -A` behaviour. Detect default by the
+            // char set rather than exact string ordering so the new
+            // " \t\n\0" init value also classifies as default.
+            let is_default_ifs = !ifs.is_empty()
+                && ifs.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\0'));
+            let words: Vec<String> = if is_default_ifs {
                 processed.split_whitespace().map(String::from).collect()
             } else {
                 processed
@@ -27100,7 +27126,7 @@ impl ShellExecutor {
             }
         }
 
-        eprintln!("zshrs: command not found: {}", name);
+        eprintln!("zshrs:1: command not found: {}", name);
         127
     }
 
