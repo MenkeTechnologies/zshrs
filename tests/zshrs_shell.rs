@@ -2403,3 +2403,26 @@ fn test_set_e_suppressed_in_while_test() {
     assert_eq!(status, 0);
     assert!(output.contains("got_here"), "got: {output:?}");
 }
+
+#[test]
+fn test_subshell_isolates_cwd() {
+    // `(cd /tmp); pwd` must not leak the cd into the parent.
+    let (_, output, _) = run_zshrs("pwd > /tmp/zr_pwd_pre.txt; (cd /tmp); pwd > /tmp/zr_pwd_post.txt");
+    let pre = std::fs::read_to_string("/tmp/zr_pwd_pre.txt").unwrap_or_default();
+    let post = std::fs::read_to_string("/tmp/zr_pwd_post.txt").unwrap_or_default();
+    let _ = std::fs::remove_file("/tmp/zr_pwd_pre.txt");
+    let _ = std::fs::remove_file("/tmp/zr_pwd_post.txt");
+    assert_eq!(pre.trim(), post.trim(), "subshell cd leaked: pre={pre:?} post={post:?} output={output:?}");
+}
+
+#[test]
+fn test_arith_assoc_subscript() {
+    let (_, output, _) = run_zshrs("declare -A m; m[k]=10; echo $((m[k] + 5))");
+    assert_eq!(output.trim(), "15", "got: {output:?}");
+}
+
+#[test]
+fn test_arith_array_subscript() {
+    let (_, output, _) = run_zshrs("a=(10 20 30); echo $((a[2] + 5))");
+    assert_eq!(output.trim(), "25", "got: {output:?}");
+}
