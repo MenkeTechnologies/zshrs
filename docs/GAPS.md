@@ -1651,6 +1651,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - An empty command-substitution result that becomes the entire command word should be a no-op (exit status preserved). zshrs hit `host_exec_external` with an empty `cmd` and emitted `command not found:` (no name) with status 127. Added an `if cmd.is_empty() && rest.is_empty()` early return at the top of host_exec_external. Test: `test_empty_cmdsubst_no_command_not_found`.
 
+### `type local` / `declare` / `typeset` / `readonly` / `export` reported "shell builtin"
+
+- zsh's `type local` reports `local is a reserved word` — these are precommand modifiers parsed at the syntactic level, not regular builtins. zshrs's reserved-word table only included flow-control keywords (`if`, `while`, etc.); the declaration keywords were missing. Added: `local`, `declare`, `typeset`, `readonly`, `export`, `integer`, `float` to the RESERVED_WORDS list in `builtin_type`. Test: `test_type_reserved_word_local_declare`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

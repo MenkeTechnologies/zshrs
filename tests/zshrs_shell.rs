@@ -6140,3 +6140,21 @@ fn test_empty_cmdsubst_no_command_not_found() {
         stderr
     );
 }
+
+#[test]
+fn test_type_reserved_word_local_declare() {
+    // zsh treats `local`, `declare`, `typeset`, `readonly`,
+    // `export`, `integer`, `float` as reserved-word declarations
+    // (precommand modifiers). `type local` should report
+    // "is a reserved word" not "is a shell builtin".
+    let (_, output, _) = run_zshrs("type local");
+    assert!(output.contains("reserved word"));
+    let (_, output, _) = run_zshrs("type declare");
+    assert!(output.contains("reserved word"));
+    let (_, output, _) = run_zshrs("type typeset");
+    assert!(output.contains("reserved word"));
+    let (_, output, _) = run_zshrs("type readonly");
+    assert!(output.contains("reserved word"));
+    let (_, output, _) = run_zshrs("type export");
+    assert!(output.contains("reserved word"));
+}
