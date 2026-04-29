@@ -1289,7 +1289,45 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `expand_string`'s var-name reader accepted `*` as a valid char ANYWHERE in an identifier, not just as a single-char special. So `$a*2` consumed `a*2` as one var name, looked up nonexistent `a*2`, returned empty. Then arith on `*2` gave 0. Gated `*`/`@`/`#`/`?` to only match as the FIRST char of var_name. Test: `test_arith_dollar_var_with_star`.
 
-## Still open (seventy-second-pass — remaining)
+## Closed (seventy-third-pass)
+
+### `local NAME` (no value) didn't reset to empty in function scope
+
+- `a=hi; foo() { local a; echo "[$a]"; }; foo` should print `[]` (zsh: local shadows with empty value, parent value restored on exit). zshrs preserved the parent value because my iter-66 "preserve existing" guard fired here too. Gated on `local_scope_depth > 0 && !is_global` — INSIDE a function, bare `local NAME`/`typeset NAME` always resets to empty. The local_save_stack already preserves the parent value for restore-on-exit. Tests: `test_local_no_value_resets_to_empty`, `test_typeset_no_value_resets_in_function_scope`, `test_typeset_g_keeps_parent_value`.
+
+### `${!var}` bash indirect accepted instead of rejected
+
+- `${!var}` is a bash extension that zsh emits "bad substitution" for; zsh's native indirect is `${(P)var}`. zshrs implemented bash semantics. Replaced the `${!name}` path (single-name form) with the zsh-format error. The `${!prefix*}` / `${!prefix@}` listing forms remain — zsh's behavior there is fuzzier and the test suite uses them. Test: `test_bash_indirect_expansion_rejected`.
+
+### Exit status not masked to 8 bits
+
+- POSIX/zsh: exit codes are taken mod 256. `(exit 256)` should yield `$? == 0`, `(exit 257)` → 1. zshrs returned the raw value. Added `(raw_code as u32) & 0xff` mask in `builtin_exit`. Tests: `test_exit_status_masked_to_byte`, `test_exit_status_257_wraps_to_one`.
+
+### `$((1#X))` and `$((37#5))` panicked instead of erroring
+
+- `i64::from_str_radix(s, base)` panics when base is outside [2, 36]. zshrs passed the user-supplied base directly without validation, panicking on `$((1#1))` and `$((37#5))`. Added `(2..=36).contains(&base)` check that emits zsh's "invalid base (must be 2 to 36 inclusive)" error and returns 0. Two sites in `math.rs`: the `N#value` form and the `[#base]` arith-format form. Tests: `test_arith_invalid_base_no_panic`, `test_arith_base_too_large_no_panic`.
+
+### `${(P):-test}` returned empty instead of "test"
+
+- The `(P)` flag dereferences the value as a parameter name. With `${(P):-test}`, var_name is empty so the default fires and returns "test" — but then `(P)` was applied to "test" which isn't a set var, returning empty. Track whether the default fired and skip the `Parameter` flag in that case (the default value IS the literal result, not a name to look up). Test: `test_param_paren_p_with_empty_name_default`.
+
+### `${#NAME:-default}` returned 0 (length of unset name) instead of 7
+
+- The `${#...}` length form didn't recognize the trailing `:-default` / `-default` modifiers — it just looked up the name and returned its length (0 when unset). Added a name-then-`:-`/`-` parser inside the length path that expands the default when needed and returns its char count. Tests: `test_length_of_default_unset`, `test_length_of_default_no_colon_unset`, `test_length_no_default_when_set`.
+
+### `${a::N}` empty-offset substring returned empty
+
+- `${a::N}` is shorthand for `${a:0:N}` (offset 0, length N). The substring branch's gate required the rest to start with a digit or `-`; `:` was rejected. Extended the gate to also accept a leading `:` (empty offset → 0). Test: `test_substring_empty_offset`.
+
+### `${a::-1}` negative length didn't truncate from end
+
+- Negative length means "skip last N chars". For `a=foo`, `${a::-1}` should be `fo`. zshrs cast negative length via `as usize` (saturating to 0 or huge), returning empty or full. Added explicit negative-length branch: end = total + len, take = end - start. Tests: `test_substring_negative_length`, `test_substring_neg_length_with_offset`.
+
+### `(@O)` / `(@o)` array-context flag in DQ partially supported
+
+- Added `ZshParamFlag::At` enum variant and `@` handling in `parse_zsh_flags`. The DQ-context flag-strip block now keeps array-only flags (Sort/Reverse/Unique/etc.) when `@` is explicitly present. Full DQ-with-`@` element-by-element splicing still needs more work; this iteration handles parsing + flag retention. (Full-suite verification: 512 tests green.)
+
+## Still open (seventy-third-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).

@@ -11275,7 +11275,13 @@ impl ShellExecutor {
                 // path returns the original element order. (M) stays
                 // — it modifies `:#pat` filter behavior on the
                 // joined scalar.
-                if self.in_dq_context > 0 {
+                // In DQ context, the array-only flags become no-ops on
+                // an unsplit scalar — UNLESS the user explicitly used
+                // the `@` array-context flag, which forces array
+                // semantics even inside DQ. zsh: `"${(@o)arr}"` sorts
+                // and splices each element as its own word.
+                let has_at_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::At));
+                if self.in_dq_context > 0 && !has_at_flag {
                     flags.retain(|f| !matches!(
                         f,
                         ZshParamFlag::Sort
@@ -11418,14 +11424,25 @@ impl ShellExecutor {
                 } else {
                     val.is_empty()
                 };
-                if needs_default {
+                let default_fired = if needs_default {
                     if let Some(def) = default_val {
                         val = self.expand_string(def);
+                        true
+                    } else {
+                        false
                     }
-                }
+                } else {
+                    false
+                };
 
-                // Apply flags in order
+                // Apply flags in order. Skip the (P) parameter-indirect
+                // flag when the default fired — zsh: `${(P):-test}` →
+                // `test` (the default is the literal result, not a
+                // parameter name to dereference).
                 for flag in &flags {
+                    if default_fired && matches!(flag, ZshParamFlag::Parameter) {
+                        continue;
+                    }
                     val = self.apply_zsh_param_flag(&val, var_name, flag);
                 }
                 return val;
@@ -11476,6 +11493,50 @@ impl ShellExecutor {
                     .get(rest)
                     .map(|h| h.len().to_string())
                     .unwrap_or_else(|| "0".to_string());
+            }
+            // `${#var:-default}` / `${#var-default}` — length of the
+            // var-or-default expansion. zsh: `${#NONEXIST:-default}` →
+            // 7 (length of "default"). Without this, zshrs always
+            // returned 0 because the `-default` text was passed
+            // through to get_variable and silently ignored.
+            // Detect the colon/dash form: identifier-then-`:-` or
+            // identifier-then-`-`.
+            let chars: Vec<char> = rest.chars().collect();
+            let mut name_end = 0usize;
+            let first_ok = chars.first().map(|c| c.is_alphabetic() || *c == '_').unwrap_or(false);
+            if first_ok {
+                while name_end < chars.len()
+                    && (chars[name_end] == '_' || chars[name_end].is_ascii_alphanumeric())
+                {
+                    name_end += 1;
+                }
+                if name_end > 0 && name_end < chars.len() {
+                    let next = chars[name_end];
+                    let after = &chars[name_end..];
+                    let (op_len, dash_kind) = if after.starts_with(&[':', '-']) {
+                        (2, Some(false))   // :-, fires on empty OR unset
+                    } else if next == '-' {
+                        (1, Some(true))    // -, fires on unset only
+                    } else {
+                        (0, None)
+                    };
+                    if let Some(unset_only) = dash_kind {
+                        let var_name: String = chars[..name_end].iter().collect();
+                        let default_text: String = chars[name_end + op_len..].iter().collect();
+                        let val = self.get_variable(&var_name);
+                        let var_is_set = self.variables.contains_key(&var_name)
+                            || self.arrays.contains_key(&var_name)
+                            || self.assoc_arrays.contains_key(&var_name)
+                            || std::env::var(&var_name).is_ok();
+                        let needs_default = if unset_only { !var_is_set } else { val.is_empty() };
+                        let final_val = if needs_default {
+                            self.expand_string(&default_text)
+                        } else {
+                            val
+                        };
+                        return final_val.chars().count().to_string();
+                    }
+                }
             }
             // ${#var} - string char length (NOT byte length, so unicode
             // counts as 1 char each — `${#héllo}` should be 5, not 6).
@@ -11805,17 +11866,25 @@ impl ShellExecutor {
                 // space) means substring with offset -3, NOT default-if-
                 // unset (`${v:-3}`). Detect leading whitespace and
                 // skip past it before the digit-or-dash check.
+                // Also fire on `${v::N}` (empty offset, length N) so
+                // the substring path runs with offset=0. Without that,
+                // `${a::1}` returned empty.
                 let stripped = rest.trim_start_matches(' ');
-                stripped
-                    .chars()
-                    .next()
-                    .map(|c| c.is_ascii_digit() || c == '-')
+                let next = stripped.chars().next();
+                let is_empty_offset = stripped.starts_with(':');
+                next.map(|c| c.is_ascii_digit() || c == '-')
                     .unwrap_or(false)
+                    || is_empty_offset
             } {
-                // ${var:offset} or ${var:offset:length}
+                // ${var:offset} or ${var:offset:length} — also accepts
+                // ${var::length} (empty offset → 0).
                 let rest_trimmed = rest.trim_start_matches(' ');
                 let parts: Vec<&str> = rest_trimmed.splitn(2, ':').collect();
-                let offset: i64 = parts[0].trim().parse().unwrap_or(0);
+                let offset: i64 = if parts[0].trim().is_empty() {
+                    0
+                } else {
+                    parts[0].trim().parse().unwrap_or(0)
+                };
                 let length: Option<i64> = parts.get(1).and_then(|s| s.trim().parse().ok());
 
                 // Positionals (`@`/`*`) and arrays slice ELEMENTS,
@@ -11838,8 +11907,18 @@ impl ShellExecutor {
                 };
 
                 return if let Some(len) = length {
-                    let len = len as usize;
-                    val.chars().skip(start).take(len).collect()
+                    if len < 0 {
+                        // Negative length: take all chars from start
+                        // up to (total - |len|) — `${a::-1}` skips the
+                        // last char. zsh's bash-compat behavior.
+                        let total = val.chars().count();
+                        let end = (total as i64 + len).max(start as i64) as usize;
+                        let take = end.saturating_sub(start);
+                        val.chars().skip(start).take(take).collect()
+                    } else {
+                        let len = len as usize;
+                        val.chars().skip(start).take(len).collect()
+                    }
                 } else {
                     val.chars().skip(start).collect()
                 };
@@ -12116,6 +12195,10 @@ impl ShellExecutor {
         // Handle ${!prefix*} and ${!prefix@} - expand to variable names with prefix
         if content.starts_with('!') {
             let rest = &content[1..];
+            // `${!prefix*}` and `${!prefix@}` — list variable names
+            // matching prefix. THIS one is bash-only too BUT zsh
+            // accepts it as `${(k)var}`-style; keep working until a
+            // clearer divergence test forces a stricter gate.
             if rest.ends_with('*') || rest.ends_with('@') {
                 let prefix = &rest[..rest.len() - 1];
                 let mut matches: Vec<String> = self
@@ -12134,9 +12217,12 @@ impl ShellExecutor {
                 return matches.join(" ");
             }
 
-            // ${!var} - indirect expansion
-            let var_name = self.get_variable(rest);
-            return self.get_variable(&var_name);
+            // ${!var} bash-style indirect expansion is NOT a valid zsh
+            // form — zsh emits "bad substitution". The zsh-native indirect
+            // is `${(P)var}`. zshrs previously implemented bash semantics;
+            // align with zsh by emitting the error.
+            eprintln!("zshrs:1: bad substitution");
+            return String::new();
         }
 
         // Default: just get the variable
@@ -13813,6 +13899,7 @@ impl ShellExecutor {
 
         while let Some(c) = chars.next() {
             match c {
+                '@' => flags.push(ZshParamFlag::At),
                 'L' => flags.push(ZshParamFlag::Lower),
                 'U' => flags.push(ZshParamFlag::Upper),
                 'C' => flags.push(ZshParamFlag::Capitalize),
@@ -13984,6 +14071,10 @@ impl ShellExecutor {
     /// Apply a single zsh parameter expansion flag
     fn apply_zsh_param_flag(&self, val: &str, name: &str, flag: &ZshParamFlag) -> String {
         match flag {
+            // `@` is a context marker (force array semantics in DQ),
+            // not a value transform. It's already consumed at the
+            // flag-strip stage above; here it's a no-op pass-through.
+            ZshParamFlag::At => val.to_string(),
             ZshParamFlag::Lower => val.to_lowercase(),
             ZshParamFlag::Upper => val.to_uppercase(),
             ZshParamFlag::Capitalize => val
@@ -15426,10 +15517,15 @@ impl ShellExecutor {
     }
 
     fn builtin_exit(&mut self, args: &[String]) -> i32 {
-        let code = args
+        let raw_code = args
             .first()
             .and_then(|s| s.parse::<i32>().ok())
             .unwrap_or(self.last_status);
+        // POSIX/zsh: exit status is masked to 8 bits — `exit 256`
+        // becomes 0, `exit 257` becomes 1. Without this, zshrs
+        // reported the raw value (256 etc.) which couldn't be matched
+        // by `$?` checks against the byte range.
+        let code = ((raw_code as u32) & 0xff) as i32;
         // Inside a subshell `(...)` the shell hasn't forked, so a real
         // `process::exit` would tear down the parent. zsh semantics:
         // `(exit N)` exits the subshell only. Track the snapshot stack
@@ -16584,10 +16680,28 @@ impl ShellExecutor {
                 self.variables.insert(arg.clone(), String::new());
             } else {
                 // `typeset NAME` (no `=value`) attaches attributes to an
-                // existing variable WITHOUT clobbering its value. zsh:
-                // `a=hello; typeset -x a` keeps `a=hello` and adds export.
-                // Without this guard, zshrs reset `a` to empty.
-                if !self.variables.contains_key(arg.as_str())
+                // existing variable WITHOUT clobbering its value at the
+                // GLOBAL scope. zsh: `a=hello; typeset -x a` keeps the
+                // existing `a=hello` and adds export. Without this guard,
+                // zshrs reset `a` to empty.
+                //
+                // INSIDE A FUNCTION SCOPE, however, a bare `local NAME`
+                // (or `typeset NAME` — they share this code path)
+                // SHADOWS the parent value with a fresh empty binding.
+                // zsh: `a=hi; foo() { local a; echo "[$a]"; }; foo` →
+                // prints `[]`. The pre-loop save into local_save_stack
+                // already preserved the parent value for the function
+                // exit; here we just need to clear the live storage.
+                let in_function = self.local_scope_depth > 0 && !is_global;
+                if in_function {
+                    self.variables.insert(arg.clone(), String::new());
+                    // Also remove any lingering array/assoc binding so
+                    // the local NAME starts genuinely fresh; the old
+                    // values are restored on function exit via the
+                    // local_*_save_stacks.
+                    self.arrays.remove(arg.as_str());
+                    self.assoc_arrays.remove(arg.as_str());
+                } else if !self.variables.contains_key(arg.as_str())
                     && !self.arrays.contains_key(arg.as_str())
                     && !self.assoc_arrays.contains_key(arg.as_str())
                 {

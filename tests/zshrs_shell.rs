@@ -4925,3 +4925,131 @@ fn test_arith_dollar_var_with_star() {
     let (_, output, _) = run_zshrs(r#"a=10; echo $(($a*2))"#);
     assert_eq!(output.trim(), "20");
 }
+
+#[test]
+fn test_local_no_value_resets_to_empty() {
+    // `a=hi; foo() { local a; echo "[$a]"; }; foo` — local should
+    // shadow with EMPTY value, not parent's value. Regression: zshrs
+    // preserved the parent value because the no-value typeset path
+    // was set to "preserve existing".
+    let (_, output, _) = run_zshrs(
+        r#"a=hi; foo() { local a; echo "in[$a]"; }; foo; echo "out[$a]""#,
+    );
+    assert_eq!(output.trim(), "in[]\nout[hi]");
+}
+
+#[test]
+fn test_typeset_no_value_resets_in_function_scope() {
+    // Same behavior for `typeset` (which `local` aliases to).
+    let (_, output, _) = run_zshrs(
+        r#"a=hi; foo() { typeset a; echo "in[$a]"; }; foo; echo "out[$a]""#,
+    );
+    assert_eq!(output.trim(), "in[]\nout[hi]");
+}
+
+#[test]
+fn test_typeset_g_keeps_parent_value() {
+    // `typeset -g` opts out of localization — should keep parent value
+    // (regression guard for the local-resets fix).
+    let (_, output, _) = run_zshrs(
+        r#"a=hi; foo() { typeset -g a; echo "in[$a]"; }; foo; echo "out[$a]""#,
+    );
+    assert_eq!(output.trim(), "in[hi]\nout[hi]");
+}
+
+#[test]
+fn test_bash_indirect_expansion_rejected() {
+    // `${!var}` is a bash-only indirect. zsh emits "bad substitution".
+    // Regression: zshrs implemented bash semantics.
+    let (_, _, stderr) = run_zshrs(r#"a=hi; echo "${!a}""#);
+    assert!(
+        stderr.contains("bad substitution"),
+        "expected bad substitution: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_exit_status_masked_to_byte() {
+    // POSIX: exit codes are 8-bit. `(exit 256)` → `$?` of 0.
+    let (_, output, _) = run_zshrs(r#"(exit 256); echo $?"#);
+    assert_eq!(output.trim(), "0");
+}
+
+#[test]
+fn test_exit_status_257_wraps_to_one() {
+    let (_, output, _) = run_zshrs(r#"(exit 257); echo $?"#);
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn test_arith_invalid_base_no_panic() {
+    // `$((1#X))` with base out of [2, 36] should error (NOT panic).
+    // Regression: i64::from_str_radix panicked on base 1.
+    let (_, _, stderr) = run_zshrs(r#"echo $((1#1))"#);
+    assert!(
+        stderr.contains("invalid base"),
+        "expected invalid-base err: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_arith_base_too_large_no_panic() {
+    let (_, _, stderr) = run_zshrs(r#"echo $((37#5))"#);
+    assert!(
+        stderr.contains("invalid base"),
+        "expected invalid-base err: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_param_paren_p_with_empty_name_default() {
+    // `${(P):-test}` — flag with empty name, default fires. The default
+    // is the literal result; P should NOT dereference it. Regression:
+    // zshrs applied P to "test" and returned empty.
+    let (_, output, _) = run_zshrs(r#"echo "${(P):-test}""#);
+    assert_eq!(output.trim(), "test");
+}
+
+#[test]
+fn test_length_of_default_unset() {
+    // `${#NONEXIST:-default}` returns 7 (length of "default"), not 0.
+    let (_, output, _) = run_zshrs(r#"echo ${#NONEXIST:-default}"#);
+    assert_eq!(output.trim(), "7");
+}
+
+#[test]
+fn test_length_of_default_no_colon_unset() {
+    // `${#NONEXIST-default}` (no colon) — same length-of-default form.
+    let (_, output, _) = run_zshrs(r#"echo ${#NONEXIST-default}"#);
+    assert_eq!(output.trim(), "7");
+}
+
+#[test]
+fn test_length_no_default_when_set() {
+    // Regression guard: when var is set, return its length, not the
+    // default's. `a=hi` → 2, NOT 7.
+    let (_, output, _) = run_zshrs(r#"a=hi; echo ${#a-default}"#);
+    assert_eq!(output.trim(), "2");
+}
+
+#[test]
+fn test_substring_empty_offset() {
+    // `${a::N}` is shorthand for `${a:0:N}`. Was returning empty.
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "${a::1}""#);
+    assert_eq!(output.trim(), "f");
+}
+
+#[test]
+fn test_substring_negative_length() {
+    // `${a::-1}` — negative length means "skip last N chars". `foo`
+    // skip last 1 → `fo`.
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "${a::-1}""#);
+    assert_eq!(output.trim(), "fo");
+}
+
+#[test]
+fn test_substring_neg_length_with_offset() {
+    // `${a:1:-1}` for `hello` → "ell" (skip first 1 + last 1).
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "${a:1:-1}""#);
+    assert_eq!(output.trim(), "ell");
+}
