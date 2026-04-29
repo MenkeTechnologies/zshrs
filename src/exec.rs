@@ -5051,6 +5051,59 @@ impl ZshrsHost {
 /// ${arr[@]}` with `arr=(x y z)` would receive a single space-joined arg
 /// `"x y z"` instead of three separate args.
 #[inline]
+/// Detect `name[idx]=rhs` (or `name[idx]+=rhs`, etc.) at the start of
+/// an arith expression. Returns (name, idx_expr, rhs). Used by
+/// `eval_arith_expr` to handle `((a[i]=expr))` — the regular pre-
+/// resolve pass would substitute a[i] with its current value first,
+/// turning the expression into `0=42` which is invalid.
+fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String, String)> {
+    let trimmed = expr.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut i = 1;
+    while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+        i += 1;
+    }
+    let name = trimmed[..i].to_string();
+    if i >= bytes.len() || bytes[i] != b'[' {
+        return None;
+    }
+    let idx_start = i + 1;
+    let mut depth = 1;
+    let mut j = idx_start;
+    while j < bytes.len() && depth > 0 {
+        match bytes[j] {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 { break; }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if j >= bytes.len() {
+        return None;
+    }
+    let idx_expr = trimmed[idx_start..j].to_string();
+    // Skip ]
+    let mut k = j + 1;
+    while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+        k += 1;
+    }
+    if k >= bytes.len() || bytes[k] != b'=' {
+        return None;
+    }
+    // Reject `==` and `=~` (comparison/regex, not assignment).
+    if k + 1 < bytes.len() && (bytes[k + 1] == b'=' || bytes[k + 1] == b'~') {
+        return None;
+    }
+    let rhs = trimmed[k + 1..].trim().to_string();
+    Some((name, idx_expr, rhs))
+}
+
 /// Strip Rust's "(os error N)" suffix from an io::Error display so
 /// the message matches BSD/GNU coreutils' output (e.g. zsh's bundled
 /// cat/head emit `cat: foo: No such file or directory`, not
@@ -13832,6 +13885,36 @@ impl ShellExecutor {
         } else {
             expr.to_string()
         };
+        // Subscripted-array arith assignment: `((a[i]=expr))`. Without
+        // this special case, pre_resolve_array_subscripts would
+        // substitute a[i] with its current value (`0=42` → invalid).
+        if let Some((name, idx_expr, rhs)) = parse_subscript_arith_assign(&expr) {
+            let idx_val = self.eval_arith_expr(&idx_expr);
+            let rhs_val = self.eval_arith_expr(&rhs);
+            if let Some(arr) = self.arrays.get_mut(&name) {
+                let i_pos = if idx_val < 0 {
+                    arr.len() as i64 + idx_val
+                } else {
+                    idx_val - 1
+                };
+                if i_pos >= 0 {
+                    let pos = i_pos as usize;
+                    if pos >= arr.len() {
+                        arr.resize(pos + 1, "0".to_string());
+                    }
+                    arr[pos] = rhs_val.to_string();
+                }
+            } else if let Some(map) = self.assoc_arrays.get_mut(&name) {
+                map.insert(idx_val.to_string(), rhs_val.to_string());
+            } else {
+                let mut arr: Vec<String> = Vec::new();
+                let i_pos = if idx_val < 0 { 0 } else { (idx_val - 1).max(0) as usize };
+                arr.resize(i_pos + 1, "0".to_string());
+                arr[i_pos] = rhs_val.to_string();
+                self.arrays.insert(name, arr);
+            }
+            return rhs_val.to_string();
+        }
         let expr = self.pre_resolve_array_subscripts(&expr);
         let force_float = self.options.get("forcefloat").copied().unwrap_or(false);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
@@ -13870,6 +13953,41 @@ impl ShellExecutor {
         } else {
             expr.to_string()
         };
+        // Subscripted-array arith assignment: `((a[i]=expr))`. The
+        // pre_resolve_array_subscripts pass below substitutes a[i]
+        // with the current value (e.g. 0=42 → invalid). Detect the
+        // assignment LHS first, evaluate the RHS, write to arrays.
+        if let Some((name, idx_expr, rhs)) = parse_subscript_arith_assign(&expr_expanded) {
+            // Evaluate the index (could itself be an expression).
+            let idx_val = self.eval_arith_expr(&idx_expr);
+            // Evaluate the RHS.
+            let rhs_val = self.eval_arith_expr(&rhs);
+            // Write back: arrays for numeric idx, assoc otherwise.
+            if let Some(arr) = self.arrays.get_mut(&name) {
+                let i_pos = if idx_val < 0 {
+                    arr.len() as i64 + idx_val
+                } else {
+                    idx_val - 1
+                };
+                if i_pos >= 0 {
+                    let pos = i_pos as usize;
+                    if pos >= arr.len() {
+                        arr.resize(pos + 1, "0".to_string());
+                    }
+                    arr[pos] = rhs_val.to_string();
+                }
+            } else if let Some(map) = self.assoc_arrays.get_mut(&name) {
+                map.insert(idx_val.to_string(), rhs_val.to_string());
+            } else {
+                // Auto-create indexed array.
+                let mut arr: Vec<String> = Vec::new();
+                let i_pos = if idx_val < 0 { 0 } else { (idx_val - 1).max(0) as usize };
+                arr.resize(i_pos + 1, "0".to_string());
+                arr[i_pos] = rhs_val.to_string();
+                self.arrays.insert(name, arr);
+            }
+            return rhs_val;
+        }
         let expr_expanded = self.pre_resolve_array_subscripts(&expr_expanded);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);

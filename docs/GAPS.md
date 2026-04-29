@@ -976,7 +976,21 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - Rust's `io::Error` display appends `(os error N)` by default. zsh's bundled coreutils emit just the friendly message (`No such file or directory`). Added `pretty_io_err(&io::Error) -> String` helper that strips ` (os error` and everything after; wired into `cat`/`head`/`tail`/`wc` error sites. Test: `test_coreutils_error_msg_strips_os_error_suffix`.
 
-## Still open (fifty-fifth-pass — remaining)
+## Closed (fifty-sixth-pass — `((a[i]=v))` subscripted arith assignment)
+
+### `((a[2]=42))` left the array unchanged
+
+- Both runtime arith paths (`evaluate_arithmetic` for `$(())` and `compile_arith` → `ArithCompiler` for `(())`) ran `pre_resolve_array_subscripts` first, which substitutes `a[2]` with the current value (`0`). Result: arith engine saw `0=42` (invalid). The non-subscripted `a=42` path worked because no pre-resolve was needed.
+- Added `parse_subscript_arith_assign(expr)` helper that detects `name[idx]=rhs` (rejecting `==` / `=~`). When matched: eval the index, eval the RHS, write back via `arrays.get_mut` (or `assoc_arrays.get_mut`, with auto-resize). Wired into `evaluate_arithmetic`.
+- For compound `(())`, `compile_arith` now untokenizes the lexer-wrapped expr, strips outer parens, runs the same check via `subscripted_arith_assign_check`, and routes to `BUILTIN_ARITH_EVAL` instead of `ArithCompiler` (which has no array-write hook). Test: `test_arith_subscripted_array_assign`.
+
+### Deferred — `nocorrect` precommand
+
+- `echo step1; nocorrect echo hi; echo step3` only runs `echo step1` — the parser (the unmodifiable direct port of zsh's C parser) drops everything after `;` once `nocorrect` appears as a command name. zsh handles `nocorrect` as a precommand modifier in its lexer/parser via `lexflags.dbparens` / `incmdpos` machinery. zshrs's port has the field but no behavior. Stripping `nocorrect` in `compile_simple` doesn't help because the parser already lost the rest of the line. Documented as deferred — needs lexer-side handling.
+
+## Still open (fifty-sixth-pass — remaining)
+
+- **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.

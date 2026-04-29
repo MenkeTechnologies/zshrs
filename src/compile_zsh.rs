@@ -488,7 +488,7 @@ impl ZshCompiler {
         let untoked_first0 = crate::lexer::untokenize(&simple.words[0]);
         if untoked_first0 == "noglob" && simple.words.len() > 1 {
             let inner = ZshSimple {
-                assigns: Vec::new(),
+                assigns: simple.assigns.clone(),
                 words: simple.words[1..].to_vec(),
                 redirs: simple.redirs.clone(),
             };
@@ -2278,6 +2278,29 @@ impl ZshCompiler {
 
     fn compile_arith(&mut self, expr: &str) {
         // Compound `(( expr ))` — set status based on whether expr is non-zero.
+        // Subscripted-array assignment (`((a[i]=v))`) needs to bypass
+        // ArithCompiler (which doesn't write back through arr[idx])
+        // and use the runtime arith eval that we taught about
+        // subscripted-array writes.
+        let untoked = crate::lexer::untokenize(expr);
+        // Strip leading/trailing `(` and `)` from the lexer's wrapper —
+        // `(( a[i]=v ))` arrives here with parens still attached.
+        let inner_arith_owned = untoked.trim_start_matches('(').trim_end_matches(')').trim().to_string();
+        let inner_arith = inner_arith_owned.as_str();
+        if subscripted_arith_assign_check(inner_arith) {
+            let idx_const = self.builder.add_constant(Value::str(inner_arith));
+            self.builder.emit(Op::LoadConst(idx_const), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
+            // Status is 0 (truthy assignment) per zsh — `((a[i]=42))` is
+            // success unless rhs is 0.
+            self.builder.emit(Op::LoadInt(0), 0);
+            self.builder.emit(Op::SetStatus, 0);
+            return;
+        }
         self.compile_arith_str(expr);
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::NumNe, 0);
@@ -3256,6 +3279,49 @@ fn braced_subscript_dynamic_ref(s: &str) -> Option<(&str, &str)> {
 /// form. Both expand to the array's elements as separate words; the
 /// distinction with quoted forms is handled by the for-list / WORD_SPLIT
 /// logic, not here.
+/// True iff `expr` is a subscripted-array arith assignment — used by
+/// compile_arith to bypass ArithCompiler (which doesn't write back to
+/// arr[idx]) for `((a[i]=v))` and route to the runtime eval which
+/// handles the write correctly.
+fn subscripted_arith_assign_check(expr: &str) -> bool {
+    let trimmed = expr.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
+        return false;
+    }
+    let mut i = 1;
+    while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'[' {
+        return false;
+    }
+    let mut depth = 1;
+    let mut j = i + 1;
+    while j < bytes.len() && depth > 0 {
+        match bytes[j] {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 { break; }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if j >= bytes.len() {
+        return false;
+    }
+    let mut k = j + 1;
+    while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+        k += 1;
+    }
+    if k >= bytes.len() || bytes[k] != b'=' {
+        return false;
+    }
+    !(k + 1 < bytes.len() && (bytes[k + 1] == b'=' || bytes[k + 1] == b'~'))
+}
+
 fn array_splice_ref(s: &str) -> Option<&str> {
     for sub in &["[@]}", "[*]}"] {
         if let Some(rest) = s.strip_suffix(sub) {
