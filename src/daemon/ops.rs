@@ -53,6 +53,16 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "publish" => op_publish(state, client_id, args).await,
         "fpath_changed" => op_fpath_changed(state, args).await,
         "watcher_stats" => op_watcher_stats(state).await,
+        "push_canonical" => super::zsync::op_push_canonical(state, client_id, args).await,
+        "pull_canonical" => super::zsync::op_pull_canonical(state, args).await,
+        "diff_canonical" => super::zsync::op_diff_canonical(state, args).await,
+        "view" => super::export::op_view(state, args).await,
+        "export" => super::export::op_export(state, args).await,
+        "ask_ask" => super::zask::op_ask_ask(state, client_id, args).await,
+        "ask_pending" => super::zask::op_ask_pending(state, client_id, args).await,
+        "ask_take" => super::zask::op_ask_take(state, client_id, args).await,
+        "ask_dismiss" => super::zask::op_ask_dismiss(state, client_id, args).await,
+        "ask_response" => super::zask::op_ask_response(state, args).await,
 
         // Stubs — all return unimplemented. Filling in is later-iteration work.
         "stats_flush"
@@ -62,9 +72,6 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         | "highlight"
         | "keys"
         | "load_script"
-        | "push_canonical"
-        | "pull_canonical"
-        | "diff_canonical"
         | "export_zcompdump"
         | "export_catalog"
         | "export_shard"

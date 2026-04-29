@@ -93,6 +93,7 @@ pub struct DaemonState {
     catalog: Mutex<Connection>,
     history_db: Mutex<Connection>,
     pub fs_watcher: Arc<super::fsnotify::FsWatcher>,
+    pub ask_inbox: Arc<super::zask::AskInbox>,
     pub paths: CachePaths,
     pub started_at: Instant,
     pub start_wall: chrono::DateTime<chrono::Utc>,
@@ -104,11 +105,13 @@ impl DaemonState {
         let catalog = catalog::open(&paths)?;
         let history_db = history::open(&paths)?;
         let fs_watcher = Arc::new(super::fsnotify::FsWatcher::new());
+        let ask_inbox = super::zask::AskInbox::new();
         Ok(Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
             catalog: Mutex::new(catalog),
             history_db: Mutex::new(history_db),
             fs_watcher,
+            ask_inbox,
             paths,
             started_at: Instant::now(),
             start_wall: chrono::Utc::now(),
@@ -191,10 +194,14 @@ impl DaemonState {
     }
 
     pub fn unregister_session(&self, client_id: u64) {
-        let mut g = self.inner.lock();
-        g.sessions.remove(&client_id);
-        // Drop every subscription belonging to this client.
-        g.subscriptions.retain(|_, s| s.client_id != client_id);
+        {
+            let mut g = self.inner.lock();
+            g.sessions.remove(&client_id);
+            // Drop every subscription belonging to this client.
+            g.subscriptions.retain(|_, s| s.client_id != client_id);
+        }
+        // Also drop any pending zask requests targeting this disconnected shell.
+        self.ask_inbox.drop_for_shell(client_id);
     }
 
     /// Add a subscription. Returns the assigned subscription id, or None if the
