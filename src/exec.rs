@@ -9796,8 +9796,15 @@ impl ShellExecutor {
         &self,
         files: &[String],
     ) -> HashMap<String, (Option<std::fs::Metadata>, Option<std::fs::Metadata>)> {
-        if files.len() < 32 {
-            // Small list — serial stat is faster than channel overhead
+        // After fork(), the worker pool's threads don't survive (POSIX:
+        // only the calling thread persists). Pipeline children would
+        // submit work that never gets picked up, blocking forever or
+        // returning empty. Detect via pid mismatch with the original
+        // main pid; use serial when forked.
+        let in_forked_child = crate::signals::is_forked_child();
+        if files.len() < 32 || in_forked_child {
+            // Small list OR forked child — serial stat is the only
+            // safe path.
             return files
                 .iter()
                 .map(|f| {

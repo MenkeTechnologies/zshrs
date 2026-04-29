@@ -895,7 +895,14 @@ Tests: `test_dot_glob_excludes_dot_and_dotdot`, `test_star_glob_excludes_dotfile
 
 - The `[[ s =~ $pat ]]` compile path emitted the RHS as a LoadConst literal (skipping `compile_word_str`'s expansion to avoid filesystem-glob expansion of pattern chars). That meant `$pat` reached the regex engine as the literal string `$pat` instead of its value, so the match always failed. Carved out `=~` separately: wrap the RHS in DQ markers (`\u{9e}…\u{9e}`) and route through `compile_word_str` so variable / cmd-subst / arith expansion fires. The DQ wrapper suppresses brace expansion + filesystem globbing — the test runtime treats the result as a regex pattern. Tests: `test_cond_regex_with_variable`, `test_cond_regex_with_capture_groups`.
 
-## Still open (forty-sixth-pass — remaining)
+## Closed (forty-seventh-pass — glob qualifier in pipeline child)
+
+### `echo *(N) | wc -w` returned 0 in pipeline (zsh: file count)
+
+- `expand_glob`'s parallel `prefetch_metadata` submits stat() jobs to a worker pool, but the pool's threads don't survive `fork()` (POSIX: only the calling thread persists). The pipeline child stage forked, then submitted work that nobody picked up — the rx loop blocked indefinitely OR the channel returned empty, depending on timing. Net effect: every glob with `>=32` matches in a pipeline stage produced empty output.
+- Added `signals::is_forked_child()`: lazy-init MAIN_PID on first call, then compare current pid. Pre-warmed in `zshrs_main()` so the parent's pid is captured before any pipeline forks. `prefetch_metadata` now takes the serial stat path whenever `is_forked_child()` returns true. Test: `test_glob_qualifier_in_pipeline_child`.
+
+## Still open (forty-seventh-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
