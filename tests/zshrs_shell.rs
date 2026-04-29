@@ -2955,3 +2955,36 @@ fn test_printf_q_safe_word_unquoted() {
     let (_, output, _) = run_zshrs(r#"printf "%q\n" hello"#);
     assert_eq!(output.trim(), "hello", "got: {output:?}");
 }
+
+#[test]
+fn test_arith_bitwise_not() {
+    // $((~0)) should evaluate as bitwise NOT (-1), not tilde-expand.
+    let (_, output, _) = run_zshrs("echo $((~0))");
+    assert_eq!(output.trim(), "-1", "got: {output:?}");
+}
+
+#[test]
+fn test_arith_bitwise_not_in_expr() {
+    let (_, output, _) = run_zshrs("a=5; echo $((~a + 6))");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}
+
+#[test]
+fn test_arith_dollar_var_still_works() {
+    // Sanity: regression check that $var inside arith still expands.
+    let (_, output, _) = run_zshrs("a=10; echo $(($a + 5))");
+    assert_eq!(output.trim(), "15", "got: {output:?}");
+}
+
+#[test]
+fn test_strip_pattern_expands_dollar_var() {
+    // ${s%$ext} should expand $ext before applying strip.
+    let (_, output, _) = run_zshrs(r#"s=foo.bar; ext=.bar; echo "${s%$ext}""#);
+    assert_eq!(output.trim(), "foo", "got: {output:?}");
+}
+
+#[test]
+fn test_strip_long_pattern_expands() {
+    let (_, output, _) = run_zshrs(r#"s=path/file; pre="path/"; echo "${s##$pre}""#);
+    assert_eq!(output.trim(), "file", "got: {output:?}");
+}

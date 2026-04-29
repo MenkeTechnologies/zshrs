@@ -4360,8 +4360,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // existing glob_match_static helper.
     vm.register_builtin(BUILTIN_PARAM_STRIP, |vm, _argc| {
         let op = vm.pop().to_int() as u8;
-        let pattern = vm.pop().to_str();
+        let pattern_raw = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
+        // expands these before applying the strip. Was emitted as-is.
+        let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
         let val = with_executor(|exec| exec.get_variable(&name));
         let result = match op {
             0 => {
@@ -13241,7 +13244,15 @@ impl ShellExecutor {
     }
 
     fn evaluate_arithmetic(&mut self, expr: &str) -> String {
-        let expr = self.expand_string(expr);
+        // Only run expand_string when the expression has `$` (for
+        // var/cmd-subst/nested-arith). Otherwise pass through —
+        // expand_string would tilde-expand `~` (bitwise NOT in arith
+        // context) into "no such user" errors.
+        let expr = if expr.contains('$') || expr.contains('`') {
+            self.expand_string(expr)
+        } else {
+            expr.to_string()
+        };
         let expr = self.pre_resolve_array_subscripts(&expr);
         let force_float = self.options.get("forcefloat").copied().unwrap_or(false);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
@@ -13275,7 +13286,11 @@ impl ShellExecutor {
     }
 
     fn eval_arith_expr(&mut self, expr: &str) -> i64 {
-        let expr_expanded = self.expand_string(expr);
+        let expr_expanded = if expr.contains('$') || expr.contains('`') {
+            self.expand_string(expr)
+        } else {
+            expr.to_string()
+        };
         let expr_expanded = self.pre_resolve_array_subscripts(&expr_expanded);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
@@ -13298,7 +13313,11 @@ impl ShellExecutor {
     }
 
     fn eval_arith_expr_float(&mut self, expr: &str) -> f64 {
-        let expr_expanded = self.expand_string(expr);
+        let expr_expanded = if expr.contains('$') || expr.contains('`') {
+            self.expand_string(expr)
+        } else {
+            expr.to_string()
+        };
         let expr_expanded = self.pre_resolve_array_subscripts(&expr_expanded);
         let force_float = self.options.get("forcefloat").copied().unwrap_or(false);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);

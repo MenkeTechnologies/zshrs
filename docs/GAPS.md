@@ -681,7 +681,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was using single-quote wrapping (bash semantics). zsh's `%q` matches `${(q)}` flag — backslash-escape shell-special chars. Updated both `printf_format_count`'s `'q'` branch and `builtin_printf`'s `'q'` branch. Tests: `test_printf_q_uses_backslash_quoting`, `test_printf_q_safe_word_unquoted`.
 
-## Still open (twenty-fifth-pass — remaining)
+## Closed (twenty-sixth-pass — `$((~N))` bit-NOT + `${s%$var}` strip expansion)
+
+### `$((~N))` bitwise NOT no longer mistriggers tilde expansion
+
+- The arith evaluator unconditionally ran `expand_string` on the expression text. For `$((~0))`, expand_string treated leading `~` as tilde-name (`~0` → "no such user: 0" fatal). Three eval entry points (`evaluate_arithmetic`, `eval_arith_expr`, `eval_arith_expr_float`) now skip `expand_string` when the expression has no `$` or `` ` `` (no var/cmd-subst/nested-arith to resolve). MathEval handles bare `$NAME`-less arith on its own. Tests: `test_arith_bitwise_not`, `test_arith_bitwise_not_in_expr`, `test_arith_dollar_var_still_works`.
+
+### `${s%$var}` / `${s##$var}` — expand `$var` in strip pattern
+
+- Same shape as the prior fix to `${var/$pat/}`: pattern operand was emitted literally. `BUILTIN_PARAM_STRIP` now runs `expand_string` on the pattern before glob-matching. Tests: `test_strip_pattern_expands_dollar_var`, `test_strip_long_pattern_expands`.
+
+## Still open (twenty-sixth-pass — remaining)
 
 (none — all probed gaps closed)
 - **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).
