@@ -784,7 +784,27 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - After `getopts ab:c` consumed `-b X`, the arg-fetch branch advanced OPTIND by 2 but the bottom of the function unconditionally overwrote it back to `optind + 1`, leaving OPTIND on `X` instead of `-c`. Refactored the takes_arg branch to compute `(arg, advance)` once and apply at the end. Also clear OPTARG when an option doesn't take one (was leaking the previous arg's value into the next iteration). Test: `test_getopts_stops_after_arg_taking_option`.
 
-## Still open (thirty-third-pass — remaining)
+## Closed (thirty-fourth-pass — set -u + default, (#) char-code, (n) natural sort, subshell env isolation)
+
+### `set -u; echo "${var:-fb}"` aborted with "parameter not set"
+
+- BUILTIN_PARAM_DEFAULT_FAMILY called `get_variable(name)` which honors `nounset` and exits 1 before the modifier got a chance to provide the default. The whole point of `${var:-fb}`, `${var-fb}`, `${var:+alt}`, `${var+alt}` is to handle missing values; the lookup must be silent. Save/restore `nounset` + `unset` options around the get_variable call. Test: `test_set_u_with_default_modifier_does_not_abort`.
+
+### `${(#)val}` char-code flag (arith → character)
+
+- The `'#'` arm was missing from BUILTIN_PARAM_FLAG entirely; `${(#)65}` returned `65` instead of `"A"`. Added: arith-eval each element, output the char with that code point. Distinct from `${#name}` (length) which is parsed as the LENGTH op upstream. Test: `test_param_flag_pound_arith_to_char`. Also fixed an existing test in `tests/no_tree_walker_dispatch.rs` (`zshflag_array_length_via_pound`) that incorrectly expected `${(#)arr}` to mean array length — it's char-code, not length.
+
+### `(n)` natural sort: `file2 < file10 < file20`
+
+- Previous impl was `f64::parse()` per-element, which returned 0.0 for all `file*` strings and left the array order untouched. Wrote a `natural_cmp(a, b)` helper that walks both strings in parallel, treating runs of digits as integer chunks (length-then-byte-cmp, with leading-zero tiebreak). Test: `test_param_flag_n_natural_sort`.
+
+### `(export y=v)` in subshell leaked `y` to the parent shell
+
+- zshrs runs `(...)` subshells in-process for perf (no fork). The subshell snapshot/restore covered `variables`, `arrays`, `assoc_arrays`, `positional_params`, and cwd — but NOT the OS env table. When the body called `env::set_var` (via `export` or `cd`'s `$PWD` write), those writes survived past `subshell_end` and corrupted the parent's environment. Added `env_vars` field to `SubshellSnapshot` (snapshot at begin via `std::env::vars().collect()`) and restore at end (remove keys not in snapshot, re-set keys whose values changed). Tests: `test_subshell_export_does_not_leak_to_parent`, `test_subshell_unset_does_not_leak_to_parent`.
+
+### `getopts` over-advanced OPTIND past the next flag *(see thirty-third-pass above)*
+
+## Still open (thirty-fourth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
