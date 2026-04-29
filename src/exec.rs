@@ -2445,16 +2445,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'z' => {
-                    // (z) — split by shell-word rules (whitespace, honor
-                    // simple quoting). For our purposes, whitespace split
-                    // is the common case; full quote-aware split is a
-                    // separate scanner pass.
+                    // (z) — split by shell-token rules: whitespace
+                    // boundaries, BUT also split out shell metacharacters
+                    // like `;`, `&`, `|`, `(`, `)`, `<`, `>` as their
+                    // own tokens. Honors single/double quotes (treat
+                    // contents as one token, strip outer quotes from
+                    // the result). Matches zsh's `(z)` flag.
                     state = match state {
-                        St::S(s) => St::A(
-                            s.split_whitespace()
-                                .map(String::from)
-                                .collect(),
-                        ),
+                        St::S(s) => St::A(zsh_split_z(&s)),
                         St::A(a) => St::A(a),
                     };
                 }
@@ -5930,6 +5928,84 @@ fn shell_quote(s: &str) -> String {
 
 /// Quote a value for typeset -p output (re-executable code)
 /// Uses single quoting only when the value contains special characters
+/// Tokenise a string per zsh's `${(z)var}` semantics: whitespace
+/// separates words; shell metacharacters (`;`, `&`, `|`, `(`, `)`,
+/// `<`, `>`) emit as their own tokens; single/double quoted regions
+/// stay together (with outer quotes stripped). Matches zsh closely
+/// enough for the common "split a command line into tokens" use.
+fn zsh_split_z(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    let flush = |out: &mut Vec<String>, cur: &mut String| {
+        if !cur.is_empty() {
+            out.push(std::mem::take(cur));
+        }
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            ' ' | '\t' | '\n' => {
+                flush(&mut out, &mut cur);
+                i += 1;
+            }
+            ';' | '&' | '|' | '<' | '>' | '(' | ')' => {
+                flush(&mut out, &mut cur);
+                // Combine repeated metas: `&&`, `||`, `;;`, `>>`, `<<`.
+                let mut tok = String::new();
+                tok.push(c);
+                while i + 1 < chars.len() && chars[i + 1] == c
+                    && matches!(c, '&' | '|' | ';' | '<' | '>')
+                {
+                    tok.push(c);
+                    i += 1;
+                }
+                out.push(tok);
+                i += 1;
+            }
+            '\'' => {
+                // Single-quoted: take until matching quote, no expansion.
+                i += 1;
+                while i < chars.len() && chars[i] != '\'' {
+                    cur.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1; // skip closing '
+                }
+            }
+            '"' => {
+                // Double-quoted: take until matching quote, honor `\"`.
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\' && i + 1 < chars.len() {
+                        i += 1;
+                        cur.push(chars[i]);
+                        i += 1;
+                        continue;
+                    }
+                    cur.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1; // skip closing "
+                }
+            }
+            '\\' if i + 1 < chars.len() => {
+                cur.push(chars[i + 1]);
+                i += 2;
+            }
+            _ => {
+                cur.push(c);
+                i += 1;
+            }
+        }
+    }
+    flush(&mut out, &mut cur);
+    out
+}
+
 /// Slice an array per zsh `${arr:offset[:length]}` semantics: the
 /// offset is 0-based "skip N elements" (so `${arr:1:2}` returns
 /// elements at indices 1,2). Negative offset counts from the end.
@@ -15915,11 +15991,17 @@ impl ShellExecutor {
         while i < args.len() {
             let arg = &args[i];
 
-            if arg == "-l" || arg == "-L" {
+            if arg == "-l" {
                 list_mode = true;
                 // Remaining args are signal numbers to translate
                 list_args = args[i + 1..].to_vec();
                 break;
+            } else if arg == "-L" {
+                // zsh treats `-L` as `-` + signal name "L" (no such
+                // signal). Match that error path exactly.
+                eprintln!("zshrs:kill:1: unknown signal: SIGL");
+                eprintln!("zshrs:kill:1: type kill -l for a list of signals");
+                return 1;
             } else if arg == "-s" {
                 // -s signal_name
                 i += 1;
@@ -15986,10 +16068,14 @@ impl ShellExecutor {
         // Handle -l (list signals)
         if list_mode {
             if list_args.is_empty() {
-                // List all signals
-                for (name, num, _) in signal_map {
-                    println!("{:2}) SIG{}", num, name);
-                }
+                // zsh prints bare signal names separated by spaces on
+                // a single line for `kill -l`. (bash prints numbered
+                // table; we follow zsh.)
+                let names: Vec<String> = signal_map
+                    .iter()
+                    .map(|(n, _, _)| (*n).to_string())
+                    .collect();
+                println!("{}", names.join(" "));
             } else {
                 // Translate signal numbers to names or vice versa
                 for arg in &list_args {
@@ -16907,7 +16993,8 @@ impl ShellExecutor {
                         println!("{}={}", arg, v);
                     }
                 } else {
-                    eprintln!("zshrs: alias: {}: not found", arg);
+                    // zsh exits 1 silently when querying an
+                    // unknown alias (no diagnostic).
                     return 1;
                 }
             }

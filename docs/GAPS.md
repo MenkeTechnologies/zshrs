@@ -598,7 +598,22 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Menu items were one per line. zsh packs `N) item` cells across rows to fit the terminal (defaults to 80 cols). Width = max cell + 1 trailing space. Cosmetic match.
 
-## Still open (nineteenth-pass — remaining)
+## Closed (twentieth-pass — (z) split + unalias query + kill flags)
+
+### `${(z)str}` — proper shell-token split
+
+- Was a plain `split_whitespace()` so `"echo hi; ls"` produced 3 tokens (`echo`, `hi;`, `ls`) instead of 4 (`echo`, `hi`, `;`, `ls`). New `zsh_split_z` helper walks the string honoring single/double quotes (with escape) and splitting out shell metas (`;`, `&`, `|`, `<`, `>`, `(`, `)`) as their own tokens, with combination of repeats (`&&`, `||`, `;;`, `>>`, `<<`). Tests: `test_z_split_emits_metas_as_separate_tokens`, `test_z_split_pipe_token`.
+
+### `alias NAME` query is silent on unknown name
+
+- Was emitting `zshrs: alias: NAME: not found` which zsh doesn't print. The query just exits non-zero in zsh. Removed the diagnostic; status code unchanged. Test: `test_alias_query_silent_when_unknown`.
+
+### `kill -l` and `kill -L`
+
+- `kill -l` was printing a numbered table (`1) SIGHUP\n…`); zsh emits bare names space-separated on one line. Switched to match.
+- `kill -L` was treated as a list-mode alias for `-l`. zsh treats it as `-` + signal name `L` → "unknown signal: SIGL" with the standard hint. Switched to error path for parity. Tests: `test_kill_dash_l_lists_bare_names`, `test_kill_dash_capital_l_unknown_signal`.
+
+## Still open (twentieth-pass — remaining)
 
 (none — all probed gaps closed)
 

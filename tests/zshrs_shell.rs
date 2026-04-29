@@ -2709,3 +2709,56 @@ fn test_print_s_silent_and_records_history() {
         "print -s should not echo to stdout, got: {output:?}"
     );
 }
+
+#[test]
+fn test_z_split_emits_metas_as_separate_tokens() {
+    // ${(z)str} tokenises a command line like the parser would —
+    // shell metas (;, &, |, etc.) become their own tokens.
+    let (_, output, _) = run_zshrs(
+        r#"a="echo hi; ls"; print -l "${(z)a}""#,
+    );
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(lines, vec!["echo", "hi", ";", "ls"], "got: {output:?}");
+}
+
+#[test]
+fn test_z_split_pipe_token() {
+    let (_, output, _) = run_zshrs(
+        r#"a="ls | grep foo"; print -l "${(z)a}""#,
+    );
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(lines, vec!["ls", "|", "grep", "foo"], "got: {output:?}");
+}
+
+#[test]
+fn test_alias_query_silent_when_unknown() {
+    // After unalias, `alias NAME` should return non-zero with NO
+    // diagnostic — matches zsh.
+    let (status, _output, stderr) = run_zshrs(
+        "alias hi=echo; unalias hi; alias hi 2>&1",
+    );
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(
+        !stderr.contains("not found"),
+        "unalias query should be silent, got: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_kill_dash_l_lists_bare_names() {
+    let (_, output, _) = run_zshrs("kill -l");
+    let trimmed = output.trim();
+    // Should be space-separated bare names on a single line.
+    assert!(!trimmed.contains("SIG"), "expected bare names, not 'SIG' prefix, got: {trimmed:?}");
+    assert!(trimmed.contains("HUP"), "should contain HUP, got: {trimmed:?}");
+    assert!(trimmed.contains("TERM"), "should contain TERM, got: {trimmed:?}");
+}
+
+#[test]
+fn test_kill_dash_capital_l_unknown_signal() {
+    // zsh treats `-L` as `- + L` → unknown signal SIGL.
+    let (status, _, stderr) = run_zshrs("kill -L");
+    assert_ne!(status, 0);
+    assert!(stderr.contains("SIGL") || stderr.contains("unknown signal"),
+        "stderr: {stderr:?}");
+}
