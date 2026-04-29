@@ -1948,7 +1948,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             | "kill" | "wait" | "trap" | "ulimit" | "umask"
                             | "hash" | "unhash" | "type" | "whence" | "which"
                             | "where" | "command" | "builtin" | "exec"
-                            | "getopts" | "let" | "shopt" | "setopt"
+                            | "getopts" | "let" | "setopt"
                             | "unsetopt" | "emulate" | "zstyle" | "compdef"
                             | "compadd" | "compinit" | "compset"
                     );
@@ -6332,7 +6332,6 @@ static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "alias",
         "unalias",
         "set",
-        "shopt",
         "setopt",
         "unsetopt",
         "getopts",
@@ -9436,6 +9435,16 @@ impl ShellExecutor {
                                 return vec![s.to_string()];
                             };
 
+                            // Stepped char ranges ({a..z..2}) and other
+                            // unrecognised forms come back unchanged from
+                            // expand_brace_sequence. Detect that single-element
+                            // identity case BEFORE recursing — otherwise the
+                            // recursive expand_braces re-finds the same
+                            // braces and stack-overflows.
+                            if expansions.len() == 1 && expansions[0] == content {
+                                return vec![s.to_string()];
+                            }
+
                             // Combine prefix, expansions, and suffix
                             let mut results = Vec::new();
                             for exp in expansions {
@@ -9536,8 +9545,11 @@ impl ShellExecutor {
             return results;
         }
 
-        // Try character sequence
-        if start.len() == 1 && end.len() == 1 {
+        // Try character sequence. zsh only expands UNSTEPPED char ranges
+        // ({a..z}); a stepped form ({a..z..2}) is left literal — return
+        // the unchanged content so the caller (expand_braces) detects
+        // identity and re-wraps with the original braces.
+        if parts.len() == 2 && start.len() == 1 && end.len() == 1 {
             let start_char = start.chars().next().unwrap();
             let end_char = end.chars().next().unwrap();
             let mut results = Vec::new();
@@ -12687,7 +12699,6 @@ impl ShellExecutor {
             "set",
             "setopt",
             "shift",
-            "shopt",
             "source",
             "stat",
             "strftime",
@@ -14039,7 +14050,13 @@ impl ShellExecutor {
                 // return value emulate zsh's %g style.
                 result.format_zsh_subst()
             }
-            Err(_) => "0".to_string(),
+            Err(msg) => {
+                // zsh writes arith errors to stderr in `zshrs:LINE: <msg>`
+                // form. Without this gate, `$((10/0))` returned "0" silently
+                // and masked real bugs in user scripts.
+                eprintln!("zshrs:1: {}", msg);
+                "0".to_string()
+            }
         }
     }
 
@@ -14101,7 +14118,14 @@ impl ShellExecutor {
                 }
                 result.to_int()
             }
-            Err(_) => 0,
+            Err(msg) => {
+                // zsh writes arith errors (div-by-zero, bad expr, etc.) to
+                // stderr in the form `zshrs:LINE: <message>`. Without this
+                // gate, `$((10/0))` returned 0 silently — masking real bugs
+                // in user scripts.
+                eprintln!("zshrs:1: {}", msg);
+                0
+            }
         }
     }
 
@@ -18014,10 +18038,11 @@ impl ShellExecutor {
                         name.contains(arg.as_str())
                     };
                     if matches {
+                        let formatted = format_alias_kv(name, value);
                         if list_form {
-                            println!("{}{}='{}'", prefix, name, value);
+                            println!("{}{}", prefix, formatted);
                         } else {
-                            println!("{}='{}'", name, value);
+                            println!("{}", formatted);
                         }
                     }
                 }
@@ -20693,7 +20718,6 @@ impl ShellExecutor {
             "alias" => self.builtin_alias(cmd_args),
             "unalias" => self.builtin_unalias(cmd_args),
             "set" => self.builtin_set(cmd_args),
-            "shopt" => self.builtin_shopt(cmd_args),
             "getopts" => self.builtin_getopts(cmd_args),
             "type" => self.builtin_type(cmd_args),
             "hash" => self.builtin_hash(cmd_args),
@@ -20834,7 +20858,7 @@ impl ShellExecutor {
                     for name in [
                         "cd", "pwd", "echo", "export", "unset", "source", "exit", "return", "true",
                         "false", ":", "test", "[", "local", "declare", "jobs", "fg", "bg", "kill",
-                        "disown", "wait", "alias", "unalias", "set", "shopt",
+                        "disown", "wait", "alias", "unalias", "set",
                     ] {
                         if name.starts_with(&prefix) {
                             results.push(name.to_string());

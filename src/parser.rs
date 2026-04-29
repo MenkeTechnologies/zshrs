@@ -1228,6 +1228,13 @@ impl<'a> ZshParser<'a> {
                 // Note: do NOT zshlex() here. parse_simple's `self.lexer
                 // .zshlex()` after `parse_assign` returns advances past
                 // the Outpar onto the next significant token.
+                //
+                // Force `incmdpos=true` so the next zshlex() recognizes
+                // a follow-up `b=(...)` / `b=val` as Envarray/Envstring.
+                // The lexer flips incmdpos to false on bare Outpar (which
+                // is correct for subshell-close context), but for an
+                // array-assignment close more assigns/words may follow.
+                self.lexer.incmdpos = true;
             }
 
             ZshAssignValue::Array(elements)
