@@ -7468,6 +7468,13 @@ impl ShellExecutor {
         // inspects $IFS sees what zsh exposes.
         variables.insert("IFS".to_string(), " \t\n\0".to_string());
 
+        // POSIX `getopts` initial state: OPTIND starts at 1, OPTERR
+        // at 1 (errors enabled). Without these, scripts that read
+        // `$OPTIND` before the first `getopts` call see empty strings
+        // (zsh: `1`).
+        variables.insert("OPTIND".to_string(), "1".to_string());
+        variables.insert("OPTERR".to_string(), "1".to_string());
+
         let mut exec = Self {
             aliases: {
                 let mut a = HashMap::new();
@@ -15205,8 +15212,20 @@ impl ShellExecutor {
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
 
+        // Pre-resolve dynamic special parameters that aren't in the
+        // variables map: $RANDOM, $SECONDS, $EPOCHSECONDS,
+        // $EPOCHREALTIME, $LINENO. MathEval looks up names in a
+        // static HashMap, so without substitution these would resolve
+        // to 0. Inject the current value into a fresh extras HashMap.
+        let mut extras = self.variables.clone();
+        for special in ["RANDOM", "SECONDS", "EPOCHSECONDS", "EPOCHREALTIME", "LINENO"] {
+            if !extras.contains_key(special) || special == "RANDOM" {
+                let v = self.get_variable(special);
+                extras.insert(special.to_string(), v);
+            }
+        }
         let mut evaluator = MathEval::new(&expr)
-            .with_string_variables(&self.variables)
+            .with_string_variables(&extras)
             .with_force_float(force_float)
             .with_c_precedences(c_prec)
             .with_octal_zeroes(octal);
@@ -21544,7 +21563,16 @@ impl ShellExecutor {
                         }
                     } else {
                         let (name, enable) = Self::normalize_option_name(arg);
-                        // Verify it's a valid option (zsh doesn't error on bad names in setopt)
+                        // zsh: `setopt nosuchoption` errors with
+                        //   `setopt:1: no such option: nosuchoption`
+                        // Reject unknown names against the canonical
+                        // ZSH_OPTIONS_SET so user scripts get the same
+                        // diagnostic. Strip leading `no` first because
+                        // `nounset` ↔ `unset` style names are toggles.
+                        if !ZSH_OPTIONS_SET.contains(name.as_str()) {
+                            eprintln!("zshrs:setopt:1: no such option: {}", arg);
+                            return 1;
+                        }
                         self.options.insert(name, enable);
                     }
                 }

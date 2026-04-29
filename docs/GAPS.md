@@ -1596,6 +1596,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `unalias:1: no such hash table element: NAME`. zshrs had its own custom format (`unalias: NAME: not found`). Aligned to zsh's exact wording so user scripts that grep the error get the same string. Test: `test_unalias_missing_zsh_format`.
 
+### `$OPTIND` defaulted to empty string
+
+- POSIX: `getopts` reads OPTIND starting at 1 before any call. Scripts that probe `$OPTIND` before invoking `getopts` saw empty string in zshrs (zsh: `1`). Initialized OPTIND=1 and OPTERR=1 in the executor's variables map so first-read returns the canonical defaults. Test: `test_optind_default_one`.
+
+### `setopt nosuchoption` was silent
+
+- zsh emits `setopt:1: no such option: NAME` to stderr and returns 1. zshrs's `builtin_setopt` had a comment saying "zsh doesn't error on bad names" — that's wrong. Added a `ZSH_OPTIONS_SET.contains()` check after `normalize_option_name` and an early `eprintln!` + `return 1` for unknown names. Test: `test_setopt_unknown_option_errors`.
+
+### `$((RANDOM))` returned 0
+
+- `$RANDOM` worked (gets resolved by `get_variable`'s special-param branch) but `$((RANDOM))` returned 0 because `MathEval` looks up names in a static `string_variables` HashMap that didn't include the dynamic special params. Same root for `$((SECONDS))`, `$((EPOCHSECONDS))`, `$((LINENO))`. Fix: clone `self.variables` into an extras map and pre-inject `get_variable("RANDOM")` etc. before passing to `MathEval` — each arith eval now sees a fresh value (RANDOM also re-resolves per call so two arith-substs in a row return distinct values). Test: `test_random_resolves_in_arithmetic`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
