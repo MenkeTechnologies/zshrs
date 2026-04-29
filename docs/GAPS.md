@@ -965,7 +965,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 - For bare `$@`/`$*`, compile_word_str emitted `BUILTIN_GET_VAR` directly (returns Value::Array of positionals so splice in argument context works). When that result reached the assignment via `pop_args`, the Array got flattened into separate args — `name="v"`, `value=<first positional>`, rest discarded.
 - Detect DQ context (parent `s` is DNULL-wrapped OR `dq_context_depth>0`) and, ONLY for `$*`, follow GET_VAR with Pop + LoadConst(name) + `BUILTIN_ARRAY_JOIN_STAR` so the joined scalar replaces the Array on stack. `$@` keeps its Array splice (zsh: `"$@"` → each positional its own word). Tests: `test_dq_star_assignment_joins_with_ifs`, `test_dq_at_preserves_splice_semantics`.
 
-## Still open (fifty-fourth-pass — remaining)
+## Closed (fifty-fifth-pass — `noglob` precommand + coreutils error message format)
+
+### `noglob echo *` was glob-expanding `*` before noglob ran
+
+- `noglob` is a precommand modifier — its args must NOT be glob-expanded. zsh handles this in the parser/lexer by marking the line "no-glob". zshrs's `builtin_noglob` set the `noglob` option AFTER its args had already been compiled+expanded, so `*` always expanded against the real cwd.
+- Special-cased `noglob` in `compile_simple`: when `simple.words[0] == "noglob"`, peel off the leading word, emit a `BUILTIN_SET_RAW_OPT("noglob", true)` toggle, recursively compile the remaining `ZshSimple`, then emit the matching `BUILTIN_SET_RAW_OPT("noglob", false)` to restore. New `BUILTIN_SET_RAW_OPT` handler does a flat `options.insert/remove` (no validation, just the toggle). Test: `test_noglob_precommand_suppresses_glob`.
+
+### `cat /no/such/file` printed `... (os error 2)` suffix
+
+- Rust's `io::Error` display appends `(os error N)` by default. zsh's bundled coreutils emit just the friendly message (`No such file or directory`). Added `pretty_io_err(&io::Error) -> String` helper that strips ` (os error` and everything after; wired into `cat`/`head`/`tail`/`wc` error sites. Test: `test_coreutils_error_msg_strips_os_error_suffix`.
+
+## Still open (fifty-fifth-pass — remaining)
 
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
