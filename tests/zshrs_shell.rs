@@ -4189,3 +4189,97 @@ fn test_arith_mod_by_zero_prints_error() {
         "expected division-by-zero error: {stderr:?}"
     );
 }
+
+#[test]
+fn test_machtype_returns_arm_or_x86_64() {
+    // `$MACHTYPE` should report a recognisable arch tag (zsh shortens
+    // aarch64 → arm). Was empty in zshrs because params.rs's table
+    // wasn't reachable from the executor's get_variable.
+    let (_, output, _) = run_zshrs(r#"echo $MACHTYPE"#);
+    let v = output.trim();
+    assert!(
+        v == "arm" || v == "x86_64" || v == "aarch64",
+        "expected arm/x86_64/aarch64, got: {v:?}"
+    );
+}
+
+#[test]
+fn test_ostype_starts_with_os_family() {
+    // `$OSTYPE` should start with "darwin" / "linux" / etc — zsh hardcodes
+    // build-time string; we synthesize from libc uname() at runtime.
+    let (_, output, _) = run_zshrs(r#"echo $OSTYPE"#);
+    let v = output.trim();
+    assert!(
+        v.starts_with("darwin") || v.starts_with("linux") || v.starts_with("freebsd"),
+        "expected OS-family prefix, got: {v:?}"
+    );
+}
+
+#[test]
+fn test_vendor_returns_apple_or_unknown() {
+    // `$VENDOR` should be "apple" on macOS, "unknown"/"pc" elsewhere.
+    let (_, output, _) = run_zshrs(r#"echo $VENDOR"#);
+    let v = output.trim();
+    assert!(
+        v == "apple" || v == "unknown" || v == "pc",
+        "expected vendor tag, got: {v:?}"
+    );
+}
+
+#[test]
+fn test_minus_f_skips_eager_fpath_autoload() {
+    // In `-f` (no-rcs) mode, zshrs must NOT eagerly scan FPATH/ZWC for
+    // unknown command names. Regression: zshrs autoloaded `rm` from the
+    // user's FPATH (where it was wrapped to call `zpwrLogConsoleErr`),
+    // shadowing the external. zsh only autoloads names explicitly
+    // declared via `autoload`. Test runs `rm -f /tmp/file_zshrs_test_$$`
+    // (a path we know doesn't exist) — zshrs should fall through to the
+    // external rm without trying to load any FPATH wrapper.
+    let (_, output, stderr) = run_zshrs(r#"rm -f /tmp/zshrs_never_existed_$$; echo done"#);
+    assert!(output.trim().ends_with("done"), "expected `done`: {output:?}");
+    assert!(
+        !stderr.contains("zpwrLogConsoleErr"),
+        "FPATH wrapper leaked into -f mode: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_case_paren_prefixed_pattern_accepted() {
+    // `case x in (foo|bar) …` — the leading `(` is optional in zsh.
+    // Regression: the lexer consumed `(foo)` as one big String token
+    // because `incasepat` wasn't yet 1 when the `(` was read. Setting
+    // incasepat=1 before zshlex'ing past `in` fixes it.
+    let (_, output, _) = run_zshrs(r#"case foo in (foo|bar) echo a;; (*) echo c;; esac"#);
+    assert_eq!(output.trim(), "a", "got: {output:?}");
+}
+
+#[test]
+fn test_case_paren_only_first_alt_matches() {
+    // Same form, second alternative chosen.
+    let (_, output, _) = run_zshrs(r#"case bar in (foo|bar) echo b;; (*) echo c;; esac"#);
+    assert_eq!(output.trim(), "b", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_dash_baseline_no_user_flags() {
+    // `echo $-` in `-f -c` mode should produce zsh's baseline "569Xf"
+    // — the `f` indicates -f (no rcs) is on. Regression: zshrs returned
+    // empty entirely.
+    let (_, output, _) = run_zshrs(r#"echo $-"#);
+    assert_eq!(output.trim(), "569Xf", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_dash_includes_e_when_errexit_on() {
+    // `set -e; echo $-` adds `e`. Letter ordering matches zsh: e BEFORE f.
+    let (_, output, _) = run_zshrs(r#"set -e; echo $-"#);
+    assert_eq!(output.trim(), "569Xef", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_dash_includes_x_when_xtrace_on() {
+    // `set -x; echo $-` should include `x` after `f`.
+    let (_, output, _) = run_zshrs(r#"set -x; echo $-"#);
+    let last = output.lines().last().unwrap_or("").trim();
+    assert_eq!(last, "569Xfx", "got: {output:?}");
+}
