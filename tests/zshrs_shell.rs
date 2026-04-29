@@ -6098,3 +6098,32 @@ fn test_extendedglob_caret_negation() {
     parts.sort();
     assert_eq!(parts, vec!["a", "c"]);
 }
+
+#[test]
+fn test_alias_dash_L_emits_alias_prefix() {
+    // `alias -L name` should print `alias name=value` (re-input
+    // form). zshrs was printing `name=value` only.
+    let (_, output, _) = run_zshrs("alias x=hi; alias -L x");
+    assert_eq!(output.trim(), "alias x=hi");
+    let (_, output, _) = run_zshrs("alias x=hi; alias x");
+    assert_eq!(output.trim(), "x=hi");
+}
+
+#[test]
+fn test_setopt_nocaseglob_honored() {
+    // `setopt nocaseglob` should make glob expansion
+    // case-insensitive. Was being normalized to `caseglob=false`
+    // in the options map but expand_glob only read `nocaseglob` —
+    // so the option was silently ignored.
+    let dir = std::env::temp_dir().join("zshrs_test_nocase");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::File::create(dir.join("Aa")).unwrap();
+    let cmd = format!(
+        "setopt nocaseglob; cd {} && echo a*",
+        dir.display()
+    );
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(output.trim(), "Aa");
+}
