@@ -6370,3 +6370,25 @@ fn test_array_element_history_modifier() {
     let (_, output, _) = run_zshrs(r#"a=(HELLO); echo "${a[1]:l}""#);
     assert_eq!(output.trim(), "hello");
 }
+
+#[test]
+fn test_builtin_missing_zsh_format() {
+    // `builtin nosuch` should emit "no such builtin: NAME" matching
+    // zsh. zshrs had a custom format ("not a shell builtin").
+    let (_, _, stderr) = run_zshrs("builtin nosuch_zzz_cmd");
+    assert!(stderr.contains("no such builtin"));
+}
+
+#[test]
+fn test_print_P_color_basic_8_uses_ansi_codes() {
+    // %F{1} should emit \e[31m (basic ANSI red), not the 256-color
+    // escape \e[38;5;1m. Indexes 0-7 use the basic codes; 8-255
+    // use the 256-color form.
+    let (_, output, _) = run_zshrs(r#"print -P "%F{1}r%f""#);
+    assert_eq!(output.as_bytes(), b"\x1b[31mr\x1b[39m\n");
+    let (_, output, _) = run_zshrs(r#"print -P "%F{0}b%f""#);
+    assert_eq!(output.as_bytes(), b"\x1b[30mb\x1b[39m\n");
+    // 256-color path still uses the long form.
+    let (_, output, _) = run_zshrs(r#"print -P "%F{42}c%f""#);
+    assert_eq!(output.as_bytes(), b"\x1b[38;5;42mc\x1b[39m\n");
+}

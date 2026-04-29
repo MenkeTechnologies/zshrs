@@ -22817,7 +22817,7 @@ impl ShellExecutor {
                 crate::daemon::builtins::dispatch(cmd, &argv).unwrap_or(1)
             }
             _ => {
-                eprintln!("zshrs: builtin: {}: not a shell builtin", cmd);
+                eprintln!("zshrs:1: no such builtin: {}", cmd);
                 1
             }
         }
