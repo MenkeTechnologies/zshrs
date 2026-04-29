@@ -2154,16 +2154,32 @@ impl ZshCompiler {
                     };
                     self.compile_word_str(&dq_wrapped);
                 } else if is_pattern_op {
-                    // If the RHS had quote markers (DNULL/SNULL/BNULL),
-                    // glob metas inside the quotes should be LITERAL,
-                    // not pattern. Pre-escape `*` / `?` / `[` in quoted
-                    // segments before stripping the markers — keeps
-                    // unquoted-glob behaviour intact for `[[ x == a* ]]`
-                    // while making `[[ x == "a*" ]]` literal.
-                    let escaped = escape_quoted_glob_metas(right);
-                    let right_clean = crate::lexer::untokenize(&escaped);
-                    let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
-                    self.builder.emit(Op::LoadConst(idx), 0);
+                    // RHS handling for `==` / `=` / `!=` patterns:
+                    // - If it contains a variable / cmd-subst (`$`, `` ` ``)
+                    //   route through compile_word_str so the value is
+                    //   substituted in. Wrap in DQ so the expansion
+                    //   doesn't trigger filesystem-glob — the result
+                    //   is a PATTERN matched by the test, not a path.
+                    // - Otherwise use the literal-pattern path with
+                    //   pre-escaped quoted-glob metas.
+                    let needs_expand = right.contains('\u{85}')   // META-$
+                        || right.contains('\u{8c}')                  // QSTRING-$
+                        || right.contains('\u{93}')                  // TICK
+                        || right.contains('$')
+                        || right.contains('`');
+                    if needs_expand {
+                        let dq_wrapped = if right.starts_with('\u{9e}') {
+                            right.clone()
+                        } else {
+                            format!("\u{9e}{}\u{9e}", right)
+                        };
+                        self.compile_word_str(&dq_wrapped);
+                    } else {
+                        let escaped = escape_quoted_glob_metas(right);
+                        let right_clean = crate::lexer::untokenize(&escaped);
+                        let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                    }
                 } else {
                     self.compile_word_str(right);
                 }
@@ -2835,13 +2851,39 @@ fn strip_arith_subst(s: &str) -> Option<String> {
         return None;
     }
     let inner = &s[3..s.len() - 2];
-    // Reject if inner contains an unbalanced `((` or `))` indicating
-    // a more complex shape.
-    let depth = inner.chars().fold(0i32, |d, c| match c {
-        '(' => d + 1,
-        ')' => d - 1,
-        _ => d,
-    });
+    // Reject if inner has an unbalanced `((` / `))` OR if depth EVER
+    // drops below zero — that means a `))` closes the outer `$((`
+    // before the end of the input, signalling concat with another
+    // arith / cmd subst (`$((1+2))$((3+4))` was the bug case). The
+    // fold-only check let those through with a net zero depth.
+    let mut depth = 0i32;
+    let mut depth_dropped_below_zero = false;
+    let chars: Vec<char> = inner.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '(' => depth += 1,
+            ')' => {
+                // Recognise the `))` close of an inner $((..)) — only
+                // count as -2 when paired. Single `)` is -1.
+                if i + 1 < chars.len() && chars[i + 1] == ')' && depth >= 2 {
+                    depth -= 2;
+                    i += 2;
+                    continue;
+                }
+                depth -= 1;
+                if depth < 0 {
+                    depth_dropped_below_zero = true;
+                    break;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if depth_dropped_below_zero {
+        return None;
+    }
     if depth != 0 {
         return None;
     }

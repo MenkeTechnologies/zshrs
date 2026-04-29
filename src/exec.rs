@@ -4397,8 +4397,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     // `[[ a -nt b ]]` — true if `a`'s mtime is strictly later than `b`'s.
-    // If either path is missing the result follows zsh: false unless only
-    // `b` is missing (then true), per the man page.
+    // BOTH files must exist; if either is missing the result is false.
+    // (Earlier behavior was bash's "missing == infinitely-old"; zsh
+    // strictly requires both files to exist.)
     vm.register_builtin(BUILTIN_FILE_NEWER, |vm, _argc| {
         let b = vm.pop().to_str();
         let a = vm.pop().to_str();
@@ -4411,13 +4412,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let tb = std::fs::metadata(&b).and_then(|m| m.modified()).ok();
         let result = match (ta, tb) {
             (Some(ta), Some(tb)) => ta > tb,
-            (Some(_), None) => true,  // zsh: a exists, b doesn't → newer
             _ => false,
         };
         fusevm::Value::Bool(result)
     });
 
-    // `[[ a -ot b ]]` — mirror of -nt.
+    // `[[ a -ot b ]]` — mirror of -nt. Same both-must-exist contract.
     vm.register_builtin(BUILTIN_FILE_OLDER, |vm, _argc| {
         let b = vm.pop().to_str();
         let a = vm.pop().to_str();
@@ -4425,7 +4425,6 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let tb = std::fs::metadata(&b).and_then(|m| m.modified()).ok();
         let result = match (ta, tb) {
             (Some(ta), Some(tb)) => ta < tb,
-            (None, Some(_)) => true,  // zsh: a missing, b exists → older
             _ => false,
         };
         fusevm::Value::Bool(result)
@@ -4824,7 +4823,37 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
             _ => {
                 // Default: full expansion pipeline.
-                let expanded = exec.expand_string(&text);
+                // Pre-process backslash-escapes to the `\x00X` literal-
+                // marker form so expand_string suppresses variable
+                // expansion on escaped specials: `\$` → literal `$`,
+                // `\\` → literal `\`, `\`` → literal `` ` ``. Without
+                // this, `echo \$a` ran `\` literally then expanded
+                // `$a`, leaving a stray `\` that echo's escape
+                // interpreter then turned into form-feed when followed
+                // by `f`-like content.
+                let mut prepped = String::with_capacity(text.len());
+                let mut it = text.chars().peekable();
+                while let Some(c) = it.next() {
+                    if c == '\\' {
+                        match it.peek() {
+                            Some('$') | Some('`') | Some('"') | Some('\'')
+                                | Some('\\') => {
+                                prepped.push('\x00');
+                                prepped.push(it.next().unwrap());
+                            }
+                            // Don't preprocess `\{` / `\}` here — the
+                            // brace-expansion stage has its own
+                            // has_balanced_escaped_braces detector that
+                            // strips the backslashes when both sides
+                            // are escaped. Touching them here would
+                            // hide them from that detector.
+                            _ => prepped.push(c),
+                        }
+                    } else {
+                        prepped.push(c);
+                    }
+                }
+                let expanded = exec.expand_string(&prepped);
                 let brace_expanded = exec.expand_braces(&expanded);
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
@@ -7005,6 +7034,10 @@ pub struct VarAttr {
     /// `typeset -U arr` — array dedupes its elements on assignment /
     /// append, keeping the first occurrence. zsh-only.
     pub unique: bool,
+    /// `typeset -E` — float in scientific notation (vs `-F` for fixed).
+    /// Distinguished from VarKind::Float for `declare -p` printing
+    /// (`-E` vs `-F` flag letter).
+    pub float_exp: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -7051,6 +7084,9 @@ impl VarAttr {
         }
         if self.export {
             out.push_str("-export");
+        }
+        if self.unique {
+            out.push_str("-unique");
         }
         out
     }
@@ -11187,6 +11223,38 @@ impl ShellExecutor {
     /// Uses the same numeric/range parsing as the main bracket handler
     /// but only the single-element case (sufficient for the modifiers
     /// that gate on emptiness).
+    /// Companion to `lookup_array_element` — returns true iff the
+    /// element at `index` is SET (key present for assoc, index in
+    /// bounds for indexed array, char position in range for scalar
+    /// substring). Used by `${arr[N]+set}` / `${arr[N]-default}` /
+    /// `${arr[N]?msg}` — the no-colon variants test SET-ness, not
+    /// empty-ness.
+    fn array_element_is_set(&mut self, var_name: &str, index: &str) -> bool {
+        if self.assoc_arrays.contains_key(var_name) {
+            let key = self.expand_string(index);
+            return self
+                .assoc_arrays
+                .get(var_name)
+                .map(|a| a.contains_key(&key))
+                .unwrap_or(false);
+        }
+        let expanded_index = self.expand_string(index);
+        if let Ok(idx) = expanded_index.parse::<i64>() {
+            if let Some(arr) = self.arrays.get(var_name) {
+                let len = arr.len() as i64;
+                let pos = if idx > 0 { idx - 1 } else if idx < 0 { len + idx } else { return false };
+                return pos >= 0 && pos < len;
+            }
+            // Scalar string — check if char index is in range.
+            let val = self.get_variable(var_name);
+            let n = val.chars().count() as i64;
+            if n == 0 { return false; }
+            let pos = if idx > 0 { idx - 1 } else if idx < 0 { n + idx } else { return false };
+            return pos >= 0 && pos < n;
+        }
+        false
+    }
+
     fn lookup_array_element(&mut self, var_name: &str, index: &str) -> String {
         if let Some(val) = self.get_special_array_value(var_name, index) {
             return val;
@@ -11684,6 +11752,34 @@ impl ShellExecutor {
                                 }
                             }
                             return v;
+                        }
+                        return elem;
+                    }
+                    // No-colon variants `${arr[N]-d}` / `${arr[N]+set}` /
+                    // `${arr[N]?msg}` — same as colon forms but the test
+                    // is "is the element SET" rather than "is empty".
+                    // For an indexed array, `set` means the index is in
+                    // bounds; for an assoc, the key is present.
+                    let elem_is_set = self.array_element_is_set(var_name, index);
+                    if let Some(rest) = after_bracket.strip_prefix('-') {
+                        return if elem_is_set {
+                            elem
+                        } else {
+                            self.expand_string(rest)
+                        };
+                    }
+                    if let Some(rest) = after_bracket.strip_prefix('+') {
+                        return if elem_is_set {
+                            self.expand_string(rest)
+                        } else {
+                            String::new()
+                        };
+                    }
+                    if let Some(rest) = after_bracket.strip_prefix('?') {
+                        if !elem_is_set {
+                            let msg = self.expand_string(rest);
+                            eprintln!("zshrs:1: {}[{}]: {}", var_name, index, msg);
+                            return String::new();
                         }
                         return elem;
                     }
@@ -16525,7 +16621,12 @@ impl ShellExecutor {
                 if let Some(ref a) = attr {
                     match a.kind {
                         VarKind::Integer => attrs.push('i'),
-                        VarKind::Float => attrs.push('F'),
+                        VarKind::Float => {
+                            // Distinguish `-E` (scientific) from `-F`
+                            // (fixed-decimal) so `declare -p` echoes
+                            // back the correct flag letter.
+                            attrs.push(if a.float_exp { 'E' } else { 'F' });
+                        }
                         VarKind::Array => attrs.push('a'),
                         VarKind::Association => attrs.push('A'),
                         VarKind::Scalar => {}
@@ -16547,10 +16648,17 @@ impl ShellExecutor {
                 // `typeset -x` to preserve the kind. Mirror that.
                 let is_exported = env_exported
                     || attr.as_ref().map(|a| a.export).unwrap_or(false);
-                // zsh prints exported variables with the `export` builtin
-                // form. The trailing `x` flag is folded into the `export`
-                // keyword: `export -i n=5` not `typeset -ix n=5`.
-                let prefix = if is_exported {
+                // zsh prints exported scalars with `export NAME=…`.
+                // Integer-typed exports fold to `export -i NAME=…`.
+                // BUT array/assoc/float typed exports stay as
+                // `typeset -aAxFE…`; the `export` form is reserved
+                // for scalars/integers. Detect "non-scalar attr" and
+                // route to typeset in that case.
+                let has_non_scalar_attr = attrs.contains('A')
+                    || attrs.contains('a')
+                    || attrs.contains('F')
+                    || attrs.contains('E');
+                let prefix = if is_exported && !has_non_scalar_attr {
                     let other_attrs: String = attrs.chars().filter(|&c| c != 'x').collect();
                     if other_attrs.is_empty() {
                         "export".to_string()
@@ -16571,7 +16679,11 @@ impl ShellExecutor {
                             format!("[{}]={}", shell_quote_value(k), shell_quote_value(v))
                         })
                         .collect();
-                    println!("{} {}=( {} )", prefix, name, formatted.join(" "));
+                    if formatted.is_empty() {
+                        println!("{} {}=( )", prefix, name);
+                    } else {
+                        println!("{} {}=( {} )", prefix, name, formatted.join(" "));
+                    }
                 } else if let Some(arr) = self.arrays.get(name) {
                     let formatted: Vec<String> =
                         arr.iter().map(|v| shell_quote_value(v)).collect();
@@ -16813,6 +16925,7 @@ impl ShellExecutor {
                         lowercase: is_lower,
                         uppercase: is_upper,
                         unique: is_unique,
+                        float_exp: is_float_exp,
                     };
                     self.var_attrs.insert(attr_name.clone(), attr);
                     // Apply unique-dedupe immediately if the array

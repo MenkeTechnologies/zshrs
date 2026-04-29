@@ -5157,3 +5157,127 @@ fn test_pattern_class_with_negation_matches_others() {
     let (_, output, _) = run_zshrs(r#"a=hello; echo "${a/[!hl]/X}""#);
     assert_eq!(output.trim(), "hXllo");
 }
+
+#[test]
+fn test_escape_dollar_sign_literal() {
+    // `echo \$` should print `$` (literal). Regression: zshrs printed
+    // `\$` because expand_string didn't honor backslash-escape.
+    let (_, output, _) = run_zshrs(r#"echo \$"#);
+    assert_eq!(output.trim(), "$");
+}
+
+#[test]
+fn test_escape_dollar_var_literal() {
+    // `a=foo; echo \$a` should print `$a` literally (not expand).
+    let (_, output, _) = run_zshrs(r#"a=foo; echo \$a"#);
+    assert_eq!(output.trim(), "$a");
+}
+
+#[test]
+fn test_escape_backtick_literal() {
+    let (_, output, _) = run_zshrs(r#"echo \`"#);
+    assert_eq!(output.trim(), "`");
+}
+
+#[test]
+fn test_arith_subst_concat() {
+    // `$((1+2))$((3+4))` — two arith substs concatenated.
+    // Regression: strip_arith_subst's depth check passed even when
+    // a `))` closed mid-string; ran the whole thing as one arith.
+    let (_, output, _) = run_zshrs(r#"echo $((1+2))$((3+4))"#);
+    assert_eq!(output.trim(), "37");
+}
+
+#[test]
+fn test_arith_subst_concat_three() {
+    let (_, output, _) = run_zshrs(r#"echo $((1*2))$((3*4))$((5*6))"#);
+    assert_eq!(output.trim(), "21230");
+}
+
+#[test]
+fn test_declare_p_assoc_export_uses_typeset() {
+    // `declare -Ax h` — assoc + export should print `typeset -Ax`,
+    // not `export -A`. The export keyword is reserved for scalars/ints.
+    let (_, output, _) = run_zshrs(r#"declare -Ax h; declare -p h"#);
+    assert_eq!(output.trim(), "typeset -Ax h=( )");
+}
+
+#[test]
+fn test_declare_p_float_E_flag() {
+    // `declare -E a=3.14` → `typeset -E ...` (was wrongly `-F`).
+    let (_, output, _) = run_zshrs(r#"declare -E a=3.14; declare -p a"#);
+    assert!(
+        output.starts_with("typeset -E"),
+        "expected -E flag: {output:?}"
+    );
+}
+
+#[test]
+fn test_array_element_no_colon_set() {
+    // `${arr[N]+set}` (no colon) should print "set" when index is in bounds.
+    let (_, output, _) = run_zshrs(r#"arr=(a b); echo "${arr[1]+set}""#);
+    assert_eq!(output.trim(), "set");
+}
+
+#[test]
+fn test_array_element_no_colon_set_oob() {
+    let (_, output, _) = run_zshrs(r#"arr=(a b); echo "${arr[3]+set}""#);
+    assert_eq!(output.trim(), "");
+}
+
+#[test]
+fn test_assoc_element_no_colon_set() {
+    let (_, output, _) =
+        run_zshrs(r#"declare -A h; h[k]=v; echo "${h[k]+set}""#);
+    assert_eq!(output.trim(), "set");
+}
+
+#[test]
+fn test_assoc_element_no_colon_unset() {
+    let (_, output, _) =
+        run_zshrs(r#"declare -A h; h[k]=v; echo "${h[m]+set}""#);
+    assert_eq!(output.trim(), "");
+}
+
+#[test]
+fn test_t_flag_array_unique() {
+    // `${(t)arr}` for `typeset -aU` should include "-unique".
+    let (_, output, _) = run_zshrs(r#"declare -aU arr=(a a b); echo "${(t)arr}""#);
+    assert_eq!(output.trim(), "array-unique");
+}
+
+#[test]
+fn test_test_nt_both_must_exist() {
+    // `[[ a -nt b ]]` requires BOTH files to exist; missing → false.
+    let (_, output, _) = run_zshrs(r#"[[ /etc/passwd -nt /tmp/nope_zshrs ]] && echo nt || echo not_nt"#);
+    assert_eq!(output.trim(), "not_nt");
+}
+
+#[test]
+fn test_test_ot_missing_is_false() {
+    // `[[ "foo" -ot /tmp ]]` — "foo" doesn't exist → false (not "old").
+    let (_, output, _) = run_zshrs(r#"[[ "foo" -ot /tmp ]] && echo old || echo notold"#);
+    assert_eq!(output.trim(), "notold");
+}
+
+#[test]
+fn test_double_bracket_var_eq_var() {
+    // `[[ $a == $b ]]` should expand both sides. Regression: zshrs's
+    // `==` path treated RHS as literal pattern, so `$b` was the
+    // string "$b" not the value.
+    let (_, output, _) = run_zshrs(r#"a=foo; b=foo; [[ $a == $b ]] && echo eq"#);
+    assert_eq!(output.trim(), "eq");
+}
+
+#[test]
+fn test_double_bracket_var_eq_var_unequal() {
+    let (_, output, _) = run_zshrs(r#"a=foo; b=bar; [[ $a == $b ]] && echo eq || echo neq"#);
+    assert_eq!(output.trim(), "neq");
+}
+
+#[test]
+fn test_double_bracket_glob_pattern_still_works() {
+    // Regression guard: glob on RHS still works.
+    let (_, output, _) = run_zshrs(r#"[[ "abc" == ab* ]] && echo m"#);
+    assert_eq!(output.trim(), "m");
+}
