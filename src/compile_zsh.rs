@@ -662,8 +662,14 @@ impl ZshCompiler {
 
         // `shopt` is bash-only; zsh has no such builtin. Force external lookup
         // so it produces "command not found: shopt" matching /bin/zsh exactly.
+        // `declare` and `typeset` both map to BUILTIN_TYPESET in fusevm — but
+        // zsh prefixes "no such variable" errors with the builtin name the
+        // user actually typed. Route `declare` to BUILTIN_DECLARE so the
+        // distinct error-format path fires.
         let builtin_id = if first == "shopt" {
             None
+        } else if first == "declare" {
+            Some(fusevm::shell_builtins::BUILTIN_DECLARE)
         } else {
             fusevm::shell_builtins::builtin_id(first)
         };

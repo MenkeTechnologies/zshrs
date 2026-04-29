@@ -4645,3 +4645,115 @@ fn test_dollar_hash_name_bracket_star() {
     let (_, output, _) = run_zshrs(r#"a=(x y z); echo $#a[*]"#);
     assert_eq!(output.trim(), "3");
 }
+
+#[test]
+fn test_arith_float_div_by_zero_returns_inf() {
+    // `1/0.0` in zsh produces `Inf` (IEEE 754 semantics); only INTEGER
+    // div-by-zero raises the "division by zero" error. zshrs treated
+    // both alike — gated the error on !is_float.
+    let (_, output, _) = run_zshrs(r#"echo $((1/0.0))"#);
+    assert_eq!(output.trim(), "Inf");
+}
+
+#[test]
+fn test_arith_neg_float_div_by_zero_returns_neg_inf() {
+    let (_, output, _) = run_zshrs(r#"echo $((-1/0.0))"#);
+    assert_eq!(output.trim(), "-Inf");
+}
+
+#[test]
+fn test_arith_zero_div_zero_returns_nan() {
+    let (_, output, _) = run_zshrs(r#"echo $((0.0/0.0))"#);
+    assert_eq!(output.trim(), "NaN");
+}
+
+#[test]
+fn test_arith_int_div_by_zero_still_errors() {
+    // Regression guard: integer-only div-by-zero must still raise the
+    // error (not silently produce Inf).
+    let (_, _, stderr) = run_zshrs(r#"echo $((10/0))"#);
+    assert!(
+        stderr.contains("division by zero"),
+        "expected error: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_declare_p_missing_variable_emits_named_error() {
+    // `declare -p NAME` for an unknown var should emit
+    // `declare:1: no such variable: NAME` (NOT `typeset:1:`).
+    let (status, _, stderr) = run_zshrs(r#"declare -p NONEXIST"#);
+    assert_ne!(status, 0, "expected non-zero exit");
+    assert!(
+        stderr.contains("declare:1: no such variable: NONEXIST"),
+        "expected declare-prefixed err: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_typeset_p_missing_variable_emits_named_error() {
+    // `typeset -p` keeps the `typeset:` prefix.
+    let (status, _, stderr) = run_zshrs(r#"typeset -p NONEXIST"#);
+    assert_ne!(status, 0);
+    assert!(
+        stderr.contains("typeset:1: no such variable: NONEXIST"),
+        "expected typeset-prefixed err: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_arith_huge_float_doesnt_truncate_to_i64_max() {
+    // `1e100` was printing `9223372036854775807.` (i64::MAX) because
+    // format_zsh_subst cast every float-with-fract==0 to i64. Now
+    // gated on the value fitting in i64 range; out-of-range falls
+    // through to the scientific-notation branch.
+    let (_, output, _) = run_zshrs(r#"echo $((1e100))"#);
+    let s = output.trim();
+    assert!(
+        s.contains("e+") && !s.contains("9223372036854775807"),
+        "expected scientific notation: {s:?}"
+    );
+}
+
+#[test]
+fn test_arith_scientific_format_signed_two_digit_exp() {
+    // `1e20` should print with signed 2-digit exponent (`1e+20`),
+    // not `1e20` or `1.0e+20`.
+    let (_, output, _) = run_zshrs(r#"echo $((1e20))"#);
+    assert_eq!(output.trim(), "1e+20");
+}
+
+#[test]
+fn test_array_oob_index_default_modifier() {
+    // `${arr[5]:-default}` with `arr=(a b)` (only 2 elements) should
+    // return `default`. Regression: zshrs's bracket-handler returned
+    // empty silently, never falling through to the `:-default` form.
+    let (_, output, _) = run_zshrs(r#"arr=(a b); echo "${arr[5]:-default}""#);
+    assert_eq!(output.trim(), "default");
+}
+
+#[test]
+fn test_array_empty_index_default_modifier() {
+    // Same behavior for `${arr[1]:-empty}` with empty array.
+    let (_, output, _) = run_zshrs(r#"arr=(); echo "${arr[1]:-empty}""#);
+    assert_eq!(output.trim(), "empty");
+}
+
+#[test]
+fn test_array_oob_index_assign_modifier() {
+    // `${arr[N]:=fresh}` should assign fresh when OOB and return fresh.
+    let (_, output, _) =
+        run_zshrs(r#"arr=(); echo "${arr[1]:=fresh}"; echo "${arr[1]}""#);
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(lines.len(), 2, "expected 2 lines: {output:?}");
+    assert_eq!(lines[0], "fresh");
+    assert_eq!(lines[1], "fresh");
+}
+
+#[test]
+fn test_array_in_bounds_no_default_kicks_in() {
+    // Regression guard: `${arr[1]:-default}` with arr=(a b) returns
+    // `a`, not `default`.
+    let (_, output, _) = run_zshrs(r#"arr=(a b); echo "${arr[1]:-default}""#);
+    assert_eq!(output.trim(), "a");
+}

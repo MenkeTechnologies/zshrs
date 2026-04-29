@@ -1217,7 +1217,25 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - Bare `$#NAME[@]` is zsh shorthand for `${#NAME[@]}` (array length). My iteration-67 fast-path only matched `^\$#NAME$` (no brackets). Extended the matcher in `compile_word_str` to also accept a trailing `[@]` / `[*]` suffix and route the same way through `BUILTIN_PARAM_LENGTH`. Tests: `test_dollar_hash_name_bracket_at`, `test_dollar_hash_name_bracket_star`.
 
-## Still open (seventieth-pass — remaining)
+## Closed (seventy-first-pass)
+
+### Float div-by-zero raised "division by zero" instead of producing Inf
+
+- zsh follows IEEE 754 — `1/0.0` produces `Inf`, `-1/0.0` produces `-Inf`, `0.0/0.0` produces `NaN`. Only INTEGER div-by-zero raises the runtime error. zshrs treated both the same. Gated the error in `MathTok::Div` / `Mod` arms on `!is_float` so float operands fall through to the f64 division (which produces the IEEE specials naturally). Updated `format_zsh_subst` to print `Inf` / `-Inf` / `NaN` (capitalized, no decimal) instead of Rust's `inf` / `NaN.0`. Tests: `test_arith_float_div_by_zero_returns_inf`, `test_arith_neg_float_div_by_zero_returns_neg_inf`, `test_arith_zero_div_zero_returns_nan`, `test_arith_int_div_by_zero_still_errors`.
+
+### `declare -p NONEXIST` was silent (and used wrong builtin name)
+
+- zsh emits `declare:1: no such variable: NAME` (or `typeset:1:` if invoked as `typeset`) and exits non-zero. zshrs returned silent success, masking missing-variable bugs. Added the error emit in the `print_mode` path, threaded the invoked name through a new `builtin_typeset_named` helper. fusevm maps both names to the same builtin id so I also exposed `BUILTIN_DECLARE` (id 21) and route `declare` to it from `compile_simple` to preserve the name distinction at error time. Tests: `test_declare_p_missing_variable_emits_named_error`, `test_typeset_p_missing_variable_emits_named_error`.
+
+### Huge floats (`1e100`) truncated to `9223372036854775807` (i64::MAX)
+
+- `format_zsh_subst` cast every "fract==0 && finite" float to `i64`. Rust's `as i64` saturates on overflow to `i64::MAX`, so `1e100` displayed as the saturation value — completely wrong. Gated the int-cast on the float fitting in `[i64::MIN, i64::MAX]`. Out-of-range floats now route through a scientific-notation branch that emits zsh's `<mantissa>e±DD` shape. Tests: `test_arith_huge_float_doesnt_truncate_to_i64_max`, `test_arith_scientific_format_signed_two_digit_exp`.
+
+### `${arr[N]:-default}` ignored the modifier on out-of-bounds index
+
+- For an OOB index like `arr=(a b); echo ${arr[5]:-default}`, zshrs's bracket-handler returned the empty array element and exited the function — never reaching the `:-default` form's default fallback. Added a `lookup_array_element` helper and an `after_bracket` modifier scanner that handles `:-`, `:+`, `:?`, `:=` after `]`. Tests: `test_array_oob_index_default_modifier`, `test_array_empty_index_default_modifier`, `test_array_oob_index_assign_modifier`, `test_array_in_bounds_no_default_kicks_in`.
+
+## Still open (seventy-first-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
