@@ -1687,6 +1687,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `echo */` outputs each directory with a trailing `/`. The Rust `glob` crate strips trailing slashes from match results, so zshrs returned `sub` instead of `sub/`. Re-append `/` to each result when the input pattern ended in `/`. Test: `test_glob_trailing_slash_preserved`.
 
+### `echo - hi` printed `- hi` instead of `hi`
+
+- zsh's echo treats a bare `-` (single char) as a no-op flag — silently consumed. zshrs's flag parser skipped tokens shorter than 2 chars, so the lone `-` became a positional arg. Added an explicit `if arg == "-"` skip in the flag-walk. `--` (two dashes) is still NOT a recognized flag — stays literal. Test: `test_echo_bare_dash_is_noop_flag`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
