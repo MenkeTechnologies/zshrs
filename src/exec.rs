@@ -16811,7 +16811,8 @@ impl ShellExecutor {
         };
 
         let Some(id) = job_id else {
-            eprintln!("fg: no current job");
+            // Match zsh's diagnostic for non-interactive contexts.
+            eprintln!("zshrs:fg:1: no job control in this shell.");
             return 1;
         };
 
@@ -16858,7 +16859,7 @@ impl ShellExecutor {
         };
 
         let Some(id) = job_id else {
-            eprintln!("bg: no current job");
+            eprintln!("zshrs:bg:1: no job control in this shell.");
             return 1;
         };
 
@@ -16892,37 +16893,39 @@ impl ShellExecutor {
             return 1;
         }
 
-        // Signal name/number mapping
+        // Signal name/number mapping. Numbers are pulled from libc
+        // so they're platform-correct: macOS USR1=30, Linux USR1=10.
+        // Hardcoding caused `kill -l USR1` to print 10 on macOS.
         let signal_map: &[(&str, i32, Signal)] = &[
-            ("HUP", 1, Signal::SIGHUP),
-            ("INT", 2, Signal::SIGINT),
-            ("QUIT", 3, Signal::SIGQUIT),
-            ("ILL", 4, Signal::SIGILL),
-            ("TRAP", 5, Signal::SIGTRAP),
-            ("ABRT", 6, Signal::SIGABRT),
-            ("BUS", 7, Signal::SIGBUS),
-            ("FPE", 8, Signal::SIGFPE),
-            ("KILL", 9, Signal::SIGKILL),
-            ("USR1", 10, Signal::SIGUSR1),
-            ("SEGV", 11, Signal::SIGSEGV),
-            ("USR2", 12, Signal::SIGUSR2),
-            ("PIPE", 13, Signal::SIGPIPE),
-            ("ALRM", 14, Signal::SIGALRM),
-            ("TERM", 15, Signal::SIGTERM),
-            ("CHLD", 17, Signal::SIGCHLD),
-            ("CONT", 18, Signal::SIGCONT),
-            ("STOP", 19, Signal::SIGSTOP),
-            ("TSTP", 20, Signal::SIGTSTP),
-            ("TTIN", 21, Signal::SIGTTIN),
-            ("TTOU", 22, Signal::SIGTTOU),
-            ("URG", 23, Signal::SIGURG),
-            ("XCPU", 24, Signal::SIGXCPU),
-            ("XFSZ", 25, Signal::SIGXFSZ),
-            ("VTALRM", 26, Signal::SIGVTALRM),
-            ("PROF", 27, Signal::SIGPROF),
-            ("WINCH", 28, Signal::SIGWINCH),
-            ("IO", 29, Signal::SIGIO),
-            ("SYS", 31, Signal::SIGSYS),
+            ("HUP", libc::SIGHUP, Signal::SIGHUP),
+            ("INT", libc::SIGINT, Signal::SIGINT),
+            ("QUIT", libc::SIGQUIT, Signal::SIGQUIT),
+            ("ILL", libc::SIGILL, Signal::SIGILL),
+            ("TRAP", libc::SIGTRAP, Signal::SIGTRAP),
+            ("ABRT", libc::SIGABRT, Signal::SIGABRT),
+            ("BUS", libc::SIGBUS, Signal::SIGBUS),
+            ("FPE", libc::SIGFPE, Signal::SIGFPE),
+            ("KILL", libc::SIGKILL, Signal::SIGKILL),
+            ("USR1", libc::SIGUSR1, Signal::SIGUSR1),
+            ("SEGV", libc::SIGSEGV, Signal::SIGSEGV),
+            ("USR2", libc::SIGUSR2, Signal::SIGUSR2),
+            ("PIPE", libc::SIGPIPE, Signal::SIGPIPE),
+            ("ALRM", libc::SIGALRM, Signal::SIGALRM),
+            ("TERM", libc::SIGTERM, Signal::SIGTERM),
+            ("CHLD", libc::SIGCHLD, Signal::SIGCHLD),
+            ("CONT", libc::SIGCONT, Signal::SIGCONT),
+            ("STOP", libc::SIGSTOP, Signal::SIGSTOP),
+            ("TSTP", libc::SIGTSTP, Signal::SIGTSTP),
+            ("TTIN", libc::SIGTTIN, Signal::SIGTTIN),
+            ("TTOU", libc::SIGTTOU, Signal::SIGTTOU),
+            ("URG", libc::SIGURG, Signal::SIGURG),
+            ("XCPU", libc::SIGXCPU, Signal::SIGXCPU),
+            ("XFSZ", libc::SIGXFSZ, Signal::SIGXFSZ),
+            ("VTALRM", libc::SIGVTALRM, Signal::SIGVTALRM),
+            ("PROF", libc::SIGPROF, Signal::SIGPROF),
+            ("WINCH", libc::SIGWINCH, Signal::SIGWINCH),
+            ("IO", libc::SIGIO, Signal::SIGIO),
+            ("SYS", libc::SIGSYS, Signal::SIGSYS),
         ];
 
         let mut sig = Signal::SIGTERM;
@@ -23076,8 +23079,14 @@ impl ShellExecutor {
         }
 
         let err = command.exec();
-        eprintln!("exec: {}: {}", cmd, err);
-        1
+        // zsh format for missing exec target: `zsh:1: no such file or
+        // directory: PATH` (lowercased, no os-error suffix). Strip
+        // Rust's wrapping.
+        let msg = pretty_io_err(&err).to_lowercase();
+        eprintln!("zshrs:1: {}: {}", msg, cmd);
+        // exec failure is fatal in zsh — exit the shell with status 127
+        // (not 1) since the target couldn't be found/executed.
+        std::process::exit(127);
     }
 
     /// float - declare floating point variables

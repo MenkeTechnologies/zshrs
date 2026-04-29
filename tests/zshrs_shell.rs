@@ -3916,3 +3916,32 @@ fn test_abs_path_missing_says_no_such_file_not_command_not_found() {
         "abs path must NOT say command not found: {stderr:?}"
     );
 }
+
+#[test]
+fn test_kill_l_uses_platform_signal_numbers() {
+    // `kill -l USR1` must use the platform's actual signal number,
+    // not Linux defaults. macOS USR1 is 30, Linux is 10. Was
+    // hardcoded to Linux. Pulled from libc::SIGUSR1 etc.
+    let (_, output, _) = run_zshrs(r#"kill -l USR1"#);
+    let n: i32 = output.trim().parse().unwrap_or(0);
+    let expected = libc::SIGUSR1 as i32;
+    assert_eq!(n, expected, "got: {output:?}, expected libc::SIGUSR1={expected}");
+}
+
+#[test]
+fn test_fg_bg_no_job_control_message() {
+    // Non-interactive mode: zsh emits `zsh:fg:1: no job control in
+    // this shell.` and exits 1. Was emitting `fg: no current job`.
+    let (status, _stdout, stderr) = run_zshrs(r#"fg"#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("fg:1: no job control in this shell."),
+        "stderr: {stderr:?}"
+    );
+    let (status, _stdout, stderr) = run_zshrs(r#"bg"#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("bg:1: no job control in this shell."),
+        "stderr: {stderr:?}"
+    );
+}

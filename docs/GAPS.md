@@ -1017,9 +1017,24 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh distinguishes: relative names not in PATH → `command not found`; absolute paths that don't exist → `no such file or directory` (since no PATH search was attempted, the open() syscall reported ENOENT). Added a `cmd.starts_with('/')` branch in `execute_external` to switch the diagnostic. Test: `test_abs_path_missing_says_no_such_file_not_command_not_found`.
 
-## Still open (fifty-eighth-pass — remaining)
+## Closed (fifty-ninth-pass — `kill -l` platform signals + `exec` missing-target + `fg`/`bg` non-interactive message)
+
+### `kill -l USR1` printed 10 instead of 30 on macOS
+
+- The signal_map was hardcoded to Linux signal numbers (USR1=10). macOS uses USR1=30. Replaced the literal numbers with `libc::SIGHUP`, `libc::SIGUSR1`, etc. — pulled from the platform's libc bindings, so the values are always correct on the build target. Test: `test_kill_l_uses_platform_signal_numbers`.
+
+### `exec /nonexistent_xyz` emitted Rust's wrapped error and continued
+
+- Was `exec: /nonexistent_xyz: No such file or directory (os error 2)` then continued running with status 1. zsh emits `zsh:1: no such file or directory: PATH` and exits the whole shell with 127 (exec target unfindable). Stripped Rust's wrapping via `pretty_io_err`, lowercased, used canonical `zshrs:1: <msg>: <path>` shape, switched to `std::process::exit(127)` since `exec` failure is fatal.
+
+### `fg` / `bg` in non-interactive mode said "no current job"
+
+- zsh emits `zsh:fg:1: no job control in this shell.` (with trailing period — quirky). Updated both messages. Test: `test_fg_bg_no_job_control_message`.
+
+## Still open (fifty-ninth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
+- **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
 
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
