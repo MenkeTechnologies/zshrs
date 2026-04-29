@@ -1994,12 +1994,13 @@ impl<'a> ZshParser<'a> {
                 self.lexer.zshlex();
             }
 
-            // Anonymous form `function () { body } a b c` — no name was
-            // collected, but `()` was present. Mirror parse_anon_funcdef:
-            // synthesize `_zshrs_anon_N`, collect trailing args, set
-            // auto_call_args so compile_funcdef registers + immediately
-            // calls the function with the args as positional params.
-            if names.is_empty() && saw_paren {
+            // Anonymous form `function () { body } a b c` (with `()`) or
+            // `function { body } a b c` (zsh-only shorthand, no `()`). No
+            // name was collected. Mirror parse_anon_funcdef: synthesize
+            // `_zshrs_anon_N`, collect trailing args, set auto_call_args
+            // so compile_funcdef registers + immediately calls the
+            // function with the args as positional params.
+            if names.is_empty() {
                 let mut args = Vec::new();
                 while self.lexer.tok == LexTok::String {
                     if let Some(s) = self.lexer.tokstr.clone() {

@@ -5384,3 +5384,119 @@ fn test_dq_var_double_concat() {
     let (_, output, _) = run_zshrs(r#"a=foo; echo X_"$a"_Y"#);
     assert_eq!(output.trim(), "X_foo_Y");
 }
+
+#[test]
+fn test_anonymous_function_no_parens() {
+    // `function { body } args` — zsh-only anonymous-function shorthand
+    // (no `()`). Args become the function's positional params.
+    let (_, output, _) = run_zshrs("function { echo $1 } hello");
+    assert_eq!(output.trim(), "hello");
+}
+
+#[test]
+fn test_anonymous_function_no_parens_multi_arg() {
+    let (_, output, _) =
+        run_zshrs("function { echo $#; echo $@ } a b c");
+    assert_eq!(output.trim(), "3\na b c");
+}
+
+#[test]
+fn test_zsh_subshell_increments() {
+    // `$ZSH_SUBSHELL` increments by one for each subshell nesting level.
+    let (_, output, _) = run_zshrs(
+        "echo $ZSH_SUBSHELL; (echo $ZSH_SUBSHELL); ( ( echo $ZSH_SUBSHELL ) )",
+    );
+    assert_eq!(output.trim(), "0\n1\n2");
+}
+
+#[test]
+fn test_printf_double_dash_end_of_options() {
+    // `printf -- fmt args...` — POSIX `--` end-of-options. Without this
+    // `--` was printed as the format string's first literal output.
+    let (_, output, _) = run_zshrs(r#"printf -- "%s\n" hi"#);
+    assert_eq!(output.trim(), "hi");
+}
+
+#[test]
+fn test_glob_sort_locale_aware() {
+    // Under a Unicode locale, glob results sort case-insensitively
+    // (`Aaa bbb Ccc Ddd` not `Aaa Ccc Ddd bbb`).
+    let dir = std::env::temp_dir().join("zshrs_test_locale_sort");
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["Aaa", "bbb", "Ccc", "Ddd"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+    }
+    let cmd = format!("cd {} && echo *", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    let trimmed = output.trim();
+    // Either case-folded order under Unicode locale, or ASCII order under C.
+    let lc_all = std::env::var("LC_ALL").unwrap_or_default();
+    let lang = std::env::var("LANG").unwrap_or_default();
+    let active = if !lc_all.is_empty() { lc_all } else { lang };
+    let is_c = matches!(
+        active.split('.').next().unwrap_or("").to_uppercase().as_str(),
+        "" | "C" | "POSIX"
+    );
+    if is_c {
+        assert_eq!(trimmed, "Aaa Ccc Ddd bbb");
+    } else {
+        assert_eq!(trimmed, "Aaa bbb Ccc Ddd");
+    }
+}
+
+#[test]
+fn test_typeset_integer_base_output() {
+    // `typeset -i N name=value` displays in base N as `N#DIGITS`.
+    let (_, output, _) =
+        run_zshrs("typeset -i 16 a=255; echo $a");
+    assert_eq!(output.trim(), "16#FF");
+
+    let (_, output, _) =
+        run_zshrs("typeset -i 2 a=10; echo $a");
+    assert_eq!(output.trim(), "2#1010");
+}
+
+#[test]
+fn test_cd_uses_shell_home() {
+    // `HOME=/tmp; cd; pwd` honors the shell-state HOME assignment
+    // (no export needed) — was reading only OS env before.
+    let (_, output, _) = run_zshrs("HOME=/tmp; cd; pwd");
+    assert_eq!(output.trim(), "/tmp");
+}
+
+#[test]
+fn test_cd_tilde_uses_shell_home() {
+    // `cd ~` — tilde expansion reads shell-state HOME first.
+    let (_, output, _) = run_zshrs("HOME=/tmp; cd ~; pwd");
+    assert_eq!(output.trim(), "/tmp");
+}
+
+#[test]
+fn test_cdpath_implicit_search() {
+    // CDPATH entries are searched without `-s` flag when the literal
+    // path isn't a directory in cwd.
+    let (_, output, _) = run_zshrs(
+        "mkdir -p /tmp/zshrs_cdpath_test && CDPATH=/tmp cd zshrs_cdpath_test; pwd; rm -rf /tmp/zshrs_cdpath_test",
+    );
+    assert!(output.contains("/tmp/zshrs_cdpath_test"));
+}
+
+#[test]
+fn test_tilde_literal_in_double_quotes() {
+    // Tilde inside `"..."` is literal — `echo "~"` prints `~`, not
+    // the home dir.
+    let (_, output, _) = run_zshrs(r#"echo "~""#);
+    assert_eq!(output.trim(), "~");
+
+    let (_, output, _) = run_zshrs(r#"a="~"; echo "[$a]""#);
+    assert_eq!(output.trim(), "[~]");
+}
+
+#[test]
+fn test_herestring_inside_command_substitution() {
+    // `$(<<<"hi" cat)` — herestring inside cmd-subst was being
+    // misinterpreted as the `$(<file)` read-file shorthand.
+    let (_, output, _) = run_zshrs(r#"a=$(<<<"hi" cat); echo "$a""#);
+    assert_eq!(output.trim(), "hi");
+}

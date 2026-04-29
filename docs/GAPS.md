@@ -1419,6 +1419,48 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The bare-var fast-path in `compile_word_str` matched after `untokenize` stripped DNULL markers, so `"$a"bar` (raw `\u{9e}$a\u{9e}bar`) became `$abar` and the fast-path looked up nonexistent `abar`. Skip the fast-path when the raw word contains DNULL/SNULL quote markers — the bridge below handles the segment-split correctly. Tests: `test_dq_var_concat_with_literal_suffix`, `test_dq_var_concat_with_literal_prefix`, `test_dq_var_with_underscore_suffix`, `test_dq_var_double_concat`.
 
+## Closed (seventy-fifth-pass continued — second batch)
+
+### `$(<<<"hi" cat)` herestring misread as `$(<file)` shorthand
+
+- `run_command_substitution` shortcuts `$(<filename)` to `read-file`; the `<<<"hi"` herestring matched the leading `<` and was passed to the read-file path which errored "no such file or directory: <<\"hi\" cat". Tighten the prefix-strip with `.filter(|s| !s.starts_with('<'))` so only a SINGLE leading `<` triggers the shorthand. Test: `test_herestring_inside_command_substitution`.
+
+### `function { body }` (no parens) anonymous function unsupported
+
+- zsh accepts both `function () { body } args` and `function { body } args` for anonymous functions. zshrs's `parse_funcdef` required the `()` to identify the anonymous form, so the no-parens shorthand silently parsed the trailing args as the next command. Drop the `saw_paren` guard — empty-name path in parse_funcdef now synthesizes the auto-call regardless. Tests: `test_anonymous_function_no_parens`, `test_anonymous_function_no_parens_multi_arg`.
+
+### `$ZSH_SUBSHELL` didn't increment in `(...)` subshells
+
+- zshrs's snapshot/restore-based `(...)` doesn't fork, so `entersubsh()` (which bumps the counter) was never called. Increment the counter inside `subshell_begin` before snapshotting; the snapshot captures the parent-side value so `subshell_end` restores it. Test: `test_zsh_subshell_increments`.
+
+### `printf -- fmt args` printed `--` as the format
+
+- POSIX `--` end-of-options marker wasn't recognized; `printf -- "%s\n" hi` produced `--\nhi\n`. Strip a leading `--` before the `-v VAR` parse / format-string lookup. Test: `test_printf_double_dash_end_of_options`.
+
+### `echo *` glob sort was always byte-order (case-sensitive)
+
+- Under a Unicode locale, zsh sorts case-foldedly (`Aaa bbb Ccc Ddd`), not ASCII (`Aaa Ccc Ddd bbb`). zshrs's `expand_glob` finalized with `expanded.sort()` — pure byte compare. Added `glob::locale_aware_name_cmp` that folds case under non-C locales (via LC_ALL/LC_COLLATE/LANG sniff) and falls back to byte order under C/POSIX. Wired into `expand_glob`'s final sort and `MatchEntry::compare`. Test: `test_glob_sort_locale_aware`.
+
+### `typeset -i N name=value` ignored the base argument
+
+- `typeset -i 16 a=255` should display `$a` as `16#FF`; zshrs stored decimal `255`. Added `int_base: Option<u32>` to `VarAttr`, parsed both `-iN` (attached digits) and `-i N` (separate arg) forms, and emit `BASE#DIGITS` (with `A`-`Z` for digits ≥10) at assignment time via new `format_int_in_base` helper. Test: `test_typeset_integer_base_output`.
+
+### `cd` with no args used OS env HOME, not shell-state HOME
+
+- `HOME=/tmp; cd; pwd` printed `/Users/wizard` because `do_cd` called `dirs::home_dir()` which reads the OS env (unaffected by non-exported shell-local assignments). Changed to a closure that prefers `self.variables["HOME"]` then env. Test: `test_cd_uses_shell_home`.
+
+### `cd ~` used OS env HOME, not shell-state HOME
+
+- Same root cause for the tilde-prefix path. `expand_tilde_named` for bare `~` only checked `std::env::var("HOME")`. Read shell-state `variables["HOME"]` first. Test: `test_cd_tilde_uses_shell_home`.
+
+### CDPATH searched only with explicit `-s`
+
+- zsh implicitly searches CDPATH when the literal path isn't a directory in cwd; zshrs gated this behind the `-s` (use_cdpath) flag. Reworked the path-resolution branch to: if path doesn't start with `/`/`.` AND isn't a cwd directory, search `$CDPATH` (shell-state preferred over env) then the `cdpath` array. Test: `test_cdpath_implicit_search`.
+
+### `~` literal in double quotes was being expanded
+
+- `echo "~"` printed `/Users/wizard`; zsh keeps `~` literal inside `"..."`. The shared `expand_string` tilde-handler had no DQ-context guard. Added `&& self.in_dq_context == 0` to the tilde branch — the existing `in_dq_context` counter (incremented around `expand_string` for DQ contents) gates expansion. Tests: `test_tilde_literal_in_double_quotes`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
