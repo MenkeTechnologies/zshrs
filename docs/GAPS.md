@@ -1655,6 +1655,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `type local` reports `local is a reserved word` — these are precommand modifiers parsed at the syntactic level, not regular builtins. zshrs's reserved-word table only included flow-control keywords (`if`, `while`, etc.); the declaration keywords were missing. Added: `local`, `declare`, `typeset`, `readonly`, `export`, `integer`, `float` to the RESERVED_WORDS list in `builtin_type`. Test: `test_type_reserved_word_local_declare`.
 
+### `whence -v local` / `repeat` etc. also reported "shell builtin"
+
+- Same reserved-word gap in the `whence` builtin's `is_reserved_word` table. Added the same declaration keywords (`local`, `declare`, `typeset`, `readonly`, `export`, `integer`, `float`) plus zsh-specific keywords `repeat`, `foreach`, `end`, `nocorrect`, `noglob` that were missing from both tables. `whence -v local` now matches zsh's `local is a reserved word`. Test: `test_whence_reserved_word_local`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

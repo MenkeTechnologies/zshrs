@@ -26201,6 +26201,21 @@ impl ShellExecutor {
                 | "function"
                 | "time"
                 | "coproc"
+                | "repeat"
+                | "foreach"
+                | "end"
+                | "nocorrect"
+                | "noglob"
+                // Declaration keywords (precommand modifiers).
+                // zsh treats these as reserved-word declarations,
+                // not regular builtins.
+                | "local"
+                | "declare"
+                | "typeset"
+                | "readonly"
+                | "export"
+                | "integer"
+                | "float"
                 | "{"
                 | "}"
                 | "!"
