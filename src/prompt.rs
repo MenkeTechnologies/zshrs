@@ -863,17 +863,10 @@ impl<'a> PromptExpander<'a> {
             }
         }
 
-        // Reset attributes at end
-        if self.attrs.bold
-            || self.attrs.underline
-            || self.attrs.standout
-            || self.attrs.fg_color.is_some()
-            || self.attrs.bg_color.is_some()
-        {
-            self.start_escape();
-            self.output.push_str("\x1b[0m");
-            self.end_escape();
-        }
+        // zsh: no auto-reset at end of prompt expansion. The user is
+        // responsible for emitting `%b`/`%f`/`%k` to reset attributes;
+        // `print -P "%B"` outputs only `\e[1m` with no trailing
+        // `\e[0m`. Leaving any open escapes is the caller's intent.
 
         self.output
     }
