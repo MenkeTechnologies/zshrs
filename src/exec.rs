@@ -9339,15 +9339,21 @@ impl ShellExecutor {
         let nullglob = self.options.get("nullglob").copied().unwrap_or(false);
         // `(D)` glob qualifier — per-pattern dotglob. Same effect as
         // `setopt dotglob` but scoped to this expansion only.
+        // Also: when the LAST path component starts with literal `.`,
+        // treat as if dotglob was on (zsh: `.*` matches dotfiles even
+        // without setopt dotglob, because the leading `.` is literal).
+        let last_seg = glob_pattern.rsplit('/').next().unwrap_or(&glob_pattern);
+        let pattern_starts_with_dot = last_seg.starts_with('.');
         let dotglob = self.options.get("dotglob").copied().unwrap_or(false)
-            || qualifiers.contains('D');
+            || qualifiers.contains('D')
+            || pattern_starts_with_dot;
         let nocaseglob = self.options.get("nocaseglob").copied().unwrap_or(false);
 
         // Parallel recursive glob: when pattern contains **/ we split the
         // directory walk across worker pool threads — one thread per top-level
         // subdirectory.  zsh does this single-threaded via fork+exec which is
         // why `echo **/*.rs` is painfully slow on large trees.
-        let expanded = if glob_pattern.contains("**/") {
+        let mut expanded = if glob_pattern.contains("**/") {
             self.expand_glob_parallel(&glob_pattern, dotglob, nocaseglob)
         } else {
             let options = glob::MatchOptions {
@@ -9364,7 +9370,17 @@ impl ShellExecutor {
             }
         };
 
-        let mut expanded = self.filter_by_qualifiers(expanded, &qualifiers);
+        // zsh always excludes "." and ".." from glob results, even
+        // with `dotglob` set or when the pattern is `.*`. The Rust
+        // glob crate includes them. `Path::file_name` returns None
+        // for these (treats them as cur/parent-dir components), so
+        // check the trailing path segment textually.
+        expanded.retain(|p| {
+            let last = p.rsplit('/').next().unwrap_or(p);
+            last != "." && last != ".."
+        });
+        let expanded = self.filter_by_qualifiers(expanded, &qualifiers);
+        let mut expanded = expanded;
         expanded.sort();
 
         if expanded.is_empty() {

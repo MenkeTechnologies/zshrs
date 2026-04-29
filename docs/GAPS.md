@@ -873,7 +873,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - zsh ships two aliases by default: `run-help=man` and `which-command=whence`. Visible in a fresh `zsh -f -c 'alias'`. zshrs's executor started with an empty alias map. Pre-populated `aliases` HashMap with these two entries in `ShellExecutor::new()`. Test: `test_default_aliases_match_zsh`.
 
-## Still open (forty-third-pass — remaining)
+## Closed (forty-fourth-pass — `.*` glob excludes `.`/`..` and matches dotfiles)
+
+### `echo .*` returned `./.` `./..` instead of the actual dotfiles
+
+Two bugs in `expand_glob`:
+- The Rust `glob` crate includes `.` and `..` in its results when the pattern matches them. zsh always excludes those even with `dotglob`. Added a textual `rsplit('/').next()` filter (`Path::file_name` returns None for `.`/`..` so the structured API doesn't catch them).
+- With `dotglob` off, `glob`'s `require_literal_leading_dot` blocked the dot-prefixed pattern from matching dotfiles even though the leading `.` IS literal in `.*`. zsh's actual rule: when the LAST path component starts with `.`, the leading `.` is literal so dotfiles match (no setopt needed). Set `dotglob = true` for this case before passing to `glob_with`.
+
+Tests: `test_dot_glob_excludes_dot_and_dotdot`, `test_star_glob_excludes_dotfiles_by_default`.
+
+## Still open (forty-fourth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
