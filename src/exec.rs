@@ -5350,6 +5350,20 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
             other => args.push(other.to_str()),
         }
     }
+    // `$_` tracks the last argument of the PREVIOUSLY executed
+    // command (zsh / bash convention). Promote the deferred value
+    // into `$_` BEFORE this command runs (so `echo $_` reads the
+    // prior command's last arg) then stash THIS command's last arg
+    // for the next dispatch.
+    let new_last = args.last().cloned();
+    with_executor(|exec| {
+        if let Some(prev) = exec.pending_underscore.take() {
+            exec.variables.insert("_".to_string(), prev);
+        }
+        if let Some(last) = new_last {
+            exec.pending_underscore = Some(last);
+        }
+    });
     args
 }
 
@@ -6004,6 +6018,13 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn exec(&mut self, args: Vec<String>) -> i32 {
+        // Track `$_` as the last argument of the last command (zsh /
+        // bash convention). Empty arglists leave it untouched.
+        if let Some(last) = args.last() {
+            with_executor(|exec| {
+                exec.variables.insert("_".to_string(), last.clone());
+            });
+        }
         // Route external command spawning through `executor.execute_external`
         // so intercepts (AOP before/after/around), command_hash lookups,
         // pre/postexec hooks, and zsh-specific fork-then-exec all apply.
@@ -7248,6 +7269,12 @@ pub struct ShellExecutor {
     pub local_array_save_stack: Vec<(String, Option<Vec<String>>)>,
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
+    /// Last arg of the currently-running command, deferred into `$_`
+    /// when the next command dispatches. zsh: `$_` reflects the LAST
+    /// command's last arg, so `echo hi; echo $_` prints `hi` (not the
+    /// `_` arg of `echo $_` itself). Promoted in `pop_args` and
+    /// `host.exec` before the command's args are read.
+    pub pending_underscore: Option<String>,
     /// True while expanding inside a double-quoted context. Set by
     /// `BUILTIN_EXPAND_TEXT` mode 1 around `expand_string` calls.
     /// Used by parameter-flag application to suppress array-only flags
@@ -7439,6 +7466,7 @@ impl ShellExecutor {
             local_save_stack: Vec::new(),
             local_array_save_stack: Vec::new(),
             local_scope_depth: 0,
+            pending_underscore: None,
             in_dq_context: 0,
             session_history_ids: Vec::new(),
             autoload_pending: HashMap::new(),
@@ -11950,6 +11978,23 @@ impl ShellExecutor {
 
                 // Regular indexed array
                 if index == "@" || index == "*" {
+                    // `${arr[@]:modifier}` — apply the path-modifier
+                    // (`:h`/`:t`/`:r`/`:e`/`:l`/`:u`/`:q`/`:Q`/`:A`/`:a`)
+                    // per-element. Without this, the join-then-return
+                    // path collapsed the array into a scalar and the
+                    // colon-modifier branch never fired, so `${a[@]:h}`
+                    // for `(/foo/x /bar/y)` returned the joined string
+                    // unchanged instead of `/foo /bar`.
+                    let modifier = after_bracket.strip_prefix(':').unwrap_or(after_bracket);
+                    if !modifier.is_empty() && self.is_history_modifier(modifier) {
+                        if let Some(arr) = self.arrays.get(var_name).cloned() {
+                            return arr
+                                .iter()
+                                .map(|e| self.apply_history_modifiers(e, modifier))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                        }
+                    }
                     // ${arr[@]} - return all elements
                     return self
                         .arrays
@@ -12097,6 +12142,33 @@ impl ShellExecutor {
             } else if self.is_history_modifier(rest) {
                 // Handle history-style modifiers: :A, :h, :t, :r, :e, :l, :u, :q, :Q
                 // These can be chained: ${var:A:h:h}
+                // For `${arr[@]:h}` / `${arr[*]:h}` (or the `(@)`-flag
+                // form we already stripped above) iterate per-element
+                // so each path gets its own :h/:t/:r truncation.
+                let (base_name, has_at_subscript) = if var_name.ends_with("[@]")
+                    || var_name.ends_with("[*]")
+                {
+                    (&var_name[..var_name.len() - 3], true)
+                } else {
+                    (var_name, false)
+                };
+                if has_at_subscript {
+                    if let Some(arr) = self.arrays.get(base_name).cloned() {
+                        return arr
+                            .iter()
+                            .map(|e| self.apply_history_modifiers(e, rest))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                    }
+                    if base_name == "@" || base_name == "*" || base_name.is_empty() {
+                        return self
+                            .positional_params
+                            .iter()
+                            .map(|e| self.apply_history_modifiers(e, rest))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                    }
+                }
                 return self.apply_history_modifiers(&val, rest);
             } else if rest
                 .chars()

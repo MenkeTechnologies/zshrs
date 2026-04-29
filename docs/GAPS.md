@@ -1511,6 +1511,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `cat <<EOF\n[42]\nEOF` should produce `[42]` on cat's stdin, but zshrs routed the body through the full word-expansion pipeline (expand_string + brace + glob), and `[42]` looks like a one-char glob pattern that never matches. Added mode 4 ("HeredocBody") to `BUILTIN_EXPAND_TEXT` which runs only `expand_string` (variable / cmd-subst / arith) and skips the brace + glob steps. The compile-side already passed mode 0 (Default); switched to mode 4 for the unquoted-terminator branch. Test: `test_heredoc_body_no_glob_expansion`.
 
+### `$_` always returned the shell binary path
+
+- zsh / bash convention: `$_` holds the last argument of the previously-executed command (`echo hi; echo $_` → `hi\nhi`). zshrs's `_` was only ever set to the binary path at startup. Added `pending_underscore: Option<String>` to the executor and promote it on every builtin dispatch (in `pop_args`) AND every external exec (in `host.exec`) — the previous command's last arg becomes `$_` BEFORE the next command's args are read, so `echo $_` reads the prior value. Test: `test_dollar_underscore_tracks_last_command_arg`.
+
+### `${arr[@]:h}` (and :t, :r, :l, :u, etc.) didn't iterate per-element
+
+- zsh applies path-modifier suffixes per-array-element: `a=(/a/b/c /d/e/f); echo "${a[@]:h}"` should produce `/a/b /d/e`. zshrs's subscript-resolution path returned `arr.join(" ")` for `[@]`/`[*]` and never reached the modifier loop, so the `:h` was silently dropped. Added a per-element `apply_history_modifiers` walk inside the `index == "@"`/`"*"` branch that fires when `after_bracket` starts with `:` and looks like a history modifier. Test: `test_array_at_subscript_history_modifier_per_element`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

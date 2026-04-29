@@ -5666,3 +5666,30 @@ fn test_heredoc_body_no_glob_expansion() {
         run_zshrs("a=42; cat <<EOF\n[$a]\nEOF");
     assert_eq!(output.trim(), "[42]");
 }
+
+#[test]
+fn test_dollar_underscore_tracks_last_command_arg() {
+    // `echo hi; echo $_` → `hi\nhi`. zshrs was returning the binary
+    // path because no command-dispatch path updated `$_`. Fix:
+    // promote pending_underscore in pop_args / host.exec.
+    let (_, output, _) = run_zshrs("echo hi; echo $_");
+    assert_eq!(output.trim(), "hi\nhi");
+}
+
+#[test]
+fn test_array_at_subscript_history_modifier_per_element() {
+    // `${arr[@]:h}` should apply :h per element (`/a/b/c /d/e/f` →
+    // `/a/b /d/e`), not collapse to scalar then strip. Same for
+    // :t / :r / :l / :u modifiers.
+    let (_, output, _) =
+        run_zshrs(r#"a=(/a/b/c /d/e/f); echo "${a[@]:h}""#);
+    assert_eq!(output.trim(), "/a/b /d/e");
+
+    let (_, output, _) =
+        run_zshrs(r#"a=(foo.txt bar.bin); echo "${a[@]:r}""#);
+    assert_eq!(output.trim(), "foo bar");
+
+    let (_, output, _) =
+        run_zshrs(r#"a=(/a/b/c /d/e); echo "${a[@]:t}""#);
+    assert_eq!(output.trim(), "c e");
+}
