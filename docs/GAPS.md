@@ -1495,6 +1495,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - POSIX printf accepts both `\NNN` (1-3 octal digits, the standard form) and `\0NNN` (legacy bash-style with leading 0). zshrs's escape branch only matched `\0…`, so `\102` (= 'B') stayed literal. Extended the match to any digit `0`-`7` as the first octal char. The leading-zero form still works: `\0102` is up to 3 chars total including the `0`, so it consumes `010` (= backspace) and leaves `2` as literal — matching zsh's output. Tests: `test_printf_octal_escape_no_leading_zero`, `test_printf_octal_leading_zero_three_total_digits`.
 
+### `() { echo $0 } anon` printed `_zshrs_anon_0`
+
+- zsh: anonymous functions display `(anon)` for `$0`. zshrs synthesizes internal names `_zshrs_anon_N` / `_zshrs_anon_kw_N` for the two anon syntaxes; the internal name was leaking into `$0`. In `call_function`, when `name.starts_with("_zshrs_anon_")` substitute the cosmetic `(anon)` for the value of `$0`. Test: `test_anon_function_dollar_zero_is_anon_string`.
+
+### `set -E` and `set -T` errored "invalid option"
+
+- zsh's `set` accepts `-E` (ERR_RETURN: return on non-zero status inside a function) and `-T` (TRAPS_ASYNC: run traps after each command). zshrs's `builtin_set` matcher had no `-E`/`-T` cases; both produced "invalid option". Added accept-silently mappings to `err_return` and `trapasync` options so user scripts that set the flag don't bail. Test: `test_set_capital_E_accepted`.
+
+### `[[ -o no_such_option ]]` was silent (no diagnostic)
+
+- zsh: emits `no such option: NAME` to stderr (test still returns false). zshrs's `BUILTIN_OPTION_SET` just returned false silently. Added a known-option lookup against `ZSH_OPTIONS_SET` (the same canonical-set used by `setopt`/`unsetopt`) plus the `no`-prefix-strip so `[[ -o nounset ]]` and `[[ -o nonounset ]]` invert correctly. Unknown names now log "no such option" to stderr matching zsh. Test: `test_double_bracket_o_unknown_option_warns`.
+
+### Heredoc body `[42]` triggered NOMATCH glob expansion
+
+- `cat <<EOF\n[42]\nEOF` should produce `[42]` on cat's stdin, but zshrs routed the body through the full word-expansion pipeline (expand_string + brace + glob), and `[42]` looks like a one-char glob pattern that never matches. Added mode 4 ("HeredocBody") to `BUILTIN_EXPAND_TEXT` which runs only `expand_string` (variable / cmd-subst / arith) and skips the brace + glob steps. The compile-side already passed mode 0 (Default); switched to mode 4 for the unquoted-terminator branch. Test: `test_heredoc_body_no_glob_expansion`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
