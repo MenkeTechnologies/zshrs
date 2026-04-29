@@ -86,8 +86,50 @@ impl MathNum {
         match self {
             MathNum::Integer(i) => i.to_string(),
             MathNum::Float(f) => {
-                if f.fract() == 0.0 && f.is_finite() {
+                // IEEE special values: zsh prints `Inf`, `-Inf`, `NaN`
+                // (capitalized, no decimal). Rust's Display gives
+                // `inf` / `-inf` / `NaN` so we have to special-case.
+                if f.is_nan() {
+                    return "NaN".to_string();
+                }
+                if f.is_infinite() {
+                    return if *f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() };
+                }
+                // Cast-to-int only when the float actually fits in i64.
+                // For huge values like 1e100, `as i64` saturates to
+                // i64::MAX, hiding the real magnitude. Fall through to
+                // the float-display branch, which handles scientific
+                // notation properly (`1e100`, etc.).
+                let abs = f.abs();
+                let needs_scientific = abs >= 1e16 || (abs > 0.0 && abs < 1e-4);
+                if !needs_scientific
+                    && f.fract() == 0.0
+                    && *f >= i64::MIN as f64
+                    && *f <= i64::MAX as f64
+                {
                     format!("{}.", *f as i64)
+                } else if needs_scientific {
+                    // Match zsh's `%g`-style scientific output: mantissa
+                    // (no `.0` padding when integral) + `e±DD`. Rust's
+                    // `{:e}` gives `e<exp>` (no sign, may be 1-digit) so
+                    // we only fix the exponent tail.
+                    let raw = format!("{:e}", f);
+                    if let Some(epos) = raw.rfind('e') {
+                        let (mantissa, exp) = raw.split_at(epos);
+                        let exp_body = &exp[1..];
+                        let (sign, digits) =
+                            if exp_body.starts_with('-') { ("-", &exp_body[1..]) }
+                            else if exp_body.starts_with('+') { ("+", &exp_body[1..]) }
+                            else { ("+", exp_body) };
+                        let padded = if digits.len() < 2 {
+                            format!("0{}", digits)
+                        } else {
+                            digits.to_string()
+                        };
+                        format!("{}e{}{}", mantissa, sign, padded)
+                    } else {
+                        raw
+                    }
                 } else {
                     // Rust's `{}` for f64 is shortest-roundtrip, which
                     // almost always agrees with zsh's full-precision
@@ -1101,13 +1143,19 @@ impl<'a> MathEval<'a> {
                     }
 
                     MathTok::Div | MathTok::DivEq => {
-                        if b.is_zero() {
-                            self.error = Some("division by zero".to_string());
-                            return;
-                        }
+                        // Float div-by-zero is NOT an error in zsh —
+                        // it produces IEEE Inf/-Inf/NaN per IEEE 754.
+                        // Only INTEGER div-by-zero raises the error.
+                        // Without this gate `1/0.0` errored out instead
+                        // of returning `Inf`.
                         if is_float {
+                            // Let f64 semantics handle 0.0, -0.0, NaN.
                             MathNum::Float(a.to_float() / b.to_float())
                         } else {
+                            if b.is_zero() {
+                                self.error = Some("division by zero".to_string());
+                                return;
+                            }
                             let bi = b.to_int();
                             if bi == -1 {
                                 MathNum::Integer(a.to_int().wrapping_neg())
@@ -1118,12 +1166,14 @@ impl<'a> MathEval<'a> {
                     }
 
                     MathTok::Mod | MathTok::ModEq => {
-                        if b.is_zero() {
+                        if is_float {
+                            // float % 0.0 → NaN per IEEE; let it fall
+                            // through to f64 semantics rather than
+                            // raising the integer-only error.
+                            MathNum::Float(a.to_float() % b.to_float())
+                        } else if b.is_zero() {
                             self.error = Some("division by zero".to_string());
                             return;
-                        }
-                        if is_float {
-                            MathNum::Float(a.to_float() % b.to_float())
                         } else {
                             let bi = b.to_int();
                             if bi == -1 {

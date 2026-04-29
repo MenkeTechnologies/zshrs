@@ -666,6 +666,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_TYPESET, |vm, argc| {
         let args = pop_args(vm, argc);
+        // fusevm's builtin_id maps both `declare` and `typeset` to
+        // BUILTIN_TYPESET, so this handler must default to the
+        // typeset error-prefix. compile_zsh special-cases `declare`
+        // to register BUILTIN_DECLARE explicitly so that path keeps
+        // the `declare:` prefix in error messages.
+        let status = with_executor(|exec| exec.builtin_typeset(&args));
+        Value::Status(status)
+    });
+
+    vm.register_builtin(BUILTIN_DECLARE, |vm, argc| {
+        let args = pop_args(vm, argc);
         let status = with_executor(|exec| exec.builtin_declare(&args));
         Value::Status(status)
     });
@@ -11123,6 +11134,56 @@ impl ShellExecutor {
         parts.iter().map(|p| self.expand_word(p)).collect()
     }
 
+    /// Helper for `${arr[idx]:-default}` family — returns the element
+    /// (or empty string if OOB / not present). Routes through assoc
+    /// arrays first, then indexed arrays, then string subscripting.
+    /// Uses the same numeric/range parsing as the main bracket handler
+    /// but only the single-element case (sufficient for the modifiers
+    /// that gate on emptiness).
+    fn lookup_array_element(&mut self, var_name: &str, index: &str) -> String {
+        if let Some(val) = self.get_special_array_value(var_name, index) {
+            return val;
+        }
+        if self.assoc_arrays.contains_key(var_name) {
+            let key = self.expand_string(index);
+            return self
+                .assoc_arrays
+                .get(var_name)
+                .and_then(|a| a.get(&key).cloned())
+                .unwrap_or_default();
+        }
+        let expanded_index = self.expand_string(index);
+        if let Ok(idx) = expanded_index.parse::<i64>() {
+            if let Some(arr) = self.arrays.get(var_name) {
+                let pos = if idx > 0 {
+                    (idx - 1) as usize
+                } else if idx < 0 {
+                    let n = arr.len() as i64 + idx;
+                    if n < 0 { return String::new(); }
+                    n as usize
+                } else {
+                    0
+                };
+                return arr.get(pos).cloned().unwrap_or_default();
+            }
+            // String subscript on scalar
+            let val = self.get_variable(var_name);
+            if val.is_empty() { return String::new(); }
+            let chars: Vec<char> = val.chars().collect();
+            let pos = if idx > 0 {
+                (idx - 1) as usize
+            } else if idx < 0 {
+                let n = chars.len() as i64 + idx;
+                if n < 0 { return String::new(); }
+                n as usize
+            } else {
+                0
+            };
+            return chars.get(pos).map(|c| c.to_string()).unwrap_or_default();
+        }
+        String::new()
+    }
+
     fn expand_braced_variable(&mut self, content: &str) -> String {
         // Handle nested expansion: ${${inner}[subscript]} or ${${inner}modifier}
         if content.starts_with("${") {
@@ -11435,6 +11496,56 @@ impl ShellExecutor {
             let bracket_content = &content[bracket_start + 1..];
             if let Some(bracket_end) = bracket_content.find(']') {
                 let index = &bracket_content[..bracket_end];
+                // Anything after the closing `]` is a parameter modifier
+                // applied to the looked-up element. Honor `${arr[N]:-d}`
+                // (default-if-empty) and friends. Without this, an
+                // OOB index like `arr[5]:-default` returned empty
+                // because the `:-default` text was silently dropped.
+                let after_bracket = &bracket_content[bracket_end + 1..];
+                if !after_bracket.is_empty() {
+                    let elem = self.lookup_array_element(var_name, index);
+                    if let Some(rest) = after_bracket.strip_prefix(":-") {
+                        return if elem.is_empty() {
+                            self.expand_string(rest)
+                        } else {
+                            elem
+                        };
+                    }
+                    if let Some(rest) = after_bracket.strip_prefix(":+") {
+                        return if elem.is_empty() {
+                            String::new()
+                        } else {
+                            self.expand_string(rest)
+                        };
+                    }
+                    if let Some(rest) = after_bracket.strip_prefix(":?") {
+                        if elem.is_empty() {
+                            let msg = self.expand_string(rest);
+                            eprintln!("zshrs:1: {}[{}]: {}", var_name, index, msg);
+                            return String::new();
+                        }
+                        return elem;
+                    }
+                    if let Some(rest) = after_bracket.strip_prefix(":=") {
+                        if elem.is_empty() {
+                            let v = self.expand_string(rest);
+                            // Set the array element back. Best-effort:
+                            // only writes back to indexed arrays at
+                            // numeric-positive indices.
+                            if let Ok(idx) = index.parse::<i64>() {
+                                if let Some(arr) = self.arrays.get_mut(var_name) {
+                                    let pos = if idx > 0 { (idx - 1) as usize } else { 0 };
+                                    if pos >= arr.len() {
+                                        arr.resize(pos + 1, String::new());
+                                    }
+                                    arr[pos] = v.clone();
+                                }
+                            }
+                            return v;
+                        }
+                        return elem;
+                    }
+                }
 
                 // Check for zsh/parameter special associative arrays (options, commands, etc.)
                 if let Some(val) = self.get_special_array_value(var_name, index) {
@@ -15609,14 +15720,20 @@ impl ShellExecutor {
     }
 
     fn builtin_local(&mut self, args: &[String]) -> i32 {
-        self.builtin_typeset(args)
+        self.builtin_typeset_named(args, "typeset")
     }
 
     fn builtin_declare(&mut self, args: &[String]) -> i32 {
-        self.builtin_typeset(args)
+        // zsh prefixes "no such variable" errors with the builtin name
+        // the user actually invoked (`declare:` vs `typeset:`).
+        self.builtin_typeset_named(args, "declare")
     }
 
     fn builtin_typeset(&mut self, args: &[String]) -> i32 {
+        self.builtin_typeset_named(args, "typeset")
+    }
+
+    fn builtin_typeset_named(&mut self, args: &[String], invoked_as: &str) -> i32 {
         // Save old values when inside a function scope (local variable support).
         // Restored by call_function on function exit. The `-g` flag opts out
         // of localization — `declare -g x=val` from inside a function should
@@ -16111,6 +16228,14 @@ impl ShellExecutor {
                 } else if self.variables.contains_key(name) || env::var(name).is_ok() {
                     let val = self.get_variable(name);
                     println!("{} {}={}", prefix, name, shell_quote_value(&val));
+                } else {
+                    // zsh emits `<invoked>:1: no such variable: NAME`
+                    // to stderr and exits non-zero when the named
+                    // variable doesn't exist. The builtin name comes
+                    // from how the user called it — `declare -p X` →
+                    // `declare:1:`, `typeset -p X` → `typeset:1:`.
+                    eprintln!("zshrs:{}:1: no such variable: {}", invoked_as, name);
+                    return 1;
                 }
             }
             return 0;
@@ -20980,7 +21105,8 @@ impl ShellExecutor {
             "test" | "[" => self.builtin_test(cmd_args),
             "local" => self.builtin_local(cmd_args),
             "private" => self.builtin_local(cmd_args),
-            "declare" | "typeset" => self.builtin_declare(cmd_args),
+            "declare" => self.builtin_declare(cmd_args),
+            "typeset" => self.builtin_typeset(cmd_args),
             "read" => self.builtin_read(cmd_args),
             "shift" => self.builtin_shift(cmd_args),
             "eval" => self.builtin_eval(cmd_args),
