@@ -3862,3 +3862,57 @@ fn test_array_zero_subscript_assignment_errors() {
         "stderr: {stderr:?}"
     );
 }
+
+#[test]
+fn test_umask_3_octal_digits_no_leading_zero() {
+    // zsh prints 3 octal digits (`022`), not 4 (`0022`).
+    let (_, output, _) = run_zshrs(r#"umask"#);
+    let trimmed = output.trim();
+    // Must be 3 digits, no leading 0 padding to 4 digits.
+    assert_eq!(trimmed.len(), 3, "expected 3 digits: {trimmed:?}");
+    assert!(
+        trimmed.chars().all(|c| c.is_ascii_digit()),
+        "expected octal digits: {trimmed:?}"
+    );
+}
+
+#[test]
+fn test_umask_dash_S_uses_commas() {
+    // zsh: `umask -S` prints `u=rwx,g=rx,o=rx` (comma-separated).
+    let (_, output, _) = run_zshrs(r#"umask -S"#);
+    let trimmed = output.trim();
+    assert!(
+        trimmed.contains(",g=") && trimmed.contains(",o="),
+        "expected commas separating u/g/o: {trimmed:?}"
+    );
+}
+
+#[test]
+fn test_cd_missing_dir_zsh_format() {
+    // zsh: `zshrs:cd:1: no such file or directory: PATH`. Was
+    // emitting Rust's wrapped io::Error with "(os error 2)" suffix.
+    let (status, _stdout, stderr) = run_zshrs(r#"cd /not/a/dir"#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:cd:1: no such file or directory: /not/a/dir"),
+        "stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_abs_path_missing_says_no_such_file_not_command_not_found() {
+    // zsh distinguishes: relative names not in PATH say "command not
+    // found"; absolute paths that don't exist say "no such file or
+    // directory" (since no PATH search was attempted).
+    let (status, _stdout, stderr) =
+        run_zshrs(r#"/nonexistent_abs_path_xyz"#);
+    assert_eq!(status, 127);
+    assert!(
+        stderr.contains("no such file or directory:"),
+        "abs path should report ENOENT-style: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("command not found:"),
+        "abs path must NOT say command not found: {stderr:?}"
+    );
+}

@@ -999,7 +999,25 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: arrays are 1-based, so `a[0]=v` is "assignment to invalid subscript range" (exits 1). zshrs's `BUILTIN_SET_ASSOC` had a `i == 0` arm that just `return`'d silently. Replaced with the diagnostic + `std::process::exit(1)`. Test: `test_array_zero_subscript_assignment_errors`.
 
-## Still open (fifty-seventh-pass — remaining)
+## Closed (fifty-eighth-pass — `umask`/`cd`/abs-path-missing format pass)
+
+### `umask` printed `0022` instead of `022`
+
+- zsh prints 3 octal digits (`022`); zshrs's `{:04o}` format-spec emitted 4. Switched to `{:03o}`. Test: `test_umask_3_octal_digits_no_leading_zero`.
+
+### `umask -S` printed `u=rwxg=rxo=rx` (no separators)
+
+- The println! template was missing the commas between user/group/other groups. zsh emits `u=rwx,g=rx,o=rx`. Test: `test_umask_dash_S_uses_commas`.
+
+### `cd /no/such/dir` emitted Rust's wrapped error format
+
+- Was `cd: /not/a/dir: No such file or directory (os error 2)` (with the os-error suffix). zsh emits `zsh:cd:1: no such file or directory: PATH` (lowercased, prefixed). Switched to `pretty_io_err` + the canonical `zshrs:cd:1: <msg>: <path>` shape. Test: `test_cd_missing_dir_zsh_format`.
+
+### `/nonexistent_xyz` (absolute path) said `command not found:`
+
+- zsh distinguishes: relative names not in PATH → `command not found`; absolute paths that don't exist → `no such file or directory` (since no PATH search was attempted, the open() syscall reported ENOENT). Added a `cmd.starts_with('/')` branch in `execute_external` to switch the diagnostic. Test: `test_abs_path_missing_says_no_such_file_not_command_not_found`.
+
+## Still open (fifty-eighth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 
