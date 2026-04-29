@@ -26172,6 +26172,10 @@ impl ShellExecutor {
                         println!("{}: {}", name, word);
                     } else if verbose {
                         println!("{} is a reserved word", name);
+                    } else if csh_style {
+                        // `which local` (zsh: csh-style whence)
+                        // outputs `local: shell reserved word`.
+                        println!("{}: shell reserved word", name);
                     } else {
                         println!("{}", name);
                     }
