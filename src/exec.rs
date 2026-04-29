@@ -2690,18 +2690,25 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'P' => {
-                    // Indirect: current scalar value is another var name.
+                    // Indirect: current value is another var name.
+                    // For Array (e.g. via `(@P)`), look up each
+                    // element as a name. Without the array branch,
+                    // `${(@P)var}` left the array as-is — returning
+                    // the raw var-name(s) instead of dereferencing.
                     state = match state {
-                        St::S(indirect_name) => {
-                            let v = with_executor(|exec| {
-                                if let Some(arr) = exec.arrays.get(&indirect_name) {
-                                    return St::A(arr.clone());
-                                }
-                                St::S(exec.get_variable(&indirect_name))
-                            });
-                            v
-                        }
-                        a => a,
+                        St::S(indirect_name) => with_executor(|exec| {
+                            if let Some(arr) = exec.arrays.get(&indirect_name) {
+                                return St::A(arr.clone());
+                            }
+                            St::S(exec.get_variable(&indirect_name))
+                        }),
+                        St::A(names) => with_executor(|exec| {
+                            let resolved: Vec<String> = names
+                                .into_iter()
+                                .map(|n| exec.get_variable(&n))
+                                .collect();
+                            St::A(resolved)
+                        }),
                     };
                 }
                 '@' => {
@@ -16903,6 +16910,8 @@ impl ShellExecutor {
             ("ILL", libc::SIGILL, Signal::SIGILL),
             ("TRAP", libc::SIGTRAP, Signal::SIGTRAP),
             ("ABRT", libc::SIGABRT, Signal::SIGABRT),
+            #[cfg(target_os = "macos")]
+            ("EMT", libc::SIGEMT, Signal::SIGEMT),
             ("BUS", libc::SIGBUS, Signal::SIGBUS),
             ("FPE", libc::SIGFPE, Signal::SIGFPE),
             ("KILL", libc::SIGKILL, Signal::SIGKILL),
@@ -17015,9 +17024,14 @@ impl ShellExecutor {
         if list_mode {
             if list_args.is_empty() {
                 // zsh prints bare signal names separated by spaces on
-                // a single line for `kill -l`. (bash prints numbered
-                // table; we follow zsh.)
-                let names: Vec<String> = signal_map
+                // a single line for `kill -l`, ordered by SIGNAL
+                // NUMBER (not declaration order). Sort by num so
+                // macOS shows HUP INT QUIT ILL TRAP ABRT EMT FPE
+                // KILL BUS SEGV SYS PIPE ALRM TERM URG STOP TSTP …
+                // matching `/bin/zsh -f -c 'kill -l'`.
+                let mut by_num: Vec<&(&str, i32, _)> = signal_map.iter().collect();
+                by_num.sort_by_key(|(_, n, _)| *n);
+                let names: Vec<String> = by_num
                     .iter()
                     .map(|(n, _, _)| (*n).to_string())
                     .collect();
@@ -17026,11 +17040,13 @@ impl ShellExecutor {
                 // Translate signal numbers to names or vice versa
                 for arg in &list_args {
                     if let Ok(num) = arg.parse::<i32>() {
-                        // Number -> name
+                        // Number -> name. zsh passes through unknown
+                        // numbers (`kill -l 100` → `100`) instead of
+                        // erroring — matches POSIX-ish behavior.
                         if let Some((name, _, _)) = signal_map.iter().find(|(_, n, _)| *n == num) {
                             println!("{}", name);
                         } else {
-                            eprintln!("kill: unknown signal: {}", num);
+                            println!("{}", num);
                         }
                     } else {
                         // Name -> number

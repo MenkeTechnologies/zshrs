@@ -3945,3 +3945,33 @@ fn test_fg_bg_no_job_control_message() {
         "stderr: {stderr:?}"
     );
 }
+
+#[test]
+fn test_kill_l_lists_signals_in_number_order() {
+    // zsh's `kill -l` orders signal names by signal number
+    // (HUP INT QUIT ILL TRAP ABRT ...). Was emitting in declaration
+    // order which didn't match.
+    let (_, output, _) = run_zshrs(r#"kill -l"#);
+    let names: Vec<&str> = output.split_whitespace().collect();
+    // First three should always be HUP INT QUIT (1, 2, 3 on every Unix).
+    assert_eq!(&names[..3], &["HUP", "INT", "QUIT"], "got: {output:?}");
+}
+
+#[test]
+fn test_kill_l_unknown_number_passes_through() {
+    // zsh: `kill -l 100` prints `100` (no error). Was erroring
+    // "kill: unknown signal: 100".
+    let (status, output, _) = run_zshrs(r#"kill -l 100"#);
+    assert_eq!(status, 0);
+    assert_eq!(output.trim(), "100", "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_at_P_indirects_each_element() {
+    // `${(@P)var}` should dereference: var holds "x" → look up x.
+    // Was returning the raw var name because the P arm only handled
+    // scalar state, leaving the (@)-forced array unchanged.
+    let (_, output, _) =
+        run_zshrs(r#"x=hello; var=x; print "${(@P)var}""#);
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+}
