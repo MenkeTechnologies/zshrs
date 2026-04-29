@@ -5846,3 +5846,59 @@ fn test_glob_Om_sort_oldest_first() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(output.trim(), "a b c");
 }
+
+#[test]
+fn test_history_dash_c_zsh_error_format() {
+    // zsh's `history` is `fc -l` synonym; `-c` (bash clear) is not
+    // accepted. zsh emits "bad option: -c". zshrs had a custom
+    // "clear not supported" string; aligned to zsh's format.
+    let (_, _, stderr) = run_zshrs("history -c");
+    assert!(stderr.contains("bad option"));
+}
+
+#[test]
+fn test_glob_posix_char_class_alpha() {
+    // `[[:alpha:]]` and friends — POSIX char-class syntax. The
+    // glob crate doesn't recognize the `[:class:]` form, so we
+    // pre-expand to enumerated ranges (`a-zA-Z`, `0-9`, etc).
+    let dir = std::env::temp_dir().join("zshrs_test_pcc");
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["1", "a", "2", "b"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+    }
+    let cmd = format!("cd {} && echo [[:digit:]]", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    parts.sort();
+    assert_eq!(parts, vec!["1", "2"]);
+}
+
+#[test]
+fn test_glob_posix_char_class_alpha_letters() {
+    let dir = std::env::temp_dir().join("zshrs_test_pcc_alpha");
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["1", "a", "2", "b"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+    }
+    let cmd = format!("cd {} && echo [[:alpha:]]", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    parts.sort();
+    assert_eq!(parts, vec!["a", "b"]);
+}
+
+#[test]
+fn test_case_multi_pattern_with_brackets() {
+    // `case x in [a-z]) ...;; [A-Z]) ...;; esac` — bracket-class
+    // patterns in subsequent case arms were parse-erroring because
+    // the lexer tokenized `[` as Inbrack (not part of pattern) when
+    // incasepat had reset to 0 across the `;;` advance.
+    let (_, output, _) =
+        run_zshrs("case a in [a-z]) echo lower;; [A-Z]) echo upper;; esac");
+    assert_eq!(output.trim(), "lower");
+    let (_, output, _) =
+        run_zshrs("case X in [a-z]) echo lower;; [A-Z]) echo upper;; esac");
+    assert_eq!(output.trim(), "upper");
+}

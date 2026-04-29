@@ -1570,6 +1570,20 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
   2. `looks_like_glob_qualifiers` was missing `O` in its valid-char set, so `*(Om)` parsed as a literal pattern with unmatched `)` instead of as a qualifier set.
   Fixed both: skip the alpha sort when the qualifier set contains `o`/`O`, and added `O` to the valid char set. Same default-descending semantics now applied to `oa` (atime) and `oc` (ctime) too. Tests: `test_glob_om_sort_newest_first`, `test_glob_Om_sort_oldest_first`.
 
+## Closed (seventy-seventh-pass)
+
+### `history -c` had non-zsh error format
+
+- zsh's `history` is a synonym for `fc -l`; it doesn't accept `-c` (bash's clear-history flag). zsh emits `history:1: bad option: -c`. zshrs had a custom "clear not supported in this mode" string. Aligned to zsh's diagnostic format. Test: `test_history_dash_c_zsh_error_format`.
+
+### POSIX char classes (`[[:alpha:]]`, `[[:digit:]]`) didn't match
+
+- The `glob` crate doesn't recognize the `[:class:]` syntax — it sees `[[:alpha:]]` as a literal pattern with stray `:` and `]`, never matches. Added `expand_posix_char_classes` pre-processor that translates known classes (`alpha`, `alnum`, `digit`, `xdigit`, `lower`, `upper`, `space`, `blank`, `cntrl`, `print`, `graph`, `punct`) to their enumerated ranges (`a-zA-Z`, `0-9`, etc.) before the pattern reaches `glob::glob_with`. Tests: `test_glob_posix_char_class_alpha`, `test_glob_posix_char_class_alpha_letters`.
+
+### `case x in [a-z]) ;; [A-Z]) ;; esac` parse-errored on second arm
+
+- Bracket-class patterns in subsequent case arms triggered `expected ')' in case pattern`. After parsing the first arm's body, the lexer advanced past `;;` BEFORE the parser set `incasepat=1` for the next round, so `[A-Z]` got tokenized as `Inbrack` (test/array subscript) instead of being part of a glob pattern. Fix: set `incasepat=1` BEFORE the zshlex advance on each terminator (`;;`, `;&`, `;|`) so the next pattern's `[` is lexed in pattern context. Test: `test_case_multi_pattern_with_brackets`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
