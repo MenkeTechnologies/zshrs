@@ -570,13 +570,33 @@ fn param_replace_all() {
 }
 
 #[test]
-fn param_uppercase() {
-    ok(r#"s=hello; echo "${s^^}""#, "HELLO\n");
+fn param_uppercase_bash_form_rejected() {
+    // ${var^^} is bash-only — zsh rejects with "bad substitution".
+    // zshrs follows zsh: returns empty stdout. (The zsh-native
+    // uppercase form is `${(U)var}`.)
+    let (_, out) = run(r#"s=hello; echo "${s^^}""#);
+    assert_eq!(out.trim(), "");
 }
 
 #[test]
-fn param_lowercase() {
-    ok(r#"s=HELLO; echo "${s,,}""#, "hello\n");
+fn param_lowercase_bash_form_rejected() {
+    // ${var,,} is bash-only — zsh rejects with "bad substitution".
+    // zshrs follows zsh: returns empty stdout. (The zsh-native
+    // lowercase form is `${(L)var}`.)
+    let (_, out) = run(r#"s=HELLO; echo "${s,,}""#);
+    assert_eq!(out.trim(), "");
+}
+
+#[test]
+fn param_uppercase_zsh_native() {
+    // The zsh-native uppercase: `${(U)var}` flag.
+    ok(r#"s=hello; echo "${(U)s}""#, "HELLO\n");
+}
+
+#[test]
+fn param_lowercase_zsh_native() {
+    // The zsh-native lowercase: `${(L)var}` flag.
+    ok(r#"s=HELLO; echo "${(L)s}""#, "hello\n");
 }
 
 #[test]

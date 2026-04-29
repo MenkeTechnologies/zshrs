@@ -2330,6 +2330,38 @@ impl ZshCompiler {
             self.builder.emit(Op::SetStatus, 0);
             return;
         }
+        // ArithCompiler emits float-only Op::Div, so `((a/=3))` produces
+        // 3.333… instead of zsh's integer-divide 3. Route any expression
+        // that contains `/` (division or compound div-assign) through
+        // BUILTIN_ARITH_EVAL — MathEval honors integer-divide when both
+        // operands parse as Integer. Expressions without `/` keep the
+        // ArithCompiler fast path.
+        if inner_arith.contains('/') {
+            let idx_const = self.builder.add_constant(Value::str(inner_arith));
+            self.builder.emit(Op::LoadConst(idx_const), 0);
+            self.builder.emit(
+                Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1),
+                0,
+            );
+            // Result stays on stack as Value::Str (e.g. "3" / "0" / "1.5").
+            // Compare against "0" to compute the truthiness. Don't
+            // re-evaluate the expression — it's an assignment so the
+            // second call would compound (e.g. `a/=3` runs twice).
+            let zero_const = self.builder.add_constant(Value::str("0"));
+            self.builder.emit(Op::LoadConst(zero_const), 0);
+            self.builder.emit(Op::StrEq, 0);
+            let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
+            self.builder.emit(Op::LoadInt(0), 0);
+            self.builder.emit(Op::SetStatus, 0);
+            let end_jump = self.builder.emit(Op::Jump(0), 0);
+            let true_target = self.builder.current_pos();
+            self.builder.patch_jump(true_jump, true_target);
+            self.builder.emit(Op::LoadInt(1), 0);
+            self.builder.emit(Op::SetStatus, 0);
+            let end = self.builder.current_pos();
+            self.builder.patch_jump(end_jump, end);
+            return;
+        }
         self.compile_arith_str(expr);
         self.builder.emit(Op::LoadInt(0), 0);
         self.builder.emit(Op::NumNe, 0);
@@ -2789,7 +2821,31 @@ fn strip_cmd_subst(s: &str) -> Option<&str> {
     if !s.starts_with("$(") || !s.ends_with(')') || s.starts_with("$((") {
         return None;
     }
-    Some(&s[2..s.len() - 1])
+    // Verify the closing `)` at the end matches the OPENING `$(` at the
+    // start (i.e. the whole input is exactly one cmd-subst). Without this
+    // check, `$(echo foo)$(echo bar)` matched too — the outer `$(` and
+    // final `)` are not paired, the body is `echo foo)$(echo bar` which
+    // ran as a malformed script and dropped the second cmd subst.
+    let inner = &s[2..s.len() - 1];
+    let mut depth = 1i32;
+    let chars: Vec<char> = inner.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 && i < chars.len() - 1 {
+                    // Found a closing `)` mid-string → not a single cmd
+                    // subst (the rest is a separate token / second subst).
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Some(inner)
 }
 
 /// Phase 1 native param-modifier kinds. Each maps to one of the four
