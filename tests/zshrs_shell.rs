@@ -3293,3 +3293,58 @@ fn test_getopts_stops_after_arg_taking_option() {
         "got: {output:?}"
     );
 }
+
+#[test]
+fn test_set_u_with_default_modifier_does_not_abort() {
+    // `${var:-fb}` and `${var-fb}` provide a default for missing vars.
+    // Even with `set -u` (nounset) on, the lookup must NOT abort the
+    // shell — the modifier IS the handler. zshrs was calling
+    // get_variable() (which honors nounset) and exiting 1 before the
+    // modifier could fire.
+    let (_, output, _) = run_zshrs(r#"set -u; echo "${notdef:-fb}""#);
+    assert_eq!(output.trim(), "fb", "got: {output:?}");
+    let (_, output, _) = run_zshrs(r#"set -u; echo "${notdef-fb}""#);
+    assert_eq!(output.trim(), "fb", "got: {output:?}");
+    let (_, output, _) = run_zshrs(r#"set -u; echo "${notdef:+set}""#);
+    // :+ on unset returns "", not abort.
+    assert_eq!(output.trim(), "", "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_pound_arith_to_char() {
+    // `${(#)val}`: arith-evaluate the value(s) and output the matching
+    // character(s). 65 → "A", 97 → "a".
+    let (_, output, _) = run_zshrs(r#"a=65; echo "${(#)a}""#);
+    assert_eq!(output.trim(), "A", "got: {output:?}");
+    let (_, output, _) = run_zshrs(r#"a=(65 66 67); echo "${(#)a}""#);
+    assert_eq!(output.trim(), "A B C", "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_n_natural_sort() {
+    // `(n)` natural sort: "file2" < "file10" < "file20".
+    let (_, output, _) = run_zshrs(
+        r#"arr=(file10 file2 file1 file20); echo ${(on)arr}"#,
+    );
+    assert_eq!(output.trim(), "file1 file2 file10 file20", "got: {output:?}");
+}
+
+#[test]
+fn test_subshell_export_does_not_leak_to_parent() {
+    // zsh subshell `(...)` forks; child's `export` dies with the child.
+    // zshrs runs subshells in-process, so we snapshot+restore the OS
+    // env around subshell entry/exit. Without this, `(export y=v)`
+    // would leak `y` to the parent shell.
+    let (_, output, _) = run_zshrs(
+        r#"x=outer; (export y=sub; echo "in: $y"); echo "out y=${y:-empty}""#,
+    );
+    assert_eq!(output.trim(), "in: sub\nout y=empty", "got: {output:?}");
+}
+
+#[test]
+fn test_subshell_unset_does_not_leak_to_parent() {
+    let (_, output, _) = run_zshrs(
+        r#"export X=parent; (unset X; echo "sub: ${X:-empty}"); echo "outer: $X""#,
+    );
+    assert_eq!(output.trim(), "sub: empty\nouter: parent", "got: {output:?}");
+}

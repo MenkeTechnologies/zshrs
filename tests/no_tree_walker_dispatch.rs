@@ -1025,9 +1025,10 @@ fn zshflag_indirect_resolves_through_name() {
 
 #[test]
 fn zshflag_array_length_via_pound() {
-    // `${#arr}` (NOT `${#arr[@]}` — that's covered by ARRAY_LENGTH already).
-    // Goes through PARAM_FLAG with `#` flag; on an array it returns length.
-    ok(r#"arr=(a b c d); echo "${(#)arr}""#, "4\n");
+    // `${(#)x}` is the char-code flag (arith-eval each element, output
+    // the corresponding character) — NOT array length. zsh: "65" → "A".
+    // `${#arr}` is the actual length form, covered by ARRAY_LENGTH.
+    ok(r#"arr=(65 66 67); echo "${(#)arr}""#, "A B C\n");
 }
 
 #[test]

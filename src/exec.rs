@@ -2399,6 +2399,27 @@ fn register_builtins(vm: &mut fusevm::VM) {
             let c = chars[i];
             i += 1;
             match c {
+                '#' => {
+                    // `(#)` — evaluate each element as an arithmetic
+                    // expression, then output the character with that
+                    // code point. `${(#)a}` with `a=(65 66 67)` → "A B C".
+                    // Distinct from `${#name}` (length) and `${(w)#s}`
+                    // (word count) — those are length ops, not flags.
+                    let to_char = |s: &str| -> String {
+                        let n = with_executor(|exec| exec.eval_arith_expr(s));
+                        if n < 0 {
+                            String::new()
+                        } else if let Some(c) = char::from_u32(n as u32) {
+                            c.to_string()
+                        } else {
+                            String::new()
+                        }
+                    };
+                    state = match state {
+                        St::S(s) => St::S(to_char(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| to_char(&s)).collect()),
+                    };
+                }
                 'L' => {
                     state = match state {
                         St::S(s) => St::S(s.to_lowercase()),
@@ -2595,14 +2616,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                     // ascending + array-order = no-op
                                 }
                                 Some('n') if consume => {
+                                    // Natural sort: compare by chunks of
+                                    // digits-vs-non-digits so "file10"
+                                    // sorts after "file2".
                                     a.sort_by(|x, y| {
-                                        let xi: f64 = x.parse().unwrap_or(0.0);
-                                        let yi: f64 = y.parse().unwrap_or(0.0);
-                                        if descending {
-                                            yi.partial_cmp(&xi).unwrap_or(std::cmp::Ordering::Equal)
-                                        } else {
-                                            xi.partial_cmp(&yi).unwrap_or(std::cmp::Ordering::Equal)
-                                        }
+                                        let cmp = natural_cmp(x, y);
+                                        if descending { cmp.reverse() } else { cmp }
                                     });
                                 }
                                 Some('i') if consume => {
@@ -4372,7 +4391,26 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // Op codes:
         //   0 :-  1 :=  2 :?  3 :+   (treat-empty-as-unset variants)
         //   4 -   5 =   6 ?   7 +    (no-colon: only fire if truly unset)
-        let val = with_executor(|exec| exec.get_variable(&name));
+        // The default/alt modifiers handle missing-var themselves, so
+        // suppress the nounset (set -u) abort during the value lookup —
+        // otherwise `${unset:-fb}` exits the shell instead of returning
+        // "fb". Save/restore nounset around the lookup.
+        let val = with_executor(|exec| {
+            let saved_nounset = exec.options.get("nounset").copied();
+            let saved_unset = exec.options.get("unset").copied();
+            exec.options.insert("nounset".to_string(), false);
+            exec.options.insert("unset".to_string(), true);
+            let v = exec.get_variable(&name);
+            match saved_nounset {
+                Some(b) => { exec.options.insert("nounset".to_string(), b); }
+                None => { exec.options.remove("nounset"); }
+            }
+            match saved_unset {
+                Some(b) => { exec.options.insert("unset".to_string(), b); }
+                None => { exec.options.remove("unset"); }
+            }
+            v
+        });
         let is_set = with_executor(|exec| {
             // Positional params ($1, $2, ...): set iff index <= $#.
             if name.chars().all(|c| c.is_ascii_digit()) && !name.is_empty() {
@@ -5493,6 +5531,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 arrays: exec.arrays.clone(),
                 assoc_arrays: exec.assoc_arrays.clone(),
                 positional_params: exec.positional_params.clone(),
+                env_vars: std::env::vars().collect(),
                 cwd: std::env::current_dir().ok(),
             });
         });
@@ -5505,13 +5544,26 @@ impl fusevm::ShellHost for ZshrsHost {
                 exec.arrays = snap.arrays;
                 exec.assoc_arrays = snap.assoc_arrays;
                 exec.positional_params = snap.positional_params;
+                // Restore the OS env to its pre-subshell state.
+                // Removes any `export` writes the subshell made, and
+                // restores any vars the subshell unset. Without this
+                // `(export y=sub)` would leak `y` to the parent shell.
+                let current: HashMap<String, String> =
+                    std::env::vars().collect();
+                for k in current.keys() {
+                    if !snap.env_vars.contains_key(k) {
+                        std::env::remove_var(k);
+                    }
+                }
+                for (k, v) in &snap.env_vars {
+                    if current.get(k) != Some(v) {
+                        std::env::set_var(k, v);
+                    }
+                }
                 if let Some(cwd) = snap.cwd {
                     let _ = std::env::set_current_dir(&cwd);
                     // Resync $PWD env so a parent `pwd` doesn't read
-                    // the cwd the subshell `cd`'d into. The snapshot
-                    // restored `self.variables`, but `env::set_var` had
-                    // also been called by the inner `cd` and leaks
-                    // unless re-set here.
+                    // the cwd the subshell `cd`'d into.
                     std::env::set_var("PWD", &cwd);
                 }
             }
@@ -6565,14 +6617,18 @@ pub enum LoopSignal {
 
 /// Snapshot of subshell-isolated state. Captured at `(` entry, restored at
 /// `)` exit. zsh subshell semantics: assignments inside `(…)` don't leak to
-/// the outer scope. We snapshot variables + arrays + assoc_arrays which
-/// covers the common case; environment isn't snapshotted since exporting
-/// from a subshell is meaningful (zsh inherits but doesn't propagate-back).
+/// the outer scope — and that includes `export`. zsh forks a child for the
+/// subshell so the child's env::set_var dies with the child; without a fork
+/// (zshrs runs subshells in-process for perf), we snapshot+restore the OS
+/// env table around the subshell. Otherwise `(export y=v)` would leak `y`
+/// to the parent shell, breaking every script that uses a subshell to
+/// scope an env override.
 pub struct SubshellSnapshot {
     pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
     pub assoc_arrays: HashMap<String, HashMap<String, String>>,
     pub positional_params: Vec<String>,
+    pub env_vars: HashMap<String, String>,
     /// Process working directory at subshell entry. `cd` inside the
     /// subshell shouldn't leak to the parent; we restore on End.
     pub cwd: Option<std::path::PathBuf>,
@@ -21893,6 +21949,71 @@ impl ShellExecutor {
 
     #[allow(dead_code)]
     fn expand_printf_escapes_internal_marker(&self) {}
+}
+
+/// Natural-order string compare: walks both strings in parallel, treating
+/// runs of digits as integer chunks. So "file2" < "file10" < "file20".
+/// Used by the `(n)` / `(on)` / `(On)` parameter flag for human-friendly
+/// sort. Falls back to byte-cmp for non-digit segments.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let mut ai = 0;
+    let mut bi = 0;
+    while ai < a_bytes.len() && bi < b_bytes.len() {
+        let a_is_digit = a_bytes[ai].is_ascii_digit();
+        let b_is_digit = b_bytes[bi].is_ascii_digit();
+        if a_is_digit && b_is_digit {
+            // Skip leading zeros for the numeric compare, but keep them
+            // for the lexical tiebreaker so "01" < "1" (zsh does this).
+            let a_zero_end = ai + a_bytes[ai..]
+                .iter()
+                .take_while(|c| **c == b'0')
+                .count();
+            let b_zero_end = bi + b_bytes[bi..]
+                .iter()
+                .take_while(|c| **c == b'0')
+                .count();
+            let a_digits_end = a_zero_end + a_bytes[a_zero_end..]
+                .iter()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            let b_digits_end = b_zero_end + b_bytes[b_zero_end..]
+                .iter()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            let a_num = &a_bytes[a_zero_end..a_digits_end];
+            let b_num = &b_bytes[b_zero_end..b_digits_end];
+            // Compare by length of stripped digits first (shorter = smaller),
+            // then byte-by-byte if same length.
+            match a_num.len().cmp(&b_num.len()) {
+                Ordering::Equal => match a_num.cmp(b_num) {
+                    Ordering::Equal => {
+                        // Numeric values equal; tiebreak on raw zero-prefix length.
+                        let a_lead = a_zero_end - ai;
+                        let b_lead = b_zero_end - bi;
+                        if a_lead != b_lead {
+                            return a_lead.cmp(&b_lead);
+                        }
+                        ai = a_digits_end;
+                        bi = b_digits_end;
+                    }
+                    ord => return ord,
+                },
+                ord => return ord,
+            }
+        } else {
+            match a_bytes[ai].cmp(&b_bytes[bi]) {
+                Ordering::Equal => {
+                    ai += 1;
+                    bi += 1;
+                }
+                ord => return ord,
+            }
+        }
+    }
+    a_bytes.len().cmp(&b_bytes.len())
 }
 
 /// C-style printf `%g`/`%G`: shortest of `%f`/`%e` representation that
