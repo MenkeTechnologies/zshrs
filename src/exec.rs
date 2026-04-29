@@ -4836,25 +4836,101 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // resolves $pat).
         let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
         let repl = with_executor(|exec| exec.expand_string(&repl_raw));
+        // zsh patterns in ${var/pat/repl} support `?`, `*`, `[...]`,
+        // anchored `#`/`%` (handled via op codes 2/3). Compile to a
+        // regex for the actual matching; falls back to plain string
+        // when the pattern has no glob metas (faster).
+        let has_glob = pattern.chars().any(|c| matches!(c, '?' | '*' | '[' | ']'));
+        let glob_re: Option<regex::Regex> = if has_glob {
+            // Convert the glob pattern to a regex string:
+            //   ? → . (any single char)
+            //   * → .* (any seq)
+            //   [...] → kept as-is (regex char class)
+            //   other regex metas → escaped
+            let mut re = String::with_capacity(pattern.len() * 2);
+            let mut chars = pattern.chars().peekable();
+            while let Some(c) = chars.next() {
+                match c {
+                    '?' => re.push('.'),
+                    '*' => re.push_str(".*"),
+                    '[' => {
+                        // Pass through to the closing ']' (already
+                        // valid regex syntax for most char classes).
+                        re.push('[');
+                        while let Some(cc) = chars.next() {
+                            re.push(cc);
+                            if cc == ']' { break; }
+                        }
+                    }
+                    '\\' => {
+                        re.push('\\');
+                        if let Some(next) = chars.next() {
+                            re.push(next);
+                        }
+                    }
+                    // Regex meta chars that are NOT glob metas — escape
+                    // so the regex compiler treats them literally.
+                    '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' => {
+                        re.push('\\');
+                        re.push(c);
+                    }
+                    _ => re.push(c),
+                }
+            }
+            regex::Regex::new(&re).ok()
+        } else {
+            None
+        };
         let one = |val: String| -> String {
-            match op {
-                0 => val.replacen(&pattern, &repl, 1),
-                1 => val.replace(&pattern, &repl),
-                2 => {
-                    if val.starts_with(&pattern) {
-                        format!("{}{}", repl, &val[pattern.len()..])
-                    } else {
+            if let Some(ref rx) = glob_re {
+                match op {
+                    0 => rx.replacen(&val, 1, repl.as_str()).to_string(),
+                    1 => rx.replace_all(&val, repl.as_str()).to_string(),
+                    2 => {
+                        // Anchored prefix: only match at start.
+                        if let Some(m) = rx.find(&val) {
+                            if m.start() == 0 {
+                                return format!("{}{}", repl, &val[m.end()..]);
+                            }
+                        }
                         val
                     }
-                }
-                3 => {
-                    if val.ends_with(&pattern) {
-                        format!("{}{}", &val[..val.len() - pattern.len()], repl)
-                    } else {
+                    3 => {
+                        // Anchored suffix: only match at end.
+                        // Find the LAST match whose end == val.len().
+                        let mut last_start: Option<usize> = None;
+                        for m in rx.find_iter(&val) {
+                            if m.end() == val.len() {
+                                last_start = Some(m.start());
+                            }
+                        }
+                        if let Some(s) = last_start {
+                            return format!("{}{}", &val[..s], repl);
+                        }
                         val
                     }
+                    _ => val,
                 }
-                _ => val,
+            } else {
+                match op {
+                    0 => val.replacen(&pattern, &repl, 1),
+                    1 => val.replace(&pattern, &repl),
+                    2 => {
+                        if val.starts_with(&pattern) {
+                            format!("{}{}", repl, &val[pattern.len()..])
+                        } else {
+                            val
+                        }
+                    }
+                    3 => {
+                        if val.ends_with(&pattern) {
+                            format!("{}{}", &val[..val.len() - pattern.len()], repl)
+                        } else {
+                            val
+                        }
+                    }
+                    _ => val,
+                }
             }
         };
         // Array case: apply replacement to each element, return Array.

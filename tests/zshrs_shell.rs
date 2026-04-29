@@ -3569,3 +3569,31 @@ fn test_star_glob_excludes_dotfiles_by_default() {
         "* should match only non-dot files: {output:?}"
     );
 }
+
+#[test]
+fn test_param_replace_glob_pattern_question() {
+    // ${s/?/X} should treat `?` as glob (any single char), not literal.
+    let (_, output, _) = run_zshrs(r#"s=hello; echo "${s/?/X}""#);
+    assert_eq!(output.trim(), "Xello", "got: {output:?}");
+}
+
+#[test]
+fn test_param_replace_glob_pattern_star() {
+    // ${s/*l/X} replaces longest prefix ending in `l`.
+    let (_, output, _) = run_zshrs(r#"s=hello; echo "${s/*l/X}""#);
+    assert_eq!(output.trim(), "Xo", "got: {output:?}");
+}
+
+#[test]
+fn test_param_replace_glob_pattern_class() {
+    // ${s/[aeiou]/V} replaces first vowel.
+    let (_, output, _) = run_zshrs(r#"s=hello; echo "${s/[aeiou]/V}""#);
+    assert_eq!(output.trim(), "hVllo", "got: {output:?}");
+}
+
+#[test]
+fn test_param_replace_global_with_glob() {
+    // ${s//[aeiou]/V} replaces all vowels.
+    let (_, output, _) = run_zshrs(r#"s=hello; echo "${s//[aeiou]/V}""#);
+    assert_eq!(output.trim(), "hVllV", "got: {output:?}");
+}
