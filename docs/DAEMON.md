@@ -244,7 +244,7 @@ Iterate: client receives the daemon-precomputed flat key array (mmap'd slice) pl
 
 Plugin compat falls out: zinit's `_comps[foo]=_my_handler` direct assignment lands in overlay; `${(k)_comps}` iterates the daemon-flat-array merged with overlay; `compdef foo bar` writes to overlay. zinit's compdef-replay is harmless redundancy.
 
-For legacy tooling that introspects `.zcompdump` directly (some plugin patterns, backup scripts, p10k cache-staleness probes, parallel zsh sessions sharing the cache), the daemon can synthesize a valid `.zcompdump` file on demand from its canonical state. Triggered by `zcache export zcompdump [path]` or the `export_zcompdump` IPC op. Optionally emits the zcompiled `.zcompdump.zwc` form too. The synthesized file is byte-compatible with what `compinit` would have produced, so legacy consumers don't notice the difference. Not generated automatically — opt-in only, on user request.
+For legacy tooling that introspects `.zcompdump` directly (some plugin patterns, backup scripts, p10k cache-staleness probes, parallel zsh sessions sharing the cache), the daemon can synthesize a valid `.zcompdump` file on demand from its canonical state. Triggered by `zcache export zcompdump [path]` or the `export_zcompdump` IPC op. The synthesized file is byte-compatible with what `compinit` would have produced, so legacy consumers don't notice the difference. Not generated automatically — opt-in only, on user request. (`.zcompdump.zwc` is not emitted; legacy tooling will regenerate it if it wants it.)
 
 ### Starting state served by daemon (PATH, FPATH, hash tables, etc.)
 
@@ -350,7 +350,51 @@ The daemon must absorb all of this on first cold start (one-shot, then increment
 
 Daemon doesn't *run* zinit's Ruby/zsh code. It parses zinit declarations to extract: which plugins to load, which ice modifiers (lazy-load, install-time hooks, alternate paths) to honor, what lifecycle behavior the user expects. The daemon then implements that behavior natively. zinit-the-zsh-plugin can be removed from the user's `.zshrc` once daemon-handled compat is verified, but doesn't have to be — having it source unmodified is fine; daemon analysis just notices the work has already been done.
 
-**`.zwc` supersession.** zsh's `.zwc` (zsh-compiled bytecode) files become irrelevant under zshrs. Daemon's rkyv shards are faster (mmap zero-copy), richer (typed ASTs, perfect-hash lookup, bidirectional reconstruction), and unified (one cache directory vs scattered `.zwc` files). On first cold start, daemon reads existing `.zwc` files to bootstrap its cache (cheap one-time win — `.zwc` is already parsed, just needs re-serialization to rkyv) and then ignores them. Existing `.zwc` files are not deleted by zshrs (user owns them); they're just unused by zshrs's lookup path. `zcache import zwc <path>` is the explicit migration verb.
+**`.zwc` files: invisible to scans, importable on demand, encouraged to delete.** During every automatic discovery pass the daemon performs — `$FPATH` enumeration, plugin tree walks, source-statement following, fsnotify watches, autoload table population — `.zwc` files are filtered out and treated as if they don't exist. The daemon only sees the source files (`.zsh`, `.sh`). `.zwc` files in `~/.zpwr` (or anywhere else) sit on disk untouched and unread by any auto-driven code path. They never feed into the cold-start, never participate in fsnotify, never count toward "what's in fpath."
+
+Once a user is on zshrs, every `.zwc` and `.zcompdump-*` file is **dead disk litter that contributes zero speed** — no longer doing any work, just consuming bytes and confusing future debugging.
+
+`.zwc`'s entire reason to exist is "skip the source-parse step on cold load" — but zshrs clients never parse source on cold load. The daemon parsed it once, serialized into rkyv, and clients mmap the rkyv shard. The cold path is mmap + index + execute. There's no parse step for `.zwc` to short-circuit, so even if zshrs *did* read `.zwc`, it would be slower than the rkyv path (`.zwc` deserialization → AST → re-execute is more work than mmap → indexed bytecode → execute). `.zcompdump` has the same problem at one layer up (compinit-cache vs daemon-served `_comps`).
+
+zshrs encourages cleanup:
+
+```
+zcache clean zwc                    # find and delete every .zwc inside known scope (fpath, plugin trees,
+                                    # source-statement targets, autoload paths, ~/.zpwr, ~/.zsh, etc.)
+zcache clean zwc --dry-run          # report what would be deleted, delete nothing
+zcache clean zcompdump              # find and delete every .zcompdump* file (default scope: $HOME, $ZDOTDIR,
+                                    # $ZPWR_LOCAL, $XDG_CACHE_HOME)
+zcache clean legacy                 # zwc + zcompdump together; the standard "I am fully on zshrs" cleanup
+zcache verify                       # already exists; reports .zwc/.zcompdump presence as a WARN with the
+                                    # cleanup hint, since their existence implies stale legacy artifacts
+```
+
+Out-of-scope dirs are never touched (no recursive `find ~ -name '*.zwc'`). Daemon walks only the directories it already knows about from the user's `.zshrc` analysis. `--dry-run` shows the full list before commit. No confirmation prompt at delete time (per CLAUDE.md "no friction"). `zcache verify` runs as part of `zcache info` and flags litter every time the user looks at cache state, gently surfacing the cleanup verb without nagging.
+
+Once cleaned, the user's daily-driver disk footprint for shell artifacts is just `~/.cache/zshrs/` — single directory, daemon-owned, queryable, exportable. No more 40 `.zwc` files scattered through `~/.zpwr`, no more 1.8 MB `.zcompdump.zwc` orphan, no more `~/.zcompdump*` accumulating across versions.
+
+**Why no auto-import:** `.zwc` (and `.zcompdump`) files can be arbitrarily stale relative to the source they were compiled from. Picking them up automatically would let stale bytecode bleed into the daemon's canonical view, masking real source changes and producing the same "completion is stale, restart shell, still stale" failure mode that motivates the daemon architecture in the first place. The daemon's source-file-is-authoritative rule means it always parses fresh from `.zsh` / `.sh` and never trusts a pre-compiled artifact unless the user explicitly says so.
+
+**On-demand import (user-invoked only):**
+
+```
+zcache import zwc <path>            # ingest a single .zwc — daemon validates against the adjacent
+                                    # source file (mtime+hash); skips with WARN if stale; on match,
+                                    # uses the .zwc to skip the source-parse pass for that file
+zcache import zwc --tree <dir>      # walk a directory, import every .zwc that has a fresh adjacent
+                                    # source file; stale ones reported and skipped
+zcache import zcompdump <path>      # ingest a .zcompdump as compdef seed (validated against current
+                                    # fpath; entries pointing at non-existent functions are dropped)
+```
+
+Both verbs are explicit user choice, never run automatically. Both validate freshness before merging:
+
+- `.zwc` ingest: daemon stats the adjacent `.zsh` / `.sh` source; if mtime newer than `.zwc`, skip with `WARN: stale .zwc, will reparse from source`. If fresh, ingest the bytecode equivalence and skip the parse step for that file.
+- `.zcompdump` ingest: daemon walks every entry; if the referenced function file doesn't exist or has a newer mtime, drop it; only fresh entries are merged.
+
+Conflict resolution: incoming entries that disagree with daemon's current canonical state report a merge plan; `--force` overrides, default is skip-with-WARN.
+
+This preserves the optionality (user can opt in to skip parse work for a known-fresh prebuilt cache) without the auto-staleness trap.
 
 **History migration.** zpwr's 25 MB / 478 k-command history file (`~/.zpwr/local/.zpwr-MenkeTechnologies-history`) ingests once into the daemon's `history.db` via `zcache import history <path>`. The legacy zsh `HISTFILE=` setting becomes a no-op once migrated — daemon owns the canonical store. Backwards-export to legacy zsh format available via `zcache export history --format zsh-histfile` for round-trip.
 
@@ -473,7 +517,6 @@ Both are thin IPC wrappers over daemon ops `view_cache` / `export_cache`. Daemon
 | `sql` | SQL INSERT statements | catalog/entries/entry_stats/plugins/history |
 | `csv` | Tabular | history/entry_stats/shells/plugins |
 | `zcompdump` | Legacy zsh compinit format (byte-compatible) | compdef/_comps/_services/_patcomps/_describe_handlers (combined) |
-| `zwc` | Zsh-compiled `.zwc` form | function bytecode, compdef table, .zshrc body |
 | `disasm` | Disassembled bytecode (mnemonic + operands) | function/script/shard |
 
 **Examples:**
@@ -556,7 +599,7 @@ Hot-path escape hatch: if JSON parse cost shows up in flamegraphs for `highlight
 | `push_canonical` | Promote client overlay state for a subsystem (path/fpath/alias/named_dir/etc.) into daemon canonical for future shells |
 | `pull_canonical` | Client opt-in: re-fetch canonical state for a subsystem mid-session |
 | `diff_canonical` | Get overlay-vs-canonical diff for inspection |
-| `export_zcompdump` | Emit a synthetic `.zcompdump` (and optional `.zcompdump.zwc`) from canonical state for legacy tooling |
+| `export_zcompdump` | Emit a synthetic `.zcompdump` from canonical state for legacy tooling (no `.zwc` emission) |
 | `export_catalog` | Dump `catalog.db` to a portable file |
 | `export_shard` | Dump a specific rkyv shard to a portable file |
 | `import_zcompdump` | Ingest a legacy `.zcompdump` for migration assist |
@@ -620,7 +663,10 @@ zcache compact [--wait]             # vacuum + dedup
 # accepting common flags: [--format <fmt>] [--filter <pat>] [--out <path>] [--all]
 zcache view   <target> [flags]      # pretty-print to stdout (default --format text)
 zcache export <target> [flags]      # serialize as eval-compatible zsh script to stdout (default --format sh)
-zcache import <target> <path>       # ingest external file
+zcache import <target> <path>       # ingest external file (stale-validated; --force to override)
+zcache import zwc <path>            # on-demand .zwc ingest; daemon validates adjacent source freshness
+zcache import zwc --tree <dir>      # walk dir, import every .zwc with fresh adjacent source
+zcache import zcompdump <path>      # on-demand .zcompdump ingest; entries validated against current fpath
 zcache list                         # list every supported export target
 
 # CRITICAL: `zcache export` default output is eval-compatible. The canonical reset pattern is:
@@ -692,7 +738,7 @@ zcache export script <path>         # bytecode for a cached `zshrs FILE`
 zcache export sourced <path>        # bytecode for a sourced file (single)
 zcache export sourced --all         # registry of every sourced file with mtime/hash/sensitive flag
 zcache export compiled_files        # full compiled_files table dump
-zcache export zcompdump [--zwc]     # synthetic .zcompdump for legacy tools
+zcache export zcompdump             # synthetic .zcompdump for legacy tools
 zcache export daemon_state          # full daemon state for debugging
 zcache export --all [--out <path>]  # snapshot every target into one archive
 
@@ -800,6 +846,7 @@ POSIX mode never spawns the daemon, never creates `~/.cache/zshrs/`. Required fo
 - ANY hydration progress on stderr/stdout — REJECT (`tracing::info!` to log file only).
 - ANY scattered per-plugin cache files outside `~/.cache/zshrs/images/` — REJECT.
 - ANY removal of `entry_stats` to "simplify" — REJECT.
+- ANY auto-consumption of `.zwc` / `.zcompdump` files on daemon scans, fpath walks, fsnotify watches, or plugin-tree enumeration — REJECT. They're invisible to all automatic discovery; only `zcache import zwc|zcompdump <path>` (user-explicit, freshness-validated) may ingest them.
 
 ### Acceptance criteria
 

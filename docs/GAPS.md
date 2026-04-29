@@ -912,7 +912,14 @@ Tests: `test_dot_glob_excludes_dot_and_dotdot`, `test_star_glob_excludes_dotfile
 
 Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_uses_chars_not_bytes`.
 
-## Still open (forty-eighth-pass — remaining)
+## Closed (forty-ninth-pass — `exit N` fires EXIT trap)
+
+### `trap 'cleanup' EXIT; exit 5` skipped the cleanup
+
+- The implicit script-end path in `execute_script_zsh_pipeline` already ran the EXIT trap. But `builtin_exit` called `std::process::exit(code)` directly, bypassing the trap. Real-world scripts use `trap 'cleanup' EXIT` heavily for tempfile cleanup, db disconnect, etc. — `exit N` skipping the trap is a major compatibility break.
+- Inserted the trap-fire (with same "remove first to prevent recursion" pattern as the implicit path) before `std::process::exit`. Set `last_status = code` first so the trap body sees the right `$?`. The subshell branch is unchanged — it returns to the subshell caller without running the trap (zsh defers EXIT trap to the outer process). Tests: `test_exit_builtin_fires_exit_trap`, `test_exit_trap_with_explicit_exit_in_trap_body`.
+
+## Still open (forty-ninth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
