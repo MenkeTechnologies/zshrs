@@ -1083,7 +1083,17 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - builtin_umask only parsed numeric (`022`) input. zsh accepts symbolic (`u=rwx,g=rx,o=`) for set, computing the umask as `0777` minus the granted bits per class. Added a parse path: read current umask, split on `,`, for each `class=bits` segment translate `r/w/x` into a 3-bit value and apply to the named class (u/g/o/a). Test: `test_umask_dash_S_symbolic_set`.
 
-## Still open (sixty-third-pass — remaining)
+## Closed (sixty-fourth-pass — `find -maxdepth` + `ulimit -a` zsh format)
+
+### `find /tmp -maxdepth 0` recursed the entire tree
+
+- The `-maxdepth N` flag was unrecognized — `find` always recursed unbounded. Added arg parsing for `-maxdepth N`, threaded `max_depth: Option<usize>` and `cur_depth: usize` through the recursive `walk()`, and gated descent with `if cur_depth >= md { return; }`. `-maxdepth 0` now prints only the starting path. Test: `test_find_maxdepth_caps_recursion`.
+
+### `ulimit -a` printed the wrong format and order
+
+- zsh format per line: `<flag>: <long-name> (<unit>)<padding>value`, ordered as -t (cpu) -f (file) -d (data) -s (stack) -c (core) -m (resident) -v (address) -n (descriptors) -u (processes). zshrs was emitting just `<long-name> (<unit>) value` in a different order with no `-flag:` prefix. Reordered the limits table, prefixed each row's label with `-flag:`, widened padding to 34 chars to match zsh's column alignment exactly. Test: `test_ulimit_dash_a_zsh_format`.
+
+## Still open (sixty-fourth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
