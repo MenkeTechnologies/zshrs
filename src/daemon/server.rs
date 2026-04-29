@@ -37,7 +37,7 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
 
     tracing::info!(socket = %paths.socket.display(), "listening");
 
-    let state = DaemonState::new(paths.clone());
+    let state = DaemonState::new(paths.clone())?;
 
     let shutdown = tokio::sync::Notify::new();
     let shutdown = Arc::new(shutdown);

@@ -13,10 +13,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use parking_lot::Mutex;
+use rusqlite::Connection;
 use tokio::sync::mpsc;
 
+use super::catalog::{self, CatalogSummary};
 use super::ipc::Frame;
 use super::paths::CachePaths;
+use super::Result;
 
 /// One client/shell session.
 pub struct Session {
@@ -81,6 +84,7 @@ impl DaemonStateInner {
 /// Shared handle — clone freely; every clone holds the same Arc<Mutex<...>> + paths.
 pub struct DaemonState {
     inner: Mutex<DaemonStateInner>,
+    catalog: Mutex<Connection>,
     pub paths: CachePaths,
     pub started_at: Instant,
     pub start_wall: chrono::DateTime<chrono::Utc>,
@@ -88,14 +92,28 @@ pub struct DaemonState {
 }
 
 impl DaemonState {
-    pub fn new(paths: CachePaths) -> Arc<Self> {
-        Arc::new(Self {
+    pub fn new(paths: CachePaths) -> Result<Arc<Self>> {
+        let catalog = catalog::open(&paths)?;
+        Ok(Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
+            catalog: Mutex::new(catalog),
             paths,
             started_at: Instant::now(),
             start_wall: chrono::Utc::now(),
             pid: std::process::id() as i32,
-        })
+        }))
+    }
+
+    /// Read-only snapshot of catalog.db stats (table counts + file size).
+    pub fn catalog_summary(&self) -> Result<CatalogSummary> {
+        let conn = self.catalog.lock();
+        catalog::summary(&conn, &self.paths.catalog_db)
+    }
+
+    /// Run PRAGMA integrity_check against catalog.db.
+    pub fn catalog_integrity(&self) -> Result<bool> {
+        let conn = self.catalog.lock();
+        catalog::integrity_check(&conn)
     }
 
     pub fn uptime_ms(&self) -> u64 {
@@ -237,7 +255,7 @@ mod tests {
         paths.ensure_dirs().unwrap();
         // tempdir leaks here intentionally — test scope keeps it alive.
         std::mem::forget(tmp);
-        DaemonState::new(paths)
+        DaemonState::new(paths).expect("DaemonState::new")
     }
 
     #[test]
