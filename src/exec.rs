@@ -4792,11 +4792,19 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 _ => v.to_string(),
             }
         };
-        // `${arr#pat}` / `${arr%pat}` / etc. on an array iterate per
-        // element. Was joining first then stripping the joined scalar,
-        // which only stripped the LAST element's suffix.
+        // `${arr#pat}` / `${arr%pat}` / etc. on an array:
+        //   - Unquoted form: iterate per element.
+        //   - DQ-wrapped form (`"${arr%pat}"`): zsh joins as scalar
+        //     first then strips. So `(/tmp/foo /etc/bar)` with `%/*`
+        //     gives `/tmp/foo /etc` (last `/bar` stripped from
+        //     joined), not `/tmp /etc` (per-element).
         let result: String = with_executor(|exec| {
+            let in_dq = exec.in_dq_context > 0;
             if name == "@" || name == "*" {
+                if in_dq {
+                    let joined = exec.positional_params.join(" ");
+                    return strip_one(&joined, op, &pattern);
+                }
                 return exec
                     .positional_params
                     .iter()
@@ -4805,6 +4813,10 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     .join(" ");
             }
             if let Some(arr) = exec.arrays.get(&name) {
+                if in_dq {
+                    let joined = arr.join(" ");
+                    return strip_one(&joined, op, &pattern);
+                }
                 return arr
                     .iter()
                     .map(|e| strip_one(e, op, &pattern))
@@ -6340,6 +6352,19 @@ impl fusevm::ShellHost for ZshrsHost {
                     new_stack.extend_from_slice(s);
                 }
                 exec.arrays.insert("funcstack".to_string(), new_stack);
+                // Set `$_` BEFORE the function body runs. zsh: inside
+                // a function, `echo $_` reads the function name (when
+                // called with no args) or the last call-arg.
+                // Without this, internal builtins that ran before
+                // (like REGISTER_COMPILED_FN) leaked their last arg
+                // (the function body source!) as $_.
+                let dollar_underscore = args
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(|| fn_name.clone());
+                exec.variables
+                    .insert("_".to_string(), dollar_underscore.clone());
+                exec.pending_underscore = Some(dollar_underscore);
                 (prev, count, arr_count, prev_zero, prev_stack)
             });
 

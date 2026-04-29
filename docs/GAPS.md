@@ -1705,6 +1705,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `%B%S%U` outputs `\e[1m\e[3m\e[4m` (each independent SGR). zshrs's `apply_attrs` re-emitted ALL currently-active attrs every call, producing `\e[1m\e[1m\e[3m\e[1m\e[3m\e[4m` etc. Each individual attribute handler (`B`/`U`/`S`) now emits ONLY its specific SGR code; `apply_attrs` is reserved for color-set paths that need the full state. Test: `test_print_P_attr_chain_independent`.
 
+### `$_` leaked function body text inside function calls
+
+- After `foo() { echo $_ }; foo`, zsh's `$_` inside the function body should be `foo` (function name when no args). zshrs was reading the FUNCTION BODY SOURCE because `BUILTIN_REGISTER_COMPILED_FN` (called when defining the function) had updated `pending_underscore` with the body text via the standard `pop_args` hook. Fix: explicitly set `$_` and `pending_underscore` BEFORE the function body runs (in `call_function`'s pre-VM setup) — using the function's call-form last arg, or the function name when no args. Test: `test_dollar_underscore_inside_function_body`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
