@@ -23294,11 +23294,18 @@ impl ShellExecutor {
                     Some('v') => output.push('\x0b'),
                     Some('"') => output.push('"'),
                     Some('\'') => output.push('\''),
-                    Some('0') => {
+                    Some(d0) if ('0'..='7').contains(&d0) => {
+                        // POSIX printf: `\NNN` is 1-3 octal digits (zsh
+                        // accepts the same). The leading `0` (if any) is
+                        // part of the digit count — `\0102` consumes
+                        // `010` (octal 10 = backspace) and leaves `2` as
+                        // literal, matching `printf "\0102"` output of
+                        // `\b2`. Build the octal up to 3 total chars.
                         let mut octal = String::new();
+                        octal.push(d0);
                         while octal.len() < 3 {
                             if let Some(&d) = chars.peek() {
-                                if d >= '0' && d <= '7' {
+                                if ('0'..='7').contains(&d) {
                                     octal.push(d);
                                     chars.next();
                                 } else {
@@ -23308,9 +23315,7 @@ impl ShellExecutor {
                                 break;
                             }
                         }
-                        if octal.is_empty() {
-                            output.push('\0');
-                        } else if let Ok(val) = u8::from_str_radix(&octal, 8) {
+                        if let Ok(val) = u8::from_str_radix(&octal, 8) {
                             output.push(val as char);
                         }
                     }
@@ -23598,7 +23603,11 @@ impl ShellExecutor {
                         }
                     }
                     'o' => {
-                        let val: u64 = arg.parse().unwrap_or(0);
+                        let val: u64 = arg
+                            .parse::<i64>()
+                            .map(|n| n as u64)
+                            .or_else(|_| arg.parse::<u64>())
+                            .unwrap_or(0);
                         let num_str = format!("{:o}", val);
                         let prefix = if alt_form && val != 0 { "0" } else { "" };
                         let total_len = prefix.len() + num_str.len();
@@ -23618,7 +23627,15 @@ impl ShellExecutor {
                         }
                     }
                     'x' => {
-                        let val: u64 = arg.parse().unwrap_or(0);
+                        // Parse as i64 first so negatives wrap around
+                        // (printf "%x" -1 → "ffffffffffffffff", matching
+                        // C/zsh). Direct u64 parse rejected the leading
+                        // `-` and silently used 0.
+                        let val: u64 = arg
+                            .parse::<i64>()
+                            .map(|n| n as u64)
+                            .or_else(|_| arg.parse::<u64>())
+                            .unwrap_or(0);
                         let num_str = format!("{:x}", val);
                         let prefix = if alt_form && val != 0 { "0x" } else { "" };
                         let total_len = prefix.len() + num_str.len();
@@ -23638,7 +23655,11 @@ impl ShellExecutor {
                         }
                     }
                     'X' => {
-                        let val: u64 = arg.parse().unwrap_or(0);
+                        let val: u64 = arg
+                            .parse::<i64>()
+                            .map(|n| n as u64)
+                            .or_else(|_| arg.parse::<u64>())
+                            .unwrap_or(0);
                         let num_str = format!("{:X}", val);
                         let prefix = if alt_form && val != 0 { "0X" } else { "" };
                         let total_len = prefix.len() + num_str.len();

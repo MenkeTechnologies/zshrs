@@ -5578,3 +5578,45 @@ fn test_trap_signal_zero_is_exit() {
     let (_, output, _) = run_zshrs(r#"trap "echo bye" 0; echo hi"#);
     assert_eq!(output.trim(), "hi\nbye");
 }
+
+#[test]
+fn test_special_param_concat_after_literal() {
+    // `echo X$?` should expand $? — was returning literal `X$?`.
+    // Same root cause for `X$$`, `X$#`, `X$*`, `X$!`. Fix: extend
+    // find_expansion_end's special-single-char matcher to recognise
+    // the META-coded forms (`\u{97}` for `?`, `\u{85}` for `$`, etc.)
+    // so the expansion-segment splitter doesn't truncate.
+    let (_, output, _) = run_zshrs("true; echo X$?");
+    assert_eq!(output.trim(), "X0");
+    let (_, output, _) = run_zshrs("false; echo bye=$?");
+    assert_eq!(output.trim(), "bye=1");
+    let (_, output, _) = run_zshrs("set -- a b c; echo X$#");
+    assert_eq!(output.trim(), "X3");
+}
+
+#[test]
+fn test_printf_x_negative_wraps_unsigned() {
+    // printf "%x" -1 should print "ffffffffffffffff" — was producing
+    // "0" because u64 parse rejected the leading `-`.
+    let (_, output, _) = run_zshrs(r#"printf "%x\n" -1"#);
+    assert_eq!(output.trim(), "ffffffffffffffff");
+}
+
+#[test]
+fn test_printf_octal_escape_no_leading_zero() {
+    // `\NNN` (1-3 octal digits, no leading 0) is the POSIX form.
+    // `\102` should produce `B` (octal 102 = 66 = 'B'). Was leaving
+    // it as literal `\102` because the escape branch only matched
+    // `\0NNN`.
+    let (_, output, _) = run_zshrs(r#"printf "a\102b\n""#);
+    assert_eq!(output.trim(), "aBb");
+}
+
+#[test]
+fn test_printf_octal_leading_zero_three_total_digits() {
+    // `\0102` consumes `010` (3 chars total including the leading `0`)
+    // = octal 010 = 8 = backspace, then leaves `2` as literal.
+    let (_, output, _) = run_zshrs(r#"printf "[\0102]""#);
+    // Expect: `[`, BS (0x08), `2`, `]`. Match exact bytes.
+    assert_eq!(output.as_bytes(), &[b'[', 0x08, b'2', b']']);
+}

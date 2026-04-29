@@ -2808,8 +2808,28 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             j
         }
-        // Special single-char params: $@ $* $# $? $! $- $_ $$
-        Some(ch) if matches!(ch, '@' | '*' | '#' | '?' | '!' | '-' | '_' | '$') => {
+        // Special single-char params: $@ $* $# $? $! $- $_ $$.
+        // The lexer META-marks `*`, `?`, `#`, `-`, `!` (and similar
+        // glob/syntax chars) when they appear as a token; after a META-$
+        // they're still the variable-name char even in their META form.
+        // Match both the literal char and its META code-point so e.g.
+        // `X$?` lexed as `X\u{85}\u{97}` (META-$, META-?) detects the
+        // expansion as `$?` rather than falling through to the
+        // "advance by 1" default (which left `?` as a literal-glob in
+        // the trailing literal segment).
+        Some(ch)
+            if matches!(
+                ch,
+                '@' | '*' | '#' | '?' | '!' | '-' | '_' | '$'
+                    | '\u{87}' // META-* (STAR)
+                    | '\u{84}' // META-# (POUND)
+                    | '\u{97}' // META-? (QUEST)
+                    | '\u{9b}' // META-- (DASH)
+                    | '\u{9c}' // META-! (BANG)
+                    | '\u{85}' // META-$ ($$ → PID; second $ also lexed as STRING)
+                    | '\u{8c}' // META-QSTRING ($ in DQ context)
+            ) =>
+        {
             i + 2
         }
         // All-digit positional: $0..$N
