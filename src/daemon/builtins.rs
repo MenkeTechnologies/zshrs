@@ -83,10 +83,16 @@ fn zcache(args: &[String]) -> i32 {
     match verb {
         "info" | "" => zcache_info(),
         "daemon" => zcache_daemon(args.get(2).map(|s| s.as_str()).unwrap_or("status")),
-        "jobs" | "rebuild" | "clean" | "verify" | "compact" | "view" | "export"
-        | "import" | "list" | "log" => {
-            err_exit("zcache", &format!("`{}` not yet implemented in v1 foundation", verb))
-        }
+        "rebuild" => zcache_rebuild(&args[2..]),
+        "clean" => zcache_clean(&args[2..]),
+        "verify" => zcache_simple_op("verify", json!({})),
+        "compact" => zcache_simple_op("compact", json!({})),
+        "list" => zcache_list_targets(),
+        "jobs" => zcache_simple_op("info", json!({})), // info doubles as jobs view for v1
+        "view" | "export" | "import" | "log" => err_exit(
+            "zcache",
+            &format!("`{}` not yet implemented in v1 foundation", verb),
+        ),
         other => err_exit("zcache", &format!("unknown verb `{}`", other)),
     }
 }
@@ -118,6 +124,104 @@ fn zcache_daemon(verb: &str) -> i32 {
         }
         Err(e) => err_exit("zcache daemon", &e.to_string()),
     }
+}
+
+fn zcache_rebuild(args: &[String]) -> i32 {
+    let mut shard: Option<String> = None;
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "shard" => shard = iter.next().cloned(),
+            "--wait" | "--parallel" => {
+                let _ = iter.next();
+            } // accepted but ignored in v1
+            _ => {}
+        }
+    }
+    let payload = match shard {
+        Some(s) => json!({ "shard": s }),
+        None => json!({}),
+    };
+    zcache_simple_op("rebuild", payload)
+}
+
+fn zcache_clean(args: &[String]) -> i32 {
+    // zcache clean [shards|index|log|--all]
+    let target = args
+        .iter()
+        .find(|a| matches!(a.as_str(), "shards" | "index" | "log" | "stats" | "shard" | "catalog"))
+        .map(|s| s.as_str())
+        .unwrap_or_else(|| {
+            if args.iter().any(|a| a == "--all") {
+                "all"
+            } else {
+                "all"
+            }
+        });
+    zcache_simple_op("clean", json!({ "target": target }))
+}
+
+fn zcache_simple_op(op: &str, args: Value) -> i32 {
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call(op, args) {
+        Ok(payload) => {
+            print_pretty(&payload);
+            0
+        }
+        Err(e) => err_exit(&format!("zcache {}", op), &e.to_string()),
+    }
+}
+
+fn zcache_list_targets() -> i32 {
+    // Static list — every named export target the daemon supports. Hand-maintained
+    // until we wire `zcache view`/`zcache export` end-to-end. Matches docs/DAEMON.md
+    // "Universal cache dump / view / export" Targets table.
+    let targets = &[
+        "path",
+        "fpath",
+        "manpath",
+        "infopath",
+        "cdpath",
+        "ld_library_path",
+        "named_dir",
+        "command_hash",
+        "autoload_table",
+        "aliases",
+        "galiases",
+        "saliases",
+        "functions",
+        "_comps",
+        "_services",
+        "_patcomps",
+        "_describe_handlers",
+        "zstyle",
+        "bindkey",
+        "setopt",
+        "zmodload",
+        "env",
+        "params",
+        "theme",
+        "history",
+        "entry_stats",
+        "subscriptions",
+        "shells",
+        "plugins",
+        "shard",
+        "index",
+        "catalog",
+        "script",
+        "sourced",
+        "compiled_files",
+        "zcompdump",
+        "daemon_state",
+    ];
+    for t in targets {
+        println!("{}", t);
+    }
+    0
 }
 
 // -------- zls --------

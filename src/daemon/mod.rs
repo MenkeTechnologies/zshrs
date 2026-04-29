@@ -21,6 +21,8 @@ pub mod ops;
 pub mod paths;
 pub mod pidlock;
 pub mod server;
+pub mod shard;
+pub mod source_resolver;
 pub mod state;
 
 pub use ipc::{Event, Frame, Hello, Welcome, ProtocolVersion, PROTOCOL_VERSION};

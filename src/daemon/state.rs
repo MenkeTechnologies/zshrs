@@ -116,6 +116,17 @@ impl DaemonState {
         catalog::integrity_check(&conn)
     }
 
+    /// Run a closure with mutable access to the catalog connection. The lock is held
+    /// for the duration of the closure; keep it short.
+    pub fn with_catalog<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&Connection) -> std::result::Result<T, E>,
+        E: From<rusqlite::Error>,
+    {
+        let conn = self.catalog.lock();
+        f(&conn)
+    }
+
     pub fn uptime_ms(&self) -> u64 {
         self.started_at.elapsed().as_millis() as u64
     }
