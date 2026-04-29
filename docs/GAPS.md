@@ -1667,6 +1667,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `[[ -l file ]]` (no `-l` test in zsh — `-h` is the symlink test) emits `unknown condition: -l` to stderr and returns false. zshrs's `emit_file_test` default arm for unknown ops just emitted `Pop; LoadFalse` with no diagnostic. Now emits the error message at compile-time so users see the same warning zsh prints. Test: `test_unknown_cond_emits_diagnostic`.
 
+### `${a[N]:offset:length}` returned the full element instead of the substring
+
+- zsh: `a=(hello); ${a[1]:0:1}` should return `h` (substring of element 1). zshrs's bracket-handler routed the `:0:1` modifier through the colon-default branch (`:-`) which doesn't handle digit-prefixed offset/length. Added a `:DIGIT[:DIGIT]` substring branch BEFORE the colon-default handlers — only fires when the char after `:` is a digit (so `:-default` continues to be the default-if-empty form, not a negative offset). Test: `test_array_element_substring`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

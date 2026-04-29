@@ -12297,6 +12297,43 @@ impl ShellExecutor {
                             }
                         }
                     }
+                    // `${a[N]:offset:length}` — substring on the
+                    // resolved element. zsh: `a=(hello); ${a[1]:0:1}`
+                    // → `h`. Detect `:DIGIT[:DIGIT]` after the
+                    // bracket. Note: ONLY digit (not `-`); `:-` is
+                    // the default-if-empty modifier (`${a[N]:-d}`)
+                    // and must fall through to that branch. zsh
+                    // requires a space for the negative-offset form:
+                    // `${a: -3:2}`.
+                    if after_bracket.starts_with(':')
+                        && after_bracket
+                            .chars()
+                            .nth(1)
+                            .map(|c| c.is_ascii_digit())
+                            .unwrap_or(false)
+                    {
+                        let body = &after_bracket[1..];
+                        let parts: Vec<&str> = body.splitn(2, ':').collect();
+                        let off: i64 = parts[0].trim().parse().unwrap_or(0);
+                        let chars: Vec<char> = elem.chars().collect();
+                        let len_total = chars.len() as i64;
+                        let start = if off < 0 {
+                            (len_total + off).max(0) as usize
+                        } else {
+                            (off as usize).min(chars.len())
+                        };
+                        if let Some(len_str) = parts.get(1) {
+                            let len: i64 = len_str.trim().parse().unwrap_or(len_total);
+                            let take = if len < 0 {
+                                let neg_idx = (len_total + len).max(start as i64);
+                                (neg_idx as usize).saturating_sub(start)
+                            } else {
+                                (len as usize).min(chars.len().saturating_sub(start))
+                            };
+                            return chars[start..start + take].iter().collect();
+                        }
+                        return chars[start..].iter().collect();
+                    }
                     if let Some(rest) = after_bracket.strip_prefix(":-") {
                         return if elem.is_empty() {
                             self.expand_string(rest)

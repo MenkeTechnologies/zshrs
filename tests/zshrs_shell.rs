@@ -6200,3 +6200,20 @@ fn test_unknown_cond_emits_diagnostic() {
     let (_, _, stderr) = run_zshrs("[[ -X /tmp ]]");
     assert!(stderr.contains("unknown condition"));
 }
+
+#[test]
+fn test_array_element_substring() {
+    // `${a[N]:offset:length}` should slice the resolved element.
+    // zsh: `a=(hello); ${a[1]:0:1}` → `h`. zshrs was returning
+    // the full element because the substring branch only fired
+    // for the top-level scalar form, not after `[N]` resolution.
+    let (_, output, _) =
+        run_zshrs(r#"a=(hello); echo "[${a[1]:0:1}]""#);
+    assert_eq!(output.trim(), "[h]");
+    let (_, output, _) =
+        run_zshrs(r#"a=(hello world); echo "[${a[2]:0:3}]""#);
+    assert_eq!(output.trim(), "[wor]");
+    let (_, output, _) =
+        run_zshrs(r##"a=(abcdef); echo "[${a[1]:1:3}]""##);
+    assert_eq!(output.trim(), "[bcd]");
+}
