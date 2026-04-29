@@ -1519,6 +1519,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh applies path-modifier suffixes per-array-element: `a=(/a/b/c /d/e/f); echo "${a[@]:h}"` should produce `/a/b /d/e`. zshrs's subscript-resolution path returned `arr.join(" ")` for `[@]`/`[*]` and never reached the modifier loop, so the `:h` was silently dropped. Added a per-element `apply_history_modifiers` walk inside the `index == "@"`/`"*"` branch that fires when `after_bracket` starts with `:` and looks like a history modifier. Test: `test_array_at_subscript_history_modifier_per_element`.
 
+### `${var:h}` didn't strip trailing slashes before head
+
+- `${a:h}` for `a=/tmp/` should yield `/` (drops trailing-slash + `tmp`). zshrs found the trailing slash with `rfind('/')` and returned `/tmp`. Added a `trim_end_matches('/')` pass before locating the last segment so `/tmp/` and `/tmp` both resolve to `/`. Same fix to `:t` so `foo/` :t is `foo`. Test: `test_h_modifier_strips_trailing_slashes`.
+
+### `${a[1][1]}` (chained subscript) returned the full element
+
+- zsh: `${a[1][1]}` for `a=(hello)` selects array element 1 (`hello`) then character 1 (`h`). zshrs treated the second `[1]` as noise after the first subscript resolved. Added a chained-subscript handler in the array-subscript branch: if `after_bracket` starts with `[`, parse the inner index (numeric or `start,end` range), apply to the looked-up element's chars, and return. Test: `test_chained_subscript_array_then_char`.
+
+### `print -e` and `print -E` were silently accepted
+
+- zsh's `print` rejects `-e` AND `-E` ("bad option") — the escape-interpretation flags belong to `echo`, not `print`. zshrs's print known-flag set included both. Removed `e`/`E` from the print known-flag set so these now fall through to the strict "bad option" error matching zsh. Test: `test_print_rejects_dash_e_and_dash_E`.
+
+### `$((0o15))` Rust/Python octal prefix was silently accepted as 0
+
+- zsh rejects `0o…` octal-prefix; only `0x` (hex), `0b` (binary), and bare-leading-zero (with `setopt octalzeroes`) are recognised. zshrs's math lexer fell through `Some('o')` to the default branch and returned 0. Added an explicit `Some('o') | Some('O')` case that sets `self.error` to zsh's exact diagnostic ("bad math expression: operator expected at `…'") and returns a stub Num. Test: `test_math_rejects_0o_octal_prefix`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

@@ -535,6 +535,20 @@ impl<'a> MathEval<'a> {
                     };
                     return MathTok::Num;
                 }
+                Some('o') | Some('O') => {
+                    // zsh rejects `0o…` octal-prefix (Rust/Python form).
+                    // Only `0x` (hex), `0b` (binary), and bare-leading-0
+                    // (with `setopt octalzeroes`) are recognized. Emit
+                    // the same diagnostic zsh produces — set self.error
+                    // and return a stub Num so the caller's
+                    // error-propagation path picks up the failure.
+                    self.error = Some(format!(
+                        "bad math expression: operator expected at `{}'",
+                        &self.input[self.pos..]
+                    ));
+                    self.yyval = MathNum::Integer(0);
+                    return MathTok::Num;
+                }
                 _ => {
                     // Could be octal or just 0
                     if self.octal_zeroes {
