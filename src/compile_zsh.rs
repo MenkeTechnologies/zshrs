@@ -1072,16 +1072,20 @@ impl ZshCompiler {
             }
         }
 
-        // Fast path: `${NAME[@]}` / `${NAME[*]}` — array splice. Emits
-        // BUILTIN_ARRAY_ALL which always returns Value::Array, even for
-        // empty arrays. (BUILTIN_GET_VAR joins arrays into a string for
-        // scalar-context use, which collapses splice semantics.)
+        // Fast path: `${NAME[@]}` / `${NAME[*]}` — array splice/join.
+        //   `[@]` → BUILTIN_ARRAY_ALL (returns Value::Array, splice).
+        //   `[*]` → BUILTIN_ARRAY_JOIN_STAR (joins with first IFS
+        //          char into a single Value::Str, matching zsh).
         if !has_bnull {
             if let Some(name) = array_splice_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_ALL, 0), 0);
+                let bid = if array_splice_is_star(&untoked) {
+                    crate::exec::BUILTIN_ARRAY_JOIN_STAR
+                } else {
+                    crate::exec::BUILTIN_ARRAY_ALL
+                };
+                self.builder.emit(Op::CallBuiltin(bid, 0), 0);
                 return;
             }
         }
@@ -3140,6 +3144,14 @@ fn array_splice_ref(s: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// True iff the splice is `[*]` (join) rather than `[@]` (splice).
+/// Used by the compile path to pick between BUILTIN_ARRAY_ALL (returns
+/// each element separately) and BUILTIN_ARRAY_JOIN_STAR (joins with
+/// the first IFS char into a single string).
+fn array_splice_is_star(s: &str) -> bool {
+    s.ends_with("[*]}")
 }
 
 /// Return the variable name if `s` is a `${NAME}` form with no

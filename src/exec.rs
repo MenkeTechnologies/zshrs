@@ -3359,6 +3359,30 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::str(len.to_string())
     });
 
+    // `${arr[*]}` — join array elements with the first IFS char into
+    // a single string. Matches zsh: in DQ context this preserves the
+    // join; in array context too the result is one Value::Str.
+    vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, _argc| {
+        let name = vm.pop().to_str();
+        let result = with_executor(|exec| {
+            let sep = exec
+                .variables
+                .get("IFS")
+                .and_then(|s| s.chars().next())
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| " ".to_string());
+            if name == "@" || name == "*" || name == "argv" {
+                return exec.positional_params.join(&sep);
+            }
+            if let Some(arr) = exec.arrays.get(&name) {
+                arr.join(&sep)
+            } else {
+                exec.get_variable(&name)
+            }
+        });
+        fusevm::Value::str(result)
+    });
+
     vm.register_builtin(BUILTIN_ARRAY_ALL, |vm, _argc| {
         let name = vm.pop().to_str();
         with_executor(|exec| {
@@ -4559,9 +4583,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // op: 0=first, 1=all, 2=anchor-prefix (`/#`), 3=anchor-suffix (`/%`).
     vm.register_builtin(BUILTIN_PARAM_REPLACE, |vm, _argc| {
         let op = vm.pop().to_int() as u8;
-        let repl = vm.pop().to_str();
-        let pattern = vm.pop().to_str();
+        let repl_raw = vm.pop().to_str();
+        let pattern_raw = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // Both pattern and replacement get parameter / cmd-subst /
+        // arith expansion before use (zsh semantics — `${s/$pat/X}`
+        // resolves $pat).
+        let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
+        let repl = with_executor(|exec| exec.expand_string(&repl_raw));
         let one = |val: String| -> String {
             match op {
                 0 => val.replacen(&pattern, &repl, 1),
@@ -4916,6 +4945,7 @@ pub const BUILTIN_IS_SOCKET: u16 = 335;
 pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
+pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
 /// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk
@@ -16275,6 +16305,27 @@ impl ShellExecutor {
                         continue;
                     }
                 };
+                // Verify the PID is one of OUR children. If we never
+                // forked it, zsh emits `pid N is not a child of this
+                // shell` and exits 127.
+                let known = self
+                    .variables
+                    .get("!")
+                    .and_then(|s| s.parse::<u32>().ok())
+                    == Some(pid)
+                    || self
+                        .jobs
+                        .list()
+                        .iter()
+                        .any(|j| j.pid == pid as i32);
+                if !known {
+                    eprintln!(
+                        "zshrs:wait:1: pid {} is not a child of this shell",
+                        pid
+                    );
+                    status = 127;
+                    continue;
+                }
                 match wait_for_job(pid as i32) {
                     Ok(s) => status = s,
                     Err(e) => {
