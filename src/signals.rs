@@ -386,6 +386,31 @@ static SIGCHLD_RECEIVED: AtomicBool = AtomicBool::new(false);
 /// Whether we received SIGWINCH.
 static SIGWINCH_RECEIVED: AtomicBool = AtomicBool::new(false);
 
+/// True iff the current pid differs from the main shell pid — i.e.
+/// we're inside a forked child (pipeline stage, async, etc.).
+/// Worker pool threads, signal handlers, and resources tied to
+/// the original process should not be used here.
+pub fn is_forked_child() -> bool {
+    // Lazy-init MAIN_PID to current pid the first time this is called.
+    // signal_set_handlers also sets it, but -c mode doesn't always
+    // call that path. The first caller wins; subsequent forks see a
+    // different pid and return true.
+    let mut main = MAIN_PID.load(Ordering::Relaxed);
+    if main == 0 {
+        let cur = getpid().as_raw();
+        match MAIN_PID.compare_exchange(
+            0,
+            cur,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => main = cur,
+            Err(prev) => main = prev,
+        }
+    }
+    getpid().as_raw() != main
+}
+
 /// Check if we're in a forked child and re-raise signal if so.
 fn reraise_if_forked_child(sig: i32) -> bool {
     if getpid().as_raw() == MAIN_PID.load(Ordering::Relaxed) {

@@ -631,6 +631,11 @@ pub fn zshrs_main() {
     // Default level: info. Override with ZSHRS_LOG=debug or ZSHRS_LOG=trace.
     zsh::log::init();
 
+    // Capture the main shell pid so signals::is_forked_child() can
+    // detect pipeline children (POSIX: only the calling thread
+    // survives fork, so worker pools and other thread-bound resources
+    // must use serial fallbacks in the child).
+    let _ = zsh::signals::is_forked_child();
     let pid = std::process::id();
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())

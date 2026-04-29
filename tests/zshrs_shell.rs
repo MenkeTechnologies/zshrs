@@ -3614,3 +3614,27 @@ fn test_cond_regex_with_capture_groups() {
     );
     assert_eq!(output.trim(), "h:ello", "got: {output:?}");
 }
+
+#[test]
+fn test_glob_qualifier_in_pipeline_child() {
+    // Regression: `echo glob_pat(N) | wc -w` returned 0 because the
+    // worker pool doesn't survive fork() (POSIX: only the calling
+    // thread persists), so prefetch_metadata blocked / returned empty
+    // in the child stage. Detect via signals::is_forked_child() and
+    // use the serial stat path when forked.
+    use std::fs::{create_dir_all, File};
+    let dir = "/tmp/zr_pipe_glob_test";
+    let _ = std::fs::remove_dir_all(dir);
+    create_dir_all(dir).unwrap();
+    for i in 0..40 {
+        File::create(format!("{}/file{:03}", dir, i)).unwrap();
+    }
+    let (_, output, _) =
+        run_zshrs(&format!("echo {}/file*(N) | wc -w", dir));
+    let _ = std::fs::remove_dir_all(dir);
+    assert_eq!(
+        output.trim().parse::<usize>().unwrap_or(0),
+        40,
+        "got: {output:?}"
+    );
+}
