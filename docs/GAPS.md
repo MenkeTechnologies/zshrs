@@ -1659,6 +1659,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - Same reserved-word gap in the `whence` builtin's `is_reserved_word` table. Added the same declaration keywords (`local`, `declare`, `typeset`, `readonly`, `export`, `integer`, `float`) plus zsh-specific keywords `repeat`, `foreach`, `end`, `nocorrect`, `noglob` that were missing from both tables. `whence -v local` now matches zsh's `local is a reserved word`. Test: `test_whence_reserved_word_local`.
 
+### `$_` leaked internal `return N` arg as the function's call-form last-arg
+
+- After `foo() { return 42 }; foo; echo $_`, zsh reports `$_ = foo` (the function name, since no args were passed). zshrs reported `$_ = 42` (the `return 42` arg) because the function-internal `pop_args` for `return` updated `pending_underscore`, and that leaked back to the caller. Fix: at the END of `call_function`, overwrite `$_` and `pending_underscore` with the function's CALL-form last arg (or the function name if no args). The internal command args don't escape function scope. Test: `test_dollar_underscore_after_function_call`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
