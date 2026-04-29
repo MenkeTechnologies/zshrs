@@ -2358,7 +2358,14 @@ impl ZshCompiler {
         // `(( a[i]=v ))` arrives here with parens still attached.
         let inner_arith_owned = untoked.trim_start_matches('(').trim_end_matches(')').trim().to_string();
         let inner_arith = inner_arith_owned.as_str();
-        if subscripted_arith_assign_check(inner_arith) {
+        if subscripted_arith_assign_check(inner_arith)
+            || subscripted_arith_compound_check(inner_arith)
+        {
+            // Both `((a[i]=v))` (bare `=`) and `((a[i]+=v))` /
+            // `((a[i]++))` / `((a[i]--))` route through the runtime
+            // arith eval which handles read-modify-write through
+            // BUILTIN_ARITH_EVAL → evaluate_arithmetic. ArithCompiler
+            // can't write back through arr[idx] for compound forms.
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder.emit(
@@ -2395,7 +2402,8 @@ impl ZshCompiler {
             // path only handles a single `op=` and drops subsequent
             // expressions in `a+=5, b*=2`. MathEval evaluates the
             // entire comma-list in order.
-            || inner_arith.contains(',');
+            || inner_arith.contains(',')
+            ;
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
@@ -3570,6 +3578,63 @@ fn subscripted_arith_assign_check(expr: &str) -> bool {
         return false;
     }
     !(k + 1 < bytes.len() && (bytes[k + 1] == b'=' || bytes[k + 1] == b'~'))
+}
+
+/// Detect compound-assign or pre/post-increment on an array element:
+/// `a[i]++`, `a[i]--`, `a[i]+=v`, `a[i]-=v`, `a[i]*=v`, etc.
+/// Returns true so the caller routes through BUILTIN_ARITH_EVAL
+/// (which handles the read-modify-write via subscripted_arith_eval).
+fn subscripted_arith_compound_check(expr: &str) -> bool {
+    let trimmed = expr.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
+        return false;
+    }
+    let mut i = 1;
+    while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+        i += 1;
+    }
+    if i >= bytes.len() || bytes[i] != b'[' {
+        return false;
+    }
+    let mut depth = 1;
+    let mut j = i + 1;
+    while j < bytes.len() && depth > 0 {
+        match bytes[j] {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if j >= bytes.len() {
+        return false;
+    }
+    // After the closing `]`, look for one of: `++`, `--`, `+=`,
+    // `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`,
+    // `**=`. Whitespace before the operator is allowed.
+    let mut k = j + 1;
+    while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+        k += 1;
+    }
+    if k >= bytes.len() {
+        return false;
+    }
+    let rest = &bytes[k..];
+    matches!(rest,
+        [b'+', b'+', ..] | [b'-', b'-', ..] |
+        [b'+', b'=', ..] | [b'-', b'=', ..] |
+        [b'*', b'=', ..] | [b'/', b'=', ..] |
+        [b'%', b'=', ..] | [b'&', b'=', ..] |
+        [b'|', b'=', ..] | [b'^', b'=', ..] |
+        [b'<', b'<', b'=', ..] | [b'>', b'>', b'=', ..] |
+        [b'*', b'*', b'=', ..]
+    )
 }
 
 fn array_splice_ref(s: &str) -> Option<&str> {
