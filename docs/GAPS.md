@@ -1555,6 +1555,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - POSIX/zsh: `%.s` is the same as `%.0s` — a period with no digits means precision 0, which suppresses string output (`printf "%.s" ignore` → empty). zshrs only set `prec_val` when the precision string parsed to a number, so empty precision left `prec_val = None` and the full arg printed. Track a `saw_period` flag and default to `Some(0)` when the period was consumed but no digits followed. Test: `test_printf_dot_s_zero_precision_suppresses_arg`.
 
+### `print -nN` left a stray NUL byte after output
+
+- `print -n` should suppress the terminator entirely; the `-N` (NUL-separator) flag was overriding `-n` and emitting a final `\0`. Reordered the terminator selection so `no_newline` wins over `null_terminate`. Now `print -nN hi` outputs exactly `hi` with no trailing byte. Test: `test_print_dash_n_suppresses_null_terminator`.
+
+### `(set -e; false); echo` killed the parent shell
+
+- zsh's errexit aborts the subshell only; the parent continues with the subshell's exit status. zshrs's `BUILTIN_ERREXIT_CHECK` called `std::process::exit` unconditionally, tearing down the parent shell when an inner subshell hit a non-zero status under `set -e`. Added a `subshell_snapshots.is_empty()` guard so the exit only fires at top level (the in-process subshell continues to natural end with the parent intact). Full subshell-internal abort would require VM-level halt support and is deferred. Test: `test_set_e_in_subshell_doesnt_kill_parent`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

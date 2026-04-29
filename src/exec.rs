@@ -4489,9 +4489,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // `set -o errexit`, and `set -e` which currently writes
             // `errexit=true` too). Also suppress when inside a function
             // call — zsh's errexit lets functions handle their own
-            // failures unless ERR_RETURN is also set.
+            // failures unless ERR_RETURN is also set. Also suppress
+            // when inside a subshell — the in-process snapshot/restore
+            // doesn't have a process-isolation boundary, so a real
+            // `process::exit` would tear down the parent shell. Match
+            // zsh's "errexit aborts the subshell only" by leaving the
+            // parent alive (subshell continues until natural end).
             let on = exec.options.get("errexit").copied().unwrap_or(false);
-            on && exec.local_scope_depth == 0
+            on && exec.local_scope_depth == 0 && exec.subshell_snapshots.is_empty()
         });
         if should_exit {
             std::process::exit(last);
@@ -25142,10 +25147,14 @@ impl ShellExecutor {
         } else {
             " "
         };
-        let terminator = if null_terminate {
-            "\0"
-        } else if no_newline {
+        // zsh: `-n` always suppresses the terminator (no `\n` AND no
+        // trailing `\0` for `-N`). Without this, `print -nN hi` left
+        // a stray `\0` that displayed as a blank space in some
+        // terminals (and broke `print -nN a; echo X` byte alignment).
+        let terminator = if no_newline {
             ""
+        } else if null_terminate {
+            "\0"
         } else {
             "\n"
         };

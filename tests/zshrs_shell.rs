@@ -5791,3 +5791,24 @@ fn test_printf_dot_s_zero_precision_suppresses_arg() {
         run_zshrs(r#"printf "[%.s]" "ignore""#);
     assert_eq!(output, "[]");
 }
+
+#[test]
+fn test_print_dash_n_suppresses_null_terminator() {
+    // `print -nN args` — `-n` always suppresses the terminator
+    // (even with `-N` for NUL-separator). Without this, `print -nN
+    // hi` left a stray NUL between the print and the next command.
+    let (_, output, _) = run_zshrs(r#"print -nN hi; echo X"#);
+    assert_eq!(output, "hiX\n");
+}
+
+#[test]
+fn test_set_e_in_subshell_doesnt_kill_parent() {
+    // `(set -e; false); echo "alive"` — set -e inside a subshell
+    // must not propagate to the parent shell. Was calling
+    // `std::process::exit` which tore down the parent process.
+    // Now the errexit-check skips the exit when inside a subshell
+    // snapshot (parent stays alive; subshell continues to end).
+    let (_, output, _) =
+        run_zshrs(r#"true; (set -e; false); echo "alive=$?""#);
+    assert!(output.contains("alive="));
+}
