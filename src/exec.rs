@@ -5004,13 +5004,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             .copied()
                             .unwrap_or(false)
                             && (s.starts_with('^') || s.contains('~'));
+                        let has_numeric_range = s.contains('<')
+                            && s.contains('>')
+                            && !extract_numeric_ranges(&s).is_empty();
                         if !noglob
                             && !is_assignment_shape
                             && (s.contains('*')
                                 || s.contains('?')
                                 || s.contains('[')
                                 || has_qual_suffix
-                                || extglob_meta)
+                                || extglob_meta
+                                || has_numeric_range)
                         {
                             exec.expand_glob(&s)
                         } else {
@@ -7396,6 +7400,209 @@ fn expand_posix_char_classes(s: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// Numeric range glob `<N-M>` parsed form. `None`/`None` means open-ended
+/// on that side (`<->` matches any digits, `<3->` ≥ 3, `<-5>` ≤ 5).
+#[derive(Debug, Clone)]
+struct NumericRange {
+    lo: Option<i64>,
+    hi: Option<i64>,
+}
+
+/// Walk the pattern once, returning each `<N-M>` range in source order.
+/// Skips bracket expressions (`[<…>]`) so the inside-`[]` `<` stays
+/// literal. Caller calls [`replace_numeric_ranges_with_star`] in lockstep
+/// to keep counts aligned.
+fn extract_numeric_ranges(pattern: &str) -> Vec<NumericRange> {
+    let mut ranges = Vec::new();
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    let mut in_bracket = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '[' && !in_bracket {
+            in_bracket = true;
+            i += 1;
+            continue;
+        }
+        if c == ']' && in_bracket {
+            in_bracket = false;
+            i += 1;
+            continue;
+        }
+        if c == '<' && !in_bracket {
+            let mut j = i + 1;
+            let mut lo_str = String::new();
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                lo_str.push(chars[j]);
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '-' {
+                j += 1;
+                let mut hi_str = String::new();
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    hi_str.push(chars[j]);
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '>' {
+                    let lo = lo_str.parse::<i64>().ok();
+                    let hi = hi_str.parse::<i64>().ok();
+                    ranges.push(NumericRange { lo, hi });
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    ranges
+}
+
+/// Replace each `<N-M>` (matching `extract_numeric_ranges`) with a `*`
+/// so the underlying glob crate matches any chars at that spot. The
+/// post-filter then narrows to digits in range.
+fn replace_numeric_ranges_with_star(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len());
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    let mut in_bracket = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '[' && !in_bracket {
+            in_bracket = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == ']' && in_bracket {
+            in_bracket = false;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '<' && !in_bracket {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '-' {
+                j += 1;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '>' {
+                    out.push('*');
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// Build a regex anchored to the basename position by translating each
+/// glob metachar to its regex equivalent and each `<N-M>` to `(\d+)`,
+/// then keep only candidates whose captured digit sequence falls in the
+/// declared range. Operates on the trailing path component since
+/// numeric ranges only apply within a single segment.
+fn filter_numeric_ranges(
+    candidates: Vec<String>,
+    original_pattern: &str,
+    ranges: &[NumericRange],
+) -> Vec<String> {
+    let pat_basename = original_pattern.rsplit('/').next().unwrap_or(original_pattern);
+    let mut regex_str = String::from("^");
+    let chars: Vec<char> = pat_basename.chars().collect();
+    let mut i = 0;
+    let mut in_bracket = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '[' && !in_bracket {
+            in_bracket = true;
+            regex_str.push('[');
+            i += 1;
+            continue;
+        }
+        if c == ']' && in_bracket {
+            in_bracket = false;
+            regex_str.push(']');
+            i += 1;
+            continue;
+        }
+        if in_bracket {
+            regex_str.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '<' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '-' {
+                j += 1;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '>' {
+                    regex_str.push_str("(\\d+)");
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        match c {
+            '*' => regex_str.push_str(".*"),
+            '?' => regex_str.push('.'),
+            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '\\' | '{' | '}' => {
+                regex_str.push('\\');
+                regex_str.push(c);
+            }
+            _ => regex_str.push(c),
+        }
+        i += 1;
+    }
+    regex_str.push('$');
+
+    let re = match regex::Regex::new(&regex_str) {
+        Ok(r) => r,
+        Err(_) => return candidates,
+    };
+    candidates
+        .into_iter()
+        .filter(|p| {
+            let basename = p.rsplit('/').next().unwrap_or(p);
+            let caps = match re.captures(basename) {
+                Some(c) => c,
+                None => return false,
+            };
+            for (idx, range) in ranges.iter().enumerate() {
+                let cap = match caps.get(idx + 1) {
+                    Some(m) => m.as_str(),
+                    None => return false,
+                };
+                let val: i64 = match cap.parse() {
+                    Ok(v) => v,
+                    Err(_) => return false,
+                };
+                if let Some(lo) = range.lo {
+                    if val < lo {
+                        return false;
+                    }
+                }
+                if let Some(hi) = range.hi {
+                    if val > hi {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+        .collect()
 }
 
 impl VarAttr {
@@ -10308,6 +10515,23 @@ impl ShellExecutor {
             glob_pattern
         };
 
+        // zsh numeric range glob `<N-M>`, `<N->`, `<-M>`, `<->`.
+        // The `glob` crate has no equivalent — match by replacing the
+        // range with `*` and post-filtering by extracting the digit
+        // sequence at that position and verifying it falls in [N, M].
+        // Only fires when the pattern actually contains a `<…-…>` shape
+        // — guard with a fast contains() before the regex.
+        let numeric_ranges = if glob_pattern.contains('<') {
+            extract_numeric_ranges(&glob_pattern)
+        } else {
+            Vec::new()
+        };
+        let glob_pattern = if !numeric_ranges.is_empty() {
+            replace_numeric_ranges_with_star(&glob_pattern)
+        } else {
+            glob_pattern
+        };
+
         // Check for extended glob patterns: ?(pat), *(pat), +(pat), @(pat), !(pat)
         if self.has_extglob_pattern(&glob_pattern) {
             let expanded = self.expand_extglob(&glob_pattern);
@@ -10322,7 +10546,11 @@ impl ShellExecutor {
         // without setopt dotglob, because the leading `.` is literal).
         let last_seg = glob_pattern.rsplit('/').next().unwrap_or(&glob_pattern);
         let pattern_starts_with_dot = last_seg.starts_with('.');
+        // `globdots` is the zsh canonical name; `dotglob` is the bash
+        // alias. Both end up stored under their own key by setopt — read
+        // both so either spelling works.
         let dotglob = self.options.get("dotglob").copied().unwrap_or(false)
+            || self.options.get("globdots").copied().unwrap_or(false)
             || qualifiers.contains('D')
             || pattern_starts_with_dot;
         // `setopt nocaseglob` normalizes to `caseglob=false` in the
@@ -10337,7 +10565,12 @@ impl ShellExecutor {
         // directory walk across worker pool threads — one thread per top-level
         // subdirectory.  zsh does this single-threaded via fork+exec which is
         // why `echo **/*.rs` is painfully slow on large trees.
-        let mut expanded = if glob_pattern.contains("**/") {
+        let mut expanded = if !numeric_ranges.is_empty() {
+            // `<N-M>` numeric range glob — handle via direct directory
+            // walk so the digit-count semantics survive (the glob crate
+            // can't express "one or more digits" precisely).
+            self.expand_glob_with_numeric_range(pattern, &numeric_ranges, dotglob, nocaseglob)
+        } else if glob_pattern.contains("**/") {
             self.expand_glob_parallel(&glob_pattern, dotglob, nocaseglob)
         } else {
             let options = glob::MatchOptions {
@@ -10363,6 +10596,7 @@ impl ShellExecutor {
             let last = p.rsplit('/').next().unwrap_or(p);
             last != "." && last != ".."
         });
+
         let expanded = self.filter_by_qualifiers(expanded, &qualifiers);
         let mut expanded = expanded;
         // zsh: `echo */` outputs each directory with a trailing
@@ -10445,10 +10679,192 @@ impl ShellExecutor {
             .find('[')
             .and_then(|i| body[i + 1..].find(']'))
             .is_some();
+        // `<N-M>` numeric range glob is also a trigger — match shape
+        // `<` + optional digits + `-` + optional digits + `>` outside
+        // any bracket expression.
+        let has_numeric_range = body.contains('<')
+            && body.contains('>')
+            && !extract_numeric_ranges(body).is_empty();
         body.contains('*')
             || body.contains('?')
             || has_bracket_class
             || has_qual_suffix
+            || has_numeric_range
+    }
+
+    /// Direct directory walk for numeric-range glob `<N-M>`.
+    ///
+    /// Split the pattern at the last `/` so the dir component can stay
+    /// concrete (or be globbed normally) and the basename gets a custom
+    /// regex match. Numeric range groups capture `(\d+)` and each
+    /// capture must fall inside its declared `[lo, hi]` range — open
+    /// ends mean unbounded on that side.
+    fn expand_glob_with_numeric_range(
+        &self,
+        pattern: &str,
+        ranges: &[NumericRange],
+        dotglob: bool,
+        nocaseglob: bool,
+    ) -> Vec<String> {
+        let (dir_part, file_part) = match pattern.rfind('/') {
+            Some(idx) => (&pattern[..idx], &pattern[idx + 1..]),
+            None => ("", pattern),
+        };
+        // Build the basename regex: glob → regex, with each `<N-M>`
+        // becoming a numbered capture group `(\d+)`.
+        let mut rx = String::from("^");
+        let chars: Vec<char> = file_part.chars().collect();
+        let mut i = 0;
+        let mut in_bracket = false;
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '[' && !in_bracket {
+                in_bracket = true;
+                rx.push('[');
+                i += 1;
+                continue;
+            }
+            if c == ']' && in_bracket {
+                in_bracket = false;
+                rx.push(']');
+                i += 1;
+                continue;
+            }
+            if in_bracket {
+                rx.push(c);
+                i += 1;
+                continue;
+            }
+            if c == '<' {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '-' {
+                    j += 1;
+                    while j < chars.len() && chars[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    if j < chars.len() && chars[j] == '>' {
+                        rx.push_str("(\\d+)");
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+            match c {
+                '*' => rx.push_str(".*"),
+                '?' => rx.push('.'),
+                '.' | '+' | '(' | ')' | '|' | '^' | '$' | '\\' | '{' | '}' => {
+                    rx.push('\\');
+                    rx.push(c);
+                }
+                _ => rx.push(c),
+            }
+            i += 1;
+        }
+        rx.push('$');
+        let re = match if nocaseglob {
+            regex::RegexBuilder::new(&rx).case_insensitive(true).build()
+        } else {
+            regex::Regex::new(&rx).map_err(|e| {
+                regex::Error::Syntax(e.to_string())
+            })
+        } {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        // Resolve dir_part: it may itself contain glob chars (e.g.
+        // `**/file<2-4>`). For now require the dir part to be either
+        // empty (cwd) or a literal path; defer recursive ranges.
+        let mut dirs: Vec<String> = if dir_part.is_empty() {
+            vec![".".to_string()]
+        } else if dir_part.contains('*')
+            || dir_part.contains('?')
+            || dir_part.contains('[')
+            || dir_part.contains('<')
+        {
+            // Glob the dir component first, keeping only directories.
+            let opts = glob::MatchOptions {
+                case_sensitive: !nocaseglob,
+                require_literal_separator: false,
+                require_literal_leading_dot: !dotglob,
+            };
+            match glob::glob_with(dir_part, opts) {
+                Ok(paths) => paths
+                    .filter_map(|p| p.ok())
+                    .filter(|p| p.is_dir())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .collect(),
+                Err(_) => return Vec::new(),
+            }
+        } else {
+            vec![dir_part.to_string()]
+        };
+        if dirs.is_empty() {
+            dirs.push(dir_part.to_string());
+        }
+
+        let mut out = Vec::new();
+        for dir in &dirs {
+            let read = match std::fs::read_dir(if dir.is_empty() { "." } else { dir }) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for entry in read.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !dotglob && name.starts_with('.') && !file_part.starts_with('.') {
+                    continue;
+                }
+                let caps = match re.captures(&name) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let mut ok = true;
+                for (idx, range) in ranges.iter().enumerate() {
+                    let cap = match caps.get(idx + 1) {
+                        Some(m) => m.as_str(),
+                        None => {
+                            ok = false;
+                            break;
+                        }
+                    };
+                    let val: i64 = match cap.parse() {
+                        Ok(v) => v,
+                        Err(_) => {
+                            ok = false;
+                            break;
+                        }
+                    };
+                    if let Some(lo) = range.lo {
+                        if val < lo {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if let Some(hi) = range.hi {
+                        if val > hi {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !ok {
+                    continue;
+                }
+                let full = if dir == "." || dir.is_empty() {
+                    name
+                } else if dir.ends_with('/') {
+                    format!("{}{}", dir, name)
+                } else {
+                    format!("{}/{}", dir, name)
+                };
+                out.push(full);
+            }
+        }
+        out.sort();
+        out
     }
 
     /// Parallel recursive glob using the worker pool.
@@ -15392,9 +15808,20 @@ impl ShellExecutor {
 
     /// Build a PromptContext from current executor state
     fn build_prompt_context(&self) -> PromptContext {
-        let pwd = env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "/".to_string());
+        // zsh's prompt expansion uses the *logical* pwd (`$PWD` env var
+        // as set by `cd`), not the canonicalized `getcwd()` form. On
+        // macOS, `cd /tmp` leaves `$PWD=/tmp` but `getcwd()` returns
+        // `/private/tmp`, which would make `%2d` print `/private/tmp`
+        // instead of `/tmp` to match zsh.
+        let pwd = env::var("PWD")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .or_else(|| {
+                env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| "/".to_string());
 
         let home = env::var("HOME").unwrap_or_default();
 

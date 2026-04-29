@@ -6392,3 +6392,95 @@ fn test_print_P_color_basic_8_uses_ansi_codes() {
     let (_, output, _) = run_zshrs(r#"print -P "%F{42}c%f""#);
     assert_eq!(output.as_bytes(), b"\x1b[38;5;42mc\x1b[39m\n");
 }
+
+#[test]
+fn test_prompt_d_uses_logical_pwd_not_canonical() {
+    // zsh's `%d` / `%~` honor `$PWD` (logical) rather than the
+    // canonicalized cwd from `getcwd()`. On macOS, `cd /tmp` leaves
+    // `$PWD=/tmp` but getcwd() returns `/private/tmp`, so the
+    // numbered form `%2d` was printing `/private/tmp` instead of
+    // `/tmp` to match zsh.
+    let (_, output, _) = run_zshrs(r#"cd /tmp; print -P "%1d""#);
+    assert_eq!(output, "/tmp\n");
+    let (_, output, _) = run_zshrs(r#"cd /tmp; print -P "%2d""#);
+    assert_eq!(output, "/tmp\n");
+}
+
+#[test]
+fn test_glob_globdots_setopt_alias_for_dotglob() {
+    // zsh's canonical name is `globdots`; `dotglob` is the bash alias.
+    // Both must enable hidden-file matching on bare `*` patterns.
+    use std::fs;
+    let dir = std::env::temp_dir().join("zshrs_globdots_test");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(".hidden"), b"").unwrap();
+    fs::write(dir.join("visible"), b"").unwrap();
+    let cmd = format!(
+        r#"cd {}; setopt globdots; print *"#,
+        dir.to_string_lossy()
+    );
+    let (_, output, _) = run_zshrs(&cmd);
+    assert!(output.contains(".hidden"), "want .hidden in {output}");
+    assert!(output.contains("visible"), "want visible in {output}");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn test_glob_numeric_range_finite() {
+    // `<N-M>` matches files whose digit sequence at that position
+    // falls in [N, M]. `file<2-4>` against `file1`..`file5` keeps 2,3,4.
+    use std::fs;
+    let dir = std::env::temp_dir().join("zshrs_numrange_finite");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    for n in 1..=5 {
+        fs::write(dir.join(format!("file{n}")), b"").unwrap();
+    }
+    let cmd = format!(r#"echo {}/file<2-4>"#, dir.to_string_lossy());
+    let (_, output, _) = run_zshrs(&cmd);
+    assert!(output.contains("file2"));
+    assert!(output.contains("file3"));
+    assert!(output.contains("file4"));
+    assert!(!output.contains("file1"));
+    assert!(!output.contains("file5"));
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn test_glob_numeric_range_open_high() {
+    // `<3->` matches digit sequences ≥ 3 with no upper bound.
+    use std::fs;
+    let dir = std::env::temp_dir().join("zshrs_numrange_high");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    for n in 1..=5 {
+        fs::write(dir.join(format!("file{n}")), b"").unwrap();
+    }
+    let cmd = format!(r#"echo {}/file<3->"#, dir.to_string_lossy());
+    let (_, output, _) = run_zshrs(&cmd);
+    assert!(!output.contains("file1"));
+    assert!(!output.contains("file2"));
+    assert!(output.contains("file3"));
+    assert!(output.contains("file4"));
+    assert!(output.contains("file5"));
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn test_glob_numeric_range_open_both() {
+    // `<->` matches any digit sequence — equivalent to `[0-9]+` filter.
+    use std::fs;
+    let dir = std::env::temp_dir().join("zshrs_numrange_both");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("file1"), b"").unwrap();
+    fs::write(dir.join("file9"), b"").unwrap();
+    fs::write(dir.join("filea"), b"").unwrap();
+    let cmd = format!(r#"echo {}/file<->"#, dir.to_string_lossy());
+    let (_, output, _) = run_zshrs(&cmd);
+    assert!(output.contains("file1"));
+    assert!(output.contains("file9"));
+    assert!(!output.contains("filea"));
+    fs::remove_dir_all(&dir).unwrap();
+}

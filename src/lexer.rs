@@ -282,6 +282,50 @@ impl<'a> ZshLexer<'a> {
         c == ' ' || c == '\t'
     }
 
+    /// Peek for a zsh numeric range glob shape after a `<`: returns the
+    /// captured `N*-M*>` (everything *after* the leading `<`) when the
+    /// upcoming chars match `[0-9]*-[0-9]*>` exactly. Otherwise returns
+    /// None and leaves the input untouched.
+    fn try_numeric_range_glob(&mut self) -> Option<String> {
+        let mut buf: Vec<char> = Vec::new();
+        // optional leading digits
+        loop {
+            match self.hgetc() {
+                Some(c) if c.is_ascii_digit() => buf.push(c),
+                Some(c) => {
+                    buf.push(c);
+                    break;
+                }
+                None => break,
+            }
+        }
+        // last char in buf must be '-' for the range form
+        if buf.last() != Some(&'-') {
+            for c in buf.iter().rev() {
+                self.hungetc(*c);
+            }
+            return None;
+        }
+        // optional trailing digits
+        loop {
+            match self.hgetc() {
+                Some(c) if c.is_ascii_digit() => buf.push(c),
+                Some(c) => {
+                    buf.push(c);
+                    break;
+                }
+                None => break,
+            }
+        }
+        if buf.last() != Some(&'>') {
+            for c in buf.iter().rev() {
+                self.hungetc(*c);
+            }
+            return None;
+        }
+        Some(buf.into_iter().collect())
+    }
+
     /// Check if character is blank (including other whitespace except newline)
     fn is_inblank(c: char) -> bool {
         matches!(c, ' ' | '\t' | '\x0b' | '\x0c' | '\r')
@@ -1259,6 +1303,15 @@ impl<'a> ZshLexer<'a> {
                     // In pattern context (incondpat), < is literal
                     if in_brace_param > 0 || sub || self.incondpat || self.incasepat > 0 {
                         self.add(c);
+                    } else if let Some(range_chars) = self.try_numeric_range_glob() {
+                        // zsh numeric range glob `<N-M>`, `<->`, `<N->`,
+                        // `<-M>`. When `<` mid-word matches that exact
+                        // shape, swallow it into the word instead of
+                        // breaking out for redirection.
+                        self.add(c);
+                        for ch in range_chars.chars() {
+                            self.add(ch);
+                        }
                     } else {
                         let e = self.hgetc();
                         if e != Some('(') {
