@@ -1049,7 +1049,17 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The `'P'` arm in BUILTIN_PARAM_FLAG only handled `St::S` (scalar). When `(@)` ran first and forced state to `St::A(["x"])`, the P arm's `a => a` arm left it alone — so `${(@P)var}` returned `x` (the var name) instead of `hello` (its value). Added an `St::A(names)` branch that maps each element through `get_variable`. Test: `test_param_flag_at_P_indirects_each_element`.
 
-## Still open (sixtieth-pass — remaining)
+## Closed (sixty-first-pass — `typeset -f` body format + `${(c)#}`/`${(w)#}` flag-then-length)
+
+### `typeset -f f` printed `echo F;` (with trailing semicolon) for `f() { echo F; }`
+
+- The body source captured by the parser preserved the input's semicolons. zsh re-formats: each top-level statement on its own line, trailing semicolons stripped, indented with TAB. Added `format_function_body_zsh(body)` helper that walks the source, splits on top-level `;` and `\n` (depth-tracking parens/braces, ignoring inside quotes), trims each line, and joins with `\n\t`. Wired into all three display sites (typeset -f, functions, whence -c). Test: `test_typeset_f_zsh_format_one_stmt_per_line`.
+
+### `${(c)#a}` and `${(w)#a}` returned 0 / empty
+
+- The flag-prefix path `${(...)body}` extracted `var_name` by splitting `body` on non-alphanumeric chars — `#a` parsed as empty name then `a` as the rest, lookup returned empty, length returned 0. Added a special case for `rest.starts_with('#')`: parse the remaining identifier, return char-count by default (matches `(c)`'s semantics) or word-count when the `Words` flag is in the chain. Tests: `test_param_flag_c_pound_returns_char_count`, `test_param_flag_w_pound_returns_word_count`.
+
+## Still open (sixty-first-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).

@@ -3975,3 +3975,36 @@ fn test_param_flag_at_P_indirects_each_element() {
         run_zshrs(r#"x=hello; var=x; print "${(@P)var}""#);
     assert_eq!(output.trim(), "hello", "got: {output:?}");
 }
+
+#[test]
+fn test_typeset_f_zsh_format_one_stmt_per_line() {
+    // zsh: each top-level statement on its own line, no trailing
+    // semicolons, indented with TAB. Was preserving the input's
+    // semicolons (`echo a; echo b`) because we stored body_source
+    // verbatim — now `format_function_body_zsh()` normalizes.
+    let (_, output, _) =
+        run_zshrs(r#"f() { echo a; echo b; }; typeset -f f"#);
+    assert_eq!(
+        output,
+        "f () {\n\techo a\n\techo b\n}\n",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_param_flag_c_pound_returns_char_count() {
+    // `${(c)#name}` uses char-count semantics for the length op.
+    // Was returning 0 because the # was swallowed by the var-name
+    // extractor as a non-alphanum boundary.
+    let (_, output, _) = run_zshrs(r#"a=hello; print "${(c)#a}""#);
+    assert_eq!(output.trim(), "5", "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_w_pound_returns_word_count() {
+    // `${(w)#name}` splits on whitespace and counts words.
+    // Same swallowed-# bug as (c)#.
+    let (_, output, _) =
+        run_zshrs(r#"a="x y z"; print "${(w)#a}""#);
+    assert_eq!(output.trim(), "3", "got: {output:?}");
+}
