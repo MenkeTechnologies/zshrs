@@ -709,7 +709,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - The flag parser only matched exact `-n`/`-e`/`-E` strings — combined forms like `-nE` were treated as positional args. Now walks the flag body char-by-char, requiring all chars to be recognised echo flags. Test: `test_echo_combined_flags`.
 
-## Still open (twenty-seventh-pass — remaining)
+## Closed (twenty-eighth-pass — `(l/r)` padding + quoted-glob test patterns)
+
+### `${(l:N:)s}` left-pad and `${(r:N:)s}` right-pad flags
+
+- The PadLeft/PadRight enum existed but the BUILTIN_PARAM_FLAG fast-path (`${(l:5:)s}` form) didn't recognise them. Added an `'l' | 'r'` arm to the dispatcher: parses the colon-delimited width, optional `:fill:` segment, and pads with truncate-on-overflow. Tests: `test_left_pad_flag`, `test_right_pad_flag`, `test_left_pad_with_fill_char`.
+
+### `[[ X == "a*" ]]` — quoted glob meta is literal
+
+- Was treating any `*`/`?`/`[` in the RHS as glob metacharacters regardless of quoting. zsh treats quoted metas as literal. Added `escape_quoted_glob_metas` helper in compile_cond's Binary path: walks the lexer-tokenized RHS, tracks SNULL/DNULL boundaries, prepends a `\` to glob metas inside quoted regions. Then taught `glob_match_static`'s regex translator to treat `\X` as literal X (escaping the regex meta if needed). Tests: `test_quoted_glob_pattern_in_test_is_literal`, `test_quoted_literal_star_matches_quoted_literal_star`, `test_unquoted_glob_pattern_still_matches`.
+
+## Still open (twenty-eighth-pass — remaining)
 
 (none — all probed gaps closed)
 - **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).

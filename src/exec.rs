@@ -2364,6 +2364,67 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         St::A(a) => St::A(a.into_iter().map(|s| s.to_uppercase()).collect()),
                     };
                 }
+                'l' | 'r' => {
+                    // (l:N:) — left-pad to width N (truncate if longer).
+                    // (l:N::fill:) — pad with `fill` instead of space.
+                    // (r:N:) — right-pad to width N (truncate if longer).
+                    // Width must be followed by `:` (or `(` etc.) delim.
+                    let pad_left = c == 'l';
+                    if i >= chars.len() || !ZshrsHost::is_zsh_flag_delim(chars[i]) {
+                        // Bare `l`/`r` without delim — skip (only the
+                        // padded form takes a width).
+                        continue;
+                    }
+                    let delim = chars[i];
+                    i += 1;
+                    let mut width_str = String::new();
+                    while i < chars.len() && chars[i] != delim {
+                        width_str.push(chars[i]);
+                        i += 1;
+                    }
+                    if i < chars.len() {
+                        i += 1; // skip closing delim
+                    }
+                    let width: usize = width_str.parse().unwrap_or(0);
+                    // Optional `:fill:` after the width.
+                    let mut fill = String::from(" ");
+                    if i < chars.len() && ZshrsHost::is_zsh_flag_delim(chars[i]) {
+                        let d2 = chars[i];
+                        i += 1;
+                        let mut f = String::new();
+                        while i < chars.len() && chars[i] != d2 {
+                            f.push(chars[i]);
+                            i += 1;
+                        }
+                        if i < chars.len() {
+                            i += 1; // skip closing delim
+                        }
+                        if !f.is_empty() {
+                            fill = f;
+                        }
+                    }
+                    let pad_one = |s: String| -> String {
+                        let len = s.chars().count();
+                        if len >= width {
+                            return s.chars().take(width).collect();
+                        }
+                        let need = width - len;
+                        let mut filler = String::new();
+                        while filler.chars().count() < need {
+                            filler.push_str(&fill);
+                        }
+                        let filler: String = filler.chars().take(need).collect();
+                        if pad_left {
+                            format!("{}{}", filler, s)
+                        } else {
+                            format!("{}{}", s, filler)
+                        }
+                    };
+                    state = match state {
+                        St::S(s) => St::S(pad_one(s)),
+                        St::A(a) => St::A(a.into_iter().map(pad_one).collect()),
+                    };
+                }
                 'j' | 's' => {
                     // zsh syntax: `(j:sep:)` and `(s:sep:)` use the char
                     // following the flag as the delimiter. The delimiter must
@@ -7784,7 +7845,21 @@ impl ShellExecutor {
                 }
                 ')' => regex_pattern.push(')'),
                 '|' => regex_pattern.push('|'),
-                '.' | '+' | '^' | '$' | '\\' | '{' | '}' => {
+                '\\' => {
+                    // Backslash escapes the next char — treat literally.
+                    if let Some(next) = chars.next() {
+                        if matches!(
+                            next,
+                            '.' | '+' | '^' | '$' | '\\' | '{' | '}' | '*' | '?' | '(' | ')' | '|' | '[' | ']'
+                        ) {
+                            regex_pattern.push('\\');
+                        }
+                        regex_pattern.push(next);
+                    } else {
+                        regex_pattern.push_str("\\\\");
+                    }
+                }
+                '.' | '+' | '^' | '$' | '{' | '}' => {
                     regex_pattern.push('\\');
                     regex_pattern.push(c);
                 }
