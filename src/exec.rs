@@ -8005,6 +8005,13 @@ impl ShellExecutor {
         let Some((cmd, rest)) = args.split_first() else {
             return 0;
         };
+        // Empty command name (e.g. result of an empty `$(false)`
+        // command-sub being the only word) — zsh: no command runs,
+        // exit status preserved from prior step. Was hitting the
+        // "command not found: " path with empty name.
+        if cmd.is_empty() && rest.is_empty() {
+            return self.last_status;
+        }
         let rest_vec: Vec<String> = rest.to_vec();
 
         // Builtins not in fusevm's name→id table fall through to
