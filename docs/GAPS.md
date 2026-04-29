@@ -837,7 +837,13 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was emitting `"{name} is aliased to \`{value}'"` (bash `type` shape). zsh prints `"{name} is an alias for {value}"` (no backticks, "for" not "to"). Test: `test_type_alias_uses_zsh_format`.
 
-## Still open (thirty-eighth-pass — remaining)
+## Closed (thirty-ninth-pass — `command -v` resolution order)
+
+### `command -v echo` printed `/bin/echo` instead of `echo`
+
+- `builtin_command` jumped straight to a PATH walk for `-v`/`-V`, so every name resolved to its external (or "not found"). zsh's resolution order is alias → function → shell builtin → reserved word → external; only the external case prints a path. Added each tier in order before the PATH walk: aliases print `alias k=v` (verbose: "k is an alias for v"), functions/builtins/reserved words print just the name, externals print the resolved path. Tests: `test_command_v_resolution_order_matches_zsh`, `test_command_v_missing_returns_nonzero`.
+
+## Still open (thirty-ninth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

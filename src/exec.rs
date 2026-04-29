@@ -20087,9 +20087,55 @@ impl ShellExecutor {
 
         let cmd = positional_args[0];
 
-        // -v or -V: just print info about command
+        // -v or -V: print info about command. Resolution order matches
+        // zsh's `whence`: alias → function → builtin → reserved word →
+        // external. -v prints just the resolved name (or path for an
+        // external); -V is the verbose human-readable form.
         if print_path || verbose {
-            // Search PATH for command
+            // Alias
+            if let Some(target) = self.aliases.get(cmd) {
+                if verbose {
+                    println!("{} is an alias for {}", cmd, target);
+                } else {
+                    println!("alias {}={}", cmd, shell_quote_value(target));
+                }
+                return 0;
+            }
+            // Function
+            if self.function_exists(cmd) {
+                if verbose {
+                    println!("{} is a shell function", cmd);
+                } else {
+                    println!("{}", cmd);
+                }
+                return 0;
+            }
+            // Shell builtin
+            if self.is_builtin(cmd) || cmd == ":" || cmd == "[" {
+                if verbose {
+                    println!("{} is a shell builtin", cmd);
+                } else {
+                    println!("{}", cmd);
+                }
+                return 0;
+            }
+            // Reserved word (if/then/else/etc.)
+            let reserved = matches!(
+                cmd,
+                "if" | "then" | "else" | "elif" | "fi" | "for" | "while"
+                    | "until" | "do" | "done" | "case" | "esac" | "in"
+                    | "function" | "select" | "time" | "coproc"
+                    | "{" | "}" | "[[" | "]]"
+            );
+            if reserved {
+                if verbose {
+                    println!("{} is a reserved word", cmd);
+                } else {
+                    println!("{}", cmd);
+                }
+                return 0;
+            }
+            // External
             let path_var = if use_default_path {
                 "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
             } else {
