@@ -3423,3 +3423,27 @@ fn test_type_alias_uses_zsh_format() {
     let (_, output, _) = run_zshrs(r#"alias g="echo"; type g"#);
     assert_eq!(output.trim(), "g is an alias for echo", "got: {output:?}");
 }
+
+#[test]
+fn test_command_v_resolution_order_matches_zsh() {
+    // alias > function > builtin > external. -v prints the resolved
+    // form (path for external, name for builtin/function, "alias k=v"
+    // for alias).
+    let (_, output, _) = run_zshrs(r#"command -v echo"#);
+    assert_eq!(output.trim(), "echo", "builtin: {output:?}");
+    let (_, output, _) = run_zshrs(r#"f() { :; }; command -v f"#);
+    assert_eq!(output.trim(), "f", "function: {output:?}");
+    let (_, output, _) = run_zshrs(r#"alias g="echo"; command -v g"#);
+    assert_eq!(output.trim(), "alias g=echo", "alias: {output:?}");
+    let (_, output, _) = run_zshrs(r#"command -v ls"#);
+    assert!(
+        output.trim().ends_with("/ls"),
+        "external should be a path: {output:?}"
+    );
+}
+
+#[test]
+fn test_command_v_missing_returns_nonzero() {
+    let (status, _output, _) = run_zshrs(r#"command -v xxx_no_such_cmd_x"#);
+    assert_ne!(status, 0, "missing command should return non-zero");
+}
