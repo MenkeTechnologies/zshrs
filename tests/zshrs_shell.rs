@@ -2988,3 +2988,40 @@ fn test_strip_long_pattern_expands() {
     let (_, output, _) = run_zshrs(r#"s=path/file; pre="path/"; echo "${s##$pre}""#);
     assert_eq!(output.trim(), "file", "got: {output:?}");
 }
+
+#[test]
+fn test_substring_negative_length_truncates_from_end() {
+    // ${s:0:-2} takes from offset 0, stopping 2 chars before end.
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "${a:0:-2}""#);
+    assert_eq!(output.trim(), "hel", "got: {output:?}");
+}
+
+#[test]
+fn test_substring_offset_and_negative_length() {
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "${a:1:-1}""#);
+    assert_eq!(output.trim(), "ell", "got: {output:?}");
+}
+
+#[test]
+fn test_substring_no_length_takes_rest() {
+    // No length given still takes all remaining (default sentinel).
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "${a:2}""#);
+    assert_eq!(output.trim(), "llo", "got: {output:?}");
+}
+
+#[test]
+fn test_shift_too_many_errors() {
+    let (status, _, stderr) = run_zshrs("set -- a; shift 2");
+    assert_ne!(status, 0);
+    assert!(
+        stderr.contains("shift count must be"),
+        "stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_echo_combined_flags() {
+    // `echo -nE` combines: no newline, no escape interpretation.
+    let (_, output, _) = run_zshrs(r#"echo -nE "a\nb""#);
+    assert_eq!(output, "a\\nb", "got: {output:?}");
+}
