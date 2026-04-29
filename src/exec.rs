@@ -4317,14 +4317,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // If either path is missing the result follows zsh: false unless only
     // `b` is missing (then true), per the man page.
     vm.register_builtin(BUILTIN_FILE_NEWER, |vm, _argc| {
-        use std::os::unix::fs::MetadataExt;
         let b = vm.pop().to_str();
         let a = vm.pop().to_str();
-        let ma = std::fs::metadata(&a);
-        let mb = std::fs::metadata(&b);
-        let result = match (ma, mb) {
-            (Ok(ma), Ok(mb)) => ma.mtime() > mb.mtime(),
-            (Ok(_), Err(_)) => true,  // zsh: a exists, b doesn't → newer
+        // Use SystemTime modified() for nanosecond precision —
+        // MetadataExt::mtime() returns seconds only, so two files
+        // touched within the same second compared equal even when
+        // 500ms apart. zsh tracks ns and uses `>=` for ties (touching
+        // a then b in quick succession should still report b newer).
+        let ta = std::fs::metadata(&a).and_then(|m| m.modified()).ok();
+        let tb = std::fs::metadata(&b).and_then(|m| m.modified()).ok();
+        let result = match (ta, tb) {
+            (Some(ta), Some(tb)) => ta > tb,
+            (Some(_), None) => true,  // zsh: a exists, b doesn't → newer
             _ => false,
         };
         fusevm::Value::Bool(result)
@@ -4332,14 +4336,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
 
     // `[[ a -ot b ]]` — mirror of -nt.
     vm.register_builtin(BUILTIN_FILE_OLDER, |vm, _argc| {
-        use std::os::unix::fs::MetadataExt;
         let b = vm.pop().to_str();
         let a = vm.pop().to_str();
-        let ma = std::fs::metadata(&a);
-        let mb = std::fs::metadata(&b);
-        let result = match (ma, mb) {
-            (Ok(ma), Ok(mb)) => ma.mtime() < mb.mtime(),
-            (Err(_), Ok(_)) => true,  // zsh: a missing, b exists → older
+        let ta = std::fs::metadata(&a).and_then(|m| m.modified()).ok();
+        let tb = std::fs::metadata(&b).and_then(|m| m.modified()).ok();
+        let result = match (ta, tb) {
+            (Some(ta), Some(tb)) => ta < tb,
+            (None, Some(_)) => true,  // zsh: a missing, b exists → older
             _ => false,
         };
         fusevm::Value::Bool(result)
@@ -12525,7 +12528,19 @@ impl ShellExecutor {
         match name {
             "" => String::new(), // Empty name returns empty
             "$" => std::process::id().to_string(),
-            "@" | "*" => self.positional_params.join(" "),
+            "@" | "*" => {
+                // $* joins by the first char of $IFS (POSIX). Default
+                // IFS is " \t\n\0" so the join char is " "; with a
+                // custom IFS like `:` the joined string uses `:`.
+                // $@ technically does the same in scalar context but
+                // is usually quoted-spliced — both fall through here.
+                let sep = self
+                    .variables
+                    .get("IFS")
+                    .and_then(|s| s.chars().next())
+                    .unwrap_or(' ');
+                self.positional_params.join(&sep.to_string())
+            }
             "#" | "#@" | "#*" => self.positional_params.len().to_string(),
             // zsh alias: $ARGC also equals $#.
             "ARGC" => self.positional_params.len().to_string(),
@@ -22873,30 +22888,43 @@ impl ShellExecutor {
 
     /// integer - declare integer variables
     fn builtin_integer(&mut self, args: &[String]) -> i32 {
+        // Parse leading flags for attribute composition (-r readonly,
+        // -x export, -g global, -U unique). Without -r tracking,
+        // `integer -r I=42; ${(t)I}` returned just `integer` instead
+        // of `integer-readonly`.
+        let mut readonly = false;
+        let mut exported = false;
         for arg in args {
-            if arg.starts_with('-') {
+            if arg.starts_with('-') && arg.len() > 1 {
+                for ch in arg[1..].chars() {
+                    match ch {
+                        'r' => readonly = true,
+                        'x' => exported = true,
+                        _ => {}
+                    }
+                }
                 continue;
             }
-            if let Some(eq_pos) = arg.find('=') {
-                let name = &arg[..eq_pos];
-                let value = &arg[eq_pos + 1..];
-                // zsh: `integer i=5+3` runs the RHS through arithmetic
-                // evaluation (so `i` becomes 8). Plain `value.parse`
-                // gave 0 for any non-numeric expression.
-                let int_val = self.eval_arith_expr(value);
-                self.variables.insert(name.to_string(), int_val.to_string());
-                self.options.insert(format!("_integer_{}", name), true);
-                self.var_attrs.insert(
-                    name.to_string(),
-                    VarAttr { kind: VarKind::Integer, ..Default::default() },
-                );
+            let (name, raw_value) = if let Some(eq_pos) = arg.find('=') {
+                (&arg[..eq_pos], Some(&arg[eq_pos + 1..]))
             } else {
-                self.variables.insert(arg.clone(), "0".to_string());
-                self.options.insert(format!("_integer_{}", arg), true);
-                self.var_attrs.insert(
-                    arg.clone(),
-                    VarAttr { kind: VarKind::Integer, ..Default::default() },
-                );
+                (arg.as_str(), None)
+            };
+            let int_val = match raw_value {
+                Some(v) => self.eval_arith_expr(v),
+                None => 0,
+            };
+            self.variables.insert(name.to_string(), int_val.to_string());
+            self.options.insert(format!("_integer_{}", name), true);
+            let mut attr = VarAttr { kind: VarKind::Integer, ..Default::default() };
+            attr.readonly = readonly;
+            attr.export = exported;
+            self.var_attrs.insert(name.to_string(), attr);
+            if readonly {
+                self.readonly_vars.insert(name.to_string());
+            }
+            if exported {
+                std::env::set_var(name, int_val.to_string());
             }
         }
         0

@@ -898,6 +898,103 @@ Six lines, factual, no welcome / no congratulations / no emoji / no version stri
 - `--quiet-first-run` (or env `ZSHRS_QUIET_FIRST_RUN=1`): suppress the first-run notification block. Everything still goes to log; user just sees an immediate prompt.
 - `--verbose-init` (debug-only): show daemon work to stderr on every run, not just first. For testing daemon behavior; not recommended for daily use.
 
+### Long-running command completion notices
+
+Daemon tracks command duration via the `history_append` IPC (clients send `duration_ns` per command). When a command exceeds the long-cmd threshold and completes, daemon pushes a `long_cmd_complete` event to the user's other registered shells. Original shell already knows it finished (it just got control back); the value is alerting *other* tmux panes / ssh sessions where the user is doing parallel work.
+
+**Threshold:** default 30 seconds. Configurable via `ZSHRS_LONG_CMD_THRESHOLD=<seconds>` env var or `zcache config set long_cmd_threshold <seconds>` runtime override. Per-shell overrides via `ZSHRS_LONG_CMD_THRESHOLD` set before shell launch.
+
+**Event payload (`long_cmd_complete`):**
+
+```json
+{"event":"long_cmd_complete",
+ "from_shell":42,
+ "command":"cargo build --release",
+ "exit_code":0,
+ "duration_ns":492137000000,
+ "cwd":"/Users/wizard/RustroverProjects/zshrs",
+ "ts_ns":1735305600000000000}
+```
+
+**Routing:** by default delivered to all of the user's currently-registered shells *except* the originating shell. Subscribers can refine via patterns: `zsubscribe *.long_cmd_complete` (any shell), `zsubscribe shell:42.long_cmd_complete` (shell 42 only), `zsubscribe tag:dev.long_cmd_complete` (only dev-tagged shells), `zsubscribe --filter 'duration_ns > 600e9' *.long_cmd_complete` (only commands over 10 min).
+
+**Client rendering:** receiving shell renders the event via the existing `znotify` channel (OSC-9 + status-line update). User sees `[shell:42 ✓ cargo build (8m12s)]` in their other shell's status bar without losing focus on what they were doing.
+
+**Companion events** for richer awareness (same routing rules):
+
+- `long_cmd_started` — fires when a command crosses 5s of runtime (not waiting for completion); useful for "I started something heavy, expect it to take a while" pre-warning.
+- `long_cmd_failed` — fires on non-zero exit when duration exceeds threshold; same payload + `stderr_tail` field with the last N lines of stderr captured by daemon's command-output ring buffer.
+- `long_cmd_signaled` — fires when a long command exits via signal (SIGINT, SIGTERM, SIGKILL).
+
+**Disable:** `ZSHRS_LONG_CMD_NOTICES=0` for users who don't want any of this. Default on.
+
+### `zui` — daemon-queued UI primitives (pull-mode, never interferes with prompt)
+
+**Hard rule: daemon-pushed UI never interferes with the user's active prompt.** No auto-overlay, no key capture, no cursor moves, no inline interruption. Cross-shell scripts that need user input from another shell don't get to take over that shell's prompt unannounced.
+
+Instead: daemon-pushed UI is **queued**. The user is *notified* (status-line / OSC-9 / unobtrusive bell) that a UI request is pending; the user explicitly activates it on their own time via a keybinding or `zui take`. Until activated, the prompt is untouched and the user keeps typing.
+
+**Flow:**
+
+1. Some script / shell / daemon-job pushes a UI request: `zui ask --target shell:42 picker --items "..."`.
+2. Daemon enqueues the request in shell:42's pending-UI inbox + pushes a `ui:pending` event.
+3. shell:42's status-line shows `[zui:1 pending]` (count of queued requests). OSC-9 fires for terminal-native notification. No prompt change, no cursor move, no input capture.
+4. User finishes whatever they're typing. When ready, they hit the configured activation key (default `Ctrl-X u`, vi-mode-compatible) or type `zui take`.
+5. shell:42 then renders the next pending UI element — but only after the user explicitly engaged. The picker / input / dialog draws above the prompt, captures keystrokes, returns the response. User-initiated, not daemon-imposed.
+6. Response routes back over IPC to the originating shell / script.
+
+**Push events (daemon → target client) — informational only, never auto-render:**
+
+| Event | Payload | Client behavior |
+|-------|---------|-----------------|
+| `ui:pending` | `request_id, kind, from_shell, summary, urgency` | Increment status-line counter, optional OSC-9, write to log. NEVER render UI. |
+| `ui:dismissed` | `request_id, reason` | Decrement counter, clear status-line if count==0 |
+| `ui:progress` | `request_id, label, percent, eta_ms` | Update status-line bar (which is already a passive surface, doesn't touch prompt). Allowed to update in place because status-line is reserved space, not the prompt line |
+
+UI rendering events (`ui:picker`, `ui:input`, `ui:dialog`, `ui:menu`) are **only sent to the client when the user explicitly takes the request** via `zui take`. The daemon stages the rendering payload in the inbox; the actual render-event ships only when client signals readiness.
+
+**Builtin: `zui`** (top-level, thin IPC wrapper):
+
+```
+# Push side — script asks daemon to queue a UI request on a target shell:
+zui ask --target <shell|tag|*> picker --items <list>
+zui ask --target shell:42 picker --items "$(ls)" --multi
+zui ask --target tag:operator input --prompt "username: "
+zui ask --target shell:7 input --prompt "password: " --secret
+zui ask --target shell:42 dialog --message "Deploy to prod?" --options yes,no --urgency critical
+zui ask --target shell:42 menu --title "Select host" --items "host-1 host-2 host-3"
+
+# Progress is the one passive exception (status-line only, no key capture):
+zui progress --target shell:42 --label "Building" --percent 47 --eta 30000
+zui progress --target shell:42 --request-id <id> --percent 78    # update in place
+zui progress --target shell:42 --request-id <id> --done
+
+# Pull side — user manages their own inbox:
+zui pending                                  # list queued requests in this shell
+zui take                                     # render the oldest pending; blocks for response
+zui take <id>                                # render a specific pending request by id
+zui dismiss [<id>|--all]                     # decline/cancel pending request(s); originator gets cancelled=true
+zui inbox-clear                              # dismiss every pending request in this shell at once
+```
+
+**Activation keybinding:** `Ctrl-X u` by default — Ctrl-prefix only, works identically in vi-insert, vi-cmd, and emacs-insert modes. **No default keybindings ever use Meta / Alt** — meta keys are unreliable across terminals (macOS Option-key special chars, varying tmux pass-through, ssh meta-bit handling, locale-dependent escape sequences). Ctrl combinations pass through every terminal cleanly. Bound via `bindkey '^Xu' zui-take` shipped in zshrs's default keymap. Same binding registered in `vicmd` keymap so it works post-Esc too: `bindkey -M vicmd '^Xu' zui-take`. User overrides via `bindkey '<key>' zui-take` or env var `ZSHRS_ZUI_TAKE_KEY=^G` to remap. The widget activates one pending request at a time. Status-line counter decrements on take or dismiss.
+
+**Status-line presentation:** the only daemon→client UI surface that updates without user activation is the status-line / RPROMPT region — explicitly designed-as-passive area. Format: `[zui:N urgent:M]` where N is total pending and M is critical-urgency count. Updates in place, no prompt-line touch. Client treats this as a watched parameter that triggers a status-line redraw, not a prompt redraw.
+
+**Out-of-band rendering (planned):** integration hooks for tmux status-line, kitty's status bar, alacritty title-bar updates, and OSC-9 → macOS Notification Center / Linux libnotify. Daemon emits the same `ui:pending` event; client routes to whichever passive surface the user has configured. None of these touch the active prompt.
+
+**Use cases (revised under the no-prompt-interference rule):**
+
+- **Cross-shell wizard:** script in shell A pushes `zui ask --target shell:B picker ...`. Shell B's status-line shows `[zui:1 pending]`. User in shell B finishes their current line, hits `Ctrl-X u`, picks. Answer routes back to A. Script in A blocks until user gets around to it (or times out).
+- **Pair programming intervention:** remote operator pushes a `ui:dialog`. Local user's status-line shows `[zui:1 urgent:1]`. User finishes typing, hits `Ctrl-X u`, sees the dialog, picks yes/no.
+- **Background-job confirmation:** `zjob` supervisor pushes a `ui:dialog`. Status-line surfaces it. User answers when convenient (or `zjob` times out and aborts).
+- **`zsync up` conflict resolution:** queued for the originating shell with summary `function foo conflict — file changed since push`. User takes when ready.
+- **Long-running ops with progress:** the only UI event allowed to live-update the status-line. `zui progress` updates the status bar without ever touching the prompt.
+
+**Timeouts:** every queued UI request has a default 60-minute timeout. Originator gets `ui:timeout` event if user never engages. Configurable per-request via `--timeout <seconds>` or `--no-timeout`.
+
+**Visibility model:** `zui pending` shows this shell's queue. `zls --ui-pending` shows pending requests across all of the user's registered shells. Every push, take, dismiss, timeout logged to `~/.cache/zshrs/zshrs.log`.
+
 ### Daemon logging (every action goes to logfile)
 
 Daemon is fully observable via `~/.cache/zshrs/zshrs.log`. Every action it takes — every cache build, every fsnotify event, every IPC op handled, every shard rename, every error, every plugin discovery, every cross-shell dispatch — is logged. The log is the canonical record of "what did the daemon do" for debugging, post-mortem analysis, and behavior verification.

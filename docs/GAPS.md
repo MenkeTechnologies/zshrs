@@ -940,7 +940,24 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 - `format_zsh()` already appends `-readonly` to the type string when `var_attrs.readonly` is set, but `builtin_readonly` only inserted the name into `readonly_vars` (a separate HashSet for write-protection enforcement) without touching `var_attrs`. Result: write-protection worked, but `(t)` introspection couldn't see the readonly bit.
 - Added the `var_attrs.readonly = true` set to both branches of `builtin_readonly` (the `name=value` and bare-`name` paths). Test: `test_t_flag_includes_readonly_modifier`.
 
-## Still open (fifty-second-pass — remaining)
+## Closed (fifty-third-pass — `[[ -nt ]]` ns precision + `integer -r` readonly attr + `$*` IFS join)
+
+### `[[ a -nt b ]]` returned false when files were touched within the same second
+
+- Was using `MetadataExt::mtime()` (seconds only). `touch a; sleep 0.3; touch b; [[ b -nt a ]]` failed because both timestamps reported the same integer second. Switched to `metadata().modified()` (`SystemTime`, ns precision). Same fix applied to `BUILTIN_FILE_OLDER` (`-ot`). Test: `test_cond_nt_uses_nanosecond_precision`.
+
+### `integer -r I=42; echo "${(t)I}"` printed `integer` instead of `integer-readonly`
+
+- `builtin_integer` ignored its leading `-r` / `-x` flags entirely (the loop just `continue`'d on any `-` arg). Parsed flags into local bools, then composed `VarAttr { kind: Integer, readonly, export }` and inserted `name` into `readonly_vars` + env when applicable. Test: `test_integer_dash_r_sets_readonly_attr`.
+
+### `IFS=":"; echo "$*"` joined positionals by space, not by `:`
+
+- `get_variable("@" | "*")` was hardcoded to `.join(" ")`. POSIX: `$*` joins by the first char of `$IFS`. Updated to read `$IFS` and use its first char (default ` ` when unset). Note: `expand_string`'s DQ-context expansion of `"$*"` follows a different path that still produces only the first param — that's a deeper bug, deferred.
+
+## Still open (fifty-third-pass — remaining)
+
+- **`expand_string` DQ `"$*"`** — `v="$*"` only captures the first positional. Needs a fix in the `var_name == "*"` branch of expand_braced_variable / expand_string. Deferred.
+
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

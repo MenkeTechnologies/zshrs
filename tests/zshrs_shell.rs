@@ -3731,3 +3731,31 @@ fn test_t_flag_includes_readonly_modifier() {
         run_zshrs(r#"typeset -r R=x; echo "${(t)R}""#);
     assert_eq!(output.trim(), "scalar-readonly", "got: {output:?}");
 }
+
+#[test]
+fn test_cond_nt_uses_nanosecond_precision() {
+    // `[[ a -nt b ]]` was using MetadataExt::mtime() (seconds only),
+    // so two files touched within the same second compared equal
+    // even when 500ms apart. Switched to SystemTime::modified() for
+    // nanosecond precision.
+    use std::fs::File;
+    let a = "/tmp/zr_nt_a";
+    let b = "/tmp/zr_nt_b";
+    let _ = std::fs::remove_file(a);
+    let _ = std::fs::remove_file(b);
+    File::create(a).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    File::create(b).unwrap();
+    let (_, output, _) = run_zshrs(&format!("[[ {} -nt {} ]] && echo Y || echo N", b, a));
+    let _ = std::fs::remove_file(a);
+    let _ = std::fs::remove_file(b);
+    assert_eq!(output.trim(), "Y", "got: {output:?}");
+}
+
+#[test]
+fn test_integer_dash_r_sets_readonly_attr() {
+    // `integer -r I=42` should produce "${(t)I}" == "integer-readonly".
+    // builtin_integer was ignoring all flags; now parses -r and -x.
+    let (_, output, _) = run_zshrs(r#"integer -r I=42; echo "${(t)I}""#);
+    assert_eq!(output.trim(), "integer-readonly", "got: {output:?}");
+}
