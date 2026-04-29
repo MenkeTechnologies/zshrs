@@ -4273,6 +4273,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
         //   4 -   5 =   6 ?   7 +    (no-colon: only fire if truly unset)
         let val = with_executor(|exec| exec.get_variable(&name));
         let is_set = with_executor(|exec| {
+            // Positional params ($1, $2, ...): set iff index <= $#.
+            if name.chars().all(|c| c.is_ascii_digit()) && !name.is_empty() {
+                if let Ok(idx) = name.parse::<usize>() {
+                    if idx == 0 {
+                        return true; // $0 always set
+                    }
+                    return idx <= exec.positional_params.len();
+                }
+            }
             exec.variables.contains_key(&name)
                 || exec.arrays.contains_key(&name)
                 || exec.assoc_arrays.contains_key(&name)
@@ -7154,10 +7163,49 @@ impl ShellExecutor {
         if path.starts_with('~') {
             let rest = &path[1..];
             // Check for ~name or ~name/...
-            let (name, suffix) = if let Some(slash_pos) = rest.find('/') {
+            let (name_raw, suffix) = if let Some(slash_pos) = rest.find('/') {
                 (&rest[..slash_pos], &rest[slash_pos..])
             } else {
                 (rest, "")
+            };
+            // The name segment may contain `$VAR` references (`~$USER`,
+            // `~"$USER"`). Pre-resolve via env-lookup before treating
+            // as a username — zsh expands `$VAR` then tries `~result`.
+            // Also strip surrounding `"` and `'` (the quoted form
+            // `~"$USER"` arrives here with the quote chars intact).
+            let name_owned: String;
+            let name: &str = if name_raw.contains('$')
+                || name_raw.contains('"')
+                || name_raw.contains('\'')
+            {
+                let mut out = String::new();
+                let mut chars = name_raw.chars().peekable();
+                while let Some(c) = chars.next() {
+                    if c == '$' {
+                        let mut var_name = String::new();
+                        while let Some(&pc) = chars.peek() {
+                            if pc.is_ascii_alphanumeric() || pc == '_' {
+                                var_name.push(chars.next().unwrap());
+                            } else {
+                                break;
+                            }
+                        }
+                        if !var_name.is_empty() {
+                            out.push_str(&self.get_variable(&var_name));
+                        } else {
+                            out.push('$');
+                        }
+                    } else if c == '"' || c == '\'' {
+                        // Strip — quotes here are quoting for the
+                        // username lookup, not literal user chars.
+                    } else {
+                        out.push(c);
+                    }
+                }
+                name_owned = out;
+                name_owned.as_str()
+            } else {
+                name_raw
             };
 
             if name.is_empty() {
@@ -9134,6 +9182,14 @@ impl ShellExecutor {
     /// plain path that happened to route through this code (e.g. some
     /// fast paths bridge unconditionally).
     fn looks_like_glob(pattern: &str) -> bool {
+        // A trailing `(qualifier)` is itself a glob trigger — e.g.
+        // `path(L+10)` should be treated as a glob even when the
+        // body has no `*`/`?`/`[...]`.
+        let has_qual_suffix = if let Some(open) = pattern.rfind('(') {
+            pattern.ends_with(')') && open + 1 < pattern.len() - 1
+        } else {
+            false
+        };
         // Strip trailing `(...)` qualifier so we test the pattern body.
         let body = if let Some(open) = pattern.rfind('(') {
             if pattern.ends_with(')') {
@@ -9154,6 +9210,7 @@ impl ShellExecutor {
         body.contains('*')
             || body.contains('?')
             || has_bracket_class
+            || has_qual_suffix
     }
 
     /// Parallel recursive glob using the worker pool.
@@ -9683,7 +9740,9 @@ impl ShellExecutor {
                             chars.next();
                             1
                         }
-                        _ => 512, // zsh default: 512-byte blocks
+                        // zsh's default for L is BYTES (not 512-byte
+                        // blocks). `(L+3)` means "more than 3 bytes".
+                        _ => 1,
                     };
                     let target = n * unit_mult;
                     result = result

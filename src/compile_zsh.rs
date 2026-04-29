@@ -1268,7 +1268,13 @@ impl ZshCompiler {
         // (smaller input — terminates). Each Literal segment emits as a
         // pure-literal LoadConst (after untokenize so embedded META
         // chars resolve to their original ASCII).
-        if !has_bnull {
+        // If the word starts with `~` and contains a `$`-expansion,
+        // skip the segment-split (which would emit literal `~` + the
+        // expansion separately, defeating tilde-expand). Fall through
+        // to the bridge so expand_string sees `~$VAR` whole.
+        let starts_with_tilde_and_has_var = untoked.starts_with('~')
+            && untoked.contains('$');
+        if !has_bnull && !starts_with_tilde_and_has_var {
             if let Some(segs) = split_word_segments(s) {
                 // Pick concat operator based on segment shape:
                 // - Default splice (`${arr[@]}`, `$@`, `$*`): FIRST/LAST
