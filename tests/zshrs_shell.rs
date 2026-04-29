@@ -6277,3 +6277,26 @@ fn test_echo_bare_dash_is_noop_flag() {
     let (_, output, _) = run_zshrs("echo --");
     assert_eq!(output.trim(), "--");
 }
+
+#[test]
+fn test_print_P_standout_emits_italic_codes() {
+    // zsh's %S (start standout) emits \e[3m (italic). zshrs was
+    // emitting \e[7m (reverse video). Same fix for %s end-standout
+    // (\e[23m matches zsh, not \e[27m reverse-end).
+    let (_, output, _) = run_zshrs(r#"print -P "%S""#);
+    assert_eq!(output.as_bytes(), b"\x1b[3m\n");
+    let (_, output, _) = run_zshrs(r#"print -P "%s""#);
+    assert_eq!(output.as_bytes(), b"\x1b[23m\n");
+}
+
+#[test]
+fn test_for_arith_comma_init_and_step() {
+    // `for ((i=0,j=10; i<3; i++,j--))` should iterate with both
+    // i and j updating. ArithCompiler only handled ONE op per
+    // call and dropped the comma-trailing statements. Now the
+    // comma form routes through BUILTIN_ARITH_EVAL (MathEval).
+    let (_, output, _) = run_zshrs(
+        r#"for ((i=0,j=10; i<3; i++,j--)); do echo "$i:$j"; done"#,
+    );
+    assert_eq!(output.trim(), "0:10\n1:9\n2:8");
+}

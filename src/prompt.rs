@@ -426,7 +426,9 @@ impl<'a> PromptExpander<'a> {
             self.output.push_str("\x1b[4m");
         }
         if self.attrs.standout {
-            self.output.push_str("\x1b[7m");
+            // zsh emits italic (`3m`) for `%S` standout, not reverse
+            // video (`7m`). Match zsh's actual prompt output.
+            self.output.push_str("\x1b[3m");
         }
         if let Some(ref color) = self.attrs.fg_color {
             self.output.push_str(&color.to_ansi_fg());
@@ -729,7 +731,10 @@ impl<'a> PromptExpander<'a> {
             's' => {
                 self.attrs.standout = false;
                 self.start_escape();
-                self.output.push_str("\x1b[27m");
+                // zsh emits the italic-end (`23m`) for `%s` rather
+                // than the reverse-end (`27m`). Match zsh's output
+                // so terminal state agrees with what `%S` set.
+                self.output.push_str("\x1b[23m");
                 self.end_escape();
             }
 
