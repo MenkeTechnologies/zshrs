@@ -5884,6 +5884,13 @@ impl fusevm::ShellHost for ZshrsHost {
                 env_vars: std::env::vars().collect(),
                 cwd: std::env::current_dir().ok(),
             });
+            let level = exec
+                .variables
+                .get("ZSH_SUBSHELL")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(0);
+            exec.variables
+                .insert("ZSH_SUBSHELL".to_string(), (level + 1).to_string());
         });
     }
 
@@ -7038,6 +7045,9 @@ pub struct VarAttr {
     /// Distinguished from VarKind::Float for `declare -p` printing
     /// (`-E` vs `-F` flag letter).
     pub float_exp: bool,
+    /// `typeset -i N` — display integer in base N (2-36). Stored value
+    /// is decimal; the `N#DIGITS` form is computed on read.
+    pub int_base: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -7048,6 +7058,38 @@ pub enum VarKind {
     Float,
     Array,
     Association,
+}
+
+/// Format an integer in the given base (2-36) using zsh's `BASE#DIGITS`
+/// form. Bases 2-9 are unsigned-style; uppercase A-Z are used for digits
+/// >= 10. A negative value is output as `-BASE#DIGITS`.
+pub fn format_int_in_base(n: i64, base: u32) -> String {
+    if !(2..=36).contains(&base) {
+        return n.to_string();
+    }
+    if n == 0 {
+        return format!("{}#0", base);
+    }
+    let neg = n < 0;
+    let mut v: u64 = n.unsigned_abs();
+    let mut digits = Vec::new();
+    while v > 0 {
+        let d = (v % base as u64) as u32;
+        let ch = if d < 10 {
+            (b'0' + d as u8) as char
+        } else {
+            (b'A' + (d - 10) as u8) as char
+        };
+        digits.push(ch);
+        v /= base as u64;
+    }
+    digits.reverse();
+    let body: String = digits.into_iter().collect();
+    if neg {
+        format!("-{}#{}", base, body)
+    } else {
+        format!("{}#{}", base, body)
+    }
 }
 
 impl VarAttr {
@@ -7823,7 +7865,12 @@ impl ShellExecutor {
             };
 
             if name.is_empty() {
-                // Regular ~ expansion
+                // Regular ~ expansion. Prefer the shell's variable
+                // store over OS env so a non-exported `HOME=/tmp; cd ~`
+                // honors the shell-local override.
+                if let Some(home) = self.variables.get("HOME") {
+                    return format!("{}{}", home, suffix);
+                }
                 if let Ok(home) = std::env::var("HOME") {
                     return format!("{}{}", home, suffix);
                 }
@@ -9855,7 +9902,15 @@ impl ShellExecutor {
         });
         let expanded = self.filter_by_qualifiers(expanded, &qualifiers);
         let mut expanded = expanded;
-        expanded.sort();
+        // Locale-aware sort: under a Unicode locale, zsh folds case
+        // (`Aaa bbb Ccc Ddd` not `Aaa Ccc Ddd bbb`). Fallback to byte
+        // order under C/POSIX. Sort by basename so directory components
+        // don't dominate the comparison and produce ASCII-style output.
+        expanded.sort_by(|a, b| {
+            let an = a.rsplit('/').next().unwrap_or(a);
+            let bn = b.rsplit('/').next().unwrap_or(b);
+            crate::glob::locale_aware_name_cmp(an, bn)
+        });
 
         if expanded.is_empty() {
             // The `(N)` per-pattern qualifier is the local equivalent of
@@ -12574,12 +12629,13 @@ impl ShellExecutor {
                 chars.next(); // consume '('
                 let cmd_str = Self::collect_until_paren(&mut chars);
                 result.push_str(&self.run_process_sub_out(&cmd_str));
-            } else if c == '~' && result.is_empty() {
+            } else if c == '~' && result.is_empty() && self.in_dq_context == 0 {
                 // Collect the tilde-name suffix (until /, end-of-string,
                 // or another shell special). Then dispatch through
                 // expand_tilde_named which knows about `~+`, `~-`,
                 // `~+N`, `~-N`, named dirs (`hash -d` / `nameddirs`),
-                // and `~user` via libc getpwnam.
+                // and `~user` via libc getpwnam. zsh disables tilde
+                // expansion inside double quotes — `"~"` stays literal.
                 let mut name = String::from("~");
                 while let Some(&pc) = chars.peek() {
                     if pc == '/' || pc.is_whitespace() {
@@ -12785,7 +12841,14 @@ impl ShellExecutor {
         // whitespace) means "read this file". Trailing newline is
         // stripped (same as command-substitution).
         let trimmed = cmd_str.trim_start();
-        if let Some(rest) = trimmed.strip_prefix('<') {
+        // Only treat as `$(<file)` shorthand when the SINGLE leading `<`
+        // is followed by a filename, not another `<`. `$(<<<"hi" cat)`
+        // starts with `<<<` (here-string) and must go through the full
+        // parse path, not the read-file shortcut.
+        if let Some(rest) = trimmed
+            .strip_prefix('<')
+            .filter(|s| !s.starts_with('<'))
+        {
             let filename = rest.trim();
             // Expand any leading $ / tilde in the filename so
             // `$(< $f)` and `$(< ~/x)` work.
@@ -15018,12 +15081,22 @@ impl ShellExecutor {
 
     fn do_cd(&mut self, path_arg: &str, quiet: bool, use_cdpath: bool, logical: bool) -> i32 {
         let physical = !logical;
-        let path = if path_arg == "~" || path_arg.is_empty() {
-            dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
-        } else if path_arg.starts_with("~/") {
-            dirs::home_dir()
+        // Read $HOME from the shell's variable store first; fall back to
+        // the OS env. This makes `HOME=/tmp; cd` follow the shell-local
+        // assignment even when no `export` was used.
+        let home_dir = || -> PathBuf {
+            self.variables
+                .get("HOME")
+                .cloned()
+                .or_else(|| std::env::var("HOME").ok())
+                .map(PathBuf::from)
+                .or_else(dirs::home_dir)
                 .unwrap_or_else(|| PathBuf::from("."))
-                .join(&path_arg[2..])
+        };
+        let path = if path_arg == "~" || path_arg.is_empty() {
+            home_dir()
+        } else if path_arg.starts_with("~/") {
+            home_dir().join(&path_arg[2..])
         } else if path_arg == "-" {
             if let Ok(oldpwd) = env::var("OLDPWD") {
                 // zsh only prints the new dir in interactive mode.
@@ -15036,9 +15109,20 @@ impl ShellExecutor {
                 eprintln!("cd: OLDPWD not set");
                 return 1;
             }
-        } else if use_cdpath && !path_arg.starts_with('/') && !path_arg.starts_with('.') {
-            // Search CDPATH
-            let cdpath = env::var("CDPATH").unwrap_or_default();
+        } else if !path_arg.starts_with('/')
+            && !path_arg.starts_with('.')
+            && !PathBuf::from(path_arg).is_dir()
+        {
+            // Search CDPATH (zsh searches it implicitly when the literal
+            // path is not a directory in cwd; `-s` is not required).
+            // Honor shell-state CDPATH first so a non-exported assignment
+            // applies. cdpath array (zsh-specific) is checked too.
+            let cdpath = self
+                .variables
+                .get("CDPATH")
+                .cloned()
+                .or_else(|| env::var("CDPATH").ok())
+                .unwrap_or_default();
             let mut found = None;
             for dir in cdpath.split(':') {
                 let candidate = if dir.is_empty() {
@@ -15051,6 +15135,22 @@ impl ShellExecutor {
                     break;
                 }
             }
+            if found.is_none() {
+                if let Some(arr) = self.arrays.get("cdpath") {
+                    for dir in arr {
+                        let candidate = if dir.is_empty() {
+                            PathBuf::from(path_arg)
+                        } else {
+                            PathBuf::from(dir).join(path_arg)
+                        };
+                        if candidate.is_dir() {
+                            found = Some(candidate);
+                            break;
+                        }
+                    }
+                }
+            }
+            let _ = use_cdpath;
             found.unwrap_or_else(|| PathBuf::from(path_arg))
         } else {
             PathBuf::from(path_arg)
@@ -16278,6 +16378,7 @@ impl ShellExecutor {
         let mut plus_mode = false; // +x etc: remove attribute
         let mut width: Option<usize> = None;
         let mut precision: Option<usize> = None;
+        let mut int_base: Option<u32> = None;
         let mut var_args: Vec<String> = Vec::new();
 
         let mut i = 0;
@@ -16334,7 +16435,18 @@ impl ShellExecutor {
                         'a' => is_array = true,
                         'A' => is_assoc = true,
                         'x' => is_export = true,
-                        'i' => is_integer = true,
+                        'i' => {
+                            is_integer = true;
+                            // `-i N` (attached digits): `-i16` sets base 16.
+                            let rest: String = chars.clone().collect();
+                            if !rest.is_empty()
+                                && rest.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                            {
+                                let num: String =
+                                    chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
+                                int_base = num.parse().ok();
+                            }
+                        }
                         'r' => is_readonly = true,
                         'l' => is_lower = true,
                         'u' => is_upper = true,
@@ -16436,6 +16548,17 @@ impl ShellExecutor {
                     && !args[i + 1].is_empty()
                 {
                     width = args[i + 1].parse().ok();
+                    i += 1;
+                }
+                // `-i 16` — output base as a separate arg. Mirrors the
+                // attached `-i16` form parsed inside the char-loop above.
+                if int_base.is_none()
+                    && is_integer
+                    && i + 1 < args.len()
+                    && args[i + 1].chars().all(|c| c.is_ascii_digit())
+                    && !args[i + 1].is_empty()
+                {
+                    int_base = args[i + 1].parse().ok();
                     i += 1;
                 }
             } else {
@@ -16805,7 +16928,15 @@ impl ShellExecutor {
 
                     if is_integer {
                         // Force integer evaluation
-                        value = self.evaluate_arithmetic(&value).to_string();
+                        let evaluated = self.evaluate_arithmetic(&value);
+                        value = if let Some(base) = int_base {
+                            evaluated
+                                .parse::<i64>()
+                                .map(|n| format_int_in_base(n, base))
+                                .unwrap_or(evaluated)
+                        } else {
+                            evaluated
+                        };
                     }
                     if is_lower {
                         value = value.to_lowercase();
@@ -16981,6 +17112,7 @@ impl ShellExecutor {
                         uppercase: is_upper,
                         unique: is_unique,
                         float_exp: is_float_exp,
+                        int_base: if is_integer { int_base } else { None },
                     };
                     self.var_attrs.insert(attr_name.clone(), attr);
                     // Apply unique-dedupe immediately if the array
@@ -23001,11 +23133,22 @@ impl ShellExecutor {
         // bash-compat `printf -v VAR fmt args...`: assign formatted output
         // to VAR instead of printing. Strip the flag + var, format the
         // rest, insert into self.variables.
+        // `printf --` is end-of-options (POSIX util convention) — skip
+        // the `--` and treat the next arg as the format.
+        let trimmed: &[String] = if args.first().map(String::as_str) == Some("--") {
+            &args[1..]
+        } else {
+            args
+        };
+        if trimmed.is_empty() {
+            eprintln!("printf: usage: printf format [arguments]");
+            return 1;
+        }
         let (assign_var, format, format_args): (Option<String>, &String, &[String]) =
-            if args.first().map(String::as_str) == Some("-v") && args.len() >= 3 {
-                (Some(args[1].clone()), &args[2], &args[3..])
+            if trimmed.first().map(String::as_str) == Some("-v") && trimmed.len() >= 3 {
+                (Some(trimmed[1].clone()), &trimmed[2], &trimmed[3..])
             } else {
-                (None, &args[0], &args[1..])
+                (None, &trimmed[0], &trimmed[1..])
             };
         let mut arg_idx = 0;
         let mut output = String::new();

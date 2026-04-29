@@ -240,7 +240,7 @@ impl GlobMatch {
                     if numeric_sort {
                         numeric_string_cmp(&self.name, &other.name)
                     } else {
-                        self.name.cmp(&other.name)
+                        locale_aware_name_cmp(&self.name, &other.name)
                     }
                 }
                 GlobSort::Depth => {
@@ -307,6 +307,37 @@ impl GlobMatch {
             }
         }
         Ordering::Equal
+    }
+}
+
+/// Locale-aware name comparison for glob sort. Under a Unicode locale
+/// (LANG / LC_ALL / LC_COLLATE not in the C/POSIX/<empty> set), zsh
+/// folds case before comparing — so `Aaa bbb Ccc` sorts in declaration
+/// order rather than ASCII (uppercase < lowercase). Fallback to byte
+/// compare under C/POSIX locale to mirror `LC_ALL=C zsh` behavior.
+pub fn locale_aware_name_cmp(a: &str, b: &str) -> Ordering {
+    let locale_is_c = {
+        let lc_all = std::env::var("LC_ALL").unwrap_or_default();
+        let lc_collate = std::env::var("LC_COLLATE").unwrap_or_default();
+        let lang = std::env::var("LANG").unwrap_or_default();
+        let active = if !lc_all.is_empty() {
+            lc_all
+        } else if !lc_collate.is_empty() {
+            lc_collate
+        } else {
+            lang
+        };
+        let normalized = active.split('.').next().unwrap_or("").to_uppercase();
+        matches!(normalized.as_str(), "" | "C" | "POSIX")
+    };
+    if locale_is_c {
+        return a.cmp(b);
+    }
+    let primary = a.to_lowercase().cmp(&b.to_lowercase());
+    if primary == Ordering::Equal {
+        a.cmp(b)
+    } else {
+        primary
     }
 }
 
