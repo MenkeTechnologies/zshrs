@@ -743,7 +743,31 @@ impl ZshCompiler {
             ZshAssignValue::Scalar(s) => {
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
-                self.compile_word_str(s);
+                // Bare-assignment values (`i=5*3`) are NOT glob-
+                // expanded by zsh — the `*` stays literal. If the
+                // value contains glob metas but isn't already DQ-
+                // wrapped, wrap with DNULLs so compile_word_str's
+                // mode 1 (DoubleQuoted) bridge skips brace+glob
+                // expansion. `$var` / `$(cmd)` / `$((expr))` still
+                // expand inside DQ context.
+                // Check for glob metas in BOTH the META-encoded form
+                // (lexer's `\u{87}` for `*`, `\u{86}` for `?`, etc.)
+                // AND the literal char (some lex paths leave them
+                // bare). Either form means "glob in value, must
+                // suppress" because zsh doesn't glob-expand assignment
+                // RHS by default.
+                let needs_dq_wrap = !s.starts_with('\u{9e}')
+                    && !s.starts_with('\u{9d}')
+                    && (s.contains('*') || s.contains('\u{87}')   // STAR
+                        || s.contains('?') || s.contains('\u{86}') // QUEST
+                        || s.contains('[') || s.contains('\u{91}') // INBRACK
+                        || s.contains('{') || s.contains('\u{8f}')); // INBRACE
+                if needs_dq_wrap {
+                    let wrapped = format!("\u{9e}{}\u{9e}", s);
+                    self.compile_word_str(&wrapped);
+                } else {
+                    self.compile_word_str(s);
+                }
                 let bid = if assign.append {
                     // `name+=val` — runtime-dispatch via APPEND_SCALAR_OR_PUSH:
                     // if `name` is an indexed array, push the value as a new

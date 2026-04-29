@@ -613,7 +613,23 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 - `kill -l` was printing a numbered table (`1) SIGHUP\n…`); zsh emits bare names space-separated on one line. Switched to match.
 - `kill -L` was treated as a list-mode alias for `-l`. zsh treats it as `-` + signal name `L` → "unknown signal: SIGL" with the standard hint. Switched to error path for parity. Tests: `test_kill_dash_l_lists_bare_names`, `test_kill_dash_capital_l_unknown_signal`.
 
-## Still open (twentieth-pass — remaining)
+## Closed (twenty-first-pass — integer arith + (e) eval + assign no-glob + type format)
+
+### `integer i; i=5*3` — arith-evaluate when var has integer attribute
+
+- Two compounding bugs:
+  - `compile_assign`'s Scalar branch unconditionally called `compile_word_str(value)`, which routed `5*3` through expand_text + glob → NOMATCH error. Added a DQ-wrap step: when the value contains glob metas (in either META-encoded form `\u{87}` or literal `*`), wrap with DNULL markers so the bridge picks mode 1 (DoubleQuoted) and skips brace+glob expansion. `$var` / `$(cmd)` / `$((expr))` still expand.
+  - `BUILTIN_SET_VAR` now checks `var_attrs[name].kind == Integer`. If so, runs `eval_arith_expr(value)` before storing — `i=5*3` lands as `15`. Test: `test_integer_attribute_arith_evaluates_assignment`, `test_bare_assignment_does_not_glob_expand`.
+
+### `${(e)var}` — parameter expansion, not command execution
+
+- The `(e)` flag was running the value as a shell command via `run_command_substitution`. Per `zshexpn(1)`, `(e)` should "perform parameter expansion, command substitution and arithmetic expansion" — which is `expand_string`. Switched. `s="\$test"; test=val; ${(e)s}` now correctly returns `val`. Test: `test_paren_e_flag_expands_parameters`.
+
+### `type NAME` unknown format
+
+- Was `zshrs: type: NAME: not found` (stderr, with prefix). zsh emits `NAME not found` on stdout (no prefix). Switched format and stream. Test: `test_type_unknown_format_matches_zsh`.
+
+## Still open (twenty-first-pass — remaining)
 
 (none — all probed gaps closed)
 

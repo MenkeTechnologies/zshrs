@@ -2762,3 +2762,34 @@ fn test_kill_dash_capital_l_unknown_signal() {
     assert!(stderr.contains("SIGL") || stderr.contains("unknown signal"),
         "stderr: {stderr:?}");
 }
+
+#[test]
+fn test_integer_attribute_arith_evaluates_assignment() {
+    // After `integer i`, plain `i=5*3` arith-evaluates the value.
+    let (_, output, _) = run_zshrs("integer i; i=5*3; echo $i");
+    assert_eq!(output.trim(), "15", "got: {output:?}");
+}
+
+#[test]
+fn test_bare_assignment_does_not_glob_expand() {
+    // `i=5*3` (no integer) keeps the value literal — zsh does NOT
+    // glob-expand assignment RHS by default.
+    let (_, output, _) = run_zshrs("i=5*3; echo $i");
+    assert_eq!(output.trim(), "5*3", "got: {output:?}");
+}
+
+#[test]
+fn test_paren_e_flag_expands_parameters() {
+    // `${(e)s}` expands $-references in the value (NOT runs the
+    // value as a command).
+    let (_, output, _) = run_zshrs(r#"s="\$test"; test=val; echo "${(e)s}""#);
+    assert_eq!(output.trim(), "val", "got: {output:?}");
+}
+
+#[test]
+fn test_type_unknown_format_matches_zsh() {
+    // `NAME not found` on stdout, not `zshrs: type: NAME: not found`.
+    let (_, output, _) = run_zshrs("type nonexistent_xyz_abc");
+    assert!(output.contains("not found"), "got: {output:?}");
+    assert!(!output.contains("type:"), "should not have 'type:' prefix, got: {output:?}");
+}

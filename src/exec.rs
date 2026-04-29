@@ -2985,13 +2985,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'e' => {
-                    // Re-evaluate the value as a shell command and return its
-                    // captured stdout. Equivalent to `$(eval "$value")` —
-                    // useful for late-bound config strings. Uses the
-                    // command-substitution path (in-process pipe capture, no
-                    // fork).
+                    // Per zshexpn(1): "perform parameter expansion,
+                    // command substitution and arithmetic expansion
+                    // on the resulting word". Apply expand_string so
+                    // `\$var` (literal `$var` in the value) becomes
+                    // the value of $var, `\$(cmd)` runs the cmd, etc.
                     let eval_one = |s: &str| -> String {
-                        with_executor(|exec| exec.run_command_substitution(s))
+                        with_executor(|exec| exec.expand_string(s))
                     };
                     state = match state {
                         St::S(s) => St::S(eval_one(&s)),
@@ -3614,17 +3614,30 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 // the shell with status 1, not just the command.
                 std::process::exit(1);
             }
+            // If the variable was previously declared `integer` (or
+            // `typeset -i`), arith-evaluate the value before storing.
+            // zsh: `integer i; i=5*3` stores 15.
+            let is_integer = exec
+                .var_attrs
+                .get(&name)
+                .map(|a| matches!(a.kind, VarKind::Integer))
+                .unwrap_or(false);
+            let stored = if is_integer && !value.is_empty() {
+                exec.eval_arith_expr(&value).to_string()
+            } else {
+                value.clone()
+            };
             // Mirror scalar→array if name is the scalar side of a
             // typeset -T tie.
             if let Some((arr_name, sep)) = exec.tied_scalar_to_array.get(&name).cloned() {
-                let parts: Vec<String> = if value.is_empty() {
+                let parts: Vec<String> = if stored.is_empty() {
                     Vec::new()
                 } else {
-                    value.split(&sep).map(String::from).collect()
+                    stored.split(&sep).map(String::from).collect()
                 };
                 exec.arrays.insert(arr_name, parts);
             }
-            exec.variables.insert(name.clone(), value.clone());
+            exec.variables.insert(name.clone(), stored);
             false
         });
         Value::Status(if blocked { 1 } else { 0 })
@@ -19261,8 +19274,10 @@ impl ShellExecutor {
             }
 
             if !found_any {
+                // zsh's format: `NAME not found` on stdout (no
+                // colon-separated prefix). Match it.
                 if !silent {
-                    eprintln!("zshrs: type: {}: not found", name);
+                    println!("{} not found", name);
                 }
                 status = 1;
             }
