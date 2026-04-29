@@ -6057,3 +6057,44 @@ fn test_glob_dot_qualifier_excludes_symlinks() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(output.trim(), "a");
 }
+
+#[test]
+fn test_extendedglob_tilde_exclusion() {
+    // `*.txt~b.txt` should match all *.txt EXCEPT b.txt under
+    // setopt extendedglob.
+    let dir = std::env::temp_dir().join("zshrs_test_extglob_tilde");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+    }
+    let cmd = format!(
+        "setopt extendedglob; cd {} && echo *.txt~b.txt",
+        dir.display()
+    );
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    parts.sort();
+    assert_eq!(parts, vec!["a.txt", "c.txt"]);
+}
+
+#[test]
+fn test_extendedglob_caret_negation() {
+    // `^pat` matches all entries that DON'T match `pat`.
+    let dir = std::env::temp_dir().join("zshrs_test_extglob_caret");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["a", "b", "c"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+    }
+    let cmd = format!(
+        "setopt extendedglob; cd {} && echo ^b",
+        dir.display()
+    );
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    parts.sort();
+    assert_eq!(parts, vec!["a", "c"]);
+}

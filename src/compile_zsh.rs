@@ -998,6 +998,11 @@ impl ZshCompiler {
         let trigger_glob = unquoted(&untoked, '*')
             || unquoted(&untoked, '?')
             || unquoted(&untoked, '[')
+            // extendedglob `^pat` (negation) and `pat~excl` (exclusion).
+            // `^` is a no-op without `setopt extendedglob`, but routing
+            // through expand_glob lets the runtime decide. The unquoted
+            // check ensures `"^b"` (literal) isn't treated as a glob.
+            || (untoked.starts_with('^') && untoked.len() > 1)
             // zsh glob qualifiers: `*(.)` / `path(mh-1)` etc. The `(...)`
             // suffix triggers globbing even when the body has no other
             // glob metachar — needed for `/etc/hosts(mh-100)` style.
