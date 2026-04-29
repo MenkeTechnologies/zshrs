@@ -6226,3 +6226,15 @@ fn test_print_dash_P_no_trailing_reset() {
     let (_, output, _) = run_zshrs(r#"print -P "%B""#);
     assert_eq!(output.as_bytes(), b"\x1b[1m\n");
 }
+
+#[test]
+fn test_dollar_underscore_after_no_arg_command() {
+    // After `true`, `$_` should be `true` (the command name) since
+    // there are no args. Was empty because pop_args only updated
+    // pending_underscore from args.last(). For args.is_empty()
+    // case in BUILTIN_TRUE/FALSE/COLON, backfill the command name.
+    let (_, output, _) = run_zshrs(r#"true; echo "[$_]""#);
+    assert_eq!(output.trim(), "[true]");
+    let (_, output, _) = run_zshrs(r#"false; echo "[$_]""#);
+    assert_eq!(output.trim(), "[false]");
+}

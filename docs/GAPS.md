@@ -1675,6 +1675,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: prompt expansion does NOT auto-reset attributes at end. `print -P "%B"` outputs exactly `\e[1m\n` — the bold escape and a newline. zshrs's prompt expander unconditionally appended `\e[0m` when any attribute (`bold`, `underline`, `fg_color`, etc.) was active at end-of-expansion. Removed the auto-reset block so the user controls when to clear with explicit `%b`/`%f`/`%k`. Test: `test_print_dash_P_no_trailing_reset`.
 
+### `$_` empty after no-arg `true` / `false` / `:`
+
+- zsh: `true; echo $_` prints `true` (the command name, since no args). zshrs's `pop_args` updates `pending_underscore` only from `args.last()`; for arg-less commands no update fired. Backfilled the command name in BUILTIN_TRUE/FALSE/COLON when args is empty. Test: `test_dollar_underscore_after_no_arg_command`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
