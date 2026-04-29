@@ -11436,6 +11436,32 @@ impl ShellExecutor {
     }
 
     pub fn run_command_substitution(&mut self, cmd_str: &str) -> String {
+        // `$(< FILE)` — zsh shorthand for "read FILE contents". Faster
+        // than spawning `cat`. The leading `<` (after stripping
+        // whitespace) means "read this file". Trailing newline is
+        // stripped (same as command-substitution).
+        let trimmed = cmd_str.trim_start();
+        if let Some(rest) = trimmed.strip_prefix('<') {
+            let filename = rest.trim();
+            // Expand any leading $ / tilde in the filename so
+            // `$(< $f)` and `$(< ~/x)` work.
+            let resolved = if filename.contains('$') || filename.starts_with('~') {
+                self.expand_string(filename)
+            } else {
+                filename.to_string()
+            };
+            let resolved = self.expand_tilde_named(&resolved);
+            match std::fs::read_to_string(&resolved) {
+                Ok(contents) => {
+                    return contents.trim_end_matches('\n').to_string();
+                }
+                Err(_) => {
+                    eprintln!("zshrs:1: no such file or directory: {}", resolved);
+                    return String::new();
+                }
+            }
+        }
+
         // Port of getoutput() from Src/exec.c. Parse and compile via
         // the ZshLexer + ZshParser + ZshCompiler pipeline, run on a
         // sub-VM with the host wired up. Stdout is captured through
@@ -21247,15 +21273,37 @@ impl ShellExecutor {
                         }
                     }
                     'q' => {
-                        output.push('\'');
+                        // zsh `%q` — backslash-escape shell-special
+                        // chars (matches `${(q)}` flag, NOT `(qq)`).
                         for ch in arg.chars() {
-                            if ch == '\'' {
-                                output.push_str("'\\''");
-                            } else {
-                                output.push(ch);
+                            if matches!(
+                                ch,
+                                ' ' | '\t'
+                                    | '\''
+                                    | '"'
+                                    | '\\'
+                                    | '$'
+                                    | '`'
+                                    | '*'
+                                    | '?'
+                                    | '['
+                                    | ']'
+                                    | '{'
+                                    | '}'
+                                    | '('
+                                    | ')'
+                                    | '|'
+                                    | '&'
+                                    | ';'
+                                    | '<'
+                                    | '>'
+                                    | '#'
+                                    | '~'
+                            ) {
+                                output.push('\\');
                             }
+                            output.push(ch);
                         }
-                        output.push('\'');
                     }
                     'd' | 'i' => {
                         let val: i64 = if arg.starts_with("0x") || arg.starts_with("0X") {
@@ -22617,6 +22665,43 @@ impl ShellExecutor {
                         }
                         'b' => {
                             result.push_str(&self.expand_printf_escapes(arg));
+                        }
+                        'q' => {
+                            // zsh `%q` — backslash-escape shell-special
+                            // chars (matches `${(q)}` flag, NOT `(qq)`).
+                            // bash uses single-quote wrapping here; zsh's
+                            // own printf takes the backslash route.
+                            let mut out = String::with_capacity(arg.len() + 4);
+                            for c in arg.chars() {
+                                if matches!(
+                                    c,
+                                    ' ' | '\t'
+                                        | '\''
+                                        | '"'
+                                        | '\\'
+                                        | '$'
+                                        | '`'
+                                        | '*'
+                                        | '?'
+                                        | '['
+                                        | ']'
+                                        | '{'
+                                        | '}'
+                                        | '('
+                                        | ')'
+                                        | '|'
+                                        | '&'
+                                        | ';'
+                                        | '<'
+                                        | '>'
+                                        | '#'
+                                        | '~'
+                                ) {
+                                    out.push('\\');
+                                }
+                                out.push(c);
+                            }
+                            result.push_str(&out);
                         }
                         'n' => result.push('\n'),
                         _ => {
