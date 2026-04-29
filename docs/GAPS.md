@@ -1647,6 +1647,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `setopt nocaseglob` normalises to `caseglob=false` in the options HashMap (the `no` prefix is the negation marker stripped by `normalize_option_name`). But `expand_glob` only read `nocaseglob` directly, so the option never took effect. Read BOTH `caseglob` (default-true) and `nocaseglob` keys to honor either form. Test: `test_setopt_nocaseglob_honored`.
 
+### `$(false)` as the only word triggered "command not found:"
+
+- An empty command-substitution result that becomes the entire command word should be a no-op (exit status preserved). zshrs hit `host_exec_external` with an empty `cmd` and emitted `command not found:` (no name) with status 127. Added an `if cmd.is_empty() && rest.is_empty()` early return at the top of host_exec_external. Test: `test_empty_cmdsubst_no_command_not_found`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

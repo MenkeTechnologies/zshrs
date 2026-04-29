@@ -6127,3 +6127,16 @@ fn test_setopt_nocaseglob_honored() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(output.trim(), "Aa");
 }
+
+#[test]
+fn test_empty_cmdsubst_no_command_not_found() {
+    // `$(false)` evaluating to empty string used as the only word
+    // shouldn't error "command not found:". Was hitting that path
+    // with empty name; zsh just no-ops and preserves $?.
+    let (_, _, stderr) = run_zshrs(r#"true; $(false); echo "[$?]""#);
+    assert!(
+        !stderr.contains("command not found"),
+        "stderr should not have command-not-found: {}",
+        stderr
+    );
+}
