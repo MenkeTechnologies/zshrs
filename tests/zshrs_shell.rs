@@ -3718,3 +3718,16 @@ fn test_typeset_f_preserves_first_word_of_body() {
         "body must not start with bare `a` (lost echo): {output:?}"
     );
 }
+
+#[test]
+fn test_t_flag_includes_readonly_modifier() {
+    // ${(t)var} reports the var's type. For a readonly scalar, zsh
+    // emits "scalar-readonly" (compound: kind + modifier joined by
+    // `-`). Was just "scalar" because builtin_readonly populated
+    // readonly_vars but not var_attrs.readonly.
+    let (_, output, _) = run_zshrs(r#"readonly R=x; echo "${(t)R}""#);
+    assert_eq!(output.trim(), "scalar-readonly", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"typeset -r R=x; echo "${(t)R}""#);
+    assert_eq!(output.trim(), "scalar-readonly", "got: {output:?}");
+}

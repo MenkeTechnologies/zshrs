@@ -827,6 +827,16 @@ zsync up --all                      # promote everything
 zsync diff [subsystem]              # show overlay-vs-canonical
 zsync watch <subsystem…>            # subscribe to canonical_changed events
 zsync pull <subsystem>              # opt-in mid-session refresh from canonical (breaks snapshot rule on user request)
+
+# Daemon log inspection
+zlog                                # default: live tail of ~/.cache/zshrs/zshrs.log
+zlog tail [-n N] [--follow]
+zlog grep <pattern> [--rotated]
+zlog level [<new_level>] [<module=level>…]
+zlog clear
+zlog rotate
+zlog path
+zlog stats
 ```
 
 Subscription pattern grammar: `<scope>.<topic>`.
@@ -925,16 +935,22 @@ Daemon is fully observable via `~/.cache/zshrs/zshrs.log`. Every action it takes
 
 **Rotation:** ticker rotates `zshrs.log` to `zshrs.log.1` when size hits 10 MB (configurable via `ZSHRS_LOG_MAX_BYTES`). Up to 4 rotated copies kept (`.1` through `.4`); `.4` is purged when `.3` rotates in. Total disk footprint capped at ~50 MB.
 
-**Inspection verbs:**
+**Top-level builtin: `zlog`.** Dedicated builtin for log inspection — top-level for discoverability since this is a daily-use operation:
 
 ```
-zcache log tail [-n N] [--follow]   # tail of current log (default: last 100 lines, --follow for live)
-zcache log grep <pattern>           # ripgrep across current + rotated logs
-zcache log level [<new_level>]      # show or set runtime log level (no daemon restart)
-zcache log clear                    # truncate current log (rotated copies preserved)
+zlog                                # default: zlog tail --follow (live tail of current log)
+zlog tail [-n N]                    # tail of current log (default: last 100 lines)
+zlog tail --follow                  # live tail, streams new entries as daemon writes
+zlog grep <pattern> [--rotated]     # ripgrep current log; --rotated includes .1-.4 archives
+zlog level [<new_level>]            # show or set runtime log level (no daemon restart)
+zlog level fsnotify=debug,ipc=trace # per-module overrides at runtime
+zlog clear                          # truncate current log (rotated copies preserved)
+zlog rotate                         # force a rotation now (don't wait for size threshold)
+zlog path                           # print absolute path to current log file
+zlog stats                          # daemon log self-stats: line counts, size, errors-since-start
 ```
 
-These are thin IPC wrappers; daemon does the file IO. Client never opens the log file directly.
+`zlog` is a thin IPC wrapper; daemon does the file IO and tailing. Client never opens the log file directly. The `zcache log <verb>` form remains as an alias for `zlog <verb>` so `zcache *` discoverability stays intact, but `zlog` is the canonical surface.
 
 ### Hard invariants (rejected proposal classes)
 

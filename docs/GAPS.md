@@ -933,7 +933,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 - All three `Inbrace` body-capture sites in `parser.rs` (parse_funcdef, parse_inline_funcdef, and the synthesized FuncDef path inside `parse_program_until`) called `zshlex()` BEFORE recording `body_start`. After consuming `{`, the next `zshlex()` advances past the first body token (`echo`), so `body_start` landed mid-body and the captured slice lost the first word. Result: `typeset -f f` / `functions f` / `whence -c f` all printed `a; echo b;` instead of `echo a; echo b;`.
 - Hoisted `let body_start = self.lexer.pos;` BEFORE the `zshlex()` in all three sites (lexer.pos already points just past `{` after the outer zshlex consumed it). Test: `test_typeset_f_preserves_first_word_of_body`.
 
-## Still open (fifty-first-pass — remaining)
+## Closed (fifty-second-pass — `${(t)readonly_var}` includes `-readonly` modifier)
+
+### `readonly R=x; echo "${(t)R}"` printed `scalar` instead of `scalar-readonly`
+
+- `format_zsh()` already appends `-readonly` to the type string when `var_attrs.readonly` is set, but `builtin_readonly` only inserted the name into `readonly_vars` (a separate HashSet for write-protection enforcement) without touching `var_attrs`. Result: write-protection worked, but `(t)` introspection couldn't see the readonly bit.
+- Added the `var_attrs.readonly = true` set to both branches of `builtin_readonly` (the `name=value` and bare-`name` paths). Test: `test_t_flag_includes_readonly_modifier`.
+
+## Still open (fifty-second-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
