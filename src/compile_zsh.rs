@@ -2301,6 +2301,14 @@ impl ZshCompiler {
                     .emit(Op::CallBuiltin(crate::exec::BUILTIN_OPTION_SET, 1), 0);
                 return;
             }
+            "-t" => {
+                // `[[ -t fd ]]` — fd-is-a-tty check. Stack-top is the
+                // fd-string (e.g. "0", "1", "2"). Route through a
+                // host-side builtin that calls libc::isatty.
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_IS_TTY, 1), 0);
+                return;
+            }
             _ => {
                 // zsh: `[[ -l file ]]` (and any other unknown unary
                 // condition) errors with `unknown condition: -X`.

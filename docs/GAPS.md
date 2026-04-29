@@ -1679,6 +1679,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `true; echo $_` prints `true` (the command name, since no args). zshrs's `pop_args` updates `pending_underscore` only from `args.last()`; for arg-less commands no update fired. Backfilled the command name in BUILTIN_TRUE/FALSE/COLON when args is empty. Test: `test_dollar_underscore_after_no_arg_command`.
 
+### `[[ -t fd ]]` (is-fd-a-tty) emitted "unknown condition: -t"
+
+- zsh: `[[ -t 0 ]]` checks if stdin is a tty. zshrs's `emit_file_test` had no case for `-t` — it fell to the default unknown-condition branch and emitted the new diagnostic spuriously. Added a `-t` case that pushes the fd-string and routes through new `BUILTIN_IS_TTY` (calls `libc::isatty`). Test: `test_dash_t_fd_is_tty`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
