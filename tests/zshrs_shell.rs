@@ -6217,3 +6217,12 @@ fn test_array_element_substring() {
         run_zshrs(r##"a=(abcdef); echo "[${a[1]:1:3}]""##);
     assert_eq!(output.trim(), "[bcd]");
 }
+
+#[test]
+fn test_print_dash_P_no_trailing_reset() {
+    // `print -P "%B"` should output just `\e[1m\n` — zsh doesn't
+    // auto-reset attributes at end of prompt expansion. zshrs was
+    // appending an extra `\e[0m`.
+    let (_, output, _) = run_zshrs(r#"print -P "%B""#);
+    assert_eq!(output.as_bytes(), b"\x1b[1m\n");
+}

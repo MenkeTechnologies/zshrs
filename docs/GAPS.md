@@ -1671,6 +1671,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `a=(hello); ${a[1]:0:1}` should return `h` (substring of element 1). zshrs's bracket-handler routed the `:0:1` modifier through the colon-default branch (`:-`) which doesn't handle digit-prefixed offset/length. Added a `:DIGIT[:DIGIT]` substring branch BEFORE the colon-default handlers — only fires when the char after `:` is a digit (so `:-default` continues to be the default-if-empty form, not a negative offset). Test: `test_array_element_substring`.
 
+### `print -P "%B"` appended an unwanted `\e[0m` reset
+
+- zsh: prompt expansion does NOT auto-reset attributes at end. `print -P "%B"` outputs exactly `\e[1m\n` — the bold escape and a newline. zshrs's prompt expander unconditionally appended `\e[0m` when any attribute (`bold`, `underline`, `fg_color`, etc.) was active at end-of-expansion. Removed the auto-reset block so the user controls when to clear with explicit `%b`/`%f`/`%k`. Test: `test_print_dash_P_no_trailing_reset`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
