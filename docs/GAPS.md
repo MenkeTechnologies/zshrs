@@ -1133,13 +1133,35 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `$-` returns the concatenated single-letter codes for the options currently set: baseline `569X` always, `f` when rcs is off (`-f`), then `e`/`u`/`x`/`v`/`n`/`l`/`h` for set -e / set -u / set -x / etc. zshrs returned an empty string. Added `"-"` arm in `get_variable` that builds the letter sequence in zsh's exact ordering (e BEFORE f, then login, nounset, xtrace, verbose, noexec, hashall) — matches `set -e; echo $-` → `569Xef`, `set -u; echo $-` → `569Xfu`, `set -x; echo $-` → `569Xfx`, `set -eu; echo $-` → `569Xefu`. Tests: `test_dollar_dash_baseline_no_user_flags`, `test_dollar_dash_includes_e_when_errexit_on`, `test_dollar_dash_includes_x_when_xtrace_on`.
 
-## Still open (sixty-sixth-pass — remaining)
+## Closed (sixty-seventh-pass)
+
+### `$0` in `-c` mode leaked the full argv0 path
+
+- `echo $0` returned `./target/debug/zshrs` instead of zsh's bare `zsh`. `get_variable` defaulted to `env::args().next()` for `$0`. Fixed in `bins/zshrs.rs`'s `-c` handler — set `executor.variables["0"]` to `basename(argv[0])` BEFORE running the script. zshrs invoked as `zshrs` returns `zshrs`; invoked as `zsh` (symlink) returns `zsh`. Test: `test_dollar_zero_in_minus_c_returns_basename`.
+
+### `print -P "%T"` zero-padded the hour
+
+- zsh's prompt `%T` time-of-day produces `4:10` (no leading zero on hour); zshrs printed `04:10`. chrono's `%H` always zero-pads; switched to `%k` (space-pad) and `trim_start()` to strip the leading space without touching the digit when hour ≥ 10. Same fix for `%*` (HH:MM:SS). Test: `test_print_dash_p_capital_T_no_zero_pad_hour`.
+
+### Escaped braces `\{foo,bar\}` mangled into garbage
+
+- `echo \{foo,bar\}` should print `{foo,bar}` literally (no expansion). zshrs printed `oo ar\` — the lexer's BNULL-encoded `\{` / `\}` got `untokenize`d back into literal `\{` / `\}` BEFORE `expand_braces` ran, then the brace finder treated `\{` as `{` (with leading literal `\`) and emitted partial strings. Added a `has_balanced_escaped_braces()` short-circuit at the top of `expand_braces` that detects matched `\{`/`\}` pairs and returns the de-escaped literal as a single token. Tests: `test_escaped_braces_stay_literal_in_word`, `test_escaped_braces_with_prefix_suffix`, `test_unescaped_braces_still_expand`.
+
+### Bare `$#name` returned literal `$#name`
+
+- `$#NAME` (no braces) is zsh shorthand for `${#NAME}` (string length / array element count). zshrs's `compile_word_str` had a fast-path for `$NAME` and `$#` (positional count alone), but no path for the `$#NAME` shape — the dispatcher fell through to a generic literal emit. Added a fast-path in `compile_word_str` that detects `^$#[A-Za-z_][A-Za-z0-9_]*$` and emits `BUILTIN_PARAM_LENGTH` directly. Tests: `test_dollar_hash_name_bare_array_length`, `test_dollar_hash_name_bare_string_length`.
+
+## Still open (sixty-seventh-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
 - **`${(j:sep:)$(cmd subst)}`** — cmd-subst as direct argument to flagged PE returns empty in zshrs; zsh splits-and-joins (`a,b,c`). Needs PE flag-context cmd-subst recognition before var-name extraction. Deferred.
 - **Arith error full command-abort** — zsh: `echo $((10/0))` prints only the error and skips `echo`; zshrs prints the error then runs `echo 0`. Partial fix landed (error message now visible); full abort needs expansion-time error plumbing.
-- **`echo \{foo,bar\}`** — escaped braces should stay literal `{foo,bar}`; zshrs strips backslashes wrongly and outputs `oo ar\`. Brace-expansion preprocess needs to honor backslash escape on `{`/`}`/`,`.
+- **`set` noargs print all variables** — `set` with no args should dump every shell parameter in name=value form. zshrs prints ~10 lines; zsh prints ~480. Massive output diff; deferred (needs full param-table walk + assoc/array formatting).
+- **`${a:^b}` zip-arrays** — zsh's interleave-arrays operator. `a=(1 2 3) b=(x y z); print ${a:^b}` should yield `1 x 2 y 3 z`. Not implemented.
+- **`${(v)assoc}` insertion order** — zshrs returns hash iteration order; zsh preserves insertion order. Tests show `${(v)h}` for `h=(a 1 b 2)` returns `2 1` instead of `1 2`. Needs assoc-array storage that preserves insertion order (IndexMap).
+- **`${(s:l:)hello}` empty-element handling** — zsh drops empty elements when splitting (`hello` split by `l` → `he`, `o`); zshrs keeps empties (`he`, ``, `o`). Niche.
+- **`${#:-empty}` length-of-default** — zsh returns 5 (length of "empty"); zshrs returns 0. Esoteric edge case in `${#name:-default}` parsing.
 - **`$0` in `-c` mode** — zshrs returns `./target/debug/zshrs` (full argv0); zsh returns `zsh` (just the basename). Cosmetic but leaks paths in user scripts that log `$0`.
 - **`set` noargs print all variables** — `set` with no args should dump every shell parameter in name=value form. zshrs prints ~10 lines; zsh prints ~480. Massive output diff; deferred (needs full param-table walk + assoc/array formatting).
 - **`${a:^b}` zip-arrays** — zsh's interleave-arrays operator. `a=(1 2 3) b=(x y z); print ${a:^b}` should yield `1 x 2 y 3 z`. Not implemented.

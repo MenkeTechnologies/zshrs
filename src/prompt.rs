@@ -670,12 +670,19 @@ impl<'a> PromptExpander<'a> {
                 }
             }
             'T' => {
+                // zsh prints %T with no zero-pad on the hour: 04:10 → 4:10.
+                // chrono's %H always zero-pads; use %k (space-padded hour
+                // 0-23) and trim the leading space. Without this, zshrs
+                // emitted `04:10` while zsh emitted `4:10` for early
+                // hours.
                 let now = chrono::Local::now();
-                self.output.push_str(&now.format("%H:%M").to_string());
+                let formatted = now.format("%k:%M").to_string();
+                self.output.push_str(formatted.trim_start());
             }
             '*' => {
                 let now = chrono::Local::now();
-                self.output.push_str(&now.format("%H:%M:%S").to_string());
+                let formatted = now.format("%k:%M:%S").to_string();
+                self.output.push_str(formatted.trim_start());
             }
             't' | '@' => {
                 let now = chrono::Local::now();
