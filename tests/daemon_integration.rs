@@ -404,3 +404,143 @@ fn source_resolve_rejects_relative_path() {
     let s = format!("{}", res.unwrap_err());
     assert!(s.contains("absolute"));
 }
+
+#[test]
+fn history_append_then_query() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+
+    for cmd in ["git status", "cargo build --release", "git push origin main", "ls -la"] {
+        c.call(
+            "history_append",
+            json!({ "line": cmd, "ts_ns": 1000, "exit_code": 0 }),
+        )
+        .expect("append");
+    }
+
+    // FTS match for `git`.
+    let r = c
+        .call(
+            "history_query",
+            json!({ "filter": "git", "mode": "match", "limit": 100 }),
+        )
+        .expect("query");
+    assert_eq!(r["count"].as_u64(), Some(2));
+    let rows = r["rows"].as_array().unwrap();
+    assert!(rows.iter().any(|r| r["line"] == "git status"));
+    assert!(rows.iter().any(|r| r["line"] == "git push origin main"));
+}
+
+#[test]
+fn history_query_recent_no_filter() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+
+    for i in 1..=20 {
+        c.call(
+            "history_append",
+            json!({ "line": format!("cmd_{}", i), "ts_ns": i * 100 }),
+        )
+        .unwrap();
+    }
+    let r = c
+        .call("history_query", json!({ "limit": 5, "descending": true }))
+        .expect("query");
+    let rows = r["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 5);
+    assert_eq!(rows[0]["line"], "cmd_20");
+    assert_eq!(rows[4]["line"], "cmd_16");
+}
+
+#[test]
+fn subscribe_unsubscribe_lifecycle() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+
+    let r = c
+        .call("subscribe", json!({ "pattern": "*.commands" }))
+        .expect("subscribe");
+    let sub_id = r["subscription_id"].as_u64().unwrap();
+    assert_eq!(r["pattern"], "*.commands");
+
+    let r = c
+        .call("unsubscribe", json!({ "id": sub_id }))
+        .expect("unsubscribe by id");
+    assert_eq!(r["removed"], json!(1));
+
+    // Second unsubscribe is a no-op (already gone).
+    let r = c
+        .call("unsubscribe", json!({ "id": sub_id }))
+        .expect("unsubscribe absent");
+    assert_eq!(r["removed"], json!(0));
+}
+
+#[test]
+fn subscribe_rejects_bad_pattern() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    let res = c.call("subscribe", json!({ "pattern": "no_separator" }));
+    assert!(res.is_err());
+    assert!(format!("{}", res.unwrap_err()).contains("bad_pattern"));
+}
+
+#[test]
+fn publish_deliver_to_matching_subscribers() {
+    let d = DaemonHandle::spawn();
+    let publisher = d.connect();
+    drop(publisher); // any client can publish; we don't actually need its handle for that
+
+    // Two distinct subscribers.
+    let mut sub_a = d.connect();
+    let mut sub_b = d.connect();
+    sub_a
+        .call("subscribe", json!({ "pattern": "*.commands" }))
+        .expect("sub a");
+    sub_b
+        .call("subscribe", json!({ "pattern": "*.chpwd" }))
+        .expect("sub b");
+
+    // A third client publishes a `commands` event. Sub A matches, B doesn't.
+    let mut publisher = d.connect();
+    let r = publisher
+        .call(
+            "publish",
+            json!({ "topic": "commands", "data": { "line": "ls" } }),
+        )
+        .expect("publish");
+    assert_eq!(r["delivered_to"].as_u64(), Some(1));
+
+    // chpwd: only sub B matches.
+    let r = publisher
+        .call(
+            "publish",
+            json!({ "topic": "chpwd", "data": { "cwd": "/tmp" } }),
+        )
+        .expect("publish");
+    assert_eq!(r["delivered_to"].as_u64(), Some(1));
+
+    // unknown topic — zero subscribers.
+    let r = publisher
+        .call("publish", json!({ "topic": "totally_unhandled", "data": {} }))
+        .expect("publish");
+    assert_eq!(r["delivered_to"].as_u64(), Some(0));
+}
+
+#[test]
+fn subscriptions_cleared_on_disconnect() {
+    let d = DaemonHandle::spawn();
+    let mut sub_client = d.connect();
+    sub_client
+        .call("subscribe", json!({ "pattern": "*.commands" }))
+        .unwrap();
+    drop(sub_client); // disconnect
+
+    // Give the daemon a beat to register the disconnect cleanup.
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    let mut probe = d.connect();
+    let r = probe
+        .call("publish", json!({ "topic": "commands", "data": {} }))
+        .expect("publish");
+    assert_eq!(r["delivered_to"].as_u64(), Some(0));
+}

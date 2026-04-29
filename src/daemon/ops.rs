@@ -46,13 +46,16 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "verify" => op_verify(state).await,
         "compact" => op_compact(state).await,
         "source_resolve" => super::source_resolver::op_source_resolve(state, args).await,
+        "history_append" => super::history::op_history_append(state, args).await,
+        "history_query" => super::history::op_history_query(state, args).await,
+        "subscribe" => op_subscribe(state, client_id, args).await,
+        "unsubscribe" => op_unsubscribe(state, client_id, args).await,
+        "publish" => op_publish(state, client_id, args).await,
 
         // Stubs — all return unimplemented. Filling in is later-iteration work.
         "fpath_changed"
         | "stats_flush"
         | "subscribe_shard"
-        | "history_append"
-        | "history_query"
         | "complete"
         | "suggest"
         | "highlight"
@@ -65,9 +68,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         | "export_catalog"
         | "export_shard"
         | "import_zcompdump"
-        | "register"
-        | "subscribe"
-        | "unsubscribe" => Err(ErrPayload::new(
+        | "register" => Err(ErrPayload::new(
             "unimplemented",
             format!("op `{op}` not yet implemented in v1 foundation"),
         )),
@@ -433,6 +434,77 @@ async fn op_compact(state: &Arc<DaemonState>) -> OpResult {
     Ok(json!({
         "tmp_swept": swept,
     }))
+}
+
+// -------- pub/sub --------
+
+async fn op_subscribe(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    let pattern = args
+        .get("pattern")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `pattern`"))?
+        .to_string();
+
+    if pattern.starts_with("--list") {
+        // --list: report this client's existing subscriptions. Convention used by zsubscribe --list.
+        let subs = state.list_subscriptions_for(client_id);
+        return Ok(json!({
+            "subscriptions": subs.iter().map(|s| json!({
+                "id": s.id,
+                "pattern": s.pattern,
+            })).collect::<Vec<_>>(),
+        }));
+    }
+
+    match state.add_subscription(client_id, &pattern) {
+        Ok(id) => Ok(json!({
+            "subscription_id": id,
+            "pattern": pattern,
+        })),
+        Err(e) => Err(ErrPayload::new("bad_pattern", e)),
+    }
+}
+
+async fn op_unsubscribe(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    if let Some(id) = args.get("id").and_then(Value::as_u64) {
+        let removed = state.remove_subscription_by_id(client_id, id);
+        return Ok(json!({ "removed": if removed { 1 } else { 0 } }));
+    }
+    let pattern = args
+        .get("pattern")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `pattern` or `id`"))?
+        .to_string();
+    let removed = state.remove_subscription_by_pattern(client_id, &pattern);
+    Ok(json!({ "removed": removed }))
+}
+
+/// Generic publish op. Used by clients to inject events into the fan-out channel
+/// (e.g. preexec/precmd hooks publishing `commands`/`chpwd`/`prompt`).
+async fn op_publish(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    let topic = args
+        .get("topic")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `topic`"))?
+        .to_string();
+    let data = args.get("data").cloned().unwrap_or(Value::Null);
+
+    let origin = state
+        .origin_scope(client_id)
+        .ok_or_else(|| ErrPayload::new("no_session", "client session not found"))?;
+
+    // The match event delivered to subscribers carries scope+topic+data.
+    let scope_str = origin.canonical();
+    let payload = json!({
+        "subscription_id": null,
+        "scope": scope_str,
+        "topic": topic,
+        "data": data,
+    });
+    let frame = Frame::event("match", payload);
+    let count = state.publish(&origin, &topic, frame);
+
+    Ok(json!({ "delivered_to": count }))
 }
 
 // -------- Helpers --------
