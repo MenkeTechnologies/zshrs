@@ -1284,47 +1284,63 @@ impl<'a> MathEval<'a> {
                 self.push(result, None);
             }
             MathTok::PostPlus => {
-                if let Some(ref name) = mv.lval {
-                    let new_val = if val.is_float() {
-                        MathNum::Float(val.to_float() + 1.0)
-                    } else {
-                        MathNum::Integer(val.to_int() + 1)
-                    };
-                    self.set_variable(name, new_val);
+                // ++/-- on a literal (`5++`, `--5`) is a zsh error:
+                // "bad math expression: lvalue required". Without the
+                // mv.lval guard, zshrs silently incremented the
+                // literal value and returned it, masking the bug.
+                if mv.lval.is_none() {
+                    self.error = Some("bad math expression: lvalue required".to_string());
+                    return;
                 }
-                self.push(val, None); // Return original value
-            }
-            MathTok::PostMinus => {
-                if let Some(ref name) = mv.lval {
-                    let new_val = if val.is_float() {
-                        MathNum::Float(val.to_float() - 1.0)
-                    } else {
-                        MathNum::Integer(val.to_int() - 1)
-                    };
-                    self.set_variable(name, new_val);
-                }
-                self.push(val, None);
-            }
-            MathTok::PrePlus => {
+                let name = mv.lval.as_ref().unwrap();
                 let new_val = if val.is_float() {
                     MathNum::Float(val.to_float() + 1.0)
                 } else {
                     MathNum::Integer(val.to_int() + 1)
                 };
-                if let Some(ref name) = mv.lval {
-                    self.set_variable(name, new_val);
-                }
-                self.push(new_val, mv.lval);
+                self.set_variable(name, new_val);
+                self.push(val, None); // Return original value
             }
-            MathTok::PreMinus => {
+            MathTok::PostMinus => {
+                if mv.lval.is_none() {
+                    self.error = Some("bad math expression: lvalue required".to_string());
+                    return;
+                }
+                let name = mv.lval.as_ref().unwrap();
                 let new_val = if val.is_float() {
                     MathNum::Float(val.to_float() - 1.0)
                 } else {
                     MathNum::Integer(val.to_int() - 1)
                 };
-                if let Some(ref name) = mv.lval {
-                    self.set_variable(name, new_val);
+                self.set_variable(name, new_val);
+                self.push(val, None);
+            }
+            MathTok::PrePlus => {
+                if mv.lval.is_none() {
+                    self.error = Some("bad math expression: lvalue required".to_string());
+                    return;
                 }
+                let name = mv.lval.as_ref().unwrap();
+                let new_val = if val.is_float() {
+                    MathNum::Float(val.to_float() + 1.0)
+                } else {
+                    MathNum::Integer(val.to_int() + 1)
+                };
+                self.set_variable(name, new_val);
+                self.push(new_val, mv.lval);
+            }
+            MathTok::PreMinus => {
+                if mv.lval.is_none() {
+                    self.error = Some("bad math expression: lvalue required".to_string());
+                    return;
+                }
+                let name = mv.lval.as_ref().unwrap();
+                let new_val = if val.is_float() {
+                    MathNum::Float(val.to_float() - 1.0)
+                } else {
+                    MathNum::Integer(val.to_int() - 1)
+                };
+                self.set_variable(name, new_val);
                 self.push(new_val, mv.lval);
             }
             MathTok::Quest => {

@@ -4559,3 +4559,89 @@ fn test_declare_capital_F_lists_declared_floats() {
         "should not include shell-internal vars: {output:?}"
     );
 }
+
+#[test]
+fn test_typeset_dash_U_dedupes_array() {
+    // `typeset -U arr` with `arr=(a b a c)` should yield `a b c`.
+    // Regression: zshrs didn't track the unique attribute so the
+    // duplicates remained.
+    let (_, output, _) = run_zshrs(r#"typeset -U arr; arr=(a b a c); echo "${arr[@]}""#);
+    assert_eq!(output.trim(), "a b c");
+}
+
+#[test]
+fn test_typeset_dash_U_after_assignment_dedupes() {
+    // Setting -U AFTER the array was assigned should still dedupe
+    // (zsh applies the attr on attribute change too).
+    let (_, output, _) = run_zshrs(r#"arr=(a b a c b); typeset -U arr; echo "${arr[@]}""#);
+    assert_eq!(output.trim(), "a b c");
+}
+
+#[test]
+fn test_typeset_dash_U_append_dedupes() {
+    // `arr+=(b a c)` should append only new elements; `b` and `a`
+    // already exist so only `c` is appended.
+    let (_, output, _) = run_zshrs(r#"typeset -U arr; arr=(a b); arr+=(b a c); echo "${arr[@]}""#);
+    assert_eq!(output.trim(), "a b c");
+}
+
+#[test]
+fn test_arith_pre_increment_on_literal_errors() {
+    // `((++5))` is a zsh error: "bad math expression: lvalue required".
+    // Regression: zshrs silently incremented and returned 6.
+    let (_, _, stderr) = run_zshrs(r#"echo $((++5))"#);
+    assert!(
+        stderr.contains("bad math expression: lvalue required"),
+        "expected lvalue-required err: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_arith_post_increment_on_literal_errors() {
+    // `((5++))` — same lvalue-required error.
+    let (_, _, stderr) = run_zshrs(r#"echo $((5++))"#);
+    assert!(
+        stderr.contains("bad math expression: lvalue required"),
+        "expected lvalue-required err: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_arith_pre_decrement_on_var_works() {
+    // Regression guard: `--var` on a real variable still works.
+    let (_, output, _) = run_zshrs(r#"a=10; echo $((--a))"#);
+    assert_eq!(output.trim(), "9");
+}
+
+#[test]
+fn test_typeset_E_uses_sig_digit_precision() {
+    // `typeset -E5 a=1234.5` — `-E5` means 5 SIGNIFICANT digits, not 5
+    // fractional. zsh: `1.2345e+03`. Regression: zshrs printed
+    // `1.23450e+03` (5 fractional → 6 significant).
+    let (_, output, _) = run_zshrs(r#"typeset -E5 a=1234.5; echo $a"#);
+    assert_eq!(output.trim(), "1.2345e+03");
+}
+
+#[test]
+fn test_typeset_E_default_precision_nine_fractional() {
+    // Default `-E` (no number) → 10 significant digits → 9 fractional.
+    // zsh: `1.234500000e+03` for `1234.5`.
+    let (_, output, _) = run_zshrs(r#"typeset -E a=1234.5; echo $a"#);
+    assert_eq!(output.trim(), "1.234500000e+03");
+}
+
+#[test]
+fn test_dollar_hash_name_bracket_at() {
+    // `$#a[@]` (no braces) is zsh shorthand for `${#a[@]}` (array
+    // length). Regression: zshrs printed `$#a[@]` literally because
+    // the bare-form fast-path didn't accept the `[@]` / `[*]` suffix.
+    let (_, output, _) = run_zshrs(r#"a=(x y z); echo $#a[@]"#);
+    assert_eq!(output.trim(), "3");
+}
+
+#[test]
+fn test_dollar_hash_name_bracket_star() {
+    // Same shape with `[*]`.
+    let (_, output, _) = run_zshrs(r#"a=(x y z); echo $#a[*]"#);
+    assert_eq!(output.trim(), "3");
+}
