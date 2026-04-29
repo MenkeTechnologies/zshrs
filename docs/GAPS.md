@@ -1701,6 +1701,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - ArithCompiler emits at most one op-write per call; the comma-trailing statements were dropped. So `i=0,j=10` set `i` but left `j` empty, producing `0:` instead of `0:10`. Routed comma-containing init/step expressions through `BUILTIN_ARITH_EVAL` (MathEval, which evaluates the whole comma-list and writes back through `extract_string_variables`). Cond expressions with comma also re-routed. Test: `test_for_arith_comma_init_and_step`.
 
+### `print -P "%B%S%U"` re-emitted bold/standout each time
+
+- zsh: `%B%S%U` outputs `\e[1m\e[3m\e[4m` (each independent SGR). zshrs's `apply_attrs` re-emitted ALL currently-active attrs every call, producing `\e[1m\e[1m\e[3m\e[1m\e[3m\e[4m` etc. Each individual attribute handler (`B`/`U`/`S`) now emits ONLY its specific SGR code; `apply_attrs` is reserved for color-set paths that need the full state. Test: `test_print_P_attr_chain_independent`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

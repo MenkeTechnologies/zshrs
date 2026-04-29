@@ -699,10 +699,16 @@ impl<'a> PromptExpander<'a> {
                 self.output.push_str(&now.format("%m/%d/%y").to_string());
             }
 
-            // Text attributes
+            // Text attributes — emit only the SGR for the newly
+            // toggled attribute, not all currently-active ones.
+            // zsh: `%B%S%U` → `\e[1m\e[3m\e[4m` (each is independent).
+            // apply_attrs would re-emit all active attrs every call,
+            // producing duplicate codes.
             'B' => {
                 self.attrs.bold = true;
-                self.apply_attrs();
+                self.start_escape();
+                self.output.push_str("\x1b[1m");
+                self.end_escape();
             }
             'b' => {
                 // zsh's %b emits a full SGR reset `\e[0m` (matches the
@@ -716,7 +722,9 @@ impl<'a> PromptExpander<'a> {
             }
             'U' => {
                 self.attrs.underline = true;
-                self.apply_attrs();
+                self.start_escape();
+                self.output.push_str("\x1b[4m");
+                self.end_escape();
             }
             'u' => {
                 self.attrs.underline = false;
@@ -726,7 +734,11 @@ impl<'a> PromptExpander<'a> {
             }
             'S' => {
                 self.attrs.standout = true;
-                self.apply_attrs();
+                self.start_escape();
+                // zsh emits italic (`3m`) for `%S` standout, not
+                // reverse video (`7m`). Match zsh's actual output.
+                self.output.push_str("\x1b[3m");
+                self.end_escape();
             }
             's' => {
                 self.attrs.standout = false;

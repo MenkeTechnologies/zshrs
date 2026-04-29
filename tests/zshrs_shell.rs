@@ -6300,3 +6300,13 @@ fn test_for_arith_comma_init_and_step() {
     );
     assert_eq!(output.trim(), "0:10\n1:9\n2:8");
 }
+
+#[test]
+fn test_print_P_attr_chain_independent() {
+    // %B%S%U should emit \e[1m\e[3m\e[4m (each on its own).
+    // apply_attrs was re-emitting all active attrs, producing
+    // \e[1m\e[1m\e[3m\e[1m... duplicates. Each attr handler now
+    // emits ONLY its specific SGR code.
+    let (_, output, _) = run_zshrs(r#"print -P "%B%S%U""#);
+    assert_eq!(output.as_bytes(), b"\x1b[1m\x1b[3m\x1b[4m\n");
+}
