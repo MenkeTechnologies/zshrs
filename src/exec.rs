@@ -547,8 +547,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_PWD, |vm, argc| {
-        let _args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_pwd(&[]));
+        let args = pop_args(vm, argc);
+        let status = with_executor(|exec| exec.builtin_pwd_with_args(&args));
         Value::Status(status)
     });
 
@@ -6538,7 +6538,45 @@ impl ShellExecutor {
             }
         }
         match op_byte {
-            r::WRITE | r::CLOBBER => {
+            r::WRITE => {
+                // Honor `setopt noclobber`: refuse to overwrite an
+                // existing regular file unless `>!` / `>|` (CLOBBER).
+                // zsh internally stores the inverted-name `clobber`
+                // (default ON); `setopt noclobber` writes
+                // `clobber=false`. Honor both keys.
+                let noclobber = self.options.get("noclobber").copied().unwrap_or(false)
+                    || !self.options.get("clobber").copied().unwrap_or(true);
+                if noclobber && std::path::Path::new(target).exists() {
+                    eprintln!("zshrs:1: file exists: {}", target);
+                    self.last_status = 1;
+                    // Sink the upcoming command's stdout to /dev/null
+                    // so we don't leak its output to the terminal.
+                    // zsh skips the command entirely; we approximate by
+                    // discarding the output (the redirect target was
+                    // the user's chosen sink, but with noclobber the
+                    // file is protected — discarding matches the
+                    // user's intent better than printing to terminal).
+                    if let Ok(file) = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open("/dev/null")
+                    {
+                        let new_fd = file.into_raw_fd();
+                        unsafe {
+                            libc::dup2(new_fd, fd);
+                            libc::close(new_fd);
+                        }
+                    }
+                    return;
+                }
+                if let Ok(file) = std::fs::File::create(target) {
+                    let new_fd = file.into_raw_fd();
+                    unsafe {
+                        libc::dup2(new_fd, fd);
+                        libc::close(new_fd);
+                    }
+                }
+            }
+            r::CLOBBER => {
                 if let Ok(file) = std::fs::File::create(target) {
                     let new_fd = file.into_raw_fd();
                     unsafe {
@@ -13088,29 +13126,41 @@ impl ShellExecutor {
         }
     }
 
-    fn builtin_pwd(&mut self, redirects: &[Redirect]) -> i32 {
+    fn builtin_pwd(&mut self, _redirects: &[Redirect]) -> i32 {
+        self.builtin_pwd_with_args(&[])
+    }
+
+    fn builtin_pwd_with_args(&mut self, args: &[String]) -> i32 {
         // Honor `pwd -P` (physical, realpath) and `pwd -L` (logical,
         // tracked $PWD with symlinks preserved). Default is logical to
         // match zsh.
         let mut physical = false;
-        for r in redirects {
-            // No-op iter — kept for signature parity.
-            let _ = r;
+        for arg in args {
+            for ch in arg.strip_prefix('-').unwrap_or("").chars() {
+                match ch {
+                    'P' => physical = true,
+                    'L' => physical = false,
+                    _ => {}
+                }
+            }
         }
-        // `redirects` is unused for arg parsing; consumers pass args via
-        // the builtin dispatcher. The dispatcher includes argv before
-        // redirects in some paths; for safety, also peek
-        // self.positional_params or accept the default.
-        let _ = redirects;
         let logical_pwd = self
             .variables
             .get("PWD")
             .cloned()
             .or_else(|| env::var("PWD").ok());
         let printed = if physical {
-            env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default()
+            // Realpath the logical pwd via canonicalize (resolves
+            // every symlink); fall back to current_dir if PWD missing.
+            let base = logical_pwd
+                .clone()
+                .map(PathBuf::from)
+                .or_else(|| env::current_dir().ok())
+                .unwrap_or_default();
+            base.canonicalize()
+                .unwrap_or(base)
+                .to_string_lossy()
+                .to_string()
         } else {
             logical_pwd.unwrap_or_else(|| {
                 env::current_dir()
