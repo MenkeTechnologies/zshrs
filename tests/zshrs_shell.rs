@@ -3203,3 +3203,52 @@ fn test_until_loop_with_bracket_test() {
         run_zshrs(r#"i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done"#);
     assert_eq!(output.trim(), "0\n1\n2", "got: {output:?}");
 }
+
+#[test]
+fn test_assoc_append_pairs_adds_new_keys() {
+    let (_, output, _) = run_zshrs(
+        r#"declare -A m=(a 1 b 2); m+=(c 3); for k in ${(@k)m}; do echo "$k=${m[$k]}"; done"#,
+    );
+    let mut lines: Vec<&str> = output.lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["a=1", "b=2", "c=3"], "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_oa_preserves_array_order() {
+    let (_, output, _) = run_zshrs(r#"a=(c a b); echo ${(oa)a}"#);
+    assert_eq!(output.trim(), "c a b", "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_Oa_reverses_array_order() {
+    let (_, output, _) = run_zshrs(r#"a=(c a b); echo ${(Oa)a}"#);
+    assert_eq!(output.trim(), "b a c", "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_on_numeric_sort() {
+    let (_, output, _) = run_zshrs(r#"a=(10 2 30 4); echo ${(on)a}"#);
+    assert_eq!(output.trim(), "2 4 10 30", "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_oi_case_insensitive_sort() {
+    let (_, output, _) = run_zshrs(r#"a=(B a C b A c); echo ${(oi)a}"#);
+    // case-insensitive: A/a equal, B/b equal, C/c equal — stable order
+    // preserves original within each equivalence class.
+    let zsh_expected = "a A B b C c";
+    assert_eq!(output.trim(), zsh_expected, "got: {output:?}");
+}
+
+#[test]
+fn test_printf_g_uses_shortest_representation() {
+    let (_, output, _) = run_zshrs(r#"printf "%g\n" 3.14"#);
+    assert_eq!(output.trim(), "3.14", "%g 3.14: {output:?}");
+    let (_, output, _) = run_zshrs(r#"printf "%g\n" 1234567"#);
+    assert_eq!(output.trim(), "1.23457e+06", "%g 1234567: {output:?}");
+    let (_, output, _) = run_zshrs(r#"printf "%g\n" 0.00001"#);
+    assert_eq!(output.trim(), "1e-05", "%g 0.00001: {output:?}");
+    let (_, output, _) = run_zshrs(r#"printf "%g\n" 100"#);
+    assert_eq!(output.trim(), "100", "%g 100: {output:?}");
+}

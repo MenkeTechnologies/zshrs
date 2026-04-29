@@ -756,7 +756,21 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 - The compile-time "dynamic command name" check at `compile_zsh.rs:520` flagged any first word containing `[` as needing `Op::Exec` dispatch (so `cmd[$i]` etc. resolves through host.exec). When the first word was literally `[`, that diverted `[` away from `BUILTIN_TEST` and into external `/usr/bin/[` — which on macOS is a quirky BSD test that returned 0 for the malformed-arg shapes we passed (the `]` was being captured as another argv slot). Result: every `[ ... ]` test returned true unconditionally, breaking every script that used `if [ ... ]`, `while [ ... ]`, `until [ ... ]`, `[ ... ] && cmd`. Catastrophic.
 - Carved out `[` and `[[` from the dynamic-name check before the glob-char trigger fires (`first_is_test_builtin = first_untoked == "[" || first_untoked == "[["`). They now dispatch to `BUILTIN_TEST` / `BUILTIN_COND` like any other builtin. Tests: `test_test_builtin_bracket_form_returns_correct_status`, `test_if_elif_chain_with_bracket_test`, `test_until_loop_with_bracket_test`.
 
-## Still open (thirty-first-pass — remaining)
+## Closed (thirty-second-pass — assoc append, sort sub-flags, printf %g)
+
+### `m+=(k v)` on associative arrays
+
+- BUILTIN_APPEND_ARRAY blindly extended `exec.arrays` regardless of whether the name was an assoc, so `typeset -A m=(a 1); m+=(c 3)` left the new key/value in a parallel positional array and `${m[c]}` returned empty. Added an assoc-aware branch that consumes pairs into `exec.assoc_arrays`. Test: `test_assoc_append_pairs_adds_new_keys`.
+
+### `(o)` / `(O)` sort sub-flags `n`/`i`/`a`
+
+- `(oa)` (sort by array order = no-op) and `(Oa)` (reverse array order, no alpha-sort) were both being treated as plain alpha-sort. Same for `(on)` numeric sort and `(oi)` case-insensitive. Reworked the `'o' | 'O'` arm in `BUILTIN_PARAM_FLAG` to consume an optional `n`/`i`/`a` sub-letter and dispatch accordingly: `a` → reverse-only-if-O, `n` → f64 sort, `i` → case-insensitive sort, default → byte-sort. Tests: `test_param_flag_oa_preserves_array_order`, `test_param_flag_Oa_reverses_array_order`, `test_param_flag_on_numeric_sort`, `test_param_flag_oi_case_insensitive_sort`.
+
+### `printf '%g\n'` shortest-representation float format
+
+- `%g` was emitting the `%f` format unchanged (`3.14` → `3.140000`). Implemented a `format_g(val, prec, upper)` helper that picks `%e` when `exp < -4 || exp >= prec` else `%f`, strips trailing zeros after the decimal, and normalizes the exponent to `e±NN` (C99 shape). Test: `test_printf_g_uses_shortest_representation`.
+
+## Still open (thirty-second-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
