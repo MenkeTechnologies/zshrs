@@ -629,9 +629,25 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was `zshrs: type: NAME: not found` (stderr, with prefix). zsh emits `NAME not found` on stdout (no prefix). Switched format and stream. Test: `test_type_unknown_format_matches_zsh`.
 
-## Still open (twenty-first-pass — remaining)
+## Closed (twenty-second-pass — echo escapes + export -n + xtrace)
+
+### `echo` interprets escapes by default
+
+- zsh's default `echo` interprets `\n`/`\t`/`\b`/etc. unless `setopt bsd_echo` is on; `-e` is unnecessary. zshrs had `interpret_escapes = false` default. Switched to `!bsd_echo` so the default is ON; `-E` continues to disable. Tests: `test_echo_default_interprets_escapes`, `test_echo_dash_capital_e_disables_escapes`.
+
+### `export -n` rejected as bash-only
+
+- zsh treats `export -n` as a bad option (bash uses `-n` to remove export attribute); zshrs accepted it. Now rejects any `-X` flag besides `-p` with `zshrs:export:1: bad option: -X` and exit 1. Tests: `test_export_dash_n_rejected`.
+
+### `set -x` / `setopt xtrace` — print commands before execution
+
+- The option was tracked but never enforced. Added new `BUILTIN_XTRACE_LINE` (id 338): pops a literal command-text string and prints it to stderr with `$PS4` prefix (default `+ `) when `xtrace` is on. The compiler emits the trace call before each simple command's args/dispatch in `compile_simple`. Format is the POSIX `+ cmd args` style — zsh's elaborate `<color>PROG\tFN\tLINENO\t<reset>\tcmd` format depends on PROMPT_PERCENT and isn't matched exactly (our format is what real-world POSIX scripts assume). Tests: `test_set_dash_x_xtrace_prints_commands`, `test_set_plus_x_disables_xtrace`, `test_xtrace_uses_ps4`.
+
+## Still open (twenty-second-pass — remaining)
 
 (none — all probed gaps closed)
+- **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).
+- **`xtrace` exact zsh format** — our `+ cmd` matches POSIX but zsh's default PS4 includes color/PROG/FN/LINENO. Needs full PS4 prompt expansion.
 
 The following items have been investigated and confirmed as false positives or fundamentally compatible:
 

@@ -2793,3 +2793,53 @@ fn test_type_unknown_format_matches_zsh() {
     assert!(output.contains("not found"), "got: {output:?}");
     assert!(!output.contains("type:"), "should not have 'type:' prefix, got: {output:?}");
 }
+
+#[test]
+fn test_echo_default_interprets_escapes() {
+    // zsh's default (no -e flag) interprets \n, \t, \b, etc. unless
+    // setopt bsd_echo is set.
+    let (_, output, _) = run_zshrs(r#"echo "x\ny""#);
+    assert_eq!(output, "x\ny\n", "got: {output:?}");
+}
+
+#[test]
+fn test_echo_dash_capital_e_disables_escapes() {
+    // -E disables escape interpretation.
+    let (_, output, _) = run_zshrs(r#"echo -E "x\ny""#);
+    assert_eq!(output, "x\\ny\n", "got: {output:?}");
+}
+
+#[test]
+fn test_export_dash_n_rejected() {
+    // bash-style `-n` flag is bad option in zsh.
+    let (status, _, stderr) = run_zshrs("export X=val; export -n X");
+    assert_ne!(status, 0);
+    assert!(stderr.contains("bad option"), "stderr: {stderr:?}");
+}
+
+#[test]
+fn test_set_dash_x_xtrace_prints_commands() {
+    // `set -x` enables tracing — each command echoed to stderr with
+    // `$PS4` prefix (default `+ `).
+    let (_, _, stderr) = run_zshrs("set -x; echo hello");
+    assert!(stderr.contains("echo hello"), "stderr: {stderr:?}");
+}
+
+#[test]
+fn test_set_plus_x_disables_xtrace() {
+    let (_, _, stderr) = run_zshrs("set -x; set +x; echo hidden");
+    // The `set +x` line itself is traced, but the subsequent `echo`
+    // should NOT appear in stderr.
+    let trace_lines: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("echo hidden"))
+        .collect();
+    assert_eq!(trace_lines.len(), 0, "echo should not be traced after +x, got: {stderr:?}");
+}
+
+#[test]
+fn test_xtrace_uses_ps4() {
+    // Default PS4 is `+ `. Verify the prefix shows up.
+    let (_, _, stderr) = run_zshrs("set -x; true");
+    assert!(stderr.contains("+ "), "stderr: {stderr:?}");
+}
