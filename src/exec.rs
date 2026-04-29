@@ -14602,6 +14602,15 @@ impl ShellExecutor {
             self.returning = Some(code);
             return code;
         }
+        // Fire EXIT trap before terminating. zsh runs the EXIT trap
+        // even on explicit `exit N` (not just at script end). Without
+        // this, a script setting `trap "cleanup" EXIT` would skip the
+        // cleanup whenever it called `exit`. Remove first so the trap
+        // body itself can call exit without re-entering.
+        if let Some(action) = self.traps.remove("EXIT") {
+            self.last_status = code;
+            let _ = self.execute_script_zsh_pipeline(&action);
+        }
         std::process::exit(code);
     }
 

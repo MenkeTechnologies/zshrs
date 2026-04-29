@@ -3656,3 +3656,24 @@ fn test_param_length_uses_chars_not_bytes() {
     let (_, output, _) = run_zshrs(r#"s="héllo"; echo "${#s}""#);
     assert_eq!(output.trim(), "5", "got: {output:?}");
 }
+
+#[test]
+fn test_exit_builtin_fires_exit_trap() {
+    // `trap 'cleanup' EXIT; exit N` must run the EXIT trap before
+    // the process terminates. Implicit script-end already fired the
+    // trap; explicit `exit N` was bypassing it via std::process::exit.
+    let (status, output, _) =
+        run_zshrs(r#"trap 'echo CLEANUP' EXIT; exit 5"#);
+    assert_eq!(status, 5, "exit code should propagate");
+    assert_eq!(output.trim(), "CLEANUP", "got: {output:?}");
+}
+
+#[test]
+fn test_exit_trap_with_explicit_exit_in_trap_body() {
+    // Trap body is removed BEFORE running so a recursive exit
+    // doesn't re-fire the trap.
+    let (status, output, _) =
+        run_zshrs(r#"trap 'echo TRAP1' EXIT; exit 7"#);
+    assert_eq!(status, 7);
+    assert_eq!(output.trim(), "TRAP1", "got: {output:?}");
+}
