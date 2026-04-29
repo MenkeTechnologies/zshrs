@@ -1725,6 +1725,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `a=(file.txt); ${a[1]:r}` → `file` (history-style modifier on resolved element). zshrs's bracket handler routed `:` modifiers through the colon-default branch (`:-`/`:=`/`:?`/`:+`) and didn't recognize history modifiers. Added a per-element `apply_history_modifiers` call when `after_bracket` starts with `:` and the body is a known modifier. Test: `test_array_element_history_modifier`.
 
+### `builtin nosuch` had non-zsh error format
+
+- zsh: `builtin nosuch:1: no such builtin: NAME`. zshrs printed `builtin: NAME: not a shell builtin`. Aligned to zsh's format. Test: `test_builtin_missing_zsh_format`.
+
+### `%F{1}` (numeric color 0-7) used 256-color escape
+
+- zsh: `%F{1}` (red) outputs `\e[31m` (basic ANSI). zshrs's `Color::Numbered(n)` always used the 256-color form `\e[38;5;Nm`. For indices 0-7, the basic ANSI codes (30-37 fg, 40-47 bg) are the canonical encoding. Added a fast-path for `n <= 7` that emits `\e[3Nm` / `\e[4Nm`. Indexes 8-255 still use the long form. Test: `test_print_P_color_basic_8_uses_ansi_codes`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
