@@ -310,6 +310,11 @@ pub enum ZshParamFlag {
     Subscript,             // S - subscript scanning
     Parameter,             // P - use value as parameter name (indirection)
     Glob,                  // ~ - glob patterns in pattern
+    /// `@` flag — force array-context behavior even inside DQ. zsh's
+    /// `"${(@o)arr}"` keeps the sort active and splices each element as
+    /// its own word. Without this, the array-only flags became no-ops
+    /// in DQ.
+    At,
 }
 
 /// List operator (for shell command lists)

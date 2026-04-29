@@ -627,6 +627,16 @@ impl<'a> MathEval<'a> {
                 .filter(|&c| c != '_')
                 .collect();
             let base: u32 = base_str.parse().unwrap_or(10);
+            // zsh: `1#X` errors with "invalid base (must be 2 to 36 inclusive)".
+            // i64::from_str_radix panics on out-of-range base; reject early.
+            if !(2..=36).contains(&base) {
+                self.error = Some(format!(
+                    "invalid base (must be 2 to 36 inclusive): {}",
+                    base
+                ));
+                self.yyval = MathNum::Integer(0);
+                return MathTok::Num;
+            }
             self.lastbase = base as i32;
 
             let val_start = self.pos;
@@ -899,6 +909,16 @@ impl<'a> MathEval<'a> {
                         {
                             self.error = Some("bad base syntax".to_string());
                             return MathTok::Eoi;
+                        }
+                        // Reject out-of-range bases; from_str_radix panics
+                        // on bases outside [2, 36].
+                        if !(2..=36).contains(&base) {
+                            self.error = Some(format!(
+                                "invalid base (must be 2 to 36 inclusive): {}",
+                                base
+                            ));
+                            self.yyval = MathNum::Integer(0);
+                            return MathTok::Num;
                         }
 
                         let val_start = self.pos;
