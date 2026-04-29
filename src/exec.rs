@@ -4071,6 +4071,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(false)
     });
 
+    vm.register_builtin(BUILTIN_IS_TTY, |vm, _argc| {
+        let fd_str = vm.pop().to_str();
+        let fd: i32 = fd_str.trim().parse().unwrap_or(-1);
+        let is_tty = if fd < 0 {
+            false
+        } else {
+            unsafe { libc::isatty(fd) != 0 }
+        };
+        fusevm::Value::Bool(is_tty)
+    });
+
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
         let name = vm.pop().to_str();
         // zsh strips a leading `no` (e.g. `[[ -o nounset ]]` and
@@ -5778,6 +5789,10 @@ pub const BUILTIN_SET_SUBSCRIPT_RANGE: u16 = 323;
 /// returned false matching neither zsh's error format nor the
 /// expected status code (zsh returns 2 for parse error).
 pub const BUILTIN_UNKNOWN_COND: u16 = 324;
+
+/// `[[ -t fd ]]` — fd-is-a-tty check. Stack: [fd_string].
+/// Routes through libc::isatty. Pushes Bool.
+pub const BUILTIN_IS_TTY: u16 = 325;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)

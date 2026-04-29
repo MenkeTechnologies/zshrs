@@ -6238,3 +6238,13 @@ fn test_dollar_underscore_after_no_arg_command() {
     let (_, output, _) = run_zshrs(r#"false; echo "[$_]""#);
     assert_eq!(output.trim(), "[false]");
 }
+
+#[test]
+fn test_dash_t_fd_is_tty() {
+    // `[[ -t fd ]]` checks if fd is a tty. In a pipe, stdin is
+    // not a tty. Was emitting "unknown condition: -t" because the
+    // compile_cond_expr unary handler had no case for `-t`.
+    let (_, output, _) =
+        run_zshrs(r#"echo hi | { [[ -t 0 ]] && echo tty || echo notty; }"#);
+    assert_eq!(output.trim(), "notty");
+}
