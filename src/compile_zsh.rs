@@ -480,6 +480,36 @@ impl ZshCompiler {
             return;
         }
 
+        // `noglob CMD args...` is a precommand modifier — args must
+        // NOT be glob-expanded. zsh handles this in the parser by
+        // marking the command line "no-glob"; we strip the leading
+        // `noglob` and recursively compile the rest with a runtime
+        // option-toggle wrapper.
+        let untoked_first0 = crate::lexer::untokenize(&simple.words[0]);
+        if untoked_first0 == "noglob" && simple.words.len() > 1 {
+            let inner = ZshSimple {
+                assigns: Vec::new(),
+                words: simple.words[1..].to_vec(),
+                redirs: simple.redirs.clone(),
+            };
+            // Wrap in setopt noglob ... unsetopt noglob via a runtime
+            // option toggle. Push "noglob"+true via SET_OPT, recurse to
+            // compile inner, then push "noglob"+false to restore.
+            let opt_const = self.builder.add_constant(Value::str("noglob"));
+            self.builder.emit(Op::LoadConst(opt_const), 0);
+            self.builder.emit(Op::LoadInt(1), 0);
+            self.builder.emit(Op::CallBuiltin(
+                crate::exec::BUILTIN_SET_RAW_OPT, 2), 0);
+            self.builder.emit(Op::Pop, 0);
+            self.compile_simple(&inner);
+            self.builder.emit(Op::LoadConst(opt_const), 0);
+            self.builder.emit(Op::LoadInt(0), 0);
+            self.builder.emit(Op::CallBuiltin(
+                crate::exec::BUILTIN_SET_RAW_OPT, 2), 0);
+            self.builder.emit(Op::Pop, 0);
+            return;
+        }
+
         // ── Redirects on the simple command ─────────────────────────
         // Special case: `exec >file` (or `exec 2>err`, etc.) with NO
         // command body — apply redirects PERMANENTLY to the shell's
@@ -1028,9 +1058,30 @@ impl ZshCompiler {
         if !has_bnull && (untoked == "$@" || untoked == "$*") {
             let name = &untoked[1..];
             let idx = self.builder.add_constant(Value::str(name));
+            // Detect DQ context two ways: (a) the raw input `s` is
+            // DQ-wrapped (`\u{9e}$*\u{9e}`), or (b) we're inside a
+            // recursive compile_word_str whose parent set
+            // dq_context_depth. zsh: `"$*"` joins by IFS first char,
+            // `"$@"` keeps splice semantics (each positional its own
+            // word). Only `*` gets the join — `@` continues to return
+            // Array. Without the `*` fix, `v="$*"` captured only the
+            // first positional because pop_args flattens Array.
+            let in_dq = self.dq_context_depth > 0
+                || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
             self.builder.emit(Op::LoadConst(idx), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+            if in_dq && untoked == "$*" {
+                // Discard the GET_VAR result; JOIN_STAR re-fetches the
+                // array and joins by IFS first char. (We can't easily
+                // join an in-stack Array without a dedicated op.)
+                self.builder.emit(Op::Pop, 0);
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_JOIN_STAR, 1),
+                    0,
+                );
+            }
             return;
         }
 

@@ -3538,6 +3538,23 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // `${arr[*]}` — join array elements with the first IFS char into
     // a single string. Matches zsh: in DQ context this preserves the
     // join; in array context too the result is one Value::Str.
+    // Set or clear a shell option directly. Used by `noglob CMD ...`
+    // precommand wrapping — the compiler emits SET_RAW_OPT to flip the
+    // option ON before compiling the inner words and OFF after, so glob
+    // expansion of the inner args sees the temporary state.
+    vm.register_builtin(BUILTIN_SET_RAW_OPT, |vm, _argc| {
+        let on = vm.pop().to_int() != 0;
+        let opt = vm.pop().to_str();
+        with_executor(|exec| {
+            if on {
+                exec.options.insert(opt, true);
+            } else {
+                exec.options.remove(&opt);
+            }
+        });
+        Value::Status(0)
+    });
+
     vm.register_builtin(BUILTIN_ARRAY_JOIN_STAR, |vm, _argc| {
         let name = vm.pop().to_str();
         let result = with_executor(|exec| {
@@ -4819,7 +4836,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // Without this, `@`/`*` fell through to `get_variable`
             // which returned the IFS-joined positional string and
             // we counted chars (5 for "a b c" instead of 3).
-            if name == "@" || name == "*" {
+            if name == "@" || name == "*" || name == "argv" {
                 return exec.positional_params.len();
             }
             if let Some(arr) = exec.arrays.get(&name) {
@@ -5034,6 +5051,19 @@ impl ZshrsHost {
 /// ${arr[@]}` with `arr=(x y z)` would receive a single space-joined arg
 /// `"x y z"` instead of three separate args.
 #[inline]
+/// Strip Rust's "(os error N)" suffix from an io::Error display so
+/// the message matches BSD/GNU coreutils' output (e.g. zsh's bundled
+/// cat/head emit `cat: foo: No such file or directory`, not
+/// `cat: foo: No such file or directory (os error 2)`). Used by all
+/// the in-process coreutils builtins.
+pub fn pretty_io_err(e: &std::io::Error) -> String {
+    let s = e.to_string();
+    match s.find(" (os error") {
+        Some(i) => s[..i].to_string(),
+        None => s,
+    }
+}
+
 fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
     let mut popped: Vec<fusevm::Value> = Vec::with_capacity(argc as usize);
     for _ in 0..argc {
@@ -5296,6 +5326,7 @@ pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
 pub const BUILTIN_XTRACE_LINE: u16 = 338;
 pub const BUILTIN_ARRAY_JOIN_STAR: u16 = 339;
+pub const BUILTIN_SET_RAW_OPT: u16 = 340;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
 /// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk
@@ -11030,11 +11061,15 @@ impl ShellExecutor {
         // Handle ${#arr[@]} - array length
         if content.starts_with('#') {
             let rest = &content[1..];
-            // ${#@} / ${#*} — positional param count. Without this,
-            // `@`/`*` fell through to get_variable which returns the
-            // IFS-joined string ("a b c"), and `.len()` counted bytes
-            // (5 instead of 3).
-            if rest == "@" || rest == "*" {
+            // ${#@} / ${#*} / ${#argv} / ${#argv[@]} — positional
+            // param count. Without these special cases, `@`/`*`/`argv`
+            // fell through to get_variable which returns the IFS-
+            // joined string ("a b c"), and `.len()` counted bytes
+            // (5 instead of 3). `argv` is zsh's named alias for the
+            // positional array.
+            if rest == "@" || rest == "*"
+                || rest == "argv" || rest == "argv[@]" || rest == "argv[*]"
+            {
                 return self.positional_params.len().to_string();
             }
             if let Some(bracket_start) = rest.find('[') {
@@ -28590,7 +28625,7 @@ impl ShellExecutor {
                     let mut f = match std::fs::File::open(file) {
                         Ok(f) => f,
                         Err(e) => {
-                            eprintln!("cat: {}: {}", file, e);
+                            eprintln!("cat: {}: {}", file, pretty_io_err(&e));
                             return Err(e);
                         }
                     };
@@ -28668,7 +28703,7 @@ impl ShellExecutor {
                     match std::fs::File::open(file) {
                         Ok(f) => Box::new(f),
                         Err(e) => {
-                            eprintln!("head: {}: {}", file, e);
+                            eprintln!("head: {}: {}", file, pretty_io_err(&e));
                             return 1;
                         }
                     }
@@ -28692,7 +28727,7 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("head: {}: {}", file, e);
+                        eprintln!("head: {}: {}", file, pretty_io_err(&e));
                         return 1;
                     }
                 }
@@ -28753,7 +28788,7 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("tail: {}: {}", file, e);
+                        eprintln!("tail: {}: {}", file, pretty_io_err(&e));
                         return 1;
                     }
                 }
@@ -28821,7 +28856,7 @@ impl ShellExecutor {
                 match std::fs::File::open(file) {
                     Ok(f) => Box::new(BufReader::new(f)),
                     Err(e) => {
-                        eprintln!("wc: {}: {}", file, e);
+                        eprintln!("wc: {}: {}", file, pretty_io_err(&e));
                         return 1;
                     }
                 }

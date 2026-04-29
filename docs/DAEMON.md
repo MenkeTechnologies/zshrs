@@ -928,18 +928,20 @@ Daemon tracks command duration via the `history_append` IPC (clients send `durat
 
 **Disable:** `ZSHRS_LONG_CMD_NOTICES=0` for users who don't want any of this. Default on.
 
-### `zui` — daemon-queued UI primitives (pull-mode, never interferes with prompt)
+### `zask` — daemon-queued UI primitives (pull-mode, never interferes with prompt)
+
+> **Naming note:** `zask` (not `zui`) — `zui` is taken by [`zdharma-continuum/zui`](https://github.com/zdharma-continuum/zui), an existing zsh TUI library plugin. Mnemonic: `zask` = the daemon (or another shell) **asks** the user something.
 
 **Hard rule: daemon-pushed UI never interferes with the user's active prompt.** No auto-overlay, no key capture, no cursor moves, no inline interruption. Cross-shell scripts that need user input from another shell don't get to take over that shell's prompt unannounced.
 
-Instead: daemon-pushed UI is **queued**. The user is *notified* (status-line / OSC-9 / unobtrusive bell) that a UI request is pending; the user explicitly activates it on their own time via a keybinding or `zui take`. Until activated, the prompt is untouched and the user keeps typing.
+Instead: daemon-pushed UI is **queued**. The user is *notified* (status-line / OSC-9 / unobtrusive bell) that a UI request is pending; the user explicitly activates it on their own time via a keybinding or `zask take`. Until activated, the prompt is untouched and the user keeps typing.
 
 **Flow:**
 
-1. Some script / shell / daemon-job pushes a UI request: `zui ask --target shell:42 picker --items "..."`.
-2. Daemon enqueues the request in shell:42's pending-UI inbox + pushes a `ui:pending` event.
-3. shell:42's status-line shows `[zui:1 pending]` (count of queued requests). OSC-9 fires for terminal-native notification. No prompt change, no cursor move, no input capture.
-4. User finishes whatever they're typing. When ready, they hit the configured activation key (default `Ctrl-X u`, vi-mode-compatible) or type `zui take`.
+1. Some script / shell / daemon-job pushes a UI request: `zask --target shell:42 picker --items "..."`.
+2. Daemon enqueues the request in shell:42's pending-UI inbox + pushes a `ask:pending` event.
+3. shell:42's status-line shows `[zask:1 pending]` (count of queued requests). OSC-9 fires for terminal-native notification. No prompt change, no cursor move, no input capture.
+4. User finishes whatever they're typing. When ready, they hit the configured activation key (default `Ctrl-X q`, vi-mode-compatible) or type `zask take`.
 5. shell:42 then renders the next pending UI element — but only after the user explicitly engaged. The picker / input / dialog draws above the prompt, captures keystrokes, returns the response. User-initiated, not daemon-imposed.
 6. Response routes back over IPC to the originating shell / script.
 
@@ -947,53 +949,53 @@ Instead: daemon-pushed UI is **queued**. The user is *notified* (status-line / O
 
 | Event | Payload | Client behavior |
 |-------|---------|-----------------|
-| `ui:pending` | `request_id, kind, from_shell, summary, urgency` | Increment status-line counter, optional OSC-9, write to log. NEVER render UI. |
-| `ui:dismissed` | `request_id, reason` | Decrement counter, clear status-line if count==0 |
-| `ui:progress` | `request_id, label, percent, eta_ms` | Update status-line bar (which is already a passive surface, doesn't touch prompt). Allowed to update in place because status-line is reserved space, not the prompt line |
+| `ask:pending` | `request_id, kind, from_shell, summary, urgency` | Increment status-line counter, optional OSC-9, write to log. NEVER render UI. |
+| `ask:dismissed` | `request_id, reason` | Decrement counter, clear status-line if count==0 |
+| `ask:progress` | `request_id, label, percent, eta_ms` | Update status-line bar (which is already a passive surface, doesn't touch prompt). Allowed to update in place because status-line is reserved space, not the prompt line |
 
-UI rendering events (`ui:picker`, `ui:input`, `ui:dialog`, `ui:menu`) are **only sent to the client when the user explicitly takes the request** via `zui take`. The daemon stages the rendering payload in the inbox; the actual render-event ships only when client signals readiness.
+UI rendering events (`ask:picker`, `ask:input`, `ask:dialog`, `ask:menu`) are **only sent to the client when the user explicitly takes the request** via `zask take`. The daemon stages the rendering payload in the inbox; the actual render-event ships only when client signals readiness.
 
-**Builtin: `zui`** (top-level, thin IPC wrapper):
+**Builtin: `zask`** (top-level, thin IPC wrapper):
 
 ```
 # Push side — script asks daemon to queue a UI request on a target shell:
-zui ask --target <shell|tag|*> picker --items <list>
-zui ask --target shell:42 picker --items "$(ls)" --multi
-zui ask --target tag:operator input --prompt "username: "
-zui ask --target shell:7 input --prompt "password: " --secret
-zui ask --target shell:42 dialog --message "Deploy to prod?" --options yes,no --urgency critical
-zui ask --target shell:42 menu --title "Select host" --items "host-1 host-2 host-3"
+zask --target <shell|tag|*> picker --items <list>
+zask --target shell:42 picker --items "$(ls)" --multi
+zask --target tag:operator input --prompt "username: "
+zask --target shell:7 input --prompt "password: " --secret
+zask --target shell:42 dialog --message "Deploy to prod?" --options yes,no --urgency critical
+zask --target shell:42 menu --title "Select host" --items "host-1 host-2 host-3"
 
 # Progress is the one passive exception (status-line only, no key capture):
-zui progress --target shell:42 --label "Building" --percent 47 --eta 30000
-zui progress --target shell:42 --request-id <id> --percent 78    # update in place
-zui progress --target shell:42 --request-id <id> --done
+zask progress --target shell:42 --label "Building" --percent 47 --eta 30000
+zask progress --target shell:42 --request-id <id> --percent 78    # update in place
+zask progress --target shell:42 --request-id <id> --done
 
 # Pull side — user manages their own inbox:
-zui pending                                  # list queued requests in this shell
-zui take                                     # render the oldest pending; blocks for response
-zui take <id>                                # render a specific pending request by id
-zui dismiss [<id>|--all]                     # decline/cancel pending request(s); originator gets cancelled=true
-zui inbox-clear                              # dismiss every pending request in this shell at once
+zask pending                                  # list queued requests in this shell
+zask take                                     # render the oldest pending; blocks for response
+zask take <id>                                # render a specific pending request by id
+zask dismiss [<id>|--all]                     # decline/cancel pending request(s); originator gets cancelled=true
+zask inbox-clear                              # dismiss every pending request in this shell at once
 ```
 
-**Activation keybinding:** `Ctrl-X u` by default — Ctrl-prefix only, works identically in vi-insert, vi-cmd, and emacs-insert modes. **No default keybindings ever use Meta / Alt** — meta keys are unreliable across terminals (macOS Option-key special chars, varying tmux pass-through, ssh meta-bit handling, locale-dependent escape sequences). Ctrl combinations pass through every terminal cleanly. Bound via `bindkey '^Xu' zui-take` shipped in zshrs's default keymap. Same binding registered in `vicmd` keymap so it works post-Esc too: `bindkey -M vicmd '^Xu' zui-take`. User overrides via `bindkey '<key>' zui-take` or env var `ZSHRS_ZUI_TAKE_KEY=^G` to remap. The widget activates one pending request at a time. Status-line counter decrements on take or dismiss.
+**Activation keybinding:** `Ctrl-X q` by default — chained Ctrl-prefix (Ctrl-X then q for "queue"), works identically in vi-insert, vi-cmd, and emacs-insert modes. Chosen to avoid colliding with zsh's existing `^Xu` (undo) and other established `^X*` bindings. **No default keybindings ever use Meta / Alt** — meta keys are unreliable across terminals (macOS Option-key special chars, tmux pass-through quirks, ssh meta-bit stripping, locale-dependent escape sequences). Ctrl combinations and chained-Ctrl chords pass through every terminal cleanly. Bound via `bindkey '^Xq' zask-take` shipped in zshrs's default keymap, plus `bindkey -M vicmd '^Xq' zask-take` so it works post-Esc too. User overrides via `bindkey '<key>' zask-take` or env var `ZSHRS_ZASK_TAKE_KEY=^G` to remap. The widget activates one pending request at a time. Status-line counter decrements on take or dismiss.
 
-**Status-line presentation:** the only daemon→client UI surface that updates without user activation is the status-line / RPROMPT region — explicitly designed-as-passive area. Format: `[zui:N urgent:M]` where N is total pending and M is critical-urgency count. Updates in place, no prompt-line touch. Client treats this as a watched parameter that triggers a status-line redraw, not a prompt redraw.
+**Status-line presentation:** the only daemon→client UI surface that updates without user activation is the status-line / RPROMPT region — explicitly designed-as-passive area. Format: `[zask:N urgent:M]` where N is total pending and M is critical-urgency count. Updates in place, no prompt-line touch. Client treats this as a watched parameter that triggers a status-line redraw, not a prompt redraw.
 
-**Out-of-band rendering (planned):** integration hooks for tmux status-line, kitty's status bar, alacritty title-bar updates, and OSC-9 → macOS Notification Center / Linux libnotify. Daemon emits the same `ui:pending` event; client routes to whichever passive surface the user has configured. None of these touch the active prompt.
+**Out-of-band rendering (planned):** integration hooks for tmux status-line, kitty's status bar, alacritty title-bar updates, and OSC-9 → macOS Notification Center / Linux libnotify. Daemon emits the same `ask:pending` event; client routes to whichever passive surface the user has configured. None of these touch the active prompt.
 
 **Use cases (revised under the no-prompt-interference rule):**
 
-- **Cross-shell wizard:** script in shell A pushes `zui ask --target shell:B picker ...`. Shell B's status-line shows `[zui:1 pending]`. User in shell B finishes their current line, hits `Ctrl-X u`, picks. Answer routes back to A. Script in A blocks until user gets around to it (or times out).
-- **Pair programming intervention:** remote operator pushes a `ui:dialog`. Local user's status-line shows `[zui:1 urgent:1]`. User finishes typing, hits `Ctrl-X u`, sees the dialog, picks yes/no.
-- **Background-job confirmation:** `zjob` supervisor pushes a `ui:dialog`. Status-line surfaces it. User answers when convenient (or `zjob` times out and aborts).
+- **Cross-shell wizard:** script in shell A pushes `zask --target shell:B picker ...`. Shell B's status-line shows `[zask:1 pending]`. User in shell B finishes their current line, hits `Ctrl-X q`, picks. Answer routes back to A. Script in A blocks until user gets around to it (or times out).
+- **Pair programming intervention:** remote operator pushes a `ask:dialog`. Local user's status-line shows `[zask:1 urgent:1]`. User finishes typing, hits `Ctrl-X q`, sees the dialog, picks yes/no.
+- **Background-job confirmation:** `zjob` supervisor pushes a `ask:dialog`. Status-line surfaces it. User answers when convenient (or `zjob` times out and aborts).
 - **`zsync up` conflict resolution:** queued for the originating shell with summary `function foo conflict — file changed since push`. User takes when ready.
-- **Long-running ops with progress:** the only UI event allowed to live-update the status-line. `zui progress` updates the status bar without ever touching the prompt.
+- **Long-running ops with progress:** the only UI event allowed to live-update the status-line. `zask progress` updates the status bar without ever touching the prompt.
 
-**Timeouts:** every queued UI request has a default 60-minute timeout. Originator gets `ui:timeout` event if user never engages. Configurable per-request via `--timeout <seconds>` or `--no-timeout`.
+**Timeouts:** every queued UI request has a default 60-minute timeout. Originator gets `ask:timeout` event if user never engages. Configurable per-request via `--timeout <seconds>` or `--no-timeout`.
 
-**Visibility model:** `zui pending` shows this shell's queue. `zls --ui-pending` shows pending requests across all of the user's registered shells. Every push, take, dismiss, timeout logged to `~/.cache/zshrs/zshrs.log`.
+**Visibility model:** `zask pending` shows this shell's queue. `zls --ask-pending` shows pending requests across all of the user's registered shells. Every push, take, dismiss, timeout logged to `~/.cache/zshrs/zshrs.log`.
 
 ### Daemon logging (every action goes to logfile)
 
@@ -1064,6 +1066,7 @@ zlog stats                          # daemon log self-stats: line counts, size, 
 - ANY removal of `entry_stats` to "simplify" — REJECT.
 - ANY auto-consumption of `.zwc` / `.zcompdump` files on daemon scans, fpath walks, fsnotify watches, or plugin-tree enumeration — REJECT. They're invisible to all automatic discovery; only `zcache import zwc|zcompdump <path>` (user-explicit, freshness-validated) may ingest them.
 - ANY periodic re-walk of `$PATH` / `$FPATH` / plugin trees / source-statement targets by the daemon — REJECT. Walks happen exactly twice in daemon's life: first init (cold cache) and explicit cache bust (`zcache clean` / `rebuild`). Steady state is fsnotify-driven incremental updates only. No polling, no cron, no "every 5 minutes refresh."
+- ANY default keybinding that depends on Meta / Alt — REJECT. Meta keys behave unpredictably across terminals (macOS Option-key chars, tmux pass-through quirks, ssh meta-bit stripping, locale escape sequences). Ctrl-prefixed bindings only for shipped defaults; users can opt into Meta bindings explicitly via `bindkey` if their setup tolerates it.
 
 ### Acceptance criteria
 

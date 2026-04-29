@@ -3759,3 +3759,64 @@ fn test_integer_dash_r_sets_readonly_attr() {
     let (_, output, _) = run_zshrs(r#"integer -r I=42; echo "${(t)I}""#);
     assert_eq!(output.trim(), "integer-readonly", "got: {output:?}");
 }
+
+#[test]
+fn test_argv_length_returns_positional_count() {
+    // ${#argv} / ${#argv[@]} — `argv` is zsh's named alias for the
+    // positional array. Was returning the byte length of the IFS-
+    // joined string (5 for "a b c") instead of the count (3).
+    let (_, output, _) =
+        run_zshrs(r#"set -- a b c; echo "${#argv} ${#argv[@]}""#);
+    assert_eq!(output.trim(), "3 3", "got: {output:?}");
+}
+
+#[test]
+fn test_dq_star_assignment_joins_with_ifs() {
+    // `v="$*"` should capture the full join, not just the first
+    // positional. GET_VAR for `*` returns Array which pop_args
+    // flattens — for DQ scalar context, we now follow GET_VAR with
+    // ARRAY_JOIN_STAR (which joins by $IFS first char).
+    let (_, output, _) =
+        run_zshrs(r#"set -- a b c; v="$*"; echo "[$v]""#);
+    assert_eq!(output.trim(), "[a b c]", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"IFS=":"; set -- a b c; v="$*"; echo "[$v]""#);
+    assert_eq!(output.trim(), "[a:b:c]", "got: {output:?}");
+}
+
+#[test]
+fn test_dq_at_preserves_splice_semantics() {
+    // `"$@"` must keep splice semantics — each positional its own
+    // word, even in DQ. Only `$*` joins; my $* fix must not affect $@.
+    let (_, output, _) = run_zshrs(
+        r#"set -- a "b c" d; for x in "$@"; do echo "[$x]"; done"#,
+    );
+    assert_eq!(output.trim(), "[a]\n[b c]\n[d]", "got: {output:?}");
+}
+
+#[test]
+fn test_noglob_precommand_suppresses_glob() {
+    // `noglob CMD args...` is a precommand modifier — args must
+    // not be glob-expanded. Was failing because the noglob option
+    // was set AFTER the args were already expanded.
+    let (_, output, _) = run_zshrs(r#"noglob echo /tmp/xyz_no_match*"#);
+    assert_eq!(output.trim(), "/tmp/xyz_no_match*", "got: {output:?}");
+    let (_, output, _) = run_zshrs(r#"noglob echo a b *"#);
+    assert_eq!(output.trim(), "a b *", "got: {output:?}");
+}
+
+#[test]
+fn test_coreutils_error_msg_strips_os_error_suffix() {
+    // cat/head/tail/wc all use Rust's io::Error display by default
+    // which appends "(os error N)". zsh's coreutils-style emit just
+    // the friendly message. pretty_io_err strips the suffix.
+    let (_, _, stderr) = run_zshrs(r#"cat /no/such/file 2>&1"#);
+    let combined = format!("{}{}", "", stderr);
+    let _ = combined; // unused — checking output format below
+    let (_, output, _) = run_zshrs(r#"cat /no/such/file 2>&1"#);
+    assert_eq!(
+        output.trim(),
+        "cat: /no/such/file: No such file or directory",
+        "got: {output:?}"
+    );
+}

@@ -954,9 +954,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `get_variable("@" | "*")` was hardcoded to `.join(" ")`. POSIX: `$*` joins by the first char of `$IFS`. Updated to read `$IFS` and use its first char (default ` ` when unset). Note: `expand_string`'s DQ-context expansion of `"$*"` follows a different path that still produces only the first param — that's a deeper bug, deferred.
 
-## Still open (fifty-third-pass — remaining)
+## Closed (fifty-fourth-pass — `${#argv}` count + DQ `"$*"` IFS-join (preserve `"$@"` splice))
 
-- **`expand_string` DQ `"$*"`** — `v="$*"` only captures the first positional. Needs a fix in the `var_name == "*"` branch of expand_braced_variable / expand_string. Deferred.
+### `${#argv}` returned 5 (joined-string byte length) instead of 3 (count)
+
+- `argv` is zsh's named alias for the positional array. `expand_braced_variable`'s `${#…}` arm and `BUILTIN_PARAM_LENGTH` both special-cased `@` and `*` to return `positional_params.len()`, but missed `argv`. Added the alias + its subscripted forms (`argv[@]` / `argv[*]`) to both special-case lists. Test: `test_argv_length_returns_positional_count`.
+
+### `v="$*"` captured only the first positional
+
+- For bare `$@`/`$*`, compile_word_str emitted `BUILTIN_GET_VAR` directly (returns Value::Array of positionals so splice in argument context works). When that result reached the assignment via `pop_args`, the Array got flattened into separate args — `name="v"`, `value=<first positional>`, rest discarded.
+- Detect DQ context (parent `s` is DNULL-wrapped OR `dq_context_depth>0`) and, ONLY for `$*`, follow GET_VAR with Pop + LoadConst(name) + `BUILTIN_ARRAY_JOIN_STAR` so the joined scalar replaces the Array on stack. `$@` keeps its Array splice (zsh: `"$@"` → each positional its own word). Tests: `test_dq_star_assignment_joins_with_ifs`, `test_dq_at_preserves_splice_semantics`.
+
+## Still open (fifty-fourth-pass — remaining)
 
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
