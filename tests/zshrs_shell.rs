@@ -3519,3 +3519,53 @@ fn test_default_aliases_match_zsh() {
         "missing which-command: {output:?}"
     );
 }
+
+#[test]
+fn test_dot_glob_excludes_dot_and_dotdot() {
+    // Setup: create a temp dir with .hide and .zg_hidden, glob `.*`
+    // should match the hidden files but NOT `.` or `..` themselves.
+    use std::fs::{create_dir_all, File};
+    let dir = "/tmp/zr_dotglob_test";
+    let _ = std::fs::remove_dir_all(dir);
+    create_dir_all(dir).unwrap();
+    File::create(format!("{}/.hide", dir)).unwrap();
+    File::create(format!("{}/.other", dir)).unwrap();
+    File::create(format!("{}/visible", dir)).unwrap();
+    let (_, output, _) =
+        run_zshrs(&format!("cd {}; echo .*", dir));
+    let _ = std::fs::remove_dir_all(dir);
+    let trimmed = output.trim();
+    assert!(
+        trimmed.contains(".hide"),
+        ".* should match .hide: {output:?}"
+    );
+    assert!(
+        trimmed.contains(".other"),
+        ".* should match .other: {output:?}"
+    );
+    assert!(
+        !trimmed.split_whitespace().any(|w| w == "." || w == ".." || w == "./." || w == "./.."),
+        ".* must exclude . and ..: {output:?}"
+    );
+    assert!(
+        !trimmed.contains("visible"),
+        ".* must not match visible: {output:?}"
+    );
+}
+
+#[test]
+fn test_star_glob_excludes_dotfiles_by_default() {
+    use std::fs::{create_dir_all, File};
+    let dir = "/tmp/zr_starglob_test";
+    let _ = std::fs::remove_dir_all(dir);
+    create_dir_all(dir).unwrap();
+    File::create(format!("{}/.hide", dir)).unwrap();
+    File::create(format!("{}/visible", dir)).unwrap();
+    let (_, output, _) = run_zshrs(&format!("cd {}; echo *", dir));
+    let _ = std::fs::remove_dir_all(dir);
+    let trimmed = output.trim();
+    assert_eq!(
+        trimmed, "visible",
+        "* should match only non-dot files: {output:?}"
+    );
+}
