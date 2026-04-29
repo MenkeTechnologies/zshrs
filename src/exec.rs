@@ -15823,7 +15823,30 @@ impl ShellExecutor {
         let processed = if raw_mode {
             input
         } else {
-            input.replace("\\\n", "")
+            // Without -r, `read` removes one backslash from every
+            // `\X` pair (X = any char). `\<newline>` is a line
+            // continuation (both stripped) — different from
+            // backspace/etc. Standard POSIX read semantics.
+            let mut out = String::with_capacity(input.len());
+            let mut chars = input.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    match chars.next() {
+                        Some('\n') => {
+                            // Line continuation: both consumed.
+                        }
+                        Some(next) => {
+                            out.push(next);
+                        }
+                        None => {
+                            // Trailing backslash — drop it (POSIX).
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
         };
 
         if quiet {
@@ -23513,6 +23536,10 @@ impl ShellExecutor {
                         println!("{}: {}", name, word);
                     } else if verbose {
                         println!("{} is a shell builtin", name);
+                    } else if csh_style {
+                        // zsh `which` / `whence -c` for builtin:
+                        // `name: shell built-in command`.
+                        println!("{}: shell built-in command", name);
                     } else {
                         println!("{}", name);
                     }
