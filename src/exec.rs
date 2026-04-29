@@ -11880,6 +11880,53 @@ impl ShellExecutor {
                 let after_bracket = &bracket_content[bracket_end + 1..];
                 if !after_bracket.is_empty() && !is_range_or_all {
                     let elem = self.lookup_array_element(var_name, index);
+                    // `${a[1][2]}` — chained subscript. Look up the
+                    // first-level element, then character-subscript on
+                    // the resulting scalar. zsh: array-first then
+                    // string-on-element. Without this, the `[2]` was
+                    // treated as a noise suffix and the full element
+                    // returned untouched.
+                    if after_bracket.starts_with('[') {
+                        if let Some(end) = after_bracket.find(']') {
+                            let sub_idx = &after_bracket[1..end];
+                            // Resolve numeric / range subscript on the
+                            // scalar `elem`. 1-based, comma form for
+                            // ranges. Negative indexes count from end.
+                            let chars: Vec<char> = elem.chars().collect();
+                            let total = chars.len() as i64;
+                            let pos = |n: i64| -> usize {
+                                if n == 0 {
+                                    0
+                                } else if n > 0 {
+                                    ((n - 1) as usize).min(chars.len())
+                                } else {
+                                    ((total + n).max(0) as usize).min(chars.len())
+                                }
+                            };
+                            if let Some((s_str, e_str)) = sub_idx.split_once(',') {
+                                let s = s_str.trim().parse::<i64>().unwrap_or(1);
+                                let e = e_str.trim().parse::<i64>().unwrap_or(total);
+                                let start = pos(s);
+                                let end_pos = if e >= 0 {
+                                    (e as usize).min(chars.len())
+                                } else {
+                                    pos(e) + 1
+                                };
+                                let result: String = chars
+                                    [start.min(end_pos)..end_pos.max(start)]
+                                    .iter()
+                                    .collect();
+                                return result;
+                            }
+                            if let Ok(n) = sub_idx.parse::<i64>() {
+                                let i = pos(n);
+                                return chars
+                                    .get(i)
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_default();
+                            }
+                        }
+                    }
                     if let Some(rest) = after_bracket.strip_prefix(":-") {
                         return if elem.is_empty() {
                             self.expand_string(rest)
@@ -14197,19 +14244,32 @@ impl ShellExecutor {
                     }
                 }
                 'h' => {
-                    if let Some(pos) = result.rfind('/') {
+                    // zsh strips trailing slashes BEFORE applying head:
+                    // `/tmp/` :h is `/`, not `/tmp`. Repeatedly trim
+                    // trailing `/` first, then drop the last segment.
+                    let trimmed = result.trim_end_matches('/');
+                    if trimmed.is_empty() {
+                        // Pure-slash input (`/`, `//`, …) — head is `/`.
+                        result = "/".to_string();
+                    } else if let Some(pos) = trimmed.rfind('/') {
                         if pos == 0 {
                             result = "/".to_string();
                         } else {
-                            result = result[..pos].to_string();
+                            result = trimmed[..pos].to_string();
                         }
                     } else {
                         result = ".".to_string();
                     }
                 }
                 't' => {
-                    if let Some(pos) = result.rfind('/') {
-                        result = result[pos + 1..].to_string();
+                    // Mirror zsh: strip trailing slashes before tail
+                    // extraction so `foo/` :t is `foo`, not the empty
+                    // segment after the slash.
+                    let trimmed = result.trim_end_matches('/');
+                    if let Some(pos) = trimmed.rfind('/') {
+                        result = trimmed[pos + 1..].to_string();
+                    } else {
+                        result = trimmed.to_string();
                     }
                 }
                 'r' => {
@@ -24837,10 +24897,13 @@ impl ShellExecutor {
                     '-' // zsh accepts `-` as a no-op flag char (so
                         // `--foo` parses as `-`/`-foo` rather than
                         // erroring on the second `-`).
-                    | 'n' | 'l' | 'r' | 'R' | 'e' | 'E' | 'P' | 'N' | 'z'
+                    | 'n' | 'l' | 'r' | 'R' | 'P' | 'N' | 'z'
                     | 's' | 'o' | 'O' | 'D' | 'c' | 'm' | 'a' | 'b' | 'i'
                     | 'p' | 'S' | 'x' | 'X' | 'u' | 'C' | 'v' | 'f'
                 );
+                // zsh's `print` rejects `-e` AND `-E` (echo accepts both).
+                // Removed from the known set so they fall through to the
+                // "bad option" error path matching zsh.
                 if let Some(bad) = body.chars().find(|c| !known(*c)) {
                     eprintln!("zshrs:print:1: bad option: -{}", bad);
                     return 1;

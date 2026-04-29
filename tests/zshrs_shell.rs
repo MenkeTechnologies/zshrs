@@ -5693,3 +5693,48 @@ fn test_array_at_subscript_history_modifier_per_element() {
         run_zshrs(r#"a=(/a/b/c /d/e); echo "${a[@]:t}""#);
     assert_eq!(output.trim(), "c e");
 }
+
+#[test]
+fn test_h_modifier_strips_trailing_slashes() {
+    // `${var:h}` should strip trailing slashes BEFORE removing the
+    // last segment: `/tmp/` → `/`, not `/tmp`. zshrs was preserving
+    // the slash and dropping `tmp` as the trailing segment.
+    let (_, output, _) = run_zshrs(r#"a="/tmp/"; echo "[${a:h}]""#);
+    assert_eq!(output.trim(), "[/]");
+    let (_, output, _) = run_zshrs(r#"a="//"; echo "[${a:h}]""#);
+    assert_eq!(output.trim(), "[/]");
+    let (_, output, _) = run_zshrs(r#"a="/a/b/c"; echo "[${a:h}]""#);
+    assert_eq!(output.trim(), "[/a/b]");
+}
+
+#[test]
+fn test_chained_subscript_array_then_char() {
+    // `${a[1][1]}` with a=(hello) should pick array elem 1 (`hello`)
+    // then char 1 (`h`). zshrs was returning the full element.
+    let (_, output, _) = run_zshrs(r#"a=(hello); echo "${a[1][1]}""#);
+    assert_eq!(output.trim(), "h");
+    let (_, output, _) = run_zshrs(r#"a=(hello world); echo "${a[2][1]}""#);
+    assert_eq!(output.trim(), "w");
+    let (_, output, _) = run_zshrs(r#"a=(abcdef); echo "${a[1][2,4]}""#);
+    assert_eq!(output.trim(), "bcd");
+}
+
+#[test]
+fn test_print_rejects_dash_e_and_dash_E() {
+    // `print -e` and `print -E` both error "bad option" in zsh.
+    // zshrs's print accepted both. (Note: `echo -E` and `echo -e`
+    // remain valid — these are echo-only flags.)
+    let (_, _, stderr) = run_zshrs("print -E hi");
+    assert!(stderr.contains("bad option"));
+    let (_, _, stderr) = run_zshrs("print -e hi");
+    assert!(stderr.contains("bad option"));
+}
+
+#[test]
+fn test_math_rejects_0o_octal_prefix() {
+    // zsh: `$((0o15))` errors "bad math expression: operator
+    // expected at `o15'". zshrs silently returned 0. The `0o`
+    // octal-prefix is Rust/Python convention; zsh doesn't accept it.
+    let (_, _, stderr) = run_zshrs("echo $((0o15))");
+    assert!(stderr.contains("bad math expression"));
+}
