@@ -5115,6 +5115,59 @@ fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String, String)> 
     Some((name, idx_expr, rhs))
 }
 
+/// Format a function body the way zsh's `typeset -f` / `functions`
+/// display it: each top-level statement on its own line (split on `;`
+/// and `\n`), trailing semicolons stripped, no empty lines. Matches
+/// `/bin/zsh -f -c 'f() { echo a; echo b; }; typeset -f f'` output:
+///   f () {
+///   <TAB>echo a
+///   <TAB>echo b
+///   }
+pub fn format_function_body_zsh(body: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut depth_paren = 0i32;
+    let mut depth_brace = 0i32;
+    let mut in_squote = false;
+    let mut in_dquote = false;
+    let mut prev = '\0';
+    for c in body.chars() {
+        let escaped = prev == '\\';
+        match c {
+            '\'' if !in_dquote && !escaped => {
+                in_squote = !in_squote;
+                current.push(c);
+            }
+            '"' if !in_squote && !escaped => {
+                in_dquote = !in_dquote;
+                current.push(c);
+            }
+            '(' | '[' | '{' if !in_squote && !in_dquote => {
+                if c == '{' { depth_brace += 1; } else { depth_paren += 1; }
+                current.push(c);
+            }
+            ')' | ']' | '}' if !in_squote && !in_dquote => {
+                if c == '}' { depth_brace -= 1; } else { depth_paren -= 1; }
+                current.push(c);
+            }
+            ';' | '\n' if !in_squote && !in_dquote && depth_paren == 0 && depth_brace == 0 => {
+                let t = current.trim().to_string();
+                if !t.is_empty() {
+                    lines.push(t);
+                }
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+        prev = c;
+    }
+    let t = current.trim().to_string();
+    if !t.is_empty() {
+        lines.push(t);
+    }
+    lines.join("\n\t")
+}
+
 /// Strip Rust's "(os error N)" suffix from an io::Error display so
 /// the message matches BSD/GNU coreutils' output (e.g. zsh's bundled
 /// cat/head emit `cat: foo: No such file or directory`, not
@@ -11121,6 +11174,22 @@ impl ShellExecutor {
                     };
                 }
 
+                // ${(flags)#name} — flag-modified length form. zsh:
+                //   (c)#name → char count (= ${#name} for ASCII)
+                //   (w)#name → word count (split-on-IFS then len)
+                // Without this, the # got swallowed by the var-name
+                // extractor below (`#a` parsed as empty name → 0).
+                if let Some(name) = rest.strip_prefix('#') {
+                    let val = self.get_variable(name);
+                    let has_word_flag = flags.iter().any(|f|
+                        matches!(f, ZshParamFlag::Words));
+                    if has_word_flag {
+                        return val.split_whitespace().count().to_string();
+                    }
+                    // Default for # is char count (also what (c)
+                    // requests). Honors unicode codepoints.
+                    return val.chars().count().to_string();
+                }
                 // Handle ${(%):-%n} style - empty var with default after flags
                 // rest could be ":-%n" or ":-default" or "var:-default" or just "var"
                 let (var_name, default_val) = if rest.starts_with(":-") {
@@ -15607,7 +15676,7 @@ impl ShellExecutor {
                 if is_function {
                     for name in &var_args {
                         if let Some(body) = self.function_definition_text(name) {
-                            println!("{} () {{\n\t{}\n}}", name, body.trim());
+                            println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
                         }
                     }
                 } else {
@@ -15672,7 +15741,7 @@ impl ShellExecutor {
             let _ = print_mode;
             for name in self.function_names() {
                 if let Some(body) = self.function_definition_text(&name) {
-                    println!("{} () {{\n\t{}\n}}", name, body.trim());
+                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
                 }
             }
             return 0;
@@ -15683,7 +15752,7 @@ impl ShellExecutor {
             let _ = print_mode;
             for name in &var_args {
                 if let Some(body) = self.function_definition_text(name) {
-                    println!("{} () {{\n\t{}\n}}", name, body.trim());
+                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
                 }
             }
             return 0;
@@ -23227,7 +23296,7 @@ impl ShellExecutor {
                 } else if show_trace {
                     println!("functions -t {}", name);
                 } else if let Some(body) = self.function_definition_text(name) {
-                    println!("{} () {{\n\t{}\n}}", name, body.trim());
+                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
                 }
             }
             return 0;
@@ -23238,7 +23307,7 @@ impl ShellExecutor {
                 if list_only {
                     println!("{}", name);
                 } else if let Some(body) = self.function_definition_text(&name) {
-                    println!("{} () {{\n\t{}\n}}", name, body.trim());
+                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
                 }
             }
         } else {
@@ -23250,7 +23319,7 @@ impl ShellExecutor {
                 if show_trace {
                     println!("functions -t {}", name);
                 } else if let Some(body) = self.function_definition_text(name) {
-                    println!("{} () {{\n\t{}\n}}", name, body.trim());
+                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
                 }
             }
         }
@@ -23926,7 +23995,7 @@ impl ShellExecutor {
                             .get(name)
                             .cloned()
                             .unwrap_or_else(|| ":".to_string());
-                        println!("{} () {{\n\t{}\n}}", name, body);
+                        println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(&body));
                     } else {
                         println!("{}", name);
                     }
