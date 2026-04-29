@@ -1535,6 +1535,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh rejects `0o…` octal-prefix; only `0x` (hex), `0b` (binary), and bare-leading-zero (with `setopt octalzeroes`) are recognised. zshrs's math lexer fell through `Some('o')` to the default branch and returned 0. Added an explicit `Some('o') | Some('O')` case that sets `self.error` to zsh's exact diagnostic ("bad math expression: operator expected at `…'") and returns a stub Num. Test: `test_math_rejects_0o_octal_prefix`.
 
+### `trap "" SIG` (signal-ignore) wasn't listed by `trap`
+
+- POSIX distinguishes `trap "" SIG` (ignore signal — store empty action) from `trap - SIG` (reset to default — remove action). zshrs collapsed both to "remove from table", so `trap "" USR1; trap` printed nothing. Now only `-` removes; the empty-string ignore form is stored verbatim and shown by `trap` as `trap -- '' SIG`. `run_trap` skips execution when the action is empty so the ignore semantics actually work. Test: `test_trap_empty_string_listed_as_ignore`.
+
+### `printf "%d" 3.14` returned 0 instead of 3
+
+- POSIX printf truncates floats to int for `%d`/`%i`. zshrs's parser was i64-only — the decimal point made `arg.parse::<i64>()` fail and `unwrap_or(0)` produced 0. Added f64 fallback that truncates via `as i64`. Same path now correctly handles `-5.99` → `-5`. Test: `test_printf_d_truncates_float_to_int`.
+
+### `set -h`, `set -k`, `set -p`, `set -B`, `set -H` errored "invalid option"
+
+- These are zsh-standard short-flag aliases (HASH_CMDS, KSH_TYPESET, PRIVILEGED, BRACE_CCL, HIST_REDUCE_BLANKS). zshrs's `builtin_set` matcher had no cases for them. Added accept-silently mappings to the canonical option names so user scripts that toggle them don't bail out at startup. Test: `test_set_dash_h_and_k_accepted`.
+
+### `${#arr[N]}` returned 0 instead of element char-count
+
+- `${#a[1]}` for `a=(hello)` should return `5` (chars in "hello"). zshrs's `${#…[…]}` branch only handled `[@]`/`[*]` (array-element-count); numeric indices fell through and returned 0. Added a `lookup_array_element(name, index).chars().count()` fallback for the numeric / non-`@`/`*` case. Test: `test_array_element_length_via_hash`.
+
+### `printf "%.s"` (zero precision via empty digits) printed the arg
+
+- POSIX/zsh: `%.s` is the same as `%.0s` — a period with no digits means precision 0, which suppresses string output (`printf "%.s" ignore` → empty). zshrs only set `prec_val` when the precision string parsed to a number, so empty precision left `prec_val = None` and the full arg printed. Track a `saw_period` flag and default to `Some(0)` when the period was consumed but no digits followed. Test: `test_printf_dot_s_zero_precision_suppresses_arg`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

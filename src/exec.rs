@@ -11730,6 +11730,12 @@ impl ShellExecutor {
                             .map(|arr| arr.len().to_string())
                             .unwrap_or_else(|| "0".to_string());
                     }
+                    // `${#arr[N]}` — character length of the Nth array
+                    // element (zsh: `a=(hello world); ${#a[1]}` → 5).
+                    // Was returning 0 because the `[N]` numeric subscript
+                    // path wasn't reached for the # length form.
+                    let elem = self.lookup_array_element(var_name, index);
+                    return elem.chars().count().to_string();
                 }
             }
             // ${#arr} - if rest is an array name, return array length
@@ -19203,10 +19209,14 @@ impl ShellExecutor {
                 sig_upper
             };
 
-            if action.is_empty() || action == "-" {
-                // Reset to default
+            if action == "-" {
+                // `trap - SIG` resets to default (delete the entry).
                 self.traps.remove(&sig_name);
             } else {
+                // `trap "" SIG` (empty action) is the SIGNAL-IGNORE
+                // form per POSIX — distinct from "reset to default".
+                // Keep the empty string in the table so `trap` lists
+                // it back (zsh: `trap -- '' USR1`).
                 self.traps.insert(sig_name, action.clone());
             }
         }
@@ -19217,7 +19227,10 @@ impl ShellExecutor {
     /// Execute trap handlers for a signal
     pub fn run_trap(&mut self, signal: &str) {
         if let Some(action) = self.traps.get(signal).cloned() {
-            let _ = self.execute_script(&action);
+            // Empty action = signal-ignore. Don't try to execute "".
+            if !action.is_empty() {
+                let _ = self.execute_script(&action);
+            }
         }
     }
 
@@ -19674,6 +19687,28 @@ impl ShellExecutor {
                 "+T" => {
                     self.options.insert("trapasync".to_string(), false);
                 }
+                // POSIX/zsh `set -h` enables HASH_CMDS (cache external
+                // command paths). zsh accepts silently. zshrs errored
+                // "invalid option" — break user scripts that probe for
+                // this option early.
+                "-h" => {
+                    self.options.insert("hashcmds".to_string(), true);
+                }
+                "+h" => {
+                    self.options.insert("hashcmds".to_string(), false);
+                }
+                // `set -k` enables KSH_TYPESET (allow assignments after
+                // some keywords). `set -p` enables PRIVILEGED. `set -B`
+                // BRACE_CCL. zsh-specific knobs that user scripts may
+                // toggle; accept silently as toggle-options.
+                "-k" => { self.options.insert("kshtypeset".to_string(), true); }
+                "+k" => { self.options.insert("kshtypeset".to_string(), false); }
+                "-p" => { self.options.insert("privileged".to_string(), true); }
+                "+p" => { self.options.insert("privileged".to_string(), false); }
+                "-B" => { self.options.insert("braceccl".to_string(), true); }
+                "+B" => { self.options.insert("braceccl".to_string(), false); }
+                "-H" => { self.options.insert("histreduceblanks".to_string(), true); }
+                "+H" => { self.options.insert("histreduceblanks".to_string(), false); }
                 "--" => {
                     let remaining: Vec<String> = iter.cloned().collect();
                     if let Some(ref name) = array_name {
@@ -23616,8 +23651,10 @@ impl ShellExecutor {
                 }
 
                 let mut precision = String::new();
+                let mut saw_period = false;
                 if chars.peek() == Some(&'.') {
                     chars.next();
+                    saw_period = true;
                     if chars.peek() == Some(&'*') {
                         chars.next();
                         if arg_idx < format_args.len() {
@@ -23647,7 +23684,11 @@ impl ShellExecutor {
 
                 let width_val: usize = width.parse().unwrap_or(0);
                 let prec_val: Option<usize> = if precision.is_empty() {
-                    None
+                    // `%.s` (period present, no digits) means precision
+                    // 0 — the arg is suppressed. Without this, prec_val
+                    // stayed None and `%.s "ignore"` printed `ignore`
+                    // instead of the empty string.
+                    if saw_period { Some(0) } else { None }
                 } else {
                     precision.parse().ok()
                 };
@@ -23729,8 +23770,16 @@ impl ShellExecutor {
                             i64::from_str_radix(&arg[1..], 8).unwrap_or(0)
                         } else if arg.starts_with('\'') || arg.starts_with('"') {
                             arg.chars().nth(1).map(|c| c as i64).unwrap_or(0)
+                        } else if let Ok(n) = arg.parse::<i64>() {
+                            n
+                        } else if let Ok(f) = arg.parse::<f64>() {
+                            // POSIX printf truncates floats to int for
+                            // `%d`/`%i` (matches zsh: `printf %d 3.14`
+                            // → 3). Without this, the i64-only parse
+                            // path returned 0 for any float.
+                            f as i64
                         } else {
-                            arg.parse().unwrap_or(0)
+                            0
                         };
 
                         let sign = if val < 0 {
