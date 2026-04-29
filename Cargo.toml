@@ -59,6 +59,8 @@ serde_json = "1"
 bincode = "1"
 toml = "1"
 filetime = "0.2.27"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "io-util", "signal", "time", "sync", "macros"] }
+byteorder = "1"
 
 [features]
 default = []
