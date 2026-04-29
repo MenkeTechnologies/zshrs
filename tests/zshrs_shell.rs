@@ -3377,3 +3377,13 @@ fn test_user_function_overrides_coreutils_builtins() {
         );
     }
 }
+
+#[test]
+fn test_param_flag_Q_dequote() {
+    // (Q) strips one layer of shell quoting. Both single and double
+    // quotes get unwrapped; backslash escapes inside DQ are processed.
+    let (_, output, _) = run_zshrs(r#"s="\"hello\""; echo "${(Q)s}""#);
+    assert_eq!(output.trim(), "hello", "DQ: {output:?}");
+    let (_, output, _) = run_zshrs(r#"s="'world'"; echo "${(Q)s}""#);
+    assert_eq!(output.trim(), "world", "SQ: {output:?}");
+}
