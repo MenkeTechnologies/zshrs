@@ -3292,8 +3292,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             };
             if route_indexed && key_int_for_indexed.is_some() {
                 let i = key_int_for_indexed.unwrap();
-                let arr = exec.arrays.entry(name.clone()).or_insert_with(Vec::new);
-                let len = arr.len() as i64;
+                let len = exec.arrays.get(&name).map(|a| a.len() as i64).unwrap_or(0);
                 let idx = if i > 0 {
                     (i - 1) as usize
                 } else if i < 0 {
@@ -3303,8 +3302,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     off as usize
                 } else {
-                    return;
+                    // zsh: `a[0]=v` is "assignment to invalid subscript
+                    // range" (positionals/arrays are 1-based). Mirror
+                    // the diagnostic and abort with status 1.
+                    eprintln!("zshrs:1: {}: assignment to invalid subscript range", name);
+                    std::process::exit(1);
                 };
+                let arr = exec.arrays.entry(name.clone()).or_insert_with(Vec::new);
                 while arr.len() <= idx {
                     arr.push(String::new());
                 }
@@ -14484,8 +14488,11 @@ impl ShellExecutor {
                     }
                 },
                 Err(e) => {
-                    eprintln!("source: {}: {}", path, e);
-                    1
+                    // zsh format: `zshrs:source:1: no such file or
+                    // directory: PATH` and exit 127.
+                    let msg = pretty_io_err(&e).to_lowercase();
+                    eprintln!("zshrs:source:1: {}: {}", msg, path);
+                    127
                 }
             };
         } else {
@@ -14527,8 +14534,23 @@ impl ShellExecutor {
                 Ok(status) => status,
                 Err(e) => {
                     tracing::warn!(path = %abs_path, error = %e, "source: execution failed");
-                    eprintln!("source: {}: {}", path, e);
-                    1
+                    // Match zsh: `zshrs:source:1: no such file or
+                    // directory: PATH` and exit 127. Strip Rust's
+                    // "(os error N)" suffix and any duplicate-path
+                    // prefix that wrapped errors carry.
+                    let raw = e.to_string();
+                    let msg = match raw.find(": ") {
+                        Some(i) if raw[..i] == *path || raw.starts_with(&abs_path) => {
+                            raw[i + 2..].to_string()
+                        }
+                        _ => raw,
+                    };
+                    let msg = match msg.find(" (os error") {
+                        Some(i) => msg[..i].to_string(),
+                        None => msg,
+                    };
+                    eprintln!("zshrs:source:1: {}: {}", msg.to_lowercase(), path);
+                    127
                 }
             };
             let source_ms = t0.elapsed().as_millis() as u64;

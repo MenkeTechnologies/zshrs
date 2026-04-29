@@ -3830,3 +3830,35 @@ fn test_arith_subscripted_array_assign() {
         run_zshrs(r#"a=(0 0 0); echo $((a[2]=42)); echo $a[2]"#);
     assert_eq!(output.trim(), "42\n42", "arith subst form: {output:?}");
 }
+
+#[test]
+fn test_source_missing_file_zsh_format_and_exit_127() {
+    // zsh format: `zshrs:source:1: no such file or directory: PATH`
+    // and exit 127. Was emitting Rust's io::Error display unchanged
+    // (with "(os error 2)" suffix) and exiting 1 — both wrong.
+    let (status, _stdout, stderr) =
+        run_zshrs(r#"source /no/such/file"#);
+    assert_eq!(status, 127, "exit code should be 127 for not-found");
+    assert!(
+        stderr.contains("source:1: no such file or directory:"),
+        "stderr: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("(os error"),
+        "should strip os error suffix: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_array_zero_subscript_assignment_errors() {
+    // zsh: arrays/positionals are 1-based — `a[0]=v` is an
+    // "assignment to invalid subscript range" error and the shell
+    // exits 1. Was silently accepting the assignment as a no-op.
+    let (status, _stdout, stderr) =
+        run_zshrs(r#"a=(); a[0]=hi; echo "[${a[@]}]""#);
+    assert_eq!(status, 1, "should exit non-zero");
+    assert!(
+        stderr.contains("assignment to invalid subscript range"),
+        "stderr: {stderr:?}"
+    );
+}
