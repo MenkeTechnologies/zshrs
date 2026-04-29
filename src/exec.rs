@@ -12365,6 +12365,22 @@ impl ShellExecutor {
                             }
                         }
                     }
+                    // `${a[N]:r}` / `:e` / `:t` / `:h` / `:l` / `:u`
+                    // / `:q` / `:Q` / `:A` — history-style modifiers
+                    // applied to the resolved element. zsh:
+                    // `a=(file.txt); ${a[1]:r}` → `file`. zshrs's
+                    // bracket handler routed `:` modifiers through
+                    // the colon-default branch which only handles
+                    // `:-`/`:=`/`:?`/`:+`. Apply per-element when
+                    // the after-bracket suffix is a known modifier.
+                    if after_bracket.starts_with(':') {
+                        let modifier = &after_bracket[1..];
+                        if !modifier.is_empty()
+                            && self.is_history_modifier(modifier)
+                        {
+                            return self.apply_history_modifiers(&elem, modifier);
+                        }
+                    }
                     // `${a[N]:offset:length}` — substring on the
                     // resolved element. zsh: `a=(hello); ${a[1]:0:1}`
                     // → `h`. Detect `:DIGIT[:DIGIT]` after the
