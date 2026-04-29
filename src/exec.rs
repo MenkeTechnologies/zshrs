@@ -1396,6 +1396,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     return Value::Status(1);
                 }
                 0 => {
+                    // Reset SIGPIPE to default so a broken-pipe write
+                    // kills the child cleanly instead of triggering a
+                    // Rust println! panic. The parent shell ignores
+                    // SIGPIPE so it can handle EPIPE itself, but child
+                    // pipeline stages should die quietly when their
+                    // downstream stage closes early (e.g. `seq | head -3`).
+                    unsafe {
+                        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+                    }
                     // Child: wire stdin from previous pipe's read end
                     if i > 0 {
                         unsafe {
@@ -19770,10 +19779,12 @@ impl ShellExecutor {
                         println!("alias");
                     } else {
                         println!(
-                            "{} is aliased to `{}'",
+                            "{} is an alias for {}",
                             name,
                             self.aliases.get(name).unwrap()
                         );
+                        // Note: matches zsh's `type` format, distinct
+                        // from `which`'s "{}: aliased to {}" form.
                     }
                 }
                 if !show_all {

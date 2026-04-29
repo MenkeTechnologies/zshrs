@@ -3405,3 +3405,21 @@ fn test_pipeline_last_stage_assignment_persists() {
     );
     assert_eq!(output.trim(), "first=a", "got: {output:?}");
 }
+
+#[test]
+fn test_pipeline_child_handles_sigpipe_gracefully() {
+    // Long producer + early-closing reader: `seq | head -3` would
+    // panic before because Rust's println! errored on EPIPE writes
+    // (parent shell ignored SIGPIPE). Children now reset SIGPIPE to
+    // default so a broken-pipe write kills the child silently.
+    let (_, output, _) = run_zshrs(r#"seq 1 100 | head -3"#);
+    assert_eq!(output.trim(), "1\n2\n3", "got: {output:?}");
+}
+
+#[test]
+fn test_type_alias_uses_zsh_format() {
+    // zsh: `type g` for an alias prints "g is an alias for echo"
+    // (not the bash "g is aliased to `echo'" form).
+    let (_, output, _) = run_zshrs(r#"alias g="echo"; type g"#);
+    assert_eq!(output.trim(), "g is an alias for echo", "got: {output:?}");
+}
