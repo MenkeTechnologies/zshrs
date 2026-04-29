@@ -9306,7 +9306,15 @@ impl ShellExecutor {
                 }
                 Err(e) => {
                     if e.kind() == io::ErrorKind::NotFound {
-                        eprintln!("zshrs:1: command not found: {}", cmd);
+                        // zsh: absolute paths emit "no such file or
+                        // directory" (the OS error, since the path was
+                        // tried directly), not "command not found"
+                        // (which implies PATH search).
+                        if cmd.starts_with('/') {
+                            eprintln!("zshrs:1: no such file or directory: {}", cmd);
+                        } else {
+                            eprintln!("zshrs:1: command not found: {}", cmd);
+                        }
                         Ok(127)
                     } else {
                         Err(format!("zshrs: {}: {}", cmd, e))
@@ -9318,7 +9326,15 @@ impl ShellExecutor {
                 Ok(status) => Ok(status.code().unwrap_or(1)),
                 Err(e) => {
                     if e.kind() == io::ErrorKind::NotFound {
-                        eprintln!("zshrs:1: command not found: {}", cmd);
+                        // zsh: absolute paths emit "no such file or
+                        // directory" (the OS error, since the path was
+                        // tried directly), not "command not found"
+                        // (which implies PATH search).
+                        if cmd.starts_with('/') {
+                            eprintln!("zshrs:1: no such file or directory: {}", cmd);
+                        } else {
+                            eprintln!("zshrs:1: command not found: {}", cmd);
+                        }
                         Ok(127)
                     } else {
                         Err(format!("zshrs: {}: {}", cmd, e))
@@ -14222,7 +14238,10 @@ impl ShellExecutor {
                 0
             }
             Err(e) => {
-                eprintln!("cd: {}: {}", path.display(), e);
+                // zsh format: `zshrs:cd:1: no such file or directory: PATH`
+                // (lowercased, no Rust os-error suffix). Exit code stays 1.
+                let msg = pretty_io_err(&e).to_lowercase();
+                eprintln!("zshrs:cd:1: {}: {}", msg, path.display());
                 1
             }
         }
@@ -24263,7 +24282,7 @@ impl ShellExecutor {
                 let g = 7 - ((mask >> 3) & 7);
                 let o = 7 - (mask & 7);
                 println!(
-                    "u={}{}{}g={}{}{}o={}{}{}",
+                    "u={}{}{},g={}{}{},o={}{}{}",
                     if u & 4 != 0 { "r" } else { "" },
                     if u & 2 != 0 { "w" } else { "" },
                     if u & 1 != 0 { "x" } else { "" },
@@ -24275,7 +24294,8 @@ impl ShellExecutor {
                     if o & 1 != 0 { "x" } else { "" },
                 );
             } else {
-                println!("{:04o}", mask);
+                // zsh prints 3 octal digits (022), not 4 (0022).
+                println!("{:03o}", mask);
             }
         }
         0
