@@ -20271,7 +20271,7 @@ impl ShellExecutor {
                     if show_type {
                         println!("function");
                     } else {
-                        println!("{} is a shell function", name);
+                        println!("{} is a shell function from zsh", name);
                     }
                 }
                 if !show_all {
@@ -23985,7 +23985,7 @@ impl ShellExecutor {
                     if word_type {
                         println!("{}: {}", name, word);
                     } else if verbose {
-                        println!("{} is a shell function", name);
+                        println!("{} is a shell function from zsh", name);
                     } else if csh_style {
                         // zsh `whence -c` for function: full `typeset -f`
                         // body. Use `function_source` if registered, else
@@ -24355,11 +24355,65 @@ impl ShellExecutor {
         }
 
         if let Some(v) = value {
-            // Set umask
+            // Set umask. Two forms: numeric (`022`) or symbolic
+            // (`u=rwx,g=rx,o=`). Symbolic form sets each class's
+            // permitted bits; the umask itself is 0777 minus that.
+            // Without the symbolic branch, `umask -S u=rwx,...` errored.
             if let Ok(mask) = u32::from_str_radix(v, 8) {
                 unsafe {
                     umask(mask as libc::mode_t);
                 }
+            } else if v.contains('=') {
+                // Symbolic: parse each `u=rwx`, `g=rx`, `o=` segment.
+                // Start from the CURRENT umask and modify only the
+                // mentioned classes. zsh keeps unmentioned classes
+                // at their existing bits.
+                let cur = unsafe {
+                    let m = umask(0);
+                    umask(m);
+                    m
+                };
+                let mut perms = [
+                    7 - ((cur >> 6) & 7) as u32,
+                    7 - ((cur >> 3) & 7) as u32,
+                    7 - (cur & 7) as u32,
+                ];
+                let mut ok = true;
+                for seg in v.split(',') {
+                    let seg = seg.trim();
+                    let eq = match seg.find('=') {
+                        Some(i) => i,
+                        None => { ok = false; break; }
+                    };
+                    let classes = &seg[..eq];
+                    let bits_str = &seg[eq + 1..];
+                    let mut bits: u32 = 0;
+                    for c in bits_str.chars() {
+                        match c {
+                            'r' => bits |= 4,
+                            'w' => bits |= 2,
+                            'x' => bits |= 1,
+                            _ => { ok = false; break; }
+                        }
+                    }
+                    if !ok { break; }
+                    for cls in classes.chars() {
+                        match cls {
+                            'u' => perms[0] = bits,
+                            'g' => perms[1] = bits,
+                            'o' => perms[2] = bits,
+                            'a' => { perms[0] = bits; perms[1] = bits; perms[2] = bits; }
+                            _ => { ok = false; break; }
+                        }
+                    }
+                    if !ok { break; }
+                }
+                if !ok {
+                    eprintln!("umask: invalid mask: {}", v);
+                    return 1;
+                }
+                let new_mask = ((7 - perms[0]) << 6) | ((7 - perms[1]) << 3) | (7 - perms[2]);
+                unsafe { umask(new_mask as libc::mode_t); }
             } else {
                 eprintln!("umask: invalid mask: {}", v);
                 return 1;
@@ -29030,9 +29084,13 @@ impl ShellExecutor {
 
     fn builtin_tail(&self, args: &[String]) -> i32 {
         use std::collections::VecDeque;
-        use std::io::{BufRead, BufReader};
+        use std::io::{BufRead, BufReader, Read};
 
         let mut lines = 10usize;
+        // Some(N) when -c N was given — switches to byte-count mode.
+        // Was missing entirely; `tail -c 4` parsed `4` as a filename
+        // and emitted "tail: 4: No such file or directory".
+        let mut bytes: Option<usize> = None;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
 
@@ -29043,6 +29101,11 @@ impl ShellExecutor {
                 lines = args[i].parse().unwrap_or(10);
             } else if arg.starts_with("-n") {
                 lines = arg[2..].parse().unwrap_or(10);
+            } else if arg == "-c" && i + 1 < args.len() {
+                i += 1;
+                bytes = args[i].parse::<usize>().ok();
+            } else if arg.starts_with("-c") && arg.len() > 2 {
+                bytes = arg[2..].parse::<usize>().ok();
             } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
                 lines = arg[1..].parse().unwrap_or(10);
             } else if !arg.starts_with('-') || arg == "-" {
@@ -29065,7 +29128,7 @@ impl ShellExecutor {
                 println!("==> {} <==", file);
             }
 
-            let reader: Box<dyn BufRead> = if *file == "-" {
+            let mut reader: Box<dyn BufRead> = if *file == "-" {
                 Box::new(BufReader::new(std::io::stdin()))
             } else {
                 match std::fs::File::open(file) {
@@ -29076,6 +29139,19 @@ impl ShellExecutor {
                     }
                 }
             };
+
+            if let Some(n) = bytes {
+                // Byte-count mode: read everything into a buffer
+                // (tail needs the END), keep last n bytes. Simple
+                // approach matches BSD tail -c.
+                let mut buf = Vec::new();
+                let _ = reader.read_to_end(&mut buf);
+                let start = buf.len().saturating_sub(n);
+                use std::io::Write;
+                let stdout = std::io::stdout();
+                let _ = stdout.lock().write_all(&buf[start..]);
+                continue;
+            }
 
             let mut ring: VecDeque<String> = VecDeque::with_capacity(lines);
             for line in reader.lines().flatten() {

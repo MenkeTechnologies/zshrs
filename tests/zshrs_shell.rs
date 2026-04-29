@@ -4049,3 +4049,48 @@ fn test_wc_uses_bsd_8char_padding() {
         "expected 7-space padded count: {s:?}"
     );
 }
+
+#[test]
+fn test_type_function_says_from_zsh() {
+    // zsh prints `f is a shell function from zsh` (the suffix is
+    // load-source — `from zsh` for built-in functions, the source
+    // file path for autoloaded ones). Bare `is a shell function`
+    // missed the suffix.
+    let (_, output, _) = run_zshrs(r#"f() { :; }; type f"#);
+    assert_eq!(
+        output.trim(),
+        "f is a shell function from zsh",
+        "got: {output:?}"
+    );
+}
+
+#[test]
+fn test_tail_dash_c_byte_count() {
+    // `tail -c N` keeps the last N bytes. Was treating `4` as a
+    // filename and erroring "tail: 4: No such file or directory".
+    let mut child = std::process::Command::new(zshrs_bin())
+        .args(["-f", "-c", "tail -c 4"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child.stdin.as_mut().unwrap().write_all(b"abcdefgh\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim_end(),
+        "fgh",
+        "got: {:?}",
+        out.stdout
+    );
+}
+
+#[test]
+fn test_umask_dash_S_symbolic_set() {
+    // `umask -S u=rwx,g=rx,o=` sets the umask via symbolic perms.
+    // Was rejecting symbolic input as "invalid mask" — only numeric
+    // (`022`) was parsed.
+    let (_, output, _) =
+        run_zshrs(r#"umask 077; umask -S u=rwx,g=rx,o=; umask"#);
+    assert_eq!(output.trim(), "027", "expected 027, got: {output:?}");
+}

@@ -1069,7 +1069,21 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The println had `out.trim_start()` which stripped the `{:8}` right-aligned padding. zsh's bundled wc on macOS keeps the BSD 8-char padding even on stdin output. Removed the `trim_start`. Updated 3 invariant tests in `tests/no_tree_walker_dispatch.rs` that hardcoded the old (no-padding) format. Test: `test_wc_uses_bsd_8char_padding`.
 
-## Still open (sixty-second-pass — remaining)
+## Closed (sixty-third-pass — `type` fn `from zsh` + `tail -c` + `umask -S` symbolic set)
+
+### `type f` for a function lacked the `from zsh` suffix
+
+- zsh prints `f is a shell function from zsh` (the suffix names the load source — `from zsh` for built-in functions, the absolute path for autoloaded ones). Was emitting just `f is a shell function`. Updated all `println!("{} is a shell function", name)` sites. Test: `test_type_function_says_from_zsh`.
+
+### `tail -c N` parsed `N` as a filename
+
+- builtin_tail was missing the `-c` (byte-count) flag. `tail -c 4` errored with `tail: 4: No such file or directory`. Added `-c` parsing (both `-c N` and `-cN` shapes), then a `bytes` short-circuit in the per-file loop that does `read_to_end` + slice from `len-N`. Test: `test_tail_dash_c_byte_count`.
+
+### `umask -S u=rwx,g=rx,o=` was rejected as "invalid mask"
+
+- builtin_umask only parsed numeric (`022`) input. zsh accepts symbolic (`u=rwx,g=rx,o=`) for set, computing the umask as `0777` minus the granted bits per class. Added a parse path: read current umask, split on `,`, for each `class=bits` segment translate `r/w/x` into a 3-bit value and apply to the named class (u/g/o/a). Test: `test_umask_dash_S_symbolic_set`.
+
+## Still open (sixty-third-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
