@@ -4115,3 +4115,77 @@ fn test_ulimit_dash_a_zsh_format() {
         "expected `-t: cpu time` first line: {first:?}"
     );
 }
+
+#[test]
+fn test_alias_dash_m_uses_unquoted_form_when_no_metas() {
+    // `alias -m "g*"` should print bare `g=hi` (not `g='hi'`) when the
+    // value has no shell metas — matching zsh's plain-alias listing
+    // format. Regression: -m path always wrapped in single quotes.
+    let (_, output, _) = run_zshrs(r#"alias g=hi; alias -m "g*""#);
+    assert_eq!(output.trim(), "g=hi", "got: {output:?}");
+}
+
+#[test]
+fn test_shopt_is_command_not_found() {
+    // zsh has no `shopt` builtin — that's bash-only. Should fall through
+    // to PATH lookup and produce "command not found". Regression: zshrs
+    // shipped a bash-compat shopt builtin that listed all options.
+    let (status, _, stderr) = run_zshrs(r#"shopt"#);
+    assert_eq!(status, 127, "expected exit 127");
+    assert!(
+        stderr.contains("command not found: shopt"),
+        "expected 'command not found' for shopt: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_consecutive_array_assignments_on_one_line() {
+    // `a=(1 2 3) b=(x y z); echo $a $b` should set both arrays. The
+    // lexer flips incmdpos to false on Outpar, which prevented the
+    // second `b=(...)` from being recognised as Envarray and emitted
+    // "command not found: b=(x y z)" instead. parse_assign now resets
+    // incmdpos=true after closing an array assign.
+    let (_, output, _) = run_zshrs(r#"a=(1 2 3) b=(x y z); echo $a $b"#);
+    assert_eq!(output.trim(), "1 2 3 x y z", "got: {output:?}");
+}
+
+#[test]
+fn test_brace_stepped_char_range_left_literal() {
+    // zsh only expands UNSTEPPED char ranges `{a..z}`. A stepped form
+    // `{a..z..2}` is left literal — match that. Without the gate, zshrs
+    // expanded `{a..e..2}` to `a c e` (zsh prints `{a..e..2}` verbatim).
+    let (_, output, _) = run_zshrs(r#"echo {a..e..2}"#);
+    assert_eq!(output.trim(), "{a..e..2}", "got: {output:?}");
+}
+
+#[test]
+fn test_brace_unstepped_char_range_still_expands() {
+    // Regression guard for the stepped-char-range gate: unstepped
+    // `{a..e}` must still expand to `a b c d e`.
+    let (_, output, _) = run_zshrs(r#"echo {a..e}"#);
+    assert_eq!(output.trim(), "a b c d e", "got: {output:?}");
+}
+
+#[test]
+fn test_arith_division_by_zero_prints_error() {
+    // `$((10/0))` should print `zshrs:1: division by zero` on stderr
+    // (matching zsh's `zsh:1: division by zero`). Regression: zshrs
+    // silently returned 0 with no error output at all.
+    let (_, _, stderr) = run_zshrs(r#"echo $((10/0))"#);
+    assert!(
+        stderr.contains("division by zero"),
+        "expected division-by-zero error: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_arith_mod_by_zero_prints_error() {
+    // `$((10%0))` should also print division-by-zero (mod by zero is
+    // the same condition). Verifies the error path covers Mod, not
+    // just Div.
+    let (_, _, stderr) = run_zshrs(r#"echo $((10%0))"#);
+    assert!(
+        stderr.contains("division by zero"),
+        "expected division-by-zero error: {stderr:?}"
+    );
+}

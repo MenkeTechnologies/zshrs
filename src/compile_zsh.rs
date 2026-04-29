@@ -660,7 +660,14 @@ impl ZshCompiler {
             self.compile_word_str(word);
         }
 
-        if let Some(builtin_id) = fusevm::shell_builtins::builtin_id(first) {
+        // `shopt` is bash-only; zsh has no such builtin. Force external lookup
+        // so it produces "command not found: shopt" matching /bin/zsh exactly.
+        let builtin_id = if first == "shopt" {
+            None
+        } else {
+            fusevm::shell_builtins::builtin_id(first)
+        };
+        if let Some(builtin_id) = builtin_id {
             self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             // `return`/`exit` short-circuit.

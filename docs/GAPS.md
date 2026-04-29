@@ -1093,10 +1093,34 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh format per line: `<flag>: <long-name> (<unit>)<padding>value`, ordered as -t (cpu) -f (file) -d (data) -s (stack) -c (core) -m (resident) -v (address) -n (descriptors) -u (processes). zshrs was emitting just `<long-name> (<unit>) value` in a different order with no `-flag:` prefix. Reordered the limits table, prefixed each row's label with `-flag:`, widened padding to 34 chars to match zsh's column alignment exactly. Test: `test_ulimit_dash_a_zsh_format`.
 
-## Still open (sixty-fourth-pass — remaining)
+## Closed (sixty-fifth-pass)
+
+### `alias -m "g*"` always wrapped value in single quotes
+
+- `alias g=hi; alias -m "g*"` printed `g='hi'` instead of zsh's bare `g=hi`. The `-m` pattern-match path of `builtin_alias` printed `name='value'` unconditionally, ignoring the same metaless-value detection that the regular print path used. Routed `-m` through the shared `format_alias_kv` helper so it picks the bare form for values containing no shell metas. Test: `test_alias_dash_m_uses_unquoted_form_when_no_metas`.
+
+### `shopt` falsely accepted as a builtin
+
+- zsh has no `shopt` — that's bash-only. zshrs shipped a bash-compat `builtin_shopt` that listed all options when called with no args. Removed from VM dispatch (`compile_simple` now skips fusevm's `builtin_id` lookup for "shopt"), removed from coreutils-known-name table, removed from completion-suggestion lists, removed from `builtin help` text. `shopt` now produces `command not found: shopt` matching zsh exactly. Test: `test_shopt_is_command_not_found`.
+
+### Consecutive array assigns `a=(1 2 3) b=(x y z)` dropped second
+
+- After parsing `a=(1 2 3)`, the lexer flipped `incmdpos = false` on Outpar (correct for subshell-close), which stopped the next `b=(x y z)` from being recognised as Envarray. The parser then parsed `b=(x y z)` as a command word and emitted `command not found: b=(x y z)`. Reset `self.lexer.incmdpos = true` in `parse_assign` before returning the array branch so follow-up assigns get their proper Envarray/Envstring classification. Verified `g=(o1); f() { :; }` still parses correctly (the original guard rationale). Test: `test_consecutive_array_assignments_on_one_line`.
+
+### Stepped char brace ranges `{a..z..2}` over-expanded
+
+- zsh only expands UNSTEPPED char ranges (`{a..z}` → `a b c …`); stepped char forms `{a..z..2}` are left literal. zshrs was happily expanding `{a..e..2}` to `a c e`. Gated `expand_brace_sequence`'s char-range branch on `parts.len() == 2` (no explicit step) and added an identity-detection guard in `expand_braces` so the literal-pass-through doesn't infinite-loop on the recursive expansion. Tests: `test_brace_stepped_char_range_left_literal`, `test_brace_unstepped_char_range_still_expands`.
+
+### `$((10/0))` returned `0` silently
+
+- `evaluate_arithmetic` and `eval_arith_expr` both swallowed `MathEval::Err(_)` and returned 0/"0" with no diagnostic. zsh writes the underlying error (`division by zero`, etc.) to stderr in `zsh:LINE: <msg>` form. Surface the error message via `eprintln!("zshrs:1: {}", msg)` in both eval paths. Tests: `test_arith_division_by_zero_prints_error`, `test_arith_mod_by_zero_prints_error`. (Note: zsh additionally aborts the surrounding command on arith failure; zshrs still continues with a 0 substitution result. Full command-abort propagation deferred — needs expansion-time error plumbing through expand_string and the simple-command dispatch path.)
+
+## Still open (sixty-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
+- **`${(j:sep:)$(cmd subst)}`** — cmd-subst as direct argument to flagged PE returns empty in zshrs; zsh splits-and-joins (`a,b,c`). Needs PE flag-context cmd-subst recognition before var-name extraction. Deferred.
+- **Arith error full command-abort** — zsh: `echo $((10/0))` prints only the error and skips `echo`; zshrs prints the error then runs `echo 0`. Partial fix landed (error message now visible); full abort needs expansion-time error plumbing.
 
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
