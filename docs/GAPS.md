@@ -1465,6 +1465,24 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `${a%.txt}` for `a=(a.txt b.bin c.txt)` should yield `a b.bin c`; zshrs joined to scalar first then stripped the joined string, returning `a.txt b.bin c` (only the trailing `.txt` got stripped). Same root cause for `#`/`##`/`%%`. Reworked `BUILTIN_PARAM_STRIP` to detect the `arrays[name]` / `@` / `*` cases and iterate per-element. Tests: `test_array_suffix_strip_per_element`, `test_array_prefix_strip_per_element`, `test_array_long_suffix_strip_per_element`, `test_array_long_prefix_strip_per_element`.
 
+## Closed (seventy-sixth-pass)
+
+### `kill -0 PID` (process-existence check) errored
+
+- `kill -0` is the POSIX/zsh-compatible way to ask "is PID alive?" — no signal sent, kill(pid, 0) returns 0 / ESRCH. zshrs errored "invalid signal: -0" because Signal::SIG0 isn't a libc Signal enum variant. Added a `signal_zero` flag in `builtin_kill` that routes the `-0` parse through a direct `libc::kill(pid, 0)` call. Test: `test_kill_zero_process_check`.
+
+### `print --hi` printed `--hi` instead of erroring
+
+- zsh's `print` errors on unknown flags ("bad option: -h"); zshrs's print parser was lenient — when ANY char in the flag wasn't recognised, the whole token was pushed as a positional. Made it strict: error on the first unrecognised char. Added `-` to the known-flag set so `print -- -hi` and the `--` end-of-options idiom continue to work. Tests: `test_print_strict_unknown_flag_errors`, `test_print_double_dash_terminator`.
+
+### `<<\EOF` heredoc terminator parse-errored
+
+- zsh treats `<<\EOF` (backslash-prefix on the terminator) as shorthand for `<<'EOF'` — disables variable / cmd-sub / arith expansion in the body. zshrs's lexer detected SNULL / DNULL quoting markers but not the BNULL marker (`\u{9f}`) emitted for backslash-escaped chars, so the terminator string still contained the BNULL byte and the body never matched the closing line — hit "here document too large or unterminated". Added BNULL to both the quoted-detection check and the terminator strip-set. Test: `test_heredoc_backslash_terminator_disables_expansion`.
+
+### `trap CMD 0` didn't run the EXIT trap
+
+- POSIX numeric-signal-alias: `trap CMD 0` is equivalent to `trap CMD EXIT`. zshrs stored the trap under signal name `0`, which the EXIT-trap-runner (which keys on `"EXIT"`) never queried. Added a numeric→name normalisation in `builtin_trap`: `0` → `EXIT`, libc-derived numbers → canonical names (so `kill -l USR1`'s output round-trips). Test: `test_trap_signal_zero_is_exit`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

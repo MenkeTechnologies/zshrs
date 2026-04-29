@@ -5532,3 +5532,49 @@ fn test_array_long_prefix_strip_per_element() {
         run_zshrs("a=(/tmp/a /tmp/b); echo ${a##*/}");
     assert_eq!(output.trim(), "a b");
 }
+
+#[test]
+fn test_kill_zero_process_check() {
+    // `kill -0 PID` is the POSIX "process existence check" — no signal
+    // sent, just kill(pid, 0). Was failing because Signal::SIG0 is
+    // not a libc Signal enum variant.
+    let (_, output, _) = run_zshrs("kill -0 $$; echo $?");
+    assert_eq!(output.trim(), "0");
+}
+
+#[test]
+fn test_print_strict_unknown_flag_errors() {
+    // `print --hi` errors `bad option: -h` (zsh treats `-` as a no-op
+    // flag char then errors on the first unknown). Was being passed
+    // through as a positional arg.
+    let (_, _, stderr) = run_zshrs("print --hi");
+    assert!(
+        stderr.contains("bad option") || stderr.contains("-h"),
+        "stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_print_double_dash_terminator() {
+    // `print -- -hi` — `--` ends options, `-hi` is positional.
+    let (_, output, _) = run_zshrs("print -- -hi");
+    assert_eq!(output.trim(), "-hi");
+}
+
+#[test]
+fn test_heredoc_backslash_terminator_disables_expansion() {
+    // `<<\EOF` is shorthand for `<<'EOF'` — disables variable /
+    // command-sub / arithmetic expansion in the body.
+    let (_, output, _) = run_zshrs(
+        "a=42; cat <<\\EOF\nval=$a\nEOF",
+    );
+    assert_eq!(output.trim(), "val=$a");
+}
+
+#[test]
+fn test_trap_signal_zero_is_exit() {
+    // POSIX: `trap CMD 0` == `trap CMD EXIT` — runs at shell exit.
+    let (_, output, _) = run_zshrs(r#"trap "echo bye" 0; echo hi"#);
+    assert_eq!(output.trim(), "hi\nbye");
+}

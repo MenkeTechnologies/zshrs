@@ -18169,6 +18169,7 @@ impl ShellExecutor {
         ];
 
         let mut sig = Signal::SIGTERM;
+        let mut signal_zero = false;
         let mut pids: Vec<String> = Vec::new();
         let mut list_mode = false;
         let mut list_args: Vec<String> = Vec::new();
@@ -18231,7 +18232,15 @@ impl ShellExecutor {
 
                 // Try as number first
                 if let Ok(num) = sig_str.parse::<i32>() {
-                    if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
+                    // Signal 0: special "process existence check" — no
+                    // signal sent, but kill(pid, 0) returns 0 if pid is
+                    // alive, errno ESRCH if not. Mark with a sentinel
+                    // (SIGUSR1 + override flag) handled below.
+                    if num == 0 {
+                        signal_zero = true;
+                    } else if let Some((_, _, s)) =
+                        signal_map.iter().find(|(_, n, _)| *n == num)
+                    {
                         sig = *s;
                     } else {
                         eprintln!("kill: invalid signal: {}", arg);
@@ -18332,7 +18341,17 @@ impl ShellExecutor {
                         continue;
                     }
                 };
-                if let Err(e) = send_signal(pid as i32, sig) {
+                if signal_zero {
+                    // `kill -0 PID` — process existence check. POSIX
+                    // doesn't define a Signal::SIG0 enum variant; call
+                    // libc::kill(pid, 0) directly.
+                    let rc = unsafe { libc::kill(pid as i32, 0) };
+                    if rc != 0 {
+                        let err = std::io::Error::last_os_error();
+                        eprintln!("kill: {}: {}", pid, err);
+                        status = 1;
+                    }
+                } else if let Err(e) = send_signal(pid as i32, sig) {
                     eprintln!("kill: {}", e);
                     status = 1;
                 }
@@ -18983,10 +19002,35 @@ impl ShellExecutor {
 
         for sig in signals {
             let sig_upper = sig.to_uppercase();
-            let sig_name = if sig_upper.starts_with("SIG") {
+            // Numeric signal aliases: `trap CMD 0` is equivalent to
+            // `trap CMD EXIT` (POSIX). zsh accepts both forms.
+            let sig_name = if sig == "0" {
+                "EXIT".to_string()
+            } else if let Ok(num) = sig.parse::<u32>() {
+                // Map other numbers to canonical names. We piggyback on
+                // libc's signal numbers when available so the mapping
+                // is platform-correct (e.g. SIGUSR1 = 10 on Linux,
+                // 30 on macOS).
+                let name = match num as i32 {
+                    n if n == libc::SIGHUP => "HUP",
+                    n if n == libc::SIGINT => "INT",
+                    n if n == libc::SIGQUIT => "QUIT",
+                    n if n == libc::SIGTERM => "TERM",
+                    n if n == libc::SIGUSR1 => "USR1",
+                    n if n == libc::SIGUSR2 => "USR2",
+                    n if n == libc::SIGCHLD => "CHLD",
+                    n if n == libc::SIGCONT => "CONT",
+                    n if n == libc::SIGSTOP => "STOP",
+                    n if n == libc::SIGTSTP => "TSTP",
+                    n if n == libc::SIGALRM => "ALRM",
+                    n if n == libc::SIGPIPE => "PIPE",
+                    _ => "",
+                };
+                if name.is_empty() { sig_upper } else { name.to_string() }
+            } else if sig_upper.starts_with("SIG") {
                 sig_upper[3..].to_string()
             } else {
-                sig_upper.clone()
+                sig_upper
             };
 
             if action.is_empty() || action == "-" {
@@ -24636,20 +24680,22 @@ impl ShellExecutor {
                     .map(|c| c.is_ascii_digit())
                     .unwrap_or(false)
             {
-                // Validate every char is a real print flag — if any char
-                // isn't recognised, treat the whole token as a positional
-                // arg (matches zsh behaviour for `-foo`, `-b` mid-args).
+                // Validate every char is a real print flag. zsh errors
+                // on the FIRST unrecognised char (`print --hi` → "bad
+                // option: -h"). Unlike echo, print does NOT accept `-`
+                // mid-flags as a literal.
                 let body = &arg[1..];
-                let all_known = body.chars().all(|c| matches!(c,
-                    'n' | 'l' | 'r' | 'R' | 'e' | 'E' | 'P' | 'N' | 'z'
+                let known = |c: char| matches!(c,
+                    '-' // zsh accepts `-` as a no-op flag char (so
+                        // `--foo` parses as `-`/`-foo` rather than
+                        // erroring on the second `-`).
+                    | 'n' | 'l' | 'r' | 'R' | 'e' | 'E' | 'P' | 'N' | 'z'
                     | 's' | 'o' | 'O' | 'D' | 'c' | 'm' | 'a' | 'b' | 'i'
                     | 'p' | 'S' | 'x' | 'X' | 'u' | 'C' | 'v' | 'f'
-                ));
-                if !all_known {
-                    accept_flags = false;
-                    output_args.push(arg.clone());
-                    i += 1;
-                    continue;
+                );
+                if let Some(bad) = body.chars().find(|c| !known(*c)) {
+                    eprintln!("zshrs:print:1: bad option: -{}", bad);
+                    return 1;
                 }
                 let mut chars = arg[1..].chars().peekable();
                 while let Some(ch) = chars.next() {
