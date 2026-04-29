@@ -6909,7 +6909,15 @@ impl ShellExecutor {
         variables.insert("IFS".to_string(), " \t\n\0".to_string());
 
         Self {
-            aliases: HashMap::new(),
+            aliases: {
+                let mut a = HashMap::new();
+                // zsh ships these two aliases compiled-in; visible in
+                // a fresh `zsh -f -c 'alias'`. Adding them so zshrs's
+                // alias listing matches zsh's defaults.
+                a.insert("run-help".to_string(), "man".to_string());
+                a.insert("which-command".to_string(), "whence".to_string());
+                a
+            },
             global_aliases: HashMap::new(),
             suffix_aliases: HashMap::new(),
             loop_signal: None,

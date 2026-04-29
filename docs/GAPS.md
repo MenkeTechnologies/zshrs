@@ -867,7 +867,13 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 - `setopt` (no args) lists options whose state differs from the compiled-in default. zsh's `-f` flag turns off `rcs` (skip user .zshrc et al) AND `hashdirs` (don't pre-hash command paths) — both default-on options, so they appear as `norcs` / `nohashdirs` in `setopt`'s diff. zshrs's `-f` only filtered the flag from arg parsing without flipping any options, so `setopt` reported nothing.
 - Captured `no_rcs_flag = args.iter().any(|a| a == "-f" || a == "--no-rcs")` before the filter and threaded it into `apply_cli_flags`. Inserts `rcs=false` and `hashdirs=false` into `executor.options` (left `globalrcs` untouched — zsh `-f` keeps that on, only user-rcs files get skipped). Test: `test_dash_f_flag_disables_rcs_and_hashdirs`.
 
-## Still open (forty-second-pass — remaining)
+## Closed (forty-third-pass — default aliases match zsh)
+
+### `alias` listing missing zsh's compiled-in defaults
+
+- zsh ships two aliases by default: `run-help=man` and `which-command=whence`. Visible in a fresh `zsh -f -c 'alias'`. zshrs's executor started with an empty alias map. Pre-populated `aliases` HashMap with these two entries in `ShellExecutor::new()`. Test: `test_default_aliases_match_zsh`.
+
+## Still open (forty-third-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

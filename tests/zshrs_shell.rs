@@ -3501,3 +3501,21 @@ fn test_dash_f_flag_disables_rcs_and_hashdirs() {
     lines.sort();
     assert_eq!(lines, vec!["nohashdirs", "norcs"], "got: {output:?}");
 }
+
+#[test]
+fn test_default_aliases_match_zsh() {
+    // zsh ships compiled-in aliases `run-help=man` and
+    // `which-command=whence` — visible in `zsh -f -c 'alias'`.
+    let (_, output, _) = run_zshrs(r#"alias"#);
+    let mut lines: Vec<String> =
+        output.lines().map(|s| s.to_string()).collect();
+    lines.sort();
+    assert!(
+        lines.contains(&"run-help=man".to_string()),
+        "missing run-help: {output:?}"
+    );
+    assert!(
+        lines.contains(&"which-command=whence".to_string()),
+        "missing which-command: {output:?}"
+    );
+}
