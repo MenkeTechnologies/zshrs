@@ -1721,6 +1721,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `which` is a csh-style synonym for `whence -c`. zsh's `whence -c` outputs `name: shell reserved word` for reserved-word names. zshrs's whence-c branch had no reserved-word case — it fell through and printed just the name. Added a `csh_style` arm in the reserved-word handler. Test: `test_which_reserved_word_csh_style`.
 
+### `${a[N]:r}` / `:e` / `:t` / `:h` / `:l` / `:u` returned full element
+
+- zsh: `a=(file.txt); ${a[1]:r}` → `file` (history-style modifier on resolved element). zshrs's bracket handler routed `:` modifiers through the colon-default branch (`:-`/`:=`/`:?`/`:+`) and didn't recognize history modifiers. Added a per-element `apply_history_modifiers` call when `after_bracket` starts with `:` and the body is a known modifier. Test: `test_array_element_history_modifier`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

@@ -6352,3 +6352,21 @@ fn test_which_reserved_word_csh_style() {
     let (_, output, _) = run_zshrs("which local");
     assert!(output.contains("shell reserved word"), "got: {}", output);
 }
+
+#[test]
+fn test_array_element_history_modifier() {
+    // `${a[N]:r}` / `:e` / `:t` / `:h` / `:l` / `:u` should apply
+    // the history modifier to the resolved element. zshrs's
+    // bracket handler routed `:` modifiers through the colon-default
+    // branch which only handles :- := :? :+. Now also handles
+    // history modifiers per-element.
+    let (_, output, _) = run_zshrs(r#"a=(file.txt); echo "${a[1]:r}""#);
+    assert_eq!(output.trim(), "file");
+    let (_, output, _) = run_zshrs(r#"a=(file.tar.gz); echo "${a[1]:e}""#);
+    assert_eq!(output.trim(), "gz");
+    let (_, output, _) =
+        run_zshrs(r#"a=(/usr/local/bin/file); echo "${a[1]:t}""#);
+    assert_eq!(output.trim(), "file");
+    let (_, output, _) = run_zshrs(r#"a=(HELLO); echo "${a[1]:l}""#);
+    assert_eq!(output.trim(), "hello");
+}
