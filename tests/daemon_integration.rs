@@ -527,6 +527,134 @@ fn publish_deliver_to_matching_subscribers() {
 }
 
 #[test]
+fn push_pull_canonical_roundtrip() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+
+    let r = c
+        .call(
+            "push_canonical",
+            json!({ "subsystem": "alias", "value": { "ll": "ls -la", "gst": "git status" } }),
+        )
+        .expect("push");
+    assert_eq!(r["promoted"].as_u64(), Some(2));
+
+    let r = c
+        .call("pull_canonical", json!({ "subsystem": "alias" }))
+        .expect("pull");
+    let rows = r["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+}
+
+#[test]
+fn export_aliases_sh_format() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    c.call(
+        "push_canonical",
+        json!({ "subsystem": "alias", "value": { "ll": "ls -la" } }),
+    )
+    .unwrap();
+    let r = c
+        .call("export", json!({ "target": "aliases" }))
+        .expect("export");
+    let body = r["body"].as_str().unwrap();
+    assert!(body.contains("alias ll="));
+    assert!(body.contains("unalias -m"));
+}
+
+#[test]
+fn ask_take_pop_critical_first() {
+    let d = DaemonHandle::spawn();
+    let mut asker = d.connect();
+    let target = d.connect();
+    let target_id = target.welcome.client_id;
+    drop(target);
+
+    // Need the target connected for ask_ask to accept; reconnect after.
+    let mut target = d.connect();
+    let target_id = target.welcome.client_id;
+
+    asker
+        .call(
+            "ask_ask",
+            json!({
+                "kind": "picker",
+                "target": { "shell_id": target_id },
+                "urgency": "normal",
+                "payload": { "items": ["a", "b"] }
+            }),
+        )
+        .expect("normal ask");
+    asker
+        .call(
+            "ask_ask",
+            json!({
+                "kind": "dialog",
+                "target": { "shell_id": target_id },
+                "urgency": "critical",
+                "payload": { "message": "ok?" }
+            }),
+        )
+        .expect("critical ask");
+
+    // target takes — critical first.
+    let r = target.call("ask_take", json!({})).expect("take");
+    assert_eq!(r["kind"].as_str(), Some("dialog"));
+    assert_eq!(r["urgency"].as_str(), Some("critical"));
+
+    let r = target.call("ask_pending", json!({})).expect("pending");
+    assert_eq!(r["pending_count"].as_u64(), Some(1));
+}
+
+#[test]
+fn keys_op_returns_canonical_keys() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    c.call(
+        "push_canonical",
+        json!({
+            "subsystem": "compdef",
+            "value": { "git": "_git", "docker": "_docker" }
+        }),
+    )
+    .unwrap();
+    let r = c.call("keys", json!({ "param": "_comps" })).expect("keys");
+    let keys = r["keys"].as_array().unwrap();
+    assert_eq!(keys.len(), 2);
+    assert!(keys.iter().any(|v| v == "git"));
+}
+
+#[test]
+fn stats_flush_merges_deltas() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    let r = c
+        .call(
+            "stats_flush",
+            json!({
+                "deltas": [
+                    { "fq_name": "_git", "calls": 3, "total_ns": 1500, "last_ns": 1000 },
+                    { "fq_name": "_docker", "calls": 1, "total_ns": 500 }
+                ]
+            }),
+        )
+        .expect("flush");
+    assert_eq!(r["merged"].as_u64(), Some(2));
+
+    // Second flush merges via ON CONFLICT DO UPDATE.
+    let r = c
+        .call(
+            "stats_flush",
+            json!({
+                "deltas": [{ "fq_name": "_git", "calls": 2, "total_ns": 800, "last_ns": 2000 }]
+            }),
+        )
+        .expect("second flush");
+    assert_eq!(r["merged"].as_u64(), Some(1));
+}
+
+#[test]
 fn subscriptions_cleared_on_disconnect() {
     let d = DaemonHandle::spawn();
     let mut sub_client = d.connect();

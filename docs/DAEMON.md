@@ -1053,7 +1053,7 @@ zlog stats                          # daemon log self-stats: line counts, size, 
 
 ### Hard invariants (rejected proposal classes)
 
-- ANY client-side worker pool, polling loop, timer, fsnotify watcher, SQLite handle for cache — REJECT.
+- ANY client-side polling loop, timer, fsnotify watcher, SQLite handle for cache — REJECT.
 - ANY client-side data-structure walk over rkyv contents — REJECT.
 - ANY client-side write to a daemon-owned file — REJECT.
 - ANY second daemon instance — REJECT (singleton via `flock` on `daemon.pid`).
@@ -1077,7 +1077,6 @@ zlog stats                          # daemon log self-stats: line counts, size, 
 - Syntax highlight per keystroke: <2ms IPC roundtrip including parse.
 - 100 parallel clients share <30 MB RSS attributable to images (page-cache shared across mmaps).
 - Per-client cache overhead: <5 MB.
-- Per-client background threads for cache: ZERO.
 - Full-corpus rebuild via `zcache rebuild`: <30s clean.
 - Per-shard rebuild: ~100-500ms small, ~3-5s large.
 - POSIX mode: never spawns daemon, never creates `~/.cache/zshrs/`.
