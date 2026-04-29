@@ -883,7 +883,13 @@ Two bugs in `expand_glob`:
 
 Tests: `test_dot_glob_excludes_dot_and_dotdot`, `test_star_glob_excludes_dotfiles_by_default`.
 
-## Still open (forty-fourth-pass — remaining)
+## Closed (forty-fifth-pass — `${var/pat/repl}` glob patterns)
+
+### `${s/?/X}` was treating `?` literally
+
+- `BUILTIN_PARAM_REPLACE` used `String::replace` for plain text matching, which doesn't honor zsh's pattern syntax. zsh patterns in the replace form support `?` (any single char), `*` (any sequence), and `[...]` (char class). Compile a regex from the glob pattern (escaping regex-only metas) when the pattern contains glob chars; fall back to plain string for the meta-free fast path. Anchored prefix (`/#`) and suffix (`/%`) variants both honor the regex match position. Tests: `test_param_replace_glob_pattern_question`, `test_param_replace_glob_pattern_star`, `test_param_replace_glob_pattern_class`, `test_param_replace_global_with_glob`.
+
+## Still open (forty-fifth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
