@@ -3387,3 +3387,21 @@ fn test_param_flag_Q_dequote() {
     let (_, output, _) = run_zshrs(r#"s="'world'"; echo "${(Q)s}""#);
     assert_eq!(output.trim(), "world", "SQ: {output:?}");
 }
+
+#[test]
+fn test_pipeline_last_stage_runs_in_current_shell() {
+    // zsh: the LAST stage of a pipeline runs in the current shell
+    // (not a forked subshell), so a trailing `read x` keeps its
+    // assignment after the pipeline. bash forks every stage; zshrs
+    // must match zsh.
+    let (_, output, _) = run_zshrs(r#"echo hi | read x; echo "x=$x""#);
+    assert_eq!(output.trim(), "x=hi", "got: {output:?}");
+}
+
+#[test]
+fn test_pipeline_last_stage_assignment_persists() {
+    let (_, output, _) = run_zshrs(
+        r#"printf "a\nb\nc\n" | { read first; echo "first=$first"; }"#,
+    );
+    assert_eq!(output.trim(), "first=a", "got: {output:?}");
+}
