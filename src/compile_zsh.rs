@@ -2830,6 +2830,30 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                     | '\u{8c}' // META-QSTRING ($ in DQ context)
             ) =>
         {
+            // `$#@`, `$#*`, `$#NAME` — `$#`-then-suffix shapes. After
+            // the leading `#` (literal or META-#) the next char may be:
+            //   - `@`/`*` (literal or META): zsh shorthand for
+            //     `${#@}`/`${#*}`, the positional count.
+            //   - identifier start: `${#NAME}`, the length of NAME.
+            // Without this, `"$#@"` was split into segments
+            // [META-$, #] + literal `@`, leaving the `@` outside the
+            // expansion. Same for `X$#Y` where `Y` got dropped from
+            // the name lookup.
+            if matches!(ch, '#' | '\u{84}') && i + 2 < chars.len() {
+                let after = chars[i + 2];
+                if matches!(after, '@' | '*' | '\u{87}') {
+                    return i + 3;
+                }
+                if after == '_' || after.is_ascii_alphabetic() {
+                    let mut j = i + 2;
+                    while j < chars.len()
+                        && (chars[j] == '_' || chars[j].is_ascii_alphanumeric())
+                    {
+                        j += 1;
+                    }
+                    return j;
+                }
+            }
             i + 2
         }
         // All-digit positional: $0..$N

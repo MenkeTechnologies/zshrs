@@ -1584,6 +1584,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - Bracket-class patterns in subsequent case arms triggered `expected ')' in case pattern`. After parsing the first arm's body, the lexer advanced past `;;` BEFORE the parser set `incasepat=1` for the next round, so `[A-Z]` got tokenized as `Inbrack` (test/array subscript) instead of being part of a glob pattern. Fix: set `incasepat=1` BEFORE the zshlex advance on each terminator (`;;`, `;&`, `;|`) so the next pattern's `[` is lexed in pattern context. Test: `test_case_multi_pattern_with_brackets`.
 
+### `type for` / `type while` reported "not found"
+
+- zsh treats reserved words as a distinct type — `type for` reports "for is a reserved word". zshrs's `builtin_type` only checked aliases / functions / builtins / external paths, falling through to "not found" for keywords. Added a RESERVED_WORDS check at the top of the per-name loop so all 22 zsh keywords (`do`, `done`, `esac`, `then`, `elif`, `else`, `fi`, `for`, `case`, `if`, `while`, `until`, `select`, `function`, `repeat`, `time`, `in`, `foreach`, `end`, `coproc`, `nocorrect`, `noglob`) report the keyword status before any other lookup. Test: `test_type_for_reserved_word`.
+
+### `"$#@"` expanded to "3@" instead of "3"
+
+- zsh shorthand: `$#@` and `$#*` both mean "count of positional params" (same as `${#@}`/`${#*}`). zshrs's segment-splitter (`find_expansion_end`) only consumed `$#` then treated the trailing `@`/`*` as literal in the next segment. Same root cause for `X$#Y` (length of `Y`) — the `Y` was being dropped from the var-name lookup. Extended `find_expansion_end` to look ahead after `#` (literal or META-#): if next char is `@`/`*`/META-* consume it as part of the expansion; if next char is identifier-start (alpha or `_`) consume the whole identifier as the var name. Tests: `test_dollar_hash_at_in_double_quotes`, `test_dollar_hash_name_concat`.
+
+### `unalias notdef` had non-zsh error format
+
+- zsh: `unalias:1: no such hash table element: NAME`. zshrs had its own custom format (`unalias: NAME: not found`). Aligned to zsh's exact wording so user scripts that grep the error get the same string. Test: `test_unalias_missing_zsh_format`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
