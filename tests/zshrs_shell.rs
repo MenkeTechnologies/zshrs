@@ -6171,3 +6171,17 @@ fn test_whence_reserved_word_local() {
     let (_, output, _) = run_zshrs("whence -v repeat");
     assert!(output.contains("reserved word"));
 }
+
+#[test]
+fn test_dollar_underscore_after_function_call() {
+    // After `foo arg`, `$_` should be `arg` (last call arg). After
+    // `foo` (no args), `$_` should be `foo` (function name). zshrs
+    // was leaking the internal `return 42` arg as `$_=42`.
+    let (_, output, _) =
+        run_zshrs(r#"foo() { return 42; }; foo; echo "[$_]""#);
+    assert_eq!(output.trim(), "[foo]");
+
+    let (_, output, _) =
+        run_zshrs(r#"foo() { :; }; foo arg1; echo "[$_]""#);
+    assert_eq!(output.trim(), "[arg1]");
+}

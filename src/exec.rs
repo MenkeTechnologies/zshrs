@@ -6301,6 +6301,19 @@ impl fusevm::ShellHost for ZshrsHost {
         let status = vm.last_status;
 
         with_executor(|exec| {
+            // Set `$_` to the last arg the function was called with
+            // (or the function name when called with no args). zsh:
+            // `$_` after `foo arg` is `arg`; after `foo` (no args) is
+            // `foo`. The function-internal `pop_args` calls polluted
+            // pending_underscore with internal command args; clear and
+            // overwrite here so the caller sees the function's call
+            // form, not internal `return 42` arg.
+            let last_call_arg = args
+                .last()
+                .cloned()
+                .unwrap_or_else(|| fn_name.clone());
+            exec.variables.insert("_".to_string(), last_call_arg.clone());
+            exec.pending_underscore = Some(last_call_arg);
             exec.positional_params = saved_params;
             exec.local_scope_depth -= 1;
             // Restore `$0` and `$funcstack` to their pre-call values.
