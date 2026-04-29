@@ -7475,6 +7475,12 @@ impl ShellExecutor {
         variables.insert("OPTIND".to_string(), "1".to_string());
         variables.insert("OPTERR".to_string(), "1".to_string());
 
+        // zsh starts with `$_` empty (unlike bash which inherits the
+        // OS-env value). The parent process sets `_=/path/to/binary`
+        // before exec; zsh wipes that. Initialize to empty so script
+        // reads of `$_` before any command runs return empty.
+        variables.insert("_".to_string(), String::new());
+
         let mut exec = Self {
             aliases: {
                 let mut a = HashMap::new();
@@ -22173,7 +22179,9 @@ impl ShellExecutor {
             // Function
             if self.function_exists(cmd) {
                 if verbose {
-                    println!("{} is a shell function", cmd);
+                    // zsh prints "is a shell function from <source>";
+                    // for built-from-script defns the source is "zsh".
+                    println!("{} is a shell function from zsh", cmd);
                 } else {
                     println!("{}", cmd);
                 }

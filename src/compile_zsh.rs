@@ -3617,10 +3617,15 @@ fn escape_quoted_glob_metas(s: &str) -> String {
                 in_dquote = !in_dquote;
                 out.push(c);
             }
-            '*' | '?' | '[' if in_squote || in_dquote => {
+            '*' | '?' | '[' | '(' | ')' | '|' | '~' | '#' | '^'
+                if in_squote || in_dquote =>
+            {
                 // Backslash-escape so glob_match_static treats as
                 // literal char. The runtime glob translator already
-                // handles `\X` → escape-X.
+                // handles `\X` → escape-X. zsh's pattern matcher
+                // treats `(`/`)`/`|` as alternation grouping under
+                // KSH_GLOB / EXTENDED_GLOB; quoted forms must be
+                // literal so `[[ "foo()" == "foo()" ]]` succeeds.
                 out.push('\\');
                 out.push(c);
             }
