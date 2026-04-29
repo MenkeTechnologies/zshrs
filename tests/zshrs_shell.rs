@@ -6185,3 +6185,18 @@ fn test_dollar_underscore_after_function_call() {
         run_zshrs(r#"foo() { :; }; foo arg1; echo "[$_]""#);
     assert_eq!(output.trim(), "[arg1]");
 }
+
+#[test]
+fn test_unknown_cond_emits_diagnostic() {
+    // `[[ -l file ]]` (zsh: -h is symlink, -l is unknown) and
+    // `[[ -X file ]]` should emit "unknown condition: -X" to stderr.
+    // Was silently returning false.
+    let (_, _, stderr) = run_zshrs("[[ -l /tmp ]]");
+    assert!(
+        stderr.contains("unknown condition"),
+        "expected 'unknown condition' in stderr, got: {}",
+        stderr
+    );
+    let (_, _, stderr) = run_zshrs("[[ -X /tmp ]]");
+    assert!(stderr.contains("unknown condition"));
+}

@@ -4045,6 +4045,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Status(0)
     });
 
+    vm.register_builtin(BUILTIN_UNKNOWN_COND, |vm, _argc| {
+        // Unused — the diagnostic is emitted at compile time
+        // (BUILTIN dispatch wasn't reliably firing for this path).
+        // Kept registered as a no-op placeholder.
+        let _ = vm.pop();
+        fusevm::Value::Bool(false)
+    });
+
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
         let name = vm.pop().to_str();
         // zsh strips a leading `no` (e.g. `[[ -o nounset ]]` and
@@ -5745,6 +5753,13 @@ pub const BUILTIN_PARAM_FILTER: u16 = 322;
 /// [...elements, name, key]. Empty elements + single-int key `a[i]=()`
 /// removes that element. Comma-key `a[i,j]=(...)` splices.
 pub const BUILTIN_SET_SUBSCRIPT_RANGE: u16 = 323;
+
+/// `[[ -X file ]]` for unknown unary test op `-X`. Stack: [op_name].
+/// Emits zsh's `unknown condition: -X` diagnostic to stderr and
+/// pushes Bool(false). Without this, unknown conditions silently
+/// returned false matching neither zsh's error format nor the
+/// expected status code (zsh returns 2 for parse error).
+pub const BUILTIN_UNKNOWN_COND: u16 = 324;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)
