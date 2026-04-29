@@ -3696,3 +3696,25 @@ fn test_function_name_with_hyphen_passes_args() {
     );
     assert_eq!(output.trim(), "called: hello world", "got: {output:?}");
 }
+
+#[test]
+fn test_typeset_f_preserves_first_word_of_body() {
+    // The parser captured body_start AFTER its zshlex() that advances
+    // past the first body token, so `typeset -f f` for
+    // `f() { echo a; echo b; }` printed `a; echo b;` (missing the
+    // first `echo`). Capture body_start BEFORE the zshlex.
+    let (_, output, _) =
+        run_zshrs(r#"f() { echo a; echo b; }; typeset -f f"#);
+    assert!(
+        output.contains("echo a"),
+        "body should preserve first echo: {output:?}"
+    );
+    assert!(
+        output.contains("echo b"),
+        "body should include second echo: {output:?}"
+    );
+    assert!(
+        !output.contains("\ta;"),
+        "body must not start with bare `a` (lost echo): {output:?}"
+    );
+}
