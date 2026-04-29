@@ -3597,3 +3597,20 @@ fn test_param_replace_global_with_glob() {
     let (_, output, _) = run_zshrs(r#"s=hello; echo "${s//[aeiou]/V}""#);
     assert_eq!(output.trim(), "hVllV", "got: {output:?}");
 }
+
+#[test]
+fn test_cond_regex_with_variable() {
+    // [[ str =~ $pat ]] must expand $pat before applying the regex.
+    let (_, output, _) =
+        run_zshrs(r#"pat="^h"; [[ "hello" =~ $pat ]] && echo M"#);
+    assert_eq!(output.trim(), "M", "got: {output:?}");
+}
+
+#[test]
+fn test_cond_regex_with_capture_groups() {
+    // $match[N] is populated from regex captures.
+    let (_, output, _) = run_zshrs(
+        r#"pat="^(h)(.*)"; [[ "hello" =~ $pat ]] && echo "$match[1]:$match[2]""#,
+    );
+    assert_eq!(output.trim(), "h:ello", "got: {output:?}");
+}

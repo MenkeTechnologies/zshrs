@@ -889,7 +889,13 @@ Tests: `test_dot_glob_excludes_dot_and_dotdot`, `test_star_glob_excludes_dotfile
 
 - `BUILTIN_PARAM_REPLACE` used `String::replace` for plain text matching, which doesn't honor zsh's pattern syntax. zsh patterns in the replace form support `?` (any single char), `*` (any sequence), and `[...]` (char class). Compile a regex from the glob pattern (escaping regex-only metas) when the pattern contains glob chars; fall back to plain string for the meta-free fast path. Anchored prefix (`/#`) and suffix (`/%`) variants both honor the regex match position. Tests: `test_param_replace_glob_pattern_question`, `test_param_replace_glob_pattern_star`, `test_param_replace_glob_pattern_class`, `test_param_replace_global_with_glob`.
 
-## Still open (forty-fifth-pass — remaining)
+## Closed (forty-sixth-pass — `[[ $s =~ $pat ]]` variable expansion)
+
+### `pat="^h"; [[ "hello" =~ $pat ]]` never matched
+
+- The `[[ s =~ $pat ]]` compile path emitted the RHS as a LoadConst literal (skipping `compile_word_str`'s expansion to avoid filesystem-glob expansion of pattern chars). That meant `$pat` reached the regex engine as the literal string `$pat` instead of its value, so the match always failed. Carved out `=~` separately: wrap the RHS in DQ markers (`\u{9e}…\u{9e}`) and route through `compile_word_str` so variable / cmd-subst / arith expansion fires. The DQ wrapper suppresses brace expansion + filesystem globbing — the test runtime treats the result as a regex pattern. Tests: `test_cond_regex_with_variable`, `test_cond_regex_with_capture_groups`.
+
+## Still open (forty-sixth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
