@@ -38,6 +38,11 @@ pub struct ZshCompiler {
     /// `${(o/M/i/n/u)…}` fast paths know to pass the DQ-suppression
     /// sentinel to BUILTIN_PARAM_FLAG.
     pub dq_context_depth: i32,
+    /// Depth tracker for "compiling an assignment RHS". When >0, bare
+    /// `$(cmd)` does NOT word-split on IFS — assignments preserve
+    /// whitespace/newlines (`x=$(printf 'a\nb')` keeps both lines).
+    /// Argument-context cmd-subst still splits.
+    pub assign_context_depth: i32,
 }
 
 impl ZshCompiler {
@@ -51,6 +56,7 @@ impl ZshCompiler {
             return_patches: Vec::new(),
             errexit_suppress_depth: 0,
             dq_context_depth: 0,
+            assign_context_depth: 0,
         }
     }
 
@@ -813,12 +819,14 @@ impl ZshCompiler {
                         || s.contains('?') || s.contains('\u{86}') // QUEST
                         || s.contains('[') || s.contains('\u{91}') // INBRACK
                         || s.contains('{') || s.contains('\u{8f}')); // INBRACE
+                self.assign_context_depth += 1;
                 if needs_dq_wrap {
                     let wrapped = format!("\u{9e}{}\u{9e}", s);
                     self.compile_word_str(&wrapped);
                 } else {
                     self.compile_word_str(s);
                 }
+                self.assign_context_depth -= 1;
                 let bid = if assign.append {
                     // `name+=val` — runtime-dispatch via APPEND_SCALAR_OR_PUSH:
                     // if `name` is an indexed array, push the value as a new
@@ -1263,6 +1271,23 @@ impl ZshCompiler {
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_SUBST_TEXT, 1), 0);
+                // Word-split the result on IFS when the surrounding
+                // word is unquoted. zsh: `f $(echo a b c)` passes
+                // three args; `f "$(echo a b c)"` passes one. The
+                // outer DQ wrapper appears as a leading `\u{9e}` in
+                // `s`; inside DQ context (dq_context_depth>0) we also
+                // skip the split. POSIX/SH_WORD_SPLIT semantics for
+                // the cmd-subst case — applies even without the
+                // option set because zsh splits cmd-subst by default
+                // when the arg is bare.
+                let in_dq = s.starts_with('\u{9e}') || self.dq_context_depth > 0;
+                let in_assign = self.assign_context_depth > 0;
+                if !in_dq && !in_assign {
+                    self.builder.emit(
+                        Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0),
+                        0,
+                    );
+                }
                 return;
             }
         }
