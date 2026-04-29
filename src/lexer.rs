@@ -370,15 +370,27 @@ impl<'a> ZshLexer<'a> {
                 // heredocs disable variable / command-sub / arithmetic
                 // expansion in the body — see `compile_redir` for the
                 // expansion side.
+                // Quoted terminators (`<<'EOF'`, `<<"EOF"`, `<<\EOF`)
+                // disable expansion in the body. SNULL/DNULL mark
+                // single/double-quoted spans; BNULL (`\u{9f}`) marks
+                // any backslash-escaped char — its presence alone is
+                // enough to flag the terminator as quoted (zsh's
+                // `<<\EOF` shorthand for `<<'EOF'`).
                 let quoted = terminator.contains('\u{9d}')
                     || terminator.contains('\u{9e}')
+                    || terminator.contains('\u{9f}')
                     || terminator.starts_with('\'')
                     || terminator.starts_with('"');
                 let term = terminator
-                    .trim_matches(|c: char| {
-                        c == '\'' || c == '"' || c == '\u{9d}' || c == '\u{9e}'
+                    .chars()
+                    .filter(|c| {
+                        *c != '\''
+                            && *c != '"'
+                            && *c != '\u{9d}'
+                            && *c != '\u{9e}'
+                            && *c != '\u{9f}'
                     })
-                    .to_string();
+                    .collect::<String>();
                 self.heredocs.push(HereDoc {
                     terminator: term,
                     strip_tabs,
