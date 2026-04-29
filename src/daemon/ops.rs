@@ -41,12 +41,14 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "notify" => op_notify(state, client_id, args).await,
         "daemon" => op_daemon(state, args).await,
 
+        "rebuild" => op_rebuild(state, args).await,
+        "clean" => op_clean(state, args).await,
+        "verify" => op_verify(state).await,
+        "compact" => op_compact(state).await,
+        "source_resolve" => super::source_resolver::op_source_resolve(state, args).await,
+
         // Stubs — all return unimplemented. Filling in is later-iteration work.
-        "rebuild"
-        | "clean"
-        | "verify"
-        | "compact"
-        | "fpath_changed"
+        "fpath_changed"
         | "stats_flush"
         | "subscribe_shard"
         | "history_append"
@@ -56,7 +58,6 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         | "highlight"
         | "keys"
         | "load_script"
-        | "source_resolve"
         | "push_canonical"
         | "pull_canonical"
         | "diff_canonical"
@@ -86,6 +87,15 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
 
 async fn op_info(state: &Arc<DaemonState>) -> OpResult {
     let catalog = state.catalog_summary().ok();
+    let shards: Vec<String> = super::shard::list_shards(&state.paths)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| {
+            p.file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+        })
+        .collect();
     Ok(json!({
         "daemon_pid": state.pid,
         "daemon_uptime_ms": state.uptime_ms(),
@@ -96,6 +106,7 @@ async fn op_info(state: &Arc<DaemonState>) -> OpResult {
         "cache_root": state.paths.root.display().to_string(),
         "log_path": state.paths.log.display().to_string(),
         "catalog": catalog,
+        "shards": shards,
     }))
 }
 
@@ -278,6 +289,150 @@ async fn op_daemon(state: &Arc<DaemonState>, args: Value) -> OpResult {
 
         _ => Err(ErrPayload::new("bad_verb", format!("unknown daemon verb `{verb}`"))),
     }
+}
+
+// -------- rebuild / clean / verify / compact --------
+
+async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let shard_filter = args
+        .get("shard")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    // V1 stub-with-real-IO: create a synthetic shard so the rkyv pipeline is
+    // exercised end-to-end. Real plugin/fpath analysis arrives with the .zshrc
+    // analysis pass + walk-lifecycle evaluator.
+    let slug = shard_filter.clone().unwrap_or_else(|| "system".to_string());
+    let source_root = state.paths.root.display().to_string();
+    let mut shard = super::shard::Shard::new(slug.clone(), source_root.clone(), 1);
+
+    // Empty for v1 — real entries come from analysis-pass output.
+    let path = match super::shard::write_shard(&state.paths, &shard) {
+        Ok(p) => p,
+        Err(e) => return Err(ErrPayload::new("rebuild_failed", e.to_string())),
+    };
+    let _ = &mut shard;
+
+    Ok(json!({
+        "rebuilt": [slug.clone()],
+        "path": path.display().to_string(),
+        "generation": 1,
+        "entries": 0,
+        "stub": true,
+    }))
+}
+
+async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let target = args
+        .get("target")
+        .and_then(Value::as_str)
+        .unwrap_or("all")
+        .to_string();
+
+    let mut removed: Vec<String> = Vec::new();
+    let paths = &state.paths;
+
+    match target.as_str() {
+        "all" => {
+            for shard in super::shard::list_shards(paths).unwrap_or_default() {
+                let _ = std::fs::remove_file(&shard);
+                removed.push(shard.display().to_string());
+            }
+            if paths.index_rkyv.exists() {
+                let _ = std::fs::remove_file(&paths.index_rkyv);
+                removed.push(paths.index_rkyv.display().to_string());
+            }
+        }
+        "shards" => {
+            for shard in super::shard::list_shards(paths).unwrap_or_default() {
+                let _ = std::fs::remove_file(&shard);
+                removed.push(shard.display().to_string());
+            }
+        }
+        "index" => {
+            if paths.index_rkyv.exists() {
+                let _ = std::fs::remove_file(&paths.index_rkyv);
+                removed.push(paths.index_rkyv.display().to_string());
+            }
+        }
+        "log" => {
+            // Truncate today's rolled file (don't unlink — tracing-appender holds an fd).
+            for entry in std::fs::read_dir(&paths.root)
+                .map_err(|e| ErrPayload::new("io", e.to_string()))?
+            {
+                if let Ok(entry) = entry {
+                    let name = entry.file_name();
+                    let s = name.to_string_lossy();
+                    if s.starts_with("zshrs.log") {
+                        let _ = std::fs::OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .open(entry.path());
+                        removed.push(entry.path().display().to_string());
+                    }
+                }
+            }
+        }
+        other => {
+            return Err(ErrPayload::new(
+                "bad_target",
+                format!("clean target `{}` not supported (try all|shards|index|log)", other),
+            ));
+        }
+    }
+
+    Ok(json!({
+        "removed": removed,
+        "removed_count": removed.len(),
+    }))
+}
+
+async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
+    let mut issues: Vec<String> = Vec::new();
+    let mut shards_ok = 0usize;
+    let mut shards_bad = 0usize;
+
+    for shard in super::shard::list_shards(&state.paths).unwrap_or_default() {
+        match super::shard::MmappedShard::open(&shard) {
+            Ok(_) => shards_ok += 1,
+            Err(e) => {
+                shards_bad += 1;
+                issues.push(format!("{}: {}", shard.display(), e));
+            }
+        }
+    }
+
+    let catalog_ok = state.catalog_integrity().unwrap_or(false);
+    if !catalog_ok {
+        issues.push("catalog.db: PRAGMA integrity_check failed".to_string());
+    }
+
+    let tmp_swept = super::shard::sweep_tmp_files(
+        &state.paths,
+        std::time::Duration::from_secs(60),
+    )
+    .unwrap_or(0);
+
+    Ok(json!({
+        "shards_ok": shards_ok,
+        "shards_bad": shards_bad,
+        "catalog_ok": catalog_ok,
+        "tmp_swept": tmp_swept,
+        "issues": issues,
+        "verified": shards_bad == 0 && catalog_ok,
+    }))
+}
+
+async fn op_compact(state: &Arc<DaemonState>) -> OpResult {
+    // For v1: VACUUM the catalog + sweep tmp files.
+    let swept = super::shard::sweep_tmp_files(
+        &state.paths,
+        std::time::Duration::from_secs(60),
+    )
+    .unwrap_or(0);
+    Ok(json!({
+        "tmp_swept": swept,
+    }))
 }
 
 // -------- Helpers --------

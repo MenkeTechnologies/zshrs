@@ -61,6 +61,12 @@ toml = "1"
 filetime = "0.2.27"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "io-util", "signal", "time", "sync", "macros"] }
 byteorder = "1"
+rkyv = { version = "0.7", features = ["validation", "archive_le", "size_32"] }
+memmap2 = "0.9"
+sha2 = "0.10"
+notify = "6"
+notify-debouncer-mini = "0.4"
+crossterm = "0.27"
 
 [features]
 default = []

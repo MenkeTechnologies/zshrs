@@ -285,7 +285,9 @@ fn daemon_status_op() {
 fn unimplemented_op_returns_unimplemented_code() {
     let d = DaemonHandle::spawn();
     let mut c = d.connect();
-    let res = c.call("rebuild", json!({}));
+    // `complete` (Tab completion enumeration) isn't implemented in v1 foundation
+    // — pick any op known to be in the unimplemented bucket in src/daemon/ops.rs.
+    let res = c.call("complete", json!({}));
     assert!(res.is_err());
     assert!(format!("{}", res.unwrap_err()).contains("unimplemented"));
 }
@@ -311,4 +313,94 @@ fn catalog_db_created() {
     assert_eq!(catalog["schema_version"].as_u64(), Some(1));
     assert!(catalog["size_bytes"].as_u64().unwrap() > 0);
     assert!(d.paths.catalog_db.exists());
+}
+
+#[test]
+fn rebuild_creates_shard() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+
+    let r = c.call("rebuild", json!({})).expect("rebuild");
+    assert_eq!(r["rebuilt"].as_array().unwrap().len(), 1);
+    let path = r["path"].as_str().unwrap();
+    assert!(std::path::Path::new(path).exists());
+
+    let info = c.call("info", json!({})).expect("info");
+    let shards = info["shards"].as_array().unwrap();
+    assert_eq!(shards.len(), 1);
+}
+
+#[test]
+fn verify_passes_on_fresh_daemon() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    let r = c.call("verify", json!({})).expect("verify");
+    assert_eq!(r["verified"], json!(true));
+    assert_eq!(r["catalog_ok"], json!(true));
+}
+
+#[test]
+fn clean_shards_removes_them() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    c.call("rebuild", json!({})).unwrap();
+
+    let r = c.call("clean", json!({ "target": "shards" })).expect("clean");
+    assert_eq!(r["removed_count"].as_u64(), Some(1));
+
+    let info = c.call("info", json!({})).expect("info");
+    assert_eq!(info["shards"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn source_resolve_miss_then_hit() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+
+    // Create a real file to source.
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(tmp.path(), b"alias hi='echo hello'\n").unwrap();
+    let path = tmp.path().to_str().unwrap().to_string();
+
+    let r = c
+        .call("source_resolve", json!({ "path": path, "mtime_ns": 0, "inode": 0 }))
+        .expect("source_resolve miss");
+    assert_eq!(r["hit"], json!(false));
+    assert!(r["bytes_in"].as_i64().unwrap() > 0);
+    assert_eq!(r["sensitive"], json!(false));
+
+    // Same path again — should hit.
+    let r = c
+        .call("source_resolve", json!({ "path": path, "mtime_ns": 0, "inode": 0 }))
+        .expect("source_resolve hit");
+    assert_eq!(r["hit"], json!(true));
+}
+
+#[test]
+fn source_resolve_flags_sensitive_files() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+
+    // Tempfile with .tokens-style name.
+    let dir = tempfile::TempDir::new().unwrap();
+    let secret = dir.path().join(".tokens.sh");
+    std::fs::write(&secret, b"export AWS_SECRET_ACCESS_KEY=fake\n").unwrap();
+
+    let r = c
+        .call(
+            "source_resolve",
+            json!({ "path": secret.to_str().unwrap(), "mtime_ns": 0, "inode": 0 }),
+        )
+        .expect("source_resolve");
+    assert_eq!(r["sensitive"], json!(true));
+}
+
+#[test]
+fn source_resolve_rejects_relative_path() {
+    let d = DaemonHandle::spawn();
+    let mut c = d.connect();
+    let res = c.call("source_resolve", json!({ "path": "relative/path.sh" }));
+    assert!(res.is_err());
+    let s = format!("{}", res.unwrap_err());
+    assert!(s.contains("absolute"));
 }

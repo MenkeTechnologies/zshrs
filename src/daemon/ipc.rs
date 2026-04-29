@@ -63,6 +63,24 @@ impl ErrPayload {
     }
 }
 
+impl From<rusqlite::Error> for ErrPayload {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::new("sqlite", e.to_string())
+    }
+}
+
+impl From<std::io::Error> for ErrPayload {
+    fn from(e: std::io::Error) -> Self {
+        Self::new("io", e.to_string())
+    }
+}
+
+impl From<super::DaemonError> for ErrPayload {
+    fn from(e: super::DaemonError) -> Self {
+        Self::new("daemon", e.to_string())
+    }
+}
+
 /// Top-level frame envelope. One of these JSON objects per length-prefixed frame.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
