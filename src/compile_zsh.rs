@@ -643,8 +643,13 @@ impl ZshCompiler {
         } else {
             // Treat as function/external dispatch via Op::CallFunction.
             // host.call_function checks aliases → functions → falls back
-            // to host.exec for externals.
-            let name_idx = self.builder.add_name(first);
+            // to host.exec for externals. Untokenize first so the
+            // lexer's META encoding of `-` (`\u{9b}`) and other special
+            // chars doesn't reach the name table — without this,
+            // `foo-bar()` registered cleanly but the call site looked
+            // up `foo\u{9b}bar` and missed the registered function.
+            let cleaned_first = crate::lexer::untokenize(first);
+            let name_idx = self.builder.add_name(&cleaned_first);
             self.builder.emit(Op::CallFunction(name_idx, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             self.emit_errexit_check();

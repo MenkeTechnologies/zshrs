@@ -919,7 +919,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 - The implicit script-end path in `execute_script_zsh_pipeline` already ran the EXIT trap. But `builtin_exit` called `std::process::exit(code)` directly, bypassing the trap. Real-world scripts use `trap 'cleanup' EXIT` heavily for tempfile cleanup, db disconnect, etc. — `exit N` skipping the trap is a major compatibility break.
 - Inserted the trap-fire (with same "remove first to prevent recursion" pattern as the implicit path) before `std::process::exit`. Set `last_status = code` first so the trap body sees the right `$?`. The subshell branch is unchanged — it returns to the subshell caller without running the trap (zsh defers EXIT trap to the outer process). Tests: `test_exit_builtin_fires_exit_trap`, `test_exit_trap_with_explicit_exit_in_trap_body`.
 
-## Still open (forty-ninth-pass — remaining)
+## Closed (fiftieth-pass — function-name-with-hyphen call dispatch)
+
+### `foo-bar() { ... }; foo-bar` returned "command not found: foobar"
+
+- `foo-bar` registered cleanly under its real name, but the call site went through compile_simple → add_name(first) where `first` was still the lexer's META-encoded form `foo\u{9b}bar` (`\u{9b}` is the META char for `-`). add_name stored the encoded string verbatim; CallFunction looked it up; missed the registered `foo-bar`; fell through to host.exec which reported "command not found" with the partly-cleaned form `foobar`.
+- Untokenize `first` before `add_name` so the cleaned identifier reaches the name pool. Same fix applies to any function name with hyphens, dots, or other lexer-mangled chars in the call dispatch. Tests: `test_function_name_with_hyphen_dispatches_correctly`, `test_function_name_with_hyphen_passes_args`.
+
+## Still open (fiftieth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

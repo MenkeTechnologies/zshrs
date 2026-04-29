@@ -3677,3 +3677,22 @@ fn test_exit_trap_with_explicit_exit_in_trap_body() {
     assert_eq!(status, 7);
     assert_eq!(output.trim(), "TRAP1", "got: {output:?}");
 }
+
+#[test]
+fn test_function_name_with_hyphen_dispatches_correctly() {
+    // `foo-bar()` registered cleanly but the call site looked up
+    // `foo\u{9b}bar` (the lexer's META encoding of `-`) and missed
+    // the registered function. Untokenize before add_name in the
+    // CallFunction emit path.
+    let (_, output, _) =
+        run_zshrs(r#"foo-bar() { echo F; }; foo-bar"#);
+    assert_eq!(output.trim(), "F", "got: {output:?}");
+}
+
+#[test]
+fn test_function_name_with_hyphen_passes_args() {
+    let (_, output, _) = run_zshrs(
+        r#"my-cmd() { echo "called: $@"; }; my-cmd hello world"#,
+    );
+    assert_eq!(output.trim(), "called: hello world", "got: {output:?}");
+}
