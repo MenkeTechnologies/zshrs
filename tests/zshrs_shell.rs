@@ -6248,3 +6248,18 @@ fn test_dash_t_fd_is_tty() {
         run_zshrs(r#"echo hi | { [[ -t 0 ]] && echo tty || echo notty; }"#);
     assert_eq!(output.trim(), "notty");
 }
+
+#[test]
+fn test_glob_trailing_slash_preserved() {
+    // `echo */` should output each match with trailing `/`. The
+    // glob crate strips trailing slashes from matches; we re-append
+    // when the input pattern ended in `/`.
+    let dir = std::env::temp_dir().join("zshrs_test_trailing_slash");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir.join("sub/sub2"));
+    std::fs::File::create(dir.join("file")).unwrap();
+    let cmd = format!("cd {} && echo */", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(output.trim(), "sub/");
+}

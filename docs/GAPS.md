@@ -1683,6 +1683,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `[[ -t 0 ]]` checks if stdin is a tty. zshrs's `emit_file_test` had no case for `-t` — it fell to the default unknown-condition branch and emitted the new diagnostic spuriously. Added a `-t` case that pushes the fd-string and routes through new `BUILTIN_IS_TTY` (calls `libc::isatty`). Test: `test_dash_t_fd_is_tty`.
 
+### `echo */` stripped trailing slash from directory matches
+
+- zsh: `echo */` outputs each directory with a trailing `/`. The Rust `glob` crate strips trailing slashes from match results, so zshrs returned `sub` instead of `sub/`. Re-append `/` to each result when the input pattern ended in `/`. Test: `test_glob_trailing_slash_preserved`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

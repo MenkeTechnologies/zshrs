@@ -10340,6 +10340,16 @@ impl ShellExecutor {
         });
         let expanded = self.filter_by_qualifiers(expanded, &qualifiers);
         let mut expanded = expanded;
+        // zsh: `echo */` outputs each directory with a trailing
+        // slash. The Rust glob crate strips trailing slashes from
+        // matches, so re-append when the pattern ended in `/`.
+        if glob_pattern.ends_with('/') {
+            for p in expanded.iter_mut() {
+                if !p.ends_with('/') {
+                    p.push('/');
+                }
+            }
+        }
         // Locale-aware sort: under a Unicode locale, zsh folds case
         // (`Aaa bbb Ccc Ddd` not `Aaa Ccc Ddd bbb`). Fallback to byte
         // order under C/POSIX. Sort by basename so directory components
