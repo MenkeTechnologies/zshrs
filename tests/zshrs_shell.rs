@@ -3820,3 +3820,13 @@ fn test_coreutils_error_msg_strips_os_error_suffix() {
         "got: {output:?}"
     );
 }
+
+#[test]
+fn test_arith_subscripted_array_assign() {
+    // `((a[i]=val))` — the runtime arith eval (and compile_arith via
+    // BUILTIN_ARITH_EVAL bypass) now writes back to the array element
+    // instead of substituting a[i] with its current value.
+    let (_, output, _) =
+        run_zshrs(r#"a=(0 0 0); echo $((a[2]=42)); echo $a[2]"#);
+    assert_eq!(output.trim(), "42\n42", "arith subst form: {output:?}");
+}
