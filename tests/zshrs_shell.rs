@@ -2550,3 +2550,51 @@ fn test_command_not_found_includes_line_number() {
         "stderr: {stderr:?}"
     );
 }
+
+#[test]
+fn test_noclobber_blocks_overwrite_and_sinks_output() {
+    let _ = std::fs::remove_file("/tmp/zr_nclob_test.out");
+    std::fs::write("/tmp/zr_nclob_test.out", "first\n").unwrap();
+    let (_, output, stderr) = run_zshrs(
+        "set -o noclobber; echo second > /tmp/zr_nclob_test.out; echo done; cat /tmp/zr_nclob_test.out",
+    );
+    let _ = std::fs::remove_file("/tmp/zr_nclob_test.out");
+    assert!(stderr.contains("file exists"), "stderr: {stderr:?}");
+    assert!(output.contains("done"), "got: {output:?}");
+    assert!(output.contains("first"), "should preserve original content, got: {output:?}");
+    assert!(!output.contains("second"), "second should be sunk, got: {output:?}");
+}
+
+#[test]
+fn test_noclobber_force_overwrites_with_bang() {
+    let _ = std::fs::remove_file("/tmp/zr_nclob_force_test.out");
+    std::fs::write("/tmp/zr_nclob_force_test.out", "first\n").unwrap();
+    let (_, output, _) = run_zshrs(
+        "set -o noclobber; echo second >! /tmp/zr_nclob_force_test.out; cat /tmp/zr_nclob_force_test.out",
+    );
+    let _ = std::fs::remove_file("/tmp/zr_nclob_force_test.out");
+    assert!(output.contains("second"), "got: {output:?}");
+    assert!(!output.contains("first"), "should be overwritten, got: {output:?}");
+}
+
+#[test]
+fn test_pwd_dash_p_realpaths() {
+    // pwd -P resolves symlinks (canonicalize); -L preserves logical.
+    let (_, output_zshrs, _) = run_zshrs("cd /tmp; pwd -P");
+    let zshrs_pwd = output_zshrs.trim();
+    let zsh_out = std::process::Command::new("/bin/zsh")
+        .args(["-f", "-c", "cd /tmp; pwd -P"])
+        .output()
+        .expect("zsh failed");
+    let zsh_pwd = String::from_utf8_lossy(&zsh_out.stdout).trim().to_string();
+    assert_eq!(zshrs_pwd, zsh_pwd, "zsh:{zsh_pwd} zshrs:{zshrs_pwd}");
+}
+
+#[test]
+fn test_function_keyword_with_parens() {
+    // `function name() { body }` — the `function` keyword PLUS `()`
+    // parens combo. zsh accepts both; pre-fix zshrs only handled
+    // `function name { body }` and `name() { body }` separately.
+    let (_, output, _) = run_zshrs("function bar() { echo hello; }; bar");
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+}

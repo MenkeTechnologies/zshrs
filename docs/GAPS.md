@@ -542,7 +542,25 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was `zshrs: command not found: NAME`. zsh's format is `zsh:LINE: command not found: NAME`. Updated all three eprintln sites to `zshrs:1: command not found: ...`. Test: `test_command_not_found_includes_line_number`.
 
-## Still open (seventeenth-pass — remaining)
+## Closed (eighteenth-pass — noclobber + pwd -P + function-with-parens)
+
+### `setopt noclobber` blocks `>` overwrite of existing files
+
+- The option was tracked but the redirect path always called `File::create` (which truncates). Split `r::WRITE` from `r::CLOBBER` (the `>!` / `>|` op) and added a noclobber check: `setopt noclobber` writes the inverted-name `clobber=false`, so the check honors both keys (`noclobber=true` OR `clobber=false`). On hit:
+  - Print `zshrs:1: file exists: PATH` to stderr.
+  - Set `last_status = 1`.
+  - Sink the upcoming command's stdout to `/dev/null` (so e.g. `echo second > existing` doesn't leak `second` to the terminal — matches zsh's "command silently dropped" semantics).
+- `>!` / `>|` (CLOBBER) bypasses the check unconditionally. Tests: `test_noclobber_blocks_overwrite_and_sinks_output`, `test_noclobber_force_overwrites_with_bang`.
+
+### `pwd -P` realpaths the logical PWD
+
+- `builtin_pwd` ignored its `args` (only saw `redirects`), so `-P` was silently dropped and the logical `$PWD` was always printed. Routed dispatch through new `builtin_pwd_with_args(&[String])` that parses `-L`/`-P` flags. `-P` realpaths the tracked `$PWD` via `canonicalize()`. Test: `test_pwd_dash_p_realpaths` (delegates expected value to `/bin/zsh`).
+
+### `function name() { body }` — keyword + parens combo
+
+- The `function` keyword path collected names from `String` tokens and broke on `Inoutpar` / `Inbrace`. But the lexer packs `bar()` as a single String token suffixed with INPAR+OUTPAR markers (`\u{88}\u{8a}`), so the `name=bar()` token went into `names` literally and the body parsed under that wrong name. Added a strip step: detect the `\u{88}` ... `\u{8a}` suffix on a String token, trim it, then untokenize → clean `bar` name. Test: `test_function_keyword_with_parens`.
+
+## Still open (eighteenth-pass — remaining)
 
 (none — all probed gaps closed)
 - **`${(o)a}`/`(O)`/`(n)`/`(i)`/`(M)` array flags suppressed in DQ context** — zsh applies these flags only when the expansion is in array context (no surrounding `"..."`); zshrs always applies them. Affects parity in joined-string output. Likely needs the compile path to know its quoting context and skip these flags accordingly.
