@@ -5224,6 +5224,79 @@ impl ZshrsHost {
 /// `eval_arith_expr` to handle `((a[i]=expr))` — the regular pre-
 /// resolve pass would substitute a[i] with its current value first,
 /// turning the expression into `0=42` which is invalid.
+/// Parse `name[idx]OP rhs?` where OP is `++`, `--`, `+=`, `-=`, etc.
+/// Returns (name, idx_expr, op, rhs). For `++`/`--`, rhs is empty.
+fn parse_subscript_arith_compound(
+    expr: &str,
+) -> Option<(String, String, String, String)> {
+    let trimmed = expr.trim();
+    let bytes = trimmed.as_bytes();
+    if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut i = 1;
+    while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+        i += 1;
+    }
+    let name = trimmed[..i].to_string();
+    if i >= bytes.len() || bytes[i] != b'[' {
+        return None;
+    }
+    let idx_start = i + 1;
+    let mut depth = 1;
+    let mut j = idx_start;
+    while j < bytes.len() && depth > 0 {
+        match bytes[j] {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if j >= bytes.len() {
+        return None;
+    }
+    let idx_expr = trimmed[idx_start..j].to_string();
+    let mut k = j + 1;
+    while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+        k += 1;
+    }
+    if k >= bytes.len() {
+        return None;
+    }
+    let rest = &bytes[k..];
+    // Try 3-char operators first (`<<=`, `>>=`, `**=`), then 2-char
+    // (`++`, `--`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`).
+    let (op, op_len) = match rest {
+        [b'<', b'<', b'=', ..] => ("<<=", 3),
+        [b'>', b'>', b'=', ..] => (">>=", 3),
+        [b'*', b'*', b'=', ..] => ("**=", 3),
+        [b'+', b'+', ..] => ("++", 2),
+        [b'-', b'-', ..] => ("--", 2),
+        [b'+', b'=', ..] => ("+=", 2),
+        [b'-', b'=', ..] => ("-=", 2),
+        [b'*', b'=', ..] => ("*=", 2),
+        [b'/', b'=', ..] => ("/=", 2),
+        [b'%', b'=', ..] => ("%=", 2),
+        [b'&', b'=', ..] => ("&=", 2),
+        [b'|', b'=', ..] => ("|=", 2),
+        [b'^', b'=', ..] => ("^=", 2),
+        _ => return None,
+    };
+    let rhs = trimmed[k + op_len..].trim().to_string();
+    // For `++` / `--`, the rhs MUST be empty (anything else would be
+    // a parse error). For `+=` etc., rhs is the value expression.
+    if (op == "++" || op == "--") && !rhs.is_empty() {
+        return None;
+    }
+    Some((name, idx_expr, op.to_string(), rhs))
+}
+
 fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String, String)> {
     let trimmed = expr.trim();
     let bytes = trimmed.as_bytes();
@@ -15183,6 +15256,70 @@ impl ShellExecutor {
         } else {
             expr.to_string()
         };
+        // Subscripted-array compound-assign / increment / decrement:
+        // `((a[i]++))`, `((a[i]+=v))`, `((a[i]-=v))`, etc. Read the
+        // current value, apply the operation, write back. MathEval
+        // can't write through `a[i]` for compound forms (only the
+        // bare `=` write was special-cased below), so handle here.
+        if let Some((name, idx_expr, op, rhs)) =
+            parse_subscript_arith_compound(&expr)
+        {
+            let idx_val = self.eval_arith_expr(&idx_expr);
+            let rhs_val = if rhs.is_empty() { 1 } else { self.eval_arith_expr(&rhs) };
+            let arr_opt = self.arrays.get(&name).cloned();
+            if let Some(arr) = arr_opt {
+                let i_pos = if idx_val < 0 {
+                    arr.len() as i64 + idx_val
+                } else {
+                    idx_val - 1
+                };
+                if i_pos >= 0 {
+                    let pos = i_pos as usize;
+                    let cur: i64 =
+                        arr.get(pos).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let new_val = match op.as_str() {
+                        "++" => cur + 1,
+                        "--" => cur - 1,
+                        "+=" => cur + rhs_val,
+                        "-=" => cur - rhs_val,
+                        "*=" => cur * rhs_val,
+                        "/=" => {
+                            if rhs_val == 0 {
+                                eprintln!("zshrs:1: division by zero");
+                                return cur.to_string();
+                            }
+                            cur / rhs_val
+                        }
+                        "%=" => {
+                            if rhs_val == 0 {
+                                eprintln!("zshrs:1: division by zero");
+                                return cur.to_string();
+                            }
+                            cur % rhs_val
+                        }
+                        "&=" => cur & rhs_val,
+                        "|=" => cur | rhs_val,
+                        "^=" => cur ^ rhs_val,
+                        "<<=" => cur << rhs_val,
+                        ">>=" => cur >> rhs_val,
+                        "**=" => (cur as f64).powi(rhs_val as i32) as i64,
+                        _ => cur,
+                    };
+                    if let Some(arr_mut) = self.arrays.get_mut(&name) {
+                        if pos >= arr_mut.len() {
+                            arr_mut.resize(pos + 1, "0".to_string());
+                        }
+                        arr_mut[pos] = new_val.to_string();
+                    }
+                    // Post-increment/decrement returns OLD value;
+                    // others return new. Pre-increment isn't covered
+                    // by this parser — those route through the write-
+                    // back done above.
+                    let result = if op == "++" || op == "--" { cur } else { new_val };
+                    return result.to_string();
+                }
+            }
+        }
         // Subscripted-array arith assignment: `((a[i]=expr))`. Without
         // this special case, pre_resolve_array_subscripts would
         // substitute a[i] with its current value (`0=42` → invalid).

@@ -6010,3 +6010,32 @@ fn test_command_v_function_shows_source() {
         run_zshrs(r#"foo() { :; }; command -V foo"#);
     assert!(output.contains("from zsh"));
 }
+
+#[test]
+fn test_arith_subscripted_post_increment() {
+    // `(( a[1]++ ))` should increment the first element. zshrs's
+    // ArithCompiler couldn't write back through arr[idx] for compound
+    // forms — only the bare `=` assign was caught. Now routed through
+    // a runtime parse_subscript_arith_compound + read-modify-write.
+    let (_, output, _) =
+        run_zshrs(r#"a=(0 0); (( a[1]++ )); echo "${a[1]}""#);
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn test_arith_subscripted_compound_plus_eq() {
+    let (_, output, _) =
+        run_zshrs(r#"a=(10 20); (( a[1] += 5 )); echo "${a[1]}""#);
+    assert_eq!(output.trim(), "15");
+    let (_, output, _) =
+        run_zshrs(r#"a=(5 5); (( a[1] *= 3 )); echo "${a[1]}""#);
+    assert_eq!(output.trim(), "15");
+}
+
+#[test]
+fn test_arith_subscripted_post_increment_returns_old() {
+    let (_, output, _) =
+        run_zshrs(r#"a=(5 10); echo "$(( a[1]++ ))"; echo "${a[1]}""#);
+    // Post-increment returns OLD value, then variable updates.
+    assert_eq!(output.trim(), "5\n6");
+}

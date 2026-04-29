@@ -1620,6 +1620,13 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `command -V foo` for a user function reports `foo is a shell function from zsh`. zshrs reported the truncated `foo is a shell function`. Aligned the format to match zsh's output. Test: `test_command_v_function_shows_source`.
 
+### `(( arr[1]++ ))` (and `+=`/`-=`/`*=` etc.) didn't update the element
+
+- zsh: `(( a[1]++ ))` reads element 1, increments, writes back. zshrs's `subscripted_arith_assign_check` only matched the bare `=` form (`(( a[1]=v ))`); compound-assigns and ++/-- fell through to MathEval which can't write through `a[idx]` (it pre-resolves `a[1]` to its value, then `0++` errors "lvalue required"). Added: 
+  - `subscripted_arith_compound_check` in compile_zsh.rs to route the compound forms through `BUILTIN_ARITH_EVAL`.
+  - `parse_subscript_arith_compound` in exec.rs (handles `++`, `--`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `**=`).
+  - Read-modify-write logic in `evaluate_arithmetic` that mirrors the bare-`=` special case but with the compound operator. Post-increment/decrement returns the OLD value (matching zsh / C semantics). Tests: `test_arith_subscripted_post_increment`, `test_arith_subscripted_compound_plus_eq`, `test_arith_subscripted_post_increment_returns_old`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
