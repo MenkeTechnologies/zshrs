@@ -5620,3 +5620,49 @@ fn test_printf_octal_leading_zero_three_total_digits() {
     // Expect: `[`, BS (0x08), `2`, `]`. Match exact bytes.
     assert_eq!(output.as_bytes(), &[b'[', 0x08, b'2', b']']);
 }
+
+#[test]
+fn test_anon_function_dollar_zero_is_anon_string() {
+    // zsh: `() { echo $0; } anon arg` → `(anon)` for $0
+    // (cosmetic — the synthesized `_zshrs_anon_N` name was leaking).
+    let (_, output, _) = run_zshrs("() { echo $0 } anon");
+    assert_eq!(output.trim(), "(anon)");
+}
+
+#[test]
+fn test_set_capital_E_accepted() {
+    // `set -E` (ERR_RETURN: return on non-zero status inside a fn)
+    // — was erroring "invalid option". Now accepts the flag silently.
+    let (_, _, stderr) = run_zshrs("set -E; foo() { false; }; foo");
+    assert!(
+        !stderr.contains("invalid option"),
+        "stderr should not have invalid-option err: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_double_bracket_o_unknown_option_warns() {
+    // `[[ -o no_such_option ]]` should emit "no such option" to
+    // stderr (and the test result is false). Was silently returning
+    // false with no diagnostic.
+    let (_, _, stderr) =
+        run_zshrs("[[ -o no_such_option_zzz ]] && echo y || echo n");
+    assert!(
+        stderr.contains("no such option"),
+        "expected 'no such option' in stderr, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_heredoc_body_no_glob_expansion() {
+    // `cat <<EOF\n[42]\nEOF` should pass `[42]` through verbatim.
+    // The heredoc body was being routed through the full default
+    // expansion pipeline including glob, which fired NOMATCH on the
+    // literal `[42]` pattern. Now uses a heredoc-specific mode that
+    // expands $vars / cmd-subst / arith but skips glob+brace.
+    let (_, output, _) =
+        run_zshrs("a=42; cat <<EOF\n[$a]\nEOF");
+    assert_eq!(output.trim(), "[42]");
+}

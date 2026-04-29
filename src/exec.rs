@@ -4047,11 +4047,33 @@ fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
         let name = vm.pop().to_str();
-        let normalized = name.to_lowercase().replace('_', "");
+        // zsh strips a leading `no` (e.g. `[[ -o nounset ]]` and
+        // `[[ -o nonounset ]]` both query the `nounset` option, with
+        // the latter inverted). Strip any underscores/hyphens too —
+        // user-typed names like `extended_glob` should match the
+        // canonical `extendedglob`.
+        let normalized = name.to_lowercase().replace('_', "").replace('-', "");
+        let (canonical, invert) = if let Some(stripped) = normalized.strip_prefix("no") {
+            if ZSH_OPTIONS_SET.contains(stripped) {
+                (stripped.to_string(), true)
+            } else {
+                (normalized.clone(), false)
+            }
+        } else {
+            (normalized.clone(), false)
+        };
+        // Unknown option: zsh emits "no such option: NAME" to stderr
+        // (and the test result is false). Match the diagnostic so
+        // scripts probing `[[ -o opt ]]` for unknowns get the same
+        // signal in stderr.
+        if !ZSH_OPTIONS_SET.contains(canonical.as_str()) {
+            eprintln!("zshrs:1: no such option: {}", name);
+            return fusevm::Value::Bool(false);
+        }
         let is_set = with_executor(|exec| {
-            exec.options.get(&normalized).copied().unwrap_or(false)
+            exec.options.get(&canonical).copied().unwrap_or(false)
         });
-        fusevm::Value::Bool(is_set)
+        fusevm::Value::Bool(if invert { !is_set } else { is_set })
     });
 
     vm.register_builtin(BUILTIN_PARAM_FILTER, |vm, _argc| {
@@ -4839,6 +4861,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     text.as_str()
                 };
                 fusevm::Value::str(exec.run_command_substitution(inner))
+            }
+            4 => {
+                // HeredocBody: expand variables / command-subst / arith
+                // but NOT glob or brace. Heredoc lines like `[42]` must
+                // pass through verbatim — running them through the
+                // default pipeline triggers NOMATCH on the literal.
+                fusevm::Value::str(exec.expand_string(&text))
             }
             _ => {
                 // Default: full expansion pipeline.
@@ -6134,7 +6163,16 @@ impl fusevm::ShellHost for ZshrsHost {
                 // zsh's `$0` inside a function returns the function name
                 // (under the FUNCTION_ARGZERO option, default on). Save
                 // the previous `$0` and install the function name.
-                let prev_zero = exec.variables.insert("0".to_string(), fn_name.clone());
+                // Anonymous functions get the cosmetic name `(anon)` —
+                // zshrs's parser synthesizes `_zshrs_anon_N` /
+                // `_zshrs_anon_kw_N` for `() { … }` and `function { … }`
+                // so users would see the internal name otherwise.
+                let display_name = if fn_name.starts_with("_zshrs_anon_") {
+                    "(anon)".to_string()
+                } else {
+                    fn_name.clone()
+                };
+                let prev_zero = exec.variables.insert("0".to_string(), display_name);
                 // funcstack: prepend the function name; outermost call
                 // is at the END of the stack per zsh.
                 let prev_stack = exec.arrays.get("funcstack").cloned();
@@ -19486,6 +19524,23 @@ impl ShellExecutor {
                 }
                 "+b" => {
                     self.options.insert("notify".to_string(), false);
+                }
+                // zsh-only: `-E` enables ERR_RETURN (return on non-zero
+                // status inside a function) and `-T` enables TRAPS_ASYNC
+                // (run traps after each command). Both are no-ops in
+                // single-command -c mode for our purposes; accept the
+                // flag silently rather than erroring "invalid option".
+                "-E" => {
+                    self.options.insert("err_return".to_string(), true);
+                }
+                "+E" => {
+                    self.options.insert("err_return".to_string(), false);
+                }
+                "-T" => {
+                    self.options.insert("trapasync".to_string(), true);
+                }
+                "+T" => {
+                    self.options.insert("trapasync".to_string(), false);
                 }
                 "--" => {
                     let remaining: Vec<String> = iter.cloned().collect();

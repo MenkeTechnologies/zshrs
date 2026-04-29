@@ -742,16 +742,16 @@ impl ZshCompiler {
                     self.builder.emit(Op::HereDoc(idx), 0);
                 } else {
                     // Unquoted: expand `$var`/`$(cmd)`/`$((expr))` in the
-                    // body. Strip the trailing newline before passing
-                    // through HereString (which re-appends one) so the
-                    // resulting stdin matches the heredoc body byte-for-
-                    // byte. Phase 2: route through the text-based
-                    // BUILTIN_EXPAND_TEXT (mode 0 = default) instead of
-                    // the legacy ShellWord JSON path.
+                    // body — but NOT glob/brace expansion. The body of
+                    // `cat <<EOF\n[42]\nEOF` should reach cat's stdin
+                    // verbatim with `[42]` as literal text, not as a
+                    // glob pattern that fails NOMATCH. Mode 4 routes
+                    // through expand_string only (variable / cmd-subst
+                    // / arith), skipping glob+brace.
                     let trimmed = content_clean.trim_end_matches('\n').to_string();
                     let text_const = self.builder.add_constant(Value::str(trimmed));
                     self.builder.emit(Op::LoadConst(text_const), 0);
-                    self.builder.emit(Op::LoadInt(0), 0); // mode = Default
+                    self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
                     self.builder.emit(
                         Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2),
                         0,
