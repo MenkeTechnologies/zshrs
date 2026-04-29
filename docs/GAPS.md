@@ -1663,6 +1663,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - After `foo() { return 42 }; foo; echo $_`, zsh reports `$_ = foo` (the function name, since no args were passed). zshrs reported `$_ = 42` (the `return 42` arg) because the function-internal `pop_args` for `return` updated `pending_underscore`, and that leaked back to the caller. Fix: at the END of `call_function`, overwrite `$_` and `pending_underscore` with the function's CALL-form last arg (or the function name if no args). The internal command args don't escape function scope. Test: `test_dollar_underscore_after_function_call`.
 
+### `[[ -l file ]]` (and other unknown unary conditions) silently returned false
+
+- zsh: `[[ -l file ]]` (no `-l` test in zsh — `-h` is the symlink test) emits `unknown condition: -l` to stderr and returns false. zshrs's `emit_file_test` default arm for unknown ops just emitted `Pop; LoadFalse` with no diagnostic. Now emits the error message at compile-time so users see the same warning zsh prints. Test: `test_unknown_cond_emits_diagnostic`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

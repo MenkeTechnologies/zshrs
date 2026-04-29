@@ -2302,7 +2302,14 @@ impl ZshCompiler {
                 return;
             }
             _ => {
-                tracing::debug!(op, "compile_zsh: unknown unary test op");
+                // zsh: `[[ -l file ]]` (and any other unknown unary
+                // condition) errors with `unknown condition: -X`.
+                // Emit the diagnostic at compile-time (stderr) and
+                // produce false. Runtime BUILTIN dispatch failed (the
+                // CallBuiltin op didn't reliably fire for this path),
+                // so do the print here in the compile path — it runs
+                // for every shell that tries the unknown condition.
+                eprintln!("zshrs:1: unknown condition: {}", op);
                 self.builder.emit(Op::Pop, 0);
                 self.builder.emit(Op::LoadFalse, 0);
                 return;
