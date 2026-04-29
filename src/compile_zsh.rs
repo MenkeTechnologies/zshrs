@@ -1998,7 +1998,14 @@ impl ZshCompiler {
                     "=" | "==" | "!=" | "=~"
                 );
                 if is_pattern_op {
-                    let right_clean = crate::lexer::untokenize(right);
+                    // If the RHS had quote markers (DNULL/SNULL/BNULL),
+                    // glob metas inside the quotes should be LITERAL,
+                    // not pattern. Pre-escape `*` / `?` / `[` in quoted
+                    // segments before stripping the markers — keeps
+                    // unquoted-glob behaviour intact for `[[ x == a* ]]`
+                    // while making `[[ x == "a*" ]]` literal.
+                    let escaped = escape_quoted_glob_metas(right);
+                    let right_clean = crate::lexer::untokenize(&escaped);
                     let idx = self.builder.add_constant(Value::str(right_clean.as_str()));
                     self.builder.emit(Op::LoadConst(idx), 0);
                 } else {
@@ -3155,6 +3162,39 @@ fn array_splice_ref(s: &str) -> Option<&str> {
 /// the first IFS char into a single string).
 fn array_splice_is_star(s: &str) -> bool {
     s.ends_with("[*]}")
+}
+
+/// For `[[ ... == PATTERN ]]` style tests, walk PATTERN and replace
+/// glob metas (`*`, `?`, `[`) that fall INSIDE single/double-quoted
+/// regions with backslash-escaped versions. Quoted glob metas should
+/// match literally per zsh. Markers used by the lexer:
+///   `\u{9d}` (SNULL) — single-quote boundary
+///   `\u{9e}` (DNULL) — double-quote boundary
+fn escape_quoted_glob_metas(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_squote = false;
+    let mut in_dquote = false;
+    for c in s.chars() {
+        match c {
+            '\u{9d}' => {
+                in_squote = !in_squote;
+                out.push(c);
+            }
+            '\u{9e}' => {
+                in_dquote = !in_dquote;
+                out.push(c);
+            }
+            '*' | '?' | '[' if in_squote || in_dquote => {
+                // Backslash-escape so glob_match_static treats as
+                // literal char. The runtime glob translator already
+                // handles `\X` → escape-X.
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Return the variable name if `s` is a `${NAME}` form with no

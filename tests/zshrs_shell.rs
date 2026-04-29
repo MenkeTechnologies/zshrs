@@ -3025,3 +3025,40 @@ fn test_echo_combined_flags() {
     let (_, output, _) = run_zshrs(r#"echo -nE "a\nb""#);
     assert_eq!(output, "a\\nb", "got: {output:?}");
 }
+
+#[test]
+fn test_left_pad_flag() {
+    let (_, output, _) = run_zshrs(r#"s=hi; echo "[${(l:5:)s}]""#);
+    assert_eq!(output.trim(), "[   hi]", "got: {output:?}");
+}
+
+#[test]
+fn test_right_pad_flag() {
+    let (_, output, _) = run_zshrs(r#"s=hi; echo "[${(r:5:)s}]""#);
+    assert_eq!(output.trim(), "[hi   ]", "got: {output:?}");
+}
+
+#[test]
+fn test_left_pad_with_fill_char() {
+    let (_, output, _) = run_zshrs(r#"s=hi; echo "[${(l:5::*:)s}]""#);
+    assert_eq!(output.trim(), "[***hi]", "got: {output:?}");
+}
+
+#[test]
+fn test_quoted_glob_pattern_in_test_is_literal() {
+    // [[ "abc" == "a*" ]] — quoted "*" is literal, not glob.
+    let (status, _, _) = run_zshrs(r#"[[ "abc" == "a*" ]]"#);
+    assert_eq!(status, 1, "should NOT match (quoted * is literal)");
+}
+
+#[test]
+fn test_quoted_literal_star_matches_quoted_literal_star() {
+    let (status, _, _) = run_zshrs(r#"[[ "a*" == "a*" ]]"#);
+    assert_eq!(status, 0, "literal a* matches literal a*");
+}
+
+#[test]
+fn test_unquoted_glob_pattern_still_matches() {
+    let (status, _, _) = run_zshrs(r#"[[ "abc" == a* ]]"#);
+    assert_eq!(status, 0, "unquoted a* should glob-match abc");
+}
