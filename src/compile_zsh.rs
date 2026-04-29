@@ -1751,8 +1751,22 @@ impl ZshCompiler {
         let body_str = base64_encode(&body_bytes);
         let source_text = f.body_source.clone().unwrap_or_default();
 
-        for name in &f.names {
-            let name_const = self.builder.add_constant(Value::str(name.as_str()));
+        for raw_name in &f.names {
+            // The lexer packs `name()` into a single String token by
+            // appending INPAR+OUTPAR markers (`\u{88}\u{8a}`). Under
+            // `function name() { body }` this lands in `names` with
+            // the suffix attached. Strip it here so the registered
+            // function name is the bare identifier — the parser stays
+            // a pure port of zsh's grammar.
+            let cleaned = if raw_name.ends_with('\u{8a}') && raw_name.contains('\u{88}') {
+                let stripped = raw_name
+                    .trim_end_matches('\u{8a}')
+                    .trim_end_matches('\u{88}');
+                crate::lexer::untokenize(stripped)
+            } else {
+                raw_name.clone()
+            };
+            let name_const = self.builder.add_constant(Value::str(cleaned.as_str()));
             self.builder.emit(Op::LoadConst(name_const), 0);
             let body_const = self.builder.add_constant(Value::str(body_str.as_str()));
             self.builder.emit(Op::LoadConst(body_const), 0);
@@ -1776,8 +1790,16 @@ impl ZshCompiler {
                 self.compile_word_str(arg);
             }
             // f.names[0] is the auto-generated name from parse_anon_funcdef.
-            if let Some(name) = f.names.first() {
-                let name_idx = self.builder.add_name(name);
+            if let Some(raw_name) = f.names.first() {
+                let cleaned = if raw_name.ends_with('\u{8a}') && raw_name.contains('\u{88}') {
+                    let stripped = raw_name
+                        .trim_end_matches('\u{8a}')
+                        .trim_end_matches('\u{88}');
+                    crate::lexer::untokenize(stripped)
+                } else {
+                    raw_name.clone()
+                };
+                let name_idx = self.builder.add_name(&cleaned);
                 self.builder.emit(Op::CallFunction(name_idx, argc), 0);
                 self.builder.emit(Op::SetStatus, 0);
             }

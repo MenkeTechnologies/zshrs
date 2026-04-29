@@ -1909,36 +1909,19 @@ impl<'a> ZshParser<'a> {
         let mut names = Vec::new();
         let mut tracing = false;
 
-        // Handle options like -T and function names. The name may
-        // arrive lexed as `String` ("bar") OR as a string already
-        // suffixed with `\u{88}\u{8a}` (INPAR+OUTPAR) when zsh lexes
-        // `bar()` as one token (see simple_name_with_inoutpar). The
-        // suffix encoding shows up under `function` because the lexer
-        // only emits INOUTPAR (the merged form) when paren follows
-        // immediately. Either form should work here.
+        // Handle options like -T and function names
         loop {
             match self.lexer.tok {
                 LexTok::String => {
-                    let raw = self.lexer.tokstr.as_ref()?.clone();
-                    if raw.starts_with('-') {
-                        if raw.contains('T') {
+                    let s = self.lexer.tokstr.as_ref()?;
+                    if s.starts_with('-') {
+                        if s.contains('T') {
                             tracing = true;
                         }
                         self.lexer.zshlex();
                         continue;
                     }
-                    // Strip trailing INPAR+OUTPAR markers if the lexer
-                    // packed `name()` as a single token.
-                    let cleaned = if raw.ends_with('\u{8a}') && raw.contains('\u{88}') {
-                        let stripped = raw
-                            .trim_end_matches('\u{8a}')
-                            .trim_end_matches('\u{88}')
-                            .to_string();
-                        crate::lexer::untokenize(&stripped)
-                    } else {
-                        raw
-                    };
-                    names.push(cleaned);
+                    names.push(s.clone());
                     self.lexer.zshlex();
                 }
                 LexTok::Inbrace | LexTok::Inoutpar | LexTok::Seper | LexTok::Newlin => break,
