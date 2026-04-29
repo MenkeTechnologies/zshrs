@@ -3252,3 +3252,44 @@ fn test_printf_g_uses_shortest_representation() {
     let (_, output, _) = run_zshrs(r#"printf "%g\n" 100"#);
     assert_eq!(output.trim(), "100", "%g 100: {output:?}");
 }
+
+#[test]
+fn test_typeset_int_plus_eq_arithmetic_add() {
+    // `typeset -i x=42; x+=8` must store 50 (arithmetic add), not "428"
+    // (string concat). Without the integer check inside
+    // BUILTIN_APPEND_SCALAR_OR_PUSH the var ended up as the
+    // concatenated string.
+    let (_, output, _) = run_zshrs(r#"typeset -i x=42; x+=8; echo $x"#);
+    assert_eq!(output.trim(), "50", "got: {output:?}");
+}
+
+#[test]
+fn test_typeset_int_plus_eq_arith_expression() {
+    // RHS goes through arith eval, so `x+=5*2` adds 10, not "5*2".
+    let (_, output, _) = run_zshrs(r#"typeset -i x=10; x+=5*2; echo $x"#);
+    assert_eq!(output.trim(), "20", "got: {output:?}");
+}
+
+#[test]
+fn test_param_flag_k_on_regular_array_returns_values() {
+    // zsh quirk: `${(k)arr}` on a regular array returns the array
+    // contents themselves (not "1 2 3" indices). Verified against zsh.
+    let (_, output, _) = run_zshrs(r#"a=(x y z); echo "${(k)a}""#);
+    assert_eq!(output.trim(), "x y z", "got: {output:?}");
+}
+
+#[test]
+fn test_getopts_stops_after_arg_taking_option() {
+    // Regression: getopts was overwriting OPTIND back to optind+1
+    // after the arg-taking branch had already advanced by 2,
+    // causing the next iteration to land on the consumed arg
+    // instead of the following flag.
+    let (_, output, _) = run_zshrs(
+        r#"set -- -a -b X -c; while getopts "ab:c" opt; do echo "opt=$opt arg=$OPTARG"; done"#,
+    );
+    assert_eq!(
+        output.trim(),
+        "opt=a arg=\nopt=b arg=X\nopt=c arg=",
+        "got: {output:?}"
+    );
+}

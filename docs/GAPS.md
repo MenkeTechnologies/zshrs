@@ -770,7 +770,21 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `%g` was emitting the `%f` format unchanged (`3.14` → `3.140000`). Implemented a `format_g(val, prec, upper)` helper that picks `%e` when `exp < -4 || exp >= prec` else `%f`, strips trailing zeros after the decimal, and normalizes the exponent to `e±NN` (C99 shape). Test: `test_printf_g_uses_shortest_representation`.
 
-## Still open (thirty-second-pass — remaining)
+## Closed (thirty-third-pass — typeset -i +=, ${(k)arr}, getopts)
+
+### `typeset -i x=42; x+=8` did string concat instead of arithmetic add
+
+- BUILTIN_APPEND_SCALAR_OR_PUSH always took the scalar concat branch (`format!("{}{}", prev, value)` → `"428"`). For a typeset-int variable `+=` should arithmetically add the RHS (which itself is arith-evaluated). Added an `is_integer` check from `var_attrs` and a parse + add path. Test: `test_typeset_int_plus_eq_arithmetic_add`, `test_typeset_int_plus_eq_arith_expression`.
+
+### `${(k)arr}` on a regular (non-assoc) array returned empty
+
+- The `'k'` arm in BUILTIN_PARAM_FLAG only consulted `assoc_arrays`. zsh's actual behavior on regular arrays: `${(k)arr}` returns the array's values themselves (a quirk — docs imply integer subscripts but the impl returns contents). Fall through to `arrays.get(&name)` for the regular case. Test: `test_param_flag_k_on_regular_array_returns_values`.
+
+### `getopts` skipped the option immediately after an arg-taking flag
+
+- After `getopts ab:c` consumed `-b X`, the arg-fetch branch advanced OPTIND by 2 but the bottom of the function unconditionally overwrote it back to `optind + 1`, leaving OPTIND on `X` instead of `-c`. Refactored the takes_arg branch to compute `(arg, advance)` once and apply at the end. Also clear OPTARG when an option doesn't take one (was leaking the previous arg's value into the next iteration). Test: `test_getopts_stops_after_arg_taking_option`.
+
+## Still open (thirty-third-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
