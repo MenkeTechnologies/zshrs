@@ -4679,58 +4679,77 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
         // expands these before applying the strip. Was emitted as-is.
         let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
-        let val = with_executor(|exec| exec.get_variable(&name));
-        let result = match op {
-            0 => {
-                // `#` shortest prefix match
-                let mut out = val.clone();
-                for i in 0..=val.len() {
-                    let prefix = &val[..i];
-                    if ShellExecutor::glob_match_static(prefix, &pattern) {
-                        out = val[i..].to_string();
-                        break;
+        let strip_one = move |v: &str, op: u8, pattern: &str| -> String {
+            match op {
+                0 => {
+                    let mut out = v.to_string();
+                    for i in 0..=v.len() {
+                        let prefix = &v[..i];
+                        if ShellExecutor::glob_match_static(prefix, pattern) {
+                            out = v[i..].to_string();
+                            break;
+                        }
                     }
+                    out
                 }
-                out
-            }
-            1 => {
-                // `##` longest prefix match
-                let mut out = val.clone();
-                for i in (0..=val.len()).rev() {
-                    let prefix = &val[..i];
-                    if ShellExecutor::glob_match_static(prefix, &pattern) {
-                        out = val[i..].to_string();
-                        break;
+                1 => {
+                    let mut out = v.to_string();
+                    for i in (0..=v.len()).rev() {
+                        let prefix = &v[..i];
+                        if ShellExecutor::glob_match_static(prefix, pattern) {
+                            out = v[i..].to_string();
+                            break;
+                        }
                     }
+                    out
                 }
-                out
-            }
-            2 => {
-                // `%` shortest suffix match
-                let mut out = val.clone();
-                for i in (0..=val.len()).rev() {
-                    let suffix = &val[i..];
-                    if ShellExecutor::glob_match_static(suffix, &pattern) {
-                        out = val[..i].to_string();
-                        break;
+                2 => {
+                    let mut out = v.to_string();
+                    for i in (0..=v.len()).rev() {
+                        let suffix = &v[i..];
+                        if ShellExecutor::glob_match_static(suffix, pattern) {
+                            out = v[..i].to_string();
+                            break;
+                        }
                     }
+                    out
                 }
-                out
-            }
-            3 => {
-                // `%%` longest suffix match
-                let mut out = val.clone();
-                for i in 0..=val.len() {
-                    let suffix = &val[i..];
-                    if ShellExecutor::glob_match_static(suffix, &pattern) {
-                        out = val[..i].to_string();
-                        break;
+                3 => {
+                    let mut out = v.to_string();
+                    for i in 0..=v.len() {
+                        let suffix = &v[i..];
+                        if ShellExecutor::glob_match_static(suffix, pattern) {
+                            out = v[..i].to_string();
+                            break;
+                        }
                     }
+                    out
                 }
-                out
+                _ => v.to_string(),
             }
-            _ => val,
         };
+        // `${arr#pat}` / `${arr%pat}` / etc. on an array iterate per
+        // element. Was joining first then stripping the joined scalar,
+        // which only stripped the LAST element's suffix.
+        let result: String = with_executor(|exec| {
+            if name == "@" || name == "*" {
+                return exec
+                    .positional_params
+                    .iter()
+                    .map(|e| strip_one(e, op, &pattern))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+            if let Some(arr) = exec.arrays.get(&name) {
+                return arr
+                    .iter()
+                    .map(|e| strip_one(e, op, &pattern))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+            let val = exec.get_variable(&name);
+            strip_one(&val, op, &pattern)
+        });
         fusevm::Value::str(result)
     });
 
@@ -13830,60 +13849,116 @@ impl ShellExecutor {
 
             // ${var#pattern} - remove shortest prefix
             Some(VarModifier::RemovePrefix(pattern)) => {
-                let v = val.unwrap_or_default();
                 let pat = self.expand_word(pattern);
-                if v.starts_with(&pat) {
-                    v[pat.len()..].to_string()
-                } else {
-                    v
+                let strip = |v: &str, pat: &str| -> String {
+                    if let Ok(g) = glob::Pattern::new(pat) {
+                        for i in 0..=v.len() {
+                            if g.matches(&v[..i]) {
+                                return v[i..].to_string();
+                            }
+                        }
+                    }
+                    if v.starts_with(pat) {
+                        v[pat.len()..].to_string()
+                    } else {
+                        v.to_string()
+                    }
+                };
+                if name == "@" || name == "*" {
+                    return self
+                        .positional_params
+                        .iter()
+                        .map(|e| strip(e, &pat))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
+                if let Some(arr) = self.arrays.get(name).cloned() {
+                    return arr.iter().map(|e| strip(e, &pat)).collect::<Vec<_>>().join(" ");
+                }
+                strip(&val.unwrap_or_default(), &pat)
             }
 
             // ${var##pattern} - remove longest prefix
             Some(VarModifier::RemovePrefixLong(pattern)) => {
-                let v = val.unwrap_or_default();
                 let pat = self.expand_word(pattern);
-                // For glob patterns, find longest match from start
-                if let Ok(glob) = glob::Pattern::new(&pat) {
-                    for i in (0..=v.len()).rev() {
-                        if glob.matches(&v[..i]) {
-                            return v[i..].to_string();
+                let strip = |v: &str, pat: &str| -> String {
+                    if let Ok(g) = glob::Pattern::new(pat) {
+                        for i in (0..=v.len()).rev() {
+                            if g.matches(&v[..i]) {
+                                return v[i..].to_string();
+                            }
                         }
                     }
+                    v.to_string()
+                };
+                if name == "@" || name == "*" {
+                    return self
+                        .positional_params
+                        .iter()
+                        .map(|e| strip(e, &pat))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
-                v
+                if let Some(arr) = self.arrays.get(name).cloned() {
+                    return arr.iter().map(|e| strip(e, &pat)).collect::<Vec<_>>().join(" ");
+                }
+                strip(&val.unwrap_or_default(), &pat)
             }
 
             // ${var%pattern} - remove shortest suffix
             Some(VarModifier::RemoveSuffix(pattern)) => {
-                let v = val.unwrap_or_default();
                 let pat = self.expand_word(pattern);
-                // For glob patterns, find shortest match from end
-                if let Ok(glob) = glob::Pattern::new(&pat) {
-                    for i in (0..=v.len()).rev() {
-                        if glob.matches(&v[i..]) {
-                            return v[..i].to_string();
+                let strip = |v: &str, pat: &str| -> String {
+                    if let Ok(g) = glob::Pattern::new(pat) {
+                        for i in (0..=v.len()).rev() {
+                            if g.matches(&v[i..]) {
+                                return v[..i].to_string();
+                            }
                         }
+                    } else if v.ends_with(pat) {
+                        return v[..v.len() - pat.len()].to_string();
                     }
-                } else if v.ends_with(&pat) {
-                    return v[..v.len() - pat.len()].to_string();
+                    v.to_string()
+                };
+                if name == "@" || name == "*" {
+                    return self
+                        .positional_params
+                        .iter()
+                        .map(|e| strip(e, &pat))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
-                v
+                if let Some(arr) = self.arrays.get(name).cloned() {
+                    return arr.iter().map(|e| strip(e, &pat)).collect::<Vec<_>>().join(" ");
+                }
+                strip(&val.unwrap_or_default(), &pat)
             }
 
             // ${var%%pattern} - remove longest suffix
             Some(VarModifier::RemoveSuffixLong(pattern)) => {
-                let v = val.unwrap_or_default();
                 let pat = self.expand_word(pattern);
-                // For glob patterns, find longest match from end
-                if let Ok(glob) = glob::Pattern::new(&pat) {
-                    for i in 0..=v.len() {
-                        if glob.matches(&v[i..]) {
-                            return v[..i].to_string();
+                let strip = |v: &str, pat: &str| -> String {
+                    if let Ok(g) = glob::Pattern::new(pat) {
+                        for i in 0..=v.len() {
+                            if g.matches(&v[i..]) {
+                                return v[..i].to_string();
+                            }
                         }
                     }
+                    v.to_string()
+                };
+                if name == "@" || name == "*" {
+                    return self
+                        .positional_params
+                        .iter()
+                        .map(|e| strip(e, &pat))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
-                v
+                if let Some(arr) = self.arrays.get(name).cloned() {
+                    return arr.iter().map(|e| strip(e, &pat)).collect::<Vec<_>>().join(" ");
+                }
+                strip(&val.unwrap_or_default(), &pat)
             }
 
             // ${var/pattern/replacement} - replace first match

@@ -5500,3 +5500,35 @@ fn test_herestring_inside_command_substitution() {
     let (_, output, _) = run_zshrs(r#"a=$(<<<"hi" cat); echo "$a""#);
     assert_eq!(output.trim(), "hi");
 }
+
+#[test]
+fn test_array_suffix_strip_per_element() {
+    // `${arr%pat}` strips suffix per element, not after joining.
+    let (_, output, _) =
+        run_zshrs("a=(a.txt b.bin c.txt); echo ${a%.txt}");
+    assert_eq!(output.trim(), "a b.bin c");
+}
+
+#[test]
+fn test_array_prefix_strip_per_element() {
+    // `${arr#pat}` strips prefix per element.
+    let (_, output, _) =
+        run_zshrs("a=(/tmp/x /tmp/y); echo ${a#/tmp/}");
+    assert_eq!(output.trim(), "x y");
+}
+
+#[test]
+fn test_array_long_suffix_strip_per_element() {
+    // `${arr%%pat}` strips longest suffix per element.
+    let (_, output, _) =
+        run_zshrs("a=(a.b.c d.e.f); echo ${a%%.*}");
+    assert_eq!(output.trim(), "a d");
+}
+
+#[test]
+fn test_array_long_prefix_strip_per_element() {
+    // `${arr##pat}` strips longest prefix per element.
+    let (_, output, _) =
+        run_zshrs("a=(/tmp/a /tmp/b); echo ${a##*/}");
+    assert_eq!(output.trim(), "a b");
+}

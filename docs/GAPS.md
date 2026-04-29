@@ -1461,6 +1461,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `echo "~"` printed `/Users/wizard`; zsh keeps `~` literal inside `"..."`. The shared `expand_string` tilde-handler had no DQ-context guard. Added `&& self.in_dq_context == 0` to the tilde branch — the existing `in_dq_context` counter (incremented around `expand_string` for DQ contents) gates expansion. Tests: `test_tilde_literal_in_double_quotes`.
 
+### `${arr%pat}` / `${arr#pat}` only stripped one element of the array
+
+- `${a%.txt}` for `a=(a.txt b.bin c.txt)` should yield `a b.bin c`; zshrs joined to scalar first then stripped the joined string, returning `a.txt b.bin c` (only the trailing `.txt` got stripped). Same root cause for `#`/`##`/`%%`. Reworked `BUILTIN_PARAM_STRIP` to detect the `arrays[name]` / `@` / `*` cases and iterate per-element. Tests: `test_array_suffix_strip_per_element`, `test_array_prefix_strip_per_element`, `test_array_long_suffix_strip_per_element`, `test_array_long_prefix_strip_per_element`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
