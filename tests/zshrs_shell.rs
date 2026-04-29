@@ -5357,3 +5357,30 @@ fn test_fpath_append_keeps_existing() {
     let n_after: i32 = after.trim().parse().unwrap_or(0);
     assert_eq!(n_after, n_before + 1, "expected count+1 after fpath+=");
 }
+
+#[test]
+fn test_dq_var_concat_with_literal_suffix() {
+    // `"$a"bar` should produce `foobar`. Regression: the bare-var
+    // fast-path matched after untokenize stripped DNULL markers,
+    // looking up nonexistent `abar` instead of `a`.
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "$a"bar"#);
+    assert_eq!(output.trim(), "foobar");
+}
+
+#[test]
+fn test_dq_var_concat_with_literal_prefix() {
+    let (_, output, _) = run_zshrs(r#"a=foo; echo bar"$a""#);
+    assert_eq!(output.trim(), "barfoo");
+}
+
+#[test]
+fn test_dq_var_with_underscore_suffix() {
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "$a"_X"#);
+    assert_eq!(output.trim(), "foo_X");
+}
+
+#[test]
+fn test_dq_var_double_concat() {
+    let (_, output, _) = run_zshrs(r#"a=foo; echo X_"$a"_Y"#);
+    assert_eq!(output.trim(), "X_foo_Y");
+}

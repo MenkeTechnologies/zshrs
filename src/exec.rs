@@ -11388,10 +11388,13 @@ impl ShellExecutor {
                 // joined scalar.
                 // In DQ context, the array-only flags become no-ops on
                 // an unsplit scalar — UNLESS the user explicitly used
-                // the `@` array-context flag, which forces array
-                // semantics even inside DQ. zsh: `"${(@o)arr}"` sorts
-                // and splices each element as its own word.
-                let has_at_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::At));
+                // the `@` array-context flag (`(@)`) OR the rest has
+                // `[@]` / `[*]` subscript (which also triggers array
+                // context). zsh: `"${(@o)arr}"` and `"${(o)arr[@]}"`
+                // both sort and splice element-by-element.
+                let has_at_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::At))
+                    || rest.ends_with("[@]")
+                    || rest.ends_with("[*]");
                 if self.in_dq_context > 0 && !has_at_flag {
                     flags.retain(|f| !matches!(
                         f,
