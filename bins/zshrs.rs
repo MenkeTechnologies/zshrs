@@ -716,6 +716,11 @@ pub fn zshrs_main() {
     // Extract flags before filtering: -x (xtrace), -f (no rcs), -v (verbose)
     let enable_xtrace = args.iter().any(|a| a == "-x");
     let enable_verbose = args.iter().any(|a| a == "-v");
+    // -f / --no-rcs: skip startup files AND turn off rcs + hashdirs.
+    // zsh's `-f`-mode `setopt` lists `nohashdirs` and `norcs` for this
+    // reason; without these inserts, zshrs's `setopt` reported an
+    // empty list under `-f`.
+    let no_rcs_flag = args.iter().any(|a| a == "-f" || a == "--no-rcs");
 
     // Filter out flags that don't affect -c / script dispatch
     let args: Vec<String> = args
@@ -732,7 +737,12 @@ pub fn zshrs_main() {
         .collect();
 
     /// Apply CLI flags and shell mode to executor
-    fn apply_cli_flags(executor: &mut ShellExecutor, xtrace: bool, verbose: bool) {
+    fn apply_cli_flags(
+        executor: &mut ShellExecutor,
+        xtrace: bool,
+        verbose: bool,
+        no_rcs: bool,
+    ) {
         // Apply shell mode
         executor.zsh_compat = is_zsh_mode();
         if is_posix_mode() {
@@ -744,6 +754,13 @@ pub fn zshrs_main() {
         if verbose {
             executor.options.insert("verbose".to_string(), true);
         }
+        if no_rcs {
+            // Match zsh -f: rcs and hashdirs default-on options are
+            // turned off so `setopt` lists `nohashdirs norcs`. zsh
+            // keeps globalrcs on (only the user-rcs files are skipped).
+            executor.options.insert("rcs".to_string(), false);
+            executor.options.insert("hashdirs".to_string(), false);
+        }
     }
 
     // Handle -c 'command' syntax
@@ -751,7 +768,7 @@ pub fn zshrs_main() {
         let code = &args[2];
 
         let mut executor = ShellExecutor::new();
-        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose);
+        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag);
         let start = Instant::now();
         let result = executor.execute_script(code);
         let duration = start.elapsed().as_millis() as i64;
@@ -778,7 +795,7 @@ pub fn zshrs_main() {
     // Handle script file argument
     if args.len() >= 2 && !args[1].starts_with('-') {
         let mut executor = ShellExecutor::new();
-        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose);
+        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag);
         if let Err(e) = executor.execute_script_file(&args[1]) {
             eprintln!("zshrs: {}: {}", args[1], e);
             std::process::exit(1);

@@ -860,7 +860,14 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 - zsh splits the result of bare `$(cmd)` on `$IFS` when the substitution sits in argument context (`f $(...)`, `for x in $(...)`, etc.). zshrs's BUILTIN_CMD_SUBST_TEXT was returning a single Value::str without splitting, so `f $(echo a b c)` invoked f with one joined arg and `$#` reported 1.
 - Emit a `BUILTIN_WORD_SPLIT` op after the cmd-subst handler unless the surrounding word is DQ-wrapped (`"$(...)"`) or we're inside an assignment RHS. Added an `assign_context_depth` field to ZshCompiler that's bumped around `compile_assign`'s `compile_word_str` call so `x=$(printf 'a\nb\nc')` keeps both lines (assignment shouldn't split). Tests: `test_cmd_subst_word_splits_in_argument_context`, `test_cmd_subst_no_split_in_dq_context`, `test_cmd_subst_no_split_in_assignment`.
 
-## Still open (forty-first-pass — remaining)
+## Closed (forty-second-pass — `-f` startup flag turns off rcs+hashdirs)
+
+### `zshrs -f -c 'setopt'` printed empty (zsh: `nohashdirs\nnorcs`)
+
+- `setopt` (no args) lists options whose state differs from the compiled-in default. zsh's `-f` flag turns off `rcs` (skip user .zshrc et al) AND `hashdirs` (don't pre-hash command paths) — both default-on options, so they appear as `norcs` / `nohashdirs` in `setopt`'s diff. zshrs's `-f` only filtered the flag from arg parsing without flipping any options, so `setopt` reported nothing.
+- Captured `no_rcs_flag = args.iter().any(|a| a == "-f" || a == "--no-rcs")` before the filter and threaded it into `apply_cli_flags`. Inserts `rcs=false` and `hashdirs=false` into `executor.options` (left `globalrcs` untouched — zsh `-f` keeps that on, only user-rcs files get skipped). Test: `test_dash_f_flag_disables_rcs_and_hashdirs`.
+
+## Still open (forty-second-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

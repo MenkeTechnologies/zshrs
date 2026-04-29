@@ -3491,3 +3491,13 @@ fn test_cmd_subst_no_split_in_assignment() {
         run_zshrs("x=$(printf 'a\nb\nc'); echo \"$x\" | wc -l");
     assert_eq!(output.trim(), "3", "got: {output:?}");
 }
+
+#[test]
+fn test_dash_f_flag_disables_rcs_and_hashdirs() {
+    // zsh -f sets `nohashdirs` and `norcs` (default-on options that
+    // -f turns off so they show up in `setopt`'s diff list).
+    let (_, output, _) = run_zshrs(r#"setopt"#);
+    let mut lines: Vec<&str> = output.lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["nohashdirs", "norcs"], "got: {output:?}");
+}
