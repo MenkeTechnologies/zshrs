@@ -5943,3 +5943,35 @@ fn test_unalias_missing_zsh_format() {
     let (_, _, stderr) = run_zshrs("unalias notdef_xxx_zzz");
     assert!(stderr.contains("no such hash table element"));
 }
+
+#[test]
+fn test_optind_default_one() {
+    // POSIX: OPTIND defaults to 1 before getopts is called. zshrs
+    // returned empty string. Now initialized to 1 in executor.
+    let (_, output, _) = run_zshrs(r#"echo "[$OPTIND]""#);
+    assert_eq!(output.trim(), "[1]");
+}
+
+#[test]
+fn test_setopt_unknown_option_errors() {
+    // `setopt nosuchoption_zzz` should emit "no such option:" to
+    // stderr matching zsh. Was silent.
+    let (_, _, stderr) = run_zshrs("setopt nosuchoption_zzz_xx");
+    assert!(stderr.contains("no such option"));
+}
+
+#[test]
+fn test_random_resolves_in_arithmetic() {
+    // `$((RANDOM))` was returning 0 because MathEval looked up the
+    // name in `self.variables` (which doesn't contain RANDOM — it's
+    // a special param resolved dynamically). Now pre-resolved into
+    // a working extras map before MathEval runs.
+    let (_, output, _) = run_zshrs("echo $((RANDOM))");
+    let val: i64 = output.trim().parse().unwrap_or(-1);
+    assert!(val >= 0 && val <= 32767, "RANDOM out of range: {}", val);
+
+    // RANDOM should differ per arith-subst (zsh contract).
+    let (_, output, _) =
+        run_zshrs("a=$((RANDOM)); b=$((RANDOM)); [[ $a != $b ]] && echo diff");
+    assert_eq!(output.trim(), "diff");
+}
