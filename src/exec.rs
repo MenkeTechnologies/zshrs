@@ -10572,18 +10572,32 @@ impl ShellExecutor {
 
                 // File types — all use prefetched metadata cache
                 '.' => {
+                    // zsh: `.` is "plain regular file" — excludes
+                    // symlinks (use `@` for those). Was matching
+                    // symlinks-to-files because `is_file()` on the
+                    // followed metadata returned true. Check the
+                    // SYMLINK metadata to filter out links first.
                     result = result
                         .into_iter()
                         .filter(|f| {
-                            let is_file = meta_cache
+                            let is_plain_file = meta_cache
                                 .get(f)
-                                .and_then(|(m, _)| m.as_ref())
-                                .map(|m| m.is_file())
+                                .map(|(m, sm)| {
+                                    let is_link = sm
+                                        .as_ref()
+                                        .map(|m| m.file_type().is_symlink())
+                                        .unwrap_or(false);
+                                    let is_reg = m
+                                        .as_ref()
+                                        .map(|m| m.is_file())
+                                        .unwrap_or(false);
+                                    is_reg && !is_link
+                                })
                                 .unwrap_or(false);
                             if negate {
-                                !is_file
+                                !is_plain_file
                             } else {
-                                is_file
+                                is_plain_file
                             }
                         })
                         .collect();
