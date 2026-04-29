@@ -212,8 +212,15 @@ plugin_deps     (plugin, dep, constraint)
 entries         (fq_name, plugin_id, kind, image_path, byte_offset, source_loc, bytecode BLOB)
 hooks           (kind, name, fq_name)
 entry_stats     (fq_name, last_called_at, call_count, total_ns)
-scripts         (path PRIMARY KEY, mtime, inode, hash, bytecode BLOB,
-                 last_run_at, run_count, bytes_in, bytes_out)
+compiled_files  (path PRIMARY KEY, kind TEXT, mtime, inode, hash, bytecode BLOB,
+                 last_used_at, use_count, bytes_in, bytes_out, sensitive BOOLEAN,
+                 parent_paths TEXT)
+                 -- kind ∈ {'script', 'source', 'zshrc', 'plugin_init', 'autoload'}
+                 -- one unified table for any file that gets parsed and bytecoded by the daemon,
+                 -- looked up by absolute path. covers `zshrs FILE`, `source FILE`, .zshrc,
+                 -- plugin entry-point files, autoloaded function files. parent_paths is a
+                 -- JSON array of files that transitively included this one (for invalidation
+                 -- chain when an upstream source dependency changes).
 ```
 
 `bytecode` BLOB columns make `catalog.db` a self-contained mirror of all compiled state. Two-way reconstruction: rkyv shards ↔ catalog.db can each rebuild from the other. catalog.db is queryable and joinable; rkyv is hot-path zero-copy. Hot lookups never hit SQLite — clients only mmap rkyv.
@@ -262,7 +269,8 @@ Pre-walked state delivered at boot:
 | Initial shell-options state | `setopt`/`unsetopt` calls in `.zshrc` pre-resolved; client boots with final option mask |
 | Initial keybinding table | `bindkey` declarations pre-resolved; client boots with final binding map |
 | Loaded modules state | `zmodload` declarations pre-resolved; daemon ensures required modules are available, serves initial loaded-module set |
-| Initial environment | `export FOO=bar` in `.zshrc` pre-resolved; client boots with final env |
+| Initial environment (`env`) | Exported vars (`export FOO=bar`) from `.zshrc` and plugins pre-resolved; client boots with canonical env, mutations go to overlay |
+| Initial shell parameters (`params`) | Non-exported shell-level vars (`FOO=bar`, `typeset -A MAP=(...)`, `typeset -a ARR=(...)`) pre-resolved by daemon into a typed table (scalar / array / assoc); same overlay + `zsync up` / `eval $(zcache export params)` machinery as everything else |
 | `zstyle` registry | All `zstyle` declarations from `.zshrc` and plugins pre-resolved into a daemon-served context-pattern → key-value table |
 
 The mechanism is uniform: daemon parses and evaluates user dotfiles in an analysis pass, captures deterministic state effects, serializes into the user's boot-state shard. Client at boot mmaps the shard, applies state to its process, and is fully initialized. No client-side filesystem walks for shell-internal purposes.
@@ -272,6 +280,83 @@ The mechanism is uniform: daemon parses and evaluates user dotfiles in an analys
 **What's NOT covered by this rule:** `fork+exec`'d user commands (`find`, `ls`, `rg`, `grep`, etc.) are user code, not shell-internal walks. Those run normally in the client. The no-walking rule applies only to shell-internal directory enumeration (PATH/FPATH scans, completion file lookups, autoload resolution, plugin discovery, `hash` table population, theme file reads).
 
 Result: a 172k-line `zpwr` `.zshrc` should cost client cold-start no more than the IPC + mmap + state-apply pass — measured in milliseconds, not seconds. Per-client init cost is independent of `.zshrc` size or fpath cardinality.
+
+### Source / dot interception and file registry
+
+The `source` and `.` builtins are daemon-aware. Every call routes through the daemon's `compiled_files` registry:
+
+```
+client: source /Users/wizard/.zpwr/local/.tokens.sh
+    │
+    ↓  IPC: {"op":"source_resolve","path":"/Users/wizard/.zpwr/local/.tokens.sh","mtime":N,"inode":M}
+    │
+daemon: lookup compiled_files WHERE path = …
+    HIT (mtime+inode match):    return shard_path + generation
+    MISS:                        parse + bytecode-compile + insert + return
+    STALE (mtime/inode differ):  rebuild + atomic-rename + return new generation
+    │
+    ↓
+client: mmap shard, replay env-mutation log + execute function definitions in current process
+```
+
+**Effect:** every file ever sourced from any zshrs shell ends up in the daemon's registry, fsnotify-watched, bytecode-cached. Subsequent `source` of the same file is mmap + replay, not parse. The `.zshrc` analysis pass follows `source` / `.` calls transitively at compile-time, so the entire transitive-closure of files reachable from `.zshrc` is registered before the first interactive shell boots — `parent_paths` records the inclusion chain so an edit to a deeply-nested sourced file invalidates all the bytecode that depended on it.
+
+**Concrete example.** User has in `.zshrc`:
+```sh
+source ~/.zpwr/local/.tokens.sh    # API keys, passwords, env exports
+source ~/.zpwr/init.sh             # main zpwr init (172k LOC across sourced submodules)
+source ~/.config/work/aliases.sh   # work-specific aliases
+```
+
+Daemon analysis pass walks all three transitively, parses each, bytecode-compiles each, registers them in `compiled_files` as `kind='source'`. fsnotify watches each. Edit `.tokens.sh` → daemon rebuilds just that one entry → next shell boot sees the change. Edit `~/.zpwr/init.sh` → daemon rebuilds it and any submodule it transitively sources.
+
+**Sensitive content.** Files like `.tokens.sh` typically contain secrets (API keys, passwords, `export AWS_SECRET_ACCESS_KEY=…`). The daemon caches their bytecode, which means the bytecode shard contains the secret in plaintext-equivalent form. Two enforcement points:
+
+1. `~/.cache/zshrs/` directory permission is `0700` (user-only). Files inside are `0600`. Set at daemon startup, verified by `zcache verify` on every integrity scan. Any drift triggers a `WARN` in `zshrs.log` and a refusal to attach for non-owner clients.
+2. `compiled_files.sensitive` flag is set when daemon detects likely-secret content (heuristic: file path matches `*tokens*`, `*secret*`, `*credentials*`, `*.env*`, or content contains `AWS_SECRET`, `API_KEY=`, `PASSWORD=`, etc.). When set: the file's bytecode shard is written with `O_NOFOLLOW`, mmap'd `MAP_PRIVATE` only, and excluded from `zcache export --all` archive output unless `--include-sensitive` is passed. `zcache view` and `zcache export` for these targets refuse to print contents to terminal unless `--show-sensitive` is passed (just a one-flag opt-in; no friction).
+
+User opts into this caching by sourcing the file from `.zshrc` — the assumption is the user already trusts `~/.cache/zshrs/` with the same threat model as `~/.zpwr/local/.tokens.sh` itself. If they don't, the workaround is `[[ -o interactive ]] && source …` guarded so daemon analysis skips it (see "Determinism boundary" — daemon emits per-shell replay for conditional sources rather than baking them).
+
+### Compat surface and zpwr-scale validation target
+
+Daemon design is validated against the `~/.zpwr` codebase as the bedrock real-world load — anything that can't handle this is a design failure. Concrete numbers from the user's machine:
+
+| Measurement | Value |
+|---|---|
+| `.zshrc` line count | 889 |
+| `~/.zpwr` total shell LOC (`.zsh` + `.sh`) | ~1.6M |
+| `~/.zpwr` shell file count | 579 |
+| Existing `.zwc` files in `~/.zpwr` | 40 |
+| `~/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies` | 753 KB |
+| Same, zcompiled (`.zwc`) | 1.8 MB |
+| `~/.zpwr/local/.zpwr-MenkeTechnologies-history` | 25 MB (478k commands) |
+| `~/.zpwr/local/.tokens.sh` (sensitive, pre-zwc'd) | 12 KB |
+| `~/.zpwr/local/.common_aliases` | 92 KB |
+
+The daemon must absorb all of this on first cold start (one-shot, then incremental on fsnotify-detected changes). Subsequent shell boots see <10 ms client cold-start regardless of zpwr scale.
+
+**Plugin manager interop.** zpwr's `.zshrc` switches between plugin managers via `$ZPWR_PLUGIN_MANAGER` and ships with built-in support for zinit, antigen, zplug, antibody, oh-my-zsh, and direct git-clone. zshrs daemon supersedes all of these architecturally — the daemon IS the plugin manager (parses, caches, lifecycle, dependency graph). But for `.zshrc` files in the wild, the daemon supports the syntax of the major managers as input to its analysis pass:
+
+| Manager | Compat surface | Status |
+|---|---|---|
+| **zinit** | `zinit ice …; zinit load|light|snippet …; zinit cdreplay; zinit creinstall` — full ice-modifier grammar; turbo-mode hints recognized but no longer needed (daemon has zero cold-start cost so deferral is meaningless) | Required — primary daily-driver target |
+| **oh-my-zsh** | `ZSH_THEME=…; plugins=(…); source $ZSH/oh-my-zsh.sh; antigen-bundle …` — recognize plugin array, apply plugins from `$ZSH_CUSTOM/plugins/` and OMZ tree | Required — zpwr uses OMZ libs/plugins/comps as fallback |
+| **antigen** | `antigen bundle …; antigen apply` | Best-effort |
+| **zplug** | `zplug "user/repo"; zplug load` | Best-effort |
+| **antibody** | `antibody bundle <<<…` | Best-effort |
+| **sheldon** | TOML-config-driven | Best-effort |
+| **znap / zgenom / zcomet / zr** | various | Best-effort |
+| **direct `git clone` + `source`** | base case | Always works (handled by source-interception) |
+
+Daemon doesn't *run* zinit's Ruby/zsh code. It parses zinit declarations to extract: which plugins to load, which ice modifiers (lazy-load, install-time hooks, alternate paths) to honor, what lifecycle behavior the user expects. The daemon then implements that behavior natively. zinit-the-zsh-plugin can be removed from the user's `.zshrc` once daemon-handled compat is verified, but doesn't have to be — having it source unmodified is fine; daemon analysis just notices the work has already been done.
+
+**`.zwc` supersession.** zsh's `.zwc` (zsh-compiled bytecode) files become irrelevant under zshrs. Daemon's rkyv shards are faster (mmap zero-copy), richer (typed ASTs, perfect-hash lookup, bidirectional reconstruction), and unified (one cache directory vs scattered `.zwc` files). On first cold start, daemon reads existing `.zwc` files to bootstrap its cache (cheap one-time win — `.zwc` is already parsed, just needs re-serialization to rkyv) and then ignores them. Existing `.zwc` files are not deleted by zshrs (user owns them); they're just unused by zshrs's lookup path. `zcache import zwc <path>` is the explicit migration verb.
+
+**History migration.** zpwr's 25 MB / 478 k-command history file (`~/.zpwr/local/.zpwr-MenkeTechnologies-history`) ingests once into the daemon's `history.db` via `zcache import history <path>`. The legacy zsh `HISTFILE=` setting becomes a no-op once migrated — daemon owns the canonical store. Backwards-export to legacy zsh format available via `zcache export history --format zsh-histfile` for round-trip.
+
+**`compinit`'s `.zcompdump-…` files.** Daemon ignores existing `.zcompdump` on the first run (the rkyv corpus is canonical), but `zcache import zcompdump <path>` provides a one-shot ingest path. After migration, the legacy `.zcompdump` files remain on disk untouched until the user removes them.
+
+**Acceptance against zpwr.** Cold-cache full-corpus build for `~/.zpwr` (1.6 M LOC, 579 files): target <60 s clean compile. Warm-cache cold-start of a new shell: target <10 ms. After migration, every existing user workflow that worked under zsh+zpwr+zinit+p10k must work under zshrs+daemon, with the speedups described in the comparison table at the top of this doc.
 
 ### Promoting client-local changes to daemon canonical
 
@@ -300,7 +385,8 @@ zsync up alias <name…>              # push specific alias(es)
 zsync up alias --all                # push all aliases from overlay
 zsync up function <name…>           # push function definition to daemon
 zsync up compdef <name…>            # push compdef registration
-zsync up env <var…>                 # push env var(s)
+zsync up env <var…>                 # push exported env var(s)
+zsync up params <var…>              # push non-exported shell parameter(s)
 zsync up zstyle <pattern…>          # push zstyle declarations
 zsync up zstyle --all
 zsync up bindkey <key…>             # push keybindings
@@ -358,7 +444,8 @@ Both are thin IPC wrappers over daemon ops `view_cache` / `export_cache`. Daemon
 | `bindkey` | Keybinding map |
 | `setopt` | Option mask |
 | `zmodload` | Loaded module set |
-| `env` | Env var table (canonical) |
+| `env` | Exported env vars (visible to subprocesses) |
+| `params` | Non-exported shell parameters — scalar, array, assoc — this-shell-only |
 | `theme` | Resolved theme templates (PROMPT, RPROMPT, palette) |
 | `history` | Command history (with `--filter` for FTS query, `--range` for time range) |
 | `entry_stats` | Frecency / call counts / total time |
@@ -369,6 +456,8 @@ Both are thin IPC wrappers over daemon ops `view_cache` / `export_cache`. Daemon
 | `index` | `index.rkyv` lookup table |
 | `catalog` | Full `catalog.db` dump |
 | `script <path>` | Bytecode for a cached `zshrs FILE` script |
+| `sourced <path>` | Bytecode for a single sourced file (with `--all` for registry of every file ever sourced) |
+| `compiled_files` | Full compiled_files table — every file the daemon has bytecode-cached, with kind, mtime, hash, sensitive flag, parent_paths |
 | `zcompdump` | Synthetic `.zcompdump` for legacy tools (only valid as export, not view) |
 | `daemon_state` | Full daemon state for debugging (sizes, queues, lock states, in-flight jobs) |
 
@@ -376,7 +465,7 @@ Both are thin IPC wrappers over daemon ops `view_cache` / `export_cache`. Daemon
 
 | Format | Use | Valid targets |
 |--------|-----|---------------|
-| `sh` (default for `export` on shell-state targets) | Eval-compatible zsh script: `eval $(zcache export <target>)` resets overlay to canonical. Includes wipe prefix unless `--additive` | path/fpath/manpath/named_dir/aliases/galiases/saliases/functions/_comps/_services/_patcomps/_describe_handlers/zstyle/bindkey/setopt/zmodload/env/theme/command_hash/autoload_table |
+| `sh` (default for `export` on shell-state targets) | Eval-compatible zsh script: `eval $(zcache export <target>)` resets overlay to canonical. Includes wipe prefix unless `--additive` | path/fpath/manpath/named_dir/aliases/galiases/saliases/functions/_comps/_services/_patcomps/_describe_handlers/zstyle/bindkey/setopt/zmodload/env/params/theme/command_hash/autoload_table |
 | `text` (default for `view`) | Human-readable pretty-print | All targets |
 | `json` | Machine-readable structured | All targets |
 | `yaml` | Human + machine readable | All targets |
@@ -463,6 +552,7 @@ Hot-path escape hatch: if JSON parse cost shows up in flamegraphs for `highlight
 | `highlight` | Syntax-highlight current buffer |
 | `keys` | Get key list for daemon-served special parameter (`_comps`, `_services`, etc.) |
 | `load_script` | Cold-load `zshrs FILE`; returns shard path or inline bytecode |
+| `source_resolve` | Resolve `source FILE` / `. FILE` to cached bytecode; daemon parses + caches on miss, returns shard path + generation |
 | `push_canonical` | Promote client overlay state for a subsystem (path/fpath/alias/named_dir/etc.) into daemon canonical for future shells |
 | `pull_canonical` | Client opt-in: re-fetch canonical state for a subsystem mid-session |
 | `diff_canonical` | Get overlay-vs-canonical diff for inspection |
@@ -556,6 +646,8 @@ zcache list                         # list every supported export target
 #     eval $(zcache export zstyle)         # reset all zstyle declarations
 #     eval $(zcache export bindkey)        # reset keybindings
 #     eval $(zcache export setopt)         # reset option mask
+#     eval $(zcache export env)            # reset exported env vars (emits: export FOO=bar ...)
+#     eval $(zcache export params)         # reset non-exported shell parameters (emits: typeset -g FOO=bar / typeset -ga ARR=(...) / typeset -gA MAP=(k v) per type)
 #     eval $(zcache export --all-state)    # full shell-state reset (everything eval-compat in one go)
 #                                          # — equivalent to `exec zshrs` minus the exec
 #
@@ -585,7 +677,8 @@ zcache export zstyle                # zstyle context-pattern → key-value regis
 zcache export bindkey               # keybinding map
 zcache export setopt                # shell option mask
 zcache export zmodload              # loaded module set
-zcache export env                   # canonical env vars
+zcache export env                   # exported env vars (visible to subprocesses)
+zcache export params                # non-exported shell parameters (scalar/array/assoc, this-shell-only)
 zcache export theme                 # resolved theme templates
 zcache export history [--filter <q>] [--range <r>]
 zcache export entry_stats           # frecency / call counts / total time
@@ -596,6 +689,9 @@ zcache export shard <name>          # specific rkyv shard
 zcache export index                 # index.rkyv lookup table
 zcache export catalog               # full catalog.db
 zcache export script <path>         # bytecode for a cached `zshrs FILE`
+zcache export sourced <path>        # bytecode for a sourced file (single)
+zcache export sourced --all         # registry of every sourced file with mtime/hash/sensitive flag
+zcache export compiled_files        # full compiled_files table dump
 zcache export zcompdump [--zwc]     # synthetic .zcompdump for legacy tools
 zcache export daemon_state          # full daemon state for debugging
 zcache export --all [--out <path>]  # snapshot every target into one archive

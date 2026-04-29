@@ -4812,6 +4812,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
             .unwrap_or(&name_raw)
             .to_string();
         let count = with_executor(|exec| {
+            // ${#@} / ${#*} → count of positional params (= $#).
+            // Without this, `@`/`*` fell through to `get_variable`
+            // which returned the IFS-joined positional string and
+            // we counted chars (5 for "a b c" instead of 3).
+            if name == "@" || name == "*" {
+                return exec.positional_params.len();
+            }
             if let Some(arr) = exec.arrays.get(&name) {
                 arr.len()
             } else if let Some(assoc) = exec.assoc_arrays.get(&name) {
@@ -11020,6 +11027,13 @@ impl ShellExecutor {
         // Handle ${#arr[@]} - array length
         if content.starts_with('#') {
             let rest = &content[1..];
+            // ${#@} / ${#*} — positional param count. Without this,
+            // `@`/`*` fell through to get_variable which returns the
+            // IFS-joined string ("a b c"), and `.len()` counted bytes
+            // (5 instead of 3).
+            if rest == "@" || rest == "*" {
+                return self.positional_params.len().to_string();
+            }
             if let Some(bracket_start) = rest.find('[') {
                 let var_name = &rest[..bracket_start];
                 let bracket_content = &rest[bracket_start + 1..];
@@ -11051,9 +11065,10 @@ impl ShellExecutor {
                     .map(|h| h.len().to_string())
                     .unwrap_or_else(|| "0".to_string());
             }
-            // ${#var} - string length
+            // ${#var} - string char length (NOT byte length, so unicode
+            // counts as 1 char each — `${#héllo}` should be 5, not 6).
             let val = self.get_variable(rest);
-            return val.len().to_string();
+            return val.chars().count().to_string();
         }
 
         // Handle ${+var} and ${+arr[key]} - test if variable/element is set (returns 1 if set, 0 if not)
