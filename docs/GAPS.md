@@ -811,7 +811,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 - Same root cause as the prior `r`/`echo`/`pwd` fix, but now extended to fusevm's coreutils-style anti-fork builtins (`cat`, `head`, `tail`, `wc`, `basename`, `dirname`, `touch`, `realpath`, `sort`, `find`, `uniq`, `cut`, `tr`, `seq`, `rev`, `tee`, `sleep`, `whoami`, `id`, `hostname`, `uname`, `date`, `mktemp`, `mkdir`). Each handler bypassed user functions because the compiler emitted `Op::CallBuiltin` directly. zpwr/oh-my-zsh wrap most of these, so override-blindness was a major real-world breakage.
 - Introduced a `reg_overridable!($vm, $id, $name, $method)` macro at the top of `register_builtins`. Each registration now consults `try_user_fn_override` before falling through to the native handler. Test: `test_user_function_overrides_coreutils_builtins` covers 11 representative cases.
 
-## Still open (thirty-fifth-pass — remaining)
+## Closed (thirty-sixth-pass — `${(Q)s}` dequote)
+
+### `${(Q)s}` — strip one layer of shell quoting
+
+- The `'Q'` arm was missing entirely from `BUILTIN_PARAM_FLAG`. Added: balanced single-quote (`'…'` → literal contents), double-quote (`"…"` → process `\"`/`\\`/`\$`/`` \` `` escapes), and bare-string (drop one backslash per escape) handling. Test: `test_param_flag_Q_dequote`.
+
+### Deferred — command substitution exit status to `$?`
+
+- `cmd_out=$(false); echo $?` should report 1 (zsh: assignment is transparent w.r.t. `$?`), but `echo $(false); echo $?` should report 0 (zsh: the enclosing command's status overrides). zshrs currently propagates neither — `cmd_out=$(false); echo $?` reads 0. Fixing it requires a generation counter that fires on every Op::SetStatus to invalidate a "pin" set by cmd-substitution. fusevm doesn't expose a hook for SetStatus, and a value-only witness (compare current vm.last_status to the value at pin-time) collapses when both happen to be the same number. Documented as a known divergence; keep tests for the closed cases stable. Affects `$?` after cmd-substitution-only RHS.
+
+## Still open (thirty-sixth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

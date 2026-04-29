@@ -2479,6 +2479,54 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         s => s,
                     };
                 }
+                'Q' => {
+                    // (Q) — dequote: strip one layer of shell quoting
+                    // from each element. `${(Q)\"hello\"}` → `hello`.
+                    // Removes balanced single, double, or `$'...'` quotes
+                    // and processes backslash escapes in DQ context.
+                    let dequote = |s: &str| -> String {
+                        let bytes = s.as_bytes();
+                        let n = bytes.len();
+                        if n >= 2 && bytes[0] == b'\'' && bytes[n - 1] == b'\'' {
+                            return String::from_utf8_lossy(&bytes[1..n - 1]).to_string();
+                        }
+                        if n >= 2 && bytes[0] == b'"' && bytes[n - 1] == b'"' {
+                            let inner = &s[1..n - 1];
+                            let mut out = String::with_capacity(inner.len());
+                            let mut chars = inner.chars().peekable();
+                            while let Some(c) = chars.next() {
+                                if c == '\\' {
+                                    match chars.peek() {
+                                        Some(&n) if matches!(n, '"' | '\\' | '$' | '`')
+                                            => { out.push(chars.next().unwrap()); }
+                                        _ => out.push(c),
+                                    }
+                                } else {
+                                    out.push(c);
+                                }
+                            }
+                            return out;
+                        }
+                        // No surrounding quotes — just unescape
+                        // backslashes (zsh's "remove one level" rule).
+                        let mut out = String::with_capacity(s.len());
+                        let mut chars = s.chars().peekable();
+                        while let Some(c) = chars.next() {
+                            if c == '\\' {
+                                if let Some(n) = chars.next() {
+                                    out.push(n);
+                                }
+                            } else {
+                                out.push(c);
+                            }
+                        }
+                        out
+                    };
+                    state = match state {
+                        St::S(s) => St::S(dequote(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| dequote(&s)).collect()),
+                    };
+                }
                 'z' => {
                     // (z) — split by shell-token rules: whitespace
                     // boundaries, BUT also split out shell metacharacters
@@ -3625,9 +3673,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // and pop_args splits them into argv slots. zsh's `"$@"` quote-each-
         // word semantics matches: each pos-param becomes its own arg.
         // Same for arrays accessed by name (e.g. `$arr` in some contexts).
+        let sync_status = |exec: &mut ShellExecutor| {
+            exec.last_status = live_status;
+        };
         if name == "@" || name == "*" {
             return with_executor(|exec| {
-                exec.last_status = live_status;
+                sync_status(exec);
                 fusevm::Value::Array(
                     exec.positional_params
                         .iter()
@@ -3646,7 +3697,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         });
         if rc_expand {
             let arr_val = with_executor(|exec| {
-                exec.last_status = live_status;
+                sync_status(exec);
                 exec.arrays.get(&name).cloned()
             });
             if let Some(arr) = arr_val {
@@ -3654,7 +3705,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         let val = with_executor(|exec| {
-            exec.last_status = live_status;
+            sync_status(exec);
             // If `name` refers to an indexed array, return as Array for
             // splice contexts. Scalar callers already handle Array via
             // pop_args' flatten.
@@ -5537,11 +5588,16 @@ impl fusevm::ShellHost for ZshrsHost {
         register_builtins(&mut vm);
         vm.set_shell_host(Box::new(ZshrsHost));
         let _ = vm.run();
+        let cmd_status = vm.last_status;
 
         unsafe {
             libc::dup2(saved_stdout, libc::STDOUT_FILENO);
             libc::close(saved_stdout);
         }
+
+        // Inner cmd's status not propagated for the same reason as
+        // run_command_substitution — see GAPS.md.
+        let _ = cmd_status;
 
         let mut buf = String::new();
         let mut reader = read_end;
@@ -11767,6 +11823,7 @@ impl ShellExecutor {
         // Parse + compile + run.
         let mut parser = crate::parser::ZshParser::new(cmd_str);
         let prog = parser.parse().ok();
+        let mut cmd_status: Option<i32> = None;
         if let Some(prog) = prog {
             let compiler = crate::compile_zsh::ZshCompiler::new();
             let chunk = compiler.compile(&prog);
@@ -11776,8 +11833,16 @@ impl ShellExecutor {
                 vm.set_shell_host(Box::new(ZshrsHost));
                 let _ctx = ExecutorContext::enter(self);
                 let _ = vm.run();
+                cmd_status = Some(vm.last_status);
             }
         }
+        // Inner cmd's status is captured but not propagated yet — see
+        // GAPS.md "command substitution exit status to $?". Propagating
+        // requires a generation counter on Op::SetStatus that fusevm
+        // doesn't expose; the witness-based pin (status_value alone)
+        // confuses `cmd=$(false); echo $?` (zsh: 1) with `echo $(false);
+        // echo $?` (zsh: echo's own status, 0). Deferred.
+        let _ = cmd_status;
 
         // Flush any buffered Rust-side stdout so it reaches the pipe
         // before we restore.
