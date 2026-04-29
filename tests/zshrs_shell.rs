@@ -3098,3 +3098,55 @@ fn test_while_read_returns_1_at_eof_no_newline() {
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     assert_eq!(stdout, "[a]\n[b]\n", "got: {stdout:?}");
 }
+
+#[test]
+fn test_positional_default_plus_returns_alt_when_set() {
+    // ${1+yes} returns yes when $1 is set, nothing when unset.
+    let (_, output, _) = run_zshrs(r#"set -- a b; echo "${1+yes}""#);
+    assert_eq!(output.trim(), "yes", "got: {output:?}");
+}
+
+#[test]
+fn test_positional_default_plus_unset() {
+    let (_, output, _) = run_zshrs(r#"set --; echo "[${1+yes}]""#);
+    assert_eq!(output.trim(), "[]", "got: {output:?}");
+}
+
+#[test]
+fn test_tilde_with_dollar_var() {
+    // ~$USER should expand to /home/USER (or /Users/USER on macOS).
+    let user = std::env::var("USER").unwrap_or_default();
+    if user.is_empty() {
+        return;
+    }
+    let (_, output, _) = run_zshrs("echo ~$USER");
+    assert!(
+        output.contains(&user),
+        "expected USER in output, got: {output:?}"
+    );
+    assert!(!output.starts_with('~'), "expected expansion, got: {output:?}");
+}
+
+#[test]
+fn test_tilde_with_quoted_dollar_var() {
+    let user = std::env::var("USER").unwrap_or_default();
+    if user.is_empty() {
+        return;
+    }
+    let (_, output, _) = run_zshrs(r#"echo ~"$USER""#);
+    assert!(
+        output.contains(&user),
+        "expected USER in output, got: {output:?}"
+    );
+    assert!(!output.starts_with('~'), "expected expansion, got: {output:?}");
+}
+
+#[test]
+fn test_glob_qualifier_size_l_uses_bytes() {
+    // ${L+N}: size > N bytes (default unit BYTES, not 512-blocks).
+    let path = "/tmp/zr_l_qual_test";
+    std::fs::write(path, "12345").unwrap();
+    let (_, output, _) = run_zshrs(&format!("echo {}(L+3)", path));
+    let _ = std::fs::remove_file(path);
+    assert!(output.contains(path), "5 bytes > 3, should match: {output:?}");
+}

@@ -729,11 +729,26 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was returning 0 on any successful byte read, even when the input ended without a delimiter. zsh returns 1 in that case so `while read line` loops terminate cleanly. Added a `hit_terminator` tracker; on EOF without newline, assign the variable but return 1. Test: `test_while_read_returns_1_at_eof_no_newline`.
 
-## Still open (twenty-ninth-pass — remaining)
+## Closed (thirtieth-pass — `${1+...}` + `~$VAR` + `(L+N)` size)
+
+### `${1+arg}` / `${5-default}` — positional set/unset detection
+
+- `BUILTIN_PARAM_DEFAULT_FAMILY` checked existence via `variables.contains_key`/`arrays.contains_key`/etc. Positional params live in `positional_params: Vec<String>` and weren't found by name. Added a digit-name branch that compares the parsed index against `positional_params.len()` (with `$0` always set). Test: `test_positional_default_plus_returns_alt_when_set`, `test_positional_default_plus_unset`.
+
+### `~$VAR` and `~"$VAR"` tilde + dollar expansion
+
+- The compile-side `split_word_segments` was emitting `~` as a separate Literal segment from the `$VAR` Expansion, defeating tilde-expansion. Skip the segment split when `untoked.starts_with('~') && contains '$'` so the bridge sees `~$VAR` whole and routes through `expand_tilde_named`.
+- `expand_tilde_named` then resolves `$VAR` itself and strips surrounding quotes (so `~"$USER"` works the same as `~$USER`). Tests: `test_tilde_with_dollar_var`, `test_tilde_with_quoted_dollar_var`.
+
+### `(L+N)` size-glob qualifier — default unit is bytes
+
+- The `L` qualifier defaulted to 512-byte blocks (zsh ksh-mode but not the modern default). Switched default unit to bytes so `(L+3)` correctly means "more than 3 bytes". Suffix units (`k`/`m`/`g`/`p`) still work. Also extended `looks_like_glob` to treat trailing `(qualifier)` as a glob trigger so NOMATCH fires for unmatched qualifier-only patterns. Test: `test_glob_qualifier_size_l_uses_bytes`.
+
+## Still open (thirtieth-pass — remaining)
 
 (none — all probed gaps closed)
-- **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).
-- **`xtrace` exact zsh format** — our `+ cmd` matches POSIX but zsh's default PS4 includes color/PROG/FN/LINENO. Needs full PS4 prompt expansion.
+- **Backtick nesting** — parser-deferred.
+- **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
 The following items have been investigated and confirmed as false positives or fundamentally compatible:
 
