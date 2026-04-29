@@ -5738,3 +5738,56 @@ fn test_math_rejects_0o_octal_prefix() {
     let (_, _, stderr) = run_zshrs("echo $((0o15))");
     assert!(stderr.contains("bad math expression"));
 }
+
+#[test]
+fn test_trap_empty_string_listed_as_ignore() {
+    // `trap "" SIG` is signal-ignore (not "reset to default" — that's
+    // `trap - SIG`). Both forms should be visible in `trap` listing.
+    let (_, output, _) = run_zshrs(r#"trap "" USR1; trap"#);
+    assert!(output.contains("trap -- '' USR1"));
+}
+
+#[test]
+fn test_printf_d_truncates_float_to_int() {
+    // `printf "%d" 3.14` → 3 (POSIX truncate). zshrs was returning
+    // 0 because the i64 parse rejected the decimal point.
+    let (_, output, _) = run_zshrs(r#"printf "%d\n" 3.14"#);
+    assert_eq!(output.trim(), "3");
+    let (_, output, _) = run_zshrs(r#"printf "%i\n" -5.99"#);
+    assert_eq!(output.trim(), "-5");
+}
+
+#[test]
+fn test_set_dash_h_and_k_accepted() {
+    // `set -h` (HASH_CMDS), `set -k` (KSH_TYPESET), `set -p`
+    // (PRIVILEGED), `set -B` (BRACE_CCL), `set -H` (HIST_REDUCE_BLANKS).
+    // All zsh-spec single-char toggles. Were all erroring "invalid
+    // option". Accept silently as toggle-options.
+    let (_, _, stderr) = run_zshrs("set -h; echo done");
+    assert!(!stderr.contains("invalid option"));
+    let (_, _, stderr) = run_zshrs("set -k; echo done");
+    assert!(!stderr.contains("invalid option"));
+}
+
+#[test]
+fn test_array_element_length_via_hash() {
+    // `${#arr[N]}` should return char-count of the Nth element
+    // (zsh: `a=(hello world); ${#a[1]}` → 5). Was returning 0
+    // because the [N] subscript path wasn't reached for `${#…}`.
+    let (_, output, _) =
+        run_zshrs(r#"a=(hello world); echo "${#a[1]}""#);
+    assert_eq!(output.trim(), "5");
+    let (_, output, _) =
+        run_zshrs(r#"a=(short verylongstring); echo "${#a[2]}""#);
+    assert_eq!(output.trim(), "14");
+}
+
+#[test]
+fn test_printf_dot_s_zero_precision_suppresses_arg() {
+    // `%.s` (period, no digits) means precision-0 — the string arg
+    // is suppressed. zshrs was treating the missing digits as
+    // "no precision" and printing the full arg.
+    let (_, output, _) =
+        run_zshrs(r#"printf "[%.s]" "ignore""#);
+    assert_eq!(output, "[]");
+}
