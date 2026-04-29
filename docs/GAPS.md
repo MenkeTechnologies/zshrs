@@ -988,7 +988,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `echo step1; nocorrect echo hi; echo step3` only runs `echo step1` — the parser (the unmodifiable direct port of zsh's C parser) drops everything after `;` once `nocorrect` appears as a command name. zsh handles `nocorrect` as a precommand modifier in its lexer/parser via `lexflags.dbparens` / `incmdpos` machinery. zshrs's port has the field but no behavior. Stripping `nocorrect` in `compile_simple` doesn't help because the parser already lost the rest of the line. Documented as deferred — needs lexer-side handling.
 
-## Still open (fifty-sixth-pass — remaining)
+## Closed (fifty-seventh-pass — `source` missing-file format/exit + `a[0]=v` invalid subscript)
+
+### `source /no/such/file` printed Rust's wrapped error and exited 1
+
+- Output was `source: /no/such/file: /no/such/file: No such file or directory (os error 2)` (path duplicated, Rust's "(os error N)" suffix appended) and exit 1. zsh: `zsh:source:1: no such file or directory: /no/such/file` and exit 127.
+- Both branches (POSIX-mode and zshrs-mode) now strip Rust's "(os error N)" suffix, strip any duplicate-path prefix that wrapped errors carry, lowercase the message, and emit the canonical `zshrs:source:1: <msg>: <path>` shape with exit code 127. Test: `test_source_missing_file_zsh_format_and_exit_127`.
+
+### `a[0]=hi` was silently accepted as a no-op
+
+- zsh: arrays are 1-based, so `a[0]=v` is "assignment to invalid subscript range" (exits 1). zshrs's `BUILTIN_SET_ASSOC` had a `i == 0` arm that just `return`'d silently. Replaced with the diagnostic + `std::process::exit(1)`. Test: `test_array_zero_subscript_assignment_errors`.
+
+## Still open (fifty-seventh-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 
