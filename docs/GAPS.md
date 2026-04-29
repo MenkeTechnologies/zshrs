@@ -1631,6 +1631,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `.` qualifier means "plain regular file" — symlinks-to-files are excluded (use `@` for those). zshrs's filter used `is_file()` on followed metadata, so a symlink to a regular file passed the test. Now also checks `symlink_metadata().file_type().is_symlink()` to filter out links first. Test: `test_glob_dot_qualifier_excludes_symlinks`.
 
+### Extended-glob `pat~excl` exclusion not implemented
+
+- zsh's `setopt extendedglob` enables `*.txt~b.txt` (match `*.txt` excluding `b.txt`). Was returning "no matches found". Added a top-level `~` detector at the top of `expand_glob`: split into LHS/RHS, expand both halves, return `LHS \ RHS`. Honors nullglob/nomatch when the difference is empty. Also extended the bridge-path glob trigger in `BUILTIN_EXPAND_TEXT` to fire when a word starts with `^` or contains `~` AND extendedglob is set. Test: `test_extendedglob_tilde_exclusion`.
+
+### Extended-glob `^pat` negation not implemented
+
+- zsh's `^pat` (under extendedglob) matches everything that does NOT match `pat`. Was being passed through as a literal. Added a leading-`^` detector in `expand_glob`: walks the dir, filters out matches of the pattern, returns the remainder (sorted, dot-files excluded as zsh does). Test: `test_extendedglob_caret_negation`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

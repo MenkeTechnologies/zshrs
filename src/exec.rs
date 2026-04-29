@@ -4944,12 +4944,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         let has_qual_suffix = s.ends_with(')')
                             && s.contains('(')
                             && !s.contains('|');
+                        // extendedglob `^pat` (negation) and `pat~excl`
+                        // (exclusion). Trigger expand_glob so the runtime
+                        // can apply the appropriate filter. Both require
+                        // `setopt extendedglob` — runtime falls through
+                        // to literal if that's off.
+                        let extglob_meta = exec
+                            .options
+                            .get("extendedglob")
+                            .copied()
+                            .unwrap_or(false)
+                            && (s.starts_with('^') || s.contains('~'));
                         if !noglob
                             && !is_assignment_shape
                             && (s.contains('*')
                                 || s.contains('?')
                                 || s.contains('[')
-                                || has_qual_suffix)
+                                || has_qual_suffix
+                                || extglob_meta)
                         {
                             exec.expand_glob(&s)
                         } else {
@@ -10047,6 +10059,116 @@ impl ShellExecutor {
 
     /// Expand glob pattern to matching files
     fn expand_glob(&self, pattern: &str) -> Vec<String> {
+        // extendedglob `~` exclusion: `*.txt~b.txt` matches `*.txt`
+        // and excludes paths that also match `b.txt`. Detect a
+        // top-level `~` (not inside brackets/parens) when extendedglob
+        // is on and split. Recursively expand both halves and remove
+        // the RHS matches from the LHS list.
+        let extglob_on = self
+            .options
+            .get("extendedglob")
+            .copied()
+            .unwrap_or(false);
+        if extglob_on {
+            // extendedglob `^pat` (negation): match everything that
+            // does NOT match `pat`. The lexer leaves `^` as a literal
+            // char, so we detect a leading `^` here and convert to a
+            // directory-walk-then-filter. Only applies at the start
+            // of the LAST path component (zsh: `^pat` only negates
+            // the basename portion).
+            let last_seg_start =
+                pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
+            let last_seg = &pattern[last_seg_start..];
+            if last_seg.starts_with('^') && last_seg.len() > 1 {
+                let prefix = &pattern[..last_seg_start];
+                let neg = &last_seg[1..];
+                let dir = if prefix.is_empty() { ".".to_string() } else {
+                    prefix.trim_end_matches('/').to_string()
+                };
+                let mut out = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(&dir) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with('.') {
+                            continue;
+                        }
+                        if !ShellExecutor::glob_match_static(&name, neg) {
+                            let path = if prefix.is_empty() {
+                                name
+                            } else {
+                                format!("{}{}", prefix, name)
+                            };
+                            out.push(path);
+                        }
+                    }
+                }
+                out.sort();
+                if !out.is_empty() {
+                    return out;
+                }
+                let nullglob = self.options.get("nullglob").copied().unwrap_or(false);
+                if nullglob {
+                    return Vec::new();
+                }
+                let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
+                if nomatch {
+                    eprintln!("zshrs:1: no matches found: {}", pattern);
+                    std::process::exit(1);
+                }
+                return vec![pattern.to_string()];
+            }
+            // Find a top-level `~` outside brackets.
+            let chars: Vec<char> = pattern.chars().collect();
+            let mut depth_b = 0i32;
+            let mut depth_p = 0i32;
+            let mut split_at: Option<usize> = None;
+            for (i, &c) in chars.iter().enumerate() {
+                match c {
+                    '[' => depth_b += 1,
+                    ']' => depth_b -= 1,
+                    '(' => depth_p += 1,
+                    ')' => depth_p -= 1,
+                    '~' if depth_b == 0 && depth_p == 0 && i > 0 => {
+                        // Skip `~` at start (tilde expansion) and `~` adjacent
+                        // to space (zsh treats those as expansion).
+                        split_at = Some(i);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(pos) = split_at {
+                let lhs: String = chars[..pos].iter().collect();
+                let rhs: String = chars[pos + 1..].iter().collect();
+                let lhs_matches = self.expand_glob(&lhs);
+                let rhs_matches: std::collections::HashSet<String> =
+                    self.expand_glob(&rhs).into_iter().collect();
+                let filtered: Vec<String> = lhs_matches
+                    .into_iter()
+                    .filter(|p| !rhs_matches.contains(p))
+                    .collect();
+                if !filtered.is_empty() {
+                    return filtered;
+                }
+                // Empty after exclusion — fall through so NOMATCH
+                // semantics fire if no nullglob.
+                let nullglob = self
+                    .options
+                    .get("nullglob")
+                    .copied()
+                    .unwrap_or(false);
+                if nullglob {
+                    return Vec::new();
+                }
+                let nomatch =
+                    self.options.get("nomatch").copied().unwrap_or(true);
+                if nomatch && Self::looks_like_glob(pattern) {
+                    eprintln!("zshrs:1: no matches found: {}", pattern);
+                    std::process::exit(1);
+                }
+                return vec![pattern.to_string()];
+            }
+        }
         // Check for zsh glob qualifiers at end: *(.) *(/) *(@) etc.
         let (glob_pattern, qualifiers) = self.parse_glob_qualifiers(pattern);
         // Pre-process `[^...]` → `[!...]` so the `glob` crate (which
