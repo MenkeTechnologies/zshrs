@@ -719,7 +719,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Was treating any `*`/`?`/`[` in the RHS as glob metacharacters regardless of quoting. zsh treats quoted metas as literal. Added `escape_quoted_glob_metas` helper in compile_cond's Binary path: walks the lexer-tokenized RHS, tracks SNULL/DNULL boundaries, prepends a `\` to glob metas inside quoted regions. Then taught `glob_match_static`'s regex translator to treat `\X` as literal X (escaping the regex meta if needed). Tests: `test_quoted_glob_pattern_in_test_is_literal`, `test_quoted_literal_star_matches_quoted_literal_star`, `test_unquoted_glob_pattern_still_matches`.
 
-## Still open (twenty-eighth-pass — remaining)
+## Closed (twenty-ninth-pass — `[^...]` glob negation + `read` EOF return)
+
+### `[^abc]` glob char-class negation
+
+- The underlying `glob` crate (fnmatch-derived) only recognises `[!abc]` for class negation. Pre-fix, `echo [^a]` matched files literally containing `^` or `a` — completely inverted. Added a small pre-pass in `expand_glob` that walks the pattern and converts `[^` → `[!` only inside bracket regions. Test: `test_glob_caret_negation`.
+
+### `read` returns 1 on partial-line EOF
+
+- Was returning 0 on any successful byte read, even when the input ended without a delimiter. zsh returns 1 in that case so `while read line` loops terminate cleanly. Added a `hit_terminator` tracker; on EOF without newline, assign the variable but return 1. Test: `test_while_read_returns_1_at_eof_no_newline`.
+
+## Still open (twenty-ninth-pass — remaining)
 
 (none — all probed gaps closed)
 - **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).

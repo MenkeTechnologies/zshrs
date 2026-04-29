@@ -9038,6 +9038,35 @@ impl ShellExecutor {
     fn expand_glob(&self, pattern: &str) -> Vec<String> {
         // Check for zsh glob qualifiers at end: *(.) *(/) *(@) etc.
         let (glob_pattern, qualifiers) = self.parse_glob_qualifiers(pattern);
+        // Pre-process `[^...]` → `[!...]` so the `glob` crate (which
+        // only accepts `!` for class negation per fnmatch) works for
+        // zsh's `^` form too. Walk the pattern and only translate
+        // inside `[...]` regions (so a literal `^` outside brackets
+        // stays literal — extendedglob handles those separately).
+        let glob_pattern = if glob_pattern.contains("[^") {
+            let mut out = String::with_capacity(glob_pattern.len());
+            let mut chars = glob_pattern.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == '[' {
+                    out.push('[');
+                    if chars.peek() == Some(&'^') {
+                        chars.next();
+                        out.push('!');
+                    }
+                    while let Some(cc) = chars.next() {
+                        out.push(cc);
+                        if cc == ']' {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        } else {
+            glob_pattern
+        };
 
         // Check for extended glob patterns: ?(pat), *(pat), +(pat), @(pat), !(pat)
         if self.has_extglob_pattern(&glob_pattern) {
@@ -15456,10 +15485,18 @@ impl ShellExecutor {
         } else {
             let stdin = io::stdin();
             let mut input = String::new();
+            // Track whether the read hit a real terminator. If EOF
+            // arrived before the delimiter, zsh's read returns 1 even
+            // though some bytes may have been captured. Without this
+            // a `while read line` loop runs the body one extra time
+            // for the trailing partial line.
+            let mut hit_terminator = false;
             if delimiter == '\n' {
                 match stdin.lock().read_line(&mut input) {
                     Ok(0) => return 1,
-                    Ok(_) => {}
+                    Ok(_) => {
+                        hit_terminator = input.ends_with('\n');
+                    }
                     Err(_) => return 1,
                 }
             } else {
@@ -15469,6 +15506,7 @@ impl ShellExecutor {
                         Ok(_) => {
                             let c = byte[0] as char;
                             if c == delimiter {
+                                hit_terminator = true;
                                 break;
                             }
                             input.push(c);
@@ -15477,10 +15515,33 @@ impl ShellExecutor {
                     }
                 }
             }
-            input
+            let cleaned = input
                 .trim_end_matches('\n')
                 .trim_end_matches('\r')
-                .to_string()
+                .to_string();
+            if !hit_terminator && !cleaned.is_empty() {
+                // Captured a partial line at EOF — assign the value
+                // but tell the caller we hit EOF (status 1). We have
+                // to return AFTER the variable is set, so stash and
+                // fall through.
+                let processed = if raw_mode { cleaned } else { cleaned.replace("\\\n", "") };
+                if quiet {
+                    return 1;
+                }
+                if use_array {
+                    let var = &var_names[0];
+                    self.arrays.insert(var.clone(), vec![processed]);
+                } else if var_names.len() == 1 {
+                    let var = &var_names[0];
+                    env::set_var(var, &processed);
+                    self.variables.insert(var.clone(), processed);
+                } else if let Some(var) = var_names.first() {
+                    env::set_var(var, &processed);
+                    self.variables.insert(var.clone(), processed);
+                }
+                return 1;
+            }
+            cleaned
         };
 
         let processed = if raw_mode {

@@ -3062,3 +3062,39 @@ fn test_unquoted_glob_pattern_still_matches() {
     let (status, _, _) = run_zshrs(r#"[[ "abc" == a* ]]"#);
     assert_eq!(status, 0, "unquoted a* should glob-match abc");
 }
+
+#[test]
+fn test_glob_caret_negation() {
+    // [^abc] should match any single char NOT in {a,b,c}. The `glob`
+    // crate only natively understands `[!abc]` (fnmatch); zshrs
+    // pre-translates `[^...]` → `[!...]`.
+    let dir = "/tmp/zr_glob_caret_test";
+    let _ = std::fs::create_dir_all(dir);
+    for n in ["a", "b", "c"] {
+        std::fs::write(format!("{}/{}", dir, n), "").unwrap();
+    }
+    let (_, output, _) = run_zshrs(&format!("cd {}; echo [^a]", dir));
+    let _ = std::fs::remove_dir_all(dir);
+    let mut got: Vec<&str> = output.trim().split_whitespace().collect();
+    got.sort();
+    assert_eq!(got, vec!["b", "c"], "got: {output:?}");
+}
+
+#[test]
+fn test_while_read_returns_1_at_eof_no_newline() {
+    use std::io::Write;
+    use std::process::Stdio;
+    // Pipe `a\nb\nc` (no trailing newline) — read should return 1
+    // for the partial last line, so the loop body doesn't run for `c`.
+    let mut child = std::process::Command::new(zshrs_bin())
+        .args(["-f", "-c", "while read line; do echo \"[$line]\"; done"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(b"a\nb\nc").unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(stdout, "[a]\n[b]\n", "got: {stdout:?}");
+}
