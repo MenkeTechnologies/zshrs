@@ -4757,3 +4757,171 @@ fn test_array_in_bounds_no_default_kicks_in() {
     let (_, output, _) = run_zshrs(r#"arr=(a b); echo "${arr[1]:-default}""#);
     assert_eq!(output.trim(), "a");
 }
+
+#[test]
+fn test_param_no_colon_default_when_unset() {
+    // `${var-default}` (no colon) returns default only when var is
+    // unset. Empty values do NOT trigger the default. Regression:
+    // zshrs had no handler for the no-colon `-`/`=`/`?`/`+` forms.
+    let (_, output, _) = run_zshrs(r#"echo ${a-default}"#);
+    assert_eq!(output.trim(), "default");
+}
+
+#[test]
+fn test_param_no_colon_assign_when_unset() {
+    // `${var=fresh}` assigns and returns fresh when var is unset.
+    let (_, output, _) = run_zshrs(r#"echo ${a=fresh}; echo "[$a]""#);
+    assert_eq!(output.trim(), "fresh\n[fresh]");
+}
+
+#[test]
+fn test_param_no_colon_default_nested() {
+    // `${a-${b-default}}` should reach the inner default. Regression:
+    // zshrs didn't expand the no-colon form at all.
+    let (_, output, _) = run_zshrs(r#"echo ${a-${b-default}}"#);
+    assert_eq!(output.trim(), "default");
+}
+
+#[test]
+fn test_param_no_colon_default_outer_set_skips() {
+    let (_, output, _) = run_zshrs(r#"b=outer; echo ${a-${b-default}}"#);
+    assert_eq!(output.trim(), "outer");
+}
+
+#[test]
+fn test_param_replace_with_escaped_slash() {
+    // `${HOME//\//_}` — escaped `/` in pattern should match literal
+    // `/`. Regression: zshrs's splitn split on the escaped `\/` and
+    // produced backslash-mangled output.
+    let (_, output, _) = run_zshrs(r#"a=foo/bar; echo "${a//\//-}""#);
+    assert_eq!(output.trim(), "foo-bar");
+}
+
+#[test]
+fn test_param_at_modifier_rejected() {
+    // `${var@OP}` is bash-only; zsh emits "bad substitution".
+    let (_, _, stderr) = run_zshrs(r#"a=hi; echo "${a@U}""#);
+    assert!(
+        stderr.contains("bad substitution"),
+        "expected bad substitution: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_brace_negative_step_reverses() {
+    // `{10..1..-2}` reverses `{10..1..2}` → `2 4 6 8 10`.
+    let (_, output, _) = run_zshrs(r#"echo {10..1..-2}"#);
+    assert_eq!(output.trim(), "2 4 6 8 10");
+}
+
+#[test]
+fn test_brace_negative_step_ascending() {
+    // `{1..10..-2}` reverses `{1..10..2}` → `9 7 5 3 1`.
+    let (_, output, _) = run_zshrs(r#"echo {1..10..-2}"#);
+    assert_eq!(output.trim(), "9 7 5 3 1");
+}
+
+#[test]
+fn test_dollar_hash_positional() {
+    // `$#1` is shorthand for `${#1}` (length of arg 1).
+    let (_, output, _) = run_zshrs(r#"set -- ab; echo $#1"#);
+    assert_eq!(output.trim(), "2");
+}
+
+#[test]
+fn test_arith_negative_zero_keeps_sign() {
+    // `-0.0` should print as `-0.` (preserve IEEE sign bit).
+    let (_, output, _) = run_zshrs(r#"echo $((-0.0))"#);
+    assert_eq!(output.trim(), "-0.");
+}
+
+#[test]
+fn test_param_flag_with_no_colon_default() {
+    // `${(L)NAME-default}` — flags + no-colon default form. Should
+    // apply L (lowercase) to the default when var is unset.
+    let (_, output, _) = run_zshrs(r#"echo "${(L)NONE-Default}""#);
+    assert_eq!(output.trim(), "default");
+}
+
+#[test]
+fn test_declare_p_exported_uses_export_prefix() {
+    // `declare -p HOME` should print `export HOME=...` (not `typeset`).
+    let (_, output, _) = run_zshrs(r#"declare -p HOME"#);
+    assert!(
+        output.starts_with("export HOME="),
+        "expected export prefix: {output:?}"
+    );
+}
+
+#[test]
+fn test_declare_p_int_export_uses_export_dash_i() {
+    // `declare -ix n=5; declare -p n` → `export -i n=5`.
+    let (_, output, _) = run_zshrs(r#"declare -ix n=5; declare -p n"#);
+    assert_eq!(output.trim(), "export -i n=5");
+}
+
+#[test]
+fn test_string_range_subscript_with_default() {
+    // `${a[2,3]:-default}` for a string should return the substring,
+    // NOT the default. Regression: a bug in actual_idx (double 1->0
+    // adjustment) made it return the full string.
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "${a[2,3]:-default}""#);
+    assert_eq!(output.trim(), "oo");
+}
+
+#[test]
+fn test_arith_compound_or_assign() {
+    // `((a |= 0xff))` — bitwise compound assign. ArithCompiler doesn't
+    // recognize these; routed through MathEval via BUILTIN_ARITH_EVAL.
+    let (_, output, _) = run_zshrs(r#"a=10; ((a |= 0xff)); echo $a"#);
+    assert_eq!(output.trim(), "255");
+}
+
+#[test]
+fn test_arith_compound_shift_left_assign() {
+    let (_, output, _) = run_zshrs(r#"a=10; ((a <<= 2)); echo $a"#);
+    assert_eq!(output.trim(), "40");
+}
+
+#[test]
+fn test_arith_compound_shift_right_assign() {
+    let (_, output, _) = run_zshrs(r#"a=255; ((a >>= 4)); echo $a"#);
+    assert_eq!(output.trim(), "15");
+}
+
+#[test]
+fn test_arith_compound_xor_assign() {
+    let (_, output, _) = run_zshrs(r#"a=10; ((a ^= 7)); echo $a"#);
+    assert_eq!(output.trim(), "13");
+}
+
+#[test]
+fn test_string_oob_index_returns_empty() {
+    // `${a[10]}` for a 5-char string should return empty, NOT the
+    // last char. slice_scalar was saturating to len.
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "[${a[10]}]""#);
+    assert_eq!(output.trim(), "[]");
+}
+
+#[test]
+fn test_string_negative_oob_index_returns_empty() {
+    // `${a[-10]}` (over-negative) also empty.
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "[${a[-10]}]""#);
+    assert_eq!(output.trim(), "[]");
+}
+
+#[test]
+fn test_allexport_option_auto_exports() {
+    // `set -o allexport; a=42` should export `a` to the env.
+    let (_, output, _) = run_zshrs(r#"set -o allexport; a=zshtestval42; env | grep "^a=""#);
+    assert_eq!(output.trim(), "a=zshtestval42");
+}
+
+#[test]
+fn test_arith_dollar_var_with_star() {
+    // `$(($a*2))` (no spaces around `*`) — `$a` should expand to its
+    // value, then `*2` is multiply. Regression: `*` was being eaten
+    // into the var name (`a*2` became one var name → empty → 0).
+    let (_, output, _) = run_zshrs(r#"a=10; echo $(($a*2))"#);
+    assert_eq!(output.trim(), "20");
+}

@@ -69,7 +69,18 @@ impl MathNum {
     pub fn format_zsh(&self) -> String {
         match self {
             MathNum::Integer(i) => i.to_string(),
-            MathNum::Float(f) => format!("{:.10}", f),
+            MathNum::Float(f) => {
+                // IEEE specials (Inf/-Inf/NaN) keep zsh's capitalized
+                // form even when stored as a regular shell variable
+                // value. Rust's Display gives `inf`/`NaN` — fix.
+                if f.is_nan() {
+                    "NaN".to_string()
+                } else if f.is_infinite() {
+                    if *f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() }
+                } else {
+                    format!("{:.10}", f)
+                }
+            }
             MathNum::Unset => "0".to_string(),
         }
     }
@@ -107,6 +118,13 @@ impl MathNum {
                     && *f >= i64::MIN as f64
                     && *f <= i64::MAX as f64
                 {
+                    // Negative zero: `-0.0` should print `-0.` (zsh
+                    // preserves the sign on the IEEE -0.0 value).
+                    // `*f as i64` discards the sign bit on -0.0, so we
+                    // detect it explicitly.
+                    if *f == 0.0 && f.is_sign_negative() {
+                        return "-0.".to_string();
+                    }
                     format!("{}.", *f as i64)
                 } else if needs_scientific {
                     // Match zsh's `%g`-style scientific output: mantissa
