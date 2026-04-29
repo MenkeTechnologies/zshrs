@@ -6158,3 +6158,16 @@ fn test_type_reserved_word_local_declare() {
     let (_, output, _) = run_zshrs("type export");
     assert!(output.contains("reserved word"));
 }
+
+#[test]
+fn test_whence_reserved_word_local() {
+    // `whence -v local` should report "is a reserved word" (same
+    // as `type`). Was reporting "is a shell builtin" because the
+    // is_reserved_word table didn't include the declaration
+    // keywords. Added local/declare/typeset/readonly/export/
+    // integer/float (and repeat/foreach/end/nocorrect/noglob).
+    let (_, output, _) = run_zshrs("whence -v local");
+    assert!(output.contains("reserved word"));
+    let (_, output, _) = run_zshrs("whence -v repeat");
+    assert!(output.contains("reserved word"));
+}
