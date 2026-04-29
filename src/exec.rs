@@ -542,30 +542,45 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // Core builtins
     vm.register_builtin(BUILTIN_CD, |vm, argc| {
         let args = pop_args(vm, argc);
+        if let Some(s) = try_user_fn_override("cd", &args) {
+            return Value::Status(s);
+        }
         let status = with_executor(|exec| exec.builtin_cd(&args));
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_PWD, |vm, argc| {
         let args = pop_args(vm, argc);
+        if let Some(s) = try_user_fn_override("pwd", &args) {
+            return Value::Status(s);
+        }
         let status = with_executor(|exec| exec.builtin_pwd_with_args(&args));
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_ECHO, |vm, argc| {
         let args = pop_args(vm, argc);
+        if let Some(s) = try_user_fn_override("echo", &args) {
+            return Value::Status(s);
+        }
         let status = with_executor(|exec| exec.builtin_echo(&args, &[]));
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_PRINT, |vm, argc| {
         let args = pop_args(vm, argc);
+        if let Some(s) = try_user_fn_override("print", &args) {
+            return Value::Status(s);
+        }
         let status = with_executor(|exec| exec.builtin_print(&args));
         Value::Status(status)
     });
 
     vm.register_builtin(BUILTIN_PRINTF, |vm, argc| {
         let args = pop_args(vm, argc);
+        if let Some(s) = try_user_fn_override("printf", &args) {
+            return Value::Status(s);
+        }
         let status = with_executor(|exec| exec.builtin_printf(&args));
         Value::Status(status)
     });
@@ -600,9 +615,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_TRUE, |_vm, _argc| Value::Status(0));
-    vm.register_builtin(BUILTIN_FALSE, |_vm, _argc| Value::Status(1));
-    vm.register_builtin(BUILTIN_COLON, |_vm, _argc| Value::Status(0));
+    vm.register_builtin(BUILTIN_TRUE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        if let Some(s) = try_user_fn_override("true", &args) {
+            return Value::Status(s);
+        }
+        Value::Status(0)
+    });
+    vm.register_builtin(BUILTIN_FALSE, |vm, argc| {
+        let args = pop_args(vm, argc);
+        if let Some(s) = try_user_fn_override("false", &args) {
+            return Value::Status(s);
+        }
+        Value::Status(1)
+    });
+    vm.register_builtin(BUILTIN_COLON, |vm, argc| {
+        let _ = pop_args(vm, argc);
+        Value::Status(0)
+    });
 
     vm.register_builtin(BUILTIN_TEST, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -755,6 +785,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_R, |vm, argc| {
         let args = pop_args(vm, argc);
+        if let Some(s) = try_user_fn_override("r", &args) {
+            return Value::Status(s);
+        }
         let status = with_executor(|exec| exec.builtin_r(&args));
         Value::Status(status)
     });
@@ -4589,8 +4622,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 // Default: full expansion pipeline.
                 let expanded = exec.expand_string(&text);
                 let brace_expanded = exec.expand_braces(&expanded);
+                // zsh stores the option as `glob` (default ON);
+                // `setopt noglob` writes `glob=false`. Honor either
+                // form so the dispatcher behaves the same as zsh.
                 let noglob = exec.options.get("noglob").copied().unwrap_or(false)
-                    || exec.options.get("GLOB").map(|v| !v).unwrap_or(false);
+                    || exec.options.get("GLOB").map(|v| !v).unwrap_or(false)
+                    || !exec.options.get("glob").copied().unwrap_or(true);
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
@@ -4646,7 +4683,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // `${#name}` — pops [name]. Returns the value's element count for
     // arrays (indexed and assoc) or character length for scalars.
     vm.register_builtin(BUILTIN_PARAM_LENGTH, |vm, _argc| {
-        let name = vm.pop().to_str();
+        let name_raw = vm.pop().to_str();
+        // Strip `[@]` / `[*]` subscript suffix — `${#arr[@]}` and
+        // `${#m[@]}` are element-count forms, same as `${#arr}` /
+        // `${#m}`. Fast paths sometimes hand us the bare name and
+        // sometimes leave the subscript attached.
+        let name = name_raw
+            .strip_suffix("[@]")
+            .or_else(|| name_raw.strip_suffix("[*]"))
+            .unwrap_or(&name_raw)
+            .to_string();
         let count = with_executor(|exec| {
             if let Some(arr) = exec.arrays.get(&name) {
                 arr.len()
@@ -4802,6 +4848,25 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
         }
     }
     args
+}
+
+/// zsh dispatch order is alias → function → builtin → external. The
+/// compiler emits direct CallBuiltin ops for known builtin names for
+/// perf, which silently skips a user function that shadows the same
+/// name (e.g. `echo() { ... }; echo hi` would run the C builtin
+/// without this check). Returns Some(status) when the call is routed
+/// to the user function; the builtin handler should fall through to
+/// its native impl when None.
+fn try_user_fn_override(name: &str, args: &[String]) -> Option<i32> {
+    let has_fn = with_executor(|exec| {
+        exec.functions_compiled.contains_key(name) || exec.function_exists(name)
+    });
+    if !has_fn {
+        return None;
+    }
+    Some(with_executor(|exec| {
+        exec.dispatch_function_call(name, args).unwrap_or(127)
+    }))
 }
 
 // IDs 281 (was BUILTIN_EXPAND_WORD_RUNTIME) and 282 (was
@@ -13623,7 +13688,9 @@ impl ShellExecutor {
                 .join(&path_arg[2..])
         } else if path_arg == "-" {
             if let Ok(oldpwd) = env::var("OLDPWD") {
-                if !quiet {
+                // zsh only prints the new dir in interactive mode.
+                // In `-c` (non-interactive), suppress to match.
+                if !quiet && atty::is(atty::Stream::Stdin) {
                     println!("{}", oldpwd);
                 }
                 PathBuf::from(oldpwd)

@@ -744,9 +744,19 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - The `L` qualifier defaulted to 512-byte blocks (zsh ksh-mode but not the modern default). Switched default unit to bytes so `(L+3)` correctly means "more than 3 bytes". Suffix units (`k`/`m`/`g`/`p`) still work. Also extended `looks_like_glob` to treat trailing `(qualifier)` as a glob trigger so NOMATCH fires for unmatched qualifier-only patterns. Test: `test_glob_qualifier_size_l_uses_bytes`.
 
-## Still open (thirtieth-pass — remaining)
+## Closed (thirty-first-pass — function override + `[ ]` test form)
 
-(none — all probed gaps closed)
+### User function overrides shadowed builtins (`r`, `echo`, `pwd`, `true`, `false`, `cd`, `print`, `printf`)
+
+- zsh dispatch order: alias → function → builtin → external. `name() { ... }; name args` must run the user function, not the builtin. zshrs's compile path emitted `Op::CallBuiltin` directly for any name in `fusevm::shell_builtins::builtin_id`, so a user function never had a chance to win. `r` was the most painful: `r() { echo $1; }; r 5` infinite-looped because `builtin_r` runs `fc -e -` (history-replay) and re-executed the previous script — every iteration re-registered the function and re-called itself.
+- Added a `try_user_fn_override(name, args)` helper (src/exec.rs) that consults `functions_compiled` + `function_exists`, then routes through `dispatch_function_call`. Wired into the `r`, `cd`, `pwd`, `echo`, `print`, `printf`, `true`, `false` builtin handlers. Tests: `test_user_function_overrides_r_builtin`, `test_user_function_overrides_echo_builtin`, `test_user_function_overrides_pwd_builtin`, `test_user_function_overrides_true_builtin`.
+
+### `[ a -eq b ]` test-form always returned 0 (huge bug)
+
+- The compile-time "dynamic command name" check at `compile_zsh.rs:520` flagged any first word containing `[` as needing `Op::Exec` dispatch (so `cmd[$i]` etc. resolves through host.exec). When the first word was literally `[`, that diverted `[` away from `BUILTIN_TEST` and into external `/usr/bin/[` — which on macOS is a quirky BSD test that returned 0 for the malformed-arg shapes we passed (the `]` was being captured as another argv slot). Result: every `[ ... ]` test returned true unconditionally, breaking every script that used `if [ ... ]`, `while [ ... ]`, `until [ ... ]`, `[ ... ] && cmd`. Catastrophic.
+- Carved out `[` and `[[` from the dynamic-name check before the glob-char trigger fires (`first_is_test_builtin = first_untoked == "[" || first_untoked == "[["`). They now dispatch to `BUILTIN_TEST` / `BUILTIN_COND` like any other builtin. Tests: `test_test_builtin_bracket_form_returns_correct_status`, `test_if_elif_chain_with_bracket_test`, `test_until_loop_with_bracket_test`.
+
+## Still open (thirty-first-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

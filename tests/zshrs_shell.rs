@@ -3150,3 +3150,56 @@ fn test_glob_qualifier_size_l_uses_bytes() {
     let _ = std::fs::remove_file(path);
     assert!(output.contains(path), "5 bytes > 3, should match: {output:?}");
 }
+
+#[test]
+fn test_user_function_overrides_r_builtin() {
+    // zsh dispatch: function > builtin. Without the runtime override
+    // check inside BUILTIN_R, `r` would route to fc-replay (history
+    // re-execution) and infinite-loop on a fresh script.
+    let (_, output, _) = run_zshrs(r#"r() { echo "user-r $1"; }; r 5"#);
+    assert_eq!(output.trim(), "user-r 5", "got: {output:?}");
+}
+
+#[test]
+fn test_user_function_overrides_echo_builtin() {
+    let (_, output, _) = run_zshrs(r#"echo() { command echo "USER:" "$@"; }; echo hi"#);
+    assert_eq!(output.trim(), "USER: hi", "got: {output:?}");
+}
+
+#[test]
+fn test_user_function_overrides_pwd_builtin() {
+    let (_, output, _) = run_zshrs(r#"pwd() { echo USER-PWD; }; pwd"#);
+    assert_eq!(output.trim(), "USER-PWD", "got: {output:?}");
+}
+
+#[test]
+fn test_user_function_overrides_true_builtin() {
+    let (_, output, _) = run_zshrs(r#"true() { echo TRUE; }; true && echo ok"#);
+    assert_eq!(output.trim(), "TRUE\nok", "got: {output:?}");
+}
+
+#[test]
+fn test_test_builtin_bracket_form_returns_correct_status() {
+    // Regression: `[ a -eq b ]` previously routed through Op::Exec
+    // (because `[` was flagged as a glob char by the dynamic-name
+    // check) and silently returned 0 on every invocation, breaking
+    // every if/elif/until that used the legacy `[ ... ]` test form.
+    let (_, output, _) = run_zshrs(r#"[ 1 -eq 2 ]; echo $?"#);
+    assert_eq!(output.trim(), "1", "[1 -eq 2] should be false: {output:?}");
+    let (_, output, _) = run_zshrs(r#"[ 2 -eq 2 ]; echo $?"#);
+    assert_eq!(output.trim(), "0", "[2 -eq 2] should be true: {output:?}");
+}
+
+#[test]
+fn test_if_elif_chain_with_bracket_test() {
+    let (_, output, _) =
+        run_zshrs(r#"x=2; if [ $x -eq 1 ]; then echo one; elif [ $x -eq 2 ]; then echo two; else echo other; fi"#);
+    assert_eq!(output.trim(), "two", "got: {output:?}");
+}
+
+#[test]
+fn test_until_loop_with_bracket_test() {
+    let (_, output, _) =
+        run_zshrs(r#"i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done"#);
+    assert_eq!(output.trim(), "0\n1\n2", "got: {output:?}");
+}
