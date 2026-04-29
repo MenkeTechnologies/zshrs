@@ -5975,3 +5975,38 @@ fn test_random_resolves_in_arithmetic() {
         run_zshrs("a=$((RANDOM)); b=$((RANDOM)); [[ $a != $b ]] && echo diff");
     assert_eq!(output.trim(), "diff");
 }
+
+#[test]
+fn test_dollar_underscore_starts_empty() {
+    // zsh: `$_` is empty before any command runs (it ignores the
+    // OS-env value the parent process set). zshrs was returning the
+    // binary path because get_variable fell through to env::var.
+    // Initialize "_" to "" in the executor so the first read is
+    // empty.
+    let (_, output, _) = run_zshrs(r#"echo "[$_]""#);
+    assert_eq!(output.trim(), "[]");
+}
+
+#[test]
+fn test_double_bracket_pattern_with_quoted_parens() {
+    // `[[ "foo()" == "foo()" ]]` should match (the `()` inside DQ
+    // are literal). Quoted-glob-meta escaping was missing `(`,
+    // `)`, `|`, `~`, `#`, `^` so the pattern matcher saw them as
+    // alternation grouping (`@(...)` form).
+    let (_, output, _) =
+        run_zshrs(r#"[[ "foo()" == "foo()" ]] && echo y"#);
+    assert_eq!(output.trim(), "y");
+    let (_, output, _) =
+        run_zshrs(r#"[[ "x|y" == "x|y" ]] && echo y"#);
+    assert_eq!(output.trim(), "y");
+}
+
+#[test]
+fn test_command_v_function_shows_source() {
+    // `command -V foo` for a function should say "is a shell
+    // function from zsh" (matching zsh's exact format). Was just
+    // "is a shell function".
+    let (_, output, _) =
+        run_zshrs(r#"foo() { :; }; command -V foo"#);
+    assert!(output.contains("from zsh"));
+}

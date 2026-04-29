@@ -1608,6 +1608,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `$RANDOM` worked (gets resolved by `get_variable`'s special-param branch) but `$((RANDOM))` returned 0 because `MathEval` looks up names in a static `string_variables` HashMap that didn't include the dynamic special params. Same root for `$((SECONDS))`, `$((EPOCHSECONDS))`, `$((LINENO))`. Fix: clone `self.variables` into an extras map and pre-inject `get_variable("RANDOM")` etc. before passing to `MathEval` — each arith eval now sees a fresh value (RANDOM also re-resolves per call so two arith-substs in a row return distinct values). Test: `test_random_resolves_in_arithmetic`.
 
+### `$_` returned the shell binary path before any command
+
+- zsh starts with `$_` empty (it ignores the OS-env value the parent process set when execing the shell). zshrs's `get_variable` fell through to `env::var("_")` which returned the path the parent used. Initialized `_` to empty in the executor's variables map so the first read returns the canonical empty string. Test: `test_dollar_underscore_starts_empty`.
+
+### `[[ "foo()" == "foo()" ]]` (parens inside DQ) failed to match
+
+- Quoted glob metas inside `[[ ... == ... ]]` patterns must match literally (zsh: `(`/`)`/`|` are alternation grouping under EXTENDED_GLOB, but quoted forms are literal). zshrs's `escape_quoted_glob_metas` only backslash-escaped `*`/`?`/`[`; left `(`/`)`/`|`/`~`/`#`/`^` unquoted, so the pattern matcher saw them as alternation tokens. Extended the escape set to all six. Test: `test_double_bracket_pattern_with_quoted_parens`.
+
+### `command -V function` missing "from zsh" suffix
+
+- zsh: `command -V foo` for a user function reports `foo is a shell function from zsh`. zshrs reported the truncated `foo is a shell function`. Aligned the format to match zsh's output. Test: `test_command_v_function_shows_source`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
