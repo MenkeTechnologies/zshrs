@@ -1010,7 +1010,10 @@ impl ZshCompiler {
             // somewhere before (no other meta chars in between).
             || (untoked.ends_with(')')
                 && untoked.contains('(')
-                && !untoked.contains('|'));
+                && !untoked.contains('|'))
+            // zsh numeric range glob `<N-M>`: any `<…-…>` shape with
+            // optional digits on either side outside a bracket-class.
+            || has_numeric_range_glob(&untoked);
         let trigger_tilde = untoked.starts_with('~')
             || untoked.contains(":~")
             || untoked.contains("=~");
@@ -3955,6 +3958,50 @@ fn unquoted(s: &str, target: char) -> bool {
             return true;
         }
         prev = c;
+    }
+    false
+}
+
+/// Detect zsh numeric-range glob `<N-M>`, `<N->`, `<-M>`, `<->` outside
+/// any bracket expression. Mirrors the runtime's `extract_numeric_ranges`
+/// shape exactly so the compile-time trigger and runtime expander stay
+/// in lockstep.
+fn has_numeric_range_glob(s: &str) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    let mut in_bracket = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\x00' {
+            i += 2;
+            continue;
+        }
+        if c == '[' && !in_bracket {
+            in_bracket = true;
+            i += 1;
+            continue;
+        }
+        if c == ']' && in_bracket {
+            in_bracket = false;
+            i += 1;
+            continue;
+        }
+        if c == '<' && !in_bracket {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j < chars.len() && chars[j] == '-' {
+                j += 1;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j < chars.len() && chars[j] == '>' {
+                    return true;
+                }
+            }
+        }
+        i += 1;
     }
     false
 }

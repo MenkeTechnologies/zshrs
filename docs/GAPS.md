@@ -1733,6 +1733,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `%F{1}` (red) outputs `\e[31m` (basic ANSI). zshrs's `Color::Numbered(n)` always used the 256-color form `\e[38;5;Nm`. For indices 0-7, the basic ANSI codes (30-37 fg, 40-47 bg) are the canonical encoding. Added a fast-path for `n <= 7` that emits `\e[3Nm` / `\e[4Nm`. Indexes 8-255 still use the long form. Test: `test_print_P_color_basic_8_uses_ansi_codes`.
 
+### `print -P "%1d"` printed `tmp` and `%2d` printed `/private/tmp` (canonicalized cwd)
+
+- zsh's prompt-expansion `%d`/`%~` use the *logical* pwd from `$PWD`, not the canonicalized cwd from `getcwd()`. On macOS, `cd /tmp` leaves `$PWD=/tmp` while `getcwd()` returns `/private/tmp`. zshrs's `build_prompt_context` used `env::current_dir()` only, so `%2d` printed `/private/tmp` and `%1d` (last 1 component) printed `tmp` (no leading `/`). Switched to `env::var("PWD")` first, fall back to `current_dir()`. Test: `test_prompt_d_uses_logical_pwd_not_canonical`.
+
+### `setopt globdots` did not enable hidden-file matching
+
+- zsh's canonical option name is `globdots`; `dotglob` is the bash alias. zshrs's options table stores them under separate keys, but the glob expansion only consulted `dotglob`. So `setopt globdots; print *` skipped dotfiles even though the user explicitly asked for them. Now read both keys (either spelling enables it). Test: `test_glob_globdots_setopt_alias_for_dotglob`.
+
+### `<N-M>` numeric range glob produced parse error or literal pattern
+
+- zsh's numeric range glob `<N-M>` matches any digit sequence whose decimal value is in `[N, M]`. zshrs threw `parse error: expected word after redirection` because the lexer consumed `<` as a redirection operator mid-word. Three-part fix: (1) lexer's mid-word `<` handler peeks for `<digits?-digits?>` shape and absorbs it into the current word; (2) compile-time word classifier (`compile_word_str`) recognises the `<...>` shape via `has_numeric_range_glob` and triggers glob compilation; (3) runtime adds `expand_glob_with_numeric_range` that walks the directory and filters by a regex with `(\d+)` captures, validating each capture against the `[lo, hi]` range. Open-ended forms (`<3->`, `<-5>`, `<->`) work via `Option<i64>` bounds. Tests: `test_glob_numeric_range_finite`, `test_glob_numeric_range_open_high`, `test_glob_numeric_range_open_both`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
