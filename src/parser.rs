@@ -786,9 +786,18 @@ impl<'a> ZshParser<'a> {
                             self.lexer.zshlex();
                         }
                         if self.lexer.tok == LexTok::Inbrace {
-                            // Consume `{`, parse body, capture source.
-                            self.lexer.zshlex();
+                            // Capture body_start BEFORE the lexer
+                            // advances past the first body token. The
+                            // outer zshlex() consumed `{`; lexer.pos
+                            // is now right after `{`. The next
+                            // `zshlex()` would advance past `echo`,
+                            // making body_start land mid-body and
+                            // lose the first word — `typeset -f f`
+                            // printed `a; echo b` instead of
+                            // `echo a; echo b` for `f() { echo a;
+                            // echo b }`.
                             let body_start = self.lexer.pos;
+                            self.lexer.zshlex();
                             let body = self.parse_program();
                             let body_end = if self.lexer.tok == LexTok::Outbrace {
                                 self.lexer.pos.saturating_sub(1)
@@ -1939,8 +1948,15 @@ impl<'a> ZshParser<'a> {
 
         // Parse body
         if self.lexer.tok == LexTok::Inbrace {
-            self.lexer.zshlex();
+            // Capture body_start BEFORE the lexer advances past the
+            // first body token. After the previous zshlex consumed
+            // `{`, lexer.pos points just past `{` (which is where the
+            // body source starts). The next `zshlex()` would advance
+            // past the first token (`echo`), making body_start land
+            // mid-body and lose the first word — `typeset -f f` would
+            // print `a; echo b` for `{ echo a; echo b }`.
             let body_start = self.lexer.pos;
+            self.lexer.zshlex();
             let body = self.parse_program();
             let body_end = if self.lexer.tok == LexTok::Outbrace {
                 // Lexer has just consumed `}`; pos is past it. Body content
@@ -2018,8 +2034,9 @@ impl<'a> ZshParser<'a> {
 
         // Parse body
         if self.lexer.tok == LexTok::Inbrace {
-            self.lexer.zshlex();
+            // Same body_start-before-zshlex fix as parse_funcdef.
             let body_start = self.lexer.pos;
+            self.lexer.zshlex();
             let body = self.parse_program();
             let body_end = if self.lexer.tok == LexTok::Outbrace {
                 self.lexer.pos.saturating_sub(1)

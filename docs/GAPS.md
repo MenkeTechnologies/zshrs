@@ -926,7 +926,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 - `foo-bar` registered cleanly under its real name, but the call site went through compile_simple → add_name(first) where `first` was still the lexer's META-encoded form `foo\u{9b}bar` (`\u{9b}` is the META char for `-`). add_name stored the encoded string verbatim; CallFunction looked it up; missed the registered `foo-bar`; fell through to host.exec which reported "command not found" with the partly-cleaned form `foobar`.
 - Untokenize `first` before `add_name` so the cleaned identifier reaches the name pool. Same fix applies to any function name with hyphens, dots, or other lexer-mangled chars in the call dispatch. Tests: `test_function_name_with_hyphen_dispatches_correctly`, `test_function_name_with_hyphen_passes_args`.
 
-## Still open (fiftieth-pass — remaining)
+## Closed (fifty-first-pass — `typeset -f` body capture preserves first word)
+
+### `typeset -f f` for `f() { echo a; echo b; }` printed `a; echo b;`
+
+- All three `Inbrace` body-capture sites in `parser.rs` (parse_funcdef, parse_inline_funcdef, and the synthesized FuncDef path inside `parse_program_until`) called `zshlex()` BEFORE recording `body_start`. After consuming `{`, the next `zshlex()` advances past the first body token (`echo`), so `body_start` landed mid-body and the captured slice lost the first word. Result: `typeset -f f` / `functions f` / `whence -c f` all printed `a; echo b;` instead of `echo a; echo b;`.
+- Hoisted `let body_start = self.lexer.pos;` BEFORE the `zshlex()` in all three sites (lexer.pos already points just past `{` after the outer zshlex consumed it). Test: `test_typeset_f_preserves_first_word_of_body`.
+
+## Still open (fifty-first-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

@@ -281,6 +281,32 @@ The mechanism is uniform: daemon parses and evaluates user dotfiles in an analys
 
 Result: a 172k-line `zpwr` `.zshrc` should cost client cold-start no more than the IPC + mmap + state-apply pass — measured in milliseconds, not seconds. Per-client init cost is independent of `.zshrc` size or fpath cardinality.
 
+**Walk lifecycle — first init + cache bust only.** The daemon walks `$PATH` / `$FPATH` / plugin trees / source-statement targets exactly twice in its life:
+
+1. **First init.** Cold cache, no rkyv shards present (or daemon spawning into an empty `~/.cache/zshrs/`). Init is multi-pass and order-sensitive — `$PATH` and `$FPATH` don't exist as final values until the user's dotfiles are parsed:
+   - **Pass 1 — parse system + user dotfiles.** `/etc/zshenv` → `~/.zshenv` → `/etc/zprofile` → `~/.zprofile` → `/etc/zshrc` → `~/.zshrc` → `/etc/zlogin` → `~/.zlogin`, in zsh's standard order. Follow `source` / `.` statements transitively into plugins, env files, tokens.sh, anything reachable. Compile each parsed file into `compiled_files`.
+   - **Pass 2 — evaluate state mutations deterministically.** Replay every `path+=`, `fpath+=`, `PATH=`, `FPATH=`, `export VAR=`, `alias`, `setopt`, `bindkey`, `compdef`, `zstyle`, `hash -d`, `zmodload`, `typeset` declaration in source-order against an in-memory state model. Captures the resolved final value of every shell parameter that boots into a new shell.
+   - **Pass 3 — walk now-resolved $PATH / $FPATH / plugin tree directories.** With `$PATH` and `$FPATH` finalized, daemon walks each directory to build the command-hash table (`command_name → executable_path`) and the autoload-table (`function_name → file_path`). Plugin trees referenced from `.zshrc` get walked here too.
+   - **Pass 4 — serialize.** Build perfect-hash tables, write rkyv shards, atomic-rename, write `index.rkyv`, hydrate `catalog.db` `entries` + `compiled_files` + `entry_stats`. Register fsnotify watches on every directory and file involved.
+
+   One-time cost. Runs in the background while clients fall back to source-interp until the first shard atomic-renames.
+
+2. **Cache bust.** User-explicit `zcache clean` / `zcache clean shards` / `zcache rebuild` / version-migration / corruption-recovery triggers a re-walk of the affected scope. Same multi-pass ordering applies whenever the bust changes a source file that contributes to `$PATH` / `$FPATH` resolution: parse first, evaluate, then walk. `zcache clean shard <name>` re-walks just that shard's source root (no need to re-parse dotfiles if `$PATH` / `$FPATH` haven't changed); `zcache rebuild` walks everything from Pass 1.
+
+**Steady state: fsnotify only, with delta-walks for newly-introduced directories.** Between first init and cache bust, the daemon never re-enumerates a directory it already knows about. fsnotify watches every directory and file the daemon registered during the last walk; events fire on create / modify / delete / rename and the daemon updates exactly the affected entries. The only walks that happen in steady state are walks of *newly-introduced* directories — when a parsed dotfile change adds a new path to `$PATH` / `$FPATH` that wasn't watched before:
+
+- File created in a watched `$FPATH` dir → daemon parses + bytecode-compiles → inserts into autoload-table → atomic-renames the affected shard → bumps generation → optional push to subscribers.
+- File deleted → daemon removes the entry from `entries` + autoload-table + relevant shard → atomic-rename → bump.
+- File modified → daemon re-parses just that one file → updates one row in `entries` → updates one slot in the affected shard's perfect-hash table → atomic-rename → bump.
+- File renamed → treated as delete-old + create-new in the same atomic update.
+- **`.zshrc` modified to add `path+=(/opt/foo/bin)`** → daemon detects `$PATH` resolution changed → walks ONLY `/opt/foo/bin` (the delta), inserts new commands into command-hash → registers fsnotify watch on `/opt/foo/bin` → atomic-rename → bump. Same for `fpath+=`. The delta-walk is bounded to the new directory; existing directories are not re-enumerated.
+- **`.zshrc` modified to remove a path entry** → daemon detects removal → drops command-hash entries that came from the removed directory → unregisters its fsnotify watch → atomic-rename → bump. No full rewalk.
+- **Client `zsync up path`** with new directory → same delta-walk path: daemon walks just the new directory, updates canonical, registers watch.
+
+**No polling, no periodic rescan, no cron.** Per the hard invariants. fsnotify is the source of truth for "what changed since the last walk." If fsnotify drops an event (kernel queue overflow on Linux, FSEvents coalescing on macOS), `zcache verify` catches the drift on next user invocation and recommends `zcache rebuild` for the affected shard. Drift is rare; recovery is one verb.
+
+**Why this matters at zpwr scale.** Walking 1.6 M LOC across 579 files takes seconds, not milliseconds, even on fast SSDs. Doing this on every shell launch (zsh's status quo) is a non-starter. Doing it once at first init and incrementally thereafter via fsnotify means cold-start cost is paid in full only once — first daemon spawn ever — and amortizes to zero across the next 478 k commands the user types.
+
 ### Source / dot interception and file registry
 
 The `source` and `.` builtins are daemon-aware. Every call routes through the daemon's `compiled_files` registry:
@@ -833,6 +859,83 @@ POSIX mode never spawns the daemon, never creates `~/.cache/zshrs/`. Required fo
 - **Crash recovery:** if daemon dies, next client to fail socket connect kills stale pidfile and respawns. No state loss — rkyv shards and `catalog.db` are durable on disk.
 - **Degraded mode:** if daemon disabled or unreachable, clients fall back to source-interp for everything. Cache stops updating but shells stay functional. User never blocked.
 
+### First-run user notification (the one-time exception to no-banner)
+
+The global "no startup banner / no init progress to terminal" rule has exactly **one** exception: the first-ever zshrs invocation on a machine, when the daemon is being spawned for the first time and the cold-cache build is starting from zero. This is a multi-second-to-multi-minute operation depending on corpus size; running it silently would be confusing and potentially indistinguishable from a hung shell.
+
+**Detection:** "first-ever run" = no `~/.cache/zshrs/daemon.pid` AND no `~/.cache/zshrs/index.rkyv` AND no `~/.cache/zshrs/images/` shards on disk. After the first run completes, this branch is never taken again on this machine for this user.
+
+**What gets printed (stderr, single block, before first prompt):**
+
+```
+zshrs first-run init — daemon spawning, cold cache building.
+  scope: ~/.zshrc + transitive sources + $PATH + $FPATH + plugins
+  estimated: 579 files, ~1.6M LOC, ~60s on this machine
+  background: shells work via source-interp until cache is warm
+  log:        ~/.cache/zshrs/zshrs.log
+  inspect:    zcache info | zcache jobs | zcache view <target>
+  reset:      zcache clean | rm -rf ~/.cache/zshrs/
+```
+
+Six lines, factual, no welcome / no congratulations / no emoji / no version stripe. After this block prints, the prompt appears immediately. Daemon continues building in the background; clients run via source-interp fallback until shards atomic-rename in.
+
+**Completion notice:** when the daemon finishes the cold build, it can emit a single-line `znotify` to the originating shell: `daemon ready — future shells <10ms cold-start (took 47s, 17042 entries)`. The user-visible status-line update is a `znotify` not a stdout/stderr write, so it doesn't disrupt whatever the user is currently doing.
+
+**Subsequent runs**: silent. Per the CLAUDE.md global rule, no banner, no progress, no chatter. The first-run notification is one-shot for this user/machine pair, gated by the on-disk first-run-detection check.
+
+**Override flags** (for users who want first-run silent or who want every-run verbose):
+
+- `--quiet-first-run` (or env `ZSHRS_QUIET_FIRST_RUN=1`): suppress the first-run notification block. Everything still goes to log; user just sees an immediate prompt.
+- `--verbose-init` (debug-only): show daemon work to stderr on every run, not just first. For testing daemon behavior; not recommended for daily use.
+
+### Daemon logging (every action goes to logfile)
+
+Daemon is fully observable via `~/.cache/zshrs/zshrs.log`. Every action it takes — every cache build, every fsnotify event, every IPC op handled, every shard rename, every error, every plugin discovery, every cross-shell dispatch — is logged. The log is the canonical record of "what did the daemon do" for debugging, post-mortem analysis, and behavior verification.
+
+**What gets logged at INFO level (default):**
+
+- Daemon start / stop / restart with PID + version + config
+- First-init begin / end with corpus size + duration
+- Cache bust commands received + scope + duration
+- Per-shard rebuild jobs: trigger, source paths walked, entries written, atomic-rename complete, generation bumped
+- fsnotify events received: path, kind (create/modify/delete/rename), affected shard, action taken
+- Client connect / disconnect: client_id, pid, tty, cwd, session_id
+- All IPC ops handled: op name, args summary, response code, duration
+- `zsync up` canonical promotions: subsystem, value summary, originating client
+- `zsend` / `znotify` dispatches: from, to, command/message, delivery status
+- Subscription matches: pattern, scope, topic, recipient_count
+- Integrity check results from `zcache verify`
+- Log rotation events (when rotating to `zshrs.log.1`, file sizes)
+
+**Levels:**
+
+- `ERROR` — daemon-level failures (rebuild crash, lock contention timeout, irrecoverable corruption)
+- `WARN` — recoverable issues (stale `.zwc` skipped on import, fsnotify queue overflow, slow IPC client, malformed message dropped)
+- `INFO` — default, all the bullet points above
+- `DEBUG` — internal state transitions, individual file parses, hash-table slot writes (high volume)
+- `TRACE` — every fn entry/exit (extreme volume; for bug repro only)
+
+**Configuration:**
+
+- Default level: `INFO`
+- Override via `ZSHRS_LOG=debug` env var or `--log-level <level>` flag at daemon spawn
+- Per-module override: `ZSHRS_LOG=info,fsnotify=debug,ipc=trace` (tracing-subscriber compatible)
+
+**Format:** structured `tracing` output. Each line: `[ISO-8601 timestamp] [LEVEL] [module] message {key=value, key=value, …}`. Compatible with `tail -f`, `grep`, and any log-aggregation pipeline. Optional `--log-format json` for structured ingestion.
+
+**Rotation:** ticker rotates `zshrs.log` to `zshrs.log.1` when size hits 10 MB (configurable via `ZSHRS_LOG_MAX_BYTES`). Up to 4 rotated copies kept (`.1` through `.4`); `.4` is purged when `.3` rotates in. Total disk footprint capped at ~50 MB.
+
+**Inspection verbs:**
+
+```
+zcache log tail [-n N] [--follow]   # tail of current log (default: last 100 lines, --follow for live)
+zcache log grep <pattern>           # ripgrep across current + rotated logs
+zcache log level [<new_level>]      # show or set runtime log level (no daemon restart)
+zcache log clear                    # truncate current log (rotated copies preserved)
+```
+
+These are thin IPC wrappers; daemon does the file IO. Client never opens the log file directly.
+
 ### Hard invariants (rejected proposal classes)
 
 - ANY client-side worker pool, polling loop, timer, fsnotify watcher, SQLite handle for cache — REJECT.
@@ -847,6 +950,7 @@ POSIX mode never spawns the daemon, never creates `~/.cache/zshrs/`. Required fo
 - ANY scattered per-plugin cache files outside `~/.cache/zshrs/images/` — REJECT.
 - ANY removal of `entry_stats` to "simplify" — REJECT.
 - ANY auto-consumption of `.zwc` / `.zcompdump` files on daemon scans, fpath walks, fsnotify watches, or plugin-tree enumeration — REJECT. They're invisible to all automatic discovery; only `zcache import zwc|zcompdump <path>` (user-explicit, freshness-validated) may ingest them.
+- ANY periodic re-walk of `$PATH` / `$FPATH` / plugin trees / source-statement targets by the daemon — REJECT. Walks happen exactly twice in daemon's life: first init (cold cache) and explicit cache bust (`zcache clean` / `rebuild`). Steady state is fsnotify-driven incremental updates only. No polling, no cron, no "every 5 minutes refresh."
 
 ### Acceptance criteria
 
