@@ -853,7 +853,14 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Previous impl was `if !raw_mode { input.replace("\\\n", "") }` which only handled the line-continuation case. POSIX read (no -r) drops one backslash from every `\X` pair: `\b` → `b`, `\\` → `\`, `\<newline>` → both stripped. Replaced with a char-iterator pass. Test: `test_read_processes_backslash_escapes_without_dash_r`.
 
-## Still open (fortieth-pass — remaining)
+## Closed (forty-first-pass — `$(cmd)` IFS word-split in argument context)
+
+### `f $(echo a b c)` passed one arg instead of three
+
+- zsh splits the result of bare `$(cmd)` on `$IFS` when the substitution sits in argument context (`f $(...)`, `for x in $(...)`, etc.). zshrs's BUILTIN_CMD_SUBST_TEXT was returning a single Value::str without splitting, so `f $(echo a b c)` invoked f with one joined arg and `$#` reported 1.
+- Emit a `BUILTIN_WORD_SPLIT` op after the cmd-subst handler unless the surrounding word is DQ-wrapped (`"$(...)"`) or we're inside an assignment RHS. Added an `assign_context_depth` field to ZshCompiler that's bumped around `compile_assign`'s `compile_word_str` call so `x=$(printf 'a\nb\nc')` keeps both lines (assignment shouldn't split). Tests: `test_cmd_subst_word_splits_in_argument_context`, `test_cmd_subst_no_split_in_dq_context`, `test_cmd_subst_no_split_in_assignment`.
+
+## Still open (forty-first-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

@@ -3466,3 +3466,28 @@ fn test_read_processes_backslash_escapes_without_dash_r() {
     );
     assert_eq!(output.trim(), "[ab]", "got: {output:?}");
 }
+
+#[test]
+fn test_cmd_subst_word_splits_in_argument_context() {
+    // `f $(echo a b c)` must pass three args, not one. zsh's default
+    // for bare cmd-subst in argument position is IFS word-split.
+    let (_, output, _) =
+        run_zshrs(r#"f() { echo "argc=$#"; }; f $(echo a b c)"#);
+    assert_eq!(output.trim(), "argc=3", "got: {output:?}");
+}
+
+#[test]
+fn test_cmd_subst_no_split_in_dq_context() {
+    // `f "$(echo a b c)"` is one arg — DQ suppresses the split.
+    let (_, output, _) =
+        run_zshrs(r#"f() { echo "argc=$#"; }; f "$(echo a b c)""#);
+    assert_eq!(output.trim(), "argc=1", "got: {output:?}");
+}
+
+#[test]
+fn test_cmd_subst_no_split_in_assignment() {
+    // Assignment RHS preserves whitespace/newlines — no IFS split.
+    let (_, output, _) =
+        run_zshrs("x=$(printf 'a\nb\nc'); echo \"$x\" | wc -l");
+    assert_eq!(output.trim(), "3", "got: {output:?}");
+}
