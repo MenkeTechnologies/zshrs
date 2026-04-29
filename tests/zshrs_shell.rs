@@ -5281,3 +5281,79 @@ fn test_double_bracket_glob_pattern_still_works() {
     let (_, output, _) = run_zshrs(r#"[[ "abc" == ab* ]] && echo m"#);
     assert_eq!(output.trim(), "m");
 }
+
+#[test]
+fn test_arith_comma_compound_assigns() {
+    // `((a += 5, a *= 2))` — comma-list of compound assigns.
+    // ArithCompiler's emit only handled the first; route through
+    // MathEval (extended needs_eval to include `,`).
+    let (_, output, _) = run_zshrs(r#"a=10; ((a += 5, a *= 2)); echo $a"#);
+    assert_eq!(output.trim(), "30");
+}
+
+#[test]
+fn test_arith_comma_two_vars() {
+    // `((a += 5, b *= 2))` — both vars get updated.
+    let (_, output, _) =
+        run_zshrs(r#"a=10; b=20; ((a += 5, b *= 2)); echo "$a $b""#);
+    assert_eq!(output.trim(), "15 40");
+}
+
+#[test]
+fn test_test_dash_a_and() {
+    // `test a -a b` — POSIX AND connective.
+    let (_, output, _) = run_zshrs(r#"test 5 -gt 3 -a 3 -lt 4; echo $?"#);
+    assert_eq!(output.trim(), "0");
+}
+
+#[test]
+fn test_test_dash_o_or() {
+    // `test a -o b` — POSIX OR connective.
+    let (_, output, _) = run_zshrs(r#"test 5 -gt 10 -o 3 -lt 4; echo $?"#);
+    assert_eq!(output.trim(), "0");
+}
+
+#[test]
+fn test_test_dash_a_short_circuit_fails() {
+    let (_, output, _) = run_zshrs(r#"test 5 -gt 3 -a 5 -gt 10; echo $?"#);
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn test_test_dash_o_both_fail() {
+    let (_, output, _) = run_zshrs(r#"test 5 -gt 10 -o 1 -gt 10; echo $?"#);
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn test_float_default_E_format() {
+    // `float f=3.14` defaults to `-E` (scientific) per zsh.
+    let (_, output, _) = run_zshrs(r#"float f=3.14; declare -p f"#);
+    assert_eq!(output.trim(), "typeset -E f=3.140000000e+00");
+}
+
+#[test]
+fn test_float_F_explicit_fixed() {
+    let (_, output, _) = run_zshrs(r#"float -F f=3.14; declare -p f"#);
+    assert_eq!(output.trim(), "typeset -F f=3.1400000000");
+}
+
+#[test]
+fn test_fpath_inherited_from_env() {
+    // `fpath` should mirror $FPATH at startup; user-level `$#fpath`
+    // should match the env-derived count, not 0.
+    let (_, output, _) = run_zshrs(r#"echo $#fpath"#);
+    let n: i32 = output.trim().parse().unwrap_or(-1);
+    assert!(n > 0, "fpath should be populated from FPATH: got {n}");
+}
+
+#[test]
+fn test_fpath_append_keeps_existing() {
+    // `fpath+=(/foo)` should APPEND, preserving the env-derived
+    // entries. Regression: zshrs replaced fpath with just the new entry.
+    let (_, before, _) = run_zshrs(r#"echo $#fpath"#);
+    let (_, after, _) = run_zshrs(r#"fpath+=(/zshrs_test_dir); echo $#fpath"#);
+    let n_before: i32 = before.trim().parse().unwrap_or(0);
+    let n_after: i32 = after.trim().parse().unwrap_or(0);
+    assert_eq!(n_after, n_before + 1, "expected count+1 after fpath+=");
+}

@@ -1399,6 +1399,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `declare -A h; declare -p h` printed `typeset -A h=(  )` (2 spaces); zsh: `typeset -A h=( )` (1 space). Special-case empty assoc formatted line. (Empty arrays keep zsh's 2-space form.)
 
+### Comma operator in `((..))` dropped subsequent expressions
+
+- `((a += 5, a *= 2))` ran only the first — ArithCompiler's compound-assign emit takes one op and discards the rest. Extended `compile_arith`'s "needs_eval" sniff to route any expression containing `,` through `BUILTIN_ARITH_EVAL`. Tests: `test_arith_comma_compound_assigns`, `test_arith_comma_two_vars`.
+
+### `test`/`[ ]` `-a`/`-o` connectives unsupported
+
+- POSIX `test 5 -gt 3 -a 3 -lt 4` should AND the two sub-tests. zshrs's match-on-args pattern bottomed out at the catchall returning 1. Added explicit `-o`/`-a` splitter at the catchall (OR has lower precedence) that recursively evaluates each side. Tests: `test_test_dash_a_and`, `test_test_dash_o_or`, `test_test_dash_a_short_circuit_fails`, `test_test_dash_o_both_fail`.
+
+### `float NAME=…` defaulted to `-F` (fixed) instead of `-E` (scientific)
+
+- zsh's `float` builtin uses `-E` by default; explicit `-F` opts into fixed-decimal. zshrs always stored `-F` form. Added `-F`/`-E` flag detection in `builtin_float`, store value with the appropriate format, and set `var_attrs.float_exp` so `declare -p` round-trips. Tests: `test_float_default_E_format`, `test_float_F_explicit_fixed`.
+
+### `fpath` array empty even though FPATH env was inherited
+
+- `$#fpath` returned 0 in zshrs because the executor's `fpath` (Vec<PathBuf>) field was populated from FPATH but the user-visible `arrays["fpath"]` was not. So `fpath+=(/foo)` replaced with a 1-entry array instead of appending to the inherited 43 entries. Mirror `self.fpath` into `arrays["fpath"]` at executor init. Tests: `test_fpath_inherited_from_env`, `test_fpath_append_keeps_existing`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

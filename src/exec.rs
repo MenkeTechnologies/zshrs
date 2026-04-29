@@ -7285,7 +7285,7 @@ impl ShellExecutor {
         // inspects $IFS sees what zsh exposes.
         variables.insert("IFS".to_string(), " \t\n\0".to_string());
 
-        Self {
+        let mut exec = Self {
             aliases: {
                 let mut a = HashMap::new();
                 // zsh ships these two aliases compiled-in; visible in
@@ -7425,7 +7425,30 @@ impl ShellExecutor {
             function_source: HashMap::new(),
             tied_scalar_to_array: HashMap::new(),
             tied_array_to_scalar: HashMap::new(),
+        };
+        // Mirror env-derived path arrays into the `arrays` table so
+        // user-level `fpath` / `path` array reads see the inherited
+        // entries. zsh: `fpath+=…` should append to the inherited
+        // 43-entry array, not replace it. Same for `path` (PATH).
+        let fpath_arr: Vec<String> = exec
+            .fpath
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        if !fpath_arr.is_empty() {
+            exec.arrays.insert("fpath".to_string(), fpath_arr);
         }
+        if let Ok(path) = env::var("PATH") {
+            let path_arr: Vec<String> = path
+                .split(':')
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
+            if !path_arr.is_empty() {
+                exec.arrays.insert("path".to_string(), path_arr);
+            }
+        }
+        exec
     }
 
     /// Enter POSIX strict mode — drop all SQLite caches, shrink worker pool to minimum.
@@ -16143,6 +16166,35 @@ impl ShellExecutor {
                     let rest: Vec<String> = args[1..].iter().map(|s| s.to_string()).collect();
                     return if self.builtin_test(&rest) == 0 { 1 } else { 0 };
                 }
+                // POSIX `-a` (and) / `-o` (or) connectives — split the
+                // arg list on the first top-level connective and
+                // recursively evaluate each side.
+                // For `test 5 -gt 3 -a 3 -lt 4`: split at `-a` →
+                // left=`5 -gt 3`, right=`3 -lt 4`. AND short-circuits
+                // on left=fail; OR short-circuits on left=success.
+                // Find the LAST connective so left binds tighter (zsh
+                // convention).
+                let mut and_idx: Option<usize> = None;
+                let mut or_idx: Option<usize> = None;
+                for (i, a) in args.iter().enumerate() {
+                    if *a == "-a" { and_idx = Some(i); }
+                    else if *a == "-o" { or_idx = Some(i); }
+                }
+                // OR has lower precedence — split there first if present.
+                if let Some(i) = or_idx {
+                    let left: Vec<String> = args[..i].iter().map(|s| s.to_string()).collect();
+                    let right: Vec<String> = args[i + 1..].iter().map(|s| s.to_string()).collect();
+                    let l = self.builtin_test(&left);
+                    if l == 0 { return 0; }
+                    return self.builtin_test(&right);
+                }
+                if let Some(i) = and_idx {
+                    let left: Vec<String> = args[..i].iter().map(|s| s.to_string()).collect();
+                    let right: Vec<String> = args[i + 1..].iter().map(|s| s.to_string()).collect();
+                    let l = self.builtin_test(&left);
+                    if l != 0 { return l; }
+                    return self.builtin_test(&right);
+                }
                 1
             }
         }
@@ -24125,27 +24177,70 @@ impl ShellExecutor {
 
     /// float - declare floating point variables
     fn builtin_float(&mut self, args: &[String]) -> i32 {
+        // zsh: bare `float NAME=VAL` defaults to `-E` (scientific
+        // exponential format); `float -F` opts into fixed-decimal.
+        let mut explicit_F = false;
+        for a in args {
+            if a.starts_with('-') {
+                if a.contains('F') { explicit_F = true; }
+            }
+        }
+        let use_exp = !explicit_F;
         for arg in args {
             if arg.starts_with('-') {
                 continue;
             }
+            // Format `3.14` as `3.140000000e+00` for `float -E` (default)
+            // or `3.1400000000` for `float -F`. Match zsh's storage form
+            // exactly so `declare -p` round-trips.
+            let format_float = |f: f64| -> String {
+                if use_exp {
+                    let raw = format!("{:.9e}", f);
+                    if let Some(epos) = raw.rfind('e') {
+                        let (mantissa, exp) = raw.split_at(epos);
+                        let exp_body = &exp[1..];
+                        let (sign, digits) =
+                            if exp_body.starts_with('-') { ("-", &exp_body[1..]) }
+                            else if exp_body.starts_with('+') { ("+", &exp_body[1..]) }
+                            else { ("+", exp_body) };
+                        let padded = if digits.len() < 2 {
+                            format!("0{}", digits)
+                        } else {
+                            digits.to_string()
+                        };
+                        format!("{}e{}{}", mantissa, sign, padded)
+                    } else {
+                        raw
+                    }
+                } else {
+                    format!("{:.10}", f)
+                }
+            };
             if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
                 let value = &arg[eq_pos + 1..];
                 let float_val: f64 = value.parse().unwrap_or(0.0);
                 self.variables
-                    .insert(name.to_string(), float_val.to_string());
+                    .insert(name.to_string(), format_float(float_val));
                 self.options.insert(format!("_float_{}", name), true);
                 self.var_attrs.insert(
                     name.to_string(),
-                    VarAttr { kind: VarKind::Float, ..Default::default() },
+                    VarAttr {
+                        kind: VarKind::Float,
+                        float_exp: use_exp,
+                        ..Default::default()
+                    },
                 );
             } else {
-                self.variables.insert(arg.clone(), "0.0".to_string());
+                self.variables.insert(arg.clone(), format_float(0.0));
                 self.options.insert(format!("_float_{}", arg), true);
                 self.var_attrs.insert(
                     arg.clone(),
-                    VarAttr { kind: VarKind::Float, ..Default::default() },
+                    VarAttr {
+                        kind: VarKind::Float,
+                        float_exp: use_exp,
+                        ..Default::default()
+                    },
                 );
             }
         }
