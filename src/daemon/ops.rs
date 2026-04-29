@@ -64,21 +64,19 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "ask_dismiss" => super::zask::op_ask_dismiss(state, client_id, args).await,
         "ask_response" => super::zask::op_ask_response(state, args).await,
 
-        // Stubs — all return unimplemented. Filling in is later-iteration work.
-        "stats_flush"
-        | "subscribe_shard"
-        | "complete"
-        | "suggest"
-        | "highlight"
-        | "keys"
-        | "load_script"
-        | "export_zcompdump"
-        | "export_catalog"
-        | "export_shard"
-        | "import_zcompdump"
-        | "register" => Err(ErrPayload::new(
+        "load_script" => op_load_script(state, args).await,
+        "stats_flush" => op_stats_flush(state, args).await,
+        "keys" => op_keys(state, args).await,
+        "subscribe_shard" => op_subscribe_shard(state, client_id, args).await,
+        "export_zcompdump" => op_export_zcompdump(state, args).await,
+        "export_catalog" => op_export_catalog(state, args).await,
+        "export_shard" => op_export_shard(state, args).await,
+        "import_zcompdump" => op_import_zcompdump(state, args).await,
+
+        // Stubs — ZLE-integrated keystroke-rate ops; arrive with the ZLE wiring cycle.
+        "complete" | "suggest" | "highlight" | "register" => Err(ErrPayload::new(
             "unimplemented",
-            format!("op `{op}` not yet implemented in v1 foundation"),
+            format!("op `{op}` arrives with ZLE integration"),
         )),
 
         _ => Err(ErrPayload::new("unknown_op", format!("unsupported op `{op}`"))),
@@ -541,6 +539,261 @@ async fn op_publish(state: &Arc<DaemonState>, client_id: u64, args: Value) -> Op
     let count = state.publish(&origin, &topic, frame);
 
     Ok(json!({ "delivered_to": count }))
+}
+
+// -------- load_script / stats / keys / subscribe_shard --------
+
+async fn op_load_script(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    // Same protocol as source_resolve but with kind='script'. For v1 we delegate
+    // to source_resolve which inserts kind='source' — overwrite the kind here.
+    let resp = super::source_resolver::op_source_resolve(state, args.clone()).await?;
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path`"))?
+        .to_string();
+    state.with_catalog(|conn| {
+        conn.execute(
+            "UPDATE compiled_files SET kind = 'script' WHERE path = ?",
+            rusqlite::params![path],
+        )?;
+        Ok::<_, rusqlite::Error>(())
+    })?;
+    Ok(resp)
+}
+
+async fn op_stats_flush(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    // Client batches per-entry stats deltas (call_count, total_ns, last_called_at).
+    // Payload: { "deltas": [ {fq_name, calls, total_ns, last_ns}, ... ] }
+    let deltas = args
+        .get("deltas")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `deltas` array"))?;
+
+    let mut merged = 0usize;
+    state.with_catalog(|conn| {
+        let tx = conn.unchecked_transaction()?;
+        for d in deltas {
+            let fq = d.get("fq_name").and_then(Value::as_str).unwrap_or("");
+            if fq.is_empty() {
+                continue;
+            }
+            let calls = d.get("calls").and_then(Value::as_i64).unwrap_or(0);
+            let total = d.get("total_ns").and_then(Value::as_i64).unwrap_or(0);
+            let last = d.get("last_ns").and_then(Value::as_i64);
+            tx.execute(
+                "INSERT INTO entry_stats (fq_name, last_called_at, call_count, total_ns) \
+                 VALUES (?, ?, ?, ?) \
+                 ON CONFLICT(fq_name) DO UPDATE SET \
+                    last_called_at = COALESCE(excluded.last_called_at, entry_stats.last_called_at), \
+                    call_count = entry_stats.call_count + excluded.call_count, \
+                    total_ns = entry_stats.total_ns + excluded.total_ns",
+                rusqlite::params![fq, last, calls, total],
+            )?;
+            merged += 1;
+        }
+        tx.commit()?;
+        Ok::<_, rusqlite::Error>(())
+    })?;
+
+    Ok(json!({ "merged": merged }))
+}
+
+async fn op_keys(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    // Return the key list of a daemon-served special parameter (or any canonical
+    // subsystem). For an actual zsh-style `_comps`, the keys are the names of
+    // commands with a registered handler.
+    let param = args
+        .get("param")
+        .and_then(Value::as_str)
+        .unwrap_or("compdef");
+    super::zsync::ensure_schema(state)?;
+    let subsystem = match param {
+        "_comps" => "compdef",
+        other => other,
+    };
+    let keys: Vec<String> = state.with_catalog(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT key FROM canonical WHERE subsystem = ? ORDER BY key ASC",
+        )?;
+        let rows = stmt
+            .query_map(rusqlite::params![subsystem], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok::<_, rusqlite::Error>(rows)
+    })?;
+    Ok(json!({ "param": param, "keys": keys, "count": keys.len() }))
+}
+
+async fn op_subscribe_shard(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    let shard = args
+        .get("shard")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `shard`"))?
+        .to_string();
+    let pattern = format!("*.shard_updated:{}", shard);
+    match state.add_subscription(client_id, &pattern) {
+        Ok(id) => Ok(json!({ "subscription_id": id, "pattern": pattern })),
+        Err(e) => Err(ErrPayload::new("bad_pattern", e)),
+    }
+}
+
+// -------- export_zcompdump / export_catalog / export_shard / import_zcompdump --------
+
+async fn op_export_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    super::zsync::ensure_schema(state)?;
+    let out_path: std::path::PathBuf = args
+        .get("path")
+        .and_then(Value::as_str)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .map(|h| h.join(".zcompdump"))
+                .unwrap_or_else(|| std::path::PathBuf::from(".zcompdump"))
+        });
+
+    // Synthesize a minimal .zcompdump-compatible body from canonical compdef rows.
+    // The real zsh format is more elaborate (autoload declarations, _comps array,
+    // _patcomps, _services, etc.); v1 emits the assignment-array form which legacy
+    // tooling parses. Future iteration: full byte-compatible emission.
+    let rows: Vec<(String, String)> = state.with_catalog(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT key, value FROM canonical WHERE subsystem = 'compdef' ORDER BY key",
+        )?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok::<_, rusqlite::Error>(rows)
+    })?;
+
+    let mut body = String::from(
+        "#files: 1 version: 5.9\n# Synthesized by zshrs daemon — see docs/DAEMON.md\n\n",
+    );
+    body.push_str("typeset -gA _comps\n");
+    for (cmd, handler) in &rows {
+        let h = handler.trim_matches('"');
+        body.push_str(&format!(
+            "_comps[{}]={}\n",
+            shell_quote_loose(cmd),
+            shell_quote_loose(h)
+        ));
+    }
+    std::fs::write(&out_path, body)?;
+    super::paths::ensure_file_600(&out_path)?;
+
+    Ok(json!({
+        "path": out_path.display().to_string(),
+        "entries": rows.len(),
+    }))
+}
+
+async fn op_export_catalog(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let out_path: std::path::PathBuf = args
+        .get("path")
+        .and_then(Value::as_str)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| state.paths.root.join("catalog.export.db"));
+    // Use sqlite's online backup API via VACUUM INTO (atomic, safe under WAL).
+    let target = out_path.display().to_string();
+    state.with_catalog(|conn| {
+        conn.execute(
+            &format!("VACUUM INTO ?"),
+            rusqlite::params![target],
+        )?;
+        Ok::<_, rusqlite::Error>(())
+    })?;
+    Ok(json!({ "path": out_path.display().to_string() }))
+}
+
+async fn op_export_shard(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let name = args
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `name`"))?
+        .to_string();
+    let out_path: std::path::PathBuf = args
+        .get("path")
+        .and_then(Value::as_str)
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(format!("./{}.rkyv", name)));
+
+    // Find a shard whose filename ends with `-{name}.rkyv` or starts with the slug.
+    let shard_path = super::shard::list_shards(&state.paths)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|p| {
+            p.file_name()
+                .and_then(|s| s.to_str())
+                .map_or(false, |s| s.contains(&format!("-{}.rkyv", name)) || s.contains(&name))
+        })
+        .ok_or_else(|| ErrPayload::new("no_shard", format!("shard `{}` not found", name)))?;
+
+    std::fs::copy(&shard_path, &out_path)?;
+    Ok(json!({
+        "from": shard_path.display().to_string(),
+        "to": out_path.display().to_string(),
+    }))
+}
+
+async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    super::zsync::ensure_schema(state)?;
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path`"))?
+        .to_string();
+
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| ErrPayload::new("read_failed", format!("{}: {}", path, e)))?;
+
+    // Match `_comps[CMD]=HANDLER` lines (handles both quoted and bare values).
+    let mut imported = 0usize;
+    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    state.with_catalog(|conn| {
+        let tx = conn.unchecked_transaction()?;
+        for line in content.lines() {
+            let line = line.trim();
+            if !line.starts_with("_comps[") {
+                continue;
+            }
+            // _comps[KEY]=VALUE
+            let close = line.find(']');
+            let eq = line.find('=');
+            let (Some(c), Some(e)) = (close, eq) else { continue };
+            if e <= c {
+                continue;
+            }
+            let key = &line[7..c];
+            let key = key.trim_matches(|ch| ch == '\'' || ch == '"');
+            let val = &line[e + 1..];
+            let val = val.trim().trim_matches(|ch| ch == '\'' || ch == '"');
+            tx.execute(
+                "INSERT INTO canonical (subsystem, key, value, set_at_ns, set_by_shell) \
+                 VALUES ('compdef', ?, ?, ?, NULL) \
+                 ON CONFLICT(subsystem, key) DO UPDATE SET \
+                     value = excluded.value, \
+                     set_at_ns = excluded.set_at_ns",
+                rusqlite::params![key, format!("\"{}\"", val), now],
+            )?;
+            imported += 1;
+        }
+        tx.commit()?;
+        Ok::<_, rusqlite::Error>(())
+    })?;
+
+    Ok(json!({
+        "imported": imported,
+        "from": path,
+    }))
+}
+
+fn shell_quote_loose(v: &str) -> String {
+    if v.is_empty() {
+        return "''".to_string();
+    }
+    if v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '.' | '-' | ':' | ',' | '+')) {
+        return v.to_string();
+    }
+    format!("'{}'", v.replace('\'', "'\\''"))
 }
 
 // -------- Helpers --------
