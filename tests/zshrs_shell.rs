@@ -2924,3 +2924,34 @@ fn test_wait_unknown_pid_errors() {
         "stderr: {stderr:?}"
     );
 }
+
+#[test]
+fn test_dollar_lt_file_reads_contents() {
+    // $(< file) is zsh's shorthand for reading file contents.
+    std::fs::write("/tmp/zr_dlt_test.txt", "hello\nworld\n").unwrap();
+    let (_, output, _) = run_zshrs(r#"echo "$(< /tmp/zr_dlt_test.txt)""#);
+    let _ = std::fs::remove_file("/tmp/zr_dlt_test.txt");
+    assert_eq!(output.trim_end(), "hello\nworld", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_lt_no_space() {
+    std::fs::write("/tmp/zr_dlt2.txt", "data\n").unwrap();
+    let (_, output, _) = run_zshrs(r#"echo "$(</tmp/zr_dlt2.txt)""#);
+    let _ = std::fs::remove_file("/tmp/zr_dlt2.txt");
+    assert_eq!(output.trim(), "data", "got: {output:?}");
+}
+
+#[test]
+fn test_printf_q_uses_backslash_quoting() {
+    // zsh's `%q` uses backslash quoting (matches ${(q)}), NOT bash's
+    // single-quote wrapping.
+    let (_, output, _) = run_zshrs(r#"printf "%q\n" "hello world""#);
+    assert_eq!(output, "hello\\ world\n", "got: {output:?}");
+}
+
+#[test]
+fn test_printf_q_safe_word_unquoted() {
+    let (_, output, _) = run_zshrs(r#"printf "%q\n" hello"#);
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+}

@@ -671,7 +671,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `wait 99999` was returning 0 silently. zsh emits `pid N is not a child of this shell` and exits 127. `builtin_wait` now checks the PID against `$!` and the active jobs list before calling `wait_for_job`. Test: `test_wait_unknown_pid_errors`.
 
-## Still open (twenty-fourth-pass — remaining)
+## Closed (twenty-fifth-pass — `$(< file)` + `printf %q`)
+
+### `$(< file)` — zsh file-contents shorthand
+
+- The `<` after `$(` (with optional whitespace) signals "read this file's contents". Faster than `$(cat file)`. Added at the top of `run_command_substitution`: trim leading `<`, expand `$`-refs and tildes in the filename, `read_to_string` it, strip trailing newline. Tests: `test_dollar_lt_file_reads_contents`, `test_dollar_lt_no_space`.
+
+### `printf %q` — backslash-style quoting
+
+- Was using single-quote wrapping (bash semantics). zsh's `%q` matches `${(q)}` flag — backslash-escape shell-special chars. Updated both `printf_format_count`'s `'q'` branch and `builtin_printf`'s `'q'` branch. Tests: `test_printf_q_uses_backslash_quoting`, `test_printf_q_safe_word_unquoted`.
+
+## Still open (twenty-fifth-pass — remaining)
 
 (none — all probed gaps closed)
 - **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).
