@@ -4133,6 +4133,27 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // conditionals/pipelines/&&||/`!`). If errexit is on AND the last
     // command exited non-zero AND it's not a `return` from a function,
     // exit the shell with that status.
+    // `set -x` / `setopt xtrace` — print each command before it runs.
+    // The compiler emits this BEFORE the actual builtin/external call
+    // with the command's literal text as a single string arg. We
+    // print to stderr if xtrace is on. Honors `$PS4` (default `+ `).
+    vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
+        let cmd_text = vm.pop().to_str();
+        let on = with_executor(|exec| {
+            exec.options.get("xtrace").copied().unwrap_or(false)
+        });
+        if on {
+            let prefix = with_executor(|exec| {
+                exec.variables
+                    .get("PS4")
+                    .cloned()
+                    .unwrap_or_else(|| "+ ".to_string())
+            });
+            eprintln!("{}{}", prefix, cmd_text);
+        }
+        fusevm::Value::Status(0)
+    });
+
     vm.register_builtin(BUILTIN_ERREXIT_CHECK, |vm, _argc| {
         let last = vm.last_status;
         if last == 0 {
@@ -4886,6 +4907,7 @@ pub const BUILTIN_IS_FIFO: u16 = 334;
 pub const BUILTIN_IS_SOCKET: u16 = 335;
 pub const BUILTIN_ERREXIT_CHECK: u16 = 336;
 pub const BUILTIN_PARAM_SUBSTRING_EXPR: u16 = 337;
+pub const BUILTIN_XTRACE_LINE: u16 = 338;
 
 /// `time { compound; ... }` — wall-clock-time the sub-chunk and print
 /// elapsed seconds. Stack: [sub_chunk_idx as Int]. Runs the sub-chunk
@@ -13473,7 +13495,11 @@ impl ShellExecutor {
 
     fn builtin_echo(&mut self, args: &[String], _redirects: &[Redirect]) -> i32 {
         let mut newline = true;
-        let mut interpret_escapes = false;
+        // zsh's default: interpret backslash escapes (\n, \t, \b, etc.)
+        // unless `setopt bsd_echo` is on (then `-e` is required).
+        // Mirror zsh: default ON, `-E` disables.
+        let bsd_echo = self.options.get("bsd_echo").copied().unwrap_or(false);
+        let mut interpret_escapes = !bsd_echo;
         let mut start = 0;
 
         for (i, arg) in args.iter().enumerate() {
@@ -13528,6 +13554,13 @@ impl ShellExecutor {
         for arg in args {
             if arg == "-p" {
                 continue;
+            }
+            // zsh rejects `-n` and other bash-only flags. Only -p is
+            // accepted alongside names. Reject anything else starting
+            // with `-` (other than name-with-equals) for parity.
+            if arg.starts_with('-') && !arg.contains('=') && arg.len() > 1 {
+                eprintln!("zshrs:export:1: bad option: {}", arg);
+                return 1;
             }
             let key_owned = if let Some((key, value)) = arg.split_once('=') {
                 self.variables.insert(key.to_string(), value.to_string());

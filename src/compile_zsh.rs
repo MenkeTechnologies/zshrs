@@ -567,6 +567,23 @@ impl ZshCompiler {
             return;
         }
 
+        // xtrace: emit a runtime print of the literal command text
+        // BEFORE pushing args / dispatching. The runtime checks the
+        // `xtrace` option and prints with `$PS4` prefix to stderr.
+        // Compile-time literal — variable expansion in args isn't
+        // resolved here (matches zsh's `+ echo "$x"` style).
+        let trace_text = simple
+            .words
+            .iter()
+            .map(|w| crate::lexer::untokenize(w))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let trace_const = self.builder.add_constant(Value::str(trace_text));
+        self.builder.emit(Op::LoadConst(trace_const), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+        self.builder.emit(Op::Pop, 0);
+
         // Builtin or function or external. Push args first.
         let argc = (simple.words.len() - 1) as u8;
         for word in &simple.words[1..] {
