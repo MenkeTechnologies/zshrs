@@ -6310,3 +6310,18 @@ fn test_print_P_attr_chain_independent() {
     let (_, output, _) = run_zshrs(r#"print -P "%B%S%U""#);
     assert_eq!(output.as_bytes(), b"\x1b[1m\x1b[3m\x1b[4m\n");
 }
+
+#[test]
+fn test_dollar_underscore_inside_function_body() {
+    // Inside a function, `echo $_` should read the function name
+    // (no args) or the last call-arg. zshrs was leaking the
+    // function body source as $_ because BUILTIN_REGISTER_COMPILED_FN
+    // (called when defining the function) had updated
+    // pending_underscore with the body text. Now $_ is set BEFORE
+    // the function body runs.
+    let (_, output, _) = run_zshrs(r#"foo() { echo "[$_]"; }; foo"#);
+    assert_eq!(output.trim(), "[foo]");
+    let (_, output, _) =
+        run_zshrs(r#"foo() { echo "[$_]"; }; foo arg1"#);
+    assert_eq!(output.trim(), "[arg1]");
+}
