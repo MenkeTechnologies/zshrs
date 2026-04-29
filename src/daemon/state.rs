@@ -92,6 +92,7 @@ pub struct DaemonState {
     inner: Mutex<DaemonStateInner>,
     catalog: Mutex<Connection>,
     history_db: Mutex<Connection>,
+    pub fs_watcher: Arc<super::fsnotify::FsWatcher>,
     pub paths: CachePaths,
     pub started_at: Instant,
     pub start_wall: chrono::DateTime<chrono::Utc>,
@@ -102,10 +103,12 @@ impl DaemonState {
     pub fn new(paths: CachePaths) -> Result<Arc<Self>> {
         let catalog = catalog::open(&paths)?;
         let history_db = history::open(&paths)?;
+        let fs_watcher = Arc::new(super::fsnotify::FsWatcher::new());
         Ok(Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
             catalog: Mutex::new(catalog),
             history_db: Mutex::new(history_db),
+            fs_watcher,
             paths,
             started_at: Instant::now(),
             start_wall: chrono::Utc::now(),

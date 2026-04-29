@@ -15,6 +15,7 @@ pub mod builtins;
 pub mod catalog;
 pub mod client;
 pub mod firstrun;
+pub mod fsnotify;
 pub mod history;
 pub mod ipc;
 pub mod log;
@@ -26,6 +27,7 @@ pub mod server;
 pub mod shard;
 pub mod source_resolver;
 pub mod state;
+pub mod walk;
 
 pub use ipc::{Event, Frame, Hello, Welcome, ProtocolVersion, PROTOCOL_VERSION};
 pub use paths::CachePaths;

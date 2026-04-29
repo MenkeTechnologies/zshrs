@@ -39,6 +39,12 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
 
     let state = DaemonState::new(paths.clone())?;
 
+    // Spawn the fsnotify watcher task. No paths are registered initially;
+    // they're added by the walk-lifecycle evaluator + `fpath_changed` op.
+    if let Err(e) = state.fs_watcher.start(Arc::clone(&state)) {
+        tracing::warn!(?e, "fsnotify watcher failed to start; running degraded");
+    }
+
     let shutdown = tokio::sync::Notify::new();
     let shutdown = Arc::new(shutdown);
 

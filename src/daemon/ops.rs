@@ -51,10 +51,11 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "subscribe" => op_subscribe(state, client_id, args).await,
         "unsubscribe" => op_unsubscribe(state, client_id, args).await,
         "publish" => op_publish(state, client_id, args).await,
+        "fpath_changed" => op_fpath_changed(state, args).await,
+        "watcher_stats" => op_watcher_stats(state).await,
 
         // Stubs — all return unimplemented. Filling in is later-iteration work.
-        "fpath_changed"
-        | "stats_flush"
+        "stats_flush"
         | "subscribe_shard"
         | "complete"
         | "suggest"
@@ -295,31 +296,24 @@ async fn op_daemon(state: &Arc<DaemonState>, args: Value) -> OpResult {
 // -------- rebuild / clean / verify / compact --------
 
 async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    let shard_filter = args
-        .get("shard")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    // For v1: a single 'system' shard is rebuilt from the daemon's process env $PATH +
+    // $FPATH. The shard arg is accepted for forward-compat but we always rebuild the
+    // system shard right now (per-shard partial rebuild arrives with the .zshrc
+    // analysis pass producing distinct shards per source root).
+    let _shard_filter = args.get("shard").and_then(Value::as_str);
 
-    // V1 stub-with-real-IO: create a synthetic shard so the rkyv pipeline is
-    // exercised end-to-end. Real plugin/fpath analysis arrives with the .zshrc
-    // analysis pass + walk-lifecycle evaluator.
-    let slug = shard_filter.clone().unwrap_or_else(|| "system".to_string());
-    let source_root = state.paths.root.display().to_string();
-    let mut shard = super::shard::Shard::new(slug.clone(), source_root.clone(), 1);
-
-    // Empty for v1 — real entries come from analysis-pass output.
-    let path = match super::shard::write_shard(&state.paths, &shard) {
-        Ok(p) => p,
+    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+    let (image_path, hydrated, stats) = match super::walk::run_full_rebuild(state, generation) {
+        Ok(v) => v,
         Err(e) => return Err(ErrPayload::new("rebuild_failed", e.to_string())),
     };
-    let _ = &mut shard;
 
     Ok(json!({
-        "rebuilt": [slug.clone()],
-        "path": path.display().to_string(),
-        "generation": 1,
-        "entries": 0,
-        "stub": true,
+        "rebuilt": ["system"],
+        "path": image_path.display().to_string(),
+        "generation": generation,
+        "entries_hydrated": hydrated,
+        "walk_stats": stats,
     }))
 }
 
@@ -434,6 +428,41 @@ async fn op_compact(state: &Arc<DaemonState>) -> OpResult {
     Ok(json!({
         "tmp_swept": swept,
     }))
+}
+
+// -------- fsnotify --------
+
+async fn op_fpath_changed(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let paths_arr = args
+        .get("paths")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `paths` array"))?;
+
+    let mut registered = Vec::new();
+    for p in paths_arr {
+        let path = match p.as_str() {
+            Some(s) => s,
+            None => continue,
+        };
+        let wp = super::fsnotify::WatchedPath {
+            path: std::path::PathBuf::from(path),
+            shard_slug: format!("fpath-{}", super::shard::hash8(path)),
+            source_root: path.to_string(),
+        };
+        match state.fs_watcher.watch_path(wp, false) {
+            Ok(()) => registered.push(path.to_string()),
+            Err(e) => tracing::warn!(?e, %path, "fsnotify watch failed"),
+        }
+    }
+    Ok(json!({
+        "registered": registered,
+        "registered_count": registered.len(),
+    }))
+}
+
+async fn op_watcher_stats(state: &Arc<DaemonState>) -> OpResult {
+    let stats = state.fs_watcher.stats();
+    Ok(json!(stats))
 }
 
 // -------- pub/sub --------
