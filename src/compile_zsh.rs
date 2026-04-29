@@ -1130,10 +1130,14 @@ impl ZshCompiler {
                 rest
             };
             let first = bare_name.chars().next();
-            if !bare_name.is_empty()
+            // Accept identifier names AND positional digit names ($#1
+            // = length of $1 string). zsh: `set -- ab; echo $#1` → 2.
+            let is_ident = !bare_name.is_empty()
                 && first.map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
-                && bare_name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
-            {
+                && bare_name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+            let is_positional = !bare_name.is_empty()
+                && bare_name.chars().all(|c| c.is_ascii_digit());
+            if is_ident || is_positional {
                 let idx = self.builder.add_constant(Value::str(bare_name));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder.emit(
@@ -2346,13 +2350,19 @@ impl ZshCompiler {
             self.builder.emit(Op::SetStatus, 0);
             return;
         }
-        // ArithCompiler emits float-only Op::Div, so `((a/=3))` produces
-        // 3.333… instead of zsh's integer-divide 3. Route any expression
-        // that contains `/` (division or compound div-assign) through
-        // BUILTIN_ARITH_EVAL — MathEval honors integer-divide when both
-        // operands parse as Integer. Expressions without `/` keep the
-        // ArithCompiler fast path.
-        if inner_arith.contains('/') {
+        // ArithCompiler emits float-only Op::Div, doesn't recognize
+        // `|=` / `&=` / `^=` / `<<=` / `>>=` as compound assigns, and
+        // doesn't write back the result. Route through MathEval (via
+        // BUILTIN_ARITH_EVAL) when any of those appear OR the expr
+        // contains `/`. MathEval has full operator support and writes
+        // variable values back through extract_string_variables.
+        let needs_eval = inner_arith.contains('/')
+            || inner_arith.contains("|=")
+            || inner_arith.contains("&=")
+            || inner_arith.contains("^=")
+            || inner_arith.contains("<<=")
+            || inner_arith.contains(">>=");
+        if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
             self.builder.emit(
@@ -3100,10 +3110,45 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         } else {
             (0u8, &rest[1..])
         };
-        // body = "pat/repl" or "pat" (no replacement = empty repl)
-        let mut iter = body.splitn(2, '/');
-        let pattern = iter.next().unwrap_or("").to_string();
-        let repl = iter.next().unwrap_or("").to_string();
+        // body = "pat/repl" or "pat" (no replacement = empty repl).
+        // Find the FIRST UNESCAPED `/` so `${HOME//\//_}` splits with
+        // pattern=`/` and replacement=`_`. Naive splitn split on the
+        // escaped `\/` and produced `\\` as the pattern.
+        let chars: Vec<char> = body.chars().collect();
+        let mut sep = None;
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '\\' && i + 1 < chars.len() {
+                i += 2;
+                continue;
+            }
+            if chars[i] == '/' {
+                sep = Some(i);
+                break;
+            }
+            i += 1;
+        }
+        let unesc = |s: &[char]| -> String {
+            let mut out = String::with_capacity(s.len());
+            let mut it = s.iter().copied().peekable();
+            while let Some(c) = it.next() {
+                if c == '\\' {
+                    if let Some(&nx) = it.peek() {
+                        if nx == '/' {
+                            out.push('/');
+                            it.next();
+                            continue;
+                        }
+                    }
+                }
+                out.push(c);
+            }
+            out
+        };
+        let (pattern, repl) = match sep {
+            Some(p) => (unesc(&chars[..p]), unesc(&chars[p + 1..])),
+            None => (unesc(&chars), String::new()),
+        };
         return Some(ParamModifier {
             name,
             kind: ParamModifierKind::Replace { op, pattern, repl },

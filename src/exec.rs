@@ -517,6 +517,13 @@ fn slice_scalar(s: &str, start: i64, end: i64) -> String {
     if len == 0 {
         return String::new();
     }
+    // OOB single-index returns empty in zsh — `${str[10]}` for a
+    // 5-char string is "" not the last char. Detect when both bounds
+    // are the same value and exceed the bounds in either direction.
+    if start == end {
+        if start > len { return String::new(); }
+        if start < -len { return String::new(); }
+    }
     let resolve = |i: i64| -> i64 {
         if i < 0 {
             (len + i + 1).max(1)
@@ -526,12 +533,12 @@ fn slice_scalar(s: &str, start: i64, end: i64) -> String {
             i.min(len)
         }
     };
-    let s = resolve(start);
-    let e = resolve(end);
-    if s > e {
+    let s_idx = resolve(start);
+    let e_idx = resolve(end);
+    if s_idx > e_idx {
         return String::new();
     }
-    chars[(s - 1) as usize..e as usize].iter().collect()
+    chars[(s_idx - 1) as usize..e_idx as usize].iter().collect()
 }
 
 /// Register all zsh builtins with the VM.
@@ -3918,7 +3925,19 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 };
                 exec.arrays.insert(arr_name, parts);
             }
-            exec.variables.insert(name.clone(), stored);
+            exec.variables.insert(name.clone(), stored.clone());
+            // `set -o allexport`: every assignment auto-exports the var.
+            // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
+            // Without this, env didn't see user-set scalars.
+            let allexport = exec.options.get("allexport").copied().unwrap_or(false);
+            let already_exported = exec
+                .var_attrs
+                .get(&name)
+                .map(|a| a.export)
+                .unwrap_or(false);
+            if allexport || already_exported {
+                std::env::set_var(&name, &stored);
+            }
             false
         });
         Value::Status(if blocked { 1 } else { 0 })
@@ -9614,18 +9633,26 @@ impl ShellExecutor {
                 }
             };
             let mut results = Vec::new();
+            // zsh: a negative step REVERSES the natural sequence
+            // direction. So `{1..10..-2}` reverses `{1..10..2}` →
+            // `9 7 5 3 1`. Treat step as its absolute value for
+            // generation, then reverse if step was negative.
+            let abs_step = step.abs().max(1);
             if start_num <= end_num {
                 let mut i = start_num;
                 while i <= end_num {
                     results.push(format_num(i));
-                    i += step;
+                    i += abs_step;
                 }
             } else {
                 let mut i = start_num;
                 while i >= end_num {
                     results.push(format_num(i));
-                    i -= step;
+                    i -= abs_step;
                 }
+            }
+            if step < 0 {
+                results.reverse();
             }
             return results;
         }
@@ -11339,30 +11366,60 @@ impl ShellExecutor {
                 }
                 // Handle ${(%):-%n} style - empty var with default after flags
                 // rest could be ":-%n" or ":-default" or "var:-default" or just "var"
-                let (var_name, default_val) = if rest.starts_with(":-") {
+                // Also supports `${(flags)var-default}` (no colon → default
+                // only when var is unset; zsh distinguishes from `:-`).
+                let (var_name, default_val, default_unset_only) = if rest.starts_with(":-") {
                     // Empty variable name with default: ${(%):-default}
-                    ("", Some(&rest[2..]))
+                    ("", Some(&rest[2..]), false)
                 } else if let Some(pos) = rest.find(":-") {
                     // Variable with default: ${(%)var:-default}
-                    (&rest[..pos], Some(&rest[pos + 2..]))
+                    (&rest[..pos], Some(&rest[pos + 2..]), false)
                 } else if rest.starts_with(':') {
                     // Just ":" means empty var name, no default
-                    ("", None)
+                    ("", None, false)
+                } else if let Some(dash_pos) = rest.find('-') {
+                    // `${(flags)NAME-default}` — only-if-unset default.
+                    // Verify the prefix is a valid identifier, otherwise
+                    // fall back to the all-of-rest var name path.
+                    let pre = &rest[..dash_pos];
+                    if !pre.is_empty()
+                        && pre.chars().next().map(|c| c == '_' || c.is_alphabetic()).unwrap_or(false)
+                        && pre.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+                    {
+                        (pre, Some(&rest[dash_pos + 1..]), true)
+                    } else {
+                        let vn = rest
+                            .split(|c: char| !c.is_alphanumeric() && c != '_')
+                            .next()
+                            .unwrap_or("");
+                        (vn, None, false)
+                    }
                 } else {
                     // Normal variable reference
                     let vn = rest
                         .split(|c: char| !c.is_alphanumeric() && c != '_')
                         .next()
                         .unwrap_or("");
-                    (vn, None)
+                    (vn, None, false)
                 };
 
                 let mut val = self.get_variable(var_name);
 
-                // Use default if variable is empty
-                if val.is_empty() {
+                // Decide whether the default should fire. For `:-`, on
+                // empty (or unset). For `-` (no colon), only when the
+                // var is genuinely unset — empty value keeps the empty.
+                let var_is_set = !var_name.is_empty()
+                    && (self.variables.contains_key(var_name)
+                        || self.arrays.contains_key(var_name)
+                        || self.assoc_arrays.contains_key(var_name)
+                        || std::env::var(var_name).is_ok());
+                let needs_default = if default_unset_only {
+                    !var_is_set
+                } else {
+                    val.is_empty()
+                };
+                if needs_default {
                     if let Some(def) = default_val {
-                        // Expand the default value (handles $var and other expansions)
                         val = self.expand_string(def);
                     }
                 }
@@ -11498,11 +11555,15 @@ impl ShellExecutor {
                 let index = &bracket_content[..bracket_end];
                 // Anything after the closing `]` is a parameter modifier
                 // applied to the looked-up element. Honor `${arr[N]:-d}`
-                // (default-if-empty) and friends. Without this, an
-                // OOB index like `arr[5]:-default` returned empty
-                // because the `:-default` text was silently dropped.
+                // (default-if-empty) and friends. Skip range/all forms
+                // (`[2,3]`, `[@]`, `[*]`) — those need full subscript
+                // logic, not the simple OOB-fallback. Without this gate,
+                // string-subscript ranges like `${a[2,3]:-default}`
+                // wrongly returned the default.
+                let is_range_or_all = index.contains(',')
+                    || index == "@" || index == "*";
                 let after_bracket = &bracket_content[bracket_end + 1..];
-                if !after_bracket.is_empty() {
+                if !after_bracket.is_empty() && !is_range_or_all {
                     let elem = self.lookup_array_element(var_name, index);
                     if let Some(rest) = after_bracket.strip_prefix(":-") {
                         return if elem.is_empty() {
@@ -11614,19 +11675,19 @@ impl ShellExecutor {
                         }
                     }
 
-                    // Not an array - treat as string subscripting
+                    // Not an array - treat as string subscripting.
+                    // `v.start` from getindex is ALREADY 0-indexed (it
+                    // converted the user's 1-based input via `start-1`),
+                    // so we use it directly. Only negative indices need
+                    // length-relative resolution.
                     let val = self.get_variable(var_name);
                     if !val.is_empty() {
                         let chars: Vec<char> = val.chars().collect();
-                        let idx = v.start;
-                        let actual_idx = if idx < 0 {
-                            (chars.len() as i64 + idx).max(0) as usize
-                        } else if idx > 0 {
-                            (idx - 1) as usize // zsh is 1-indexed
+                        let actual_idx = if v.start < 0 {
+                            (chars.len() as i64 + v.start).max(0) as usize
                         } else {
-                            0
+                            v.start as usize
                         };
-
                         if v.end > v.start + 1 {
                             // String range
                             let end_idx = if v.end < 0 {
@@ -11647,6 +11708,20 @@ impl ShellExecutor {
                 }
 
                 // Non-numeric index on non-assoc - return empty
+                return String::new();
+            }
+        }
+
+        // `${var@OP}` is a bash-only modifier (Q/E/U/L/A/a/K/k). zsh
+        // rejects with "bad substitution". Emit zsh's error format and
+        // return empty so scripts that accidentally rely on these forms
+        // see the same diagnostic.
+        if let Some(at_pos) = content.find('@') {
+            let prefix = &content[..at_pos];
+            if !prefix.is_empty()
+                && prefix.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+            {
+                eprintln!("zshrs:1: bad substitution");
                 return String::new();
             }
         }
@@ -11771,6 +11846,77 @@ impl ShellExecutor {
             }
         }
 
+        // Handle the no-colon ${var-default}, ${var=default}, ${var?error},
+        // ${var+alternate} forms. These behave like the colon variants but
+        // distinguish UNSET from EMPTY: only `unset` triggers the default.
+        // Without these arms, `${a-default}` returned empty when `a` was
+        // unset, and nested forms like `${a-${b-default}}` couldn't reach
+        // the inner expansion at all.
+        if !content.is_empty() {
+            // Locate a name-terminator that is `-`, `=`, `?`, or `+` (NOT
+            // `:` which is handled above). Walk char-by-char so we don't
+            // pick up `-` inside the var name (which can't happen) or
+            // `=` inside an `==` token (also can't appear here).
+            let chars: Vec<char> = content.chars().collect();
+            // A valid var name is the leading identifier-chars run.
+            let mut name_end = 0usize;
+            let first_ok = chars.first().map(|c| c.is_alphabetic() || *c == '_').unwrap_or(false);
+            if first_ok {
+                while name_end < chars.len()
+                    && (chars[name_end] == '_' || chars[name_end].is_ascii_alphanumeric())
+                {
+                    name_end += 1;
+                }
+                if name_end > 0 && name_end < chars.len() {
+                    let op = chars[name_end];
+                    if matches!(op, '-' | '=' | '?' | '+') {
+                        let var_name: String = chars[..name_end].iter().collect();
+                        let rest: String = chars[name_end + 1..].iter().collect();
+                        let is_set = self.variables.contains_key(&var_name)
+                            || self.arrays.contains_key(&var_name)
+                            || self.assoc_arrays.contains_key(&var_name)
+                            || std::env::var(&var_name).is_ok();
+                        let val = if is_set { self.get_variable(&var_name) } else { String::new() };
+                        match op {
+                            '-' => {
+                                return if is_set {
+                                    val
+                                } else {
+                                    self.expand_string(&rest)
+                                };
+                            }
+                            '=' => {
+                                return if is_set {
+                                    val
+                                } else {
+                                    let v = self.expand_string(&rest);
+                                    self.variables.insert(var_name, v.clone());
+                                    v
+                                };
+                            }
+                            '?' => {
+                                return if is_set {
+                                    val
+                                } else {
+                                    let msg = self.expand_string(&rest);
+                                    eprintln!("zshrs:1: {}: {}", var_name, msg);
+                                    String::new()
+                                };
+                            }
+                            '+' => {
+                                return if is_set {
+                                    self.expand_string(&rest)
+                                } else {
+                                    String::new()
+                                };
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
         // Handle ${var/pattern/replacement} and ${var//pattern/replacement}
         // Only if the part before / is a valid variable name
         if let Some(slash_pos) = content.find('/') {
@@ -11790,9 +11936,55 @@ impl ShellExecutor {
                 let replace_all = rest.starts_with('/');
                 let rest = if replace_all { &rest[1..] } else { rest };
 
-                let parts: Vec<&str> = rest.splitn(2, '/').collect();
-                let pattern = *parts.get(0).unwrap_or(&"");
-                let replacement = *parts.get(1).unwrap_or(&"");
+                // Find the FIRST unescaped `/` separating pattern from
+                // replacement. zsh: `${HOME//\//_}` should split into
+                // pattern=`/` and replacement=`_`. Naive `splitn(2, '/')`
+                // split on the escaped `\/` and produced `\\` as pattern.
+                let (pattern_owned, replacement_owned): (String, String) = {
+                    let chars: Vec<char> = rest.chars().collect();
+                    let mut sep = None;
+                    let mut i = 0;
+                    while i < chars.len() {
+                        if chars[i] == '\\' && i + 1 < chars.len() {
+                            i += 2;
+                            continue;
+                        }
+                        if chars[i] == '/' {
+                            sep = Some(i);
+                            break;
+                        }
+                        i += 1;
+                    }
+                    let (pat, rep) = match sep {
+                        Some(p) => {
+                            let pat: String = chars[..p].iter().collect();
+                            let rep: String = chars[p + 1..].iter().collect();
+                            (pat, rep)
+                        }
+                        None => (rest.to_string(), String::new()),
+                    };
+                    // De-escape `\/` → `/` in BOTH pattern and replacement.
+                    let unesc = |s: &str| -> String {
+                        let mut out = String::with_capacity(s.len());
+                        let mut it = s.chars().peekable();
+                        while let Some(c) = it.next() {
+                            if c == '\\' {
+                                if let Some(&nx) = it.peek() {
+                                    if nx == '/' {
+                                        out.push('/');
+                                        it.next();
+                                        continue;
+                                    }
+                                }
+                            }
+                            out.push(c);
+                        }
+                        out
+                    };
+                    (unesc(&pat), unesc(&rep))
+                };
+                let pattern = pattern_owned.as_str();
+                let replacement = replacement_owned.as_str();
 
                 // Anchor support: `${v/#pre/repl}` matches only at start;
                 // `${v/%suf/repl}` matches only at end. The single-vs-all
@@ -12044,15 +12236,25 @@ impl ShellExecutor {
                     }
                     let mut var_name = String::new();
                     while let Some(&c) = chars.peek() {
-                        if c.is_alphanumeric()
-                            || c == '_'
-                            || c == '@'
-                            || c == '*'
-                            || c == '#'
-                            || c == '?'
-                        {
+                        // The single-char special params (`@`/`*`/`#`/`?`)
+                        // can only appear ALONE as a var name. After the
+                        // first char of an identifier, only alphanumeric
+                        // and underscore are valid. Without this guard,
+                        // `$a*2` consumed `a*2` as one var name and
+                        // looked up the (nonexistent) `a*2` variable
+                        // instead of treating the `*` as a literal.
+                        let is_first = var_name.is_empty();
+                        let allowed = if is_first {
+                            c.is_alphanumeric()
+                                || c == '_' || c == '@' || c == '*'
+                                || c == '#' || c == '?'
+                        } else {
+                            c.is_alphanumeric() || c == '_'
+                        };
+                        if allowed {
                             var_name.push(chars.next().unwrap());
-                            // Handle single-char special vars
+                            // Handle single-char special vars: stop after
+                            // consuming if the var name IS one of these.
                             if matches!(
                                 var_name.as_str(),
                                 "@" | "*"
@@ -12425,12 +12627,12 @@ impl ShellExecutor {
                 cmd_status = Some(vm.last_status);
             }
         }
-        // Inner cmd's status is captured but not propagated yet — see
-        // GAPS.md "command substitution exit status to $?". Propagating
-        // requires a generation counter on Op::SetStatus that fusevm
-        // doesn't expose; the witness-based pin (status_value alone)
-        // confuses `cmd=$(false); echo $?` (zsh: 1) with `echo $(false);
-        // echo $?` (zsh: echo's own status, 0). Deferred.
+        // Inner cmd's status is captured but not propagated — see
+        // GAPS.md "command substitution exit status to $?". The post-
+        // assignment SetStatus(0) emitted by compile_simple would
+        // overwrite anything we set here, so a runtime-only fix
+        // doesn't help. Needs compile-side change to suppress the
+        // assignment's SetStatus when the value contains a cmd-subst.
         let _ = cmd_status;
 
         // Flush any buffered Rust-side stdout so it reaches the pipe
@@ -16187,6 +16389,8 @@ impl ShellExecutor {
                 let name = arg.as_str();
                 let mut attrs = String::new();
                 let attr = self.var_attrs.get(name).cloned();
+                let env_exported = std::env::var(name).is_ok()
+                    && !attr.as_ref().map(|a| a.export).unwrap_or(false);
                 if let Some(ref a) = attr {
                     match a.kind {
                         VarKind::Integer => attrs.push('i'),
@@ -16206,7 +16410,23 @@ impl ShellExecutor {
                 } else if self.arrays.contains_key(name) {
                     attrs.push('a');
                 }
-                let prefix = if attrs.is_empty() {
+                // zsh prints `export NAME=value` instead of `typeset
+                // NAME=value` for exported scalars (`declare -p HOME`).
+                // For typed exports (`-x` from typeset) the form remains
+                // `typeset -x` to preserve the kind. Mirror that.
+                let is_exported = env_exported
+                    || attr.as_ref().map(|a| a.export).unwrap_or(false);
+                // zsh prints exported variables with the `export` builtin
+                // form. The trailing `x` flag is folded into the `export`
+                // keyword: `export -i n=5` not `typeset -ix n=5`.
+                let prefix = if is_exported {
+                    let other_attrs: String = attrs.chars().filter(|&c| c != 'x').collect();
+                    if other_attrs.is_empty() {
+                        "export".to_string()
+                    } else {
+                        format!("export -{}", other_attrs)
+                    }
+                } else if attrs.is_empty() {
                     "typeset".to_string()
                 } else {
                     format!("typeset -{}", attrs)

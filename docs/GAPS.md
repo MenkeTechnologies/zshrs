@@ -1235,7 +1235,61 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - For an OOB index like `arr=(a b); echo ${arr[5]:-default}`, zshrs's bracket-handler returned the empty array element and exited the function — never reaching the `:-default` form's default fallback. Added a `lookup_array_element` helper and an `after_bracket` modifier scanner that handles `:-`, `:+`, `:?`, `:=` after `]`. Tests: `test_array_oob_index_default_modifier`, `test_array_empty_index_default_modifier`, `test_array_oob_index_assign_modifier`, `test_array_in_bounds_no_default_kicks_in`.
 
-## Still open (seventy-first-pass — remaining)
+## Closed (seventy-second-pass)
+
+### `${var-default}` family (no-colon forms) wasn't implemented
+
+- zsh distinguishes `${var-default}` (default only when var is UNSET) from `${var:-default}` (default when unset OR empty). zshrs only implemented the colon variants — the no-colon forms fell through every branch and returned empty. Added a no-colon block in `expand_braced_variable` that walks chars looking for `-`/`=`/`?`/`+` after a valid identifier, then applies the proper unset-only semantics. Same form is supported inside `${(flags)var-default}`. Tests: `test_param_no_colon_default_when_unset`, `test_param_no_colon_assign_when_unset`, `test_param_no_colon_default_nested`, `test_param_no_colon_default_outer_set_skips`, `test_param_flag_with_no_colon_default`.
+
+### `${HOME//\//_}` escaped slash in pattern
+
+- The pattern/replacement split used `splitn(2, '/')` which split on the first `/` — including escaped `\/`. So `${HOME//\//_}` got pattern=`\` and replacement=`/_`, completely wrong. Both `expand_braced_variable` and `compile_zsh.rs::parse_param_modifier` now find the FIRST UNESCAPED `/` and de-escape `\/` → `/` in pattern/replacement. Test: `test_param_replace_with_escaped_slash`.
+
+### `${a@OP}` bash modifier silently returned empty
+
+- `${var@U}`, `${var@L}`, `${var@Q}`, etc. are bash-only. zsh emits "bad substitution". zshrs returned empty silently. Added a check in `expand_braced_variable` for `@` after a plain identifier that emits the zsh-format error. Test: `test_param_at_modifier_rejected`.
+
+### `{10..1..-2}` negative step in brace sequence
+
+- zsh's negative step REVERSES the natural-direction sequence: `{10..1..-2}` → `2 4 6 8 10` (reverse of `{10..1..2}`). zshrs did `i -= step` with negative step, infinite-looping or producing wrong results. Use `step.abs()` for generation, then `results.reverse()` if step was negative. Tests: `test_brace_negative_step_reverses`, `test_brace_negative_step_ascending`.
+
+### `$#1` bare positional length form
+
+- `$#NAME` fast-path only matched identifier names. `$#1` (length of $1) and other digit-only positionals fell through. Extended the matcher to accept `^\$#[0-9]+$` and route through `BUILTIN_PARAM_LENGTH`. Test: `test_dollar_hash_positional`.
+
+### `-0.0` printed as `0.` (lost sign)
+
+- IEEE -0.0 carries a sign bit. `format_zsh_subst`'s int-cast path used `*f as i64` which discards the sign. Detect the negative-zero case explicitly and emit `-0.`. Test: `test_arith_negative_zero_keeps_sign`.
+
+### `declare -p NAME` for exported scalars used `typeset` not `export`
+
+- zsh prints `export NAME=value` for plain exported vars and `export -i n=5` for typed exports. zshrs always emitted `typeset` / `typeset -ix`. Added export-detection (env::var lookup OR `var_attrs.export`) and folded the `x` letter into the `export` keyword. Tests: `test_declare_p_exported_uses_export_prefix`, `test_declare_p_int_export_uses_export_dash_i`.
+
+### `${a[2,3]:-default}` returned full string instead of substring
+
+- The OOB-modifier path I added in iter 71 fired for ALL bracket-with-modifier forms, including string range subscripts. For `a=foo; ${a[2,3]:-default}`, the lookup returned empty (range isn't a single index), so the `:-default` fired. Skip the OOB block when index has comma / `@` / `*`. Also fixed the underlying string-range-subscript bug — the existing code did `(idx-1) as usize` even though `v.start` from getindex is already 0-indexed. Test: `test_string_range_subscript_with_default`.
+
+### `((a |= 0xff))` and other compound bitwise/shift assigns
+
+- ArithCompiler only recognized `+=`/`-=`/`*=`/`/=`/`%=`. `|=`, `&=`, `^=`, `<<=`, `>>=` parsed but never wrote back. Extended `compile_arith`'s "needs_eval" sniff to also route any expression containing those tokens through `BUILTIN_ARITH_EVAL` (MathEval has full operator support and writes through `extract_string_variables`). Tests: `test_arith_compound_or_assign`, `test_arith_compound_shift_left_assign`, `test_arith_compound_shift_right_assign`, `test_arith_compound_xor_assign`.
+
+### `${a[10]}` for short string returned last char (saturation bug)
+
+- `slice_scalar`'s `i.min(len)` saturated OOB indices to the last char. `${a[10]}` for "hello" returned "o". zsh returns empty. Added explicit OOB checks (`start > len` or `start < -len`) that return empty before the saturating resolve. Tests: `test_string_oob_index_returns_empty`, `test_string_negative_oob_index_returns_empty`.
+
+### `set -o allexport` ignored
+
+- zsh's `allexport` option auto-exports every assignment to the env. zshrs registered the option but never consulted it during scalar assignment. Added the option check in `BUILTIN_SET_VAR` — also auto-exports when the var was previously declared exported (was missing for plain `a=newvalue` after `export a`). Test: `test_allexport_option_auto_exports`.
+
+### `Inf` / `NaN` capitalization in stored vars
+
+- After `((a/=0))` on a float, MathEval stored the result via `format_zsh` which used Rust's Display. Result: `inf` / `NaN.0` instead of zsh's `Inf` / `-Inf` / `NaN`. Special-case IEEE specials in `format_zsh` to match zsh's capitalization. (No test added — covered indirectly by the `${a/=0}` variants in the iter 71 tests.)
+
+### `$(($a*2))` (no spaces around `*`) returned 0
+
+- `expand_string`'s var-name reader accepted `*` as a valid char ANYWHERE in an identifier, not just as a single-char special. So `$a*2` consumed `a*2` as one var name, looked up nonexistent `a*2`, returned empty. Then arith on `*2` gave 0. Gated `*`/`@`/`#`/`?` to only match as the FIRST char of var_name. Test: `test_arith_dollar_var_with_star`.
+
+## Still open (seventy-second-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
