@@ -1563,6 +1563,13 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's errexit aborts the subshell only; the parent continues with the subshell's exit status. zshrs's `BUILTIN_ERREXIT_CHECK` called `std::process::exit` unconditionally, tearing down the parent shell when an inner subshell hit a non-zero status under `set -e`. Added a `subshell_snapshots.is_empty()` guard so the exit only fires at top level (the in-process subshell continues to natural end with the parent intact). Full subshell-internal abort would require VM-level halt support and is deferred. Test: `test_set_e_in_subshell_doesnt_kill_parent`.
 
+### `*(om)` glob qualifier wasn't sorting by mtime
+
+- zsh's `*(om)` orders matches by modification time NEWEST-FIRST (the time qualifiers default to descending; `Om` is the oldest-first flip). Two bugs combined:
+  1. The post-filter alpha sort in `expand_glob` ran AFTER `filter_by_qualifiers`, clobbering the qualifier-driven order.
+  2. `looks_like_glob_qualifiers` was missing `O` in its valid-char set, so `*(Om)` parsed as a literal pattern with unmatched `)` instead of as a qualifier set.
+  Fixed both: skip the alpha sort when the qualifier set contains `o`/`O`, and added `O` to the valid char set. Same default-descending semantics now applied to `oa` (atime) and `oc` (ctime) too. Tests: `test_glob_om_sort_newest_first`, `test_glob_Om_sort_oldest_first`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

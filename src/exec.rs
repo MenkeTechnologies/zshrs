@@ -9996,11 +9996,17 @@ impl ShellExecutor {
         // (`Aaa bbb Ccc Ddd` not `Aaa Ccc Ddd bbb`). Fallback to byte
         // order under C/POSIX. Sort by basename so directory components
         // don't dominate the comparison and produce ASCII-style output.
-        expanded.sort_by(|a, b| {
-            let an = a.rsplit('/').next().unwrap_or(a);
-            let bn = b.rsplit('/').next().unwrap_or(b);
-            crate::glob::locale_aware_name_cmp(an, bn)
-        });
+        // Skip when the qualifier requested an explicit sort (`o*`/`O*`)
+        // — those reorder by mtime/size/etc and the alpha sort would
+        // clobber the result.
+        let user_sort = qualifiers.contains('o') || qualifiers.contains('O');
+        if !user_sort {
+            expanded.sort_by(|a, b| {
+                let an = a.rsplit('/').next().unwrap_or(a);
+                let bn = b.rsplit('/').next().unwrap_or(b);
+                crate::glob::locale_aware_name_cmp(an, bn)
+            });
+        }
 
         if expanded.is_empty() {
             // The `(N)` per-pattern qualifier is the local equivalent of
@@ -10325,8 +10331,11 @@ impl ShellExecutor {
         // Previously missing: `h` (hours unit), `g` (group qualifier),
         // `H` (non-empty-dir alt), `U` (owned-by-user) — adding them
         // unlocks `(mh-N)`, `(g+N)`, `(U)`, etc.
+        // `O` (reverse-sort prefix, complementing `o`) was missing —
+        // `*(Om)` was being treated as a literal pattern instead of a
+        // qualifier set, leaving the trailing `)` unmatched. Added.
         let valid_chars =
-            "./@=p*%bghirwxAIERWXsStfHedDLNnMmcaouUYHTk^-+:0123456789,[]F";
+            "./@=p*%bghirwxAIERWXsStfHedDLNnMmcaouUYHTk^-+:0123456789,[]FO";
         s.chars()
             .all(|c| valid_chars.contains(c) || c.is_whitespace())
     }
@@ -10754,7 +10763,10 @@ impl ShellExecutor {
                         });
                     } else if chars.peek() == Some(&'m') {
                         chars.next();
-                        // Sort by modification time — uses prefetched metadata
+                        // zsh: `om` orders by modification time NEWEST
+                        // FIRST (the time qualifiers default to
+                        // descending; `Om` reverses to oldest-first).
+                        // Was sorting ascending which inverted output.
                         result.sort_by_key(|f| {
                             meta_cache
                                 .get(f)
@@ -10762,9 +10774,10 @@ impl ShellExecutor {
                                 .and_then(|m| m.modified().ok())
                                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         });
+                        result.reverse();
                     } else if chars.peek() == Some(&'a') {
                         chars.next();
-                        // Sort by access time — uses prefetched metadata
+                        // Same time-default-descending for atime.
                         result.sort_by_key(|f| {
                             meta_cache
                                 .get(f)
@@ -10772,6 +10785,22 @@ impl ShellExecutor {
                                 .and_then(|m| m.accessed().ok())
                                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         });
+                        result.reverse();
+                    } else if chars.peek() == Some(&'c') {
+                        chars.next();
+                        // ctime — same default-descending semantics.
+                        result.sort_by_key(|f| {
+                            meta_cache
+                                .get(f)
+                                .and_then(|(m, _)| m.as_ref())
+                                .and_then(|m| {
+                                    use std::os::unix::fs::MetadataExt;
+                                    Some(std::time::UNIX_EPOCH
+                                        + std::time::Duration::from_secs(m.ctime() as u64))
+                                })
+                                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+                        });
+                        result.reverse();
                     }
                 }
                 'O' => {
@@ -10792,6 +10821,8 @@ impl ShellExecutor {
                         result.reverse();
                     } else if chars.peek() == Some(&'m') {
                         chars.next();
+                        // `Om` flips the default time-descending — so
+                        // `Om` is oldest-first. Just sort ascending.
                         result.sort_by_key(|f| {
                             meta_cache
                                 .get(f)
@@ -10799,7 +10830,6 @@ impl ShellExecutor {
                                 .and_then(|m| m.modified().ok())
                                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         });
-                        result.reverse();
                     } else {
                         // Just reverse current order
                         result.reverse();

@@ -5812,3 +5812,37 @@ fn test_set_e_in_subshell_doesnt_kill_parent() {
         run_zshrs(r#"true; (set -e; false); echo "alive=$?""#);
     assert!(output.contains("alive="));
 }
+
+#[test]
+fn test_glob_om_sort_newest_first() {
+    // `*(om)` orders by mtime newest-first (zsh's time-qualifier
+    // default is descending; `Om` is the explicit oldest-first).
+    // Was sorting alphabetically because the post-filter alpha
+    // sort clobbered the qualifier-driven order, AND `O` wasn't
+    // in the looks_like_glob_qualifiers char set so `*(Om)` parsed
+    // as a literal pattern.
+    let dir = std::env::temp_dir().join("zshrs_test_om_sort");
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["a", "b", "c"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let cmd = format!("cd {} && echo *(om)", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(output.trim(), "c b a");
+}
+
+#[test]
+fn test_glob_Om_sort_oldest_first() {
+    let dir = std::env::temp_dir().join("zshrs_test_Om_sort");
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["a", "b", "c"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let cmd = format!("cd {} && echo *(Om)", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(output.trim(), "a b c");
+}
