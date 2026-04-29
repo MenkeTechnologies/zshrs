@@ -3348,3 +3348,32 @@ fn test_subshell_unset_does_not_leak_to_parent() {
     );
     assert_eq!(output.trim(), "sub: empty\nouter: parent", "got: {output:?}");
 }
+
+#[test]
+fn test_user_function_overrides_coreutils_builtins() {
+    // Coreutils-style anti-fork builtins (cat, head, tail, wc, sort,
+    // sleep, uname, etc.) all need to honor user function overrides
+    // — same dispatch rule as the shell builtins.
+    let cases = [
+        ("cat", r#"cat() { echo USER-CAT; }; cat"#, "USER-CAT"),
+        ("wc", r#"wc() { echo USER-WC; }; wc -l"#, "USER-WC"),
+        ("sort", r#"sort() { echo USER-SORT; }; sort"#, "USER-SORT"),
+        ("sleep", r#"sleep() { echo USER-SLEEP; }; sleep 999"#, "USER-SLEEP"),
+        ("head", r#"head() { echo USER-HEAD; }; head"#, "USER-HEAD"),
+        ("tail", r#"tail() { echo USER-TAIL; }; tail"#, "USER-TAIL"),
+        ("seq", r#"seq() { echo USER-SEQ; }; seq 5"#, "USER-SEQ"),
+        ("uniq", r#"uniq() { echo USER-UNIQ; }; uniq"#, "USER-UNIQ"),
+        ("date", r#"date() { echo USER-DATE; }; date"#, "USER-DATE"),
+        ("uname", r#"uname() { echo USER-UNAME; }; uname"#, "USER-UNAME"),
+        ("mkdir", r#"mkdir() { echo USER-MKDIR; }; mkdir foo"#, "USER-MKDIR"),
+    ];
+    for (name, code, expected) in cases {
+        let (_, output, _) = run_zshrs(code);
+        assert_eq!(
+            output.trim(),
+            expected,
+            "{}: got {output:?}",
+            name
+        );
+    }
+}

@@ -539,6 +539,23 @@ fn register_builtins(vm: &mut fusevm::VM) {
     use fusevm::shell_builtins::*;
     use fusevm::Value;
 
+    // Macro for builtins that user functions are allowed to shadow.
+    // zsh dispatch order is alias → function → builtin; without the
+    // try_user_fn_override probe a `cat() { ... }; cat` would silently
+    // run the C builtin and ignore the user function.
+    macro_rules! reg_overridable {
+        ($vm:expr, $id:expr, $name:literal, $method:ident) => {
+            $vm.register_builtin($id, |vm, argc| {
+                let args = pop_args(vm, argc);
+                if let Some(s) = try_user_fn_override($name, &args) {
+                    return Value::Status(s);
+                }
+                let status = with_executor(|exec| exec.$method(&args));
+                Value::Status(status)
+            });
+        };
+    }
+
     // Core builtins
     vm.register_builtin(BUILTIN_CD, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -1108,11 +1125,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(status)
     });
 
-    vm.register_builtin(BUILTIN_MKDIR, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_mkdir(&args));
-        Value::Status(status)
-    });
+    reg_overridable!(vm, BUILTIN_MKDIR, "mkdir", builtin_mkdir);
 
     vm.register_builtin(BUILTIN_STRFTIME, |vm, argc| {
         let args = pop_args(vm, argc);
@@ -1260,145 +1273,38 @@ fn register_builtins(vm: &mut fusevm::VM) {
 
     // ═══════════════════════════════════════════════════════════════════════
     // Coreutils builtins (anti-fork, gated by !posix_mode)
+    //
+    // All of these are routinely wrapped by user functions in real
+    // dotfiles (zpwr, oh-my-zsh, etc.) — `cat() { ... }`, `ls() { ... }`,
+    // `find() { ... }`. Each handler MUST consult try_user_fn_override
+    // first (via reg_overridable!) so the user definition wins, matching
+    // zsh's alias → function → builtin dispatch order.
     // ═══════════════════════════════════════════════════════════════════════
 
-    vm.register_builtin(BUILTIN_CAT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_cat(&args));
-        Value::Status(status)
-    });
+    reg_overridable!(vm, BUILTIN_CAT, "cat", builtin_cat);
+    reg_overridable!(vm, BUILTIN_HEAD, "head", builtin_head);
+    reg_overridable!(vm, BUILTIN_TAIL, "tail", builtin_tail);
+    reg_overridable!(vm, BUILTIN_WC, "wc", builtin_wc);
+    reg_overridable!(vm, BUILTIN_BASENAME, "basename", builtin_basename);
+    reg_overridable!(vm, BUILTIN_DIRNAME, "dirname", builtin_dirname);
+    reg_overridable!(vm, BUILTIN_TOUCH, "touch", builtin_touch);
+    reg_overridable!(vm, BUILTIN_REALPATH, "realpath", builtin_realpath);
+    reg_overridable!(vm, BUILTIN_SORT, "sort", builtin_sort);
+    reg_overridable!(vm, BUILTIN_FIND, "find", builtin_find);
+    reg_overridable!(vm, BUILTIN_UNIQ, "uniq", builtin_uniq);
+    reg_overridable!(vm, BUILTIN_CUT, "cut", builtin_cut);
+    reg_overridable!(vm, BUILTIN_TR, "tr", builtin_tr);
+    reg_overridable!(vm, BUILTIN_SEQ, "seq", builtin_seq);
+    reg_overridable!(vm, BUILTIN_REV, "rev", builtin_rev);
+    reg_overridable!(vm, BUILTIN_TEE, "tee", builtin_tee);
+    reg_overridable!(vm, BUILTIN_SLEEP, "sleep", builtin_sleep);
+    reg_overridable!(vm, BUILTIN_WHOAMI, "whoami", builtin_whoami);
+    reg_overridable!(vm, BUILTIN_ID, "id", builtin_id);
 
-    vm.register_builtin(BUILTIN_HEAD, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_head(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_TAIL, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_tail(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_WC, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_wc(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_BASENAME, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_basename(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_DIRNAME, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_dirname(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_TOUCH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_touch(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_REALPATH, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_realpath(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_SORT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_sort(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_FIND, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_find(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_UNIQ, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_uniq(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_CUT, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_cut(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_TR, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_tr(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_SEQ, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_seq(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_REV, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_rev(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_TEE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_tee(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_SLEEP, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_sleep(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_WHOAMI, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_whoami(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_ID, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_id(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_HOSTNAME, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_hostname(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_UNAME, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_uname(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_DATE, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_date(&args));
-        Value::Status(status)
-    });
-
-    vm.register_builtin(BUILTIN_MKTEMP, |vm, argc| {
-        let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_mktemp(&args));
-        Value::Status(status)
-    });
+    reg_overridable!(vm, BUILTIN_HOSTNAME, "hostname", builtin_hostname);
+    reg_overridable!(vm, BUILTIN_UNAME, "uname", builtin_uname);
+    reg_overridable!(vm, BUILTIN_DATE, "date", builtin_date);
+    reg_overridable!(vm, BUILTIN_MKTEMP, "mktemp", builtin_mktemp);
 
     // BUILTIN_EXPAND_WORD_RUNTIME (id 281) was a legacy JSON round-trip
     // bridge that no chunk emits anymore. The constant + handler are
