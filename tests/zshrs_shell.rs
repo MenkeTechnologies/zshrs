@@ -6039,3 +6039,21 @@ fn test_arith_subscripted_post_increment_returns_old() {
     // Post-increment returns OLD value, then variable updates.
     assert_eq!(output.trim(), "5\n6");
 }
+
+#[test]
+fn test_glob_dot_qualifier_excludes_symlinks() {
+    // `*(.)` should match plain regular files only (not symlinks).
+    // Was treating symlinks-to-files as files because the metadata
+    // followed links. Now check symlink_metadata too and exclude
+    // when file_type().is_symlink() is true.
+    let dir = std::env::temp_dir().join("zshrs_test_dot_qual");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::File::create(dir.join("a")).unwrap();
+    std::fs::create_dir_all(dir.join("b")).unwrap();
+    let _ = std::os::unix::fs::symlink("a", dir.join("c"));
+    let cmd = format!("cd {} && echo *(.)", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(output.trim(), "a");
+}
