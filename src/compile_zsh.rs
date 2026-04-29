@@ -2033,7 +2033,22 @@ impl ZshCompiler {
                     op_clean.as_str(),
                     "=" | "==" | "!=" | "=~"
                 );
-                if is_pattern_op {
+                if op_clean == "=~" {
+                    // For `=~`, the RHS is a regex that must undergo
+                    // variable / cmd-subst expansion (`pat="^h.*";
+                    // [[ x =~ $pat ]]` must use $pat's value as the
+                    // regex). compile_word_str does the expansion;
+                    // glob expansion is moot for `=~` because the test
+                    // runtime treats the result as a regex pattern, not
+                    // a filesystem path. Wrap in DQ to suppress brace
+                    // expansion + filesystem globbing during expansion.
+                    let dq_wrapped = if right.starts_with('\u{9e}') {
+                        right.clone()
+                    } else {
+                        format!("\u{9e}{}\u{9e}", right)
+                    };
+                    self.compile_word_str(&dq_wrapped);
+                } else if is_pattern_op {
                     // If the RHS had quote markers (DNULL/SNULL/BNULL),
                     // glob metas inside the quotes should be LITERAL,
                     // not pattern. Pre-escape `*` / `?` / `[` in quoted
