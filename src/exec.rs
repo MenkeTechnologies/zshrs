@@ -16042,8 +16042,14 @@ impl ShellExecutor {
         let mut start = 0;
 
         // Accept combined flags like `-nE` (zsh: each char treated as
-        // its own flag). Walk while args look like flag tokens.
+        // its own flag). Walk while args look like flag tokens. Also
+        // treat a bare `-` as a no-op flag — zsh: `echo - hi` prints
+        // `hi` (the lone `-` is consumed silently).
         for (i, arg) in args.iter().enumerate() {
+            if arg == "-" {
+                start = i + 1;
+                continue;
+            }
             if !arg.starts_with('-') || arg.len() < 2 {
                 break;
             }

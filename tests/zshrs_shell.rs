@@ -6263,3 +6263,17 @@ fn test_glob_trailing_slash_preserved() {
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(output.trim(), "sub/");
 }
+
+#[test]
+fn test_echo_bare_dash_is_noop_flag() {
+    // zsh: `echo - hi` prints `hi` (the bare `-` is a no-op flag,
+    // silently consumed). zshrs was treating it as a positional
+    // arg and printing `- hi`. Bare `-` (single char) now skipped.
+    let (_, output, _) = run_zshrs("echo - hi");
+    assert_eq!(output.trim(), "hi");
+    let (_, output, _) = run_zshrs("echo -");
+    assert_eq!(output.trim(), "");
+    // `--` (two dashes) is NOT a recognized flag — stays literal.
+    let (_, output, _) = run_zshrs("echo --");
+    assert_eq!(output.trim(), "--");
+}
