@@ -4445,3 +4445,117 @@ fn test_arith_div_with_float_stays_float() {
         "expected float result starting with 3.333, got: {s:?}"
     );
 }
+
+#[test]
+fn test_unknown_modifier_letter_emits_error() {
+    // `${arr:offset}`, `${a:Z}`, `${arr:Nope}` — any single letter not
+    // in the recognized modifier set should emit zsh's `unrecognized
+    // modifier `X'` error and return empty. Was silently returning empty.
+    let (_, output, stderr) = run_zshrs(r#"arr=(a b c); echo ${arr:Nope}"#);
+    assert!(
+        stderr.contains("unrecognized modifier"),
+        "expected unrecognized modifier err: {stderr:?}"
+    );
+    assert_eq!(output.trim(), "");
+}
+
+#[test]
+fn test_unknown_modifier_capital_Z() {
+    // ${a:Z} also unrecognized.
+    let (_, output, stderr) = run_zshrs(r#"a=foo; echo ${a:Z}"#);
+    assert!(
+        stderr.contains("unrecognized modifier"),
+        "expected err: {stderr:?}"
+    );
+    assert_eq!(output.trim(), "");
+}
+
+#[test]
+fn test_arith_recursive_string_var_eval() {
+    // zsh: `a="3+2"; $((a))` recursively evaluates the var's string
+    // value as an arith expression → 5. Regression: zshrs returned 0
+    // because MathEval skipped non-numeric vars entirely.
+    let (_, output, _) = run_zshrs(r#"a="3+2"; echo $((a))"#);
+    assert_eq!(output.trim(), "5");
+}
+
+#[test]
+fn test_arith_indirect_var_chain() {
+    // `b=a` then `$((b))` → resolves to `a`'s value (5).
+    let (_, output, _) = run_zshrs(r#"a=5; b=a; echo $((b))"#);
+    assert_eq!(output.trim(), "5");
+}
+
+#[test]
+fn test_arith_recursive_compound_expression() {
+    // `c="a+b"` then `$((c))` evaluates `a+b` against current vars.
+    let (_, output, _) = run_zshrs(r#"a=10; b=20; c="a+b"; echo $((c))"#);
+    assert_eq!(output.trim(), "30");
+}
+
+#[test]
+fn test_printf_e_format_signed_two_digit_exponent() {
+    // C printf / zsh emit `1.000000e+03` (signed, ≥2 digits in exp).
+    // Rust's `{:e}` emits `1e3`. Regression — without the manual sign +
+    // pad, zshrs printed `1.000000e3`.
+    let (_, output, _) = run_zshrs(r#"printf "%e\n" 1000"#);
+    assert_eq!(output.trim(), "1.000000e+03");
+}
+
+#[test]
+fn test_printf_e_format_negative_exponent_padded() {
+    // Negative exponent: `1.000000e-03` (sign already present, just pad).
+    let (_, output, _) = run_zshrs(r#"printf "%e\n" 0.001"#);
+    assert_eq!(output.trim(), "1.000000e-03");
+}
+
+#[test]
+fn test_printf_capital_E_uses_uppercase_marker() {
+    // `%E` keeps the same exponent rules but uppercase marker.
+    let (_, output, _) = run_zshrs(r#"printf "%E\n" 1000"#);
+    assert_eq!(output.trim(), "1.000000E+03");
+}
+
+#[test]
+fn test_printf_invalid_directive_v() {
+    // `%v` is bash-only; zsh emits "invalid directive". zshrs followed
+    // suit instead of passing the literal `%v` through.
+    let (_, _, stderr) = run_zshrs(r#"printf "%v\n" foo"#);
+    assert!(
+        stderr.contains("invalid directive"),
+        "expected invalid-directive err: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_printf_invalid_directive_a() {
+    // `%a` (hex float) is bash-only; zsh rejects.
+    let (_, _, stderr) = run_zshrs(r#"printf "%a\n" 1"#);
+    assert!(
+        stderr.contains("invalid directive"),
+        "expected invalid-directive err: {stderr:?}"
+    );
+}
+
+#[test]
+fn test_declare_capital_F_no_args_lists_only_floats() {
+    // `declare -F` (no args) lists only float-typed vars. With none
+    // declared, output is empty. Regression: zshrs dumped all vars.
+    let (_, output, _) = run_zshrs(r#"foo() { :; }; declare -F"#);
+    assert_eq!(output.trim(), "");
+}
+
+#[test]
+fn test_declare_capital_F_lists_declared_floats() {
+    // With a float declared, `declare -F` lists just that one.
+    let (_, output, _) = run_zshrs(r#"typeset -F PI=3.14; declare -F"#);
+    assert!(
+        output.contains("PI=3.14"),
+        "expected PI listing, got: {output:?}"
+    );
+    // No other vars should appear.
+    assert!(
+        !output.contains("ZSH_NAME") && !output.contains("WORDCHARS"),
+        "should not include shell-internal vars: {output:?}"
+    );
+}

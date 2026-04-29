@@ -1177,7 +1177,29 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's compound `((..))` arithmetic does integer division when both operands are integer; zshrs's ArithCompiler emits `Op::Div` (float-only). Added a sniff in `compile_arith` — if the inner expression contains `/`, route through `BUILTIN_ARITH_EVAL` (the integer-aware MathEval path used by `$((..))`). Result is then reused for the truthiness/status gate so the assignment doesn't run twice. Tests: `test_arith_compound_div_assign_integer`, `test_arith_div_with_float_stays_float`.
 
-## Still open (sixty-eighth-pass — remaining)
+## Closed (sixty-ninth-pass)
+
+### `${arr:offset}` / `${a:Z}` silently returned empty
+
+- Any single letter after `:` that wasn't a recognized modifier (history-style `A`/`a`/`h`/`t`/`r`/`e`/`l`/`u`/`q`/`Q`/`P`/`s`/`g`, bash-style `U`/`L`/`V`/`X`, or special-form leaders `-`/`=`/`?`/`+`/`#`/`/`/digit) fell through every branch and returned empty with no diagnostic. Added a "starts-with-alpha" trap in `expand_braced_variable` that emits zsh's `unrecognized modifier `X'` error format and returns empty. Tests: `test_unknown_modifier_letter_emits_error`, `test_unknown_modifier_capital_Z`.
+
+### `$((a))` returned 0 when `a` held a non-numeric expression string
+
+- zsh: `a="3+2"; $((a))` evaluates `a`'s value AS another arith expression and produces 5. Same for `b=a; $((b))` (indirection). zshrs's `MathEval` only loaded vars whose values parsed as int/float — non-numeric strings were dropped, so the lookup returned 0. Added `string_variables` map to MathEval; `get_variable` recursively constructs a sub-evaluator on lookup with a self-reference guard. Tests: `test_arith_recursive_string_var_eval`, `test_arith_indirect_var_chain`, `test_arith_recursive_compound_expression`.
+
+### `printf "%e" 1000` produced `1.000000e3` instead of zsh's `1.000000e+03`
+
+- Rust's `{:e}` formatting emits `e<exp>` with no sign and 1-digit exp; C printf / zsh emit `e±DD` (signed, ≥2 digits). Added a post-format pass in both `printf_format_count` and `builtin_printf` that splits on `e`/`E`, re-emits the exponent with explicit sign and 2-digit zero-pad. Tests: `test_printf_e_format_signed_two_digit_exponent`, `test_printf_e_format_negative_exponent_padded`, `test_printf_capital_E_uses_uppercase_marker`.
+
+### `printf "%v" foo` and `printf "%a" 1` accepted instead of rejected
+
+- `%v` is bash-only (assigns to var); `%a` is C99 hex-float format (zsh doesn't support it). zsh emits `printf:1: %X: invalid directive` for both. zshrs's `printf` literal-passed `%v` and produced hex-float for `%a`. Replaced the literal fallback in `builtin_printf` with the same error format; explicitly rejected `%a`/`%A`/`%v`/`%V`. Tests: `test_printf_invalid_directive_v`, `test_printf_invalid_directive_a`.
+
+### `declare -F` (no args) dumped all environment variables
+
+- zsh's `-F` flag means "float-typed only"; `declare -F` with no float vars declared prints nothing. zshrs treated `-F` as a no-op flag and routed to the typeset list-mode that dumped every variable. Added a float-only filter in the list path that uses `var_attrs[name].kind == VarKind::Float` to gate emission. Other type flags (-i/-a/-A) need shell-internal-param awareness and are left untouched. Tests: `test_declare_capital_F_no_args_lists_only_floats`, `test_declare_capital_F_lists_declared_floats`.
+
+## Still open (sixty-ninth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
@@ -1190,6 +1212,8 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 - **`${#:-empty}` length-of-default** — zsh returns 5 (length of "empty"); zshrs returns 0. Esoteric edge case in `${#name:-default}` parsing.
 - **`*` glob ordering caseglob** — zsh sorts `bench bins Cargo.lock …` (case-insensitive); zshrs sorts `Cargo.lock … bench bins` (case-sensitive). Glob expansion needs to honor the `caseglob` option (default-on in zsh).
 - **`declare -A h; h[foo bar]=baz`** — zsh: "bad pattern: h[foo"; zshrs: "command not found: h[foo". Both error; format/source differs.
+- **`declare -i` / `declare -a` / `declare -A` no-args listing** — zsh includes shell-internal params (`!`, `$`, `EUID`, `fpath`, etc.) in their respective type listings. zshrs's special params aren't typed, so the filter would return empty. Needs typed-special-param infrastructure.
+- **Math funcs without `zmodload zsh/mathfunc`** — zshrs auto-provides `sqrt`, `sin`, `cos`, `floor`, `ceil`, `min`, `max`, etc.; zsh requires `zmodload zsh/mathfunc` first and errors with "unknown function" otherwise. zshrs is more permissive (likely a feature for daily use); leaving as documented divergence.
 
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.

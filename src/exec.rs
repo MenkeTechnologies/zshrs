@@ -11569,6 +11569,23 @@ impl ShellExecutor {
                 // Handle history-style modifiers: :A, :h, :t, :r, :e, :l, :u, :q, :Q
                 // These can be chained: ${var:A:h:h}
                 return self.apply_history_modifiers(&val, rest);
+            } else if rest
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic())
+                .unwrap_or(false)
+            {
+                // `${var:X}` where X is a single letter NOT recognised as a
+                // modifier (history-style A/a/h/t/r/e/l/u/q/Q/P/s/g caught
+                // at is_history_modifier above; bash-style U/L/V/X also
+                // caught and routed to "unrecognized modifier" there).
+                // Anything else starting with a letter is an unknown
+                // modifier — emit zsh's "unrecognized modifier `X'" error
+                // and return empty. Without this the call fell through
+                // to the slash/percent paths and silently returned "".
+                let bad = rest.chars().next().unwrap();
+                eprintln!("zshrs:1: unrecognized modifier `{}'", bad);
+                return String::new();
             } else if {
                 // Negative offset disambiguator: `${v: -3}` (leading
                 // space) means substring with offset -3, NOT default-if-
@@ -15939,6 +15956,11 @@ impl ShellExecutor {
         }
 
         if list_mode {
+            // Type-filter: when -F/-E is set, narrow to float-typed
+            // vars only. zsh: `declare -F` prints nothing without any
+            // float vars; with `typeset -F PI=3.14` it prints just PI.
+            // Other type flags (-i, -a, -A) need shell-internal-param
+            // awareness to match zsh — left untouched here.
             let mut sorted_names: Vec<_> = self.variables.keys().cloned().collect();
             sorted_names.sort();
             for name in &sorted_names {
@@ -15954,6 +15976,19 @@ impl ShellExecutor {
                 }
                 if is_hash {
                     attrs.push('A');
+                }
+                if is_float || is_float_exp {
+                    // Only float-typed vars on -F/-E listings. zsh's
+                    // -i / -a / -A listings include shell-internal
+                    // params (`!`, `$`, EUID, fpath, etc.) — those need
+                    // special-param awareness we don't have yet, so
+                    // leave those flags untouched (they fall through
+                    // to the unfiltered listing below). Keeps the
+                    // common `declare -F` / `typeset -F` case correct
+                    // without regressing the others.
+                    let var_attr = self.var_attrs.get(name);
+                    let is_var_float = var_attr.map(|a| matches!(a.kind, VarKind::Float)).unwrap_or(false);
+                    if !is_var_float { continue; }
                 }
                 if print_mode {
                     // typeset -p: output re-executable code with values
@@ -22606,10 +22641,29 @@ impl ShellExecutor {
                     'e' | 'E' => {
                         let val: f64 = arg.parse().unwrap_or(0.0);
                         let prec = prec_val.unwrap_or(6);
-                        let formatted = if specifier == 'e' {
+                        let raw = if specifier == 'e' {
                             format!("{:.prec$e}", val, prec = prec)
                         } else {
                             format!("{:.prec$E}", val, prec = prec)
+                        };
+                        // Rust emits `e3` / `E-3`; C printf / zsh emit
+                        // `e+03` / `E-03` (signed, ≥2 digits). Fix tail.
+                        let exp_marker = if specifier == 'e' { 'e' } else { 'E' };
+                        let formatted = if let Some(epos) = raw.rfind(exp_marker) {
+                            let (mantissa, exp) = raw.split_at(epos);
+                            let exp_body = &exp[1..];
+                            let (sign, digits) =
+                                if exp_body.starts_with('-') { ("-", &exp_body[1..]) }
+                                else if exp_body.starts_with('+') { ("+", &exp_body[1..]) }
+                                else { ("+", exp_body) };
+                            let padded = if digits.len() < 2 {
+                                format!("0{}", digits)
+                            } else {
+                                digits.to_string()
+                            };
+                            format!("{}{}{}{}", mantissa, exp_marker, sign, padded)
+                        } else {
+                            raw
                         };
                         if width_val > formatted.len() {
                             if left_align {
@@ -22662,14 +22716,13 @@ impl ShellExecutor {
                         let formatted = format_g(val, prec, specifier == 'G');
                         output.push_str(&formatted);
                     }
-                    'a' | 'A' => {
-                        let val: f64 = arg.parse().unwrap_or(0.0);
-                        let formatted = float_to_hex(val, specifier == 'A');
-                        output.push_str(&formatted);
+                    // %a (hex float) and %v (bash-only) are rejected by
+                    // zsh as invalid directives. Match zsh.
+                    'a' | 'A' | 'v' | 'V' => {
+                        eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
                     }
                     _ => {
-                        output.push('%');
-                        output.push(specifier);
+                        eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
                     }
                 }
             } else {
@@ -23975,6 +24028,32 @@ impl ShellExecutor {
                                 ('e', None) | ('E', None) => format!("{:.6e}", n),
                                 _ => format!("{}", n),
                             };
+                            // Rust's `{:e}` emits `e<exp>` (no sign, 1-digit
+                            // for small exponents). C printf / zsh expect
+                            // `e±DD` (signed, ≥2 digits). Fix the exp tail
+                            // for %e/%E. Without this, `printf "%e" 1000`
+                            // produced `1.000000e3` instead of zsh's
+                            // `1.000000e+03`.
+                            if matches!(conv, 'e' | 'E') {
+                                if let Some(epos) = v.rfind('e') {
+                                    let (mantissa, exp) = v.split_at(epos);
+                                    let exp_body = &exp[1..]; // skip 'e'
+                                    let (sign, digits) =
+                                        if exp_body.starts_with('-') {
+                                            ("-", &exp_body[1..])
+                                        } else if exp_body.starts_with('+') {
+                                            ("+", &exp_body[1..])
+                                        } else {
+                                            ("+", exp_body)
+                                        };
+                                    let padded = if digits.len() < 2 {
+                                        format!("0{}", digits)
+                                    } else {
+                                        digits.to_string()
+                                    };
+                                    v = format!("{}e{}{}", mantissa, sign, padded);
+                                }
+                            }
                             if matches!(conv, 'E' | 'G') {
                                 v = v.replace('e', "E");
                             }
@@ -24034,8 +24113,12 @@ impl ShellExecutor {
                         }
                         'n' => result.push('\n'),
                         _ => {
-                            result.push('%');
-                            result.push(conv);
+                            // Unknown directive — zsh emits
+                            // `printf:1: %X: invalid directive`. zshrs
+                            // previously emitted the literal `%X`.
+                            // %a (hex float) and %v (bash-only) hit this
+                            // path along with any user typo.
+                            eprintln!("zshrs:printf:1: %{}: invalid directive", conv);
                         }
                     }
                 }

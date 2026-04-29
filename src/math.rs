@@ -303,6 +303,11 @@ pub struct MathEval<'a> {
     force_float: bool,
     octal_zeroes: bool,
     variables: HashMap<String, MathNum>,
+    /// Raw string values for variables whose contents aren't a plain number.
+    /// zsh recursively evaluates these as arith expressions on lookup so
+    /// `a="3+2"; $((a))` produces 5. Without this, MathEval saw `a` as
+    /// unset → 0.
+    string_variables: HashMap<String, String>,
     lastval: i32,
     pid: i64,
     error: Option<String>,
@@ -325,6 +330,7 @@ impl<'a> MathEval<'a> {
             force_float: false,
             octal_zeroes: false,
             variables: HashMap::new(),
+            string_variables: HashMap::new(),
             lastval: 0,
             pid: std::process::id() as i64,
             error: None,
@@ -343,6 +349,11 @@ impl<'a> MathEval<'a> {
                 self.variables.insert(k.clone(), MathNum::Integer(i));
             } else if let Ok(f) = v.parse::<f64>() {
                 self.variables.insert(k.clone(), MathNum::Float(f));
+            } else if !v.is_empty() {
+                // Non-numeric string — keep raw so get_variable can
+                // recursively evaluate it as an arith expression.
+                // zsh: `a="3+2"; $((a))` returns 5.
+                self.string_variables.insert(k.clone(), v.clone());
             }
         }
         self
@@ -1001,10 +1012,27 @@ impl<'a> MathEval<'a> {
         } else {
             name
         };
-        self.variables
-            .get(base_name)
-            .copied()
-            .unwrap_or(MathNum::Integer(0))
+        if let Some(v) = self.variables.get(base_name).copied() {
+            return v;
+        }
+        // Recursive eval: if the var holds a non-numeric string, evaluate
+        // it AS an arith expression. zsh: `a="3+2"; $((a))` → 5. Bound
+        // to one level of indirection — fresh evaluator each call so we
+        // don't accidentally pollute self.variables.
+        if let Some(raw) = self.string_variables.get(base_name) {
+            let mut sub = MathEval::new(raw);
+            sub.variables = self.variables.clone();
+            sub.string_variables = self.string_variables.clone();
+            // Avoid infinite recursion: drop our own entry so a self-
+            // referential `a=a` short-circuits to 0 rather than looping.
+            sub.string_variables.remove(base_name);
+            sub.prec = self.prec;
+            sub.c_precedences = self.c_precedences;
+            if let Ok(result) = sub.evaluate() {
+                return result;
+            }
+        }
+        MathNum::Integer(0)
     }
 
     fn set_variable(&mut self, name: &str, val: MathNum) -> MathNum {
