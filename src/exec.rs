@@ -25711,8 +25711,20 @@ impl ShellExecutor {
                 let value = &arg[eq_pos + 1..];
                 self.variables.insert(name.to_string(), value.to_string());
                 self.readonly_vars.insert(name.to_string());
+                // Mark the readonly attr on var_attrs so `(t)` flag
+                // returns "scalar-readonly" (not just "scalar"). zsh
+                // treats readonly as a compound type modifier, joined
+                // with the base kind via `-`.
+                self.var_attrs
+                    .entry(name.to_string())
+                    .or_insert_with(VarAttr::default)
+                    .readonly = true;
             } else {
                 self.readonly_vars.insert(arg.clone());
+                self.var_attrs
+                    .entry(arg.clone())
+                    .or_insert_with(VarAttr::default)
+                    .readonly = true;
             }
         }
         0
