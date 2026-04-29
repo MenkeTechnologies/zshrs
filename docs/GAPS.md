@@ -821,7 +821,13 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `cmd_out=$(false); echo $?` should report 1 (zsh: assignment is transparent w.r.t. `$?`), but `echo $(false); echo $?` should report 0 (zsh: the enclosing command's status overrides). zshrs currently propagates neither — `cmd_out=$(false); echo $?` reads 0. Fixing it requires a generation counter that fires on every Op::SetStatus to invalidate a "pin" set by cmd-substitution. fusevm doesn't expose a hook for SetStatus, and a value-only witness (compare current vm.last_status to the value at pin-time) collapses when both happen to be the same number. Documented as a known divergence; keep tests for the closed cases stable. Affects `$?` after cmd-substitution-only RHS.
 
-## Still open (thirty-sixth-pass — remaining)
+## Closed (thirty-seventh-pass — pipeline last-stage in current shell)
+
+### `echo hi | read x; echo "x=$x"` showed empty (zsh: `x=hi`)
+
+- Major behavioral divergence: zsh runs the LAST stage of a pipeline in the CURRENT shell process (not a forked child) so trailing `read x` keeps its assignment in the parent. zshrs's BUILTIN_RUN_PIPELINE was forking every stage, including the last — same behavior as bash, wrong for zsh. Refactored: fork stages 0..N-1, dup2 the final pipe's read end onto stdin in the parent, run the last stage's chunk inline on a sub-VM with `set_shell_host(Box::new(ZshrsHost))` so any reads/assignments hit the parent executor's variables, then restore stdin. The in-parent stage's status is appended to `pipestatus` so the array still has one entry per stage. Tests: `test_pipeline_last_stage_runs_in_current_shell`, `test_pipeline_last_stage_assignment_persists`.
+
+## Still open (thirty-seventh-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

@@ -1369,9 +1369,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
             pipes.push((fds[0], fds[1]));
         }
 
-        // Fork each stage
-        let mut child_pids: Vec<libc::pid_t> = Vec::with_capacity(n);
-        for (i, chunk) in stages.into_iter().enumerate() {
+        // zsh runs the LAST stage of a pipeline in the CURRENT shell
+        // (not a forked child) so a trailing `read x` keeps its
+        // assignment in the parent. Other shells (bash) fork every
+        // stage. Honor zsh by leaving stage N-1 inline. Forks the
+        // first N-1 stages with fork(); runs the last in this process
+        // with stdin dup2'd to the last pipe's read end and stdout
+        // restored after.
+        let last_idx = n - 1;
+        let stages_vec: Vec<fusevm::Chunk> = stages.into_iter().collect();
+
+        let mut child_pids: Vec<libc::pid_t> = Vec::with_capacity(n - 1);
+        for (i, chunk) in stages_vec.iter().take(last_idx).enumerate() {
             match unsafe { libc::fork() } {
                 -1 => {
                     // fork failed — kill any children we already started
@@ -1394,10 +1403,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         }
                     }
                     // Wire stdout to next pipe's write end
-                    if i < n - 1 {
-                        unsafe {
-                            libc::dup2(pipes[i].1, libc::STDOUT_FILENO);
-                        }
+                    unsafe {
+                        libc::dup2(pipes[i].1, libc::STDOUT_FILENO);
                     }
                     // Close all original pipe fds (keeping stdin/stdout dups)
                     for (r, w) in &pipes {
@@ -1408,7 +1415,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     }
 
                     // Run this stage's bytecode on a fresh VM
-                    let mut stage_vm = fusevm::VM::new(chunk);
+                    let mut stage_vm = fusevm::VM::new(chunk.clone());
                     register_builtins(&mut stage_vm);
                     let _ = stage_vm.run();
                     // Flush any buffered output before exiting
@@ -1423,7 +1430,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
 
-        // Parent: close all pipe fds — children have their own copies
+        // Parent runs the LAST stage inline. Save stdin, dup the last
+        // pipe's read end onto fd 0, run the chunk, restore stdin.
+        // Close every other pipe fd so the producer side gets EOF
+        // when the last upstream stage exits.
+        let saved_stdin = unsafe { libc::dup(libc::STDIN_FILENO) };
+        if last_idx > 0 {
+            let read_fd = pipes[last_idx - 1].0;
+            unsafe {
+                libc::dup2(read_fd, libc::STDIN_FILENO);
+            }
+        }
+        // Close all pipe fds in the parent now that stdin is wired.
+        // (Children already have their own copies. The dup2 above
+        // already gave us a fresh fd 0 if needed.)
         for (r, w) in &pipes {
             unsafe {
                 libc::close(*r);
@@ -1431,8 +1451,31 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
 
-        // Wait for all children, capture per-stage statuses for PIPESTATUS.
-        let mut pipestatus: Vec<i32> = Vec::with_capacity(child_pids.len());
+        // Run the last stage's bytecode on a sub-VM with the host
+        // wired up. The host points back at the executor so reads
+        // (`read x`) update the parent's variables directly.
+        let last_stage_status = {
+            let last_chunk = stages_vec.into_iter().last().unwrap();
+            let mut stage_vm = fusevm::VM::new(last_chunk);
+            register_builtins(&mut stage_vm);
+            stage_vm.set_shell_host(Box::new(ZshrsHost));
+            let _ = stage_vm.run();
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+            stage_vm.last_status
+        };
+
+        // Restore stdin
+        if saved_stdin >= 0 {
+            unsafe {
+                libc::dup2(saved_stdin, libc::STDIN_FILENO);
+                libc::close(saved_stdin);
+            }
+        }
+
+        // Wait for all forked stages, capture per-stage statuses for PIPESTATUS.
+        let mut pipestatus: Vec<i32> = Vec::with_capacity(n);
         for pid in child_pids {
             let mut status: i32 = 0;
             unsafe {
@@ -1447,6 +1490,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
             };
             pipestatus.push(s);
         }
+        // Append the in-parent last-stage status so `pipestatus` ends
+        // with N entries (one per stage).
+        pipestatus.push(last_stage_status);
         // Pipeline exit status: by default, the LAST stage's status.
         // With `setopt pipefail` (or `set -o pipefail`), use the
         // first non-zero stage status (so failures earlier in the
