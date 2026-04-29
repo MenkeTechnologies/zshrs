@@ -560,23 +560,55 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - The `function` keyword path collected names from `String` tokens and broke on `Inoutpar` / `Inbrace`. But the lexer packs `bar()` as a single String token suffixed with INPAR+OUTPAR markers (`\u{88}\u{8a}`), so the `name=bar()` token went into `names` literally and the body parsed under that wrong name. Added a strip step: detect the `\u{88}` ... `\u{8a}` suffix on a String token, trim it, then untokenize → clean `bar` name. Test: `test_function_keyword_with_parens`.
 
-## Still open (eighteenth-pass — remaining)
+## Closed (nineteenth-pass — DQ array flags + slices + bg-pid + readonly arrays + print -s)
+
+### `${(o/O/n/i/u)a}` array-flag suppression in DQ context
+
+- zsh applies these array-only flags only when the expansion is in array context (no surrounding `"..."`); inside DQ they're no-ops and the result is the original elements joined as a scalar. Two changes:
+  - `BUILTIN_PARAM_FLAG`: strip `o`/`O`/`n`/`i`/`u` chars from the flags string when DQ-context is detected (either via runtime `in_dq_context` counter or compile-time `\u{02}` sentinel prefix).
+  - `compile_word_str` fast path tags the emitted flags with the `\u{02}` sentinel when the raw word is DNULL-wrapped or when we're recursing into a DQ-wrapped parent's Expansion segment (tracked via new `dq_context_depth: i32` on the compiler).
+  - The bridge path (`BUILTIN_EXPAND_TEXT`) forces mode 1 (DoubleQuoted) when `dq_context_depth > 0`, propagating DQ semantics through nested expansions.
+  - `(M)` is NOT stripped here — it modifies `:#pat` filter behavior on the joined scalar in DQ context (verified against /bin/zsh).
+- Tests: `test_dq_suppresses_array_only_sort_flags`, `test_no_dq_sort_flags_still_apply`, `test_dq_suppresses_unique_flag`, `test_dq_suppresses_natural_sort`. Updated 5 pre-existing tests in `no_tree_walker_dispatch.rs` and `zshrs_shell.rs` that codified the old (zsh-incorrect) "always sort" behavior — they now assert array context (no DQ wrapper).
+
+### `${@:N:M}` / `${arr:N:M}` — slice positionals/arrays as elements
+
+- The substring path applied char-indexed scalar slicing to `@`/`*` and arrays. Now element-aware:
+  - `${@:N:M}` and `${*:N:M}` slice positionals where index 0 is `$0`, 1 is `$1`, etc. (matches zsh).
+  - `${arr:N:M}` slices `arr` with N as a 0-based "skip N" offset (so `arr=(x y z w); ${arr:1:2}` → `y z`).
+  - Negative offsets count from the end.
+- Three call sites updated (`BUILTIN_PARAM_SUBSTRING`, the compile-modifier `apply_var_modifier`, and the bridge `expand_braced_variable`'s inline parser). Helpers `slice_array_zero_based` and `slice_positionals` added. Tests: `test_positional_slice_skip_offset`, `test_positional_slice_no_length`, `test_array_slice_offset_skips`, `test_at_subscript_inclusive_range`.
+
+### `$!` after `cmd &`
+
+- `BUILTIN_RUN_BG` discarded the parent's pid. Now records into `self.variables["!"]` so `wait $!` works. `get_variable("!")` defaults to `"0"` when never set (matches zsh's pre-fork display). Tests: `test_bang_pid_after_background`, `test_bang_pid_initial_zero`.
+
+### `declare -ra` / `typeset -ra` — block array mutation
+
+- `BUILTIN_SET_ARRAY` and `BUILTIN_APPEND_ARRAY` now check the readonly status (both `readonly_vars` and `var_attrs[name].readonly`). On hit: emit `zshrs:1: read-only variable: NAME` and `std::process::exit(1)` (mirrors zsh `-c` fatal). Tests: `test_declare_ra_blocks_array_assign`, `test_declare_ra_blocks_append`.
+
+### `print -s` records to history (silent), `fc -l` lists session entries
+
+- Two changes:
+  - `print -s X` now suppresses stdout output entirely — per zsh's man page, `-s` "places the results in the history list INSTEAD OF on the standard output". Was printing to stdout AND adding to history.
+  - `fc -l` in `-c` (non-interactive) mode now bypasses its "no such event" guard when the script has explicitly added entries via `print -s`. Tracks them via new `session_history_ids: Vec<i64>` field; `fc -l` looks each up by ID and renumbers 1..N so the script sees clean contiguous IDs (not the SQLite global counter).
+- Test: `test_print_s_silent_and_records_history`.
+
+### `select` menu — multi-column packed format
+
+- Menu items were one per line. zsh packs `N) item` cells across rows to fit the terminal (defaults to 80 cols). Width = max cell + 1 trailing space. Cosmetic match.
+
+## Still open (nineteenth-pass — remaining)
 
 (none — all probed gaps closed)
-- **`${(o)a}`/`(O)`/`(n)`/`(i)`/`(M)` array flags suppressed in DQ context** — zsh applies these flags only when the expansion is in array context (no surrounding `"..."`); zshrs always applies them. Affects parity in joined-string output. Likely needs the compile path to know its quoting context and skip these flags accordingly.
-- **`${(ou)a}` ordered-unique** — `o`+`u` flag combo result correct (sorted-unique) but DQ context preserves original in zsh; cosmetic interaction.
-- **`print -s history-save`** — appends to history but `fc -l` doesn't see it (session histnum not bumped). Cosmetic for `-c` mode.
-- **`${@:1:2}` / `$@[2,4]`** positional slice forms.
-- **`declare -ra` (readonly array)** — silent vs zsh's "inconsistent type for assignment". Cosmetic.
-- **`$!` unset after `cmd &`** — backgrounded process pid not recorded into `$!`. Job-control plumbing scope.
-- **`select` non-interactive prompt format** — uses `?# ` instead of zsh's `?> ` style; users may set PS3 to override. Cosmetic in non-interactive `-c` mode.
 
-The following items from the fifth-pass probe were inspected and turned out to be false positives or test artifacts:
+The following items have been investigated and confirmed as false positives or fundamentally compatible:
 
 - **`read -d DELIM` / `read -A array` / `read -r raw`** — verified working when not run inside a pipeline subshell. The original probe diff was a `cmd | read v` pipeline-isolation artifact (the `read` runs in a subshell so `$v` doesn't survive — same behavior in zsh).
 - **`print -m PATTERN args...`** — match-arg flag still missing (cosmetic; rarely used).
-- **`${(M)arr:#pat}` filter** — `(M)` flag direction differs from docs in mainline zsh on the test host; the zshrs behavior of "keep only matching when (M) is set" actually matches the man page reading. Possible bug in mainline zsh; defer.
+- **`${(M)arr:#pat}` DQ context** — zsh's behavior here is subtle (the `(M)` flag stays active in DQ to flip filter direction on the joined scalar). zshrs's array-context filter logic differs only when the WHOLE expression is DQ-wrapped AND uses `(M)` AND has a `:#pat` filter. Niche edge case; deferred.
 - **`cd -`** — output style differs by one leading "print pwd" line that zsh's interactive cd suppresses but `-c` doesn't. Cosmetic.
+- **`select` PS3 customization** — uses `?# ` default; users with custom PS3 see their own value. Cosmetic in `-c` mode.
 
 The "Stub modules (loaded but limited)" section below remains as documented deferrals (`zsh/cap`, `zsh/clone`, `zsh/curses`, `zsh/zftp`, `zsh/db_gdbm`) — these are niche features whose `zmodload` call currently no-ops, with the corresponding builtins not registered. They are not active gaps in zshrs's compatibility floor; they're tracked separately because they have no real-world load on the daily-driver path. `zsh/mapfile` was previously in this list; it is now closed (read form implemented above).
 
