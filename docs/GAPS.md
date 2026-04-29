@@ -657,7 +657,21 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Were ignoring the level argument; always targeted the innermost enclosing loop. Now reads `simple.words[1]` as the level count, indexes back into `break_patches` / `continue_patches` from the end, clamping to depth. Tests: `test_break_n_breaks_outer_loop`, `test_continue_n_continues_outer_loop`.
 
-## Still open (twenty-third-pass — remaining)
+## Closed (twenty-fourth-pass — pattern expansion + `[*]` join + wait validation)
+
+### `${var/$pat/X}` / `${var//$pat/X}` — expand `$pat` and `$X`
+
+- The pattern and replacement operands were taken as-is. zsh expands parameter, command-substitution, and arith in both before applying. Wired `expand_string` on both at the top of `BUILTIN_PARAM_REPLACE`. Tests: `test_replace_pattern_expands_dollar_var`, `test_replace_global_pattern_expands`.
+
+### `${arr[*]}` joins with first IFS char
+
+- Both `[@]` and `[*]` emitted `BUILTIN_ARRAY_ALL` (always Value::Array → splice). Added `BUILTIN_ARRAY_JOIN_STAR` (id 339) that joins on first IFS char and returns Value::Str. Compiler picks via `array_splice_is_star(s)` test. Tests: `test_array_star_joins_with_first_ifs`, `test_array_at_keeps_separate_words`.
+
+### `wait PID` validates child ownership
+
+- `wait 99999` was returning 0 silently. zsh emits `pid N is not a child of this shell` and exits 127. `builtin_wait` now checks the PID against `$!` and the active jobs list before calling `wait_for_job`. Test: `test_wait_unknown_pid_errors`.
+
+## Still open (twenty-fourth-pass — remaining)
 
 (none — all probed gaps closed)
 - **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).

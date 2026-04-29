@@ -2885,3 +2885,42 @@ fn test_continue_n_continues_outer_loop() {
     );
     assert_eq!(output.trim(), "1a\n2a\n3a", "got: {output:?}");
 }
+
+#[test]
+fn test_replace_pattern_expands_dollar_var() {
+    // ${s/$pat/X} expands $pat to the variable's value.
+    let (_, output, _) = run_zshrs("s=hello; pat=l; echo \"${s/$pat/X}\"");
+    assert_eq!(output.trim(), "heXlo", "got: {output:?}");
+}
+
+#[test]
+fn test_replace_global_pattern_expands() {
+    let (_, output, _) = run_zshrs("s=hello; pat=l; echo \"${s//$pat/X}\"");
+    assert_eq!(output.trim(), "heXXo", "got: {output:?}");
+}
+
+#[test]
+fn test_array_star_joins_with_first_ifs() {
+    // ${a[*]} joins elements with first IFS char (default space).
+    // print -l on a joined string should print one line.
+    let (_, output, _) = run_zshrs(r#"a=("a b" "c d"); print -l "${a[*]}""#);
+    assert_eq!(output.trim(), "a b c d", "got: {output:?}");
+}
+
+#[test]
+fn test_array_at_keeps_separate_words() {
+    // ${a[@]} splices each element as a separate word.
+    let (_, output, _) = run_zshrs(r#"a=("a b" "c d"); print -l "${a[@]}""#);
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(lines, vec!["a b", "c d"], "got: {output:?}");
+}
+
+#[test]
+fn test_wait_unknown_pid_errors() {
+    let (status, _, stderr) = run_zshrs("wait 99999");
+    assert_eq!(status, 127);
+    assert!(
+        stderr.contains("not a child"),
+        "stderr: {stderr:?}"
+    );
+}
