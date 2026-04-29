@@ -843,7 +843,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - `builtin_command` jumped straight to a PATH walk for `-v`/`-V`, so every name resolved to its external (or "not found"). zsh's resolution order is alias → function → shell builtin → reserved word → external; only the external case prints a path. Added each tier in order before the PATH walk: aliases print `alias k=v` (verbose: "k is an alias for v"), functions/builtins/reserved words print just the name, externals print the resolved path. Tests: `test_command_v_resolution_order_matches_zsh`, `test_command_v_missing_returns_nonzero`.
 
-## Still open (thirty-ninth-pass — remaining)
+## Closed (fortieth-pass — `which` csh format, `read` backslash processing)
+
+### `which echo` printed just `echo` instead of `echo: shell built-in command`
+
+- The `csh_style` (-c) branch in `builtin_whence` had a builtin case missing — it fell through to the plain `println!("{}", name)`. zsh's `which` (and `whence -c`) emits `name: shell built-in command` for shell builtins. Added the `csh_style` arm. Test: `test_which_for_builtin_shows_csh_format`.
+
+### `read` (without `-r`) didn't process `\X` escapes — backslash + char came out literally
+
+- Previous impl was `if !raw_mode { input.replace("\\\n", "") }` which only handled the line-continuation case. POSIX read (no -r) drops one backslash from every `\X` pair: `\b` → `b`, `\\` → `\`, `\<newline>` → both stripped. Replaced with a char-iterator pass. Test: `test_read_processes_backslash_escapes_without_dash_r`.
+
+## Still open (fortieth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 

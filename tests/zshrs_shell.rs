@@ -3447,3 +3447,22 @@ fn test_command_v_missing_returns_nonzero() {
     let (status, _output, _) = run_zshrs(r#"command -v xxx_no_such_cmd_x"#);
     assert_ne!(status, 0, "missing command should return non-zero");
 }
+
+#[test]
+fn test_which_for_builtin_shows_csh_format() {
+    // zsh `which echo` → "echo: shell built-in command".
+    let (_, output, _) = run_zshrs(r#"which echo"#);
+    assert_eq!(output.trim(), "echo: shell built-in command", "got: {output:?}");
+}
+
+#[test]
+fn test_read_processes_backslash_escapes_without_dash_r() {
+    // POSIX read (no -r): each `\X` pair drops the backslash.
+    // `\<newline>` is a line-continuation (both stripped). Without
+    // this, an input of "a\b\n" was producing the backspace
+    // control character via Rust's String::replace stub.
+    let (_, output, _) = run_zshrs(
+        r#"printf 'a\\b\n' | { read line; echo "[$line]"; }"#,
+    );
+    assert_eq!(output.trim(), "[ab]", "got: {output:?}");
+}
