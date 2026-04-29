@@ -644,6 +644,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("true", &args) {
             return Value::Status(s);
         }
+        // `$_` for no-arg `true` is the command name itself ("true").
+        // pop_args only updates pending_underscore from args; for
+        // bare command name we backfill here.
+        if args.is_empty() {
+            with_executor(|exec| {
+                exec.pending_underscore = Some("true".to_string());
+            });
+        }
         Value::Status(0)
     });
     vm.register_builtin(BUILTIN_FALSE, |vm, argc| {
@@ -651,10 +659,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
         if let Some(s) = try_user_fn_override("false", &args) {
             return Value::Status(s);
         }
+        if args.is_empty() {
+            with_executor(|exec| {
+                exec.pending_underscore = Some("false".to_string());
+            });
+        }
         Value::Status(1)
     });
     vm.register_builtin(BUILTIN_COLON, |vm, argc| {
-        let _ = pop_args(vm, argc);
+        let args = pop_args(vm, argc);
+        if args.is_empty() {
+            with_executor(|exec| {
+                exec.pending_underscore = Some(":".to_string());
+            });
+        }
         Value::Status(0)
     });
 
