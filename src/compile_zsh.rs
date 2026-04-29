@@ -2384,7 +2384,12 @@ impl ZshCompiler {
             // mixed-mode compound assigns (`((a *= 1.5))`).
             || inner_arith.contains('.')
             || inner_arith.contains('e')
-            || inner_arith.contains('E');
+            || inner_arith.contains('E')
+            // Comma operator — ArithCompiler's compound-assign emit
+            // path only handles a single `op=` and drops subsequent
+            // expressions in `a+=5, b*=2`. MathEval evaluates the
+            // entire comma-list in order.
+            || inner_arith.contains(',');
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
