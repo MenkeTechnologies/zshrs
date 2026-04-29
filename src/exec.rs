@@ -22120,6 +22120,12 @@ impl ShellExecutor {
             "case", "if", "while", "until", "select", "function",
             "repeat", "time", "in", "foreach", "end", "coproc",
             "nocorrect", "noglob",
+            // zsh treats `local` / `declare` / `typeset` / `readonly`
+            // / `export` / `integer` / `float` as reserved-word
+            // declarations (precommand modifiers) — `type local`
+            // reports "is a reserved word", not "is a shell builtin".
+            "local", "declare", "typeset", "readonly", "export",
+            "integer", "float",
         ];
 
         let mut status = 0;
