@@ -1691,6 +1691,16 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's echo treats a bare `-` (single char) as a no-op flag — silently consumed. zshrs's flag parser skipped tokens shorter than 2 chars, so the lone `-` became a positional arg. Added an explicit `if arg == "-"` skip in the flag-walk. `--` (two dashes) is still NOT a recognized flag — stays literal. Test: `test_echo_bare_dash_is_noop_flag`.
 
+## Closed (seventy-eighth-pass)
+
+### `print -P "%S"` emitted reverse-video instead of italic
+
+- zsh's prompt-expansion `%S` (start standout) emits `\e[3m` (italic), and `%s` (end standout) emits `\e[23m` (italic-end). zshrs's prompt expander used `\e[7m`/`\e[27m` (reverse video pair). Switched to italic codes to match zsh's actual output. Test: `test_print_P_standout_emits_italic_codes`.
+
+### `for ((i=0,j=10; i<3; i++,j--))` only initialized one variable
+
+- ArithCompiler emits at most one op-write per call; the comma-trailing statements were dropped. So `i=0,j=10` set `i` but left `j` empty, producing `0:` instead of `0:10`. Routed comma-containing init/step expressions through `BUILTIN_ARITH_EVAL` (MathEval, which evaluates the whole comma-list and writes back through `extract_string_variables`). Cond expressions with comma also re-routed. Test: `test_for_arith_comma_init_and_step`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

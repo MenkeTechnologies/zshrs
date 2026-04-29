@@ -1851,14 +1851,52 @@ impl ZshCompiler {
         step: &str,
         body: &crate::parser::ZshProgram,
     ) {
+        // For multi-statement comma init/step (`i=0,j=10`,
+        // `i++,j--`), ArithCompiler only handles ONE op per call,
+        // dropping the rest. Route through MathEval (via
+        // BUILTIN_ARITH_EVAL) which evaluates the comma list in
+        // order and writes back through extract_string_variables.
+        let route_through_eval = |s: &str| -> bool { s.contains(',') };
+        let emit_arith = |this: &mut Self, s: &str| {
+            let untoked = crate::lexer::untokenize(s);
+            if route_through_eval(&untoked) {
+                let idx = this.builder.add_constant(Value::str(untoked.as_str()));
+                this.builder.emit(Op::LoadConst(idx), 0);
+                this.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1),
+                    0,
+                );
+            } else {
+                this.compile_arith_str(s);
+            }
+        };
+
         if !init.is_empty() {
-            self.compile_arith_str(init);
+            emit_arith(self, init);
             self.builder.emit(Op::Pop, 0);
         }
 
         let loop_top = self.builder.current_pos();
         if !cond.is_empty() {
-            self.compile_arith_str(cond);
+            // Cond is evaluated for truthiness — keep simple
+            // ArithCompiler path unless comma is present.
+            if cond.contains(',') {
+                let untoked = crate::lexer::untokenize(cond);
+                let idx = self.builder.add_constant(Value::str(untoked.as_str()));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1),
+                    0,
+                );
+                // ARITH_EVAL returns Value::Str ("0" / "1" / etc.).
+                // Convert to bool: non-zero → true.
+                let zero_const = self.builder.add_constant(Value::str("0"));
+                self.builder.emit(Op::LoadConst(zero_const), 0);
+                self.builder.emit(Op::StrEq, 0);
+                self.builder.emit(Op::LogNot, 0);
+            } else {
+                self.compile_arith_str(cond);
+            }
         } else {
             self.builder.emit(Op::LoadTrue, 0);
         }
@@ -1877,7 +1915,7 @@ impl ZshCompiler {
         }
 
         if !step.is_empty() {
-            self.compile_arith_str(step);
+            emit_arith(self, step);
             self.builder.emit(Op::Pop, 0);
         }
         self.builder.emit(Op::Jump(loop_top), 0);
