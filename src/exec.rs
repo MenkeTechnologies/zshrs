@@ -1581,7 +1581,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 let _ = std::io::stderr().flush();
                 std::process::exit(bg_vm.last_status);
             }
-            _pid => Value::Status(0),
+            pid => {
+                // Parent: record the PID into `$!` (most recent
+                // backgrounded job's pid). zsh exposes this for any
+                // script that needs `wait $!`.
+                with_executor(|exec| {
+                    exec.variables.insert("!".to_string(), pid.to_string());
+                });
+                Value::Status(0)
+            }
         }
     });
 
@@ -1616,35 +1624,44 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 other => values.push(other.to_str()),
             }
         }
-        with_executor(|exec| {
+        let blocked = with_executor(|exec| {
+            // Refuse to mutate read-only arrays (declare -ra / typeset
+            // -ra). zsh prints `read-only variable: NAME` and exits 1
+            // in -c mode. Mirror that fatal behavior.
+            let is_ro = exec.readonly_vars.contains(&name)
+                || exec
+                    .var_attrs
+                    .get(&name)
+                    .map(|a| a.readonly)
+                    .unwrap_or(false);
+            if is_ro {
+                eprintln!("zshrs:1: read-only variable: {}", name);
+                std::process::exit(1);
+            }
             // Two-statement assoc init: `typeset -A m; m=(k v k v ...)`.
-            // The first statement inserts an empty HashMap into
-            // `assoc_arrays` (the type marker); the array literal in the
-            // second statement is an alternating k/v list, NOT an indexed
-            // array. Without this branch the assignment silently re-types
-            // `m` as indexed and drops the `-A` attribute.
             if exec.assoc_arrays.contains_key(&name) {
                 let mut map = std::collections::HashMap::new();
-                let mut it = values.into_iter();
+                let mut it = values.clone().into_iter();
                 while let Some(k) = it.next() {
                     if let Some(v) = it.next() {
                         map.insert(k, v);
                     }
                 }
-                exec.assoc_arrays.insert(name, map);
-                return;
+                exec.assoc_arrays.insert(name.clone(), map);
+                return false;
             }
             // Mirror array→scalar if name is the array side of a typeset -T tie.
             if let Some((scalar_name, sep)) = exec.tied_array_to_scalar.get(&name).cloned() {
                 let joined = values.join(&sep);
                 exec.variables.insert(scalar_name, joined);
-                exec.arrays.insert(name, values);
+                exec.arrays.insert(name.clone(), values.clone());
             } else {
                 exec.variables.remove(&name);
-                exec.arrays.insert(name, values);
+                exec.arrays.insert(name.clone(), values.clone());
             }
+            false
         });
-        Value::Status(0)
+        Value::Status(if blocked { 1 } else { 0 })
     });
 
     // `arr+=(d e f)` — append. Same calling conventions as SET_ARRAY.
@@ -1671,6 +1688,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         with_executor(|exec| {
+            // Refuse appends on read-only arrays (declare -ra).
+            let is_ro = exec.readonly_vars.contains(&name)
+                || exec
+                    .var_attrs
+                    .get(&name)
+                    .map(|a| a.readonly)
+                    .unwrap_or(false);
+            if is_ro {
+                eprintln!("zshrs:1: read-only variable: {}", name);
+                std::process::exit(1);
+            }
             exec.variables.remove(&name);
             exec.arrays
                 .entry(name)
@@ -1751,9 +1779,42 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let mut last_status: i32 = 0;
 
         loop {
-            // Draw menu.
+            // Draw menu — zsh's format: `N) item` cells, padded to the
+            // longest cell width, packed across columns to fit the
+            // terminal (defaults to 80 cols when unknown). Trailing
+            // single space + newline at the end of the row.
+            let term_width: usize = std::env::var("COLUMNS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(80);
+            let max_n = words.len();
+            let n_width = max_n.to_string().len();
+            let max_cell = words
+                .iter()
+                .enumerate()
+                .map(|(i, w)| {
+                    // "N) word" + 1 trailing-space = N_DIGITS + 2 + len + 1
+                    let digits = (i + 1).to_string().len();
+                    digits + 2 + w.chars().count() + 1
+                })
+                .max()
+                .unwrap_or(1)
+                .max(n_width + 2 + 1);
+            let cols = (term_width / max_cell).max(1);
+            let mut col_in_row = 0usize;
             for (i, w) in words.iter().enumerate() {
-                let _ = writeln!(std::io::stderr(), "{}) {}", i + 1, w);
+                let cell = format!("{:>w$}) {}", i + 1, w, w = n_width);
+                let pad = max_cell.saturating_sub(cell.chars().count());
+                let _ = write!(std::io::stderr(), "{}", cell);
+                col_in_row += 1;
+                if col_in_row >= cols || i + 1 == words.len() {
+                    let _ = writeln!(std::io::stderr());
+                    col_in_row = 0;
+                } else {
+                    for _ in 0..pad {
+                        let _ = write!(std::io::stderr(), " ");
+                    }
+                }
             }
             let _ = write!(std::io::stderr(), "{}", prompt);
             let _ = std::io::stderr().flush();
@@ -2235,8 +2296,29 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // transformation. Final state is either Value::str or Value::Array
     // depending on the last flag.
     vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
-        let flags = vm.pop().to_str();
+        let mut flags = vm.pop().to_str();
         let name = vm.pop().to_str();
+
+        // Compile path tags DQ-wrapped expressions with a leading
+        // `\u{02}` sentinel. In DQ context, array-only flags are
+        // no-ops per zsh: `(o)`/`(O)`/`(n)`/`(i)`/`(M)`/`(u)` only
+        // fire in array context. Strip those flag chars before
+        // processing so the join-as-scalar path returns the original
+        // element order.
+        let dq_compile = flags.starts_with('\u{02}');
+        if dq_compile {
+            flags = flags[1..].to_string();
+        }
+        let dq_runtime = with_executor(|exec| exec.in_dq_context > 0);
+        if dq_compile || dq_runtime {
+            // Strip array-only flags (sort/unique/index variants).
+            // (M) is NOT stripped here — it still modifies `:#pat`
+            // filter behavior on the joined scalar in DQ context.
+            flags = flags
+                .chars()
+                .filter(|c| !matches!(c, 'o' | 'O' | 'n' | 'i' | 'u'))
+                .collect();
+        }
 
         // Initial state: prefer assoc → array → scalar lookup. If `P` flag
         // is in the chain, we'll re-fetch with the indirected name later.
@@ -4141,6 +4223,21 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let length = vm.pop().to_int();
         let offset = vm.pop().to_int();
         let name = vm.pop().to_str();
+        // `${@:offset:length}` / `${*:offset:length}` — slice
+        // positional parameters as ARRAY elements (not chars). zsh's
+        // semantics: 1-based, inclusive offset; length counts elems.
+        // For arrays/assoc-values arrays, same array semantics.
+        if name == "@" || name == "*" {
+            let result = with_executor(|exec| slice_positionals(exec, offset, length));
+            return fusevm::Value::str(result.join(" "));
+        }
+        let array_slice = with_executor(|exec| {
+            exec.arrays.get(&name).cloned()
+        });
+        if let Some(arr) = array_slice {
+            let result = slice_array_zero_based(&arr, offset, length);
+            return fusevm::Value::str(result.join(" "));
+        }
         let val = with_executor(|exec| exec.get_variable(&name));
         let chars: Vec<char> = val.chars().collect();
         let len = chars.len() as i64;
@@ -4317,7 +4414,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         prepped.push(c);
                     }
                 }
-                fusevm::Value::str(exec.expand_string(&prepped))
+                // Tell parameter-flag application that we're inside
+                // double quotes — array-only flags ((o), (O), (n),
+                // (i), (M), (u)) must be no-ops here per zsh.
+                exec.in_dq_context += 1;
+                let out = exec.expand_string(&prepped);
+                exec.in_dq_context -= 1;
+                fusevm::Value::str(out)
             }
             2 => {
                 // SingleQuoted: pure literal, strip outer `'…'`.
@@ -5827,6 +5930,47 @@ fn shell_quote(s: &str) -> String {
 
 /// Quote a value for typeset -p output (re-executable code)
 /// Uses single quoting only when the value contains special characters
+/// Slice an array per zsh `${arr:offset[:length]}` semantics: the
+/// offset is 0-based "skip N elements" (so `${arr:1:2}` returns
+/// elements at indices 1,2). Negative offset counts from the end.
+/// `length < 0` means "to the end".
+fn slice_array_zero_based(arr: &[String], offset: i64, length: i64) -> Vec<String> {
+    let n = arr.len() as i64;
+    if n == 0 {
+        return Vec::new();
+    }
+    let start = if offset < 0 {
+        (n + offset).max(0) as usize
+    } else {
+        (offset as usize).min(arr.len())
+    };
+    let take = if length < 0 {
+        arr.len().saturating_sub(start)
+    } else {
+        (length as usize).min(arr.len().saturating_sub(start))
+    };
+    arr.iter().skip(start).take(take).cloned().collect()
+}
+
+/// Same shape but for positional params (`@`/`*`). zsh treats
+/// position 0 as `$0` (the script/shell name). For `${@:0}` it
+/// includes `$0`; for `${@:1}` it skips `$0` and starts at `$1`.
+/// Internally `positional_params[0]` is `$1`, so we prepend `$0`
+/// then slice 0-based.
+fn slice_positionals(exec: &ShellExecutor, offset: i64, length: i64) -> Vec<String> {
+    let mut all: Vec<String> = Vec::with_capacity(exec.positional_params.len() + 1);
+    all.push(
+        exec.variables
+            .get("0")
+            .cloned()
+            .unwrap_or_else(|| std::env::args().next().unwrap_or_default()),
+    );
+    for p in &exec.positional_params {
+        all.push(p.clone());
+    }
+    slice_array_zero_based(&all, offset, length)
+}
+
 /// Normalise a path lexically: collapse `.` and `..` components without
 /// touching the filesystem. Used by `cd -L` (default) so symlinks are
 /// preserved in `$PWD` (matches zsh's logical-pwd behaviour).
@@ -6192,6 +6336,17 @@ pub struct ShellExecutor {
     pub local_array_save_stack: Vec<(String, Option<Vec<String>>)>,
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
+    /// True while expanding inside a double-quoted context. Set by
+    /// `BUILTIN_EXPAND_TEXT` mode 1 around `expand_string` calls.
+    /// Used by parameter-flag application to suppress array-only flags
+    /// (`(o)`/`(O)`/`(n)`/`(i)`/`(M)`/`(u)`) — zsh's behaviour: those
+    /// flags only fire in array context.
+    pub in_dq_context: u32,
+    /// IDs of history entries explicitly added during this session
+    /// via `print -s`. `fc -l` uses this to scope listings to just
+    /// the script-added entries (matches zsh's `-c` semantics where
+    /// session history is the only thing visible to the script).
+    pub session_history_ids: Vec<i64>,
     pub autoload_pending: HashMap<String, AutoloadFlags>, // Functions marked for autoload
     // zsh hooks (precmd, preexec, chpwd, etc.)
     pub hook_functions: HashMap<String, Vec<String>>, // hook_name -> [function_names]
@@ -6364,6 +6519,8 @@ impl ShellExecutor {
             local_save_stack: Vec::new(),
             local_array_save_stack: Vec::new(),
             local_scope_depth: 0,
+            in_dq_context: 0,
+            session_history_ids: Vec::new(),
             autoload_pending: HashMap::new(),
             hook_functions: HashMap::new(),
             named_dirs: HashMap::new(),
@@ -10106,7 +10263,23 @@ impl ShellExecutor {
             if let Some(close_paren) = content.find(')') {
                 let flags_str = &content[1..close_paren];
                 let rest = &content[close_paren + 1..];
-                let flags = self.parse_zsh_flags(flags_str);
+                let mut flags = self.parse_zsh_flags(flags_str);
+
+                // In double-quoted context, array-only flags are
+                // no-ops per zsh. Strip them so the join-as-scalar
+                // path returns the original element order. (M) stays
+                // — it modifies `:#pat` filter behavior on the
+                // joined scalar.
+                if self.in_dq_context > 0 {
+                    flags.retain(|f| !matches!(
+                        f,
+                        ZshParamFlag::Sort
+                            | ZshParamFlag::Reverse
+                            | ZshParamFlag::NumericSort
+                            | ZshParamFlag::IndexSort
+                            | ZshParamFlag::Unique
+                    ));
+                }
 
                 // Check for (M) match flag
                 let has_match_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::Match));
@@ -10495,7 +10668,20 @@ impl ShellExecutor {
                 let rest_trimmed = rest.trim_start_matches(' ');
                 let parts: Vec<&str> = rest_trimmed.splitn(2, ':').collect();
                 let offset: i64 = parts[0].trim().parse().unwrap_or(0);
-                let length: Option<usize> = parts.get(1).and_then(|s| s.trim().parse().ok());
+                let length: Option<i64> = parts.get(1).and_then(|s| s.trim().parse().ok());
+
+                // Positionals (`@`/`*`) and arrays slice ELEMENTS,
+                // not chars (1-based, inclusive offset). Matches zsh.
+                if var_name == "@" || var_name == "*" {
+                    let len = length.unwrap_or(-1);
+                    let sliced = slice_positionals(self, offset, len);
+                    return sliced.join(" ");
+                }
+                if let Some(arr) = self.arrays.get(var_name).cloned() {
+                    let len = length.unwrap_or(-1);
+                    let sliced = slice_array_zero_based(&arr, offset, len);
+                    return sliced.join(" ");
+                }
 
                 let start = if offset < 0 {
                     (val.len() as i64 + offset).max(0) as usize
@@ -10504,6 +10690,7 @@ impl ShellExecutor {
                 };
 
                 return if let Some(len) = length {
+                    let len = len as usize;
                     val.chars().skip(start).take(len).collect()
                 } else {
                     val.chars().skip(start).collect()
@@ -11657,6 +11844,11 @@ impl ShellExecutor {
             // zsh alias: $ARGC also equals $#.
             "ARGC" => self.positional_params.len().to_string(),
             "?" | "status" => self.last_status.to_string(),
+            "!" => self
+                .variables
+                .get("!")
+                .cloned()
+                .unwrap_or_else(|| "0".to_string()),
             "EUID" => unsafe { libc::geteuid() }.to_string(),
             "UID" => unsafe { libc::getuid() }.to_string(),
             "EGID" => unsafe { libc::getegid() }.to_string(),
@@ -11914,6 +12106,19 @@ impl ShellExecutor {
 
             // ${var:offset} or ${var:offset:length} - substring
             Some(VarModifier::Substring(offset, length)) => {
+                // For positionals (`@`/`*`) and arrays, slice the
+                // ELEMENTS (1-based, inclusive offset) — not the
+                // chars of the joined string. Matches zsh.
+                if name == "@" || name == "*" {
+                    let len = length.unwrap_or(-1);
+                    let sliced = slice_positionals(self, *offset, len);
+                    return sliced.join(" ");
+                }
+                if let Some(arr) = self.arrays.get(name).cloned() {
+                    let len = length.unwrap_or(-1);
+                    let sliced = slice_array_zero_based(&arr, *offset, len);
+                    return sliced.join(" ");
+                }
                 let v = val.unwrap_or_default();
                 let start = if *offset < 0 {
                     (v.len() as i64 + offset).max(0) as usize
@@ -16259,18 +16464,39 @@ impl ShellExecutor {
                 }
             };
 
-            // In non-interactive (`-c`) mode session history is empty
-            // — zsh's `fc -l` errors with "no such event: <N>". atty
-            // on stdin is the cleanest "is this a real interactive
-            // session?" signal that survives `-c` mode (matches the
-            // gating used by expand_history elsewhere).
-            if !atty::is(atty::Stream::Stdin) {
+            // In non-interactive (`-c`) mode session history is
+            // normally empty — zsh's `fc -l` errors with "no such
+            // event: <N>". But if the script explicitly added to
+            // history via `print -s`, we should be able to list those
+            // entries. Bypass the atty guard when we have session
+            // entries.
+            if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
                 let event = if first > 0 { first.to_string() } else { "1".to_string() };
                 eprintln!("zsh:fc:1: no such event: {}", event);
                 return 1;
             }
 
             let count = if first < 0 { (-first) as usize } else { 16 };
+            // Non-interactive (`-c`) mode with session adds: only
+            // show the entries added during this session, numbered
+            // from 1 (matches zsh's behaviour for `print -s` + `fc -l`
+            // in `-c` scripts). Look up by exact ID so other DB
+            // entries from prior runs don't leak in.
+            let session_only = !atty::is(atty::Stream::Stdin)
+                && !self.session_history_ids.is_empty();
+            if session_only {
+                for (i, &id) in self.session_history_ids.iter().enumerate() {
+                    if let Ok(Some(entry)) = engine.get_by_number(id) {
+                        let n = (i as i64) + 1;
+                        if no_numbers {
+                            println!("{}", entry.command);
+                        } else {
+                            println!("{:>6}  {}", n, entry.command);
+                        }
+                    }
+                }
+                return 0;
+            }
             match engine.recent(count.max(100)) {
                 Ok(mut entries) => {
                     if reverse {
@@ -21980,11 +22206,15 @@ impl ShellExecutor {
             processed.join(separator)
         };
 
-        // Add to history if -s
+        // Add to history if -s — and per zsh, `-s` REPLACES stdout
+        // output (the result goes to history INSTEAD OF stdout).
         if add_to_history {
             if let Some(ref mut engine) = self.history {
-                let _ = engine.add(&output, None);
+                if let Ok(id) = engine.add(&output, None) {
+                    self.session_history_ids.push(id);
+                }
             }
+            return 0;
         }
 
         // Store in variable or print

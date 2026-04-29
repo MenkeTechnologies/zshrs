@@ -628,8 +628,9 @@ fn test_k_flag_with_at_subscript() {
 
 #[test]
 fn test_o_sort_flag_with_at_subscript() {
+    // (o) only fires in array context — no DQ wrapper.
     let (_, output, _) =
-        run_zshrs("arr=(c a b); print -l \"${(o)arr[@]}\"");
+        run_zshrs("arr=(c a b); print -l ${(o)arr[@]}");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
 
@@ -2597,4 +2598,114 @@ fn test_function_keyword_with_parens() {
     // `function name { body }` and `name() { body }` separately.
     let (_, output, _) = run_zshrs("function bar() { echo hello; }; bar");
     assert_eq!(output.trim(), "hello", "got: {output:?}");
+}
+
+#[test]
+fn test_dq_suppresses_array_only_sort_flags() {
+    // zsh: (o)/(O)/(n)/(i)/(u) only fire in array context. Inside DQ
+    // the array is joined as a scalar with original element order.
+    let (_, output, _) = run_zshrs(r#"a=(c b a); print -- "${(o)a}""#);
+    assert_eq!(output.trim(), "c b a", "DQ should preserve order, got: {output:?}");
+}
+
+#[test]
+fn test_no_dq_sort_flags_still_apply() {
+    // No-DQ context: (o) sorts as expected.
+    let (_, output, _) = run_zshrs("a=(c b a); print -- ${(o)a}");
+    assert_eq!(output.trim(), "a b c", "got: {output:?}");
+}
+
+#[test]
+fn test_dq_suppresses_unique_flag() {
+    let (_, output, _) = run_zshrs(r#"a=(c b a c); print -- "${(ou)a}""#);
+    assert_eq!(output.trim(), "c b a c", "DQ should preserve order+dups, got: {output:?}");
+}
+
+#[test]
+fn test_dq_suppresses_natural_sort() {
+    let (_, output, _) = run_zshrs(
+        r#"a=(file10 file2 file1); print -- "${(on)a}""#,
+    );
+    assert_eq!(output.trim(), "file10 file2 file1", "got: {output:?}");
+}
+
+#[test]
+fn test_positional_slice_skip_offset() {
+    // ${@:N:M} — N is "skip N positionals" (0-based, includes \$0
+    // when N=0). Same shape as bash/zsh.
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo \"${@:1:2}\"");
+    assert_eq!(output.trim(), "a b", "got: {output:?}");
+}
+
+#[test]
+fn test_positional_slice_no_length() {
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo \"${@:2}\"");
+    assert_eq!(output.trim(), "b c d e", "got: {output:?}");
+}
+
+#[test]
+fn test_array_slice_offset_skips() {
+    // ${arr:1:2} — skip 1 element, take 2 (0-based offset).
+    let (_, output, _) = run_zshrs(r#"arr=(x y z w); echo "${arr:1:2}""#);
+    assert_eq!(output.trim(), "y z", "got: {output:?}");
+}
+
+#[test]
+fn test_at_subscript_inclusive_range() {
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo \"$@[2,4]\"");
+    assert_eq!(output.trim(), "b c d", "got: {output:?}");
+}
+
+#[test]
+fn test_bang_pid_after_background() {
+    // `cmd &` records pid into $! so wait $! works.
+    let (_, output, _) = run_zshrs("sleep 0.1 & echo $!");
+    let pid = output.trim();
+    assert!(pid.parse::<i64>().is_ok(), "expected numeric pid, got: {pid:?}");
+    assert!(pid != "0", "should be a real pid, got: {pid:?}");
+}
+
+#[test]
+fn test_bang_pid_initial_zero() {
+    let (_, output, _) = run_zshrs(r#"echo "[$!]""#);
+    assert_eq!(output.trim(), "[0]", "got: {output:?}");
+}
+
+#[test]
+fn test_declare_ra_blocks_array_assign() {
+    let (status, _, stderr) = run_zshrs(
+        "declare -ra arr=(a b c); arr=(x y z); echo done",
+    );
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(stderr.contains("read-only"), "stderr: {stderr:?}");
+}
+
+#[test]
+fn test_declare_ra_blocks_append() {
+    let (status, _, stderr) = run_zshrs(
+        "declare -ra arr=(a b c); arr+=(x); echo done",
+    );
+    assert_ne!(status, 0, "should exit non-zero");
+    assert!(stderr.contains("read-only"), "stderr: {stderr:?}");
+}
+
+#[test]
+fn test_print_s_silent_and_records_history() {
+    // `print -s X` saves X to history INSTEAD OF stdout. fc -l in
+    // -c mode shows only the entries added in this session.
+    let (_, output, _) = run_zshrs(
+        r#"print -s "echo from-history"; fc -l"#,
+    );
+    // No "echo from-history" leaked to stdout (only fc -l output).
+    let trimmed = output.trim();
+    assert!(
+        trimmed.contains("echo from-history") && trimmed.contains("1"),
+        "fc -l should list session entry numbered 1, got: {output:?}"
+    );
+    // Make sure print -s didn't echo to stdout itself.
+    assert_eq!(
+        output.lines().filter(|l| l.contains("echo from-history")).count(),
+        1,
+        "print -s should not echo to stdout, got: {output:?}"
+    );
 }

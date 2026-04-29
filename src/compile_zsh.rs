@@ -32,6 +32,12 @@ pub struct ZshCompiler {
     /// pipeline LHS). Decremented when leaving. The post-command
     /// errexit check only fires when this is 0.
     pub errexit_suppress_depth: i32,
+    /// Depth tracker for "currently compiling inside double quotes".
+    /// Bumped when a parent word is DQ-wrapped (`\u{9e}…\u{9e}`) and
+    /// we recurse into its Expansion segments. Used so the
+    /// `${(o/M/i/n/u)…}` fast paths know to pass the DQ-suppression
+    /// sentinel to BUILTIN_PARAM_FLAG.
+    pub dq_context_depth: i32,
 }
 
 impl ZshCompiler {
@@ -44,6 +50,7 @@ impl ZshCompiler {
             continue_patches: Vec::new(),
             return_patches: Vec::new(),
             errexit_suppress_depth: 0,
+            dq_context_depth: 0,
         }
     }
 
@@ -1074,11 +1081,29 @@ impl ZshCompiler {
 
         // Fast path: `${(flags)NAME}` — zsh parameter flags. Emit
         // BUILTIN_PARAM_FLAG with [name, flags] on the stack.
+        // If the whole word is wrapped in raw DNULLs (`\u{9e}`), it's
+        // double-quoted — prefix the flags with `\u{02}` so the
+        // runtime knows to skip array-only flags ((o)/(O)/(n)/(i)/
+        // (M)/(u)) per zsh's DQ semantics.
         if !has_bnull {
             if let Some((flags, name)) = parse_zsh_flag(&untoked) {
+                // DQ context: either the raw word is itself DQ-wrapped,
+                // OR we're recursing into an Expansion segment from a
+                // DQ-wrapped parent (tracked via dq_context_depth).
+                let dq_wrapped = (s.starts_with('\u{9e}')
+                    && s.ends_with('\u{9e}')
+                    && s.len() >= 2)
+                    || self.dq_context_depth > 0;
+                let flags_for_runtime = if dq_wrapped {
+                    let mut f = String::from("\u{02}");
+                    f.push_str(flags);
+                    f
+                } else {
+                    flags.to_string()
+                };
                 let name_const = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(name_const), 0);
-                let flags_const = self.builder.add_constant(Value::str(flags));
+                let flags_const = self.builder.add_constant(Value::str(flags_for_runtime));
                 self.builder.emit(Op::LoadConst(flags_const), 0);
                 self.builder
                     .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FLAG, 2), 0);
@@ -1196,6 +1221,16 @@ impl ZshCompiler {
                     // Value::Array because the option is set).
                     Some(crate::exec::BUILTIN_CONCAT_DISTRIBUTE)
                 };
+                // If the parent word is DQ-wrapped (raw form starts and
+                // ends with DNULL), each Expansion segment inherits the
+                // DQ context. Track via the compiler's
+                // `dq_context_depth` counter so child compile_word_str
+                // calls can see they're being expanded inside DQ
+                // without us having to re-wrap (which would recurse).
+                let parent_is_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                if parent_is_dq {
+                    self.dq_context_depth += 1;
+                }
                 for (i, seg) in segs.iter().enumerate() {
                     match seg {
                         WordSegment::Literal(lit) => {
@@ -1216,6 +1251,9 @@ impl ZshCompiler {
                         }
                     }
                 }
+                if parent_is_dq {
+                    self.dq_context_depth -= 1;
+                }
                 return;
             }
         }
@@ -1232,7 +1270,14 @@ impl ZshCompiler {
         //   command substitution.
         // - Else → Default, full expand_string + braces + glob.
         let preserved = crate::lexer::untokenize_preserve_quotes(s);
-        let mode = expand_text_mode(s, &preserved);
+        // If we're recursing inside a DQ-wrapped parent (tracked via
+        // `dq_context_depth`), force mode 1 so child expansions
+        // suppress array-only flags like the outer DQ does.
+        let mode = if self.dq_context_depth > 0 {
+            1
+        } else {
+            expand_text_mode(s, &preserved)
+        };
         let idx = self.builder.add_constant(Value::str(preserved.as_str()));
         self.builder.emit(Op::LoadConst(idx), 0);
         self.builder.emit(Op::LoadInt(mode as i64), 0);

@@ -993,12 +993,14 @@ fn zshflag_uppercase_scalar() {
 
 #[test]
 fn zshflag_sort_array_ascending() {
-    ok(r#"arr=(c a b); echo "${(o)arr}""#, "a b c\n");
+    // (o) only fires in array context — no surrounding DQ. Inside DQ,
+    // zsh preserves original element order.
+    ok(r#"arr=(c a b); echo ${(o)arr}"#, "a b c\n");
 }
 
 #[test]
 fn zshflag_sort_array_descending() {
-    ok(r#"arr=(c a b); echo "${(O)arr}""#, "c b a\n");
+    ok(r#"arr=(c a b); echo ${(O)arr}"#, "c b a\n");
 }
 
 #[test]
@@ -1077,10 +1079,11 @@ fn zshflag_g_processes_backslash_escapes() {
 
 #[test]
 fn zshflag_n_natural_sort() {
-    // Natural-numeric sort: file2 < file10 (lexicographically file10 would
-    // come first, naturally file2 does).
+    // Natural-numeric sort: file2 < file10 (lexicographically file10
+    // would come first, naturally file2 does). (n) only fires in
+    // array context — no DQ wrapper.
     ok(
-        r#"arr=(file10 file2 file1 file20); echo "${(on)arr}""#,
+        r#"arr=(file10 file2 file1 file20); echo ${(on)arr}"#,
         "file1 file2 file10 file20\n",
     );
 }
@@ -1096,9 +1099,10 @@ fn zshflag_t_type_query() {
 
 #[test]
 fn zshflag_i_case_insensitive_sort() {
-    // `(i)` sorts case-insensitively while preserving the original case.
+    // `(i)` sorts case-insensitively while preserving the original
+    // case. Array-only — no DQ wrapper.
     ok(
-        r#"arr=(Banana apple Cherry); echo "${(i)arr}""#,
+        r#"arr=(Banana apple Cherry); echo ${(i)arr}"#,
         "apple Banana Cherry\n",
     );
 }
