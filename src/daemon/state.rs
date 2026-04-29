@@ -17,8 +17,10 @@ use rusqlite::Connection;
 use tokio::sync::mpsc;
 
 use super::catalog::{self, CatalogSummary};
+use super::history;
 use super::ipc::Frame;
 use super::paths::CachePaths;
+use super::pubsub::{Scope, Subscription};
 use super::Result;
 
 /// One client/shell session.
@@ -70,6 +72,8 @@ pub struct SessionSnapshot {
 pub struct DaemonStateInner {
     pub sessions: BTreeMap<u64, Session>,
     pub next_client_id: u64,
+    pub subscriptions: BTreeMap<u64, Subscription>,
+    pub next_subscription_id: u64,
 }
 
 impl DaemonStateInner {
@@ -77,6 +81,8 @@ impl DaemonStateInner {
         Self {
             sessions: BTreeMap::new(),
             next_client_id: 1,
+            subscriptions: BTreeMap::new(),
+            next_subscription_id: 1,
         }
     }
 }
@@ -85,6 +91,7 @@ impl DaemonStateInner {
 pub struct DaemonState {
     inner: Mutex<DaemonStateInner>,
     catalog: Mutex<Connection>,
+    history_db: Mutex<Connection>,
     pub paths: CachePaths,
     pub started_at: Instant,
     pub start_wall: chrono::DateTime<chrono::Utc>,
@@ -94,14 +101,32 @@ pub struct DaemonState {
 impl DaemonState {
     pub fn new(paths: CachePaths) -> Result<Arc<Self>> {
         let catalog = catalog::open(&paths)?;
+        let history_db = history::open(&paths)?;
         Ok(Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
             catalog: Mutex::new(catalog),
+            history_db: Mutex::new(history_db),
             paths,
             started_at: Instant::now(),
             start_wall: chrono::Utc::now(),
             pid: std::process::id() as i32,
         }))
+    }
+
+    /// Run a closure with mutable access to the history connection.
+    pub fn with_history<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&Connection) -> std::result::Result<T, E>,
+        E: From<rusqlite::Error>,
+    {
+        let conn = self.history_db.lock();
+        f(&conn)
+    }
+
+    /// Total history row count (for `info` op).
+    pub fn history_count(&self) -> rusqlite::Result<i64> {
+        let conn = self.history_db.lock();
+        history::count(&conn)
     }
 
     /// Read-only snapshot of catalog.db stats (table counts + file size).
@@ -165,6 +190,94 @@ impl DaemonState {
     pub fn unregister_session(&self, client_id: u64) {
         let mut g = self.inner.lock();
         g.sessions.remove(&client_id);
+        // Drop every subscription belonging to this client.
+        g.subscriptions.retain(|_, s| s.client_id != client_id);
+    }
+
+    /// Add a subscription. Returns the assigned subscription id, or None if the
+    /// pattern is malformed (caller surfaces the parse error).
+    pub fn add_subscription(
+        &self,
+        client_id: u64,
+        pattern: &str,
+    ) -> std::result::Result<u64, String> {
+        let mut g = self.inner.lock();
+        let id = g.next_subscription_id;
+        g.next_subscription_id += 1;
+        let sub = Subscription::parse(client_id, id, pattern)?;
+        g.subscriptions.insert(id, sub);
+        Ok(id)
+    }
+
+    /// Remove subscriptions matching pattern (exact pattern match). Returns the count
+    /// removed.
+    pub fn remove_subscription_by_pattern(&self, client_id: u64, pattern: &str) -> usize {
+        let mut g = self.inner.lock();
+        let before = g.subscriptions.len();
+        g.subscriptions
+            .retain(|_, s| !(s.client_id == client_id && s.pattern == pattern));
+        before - g.subscriptions.len()
+    }
+
+    /// Remove a subscription by id (only the owning client may unsubscribe).
+    pub fn remove_subscription_by_id(&self, client_id: u64, sub_id: u64) -> bool {
+        let mut g = self.inner.lock();
+        match g.subscriptions.get(&sub_id) {
+            Some(s) if s.client_id == client_id => {
+                g.subscriptions.remove(&sub_id);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// List a client's active subscriptions.
+    pub fn list_subscriptions_for(&self, client_id: u64) -> Vec<Subscription> {
+        let g = self.inner.lock();
+        g.subscriptions
+            .values()
+            .filter(|s| s.client_id == client_id)
+            .cloned()
+            .collect()
+    }
+
+    /// List every active subscription (for `zls --ui-pending` / debugging / `zsubscribe --list --all`).
+    pub fn list_all_subscriptions(&self) -> Vec<Subscription> {
+        let g = self.inner.lock();
+        g.subscriptions.values().cloned().collect()
+    }
+
+    /// Publish an event: fan it out to every matching subscription. Returns the
+    /// number of recipients the event was queued to.
+    pub fn publish(&self, origin: &Scope, topic: &str, frame: Frame) -> usize {
+        let g = self.inner.lock();
+        let mut count = 0;
+        for sub in g.subscriptions.values() {
+            // Use the full Scope-aware match (covers shell/tag/user/* patterns).
+            if !origin.matches_scope(&sub.scope_pat) {
+                continue;
+            }
+            if !super::pubsub::glob_match(&sub.topic_pat, topic) {
+                continue;
+            }
+            if let Some(s) = g.sessions.get(&sub.client_id) {
+                if s.outbound.send(frame.clone()).is_ok() {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// Build a Scope from a session id (for use as event origin).
+    pub fn origin_scope(&self, client_id: u64) -> Option<Scope> {
+        let g = self.inner.lock();
+        let s = g.sessions.get(&client_id)?;
+        Some(Scope {
+            shell_id: s.client_id,
+            tags: s.tags.clone(),
+            user: None,
+        })
     }
 
     pub fn snapshot_sessions(&self) -> Vec<SessionSnapshot> {
