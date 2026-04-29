@@ -1102,7 +1102,13 @@ impl ZshCompiler {
         // no modifier). Covers `$x`, `$1`, `$#`, `$?`, `$!`, etc. — the
         // most common case in real scripts. Emits BUILTIN_GET_VAR
         // directly without going through the runtime expand path.
-        if !has_bnull {
+        // Skip when the raw word has DNULL/SNULL quote markers — those
+        // signal an internal quote boundary (e.g. `"$a"bar` becomes
+        // DNULL+$+a+DNULL+bar; after untokenize it looks like `$abar`
+        // and the fast-path reads the wrong name). The bridge below
+        // handles those correctly by routing through expand_string.
+        let has_quote_markers = s.contains('\u{9d}') || s.contains('\u{9e}');
+        if !has_bnull && !has_quote_markers {
             if let Some(name) = bare_var_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);

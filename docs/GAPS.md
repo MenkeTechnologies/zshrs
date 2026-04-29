@@ -1415,6 +1415,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `$#fpath` returned 0 in zshrs because the executor's `fpath` (Vec<PathBuf>) field was populated from FPATH but the user-visible `arrays["fpath"]` was not. So `fpath+=(/foo)` replaced with a 1-entry array instead of appending to the inherited 43 entries. Mirror `self.fpath` into `arrays["fpath"]` at executor init. Tests: `test_fpath_inherited_from_env`, `test_fpath_append_keeps_existing`.
 
+### `"$a"bar` (quoted-var followed by literal) returned empty
+
+- The bare-var fast-path in `compile_word_str` matched after `untokenize` stripped DNULL markers, so `"$a"bar` (raw `\u{9e}$a\u{9e}bar`) became `$abar` and the fast-path looked up nonexistent `abar`. Skip the fast-path when the raw word contains DNULL/SNULL quote markers — the bridge below handles the segment-split correctly. Tests: `test_dq_var_concat_with_literal_suffix`, `test_dq_var_concat_with_literal_prefix`, `test_dq_var_with_underscore_suffix`, `test_dq_var_double_concat`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
