@@ -1151,7 +1151,33 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `$#NAME` (no braces) is zsh shorthand for `${#NAME}` (string length / array element count). zshrs's `compile_word_str` had a fast-path for `$NAME` and `$#` (positional count alone), but no path for the `$#NAME` shape — the dispatcher fell through to a generic literal emit. Added a fast-path in `compile_word_str` that detects `^$#[A-Za-z_][A-Za-z0-9_]*$` and emits `BUILTIN_PARAM_LENGTH` directly. Tests: `test_dollar_hash_name_bare_array_length`, `test_dollar_hash_name_bare_string_length`.
 
-## Still open (sixty-seventh-pass — remaining)
+## Closed (sixty-eighth-pass)
+
+### `${a:A}` left literal `./` segments in non-existent paths
+
+- `a=./foo; echo ${a:A}` returned `<cwd>/./foo` instead of zsh's `<cwd>/foo`. `std::fs::canonicalize` requires the path to exist; on failure we fell through to a plain `cwd.join(&result)` that didn't lexically resolve `.` / `..` segments. Fixed by walking `path.components()` and dropping `CurDir` while popping on `ParentDir` — produces a zsh-style canonical path even for files that don't exist yet. Test: `test_modifier_capital_A_canonicalizes_dot`.
+
+### `${a:U}` / `${a:L}` modifiers silently returned empty
+
+- zsh emits `unrecognized modifier `U'` for these (they're bash-only); zshrs returned empty with no diagnostic. Added `'U' | 'L' | 'V' | 'X'` arms in `apply_history_modifiers` that print the zsh-format error to stderr and clear `result` to match zsh's "expansion fails completely" behavior. Also extended `is_history_modifier` to include U/L/V/X so they reach the apply-loop. Test: `test_modifier_unknown_emits_error_and_clears`.
+
+### Bash case modifiers `${var^^}` / `${var,,}` accepted instead of rejected
+
+- These are bash-only; zsh rejects with "bad substitution". zshrs implemented them, diverging from zsh's error contract. Replaced the implementations in `expand_braced_variable` with explicit "bad substitution" error emit + empty return. Gated to NOT trigger on `${(j:,:)…}` (legitimate comma inside flag group) — only fires when `^` / `,` appears after a plain identifier name. Test: `test_bash_caret_caret_rejected`. Updated existing tree-walker tests `param_uppercase` / `param_lowercase` to assert the rejection (they were testing the wrong, bash-style behavior).
+
+### `$(c1)$(c2)` cmd-subst concatenation dropped second result
+
+- `echo $(echo foo)$(echo bar)` printed `foo` instead of `foobar`. `strip_cmd_subst` only checked `starts_with("$(")` and `ends_with(')')` — so it matched the WHOLE `$(echo foo)$(echo bar)` as one cmd-subst, ran `echo foo)$(echo bar` as a malformed script, and dropped the second output. Added paren-balance check that rejects when an unmatched `)` appears mid-string, forcing the segment-split path which properly emits two separate cmd-substs and concatenates. Tests: `test_cmd_subst_concat_two_substitutions`, `test_cmd_subst_concat_three_substitutions`.
+
+### `typeset -x name` cleared the existing variable's value
+
+- `a=hello; typeset -x a; echo $a` printed empty instead of `hello`. The bare-name path in `builtin_typeset` did `self.variables.insert(arg, String::new())` unconditionally, clobbering existing values. Fixed: only insert empty when the variable doesn't already exist (preserve attribute attachment). Also wired `+x` to `env::remove_var` so the export attribute is properly stripped while keeping the shell value. Tests: `test_typeset_dash_x_preserves_value`, `test_typeset_plus_x_preserves_value`.
+
+### `((a/=3))` returned `3.3333333333333335` instead of `3`
+
+- zsh's compound `((..))` arithmetic does integer division when both operands are integer; zshrs's ArithCompiler emits `Op::Div` (float-only). Added a sniff in `compile_arith` — if the inner expression contains `/`, route through `BUILTIN_ARITH_EVAL` (the integer-aware MathEval path used by `$((..))`). Result is then reused for the truthiness/status gate so the assignment doesn't run twice. Tests: `test_arith_compound_div_assign_integer`, `test_arith_div_with_float_stays_float`.
+
+## Still open (sixty-eighth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
@@ -1162,9 +1188,8 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 - **`${(v)assoc}` insertion order** — zshrs returns hash iteration order; zsh preserves insertion order. Tests show `${(v)h}` for `h=(a 1 b 2)` returns `2 1` instead of `1 2`. Needs assoc-array storage that preserves insertion order (IndexMap).
 - **`${(s:l:)hello}` empty-element handling** — zsh drops empty elements when splitting (`hello` split by `l` → `he`, `o`); zshrs keeps empties (`he`, ``, `o`). Niche.
 - **`${#:-empty}` length-of-default** — zsh returns 5 (length of "empty"); zshrs returns 0. Esoteric edge case in `${#name:-default}` parsing.
-- **`$0` in `-c` mode** — zshrs returns `./target/debug/zshrs` (full argv0); zsh returns `zsh` (just the basename). Cosmetic but leaks paths in user scripts that log `$0`.
-- **`set` noargs print all variables** — `set` with no args should dump every shell parameter in name=value form. zshrs prints ~10 lines; zsh prints ~480. Massive output diff; deferred (needs full param-table walk + assoc/array formatting).
-- **`${a:^b}` zip-arrays** — zsh's interleave-arrays operator. `a=(1 2 3) b=(x y z); print ${a:^b}` should yield `1 x 2 y 3 z`. Not implemented.
+- **`*` glob ordering caseglob** — zsh sorts `bench bins Cargo.lock …` (case-insensitive); zshrs sorts `Cargo.lock … bench bins` (case-sensitive). Glob expansion needs to honor the `caseglob` option (default-on in zsh).
+- **`declare -A h; h[foo bar]=baz`** — zsh: "bad pattern: h[foo"; zshrs: "command not found: h[foo". Both error; format/source differs.
 
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.

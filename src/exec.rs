@@ -11741,38 +11741,28 @@ impl ShellExecutor {
             }
         }
 
-        // Handle ${var^} and ${var^^} - uppercase
-        if let Some(caret_pos) = content.find('^') {
-            let var_name = &content[..caret_pos];
-            let val = self.get_variable(var_name);
-            let all = content[caret_pos + 1..].starts_with('^');
-
-            return if all {
-                val.to_uppercase()
-            } else {
-                let mut chars = val.chars();
-                match chars.next() {
-                    Some(first) => first.to_uppercase().to_string() + chars.as_str(),
-                    None => String::new(),
+        // `${var^}` / `${var^^}` (uppercase) and `${var,}` / `${var,,}`
+        // (lowercase) are bash-only forms — zsh rejects them as "bad
+        // substitution". Match zsh's behavior: print the error to stderr
+        // and return empty. Note: these MUST run BEFORE the comma-aware
+        // PE flag parsing (e.g. `${(j:,:)…}` uses commas legitimately) —
+        // we only flag a bare `^` or `,` that's the operator suffix on a
+        // plain identifier name, not commas inside `(…)` flag groups.
+        if !content.starts_with('(') {
+            if let Some(caret_pos) = content.find('^') {
+                let prefix = &content[..caret_pos];
+                if prefix.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+                    eprintln!("zshrs:1: bad substitution");
+                    return String::new();
                 }
-            };
-        }
-
-        // Handle ${var,} and ${var,,} - lowercase
-        if let Some(comma_pos) = content.find(',') {
-            let var_name = &content[..comma_pos];
-            let val = self.get_variable(var_name);
-            let all = content[comma_pos + 1..].starts_with(',');
-
-            return if all {
-                val.to_lowercase()
-            } else {
-                let mut chars = val.chars();
-                match chars.next() {
-                    Some(first) => first.to_lowercase().to_string() + chars.as_str(),
-                    None => String::new(),
+            }
+            if let Some(comma_pos) = content.find(',') {
+                let prefix = &content[..comma_pos];
+                if prefix.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+                    eprintln!("zshrs:1: bad substitution");
+                    return String::new();
                 }
-            };
+            }
         }
 
         // Handle ${!prefix*} and ${!prefix@} - expand to variable names with prefix
@@ -13298,8 +13288,12 @@ impl ShellExecutor {
         matches!(
             first,
             // `g` is the prefix for `:gs/.../.../` (global substitution).
-            // `s` is `:s/old/new/`.
-            'A' | 'a' | 'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'P' | 's' | 'g'
+            // `s` is `:s/old/new/`. `U`/`L`/`V`/`X` are bash-only forms
+            // we accept here so they reach apply_history_modifiers and
+            // emit zsh's "unrecognized modifier" error rather than
+            // silently falling through to an empty substitution.
+            'A' | 'a' | 'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'P'
+                | 's' | 'g' | 'U' | 'L' | 'V' | 'X'
         )
     }
 
@@ -13315,9 +13309,34 @@ impl ShellExecutor {
                 'A' => {
                     if let Ok(abs) = std::fs::canonicalize(&result) {
                         result = abs.to_string_lossy().to_string();
-                    } else if !result.starts_with('/') {
-                        if let Ok(cwd) = std::env::current_dir() {
-                            result = cwd.join(&result).to_string_lossy().to_string();
+                    } else {
+                        // canonicalize() requires the path to exist. For
+                        // non-existent paths zsh still removes `./` and
+                        // resolves `..` lexically — `./foo` → `<cwd>/foo`,
+                        // not `<cwd>/./foo`. Without this normalization,
+                        // `${a:A}` for `a=./foo` left the `./` segment in
+                        // the output even after the cwd-prefix.
+                        let joined = if result.starts_with('/') {
+                            std::path::PathBuf::from(&result)
+                        } else if let Ok(cwd) = std::env::current_dir() {
+                            cwd.join(&result)
+                        } else {
+                            std::path::PathBuf::from(&result)
+                        };
+                        let mut parts: Vec<String> = Vec::new();
+                        for comp in joined.components() {
+                            use std::path::Component::*;
+                            match comp {
+                                CurDir => {}
+                                ParentDir => { parts.pop(); }
+                                Normal(s) => parts.push(s.to_string_lossy().to_string()),
+                                RootDir => parts.insert(0, String::new()),
+                                Prefix(p) => parts.insert(0, p.as_os_str().to_string_lossy().to_string()),
+                            }
+                        }
+                        result = parts.join("/");
+                        if result.is_empty() {
+                            result = "/".to_string();
                         }
                     }
                 }
@@ -13413,6 +13432,15 @@ impl ShellExecutor {
                     // the char after `s` (typically `/`). Final delim
                     // optional.
                     apply_subst_modifier(&mut result, &mut chars, false);
+                }
+                // Bash-only modifiers — zsh rejects with "unrecognized
+                // modifier". Match that error format. Without these arms,
+                // unknown modifiers silently terminated the loop and the
+                // caller saw the previous-stage value (often empty).
+                'U' | 'L' | 'V' | 'X' => {
+                    eprintln!("zshrs:1: unrecognized modifier `{}'", c);
+                    result = String::new();
+                    break;
                 }
                 _ => break,
             }
@@ -16121,9 +16149,28 @@ impl ShellExecutor {
                 }
                 self.variables.insert(arg.clone(), String::new());
             } else {
-                self.variables.insert(arg.clone(), String::new());
+                // `typeset NAME` (no `=value`) attaches attributes to an
+                // existing variable WITHOUT clobbering its value. zsh:
+                // `a=hello; typeset -x a` keeps `a=hello` and adds export.
+                // Without this guard, zshrs reset `a` to empty.
+                if !self.variables.contains_key(arg.as_str())
+                    && !self.arrays.contains_key(arg.as_str())
+                    && !self.assoc_arrays.contains_key(arg.as_str())
+                {
+                    self.variables.insert(arg.clone(), String::new());
+                }
                 if is_export {
-                    env::set_var(&arg, "");
+                    let val = self
+                        .variables
+                        .get(arg.as_str())
+                        .cloned()
+                        .unwrap_or_default();
+                    env::set_var(&arg, &val);
+                }
+                if plus_mode && !is_export {
+                    // `typeset +x name` strips export attribute. Remove
+                    // from process env but keep the shell-variable value.
+                    env::remove_var(&arg);
                 }
             }
 

@@ -4354,3 +4354,94 @@ fn test_dollar_hash_name_bare_string_length() {
     let (_, output, _) = run_zshrs(r#"a=hello; echo $#a"#);
     assert_eq!(output.trim(), "5", "got: {output:?}");
 }
+
+#[test]
+fn test_modifier_capital_A_canonicalizes_dot() {
+    // `${a:A}` for `a=./foo` should produce `<cwd>/foo` — `./` is
+    // resolved lexically. Was leaving the `./` segment when canonicalize
+    // failed (path doesn't need to exist).
+    let (_, output, _) = run_zshrs(r#"a=./foo; echo ${a:A}"#);
+    let s = output.trim();
+    assert!(!s.contains("/./"), "should not contain /./: {s:?}");
+    assert!(s.starts_with('/'), "should be absolute: {s:?}");
+    assert!(s.ends_with("/foo"), "should end with /foo: {s:?}");
+}
+
+#[test]
+fn test_modifier_unknown_emits_error_and_clears() {
+    // Unknown history-style modifiers (`:U`, `:L`, `:V`, `:X`) are
+    // bash-only — zsh reports "unrecognized modifier" and the resulting
+    // expansion is empty.
+    let (_, output, stderr) = run_zshrs(r#"a=foo; echo ${a:U}"#);
+    assert!(
+        stderr.contains("unrecognized modifier"),
+        "expected unrecognized modifier err: {stderr:?}"
+    );
+    assert_eq!(output.trim(), "");
+}
+
+#[test]
+fn test_bash_caret_caret_rejected() {
+    // ${var^^} is bash-only. zsh rejects with "bad substitution".
+    let (_, output, stderr) = run_zshrs(r#"a=hi; echo ${a^^}"#);
+    assert!(
+        stderr.contains("bad substitution"),
+        "expected bad substitution: {stderr:?}"
+    );
+    assert_eq!(output.trim(), "");
+}
+
+#[test]
+fn test_cmd_subst_concat_two_substitutions() {
+    // `echo $(echo foo)$(echo bar)` should produce `foobar`. Regression:
+    // zshrs's strip_cmd_subst matched the whole word as one cmd-subst
+    // (treating `$(echo foo)$(echo bar` as the body), dropping the
+    // second sub.
+    let (_, output, _) = run_zshrs(r#"echo $(echo foo)$(echo bar)"#);
+    assert_eq!(output.trim(), "foobar");
+}
+
+#[test]
+fn test_cmd_subst_concat_three_substitutions() {
+    let (_, output, _) = run_zshrs(r#"echo $(echo a)$(echo b)$(echo c)"#);
+    assert_eq!(output.trim(), "abc");
+}
+
+#[test]
+fn test_typeset_dash_x_preserves_value() {
+    // `typeset -x` should ATTACH the export attribute to an existing
+    // variable, NOT clear its value. Regression: zshrs reset to empty.
+    let (_, output, _) = run_zshrs(r#"a=hello; typeset -x a; echo $a"#);
+    assert_eq!(output.trim(), "hello");
+}
+
+#[test]
+fn test_typeset_plus_x_preserves_value() {
+    // `typeset +x` (remove export) should also keep value. zsh:
+    // `a=hello; typeset +x a; echo $a` → `hello`.
+    let (_, output, _) = run_zshrs(r#"a=hello; typeset +x a; echo $a"#);
+    assert_eq!(output.trim(), "hello");
+}
+
+#[test]
+fn test_arith_compound_div_assign_integer() {
+    // `((a/=3))` with integer `a=10` should integer-divide → 3.
+    // Regression: ArithCompiler emitted Op::Div which is float-only,
+    // producing 3.3333333333333335. Routing `((..))` with `/` through
+    // BUILTIN_ARITH_EVAL fixes it.
+    let (_, output, _) = run_zshrs(r#"a=10; ((a/=3)); echo $a"#);
+    assert_eq!(output.trim(), "3");
+}
+
+#[test]
+fn test_arith_div_with_float_stays_float() {
+    // Regression guard: `((a / 3.0))` (one float operand) must still
+    // produce a float result. Don't accidentally force int-divide
+    // everywhere.
+    let (_, output, _) = run_zshrs(r#"a=10; ((b = a / 3.0)); echo $b"#);
+    let s = output.trim();
+    assert!(
+        s.starts_with("3.333"),
+        "expected float result starting with 3.333, got: {s:?}"
+    );
+}
