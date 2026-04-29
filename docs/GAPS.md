@@ -1031,7 +1031,25 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh emits `zsh:fg:1: no job control in this shell.` (with trailing period — quirky). Updated both messages. Test: `test_fg_bg_no_job_control_message`.
 
-## Still open (fifty-ninth-pass — remaining)
+## Closed (sixtieth-pass — `kill -l` ordering + unknown number + `${(@P)}` indirect array)
+
+### `kill -l` listed signals in declaration order, not number order
+
+- zsh's `kill -l` prints the signal-name list ordered by signal number (HUP INT QUIT ILL TRAP ABRT EMT FPE …). zshrs was iterating the signal_map in declaration order which differed because the map groups by user-relevant categories instead. Sort by signal number before joining. Test: `test_kill_l_lists_signals_in_number_order`.
+
+### `kill -l 100` errored "unknown signal: 100" instead of passing through
+
+- zsh: unknown signal numbers print the number unchanged (`kill -l 100` → `100`). Removed the eprintln-and-no-output path; print the raw number when no name match. Test: `test_kill_l_unknown_number_passes_through`.
+
+### macOS `EMT` signal missing from `kill -l` output
+
+- macOS has SIGEMT (signal 7) which Linux doesn't. zsh on macOS lists it; zshrs's signal_map didn't. Added `#[cfg(target_os = "macos")]` entry for EMT. Folded into the "kill -l ordering" test.
+
+### `${(@P)var}` returned the raw var name instead of dereferencing
+
+- The `'P'` arm in BUILTIN_PARAM_FLAG only handled `St::S` (scalar). When `(@)` ran first and forced state to `St::A(["x"])`, the P arm's `a => a` arm left it alone — so `${(@P)var}` returned `x` (the var name) instead of `hello` (its value). Added an `St::A(names)` branch that maps each element through `get_variable`. Test: `test_param_flag_at_P_indirects_each_element`.
+
+## Still open (sixtieth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
