@@ -1361,7 +1361,45 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh accepts both `[!class]` and `[^class]` for negation; regex only accepts `^`. zshrs's glob-to-regex passed `!` through as a literal, so `[!fo]` matched the literal char `!`. Translate a leading `!` after `[` to `^`. Tests: `test_pattern_class_negation_with_bang`, `test_pattern_class_negation_caret_still_works`, `test_pattern_class_with_negation_matches_others`.
 
-## Still open (seventy-fourth-pass — remaining)
+## Closed (seventy-fifth-pass)
+
+### `\$` and `\` escape lost / corrupted in unquoted echo
+
+- `echo \$` printed literal `\$` instead of `$`. `echo \$a` printed bare `\` (with `$a` mangled). For `a=foo; echo \$a`, the `\` was passed through as literal then echo's escape interpreter saw `\f` later in the stream and emitted form-feed. Pre-process `\$`, `\``, `\"`, `\'`, `\\` into `\x00X` literal markers in BUILTIN_EXPAND_TEXT's Default mode (same as the DQ mode already does). Tests: `test_escape_dollar_sign_literal`, `test_escape_dollar_var_literal`, `test_escape_backtick_literal`.
+
+### `$((1+2))$((3+4))` arith-subst concat dropped tail
+
+- Same shape as the iter-67 cmd-subst-concat bug. `strip_arith_subst` checked only that `inner` had a balanced count of `(` / `)` — `1+2))$((3+4` has `(((` and `)))` so the count is +1 -3 +2 = 0 → matched, ran the whole malformed expr, errored "illegal character: )" and fell through to 0. Walk inner counting depth and reject if depth ever drops below zero (`))` mid-string means we closed the outer `$((` early). Tests: `test_arith_subst_concat`, `test_arith_subst_concat_three`.
+
+### `declare -p` for assoc-with-export wrongly used `export -A`
+
+- `declare -Ax h` should print `typeset -Ax h=( )` (zsh reserves the `export` keyword for scalars/integers). Added a `has_non_scalar_attr` check (A/a/F/E) that keeps the typeset form. Test: `test_declare_p_assoc_export_uses_typeset`.
+
+### `declare -p` for float-exp printed `-F` instead of `-E`
+
+- `typeset -E a=3.14` (scientific format) was tracked as `VarKind::Float` but the `-E` vs `-F` distinction was lost. Added `float_exp: bool` to `VarAttr` and emit `-E` when set. Test: `test_declare_p_float_E_flag`.
+
+### `${arr[N]+set}` (no-colon `+`) returned the value, not `set`
+
+- The OOB-modifier path I added in iter 71 only handled `:-`/`:+`/`:?`/`:=` (colon variants — test for empty). The no-colon variants test SET-NESS (key present / index in bounds), not emptiness. Added `array_element_is_set` helper and `-`/`+`/`?` handlers in the bracket-modifier path. Tests: `test_array_element_no_colon_set`, `test_array_element_no_colon_set_oob`, `test_assoc_element_no_colon_set`, `test_assoc_element_no_colon_unset`.
+
+### `${(t)arr}` missing `-unique` marker
+
+- `typeset -aU arr` should report `array-unique`; zshrs emitted just `array`. Added `-unique` to `VarAttr::format_zsh`. Test: `test_t_flag_array_unique`.
+
+### `[[ a -nt b ]]` returned true when one file missing
+
+- bash's "missing == infinitely-old" semantics; zsh strictly requires BOTH files to exist. Removed the `(Some, None) => true` fallback and `(None, Some) => true` for `-ot`. Tests: `test_test_nt_both_must_exist`, `test_test_ot_missing_is_false`.
+
+### `[[ $a == $b ]]` returned false because RHS wasn't variable-expanded
+
+- The `==` / `=` / `!=` path treated the RHS as a literal pattern (untokenize then LoadConst), bypassing variable expansion. So `$b` was matched as the literal string `"$b"`, never the value. Fix: detect `$` / backtick in the RHS and route through `compile_word_str` (with DQ wrapping to suppress filesystem-glob); literal RHS still uses the fast path. Tests: `test_double_bracket_var_eq_var`, `test_double_bracket_var_eq_var_unequal`, `test_double_bracket_glob_pattern_still_works`.
+
+### Empty assoc `=( )` had double space
+
+- `declare -A h; declare -p h` printed `typeset -A h=(  )` (2 spaces); zsh: `typeset -A h=( )` (1 space). Special-case empty assoc formatted line. (Empty arrays keep zsh's 2-space form.)
+
+## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
