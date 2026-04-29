@@ -85,6 +85,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
 // -------- Handlers --------
 
 async fn op_info(state: &Arc<DaemonState>) -> OpResult {
+    let catalog = state.catalog_summary().ok();
     Ok(json!({
         "daemon_pid": state.pid,
         "daemon_uptime_ms": state.uptime_ms(),
@@ -94,6 +95,7 @@ async fn op_info(state: &Arc<DaemonState>) -> OpResult {
         "started_at": state.start_wall.to_rfc3339(),
         "cache_root": state.paths.root.display().to_string(),
         "log_path": state.paths.log.display().to_string(),
+        "catalog": catalog,
     }))
 }
 
