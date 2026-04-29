@@ -7175,6 +7175,58 @@ pub fn format_int_in_base(n: i64, base: u32) -> String {
     }
 }
 
+/// Expand POSIX character-class patterns (`[[:alpha:]]`, `[[:digit:]]`,
+/// etc.) to enumerated char ranges that the underlying `glob` crate
+/// understands. Each known class translates to its standard ASCII
+/// range; unknown classes pass through unchanged.
+fn expand_posix_char_classes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '['
+            && i + 2 < chars.len()
+            && chars[i + 1] == ':'
+        {
+            // Find `:]` close
+            let mut j = i + 2;
+            while j + 1 < chars.len() && !(chars[j] == ':' && chars[j + 1] == ']') {
+                j += 1;
+            }
+            if j + 1 < chars.len() && chars[j] == ':' && chars[j + 1] == ']' {
+                let name: String = chars[i + 2..j].iter().collect();
+                let range = match name.as_str() {
+                    "alpha" => "a-zA-Z",
+                    "alnum" => "a-zA-Z0-9",
+                    "digit" => "0-9",
+                    "xdigit" => "0-9a-fA-F",
+                    "lower" => "a-z",
+                    "upper" => "A-Z",
+                    "space" => " \\t\\n\\r\\v\\f",
+                    "blank" => " \\t",
+                    "cntrl" => "\\x00-\\x1f\\x7f",
+                    "print" => "\\x20-\\x7e",
+                    "graph" => "\\x21-\\x7e",
+                    "punct" => "!-/:-@\\[-`{-~",
+                    _ => "",
+                };
+                if !range.is_empty() {
+                    // Replace `[:class:]` (NOT including the outer `[`/`]`)
+                    // — caller's outer brackets remain. Output form:
+                    // `[a-zA-Z]` for `[[:alpha:]]`, `[a-zA-Zfoo]` for
+                    // `[[:alpha:]foo]`.
+                    out.push_str(range);
+                    i = j + 2;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
 impl VarAttr {
     /// Format the attribute as zsh's `(t)` output: a base kind
     /// (`scalar`, `integer`, `float`, `array`, `association`) followed
@@ -9937,6 +9989,20 @@ impl ShellExecutor {
                 }
             }
             out
+        } else {
+            glob_pattern
+        };
+
+        // POSIX character classes: `[[:alpha:]]`, `[[:digit:]]` etc.
+        // The `glob` crate doesn't recognise the `[:class:]` syntax —
+        // convert each known class to its enumerated char range so
+        // the underlying matcher sees a plain char-class. Done here
+        // (not at the lexer) so the substitution survives all the
+        // way to glob::glob_with(). Tracks: alnum, alpha, blank,
+        // cntrl, digit, graph, lower, print, punct, space, upper,
+        // xdigit. Each translates to ranges like `0-9`/`a-zA-Z`.
+        let glob_pattern = if glob_pattern.contains("[:") {
+            expand_posix_char_classes(&glob_pattern)
         } else {
             glob_pattern
         };
@@ -18789,8 +18855,11 @@ impl ShellExecutor {
         while i < args.len() {
             match args[i].as_str() {
                 "-c" | "--clear" => {
-                    // Clear history - need mutable access
-                    eprintln!("history: clear not supported in this mode");
+                    // zsh's `history` is a synonym for `fc -l`; it
+                    // doesn't accept `-c` (bash-only). Match zsh's
+                    // diagnostic format so user scripts that probe
+                    // for the bash-style flag see the same error.
+                    eprintln!("zshrs:history:1: bad option: -c");
                     return 1;
                 }
                 "-a" | "--all" => show_all = true,

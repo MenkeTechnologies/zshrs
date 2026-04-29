@@ -1628,17 +1628,25 @@ impl<'a> ZshParser<'a> {
             // Parse body
             let body = self.parse_program();
 
-            // Get terminator
+            // Get terminator. Set incasepat=1 BEFORE the zshlex
+            // advance so the next token (the next arm's pattern, like
+            // `[a-z]`) gets tokenized in pattern context. Without
+            // this, a `[`-prefixed pattern after the FIRST arm became
+            // Inbrack instead of String and the pattern-loop bailed
+            // out with "expected ')' in case pattern".
             let terminator = match self.lexer.tok {
                 LexTok::Dsemi => {
+                    self.lexer.incasepat = 1;
                     self.lexer.zshlex();
                     CaseTerm::Break
                 }
                 LexTok::Semiamp => {
+                    self.lexer.incasepat = 1;
                     self.lexer.zshlex();
                     CaseTerm::Continue
                 }
                 LexTok::Semibar => {
+                    self.lexer.incasepat = 1;
                     self.lexer.zshlex();
                     CaseTerm::TestNext
                 }
