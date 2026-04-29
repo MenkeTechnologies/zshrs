@@ -6342,3 +6342,13 @@ fn test_print_P_color_no_extra_bold() {
     let (_, output, _) = run_zshrs(r#"print -P "%B%F{red}r%f%b""#);
     assert_eq!(output.as_bytes(), b"\x1b[1m\x1b[31mr\x1b[39m\x1b[0m\n");
 }
+
+#[test]
+fn test_which_reserved_word_csh_style() {
+    // `which local` (csh-style whence) should output
+    // `local: shell reserved word` matching zsh. zshrs printed
+    // just `local` because the csh_style branch wasn't covered
+    // for reserved-word names.
+    let (_, output, _) = run_zshrs("which local");
+    assert!(output.contains("shell reserved word"), "got: {}", output);
+}
