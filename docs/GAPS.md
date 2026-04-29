@@ -1327,7 +1327,41 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - Added `ZshParamFlag::At` enum variant and `@` handling in `parse_zsh_flags`. The DQ-context flag-strip block now keeps array-only flags (Sort/Reverse/Unique/etc.) when `@` is explicitly present. Full DQ-with-`@` element-by-element splicing still needs more work; this iteration handles parsing + flag retention. (Full-suite verification: 512 tests green.)
 
-## Still open (seventy-third-pass — remaining)
+## Closed (seventy-fourth-pass)
+
+### `${a:?}` error used bash phrasing "parameter null or not set"
+
+- zsh emits "parameter not set" for both `${a:?}` and `${a?}`. zshrs used the bash form. Replaced both occurrences in `apply_var_modifier` and `expand_braced_variable`. Test: `test_param_qmark_no_msg_uses_zsh_format`.
+
+### Paren patterns `(?)`, `(*)`, `(foo|bar)` not recognized in replace
+
+- The has-glob trigger in `BUILTIN_PARAM_REPLACE` only fired on `?`/`*`/`[`/`]`. `(...)` patterns fell into the literal-string path and matched nothing. Added `(` to the trigger set and changed glob-to-regex to keep `(`/`)`/`|` as regex group/alternation operators (instead of escaping them as literals). Tests: `test_pattern_paren_question_mark_matches_one_char`, `test_pattern_paren_star_matches_anything`, `test_pattern_alternation_in_replace`.
+
+### `pushd` / `popd` printed dir stack in non-interactive mode
+
+- zsh's `-c` mode silently performs the cd; only explicit `dirs` prints. zshrs printed the stack on every push/pop. Gated the print on `stdin().is_terminal()` so non-interactive sessions stay silent. Test: `test_pushd_popd_silent_in_noninteractive`.
+
+### `dirs -v` used space-padding instead of TAB
+
+- zsh's `dirs -v` separates index from path with a real `\t` character (tab-aligned). zshrs used `{:2}  ` space-pad. Switched to `{}\t{}`. Test: `test_dirs_v_uses_tab_separator`.
+
+### `print_dir_stack` showed absolute paths instead of `~/...`
+
+- zsh's dir-stack listing replaces `$HOME` prefix with `~`. zshrs printed full `/Users/wizard/...` paths. Added a tilde-compress helper. (No standalone test — covered by the `dirs` interactive-mode probe.)
+
+### `((a *= 1.5))` int → float promotion
+
+- ArithCompiler couldn't parse float literals; mixed-mode `int *= float` produced a wrong int result. Extended `compile_arith`'s "needs_eval" sniff to route any expression containing `.`, `e`, or `E` through `BUILTIN_ARITH_EVAL` (MathEval handles floats correctly). Test: `test_arith_int_times_float_promotes`.
+
+### Bare `${assoc}` returned empty instead of joined values
+
+- For `declare -A h; h[k]=v; ${h}` — zsh returns joined values (`v`); zshrs returned empty. Two issues: (1) `declare -A` creates `variables[name]=""` as a side effect that satisfied the variables.get() call before the assoc check; (2) the assoc->scalar path returned `String::new()` even when entries existed. Fixed: skip the variables.get() lookup when an assoc with the same name has entries, AND return joined values from assoc on the fallback path. Test: `test_assoc_bare_returns_joined_values`.
+
+### `[!fo]` class negation not recognized in replace patterns
+
+- zsh accepts both `[!class]` and `[^class]` for negation; regex only accepts `^`. zshrs's glob-to-regex passed `!` through as a literal, so `[!fo]` matched the literal char `!`. Translate a leading `!` after `[` to `^`. Tests: `test_pattern_class_negation_with_bang`, `test_pattern_class_negation_caret_still_works`, `test_pattern_class_with_negation_matches_others`.
+
+## Still open (seventy-fourth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).

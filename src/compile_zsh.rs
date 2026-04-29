@@ -2361,7 +2361,14 @@ impl ZshCompiler {
             || inner_arith.contains("&=")
             || inner_arith.contains("^=")
             || inner_arith.contains("<<=")
-            || inner_arith.contains(">>=");
+            || inner_arith.contains(">>=")
+            // Float literals and exponents — ArithCompiler's lexer
+            // can't parse them. Route through MathEval which has
+            // full float support including int→float promotion on
+            // mixed-mode compound assigns (`((a *= 1.5))`).
+            || inner_arith.contains('.')
+            || inner_arith.contains('e')
+            || inner_arith.contains('E');
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);

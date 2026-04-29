@@ -5053,3 +5053,107 @@ fn test_substring_neg_length_with_offset() {
     let (_, output, _) = run_zshrs(r#"a=hello; echo "${a:1:-1}""#);
     assert_eq!(output.trim(), "ell");
 }
+
+#[test]
+fn test_param_qmark_no_msg_uses_zsh_format() {
+    // `${var:?}` should emit "parameter not set" (zsh format), NOT
+    // "parameter null or not set" (bash). Regression: zshrs used the
+    // bash form.
+    let (_, _, stderr) = run_zshrs(r#"echo "${a:?}""#);
+    assert!(
+        stderr.contains("parameter not set"),
+        "expected zsh-format msg: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("null"),
+        "should not contain 'null': {stderr:?}"
+    );
+}
+
+#[test]
+fn test_pattern_paren_question_mark_matches_one_char() {
+    // `${a/(?)/X}` — `(?)` is a glob group containing `?` (any single
+    // char). Should replace the first char.
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "${a/(?)/X}""#);
+    assert_eq!(output.trim(), "Xoo");
+}
+
+#[test]
+fn test_pattern_paren_star_matches_anything() {
+    // `${a/(*)/X}` — `(*)` is a group with `*` (any sequence). Should
+    // replace the entire string.
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "${a/(*)/X}""#);
+    assert_eq!(output.trim(), "X");
+}
+
+#[test]
+fn test_pattern_alternation_in_replace() {
+    // `${a/(foo|bar)/X}` — alternation matches first occurrence.
+    let (_, output, _) = run_zshrs(r#"a=foobar; echo "${a/(foo|bar)/X}""#);
+    assert_eq!(output.trim(), "Xbar");
+}
+
+#[test]
+fn test_pushd_popd_silent_in_noninteractive() {
+    // zsh's pushd/popd in non-interactive mode (`-c`) suppress the
+    // dir-stack listing — only `dirs` actively prints.
+    let (_, output, _) = run_zshrs(r#"pushd /tmp; popd; echo done"#);
+    assert_eq!(output.trim(), "done");
+}
+
+#[test]
+fn test_dirs_v_uses_tab_separator() {
+    // `dirs -v` separates index and path with TAB.
+    let (_, output, _) = run_zshrs(r#"pushd /tmp >/dev/null; dirs -v"#);
+    let first = output.lines().next().unwrap_or("");
+    assert!(
+        first.contains('\t'),
+        "expected TAB in dirs -v: {first:?}"
+    );
+}
+
+#[test]
+fn test_arith_int_times_float_promotes() {
+    // `a=10; ((a *= 1.5)); echo $a` — int * float → float result.
+    // Regression: ArithCompiler kept everything int; routed through
+    // MathEval via the float-literal trigger in compile_arith.
+    let (_, output, _) = run_zshrs(r#"a=10; ((a *= 1.5)); echo $a"#);
+    let s = output.trim();
+    assert!(
+        s.starts_with("15"),
+        "expected 15.x or 15.0…, got: {s:?}"
+    );
+    assert!(s.contains('.'), "expected float result: {s:?}");
+}
+
+#[test]
+fn test_assoc_bare_returns_joined_values() {
+    // `declare -A h; h[k]=v; echo "${h:-default}"` — bare `${h}`
+    // should return joined values, NOT the default. Regression:
+    // zshrs's get_variable returned empty for assoc.
+    let (_, output, _) =
+        run_zshrs(r#"declare -A h; h[k]=v; echo "${h:-default}""#);
+    assert_eq!(output.trim(), "v");
+}
+
+#[test]
+fn test_pattern_class_negation_with_bang() {
+    // `[!fo]` should be class-negation (NOT literal `!`/`f`/`o`).
+    // For `a=foo`, `${a//[!fo]/X}` matches no chars → returns "foo".
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "${a//[!fo]/X}""#);
+    assert_eq!(output.trim(), "foo");
+}
+
+#[test]
+fn test_pattern_class_negation_caret_still_works() {
+    // Regression guard: `[^fo]` (the standard negation) must keep working.
+    let (_, output, _) = run_zshrs(r#"a=foo; echo "${a//[^fo]/X}""#);
+    assert_eq!(output.trim(), "foo");
+}
+
+#[test]
+fn test_pattern_class_with_negation_matches_others() {
+    // `${a/[!hl]/X}` for "hello" — matches first non-h-l char (`e`).
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "${a/[!hl]/X}""#);
+    assert_eq!(output.trim(), "hXllo");
+}

@@ -4565,7 +4565,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 if missing {
                     let expanded = expand_rhs(&rhs);
                     let msg = if expanded.is_empty() {
-                        "parameter null or not set".to_string()
+                        "parameter not set".to_string()
                     } else {
                         expanded
                     };
@@ -4933,12 +4933,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // anchored `#`/`%` (handled via op codes 2/3). Compile to a
         // regex for the actual matching; falls back to plain string
         // when the pattern has no glob metas (faster).
-        let has_glob = pattern.chars().any(|c| matches!(c, '?' | '*' | '[' | ']'));
+        // Include `(` as a glob trigger — zsh's `(...)` is a grouping
+        // (with `|` for alternation). `${a/(?)/X}` should match like
+        // `${a/?/X}` (paren is the group). Without `(` in the trigger
+        // set, paren patterns fell into the literal-string path and
+        // matched nothing.
+        let has_glob = pattern
+            .chars()
+            .any(|c| matches!(c, '?' | '*' | '[' | ']' | '('));
         let glob_re: Option<regex::Regex> = if has_glob {
             // Convert the glob pattern to a regex string:
             //   ? → . (any single char)
             //   * → .* (any seq)
             //   [...] → kept as-is (regex char class)
+            //   ( ) → kept as regex group; | as alternation
             //   other regex metas → escaped
             let mut re = String::with_capacity(pattern.len() * 2);
             let mut chars = pattern.chars().peekable();
@@ -4949,7 +4957,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     '[' => {
                         // Pass through to the closing ']' (already
                         // valid regex syntax for most char classes).
+                        // zsh uses BOTH `[!...]` and `[^...]` for class
+                        // negation; regex only accepts `^`. Translate
+                        // a leading `!` after `[` to `^`. Without this
+                        // `${a//[!fo]/X}` matched the literal `!` in
+                        // the class and over-replaced.
                         re.push('[');
+                        if chars.peek() == Some(&'!') {
+                            chars.next();
+                            re.push('^');
+                        }
                         while let Some(cc) = chars.next() {
                             re.push(cc);
                             if cc == ']' { break; }
@@ -4961,9 +4978,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             re.push(next);
                         }
                     }
+                    // `(`, `)`, `|` are zsh group/alternation operators
+                    // — keep them as regex equivalents.
+                    '(' | ')' | '|' => re.push(c),
                     // Regex meta chars that are NOT glob metas — escape
                     // so the regex compiler treats them literally.
-                    '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' => {
+                    '.' | '+' | '^' | '$' | '{' | '}' => {
                         re.push('\\');
                         re.push(c);
                     }
@@ -13493,17 +13513,32 @@ impl ShellExecutor {
                 // unbound name is fatal: emit the same diagnostic
                 // mainline zsh prints and exit 1 (mirrors zsh's
                 // non-interactive behaviour).
-                let resolved = self.variables
+                // Bare-assoc bypass: `declare -A h; h=(a 1 b 2); ${h}`
+                // expects the joined values. The `declare -A` sets
+                // variables["h"]="" as a side effect, which would
+                // satisfy the variables lookup with empty. Skip the
+                // variables lookup when an assoc with the same name
+                // exists AND has entries.
+                let assoc_has_entries = self
+                    .assoc_arrays
                     .get(name)
-                    .cloned()
+                    .map(|h| !h.is_empty())
+                    .unwrap_or(false);
+                let resolved = if !assoc_has_entries {
+                    self.variables.get(name).cloned()
+                } else {
+                    None
+                }
                     .or_else(|| {
                         self.arrays.get(name).map(|a| a.join(" "))
                     })
                     .or_else(|| {
-                        self.assoc_arrays.get(name).and_then(|h| {
-                            // No bare assoc-as-scalar — but presence
-                            // means the name IS bound.
-                            if h.is_empty() { None } else { Some(String::new()) }
+                        self.assoc_arrays.get(name).map(|h| {
+                            if h.is_empty() {
+                                String::new()
+                            } else {
+                                h.values().cloned().collect::<Vec<_>>().join(" ")
+                            }
                         })
                     })
                     .or_else(|| env::var(name).ok());
@@ -13558,7 +13593,7 @@ impl ShellExecutor {
                 _ => {
                     let msg = self.expand_word(word);
                     let display = if msg.is_empty() {
-                        "parameter null or not set".to_string()
+                        "parameter not set".to_string()
                     } else {
                         msg
                     };
@@ -22545,7 +22580,13 @@ impl ShellExecutor {
             self.dir_stack.pop();
             return 1;
         }
-        if !quiet {
+        // zsh's `pushd` in non-interactive mode (e.g. `-c`) suppresses
+        // the dir-stack listing — only `dirs` actively prints. Detect
+        // non-interactive via stdin-is-tty since `options[interactive]`
+        // is left on by default in zshrs even in `-c` mode.
+        use std::io::IsTerminal;
+        let stdin_is_tty = std::io::stdin().is_terminal();
+        if !quiet && stdin_is_tty {
             self.print_dir_stack();
         }
         0
@@ -22637,7 +22678,10 @@ impl ShellExecutor {
             self.dir_stack.push(target);
             return 1;
         }
-        if !quiet {
+        // Same -c-mode silence as pushd above.
+        use std::io::IsTerminal;
+        let stdin_is_tty = std::io::stdin().is_terminal();
+        if !quiet && stdin_is_tty {
             self.print_dir_stack();
         }
         0
@@ -22730,9 +22774,12 @@ impl ShellExecutor {
         }
 
         if verbose {
-            println!(" 0  {}", format_path(&current));
+            // zsh's `dirs -v` uses TAB between index and path,
+            // no leading-space padding on the index. Match exactly:
+            // `0\t<dir>\n1\t<dir>\n…`. zshrs previously space-padded.
+            println!("0\t{}", format_path(&current));
             for (i, dir) in self.dir_stack.iter().rev().enumerate() {
-                println!("{:2}  {}", i + 1, format_path(dir));
+                println!("{}\t{}", i + 1, format_path(dir));
             }
         } else if per_line {
             println!("{}", format_path(&current));
@@ -22751,9 +22798,27 @@ impl ShellExecutor {
 
     fn print_dir_stack(&self) {
         let current = std::env::current_dir().unwrap_or_default();
-        let mut parts = vec![current.to_string_lossy().to_string()];
+        let home = std::env::var("HOME").ok();
+        let tilde = |p: &std::path::Path| -> String {
+            let s = p.to_string_lossy().to_string();
+            // zsh's dir-stack listing uses `~` for $HOME paths.
+            // Without this, the output had absolute /Users/wizard/... that
+            // diverged from zsh's `~/...` form.
+            if let Some(ref h) = home {
+                if let Some(rest) = s.strip_prefix(h) {
+                    if rest.is_empty() {
+                        return "~".to_string();
+                    }
+                    if rest.starts_with('/') {
+                        return format!("~{}", rest);
+                    }
+                }
+            }
+            s
+        };
+        let mut parts = vec![tilde(&current)];
         for dir in self.dir_stack.iter().rev() {
-            parts.push(dir.to_string_lossy().to_string());
+            parts.push(tilde(dir));
         }
         println!("{}", parts.join(" "));
     }
