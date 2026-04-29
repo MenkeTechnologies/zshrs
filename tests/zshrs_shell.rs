@@ -4283,3 +4283,74 @@ fn test_dollar_dash_includes_x_when_xtrace_on() {
     let last = output.lines().last().unwrap_or("").trim();
     assert_eq!(last, "569Xfx", "got: {output:?}");
 }
+
+#[test]
+fn test_dollar_zero_in_minus_c_returns_basename() {
+    // zsh's `$0` in `-c` mode is the shell name (`zsh` / `zshrs`), not
+    // the absolute argv0 path. Regression: zshrs returned the full
+    // `./target/debug/zshrs` build path. Fixed by setting `$0` to
+    // basename(argv[0]) in the `-c` dispatch.
+    let (_, output, _) = run_zshrs(r#"echo $0"#);
+    assert_eq!(output.trim(), "zshrs", "got: {output:?}");
+}
+
+#[test]
+fn test_print_dash_p_capital_T_no_zero_pad_hour() {
+    // `print -P "%T"` should NOT zero-pad the hour: `4:10`, not
+    // `04:10`. Regression: chrono's `%H` always zero-pads; switched
+    // to `%k` (space-pad) and trim_start.
+    let (_, output, _) = run_zshrs(r#"print -P "%T""#);
+    let s = output.trim();
+    // Match HH:MM where HH has no leading zero (1-2 digits).
+    let parts: Vec<&str> = s.split(':').collect();
+    assert_eq!(parts.len(), 2, "expected H:MM, got: {s:?}");
+    let hour = parts[0];
+    assert!(
+        !hour.starts_with('0') || hour == "0",
+        "hour should not have leading zero: {s:?}"
+    );
+}
+
+#[test]
+fn test_escaped_braces_stay_literal_in_word() {
+    // `echo \{foo,bar\}` — backslash-escaped braces must not trigger
+    // brace expansion. Regression: zshrs produced `oo ar\` because
+    // the lexer's BNULL-encoded `\{` got untokenized to `\{` before
+    // expand_braces, which then expanded the comma list. Added
+    // has_balanced_escaped_braces() short-circuit that strips the
+    // backslashes and returns the literal.
+    let (_, output, _) = run_zshrs(r#"echo \{foo,bar\}"#);
+    assert_eq!(output.trim(), "{foo,bar}", "got: {output:?}");
+}
+
+#[test]
+fn test_escaped_braces_with_prefix_suffix() {
+    // Same fix should not break `\{X\}` surrounded by literal text.
+    let (_, output, _) = run_zshrs(r#"echo prefix\{a,b\}suffix"#);
+    assert_eq!(output.trim(), "prefix{a,b}suffix", "got: {output:?}");
+}
+
+#[test]
+fn test_unescaped_braces_still_expand() {
+    // Regression guard for the escaped-brace fix: bare `{a,b}` must
+    // still expand normally.
+    let (_, output, _) = run_zshrs(r#"echo {foo,bar}"#);
+    assert_eq!(output.trim(), "foo bar", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_hash_name_bare_array_length() {
+    // `$#name` (no braces) is zsh shorthand for `${#name}`. Regression:
+    // zshrs printed `$#a` literally because the bare-form fast-path in
+    // compile_word_str didn't recognize the `$#NAME` shape. Added a
+    // PARAM_LENGTH emit for `$#NAME` patterns.
+    let (_, output, _) = run_zshrs(r#"a=(1 2 3); echo $#a"#);
+    assert_eq!(output.trim(), "3", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_hash_name_bare_string_length() {
+    // Same path — string variable case.
+    let (_, output, _) = run_zshrs(r#"a=hello; echo $#a"#);
+    assert_eq!(output.trim(), "5", "got: {output:?}");
+}

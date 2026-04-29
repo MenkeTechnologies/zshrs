@@ -1106,6 +1106,28 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: bare `$#NAME` — equivalent to `${#NAME}` (string
+        // length / array element count). Without braces this looked
+        // like a literal in the dispatch path, so `echo $#a` printed
+        // `$#a` verbatim instead of `3`. Compose by emitting the param
+        // length form via PARAM_LENGTH builtin (pops [name], returns
+        // count). Match zsh: the name must start with letter/underscore.
+        if !has_bnull && untoked.len() >= 3 && untoked.starts_with("$#") {
+            let rest = &untoked[2..];
+            let first = rest.chars().next();
+            if first.map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                && rest.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+            {
+                let idx = self.builder.add_constant(Value::str(rest));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_LENGTH, 1),
+                    0,
+                );
+                return;
+            }
+        }
+
         // Fast path: bare `$NAME[KEY]` — without braces, zsh lexes
         // `$NAME` as the variable name and `[KEY]` as a subscript that
         // applies to it (NOT a literal `[KEY]` suffix). Emit name+key

@@ -794,6 +794,16 @@ pub fn zshrs_main() {
 
         let mut executor = ShellExecutor::new();
         apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag);
+        // In `-c` mode zsh sets $0 to the shell name (`zsh`), not the
+        // absolute argv0 path. We mirror that — pick the basename of
+        // argv0 if it ends in `zsh*`, otherwise default to `zshrs`.
+        // Without this `echo $0` leaked the build path.
+        let zero = std::path::Path::new(&args[0])
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "zshrs".to_string());
+        executor.variables.insert("0".to_string(), zero);
         let start = Instant::now();
         let result = executor.execute_script(code);
         let duration = start.elapsed().as_millis() as i64;

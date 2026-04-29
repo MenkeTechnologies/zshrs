@@ -9414,10 +9414,21 @@ impl ShellExecutor {
 
     /// Expand brace patterns like {a,b,c} and {1..10}
     fn expand_braces(&self, s: &str) -> Vec<String> {
+        // Fast path: a literal-escaped brace pair anywhere in the input
+        // means the user wants the braces taken literally. `echo \{a,b\}`
+        // should print `{a,b}`, not iterate. Strip the backslashes from
+        // the escaped braces and return as a single literal token.
+        // Without this guard, the brace finder treated `\{` as `{` and
+        // `\}` as `}`, expanded the comma list, and emitted partial
+        // strings like `\foo \bar\` which untokenize then mangled into
+        // `oo ar\`.
+        if (s.contains("\\{") || s.contains("\\}")) && Self::has_balanced_escaped_braces(s) {
+            let stripped = s.replace("\\{", "{").replace("\\}", "}");
+            return vec![stripped];
+        }
         // Find a brace pattern
         let mut depth = 0;
         let mut brace_start = None;
-
         for (i, c) in s.char_indices() {
             match c {
                 '{' => {
@@ -9471,6 +9482,32 @@ impl ShellExecutor {
 
         // No brace expansion found
         vec![s.to_string()]
+    }
+
+    /// True if the input has at least one `\{` and a matching `\}` such
+    /// that treating them as literal would produce a balanced string.
+    /// Conservative — we only short-circuit when escaping is clearly
+    /// the user's intent. Mixed `{a,\{b,c\}}` cases keep going through
+    /// the regular expansion path.
+    fn has_balanced_escaped_braces(s: &str) -> bool {
+        let mut esc_open = 0usize;
+        let mut esc_close = 0usize;
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        while i + 1 < chars.len() {
+            if chars[i] == '\\' && chars[i + 1] == '{' {
+                esc_open += 1;
+                i += 2;
+                continue;
+            }
+            if chars[i] == '\\' && chars[i + 1] == '}' {
+                esc_close += 1;
+                i += 2;
+                continue;
+            }
+            i += 1;
+        }
+        esc_open > 0 && esc_open == esc_close
     }
 
     /// Expand comma-separated brace list like {a,b,c}
