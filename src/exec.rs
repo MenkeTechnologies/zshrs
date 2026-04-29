@@ -2686,29 +2686,38 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 'k' => {
                     // Keys of assoc. If immediately followed by 'v' (or
                     // earlier state was already 'v'-set), interleave key/value
-                    // pairs (zsh's `(kv)` form).
+                    // pairs (zsh's `(kv)` form). For regular arrays zsh
+                    // returns the values themselves (a quirk: docs say
+                    // "integer subscripts" but the actual implementation
+                    // returns array contents — verified against /bin/zsh).
                     if i < chars.len() && chars[i] == 'v' {
                         i += 1; // consume the 'v'
                         let pairs = with_executor(|exec| {
-                            exec.assoc_arrays
-                                .get(&name)
-                                .map(|m| {
-                                    let mut out = Vec::with_capacity(m.len() * 2);
-                                    for (k, v) in m {
-                                        out.push(k.clone());
-                                        out.push(v.clone());
-                                    }
-                                    out
-                                })
-                                .unwrap_or_default()
+                            if let Some(m) = exec.assoc_arrays.get(&name) {
+                                let mut out = Vec::with_capacity(m.len() * 2);
+                                for (k, v) in m {
+                                    out.push(k.clone());
+                                    out.push(v.clone());
+                                }
+                                out
+                            } else if let Some(arr) = exec.arrays.get(&name) {
+                                arr.clone()
+                            } else {
+                                Vec::new()
+                            }
                         });
                         state = St::A(pairs);
                     } else {
                         let keys = with_executor(|exec| {
-                            exec.assoc_arrays
-                                .get(&name)
-                                .map(|m| m.keys().cloned().collect::<Vec<_>>())
-                                .unwrap_or_default()
+                            if let Some(m) = exec.assoc_arrays.get(&name) {
+                                m.keys().cloned().collect::<Vec<_>>()
+                            } else if let Some(arr) = exec.arrays.get(&name) {
+                                // zsh quirk: `(k)` on a regular array
+                                // returns the array values themselves.
+                                arr.clone()
+                            } else {
+                                Vec::new()
+                            }
                         });
                         state = St::A(keys);
                     }
@@ -3749,6 +3758,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
             if exec.assoc_arrays.contains_key(&name) {
                 eprintln!("zshrs: {}: cannot use += on assoc without (key val)", name);
+                return;
+            }
+            // typeset -i: `+=` is arithmetic add, not string concat.
+            // `typeset -i x=42; x+=8` must store 50, not "428".
+            let is_integer = exec
+                .var_attrs
+                .get(&name)
+                .map(|a| matches!(a.kind, VarKind::Integer))
+                .unwrap_or(false);
+            if is_integer {
+                let prev = exec.get_variable(&name);
+                let prev_n: i64 = prev.parse().unwrap_or(0);
+                let added = exec.eval_arith_expr(&value);
+                exec.variables.insert(name, (prev_n + added).to_string());
                 return;
             }
             // Scalar concat.
@@ -19555,16 +19578,13 @@ impl ShellExecutor {
                     let takes_arg = optstring.chars().nth(idx + 1) == Some(':');
 
                     if takes_arg {
-                        // Get argument
-                        let arg = if optpos + 1 < current_arg.len() {
-                            // Argument is rest of current arg
-                            current_arg[optpos + 1..].to_string()
+                        // Get argument. Two shapes:
+                        //   `-bX`  → arg is the rest of the same word, advance 1.
+                        //   `-b X` → arg is the next word, advance 2.
+                        let (arg, advance) = if optpos + 1 < current_arg.len() {
+                            (current_arg[optpos + 1..].to_string(), 1usize)
                         } else if optind < opt_args.len() {
-                            // Argument is next arg
-                            self.variables
-                                .insert("OPTIND".to_string(), (optind + 2).to_string());
-                            self.variables.remove("_OPTPOS");
-                            opt_args[optind].to_string()
+                            (opt_args[optind].to_string(), 2)
                         } else {
                             // Missing argument
                             self.variables.insert(varname.to_string(), "?".to_string());
@@ -19577,10 +19597,13 @@ impl ShellExecutor {
 
                         self.variables.insert("OPTARG".to_string(), arg);
                         self.variables
-                            .insert("OPTIND".to_string(), (optind + 1).to_string());
+                            .insert("OPTIND".to_string(), (optind + advance).to_string());
                         self.variables.remove("_OPTPOS");
                     } else {
-                        // No argument needed
+                        // No argument needed — clear OPTARG so the
+                        // previous iteration's value doesn't leak into
+                        // a subsequent flag that doesn't take one.
+                        self.variables.remove("OPTARG");
                         if optpos + 1 < current_arg.len() {
                             // More options in this arg
                             self.variables
