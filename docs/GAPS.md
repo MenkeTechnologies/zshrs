@@ -1115,12 +1115,34 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `evaluate_arithmetic` and `eval_arith_expr` both swallowed `MathEval::Err(_)` and returned 0/"0" with no diagnostic. zsh writes the underlying error (`division by zero`, etc.) to stderr in `zsh:LINE: <msg>` form. Surface the error message via `eprintln!("zshrs:1: {}", msg)` in both eval paths. Tests: `test_arith_division_by_zero_prints_error`, `test_arith_mod_by_zero_prints_error`. (Note: zsh additionally aborts the surrounding command on arith failure; zshrs still continues with a 0 substitution result. Full command-abort propagation deferred — needs expansion-time error plumbing through expand_string and the simple-command dispatch path.)
 
-## Still open (sixty-fifth-pass — remaining)
+## Closed (sixty-sixth-pass)
+
+### `$OSTYPE`, `$MACHTYPE`, `$VENDOR`, `$CPUTYPE` returned empty
+
+- `params.rs` set them in the params table, but the executor's `get_variable` shortcuts past that table for special names — those four were missing arms entirely. Added live `libc::uname()`-driven arms in `get_variable`: `OSTYPE` → `<sysname-lowercased><release>`, `MACHTYPE` → `machine` (with `aarch64`/`arm64` shortened to `arm` to match zsh), `CPUTYPE` → raw machine, `VENDOR` → `apple` on macOS / `unknown` on Linux / `pc` elsewhere. Tests: `test_machtype_returns_arm_or_x86_64`, `test_ostype_starts_with_os_family`, `test_vendor_returns_apple_or_unknown`. (Note: zshrs's `$OSTYPE` shows the *current* kernel version (`darwin25.4.0`); the bundled zsh hardcodes its build-time version (`darwin21.3.0`). zshrs is more truthful — accepted as an upgrade.)
+
+### `-f` mode eagerly autoloaded functions from FPATH/ZWC
+
+- `MenkeTechnologies@codelabs:` `rm -f /tmp/file` triggered `command not found: zpwrLogConsoleErr` because zshrs scanned every fpath ZWC for unknown command names and found `~/.zpwr/autoload/common.zwc` containing the user's `rm` wrapper. zsh only autoloads when an explicit `autoload name` declaration was made — never on first call. The eager-scan path in `host.call_function` now checks `executor.options["rcs"]` and skips when rcs is off (`-f` sets rcs=false). Interactive sessions keep the legacy eager behavior. Test: `test_minus_f_skips_eager_fpath_autoload`.
+
+### `case foo in (foo|bar) …` rejected as parse error
+
+- The parser sets `incasepat = 1` AFTER consuming the `in` keyword, but the lexer reads the next token (the leading `(`) BEFORE that flag flips. With incasepat=0 the `(` fell into the `gettokstr('(', false)` branch and ate the entire `(foo|bar)` as one atomic glob-pattern token — the trailing `)` was never seen as a separate Outpar, so the pattern loop errored out. Set `self.lexer.incasepat = 1` BEFORE the `zshlex()` that advances past `in`. Tests: `test_case_paren_prefixed_pattern_accepted`, `test_case_paren_only_first_alt_matches`.
+
+### `$-` returned empty (no shell-flag letters)
+
+- zsh's `$-` returns the concatenated single-letter codes for the options currently set: baseline `569X` always, `f` when rcs is off (`-f`), then `e`/`u`/`x`/`v`/`n`/`l`/`h` for set -e / set -u / set -x / etc. zshrs returned an empty string. Added `"-"` arm in `get_variable` that builds the letter sequence in zsh's exact ordering (e BEFORE f, then login, nounset, xtrace, verbose, noexec, hashall) — matches `set -e; echo $-` → `569Xef`, `set -u; echo $-` → `569Xfu`, `set -x; echo $-` → `569Xfx`, `set -eu; echo $-` → `569Xefu`. Tests: `test_dollar_dash_baseline_no_user_flags`, `test_dollar_dash_includes_e_when_errexit_on`, `test_dollar_dash_includes_x_when_xtrace_on`.
+
+## Still open (sixty-sixth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
 - **`${(j:sep:)$(cmd subst)}`** — cmd-subst as direct argument to flagged PE returns empty in zshrs; zsh splits-and-joins (`a,b,c`). Needs PE flag-context cmd-subst recognition before var-name extraction. Deferred.
 - **Arith error full command-abort** — zsh: `echo $((10/0))` prints only the error and skips `echo`; zshrs prints the error then runs `echo 0`. Partial fix landed (error message now visible); full abort needs expansion-time error plumbing.
+- **`echo \{foo,bar\}`** — escaped braces should stay literal `{foo,bar}`; zshrs strips backslashes wrongly and outputs `oo ar\`. Brace-expansion preprocess needs to honor backslash escape on `{`/`}`/`,`.
+- **`$0` in `-c` mode** — zshrs returns `./target/debug/zshrs` (full argv0); zsh returns `zsh` (just the basename). Cosmetic but leaks paths in user scripts that log `$0`.
+- **`set` noargs print all variables** — `set` with no args should dump every shell parameter in name=value form. zshrs prints ~10 lines; zsh prints ~480. Massive output diff; deferred (needs full param-table walk + assoc/array formatting).
+- **`${a:^b}` zip-arrays** — zsh's interleave-arrays operator. `a=(1 2 3) b=(x y z); print ${a:^b}` should yield `1 x 2 y 3 z`. Not implemented.
 
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.

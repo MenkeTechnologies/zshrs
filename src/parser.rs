@@ -1528,6 +1528,13 @@ impl<'a> ZshParser<'a> {
             self.error("expected 'in' or '{' in case");
             return None;
         }
+        // Set incasepat=1 BEFORE consuming "in" so the next token (which
+        // could be a leading `(` of a paren-prefixed pattern like
+        // `case foo in (a|b) …`) is lexed as Inpar, not as a glob-token.
+        // Without this the `(` got swallowed into a gettokstr('(', false)
+        // call and produced a String like "(foo)" — the parser then saw
+        // the `)` inside a string instead of as a separate Outpar.
+        self.lexer.incasepat = 1;
         self.lexer.zshlex();
 
         let mut arms = Vec::new();

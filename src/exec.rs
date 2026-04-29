@@ -5971,7 +5971,16 @@ impl fusevm::ShellHost for ZshrsHost {
             if let Some(c) = exec.functions_compiled.get(name) {
                 return Some(c.clone());
             }
-            if !exec.function_exists(name) {
+            // Eager fpath/ZWC scan for unknown names is non-zsh-compatible
+            // (zsh only autoloads when an explicit `autoload name` was
+            // declared). Skip the scan in `-f` (no-rcs) mode so the user's
+            // FPATH-resident wrappers — `rm`, `cd`, etc. — don't shadow
+            // builtins/externals when they explicitly asked for a
+            // minimal shell. With rcs enabled we keep the legacy eager
+            // behavior to avoid breaking interactive sessions that rely
+            // on it.
+            let rcs_enabled = exec.options.get("rcs").copied().unwrap_or(true);
+            if rcs_enabled && !exec.function_exists(name) {
                 let _ = exec.autoload_function(name);
             }
             exec.functions_compiled.get(name).cloned()
@@ -12766,6 +12775,31 @@ impl ShellExecutor {
                 .get("!")
                 .cloned()
                 .unwrap_or_else(|| "0".to_string()),
+            // `$-` returns the concatenated single-letter flags of options
+            // currently set. zsh always emits a baseline "569X" prefix
+            // (internal-letter options that are on by default in -f mode)
+            // followed by user-controllable flags. Match the prefix
+            // verbatim so existing scripts that do `[[ $- == *e* ]]` /
+            // `case $- in *x*) … esac` see consistent letters.
+            "-" => {
+                let mut letters = String::from("569X");
+                let opt = |n: &str| self.options.get(n).copied().unwrap_or(false);
+                // `e` comes BEFORE `f` in zsh's letter ordering: `set -e`
+                // in -f mode produces "569Xef", not "569Xfe".
+                if opt("errexit") { letters.push('e'); }
+                if !opt("rcs") { letters.push('f'); }
+                if opt("login") { letters.push('l'); }
+                // i/m are present only when *truly* interactive; zsh's `-c`
+                // path leaves them off, so we mirror that and don't surface
+                // them just because `options.interactive` happens to be set
+                // by the executor's default-options init.
+                if opt("nounset") { letters.push('u'); }
+                if opt("xtrace") { letters.push('x'); }
+                if opt("verbose") { letters.push('v'); }
+                if opt("noexec") { letters.push('n'); }
+                if opt("hashall") { letters.push('h'); }
+                letters
+            }
             "EUID" => unsafe { libc::geteuid() }.to_string(),
             "UID" => unsafe { libc::getuid() }.to_string(),
             "EGID" => unsafe { libc::getegid() }.to_string(),
@@ -12787,6 +12821,58 @@ impl ShellExecutor {
                     String::from_utf8_lossy(&buf[..nul]).into_owned()
                 } else {
                     String::new()
+                }
+            }
+            // OS / machine identity vars. zsh hardcodes these from build-time
+            // detection; we synthesize at runtime from libc uname(). Without
+            // these arms `$OSTYPE` returned empty even though params.rs wrote
+            // them into the params table — the executor's get_variable bypasses
+            // that table for special names.
+            "OSTYPE" => {
+                let mut u: libc::utsname = unsafe { std::mem::zeroed() };
+                if unsafe { libc::uname(&mut u) } == 0 {
+                    let sysname = unsafe { std::ffi::CStr::from_ptr(u.sysname.as_ptr()) }
+                        .to_string_lossy().to_lowercase();
+                    let release = unsafe { std::ffi::CStr::from_ptr(u.release.as_ptr()) }
+                        .to_string_lossy().to_string();
+                    format!("{}{}", sysname, release)
+                } else {
+                    std::env::consts::OS.to_string()
+                }
+            }
+            "MACHTYPE" => {
+                let mut u: libc::utsname = unsafe { std::mem::zeroed() };
+                if unsafe { libc::uname(&mut u) } == 0 {
+                    let m = unsafe { std::ffi::CStr::from_ptr(u.machine.as_ptr()) }
+                        .to_string_lossy().to_string();
+                    // zsh shortens common machines: aarch64 → arm, x86_64
+                    // stays x86_64. Mirror that for the common cases.
+                    if m == "aarch64" || m == "arm64" {
+                        "arm".to_string()
+                    } else {
+                        m
+                    }
+                } else {
+                    std::env::consts::ARCH.to_string()
+                }
+            }
+            "CPUTYPE" => {
+                let mut u: libc::utsname = unsafe { std::mem::zeroed() };
+                if unsafe { libc::uname(&mut u) } == 0 {
+                    unsafe { std::ffi::CStr::from_ptr(u.machine.as_ptr()) }
+                        .to_string_lossy().to_string()
+                } else {
+                    std::env::consts::ARCH.to_string()
+                }
+            }
+            "VENDOR" => {
+                // No portable libc query for vendor; pick by OS family.
+                if cfg!(target_os = "macos") {
+                    "apple".to_string()
+                } else if cfg!(target_os = "linux") {
+                    "unknown".to_string()
+                } else {
+                    "pc".to_string()
                 }
             }
             "HOSTNAME" => {
