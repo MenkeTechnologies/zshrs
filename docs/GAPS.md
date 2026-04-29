@@ -1199,7 +1199,25 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `-F` flag means "float-typed only"; `declare -F` with no float vars declared prints nothing. zshrs treated `-F` as a no-op flag and routed to the typeset list-mode that dumped every variable. Added a float-only filter in the list path that uses `var_attrs[name].kind == VarKind::Float` to gate emission. Other type flags (-i/-a/-A) need shell-internal-param awareness and are left untouched. Tests: `test_declare_capital_F_no_args_lists_only_floats`, `test_declare_capital_F_lists_declared_floats`.
 
-## Still open (sixty-ninth-pass — remaining)
+## Closed (seventieth-pass)
+
+### `typeset -U arr` didn't dedupe array elements
+
+- zsh's `-U` (unique) attribute keeps only the first occurrence of each element on assignment / append. zshrs ignored the flag entirely. Added `is_unique` to typeset arg parsing, threaded through `VarAttr.unique`, and applied dedupe in three places: at attribute attachment time (existing array gets retained-with-seen), inside `BUILTIN_SET_ARRAY` (whole-array assignment dedupes via HashSet), and inside `BUILTIN_APPEND_ARRAY` (`arr+=…` skips elements already present). Tests: `test_typeset_dash_U_dedupes_array`, `test_typeset_dash_U_after_assignment_dedupes`, `test_typeset_dash_U_append_dedupes`.
+
+### `((++5))` / `((--5))` silently incremented literals
+
+- Pre/post inc/dec on a non-lvalue is a zsh error (`bad math expression: lvalue required`). zshrs's MathEval skipped the `set_variable` call but still pushed the new value, so `echo $((++5))` printed `6` instead of failing. Added `mv.lval.is_none()` guards on all four ops (PrePlus, PreMinus, PostPlus, PostMinus) that emit `bad math expression: lvalue required` and abort. Tests: `test_arith_pre_increment_on_literal_errors`, `test_arith_post_increment_on_literal_errors`, `test_arith_pre_decrement_on_var_works`.
+
+### `typeset -E` used wrong precision and exponent format
+
+- `typeset -EN` means N **significant** digits (1 before decimal + N-1 after); zshrs passed N straight to Rust's `{:.Pe}` which means N **fractional** digits. Result: `typeset -E5 a=1234.5` printed `1.23450e+03` instead of zsh's `1.2345e+03`. Subtract 1 from the precision before passing to Rust's formatter. Also wired the same e+0DD post-format pass used by printf to fix the unsigned 1-digit exponent (was `e3`, now `e+03`). Tests: `test_typeset_E_uses_sig_digit_precision`, `test_typeset_E_default_precision_nine_fractional`.
+
+### `$#a[@]` / `$#a[*]` returned literal text
+
+- Bare `$#NAME[@]` is zsh shorthand for `${#NAME[@]}` (array length). My iteration-67 fast-path only matched `^\$#NAME$` (no brackets). Extended the matcher in `compile_word_str` to also accept a trailing `[@]` / `[*]` suffix and route the same way through `BUILTIN_PARAM_LENGTH`. Tests: `test_dollar_hash_name_bracket_at`, `test_dollar_hash_name_bracket_star`.
+
+## Still open (seventieth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).

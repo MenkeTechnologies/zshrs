@@ -1112,13 +1112,23 @@ impl ZshCompiler {
         // `$#a` verbatim instead of `3`. Compose by emitting the param
         // length form via PARAM_LENGTH builtin (pops [name], returns
         // count). Match zsh: the name must start with letter/underscore.
+        // Also accepts an optional `[@]` / `[*]` suffix (`$#a[@]` is the
+        // count of array elements, same as `$#a` on an indexed array).
         if !has_bnull && untoked.len() >= 3 && untoked.starts_with("$#") {
             let rest = &untoked[2..];
-            let first = rest.chars().next();
-            if first.map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
-                && rest.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+            // Strip a trailing `[@]` / `[*]` — both mean "array length"
+            // for the purpose of the # length operator.
+            let bare_name = if rest.ends_with("[@]") || rest.ends_with("[*]") {
+                &rest[..rest.len() - 3]
+            } else {
+                rest
+            };
+            let first = bare_name.chars().next();
+            if !bare_name.is_empty()
+                && first.map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                && bare_name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
             {
-                let idx = self.builder.add_constant(Value::str(rest));
+                let idx = self.builder.add_constant(Value::str(bare_name));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder.emit(
                     Op::CallBuiltin(crate::exec::BUILTIN_PARAM_LENGTH, 1),

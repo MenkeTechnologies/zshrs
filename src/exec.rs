@@ -1645,6 +1645,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 return false;
             }
             // Mirror array→scalar if name is the array side of a typeset -T tie.
+            // `typeset -U arr` dedupes; first-wins per zsh.
+            let is_unique = exec
+                .var_attrs
+                .get(&name)
+                .map(|a| a.unique)
+                .unwrap_or(false);
+            if is_unique {
+                let mut seen = std::collections::HashSet::new();
+                values.retain(|v| seen.insert(v.clone()));
+            }
             if let Some((scalar_name, sep)) = exec.tied_array_to_scalar.get(&name).cloned() {
                 let joined = values.join(&sep);
                 exec.variables.insert(scalar_name, joined);
@@ -1708,10 +1718,25 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 return;
             }
             exec.variables.remove(&name);
-            exec.arrays
-                .entry(name)
-                .or_insert_with(Vec::new)
-                .extend(values);
+            // `typeset -U arr` dedupes — append must respect existing
+            // elements too. Skip values that are already present.
+            let is_unique = exec
+                .var_attrs
+                .get(&name)
+                .map(|a| a.unique)
+                .unwrap_or(false);
+            let target = exec.arrays.entry(name).or_insert_with(Vec::new);
+            if is_unique {
+                let existing: std::collections::HashSet<String> =
+                    target.iter().cloned().collect();
+                for v in values {
+                    if !existing.contains(&v) {
+                        target.push(v);
+                    }
+                }
+            } else {
+                target.extend(values);
+            }
         });
         Value::Status(0)
     });
@@ -6927,6 +6952,9 @@ pub struct VarAttr {
     pub zero_pad: Option<usize>,
     pub uppercase: bool,
     pub lowercase: bool,
+    /// `typeset -U arr` — array dedupes its elements on assignment /
+    /// append, keeping the first occurrence. zsh-only.
+    pub unique: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -15642,6 +15670,7 @@ impl ShellExecutor {
         let mut is_hidden = false; // -H
         let mut is_hide_val = false; // -h
         let mut is_trace = false; // -t
+        let mut is_unique = false; // -U: dedupe array elements
         let mut print_mode = false; // -p
         let mut pattern_match = false; // -m
         let mut list_mode = false; // no args: list all
@@ -15691,6 +15720,7 @@ impl ShellExecutor {
                         'H' => is_hidden = false,
                         'h' => is_hide_val = false,
                         't' => is_trace = false,
+                        'U' => is_unique = false,
                         'p' => print_mode = false,
                         'm' => pattern_match = false,
                         _ => {}
@@ -15789,6 +15819,7 @@ impl ShellExecutor {
                         'H' => is_hidden = true,
                         'h' => is_hide_val = true,
                         't' => is_trace = true,
+                        'U' => is_unique = true,
                         'p' => print_mode = true,
                         'm' => pattern_match = true,
                         _ => {}
@@ -16161,7 +16192,30 @@ impl ShellExecutor {
                         if let Ok(f) = value.parse::<f64>() {
                             let prec = precision.unwrap_or(10);
                             value = if is_float_exp {
-                                format!("{:.prec$e}", f, prec = prec)
+                                // zsh's `-EN` means N SIGNIFICANT digits
+                                // (one before the decimal + N-1 after).
+                                // Rust's `{:.Pe}` gives P FRACTIONAL —
+                                // subtract 1 to get the same display.
+                                let frac_prec = prec.saturating_sub(1);
+                                // Rust's `{:e}` lacks the C/zsh sign and
+                                // 2-digit exponent. Same fix as printf %e.
+                                let raw = format!("{:.prec$e}", f, prec = frac_prec);
+                                if let Some(epos) = raw.rfind('e') {
+                                    let (mantissa, exp) = raw.split_at(epos);
+                                    let exp_body = &exp[1..];
+                                    let (sign, digits) =
+                                        if exp_body.starts_with('-') { ("-", &exp_body[1..]) }
+                                        else if exp_body.starts_with('+') { ("+", &exp_body[1..]) }
+                                        else { ("+", exp_body) };
+                                    let padded = if digits.len() < 2 {
+                                        format!("0{}", digits)
+                                    } else {
+                                        digits.to_string()
+                                    };
+                                    format!("{}e{}{}", mantissa, sign, padded)
+                                } else {
+                                    raw
+                                }
                             } else {
                                 format!("{:.prec$}", f, prec = prec)
                             };
@@ -16242,6 +16296,7 @@ impl ShellExecutor {
                     || is_export
                     || is_array
                     || is_assoc
+                    || is_unique
                 {
                     let kind = if is_integer {
                         VarKind::Integer
@@ -16249,7 +16304,7 @@ impl ShellExecutor {
                         VarKind::Float
                     } else if is_assoc {
                         VarKind::Association
-                    } else if is_array {
+                    } else if is_array || is_unique {
                         VarKind::Array
                     } else {
                         VarKind::Scalar
@@ -16263,8 +16318,17 @@ impl ShellExecutor {
                         zero_pad: if is_zero_pad { width } else { None },
                         lowercase: is_lower,
                         uppercase: is_upper,
+                        unique: is_unique,
                     };
-                    self.var_attrs.insert(attr_name, attr);
+                    self.var_attrs.insert(attr_name.clone(), attr);
+                    // Apply unique-dedupe immediately if the array
+                    // already exists; first-wins per zsh semantics.
+                    if is_unique {
+                        if let Some(arr) = self.arrays.get_mut(&attr_name) {
+                            let mut seen = std::collections::HashSet::new();
+                            arr.retain(|e| seen.insert(e.clone()));
+                        }
+                    }
                 }
             }
         }
