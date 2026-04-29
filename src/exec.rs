@@ -1732,6 +1732,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 eprintln!("zshrs:1: read-only variable: {}", name);
                 std::process::exit(1);
             }
+            // Assoc-aware append: `typeset -A m; m+=(k1 v1 k2 v2 ...)`
+            // adds key/value pairs. Without this, the values were
+            // appended to a parallel array and `${m[k]}` lookup missed
+            // the new keys entirely.
+            if exec.assoc_arrays.contains_key(&name) {
+                let map = exec.assoc_arrays.entry(name).or_default();
+                let mut it = values.into_iter();
+                while let Some(k) = it.next() {
+                    if let Some(v) = it.next() {
+                        map.insert(k, v);
+                    }
+                }
+                return;
+            }
             exec.variables.remove(&name);
             exec.arrays
                 .entry(name)
@@ -2562,19 +2576,50 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         St::A(a) => St::A(a),
                     };
                 }
-                'o' => {
+                'o' | 'O' => {
+                    // Optional sub-flag: `n` numeric, `i` case-insensitive,
+                    // `a` array-order (i.e. don't sort, just reverse for O).
+                    let sub = chars.get(i).copied();
+                    let consume = matches!(sub, Some('n') | Some('i') | Some('a'));
+                    if consume {
+                        i += 1;
+                    }
+                    let descending = c == 'O';
                     state = match state {
                         St::A(mut a) => {
-                            a.sort();
-                            St::A(a)
-                        }
-                        s => s,
-                    };
-                }
-                'O' => {
-                    state = match state {
-                        St::A(mut a) => {
-                            a.sort_by(|x, y| y.cmp(x));
+                            match sub {
+                                Some('a') if consume => {
+                                    if descending {
+                                        a.reverse();
+                                    }
+                                    // ascending + array-order = no-op
+                                }
+                                Some('n') if consume => {
+                                    a.sort_by(|x, y| {
+                                        let xi: f64 = x.parse().unwrap_or(0.0);
+                                        let yi: f64 = y.parse().unwrap_or(0.0);
+                                        if descending {
+                                            yi.partial_cmp(&xi).unwrap_or(std::cmp::Ordering::Equal)
+                                        } else {
+                                            xi.partial_cmp(&yi).unwrap_or(std::cmp::Ordering::Equal)
+                                        }
+                                    });
+                                }
+                                Some('i') if consume => {
+                                    a.sort_by(|x, y| {
+                                        let xl = x.to_lowercase();
+                                        let yl = y.to_lowercase();
+                                        if descending { yl.cmp(&xl) } else { xl.cmp(&yl) }
+                                    });
+                                }
+                                _ => {
+                                    if descending {
+                                        a.sort_by(|x, y| y.cmp(x));
+                                    } else {
+                                        a.sort();
+                                    }
+                                }
+                            }
                             St::A(a)
                         }
                         s => s,
@@ -21787,11 +21832,7 @@ impl ShellExecutor {
                     'g' | 'G' => {
                         let val: f64 = arg.parse().unwrap_or(0.0);
                         let prec = prec_val.unwrap_or(6).max(1);
-                        let formatted = if specifier == 'g' {
-                            format!("{:.prec$}", val, prec = prec)
-                        } else {
-                            format!("{:.prec$}", val, prec = prec).to_uppercase()
-                        };
+                        let formatted = format_g(val, prec, specifier == 'G');
                         output.push_str(&formatted);
                     }
                     'a' | 'A' => {
@@ -21827,6 +21868,84 @@ impl ShellExecutor {
         0
     }
 
+    #[allow(dead_code)]
+    fn expand_printf_escapes_internal_marker(&self) {}
+}
+
+/// C-style printf `%g`/`%G`: shortest of `%f`/`%e` representation that
+/// preserves `prec` significant digits. Trailing zeros are stripped
+/// unless they bridge the decimal point.
+fn format_g(val: f64, prec: usize, upper: bool) -> String {
+    if !val.is_finite() {
+        let s = if val.is_nan() {
+            "nan".to_string()
+        } else if val < 0.0 {
+            "-inf".to_string()
+        } else {
+            "inf".to_string()
+        };
+        return if upper { s.to_uppercase() } else { s };
+    }
+    let prec = prec.max(1);
+    // Determine the exponent X such that val ≈ d.ddd × 10^X.
+    let exp = if val == 0.0 {
+        0i32
+    } else {
+        val.abs().log10().floor() as i32
+    };
+    // C99 spec: use %e if X < -4 or X >= prec; else %f.
+    let use_exp = exp < -4 || exp >= prec as i32;
+    let raw = if use_exp {
+        let p = prec - 1;
+        format!("{:.p$e}", val, p = p)
+    } else {
+        let p = (prec as i32 - 1 - exp).max(0) as usize;
+        format!("{:.p$}", val, p = p)
+    };
+    // Strip trailing zeros after the decimal (and the dot if bare).
+    let formatted = strip_trailing_zeros_g(&raw);
+    if upper { formatted.to_uppercase() } else { formatted }
+}
+
+fn strip_trailing_zeros_g(s: &str) -> String {
+    let (mantissa, suffix) = match s.find(|c| c == 'e' || c == 'E') {
+        Some(i) => (&s[..i], &s[i..]),
+        None => (s, ""),
+    };
+    let stripped = if mantissa.contains('.') {
+        let trimmed = mantissa.trim_end_matches('0');
+        let trimmed = trimmed.trim_end_matches('.');
+        trimmed.to_string()
+    } else {
+        mantissa.to_string()
+    };
+    // Rust's %e emits exponent without leading zero (e.g. `1e0` → C wants `1e+00`).
+    // Normalize: "e<digits>" → "e+<2digits>", "e-N" → "e-<2digits>".
+    let suffix_norm = if suffix.is_empty() {
+        String::new()
+    } else {
+        let (sign, digits) = if let Some(rest) = suffix.strip_prefix("e-") {
+            ("-", rest)
+        } else if let Some(rest) = suffix.strip_prefix("e+") {
+            ("+", rest)
+        } else if let Some(rest) = suffix.strip_prefix('e') {
+            ("+", rest)
+        } else if let Some(rest) = suffix.strip_prefix("E-") {
+            ("-", rest)
+        } else if let Some(rest) = suffix.strip_prefix("E+") {
+            ("+", rest)
+        } else if let Some(rest) = suffix.strip_prefix('E') {
+            ("+", rest)
+        } else {
+            return format!("{}{}", stripped, suffix);
+        };
+        let n: i32 = digits.parse().unwrap_or(0);
+        format!("e{}{:02}", sign, n.abs())
+    };
+    format!("{}{}", stripped, suffix_norm)
+}
+
+impl ShellExecutor {
     fn expand_printf_escapes(&self, s: &str) -> String {
         let mut result = String::new();
         let mut chars = s.chars().peekable();
