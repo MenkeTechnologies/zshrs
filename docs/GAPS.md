@@ -827,7 +827,17 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Major behavioral divergence: zsh runs the LAST stage of a pipeline in the CURRENT shell process (not a forked child) so trailing `read x` keeps its assignment in the parent. zshrs's BUILTIN_RUN_PIPELINE was forking every stage, including the last — same behavior as bash, wrong for zsh. Refactored: fork stages 0..N-1, dup2 the final pipe's read end onto stdin in the parent, run the last stage's chunk inline on a sub-VM with `set_shell_host(Box::new(ZshrsHost))` so any reads/assignments hit the parent executor's variables, then restore stdin. The in-parent stage's status is appended to `pipestatus` so the array still has one entry per stage. Tests: `test_pipeline_last_stage_runs_in_current_shell`, `test_pipeline_last_stage_assignment_persists`.
 
-## Still open (thirty-seventh-pass — remaining)
+## Closed (thirty-eighth-pass — SIGPIPE-in-pipeline-child, `type` alias format)
+
+### `seq 1 100 | head -3` panicked with "Broken pipe (os error 32)"
+
+- The parent shell ignores SIGPIPE so it can detect EPIPE on writes itself, but pipeline children inherited that disposition. When the downstream reader closed early, the producer's `println!` returned EPIPE and Rust's stdout write panicked. Reset SIGPIPE to `SIG_DFL` in each forked pipeline child immediately after `fork()` so the child gets killed cleanly on broken pipe (matches zsh/bash behavior). Test: `test_pipeline_child_handles_sigpipe_gracefully`.
+
+### `type alias_name` printed bash format instead of zsh format
+
+- Was emitting `"{name} is aliased to \`{value}'"` (bash `type` shape). zsh prints `"{name} is an alias for {value}"` (no backticks, "for" not "to"). Test: `test_type_alias_uses_zsh_format`.
+
+## Still open (thirty-eighth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
