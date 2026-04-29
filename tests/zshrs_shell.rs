@@ -2843,3 +2843,45 @@ fn test_xtrace_uses_ps4() {
     let (_, _, stderr) = run_zshrs("set -x; true");
     assert!(stderr.contains("+ "), "stderr: {stderr:?}");
 }
+
+#[test]
+fn test_default_value_expands_command_substitution() {
+    // `${var:-$(cmd)}` should run cmd when var is unset/empty.
+    let (_, output, _) = run_zshrs(r#"unset x; echo "${x:-$(echo subst)}""#);
+    assert_eq!(output.trim(), "subst", "got: {output:?}");
+}
+
+#[test]
+fn test_default_value_expands_variable() {
+    let (_, output, _) = run_zshrs(r#"unset x; y=hello; echo "${x:-$y}""#);
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+}
+
+#[test]
+fn test_assign_default_expands() {
+    let (_, output, _) = run_zshrs(r#"unset x; y=expanded; echo "${x:=$y}"; echo "x=$x""#);
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(lines, vec!["expanded", "x=expanded"], "got: {output:?}");
+}
+
+#[test]
+fn test_echo_hex_escape() {
+    let (_, output, _) = run_zshrs(r#"echo "\x41\x42""#);
+    assert_eq!(output.trim(), "AB", "got: {output:?}");
+}
+
+#[test]
+fn test_break_n_breaks_outer_loop() {
+    let (_, output, _) = run_zshrs(
+        "for i in 1 2 3; do for j in a b; do [[ $j = a && $i = 2 ]] && break 2; echo \"$i$j\"; done; done",
+    );
+    assert_eq!(output.trim(), "1a\n1b", "got: {output:?}");
+}
+
+#[test]
+fn test_continue_n_continues_outer_loop() {
+    let (_, output, _) = run_zshrs(
+        "for i in 1 2 3; do for j in a b; do [[ $j = b ]] && continue 2; echo \"$i$j\"; done; done",
+    );
+    assert_eq!(output.trim(), "1a\n2a\n3a", "got: {output:?}");
+}

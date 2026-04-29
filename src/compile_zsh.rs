@@ -535,11 +535,23 @@ impl ZshCompiler {
 
         // break/continue keywords — emit jumps into enclosing loop's
         // patch lists, or fall through to BUILTIN_SET_BREAK/CONTINUE
-        // when no enclosing loop in this chunk.
+        // when no enclosing loop in this chunk. `break N` / `continue
+        // N` target the N-th enclosing loop (1 = innermost, 2 = next
+        // out, etc.). zsh clamps N to the available depth.
         if first == "break" {
-            if let Some(p) = self.break_patches.last_mut() {
+            let levels: usize = simple
+                .words
+                .get(1)
+                .and_then(|s| crate::lexer::untokenize(s).parse::<usize>().ok())
+                .unwrap_or(1)
+                .max(1);
+            // Index from end: levels=1 → last (innermost); levels=2 →
+            // second-to-last; etc. Clamped to depth.
+            let depth = self.break_patches.len();
+            if depth > 0 {
+                let idx = depth.saturating_sub(levels);
                 let j = self.builder.emit(Op::Jump(0), 0);
-                p.push(j);
+                self.break_patches[idx].push(j);
             } else {
                 self.builder.emit(
                     Op::CallBuiltin(crate::exec::BUILTIN_SET_BREAK, 0),
@@ -552,9 +564,23 @@ impl ZshCompiler {
             return;
         }
         if first == "continue" {
-            if let Some(p) = self.continue_patches.last_mut() {
+            let levels: usize = simple
+                .words
+                .get(1)
+                .and_then(|s| crate::lexer::untokenize(s).parse::<usize>().ok())
+                .unwrap_or(1)
+                .max(1);
+            let depth = self.continue_patches.len();
+            if depth > 0 {
+                // For `continue N`, jump to the N-th enclosing loop's
+                // continue target. If N>1, that's actually a BREAK out
+                // of inner loops and a continue at the outer — which
+                // the existing patch-list mechanism handles by jumping
+                // to the outer continue target (the loop will then
+                // re-enter from the top of the body).
+                let idx = depth.saturating_sub(levels);
                 let j = self.builder.emit(Op::Jump(0), 0);
-                p.push(j);
+                self.continue_patches[idx].push(j);
             } else {
                 self.builder.emit(
                     Op::CallBuiltin(crate::exec::BUILTIN_SET_CONTINUE, 0),

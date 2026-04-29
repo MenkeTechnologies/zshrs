@@ -4200,11 +4200,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
             0 | 1 | 2 | 3 => is_empty,
             _ => !is_set,
         };
+        // The default/alt operand may contain `$var` / `$(cmd)` /
+        // `$((expr))` — zsh expands these before substitution. Apply
+        // expand_string lazily (only when we'll actually use rhs).
+        let expand_rhs = |s: &str| -> String {
+            with_executor(|exec| exec.expand_string(s))
+        };
         match op {
             0 | 4 => {
                 // `:-` / `-` use default if missing
                 if missing {
-                    fusevm::Value::str(rhs)
+                    fusevm::Value::str(expand_rhs(&rhs))
                 } else {
                     fusevm::Value::str(val)
                 }
@@ -4212,10 +4218,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
             1 | 5 => {
                 // `:=` / `=` assign default if missing, then use it
                 if missing {
+                    let expanded = expand_rhs(&rhs);
                     with_executor(|exec| {
-                        exec.variables.insert(name, rhs.clone());
+                        exec.variables.insert(name, expanded.clone());
                     });
-                    fusevm::Value::str(rhs)
+                    fusevm::Value::str(expanded)
                 } else {
                     fusevm::Value::str(val)
                 }
@@ -4225,10 +4232,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 // `zsh:LINE: NAME: msg` and exits 1. Mirror that: emit
                 // diagnostic on stderr and abort the shell.
                 if missing {
-                    let msg = if rhs.is_empty() {
+                    let expanded = expand_rhs(&rhs);
+                    let msg = if expanded.is_empty() {
                         "parameter null or not set".to_string()
                     } else {
-                        rhs.clone()
+                        expanded
                     };
                     eprintln!("zshrs:1: {}: {}", name, msg);
                     std::process::exit(1);
@@ -4242,7 +4250,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 if missing {
                     fusevm::Value::str("")
                 } else {
-                    fusevm::Value::str(rhs)
+                    fusevm::Value::str(expand_rhs(&rhs))
                 }
             }
             _ => fusevm::Value::str(val),
@@ -21457,6 +21465,28 @@ impl ShellExecutor {
                         }
                     }
                     Some('c') => break,
+                    Some('x') => {
+                        // \xHH — 1 or 2 hex digits.
+                        let mut hex = String::new();
+                        while hex.len() < 2 {
+                            if let Some(&d) = chars.peek() {
+                                if d.is_ascii_hexdigit() {
+                                    hex.push(d);
+                                    chars.next();
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        if hex.is_empty() {
+                            result.push('\\');
+                            result.push('x');
+                        } else if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                            result.push(val as char);
+                        }
+                    }
                     Some(other) => {
                         result.push('\\');
                         result.push(other);

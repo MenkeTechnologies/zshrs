@@ -643,7 +643,21 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - The option was tracked but never enforced. Added new `BUILTIN_XTRACE_LINE` (id 338): pops a literal command-text string and prints it to stderr with `$PS4` prefix (default `+ `) when `xtrace` is on. The compiler emits the trace call before each simple command's args/dispatch in `compile_simple`. Format is the POSIX `+ cmd args` style — zsh's elaborate `<color>PROG\tFN\tLINENO\t<reset>\tcmd` format depends on PROMPT_PERCENT and isn't matched exactly (our format is what real-world POSIX scripts assume). Tests: `test_set_dash_x_xtrace_prints_commands`, `test_set_plus_x_disables_xtrace`, `test_xtrace_uses_ps4`.
 
-## Still open (twenty-second-pass — remaining)
+## Closed (twenty-third-pass — default expansion + hex escape + break N)
+
+### `${var:-...}` / `${var:=...}` / `${var:+...}` expand cmd-subst and `$var` in operand
+
+- The default/alt operand was used as-is. zsh runs full expansion (parameter, command-substitution, arith) on it before substitution. Wired `expand_string` lazily in `BUILTIN_PARAM_DEFAULT_FAMILY` for all four ops. Tests: `test_default_value_expands_command_substitution`, `test_default_value_expands_variable`, `test_assign_default_expands`.
+
+### `echo "\xHH"` hex escape
+
+- The escape decoder only handled `\n`/`\t`/`\xNN was missing despite octal `\NNN` working`. Added `\xHH` (1-2 hex digits) to `expand_printf_escapes`. Test: `test_echo_hex_escape`.
+
+### `break N` / `continue N` — multi-level loop control
+
+- Were ignoring the level argument; always targeted the innermost enclosing loop. Now reads `simple.words[1]` as the level count, indexes back into `break_patches` / `continue_patches` from the end, clamping to depth. Tests: `test_break_n_breaks_outer_loop`, `test_continue_n_continues_outer_loop`.
+
+## Still open (twenty-third-pass — remaining)
 
 (none — all probed gaps closed)
 - **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).
