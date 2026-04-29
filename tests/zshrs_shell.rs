@@ -3638,3 +3638,21 @@ fn test_glob_qualifier_in_pipeline_child() {
         "got: {output:?}"
     );
 }
+
+#[test]
+fn test_param_length_at_star_returns_positional_count() {
+    // ${#@} and ${#*} both return $# (number of positional params),
+    // not the length of the IFS-joined string. Without the special
+    // case, `set -- a b c; echo "${#@}"` returned 5 (length of
+    // "a b c") instead of 3.
+    let (_, output, _) = run_zshrs(r#"set -- a b c; echo "${#@} ${#*}""#);
+    assert_eq!(output.trim(), "3 3", "got: {output:?}");
+}
+
+#[test]
+fn test_param_length_uses_chars_not_bytes() {
+    // ${#var} should count chars, not bytes — so `héllo` is 5 chars
+    // (the `é` is one codepoint = one char) not 6 bytes.
+    let (_, output, _) = run_zshrs(r#"s="héllo"; echo "${#s}""#);
+    assert_eq!(output.trim(), "5", "got: {output:?}");
+}

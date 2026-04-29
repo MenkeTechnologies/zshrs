@@ -902,7 +902,17 @@ Tests: `test_dot_glob_excludes_dot_and_dotdot`, `test_star_glob_excludes_dotfile
 - `expand_glob`'s parallel `prefetch_metadata` submits stat() jobs to a worker pool, but the pool's threads don't survive `fork()` (POSIX: only the calling thread persists). The pipeline child stage forked, then submitted work that nobody picked up — the rx loop blocked indefinitely OR the channel returned empty, depending on timing. Net effect: every glob with `>=32` matches in a pipeline stage produced empty output.
 - Added `signals::is_forked_child()`: lazy-init MAIN_PID on first call, then compare current pid. Pre-warmed in `zshrs_main()` so the parent's pid is captured before any pipeline forks. `prefetch_metadata` now takes the serial stat path whenever `is_forked_child()` returns true. Test: `test_glob_qualifier_in_pipeline_child`.
 
-## Still open (forty-seventh-pass — remaining)
+## Closed (forty-eighth-pass — `${#@}` positional count + chars()-not-bytes for length)
+
+### `${#@}` returned 5 instead of `$#`
+
+- The `expand_braced_variable` length-form (`${#name}`) fell through to `get_variable("@")` which returns the IFS-joined positional string, then took its `.len()` (byte count). For `set -- a b c`, that produced `5` (length of `"a b c"`) instead of zsh's `3` (number of positional params).
+- Special-cased `@` and `*` in the `${#…}` arm to return `positional_params.len()` directly.
+- Also switched the scalar fallback from `.len()` (bytes) to `.chars().count()` (codepoints) so `${#héllo}` is 5 not 6 — matches zsh.
+
+Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_uses_chars_not_bytes`.
+
+## Still open (forty-eighth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
