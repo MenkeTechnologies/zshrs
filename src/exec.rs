@@ -12772,15 +12772,14 @@ impl ShellExecutor {
                         result.push_str(&self.get_variable(&sc.to_string()));
                         continue;
                     }
-                    // $#name → ${#name} (string/array length)
+                    // $#name → ${#name} (string/array length).
+                    // Also `$#@` and `$#*` — count of positional
+                    // params (zsh shorthand for `${#@}`/`${#*}`).
                     if chars.peek() == Some(&'#') {
                         let mut peek_iter = chars.clone();
                         peek_iter.next(); // skip #
-                        if peek_iter
-                            .peek()
-                            .map(|c| c.is_alphabetic() || *c == '_')
-                            .unwrap_or(false)
-                        {
+                        let next = peek_iter.peek().copied();
+                        if next.map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) {
                             chars.next(); // consume #
                             let mut name = String::new();
                             while let Some(&c) = chars.peek() {
@@ -12797,6 +12796,13 @@ impl ShellExecutor {
                                 self.get_variable(&name).len()
                             };
                             result.push_str(&len.to_string());
+                            continue;
+                        }
+                        // `$#@` / `$#*` — positional-param count.
+                        if matches!(next, Some('@') | Some('*')) {
+                            chars.next(); // consume #
+                            chars.next(); // consume @ or *
+                            result.push_str(&self.positional_params.len().to_string());
                             continue;
                         }
                     }
@@ -19606,7 +19612,10 @@ impl ShellExecutor {
                 self.aliases.remove(&name).is_some()
             };
             if !removed {
-                eprintln!("zshrs: unalias: {}: not found", name);
+                eprintln!(
+                    "zshrs:unalias:1: no such hash table element: {}",
+                    name
+                );
                 return 1;
             }
         }
@@ -21772,9 +21781,36 @@ impl ShellExecutor {
             return 0;
         }
 
+        // zsh treats reserved words / keywords as a distinct type.
+        // `type for` / `type while` etc. report "is a reserved word".
+        // Check this BEFORE the alias/function/builtin probes so
+        // user-shadowed reserved-word names still report the keyword
+        // status (matches zsh's lookup order).
+        const RESERVED_WORDS: &[&str] = &[
+            "do", "done", "esac", "then", "elif", "else", "fi", "for",
+            "case", "if", "while", "until", "select", "function",
+            "repeat", "time", "in", "foreach", "end", "coproc",
+            "nocorrect", "noglob",
+        ];
+
         let mut status = 0;
         for name in &names {
             let mut found_any = false;
+
+            // Reserved words win first.
+            if RESERVED_WORDS.contains(&name.as_str()) {
+                found_any = true;
+                if !silent {
+                    if show_type {
+                        println!("reserved");
+                    } else {
+                        println!("{} is a reserved word", name);
+                    }
+                }
+                if !show_all {
+                    continue;
+                }
+            }
 
             // Check for alias (skip if -p)
             if !path_only && self.aliases.contains_key(name) {

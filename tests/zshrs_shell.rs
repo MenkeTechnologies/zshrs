@@ -5902,3 +5902,44 @@ fn test_case_multi_pattern_with_brackets() {
         run_zshrs("case X in [a-z]) echo lower;; [A-Z]) echo upper;; esac");
     assert_eq!(output.trim(), "upper");
 }
+
+#[test]
+fn test_type_for_reserved_word() {
+    let (_, output, _) = run_zshrs("type for");
+    assert!(output.contains("reserved word"));
+    let (_, output, _) = run_zshrs("type while");
+    assert!(output.contains("reserved word"));
+    let (_, output, _) = run_zshrs("type if");
+    assert!(output.contains("reserved word"));
+}
+
+#[test]
+fn test_dollar_hash_at_in_double_quotes() {
+    // `"$#@"` should expand to positional count (zsh shorthand for
+    // ${#@}). zshrs was splitting `$#` from `@` so the literal `@`
+    // got appended. Same for `"$#*"`.
+    let (_, output, _) =
+        run_zshrs(r#"set -- a b c; echo "$#@""#);
+    assert_eq!(output.trim(), "3");
+    let (_, output, _) =
+        run_zshrs(r#"set -- a b c; echo "$#*""#);
+    assert_eq!(output.trim(), "3");
+}
+
+#[test]
+fn test_dollar_hash_name_concat() {
+    // `X$#Y` for unset Y should return `X0` (length of empty Y).
+    // Was returning `X3Y` because the segment-splitter only consumed
+    // `$#` and left `Y` as a literal trailing segment.
+    let (_, output, _) =
+        run_zshrs("set -- a b c; echo X$#Y");
+    assert_eq!(output.trim(), "X0");
+}
+
+#[test]
+fn test_unalias_missing_zsh_format() {
+    // `unalias missing` zsh format: `zsh:unalias:1: no such hash
+    // table element: NAME`. zshrs had its own format.
+    let (_, _, stderr) = run_zshrs("unalias notdef_xxx_zzz");
+    assert!(stderr.contains("no such hash table element"));
+}
