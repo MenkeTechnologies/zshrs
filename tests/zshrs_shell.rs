@@ -6325,3 +6325,20 @@ fn test_dollar_underscore_inside_function_body() {
         run_zshrs(r#"foo() { echo "[$_]"; }; foo arg1"#);
     assert_eq!(output.trim(), "[arg1]");
 }
+
+#[test]
+fn test_print_P_y_no_tty_outputs_parens() {
+    // zsh: `print -P "%y"` when not on a tty (e.g. -c mode) outputs
+    // `()`. zshrs returned empty.
+    let (_, output, _) = run_zshrs(r#"print -P "%y""#);
+    assert_eq!(output.trim(), "()");
+}
+
+#[test]
+fn test_print_P_color_no_extra_bold() {
+    // %B%F{red}r%f%b should emit \e[1m\e[31mr\e[39m\e[0m (each
+    // SGR independent). zshrs's `%F` apply_attrs path was
+    // re-emitting all active attrs (\e[1m\e[1m\e[31m...).
+    let (_, output, _) = run_zshrs(r#"print -P "%B%F{red}r%f%b""#);
+    assert_eq!(output.as_bytes(), b"\x1b[1m\x1b[31mr\x1b[39m\x1b[0m\n");
+}

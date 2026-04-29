@@ -637,7 +637,12 @@ impl<'a> PromptExpander<'a> {
                 self.output.push_str(tty);
             }
             'y' => {
-                let tty = if self.ctx.tty.starts_with("/dev/") {
+                // zsh: `%y` is the tty short name (without `/dev/`).
+                // When not connected to a tty (e.g. in `-c` mode or
+                // a pipe), zsh outputs `()` matching the `%l` form.
+                let tty = if self.ctx.tty.is_empty() {
+                    "()"
+                } else if self.ctx.tty.starts_with("/dev/") {
                     &self.ctx.tty[5..]
                 } else {
                     &self.ctx.tty
@@ -760,8 +765,13 @@ impl<'a> PromptExpander<'a> {
                     None
                 };
                 if let Some(c) = color {
-                    self.attrs.fg_color = Some(c);
-                    self.apply_attrs();
+                    self.attrs.fg_color = Some(c.clone());
+                    // Emit ONLY the color code, not all active attrs.
+                    // apply_attrs would re-emit bold/underline/standout
+                    // each time `%F` runs, producing duplicate codes.
+                    self.start_escape();
+                    self.output.push_str(&c.to_ansi_fg());
+                    self.end_escape();
                 }
             }
             'f' => {
@@ -783,13 +793,20 @@ impl<'a> PromptExpander<'a> {
                     None
                 };
                 if let Some(c) = color {
-                    self.attrs.bg_color = Some(c);
-                    self.apply_attrs();
+                    self.attrs.bg_color = Some(c.clone());
+                    self.start_escape();
+                    self.output.push_str(&c.to_ansi_bg());
+                    self.end_escape();
                 }
             }
             'k' => {
+                // zsh's `%k` emits `\e[49m` (default bg only); zshrs
+                // was going through apply_attrs which would re-emit
+                // all active attrs.
                 self.attrs.bg_color = None;
-                self.apply_attrs();
+                self.start_escape();
+                self.output.push_str("\x1b[49m");
+                self.end_escape();
             }
 
             // Literal escape sequences

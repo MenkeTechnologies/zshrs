@@ -1709,6 +1709,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - After `foo() { echo $_ }; foo`, zsh's `$_` inside the function body should be `foo` (function name when no args). zshrs was reading the FUNCTION BODY SOURCE because `BUILTIN_REGISTER_COMPILED_FN` (called when defining the function) had updated `pending_underscore` with the body text via the standard `pop_args` hook. Fix: explicitly set `$_` and `pending_underscore` BEFORE the function body runs (in `call_function`'s pre-VM setup) — using the function's call-form last arg, or the function name when no args. Test: `test_dollar_underscore_inside_function_body`.
 
+### `print -P "%y"` (tty short name) outputted empty when not on a tty
+
+- zsh: `%y` outputs `()` when not connected to a tty (matches `%l`). zshrs returned empty because the `%y` handler stripped the `/dev/` prefix from an empty string. Added the empty-tty check to emit `()` matching zsh. Test: `test_print_P_y_no_tty_outputs_parens`.
+
+### `print -P "%F{red}"` re-emitted all active attrs
+
+- zsh: `%F`, `%K`, `%k` each emit ONLY their specific SGR code (`\e[31m`, `\e[44m`, `\e[49m`). zshrs's color handlers called `apply_attrs` which re-emitted all currently-active attrs (`\e[1m\e[1m\e[31m...` if bold was already set). Same fix as text-attrs in batch 2: each color handler now emits only its specific code. Test: `test_print_P_color_no_extra_bold`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
