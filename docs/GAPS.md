@@ -804,7 +804,14 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 ### `getopts` over-advanced OPTIND past the next flag *(see thirty-third-pass above)*
 
-## Still open (thirty-fourth-pass — remaining)
+## Closed (thirty-fifth-pass — coreutils builtins respect user overrides)
+
+### `cat() { ... }; cat` ran the C builtin instead of the user function
+
+- Same root cause as the prior `r`/`echo`/`pwd` fix, but now extended to fusevm's coreutils-style anti-fork builtins (`cat`, `head`, `tail`, `wc`, `basename`, `dirname`, `touch`, `realpath`, `sort`, `find`, `uniq`, `cut`, `tr`, `seq`, `rev`, `tee`, `sleep`, `whoami`, `id`, `hostname`, `uname`, `date`, `mktemp`, `mkdir`). Each handler bypassed user functions because the compiler emitted `Op::CallBuiltin` directly. zpwr/oh-my-zsh wrap most of these, so override-blindness was a major real-world breakage.
+- Introduced a `reg_overridable!($vm, $id, $name, $method)` macro at the top of `register_builtins`. Each registration now consults `try_user_fn_override` before falling through to the native handler. Test: `test_user_function_overrides_coreutils_builtins` covers 11 representative cases.
+
+## Still open (thirty-fifth-pass — remaining)
 - **Backtick nesting** — parser-deferred.
 - **`xtrace` exact zsh format** — POSIX `+ cmd` shape; zsh's elaborate PS4 not matched.
 
