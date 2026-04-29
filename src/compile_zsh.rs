@@ -517,12 +517,17 @@ impl ZshCompiler {
         // $cmd` would emit CallFunction(name="$cmd", ...) and fail with
         // `command not found: $cmd`.
         let first_untoked = crate::lexer::untokenize(first);
-        let first_is_dynamic = unquoted(&first_untoked, '$')
-            || unquoted(&first_untoked, '`')
-            || unquoted(&first_untoked, '*')
-            || unquoted(&first_untoked, '?')
-            || unquoted(&first_untoked, '[')
-            || first_untoked.starts_with('~');
+        // `[` and `[[` are the test/cond builtins, not glob-pattern
+        // command names — exempt them from the "dynamic command name"
+        // check that routes through Op::Exec.
+        let first_is_test_builtin = first_untoked == "[" || first_untoked == "[[";
+        let first_is_dynamic = !first_is_test_builtin
+            && (unquoted(&first_untoked, '$')
+                || unquoted(&first_untoked, '`')
+                || unquoted(&first_untoked, '*')
+                || unquoted(&first_untoked, '?')
+                || unquoted(&first_untoked, '[')
+                || first_untoked.starts_with('~'));
         if first_is_dynamic {
             let argc = simple.words.len() as u8;
             for w in &simple.words {
@@ -2697,17 +2702,17 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // dispatched at runtime by ParamModifierKind::Length.
     if first == b'#' && bytes.len() > 1 {
         let rest = &inner[1..];
-        // The body must be a plain identifier — anything else is
-        // ambiguous (e.g. `${#}` is `$#` itself, `${#*}` is positional
-        // count). Route those through the bridge.
-        if !rest.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+        // Identifier OR identifier with `[@]`/`[*]` suffix (zsh:
+        // `${#arr[@]}` == `${#arr}` for arrays/assocs).
+        let body = rest.strip_suffix("[@]").or_else(|| rest.strip_suffix("[*]")).unwrap_or(rest);
+        if !body.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
             return None;
         }
-        if !rest.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        if !body.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
             return None;
         }
         return Some(ParamModifier {
-            name: rest.to_string(),
+            name: body.to_string(),
             kind: ParamModifierKind::Length,
         });
     }
@@ -2724,7 +2729,17 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         return None;
     }
     let name = inner[..name_end].to_string();
-    let rest = &inner[name_end..];
+    // Optional `[@]` / `[*]` subscript suffix — for arrays and assocs
+    // these are no-ops on the lookup but shouldn't break the modifier
+    // parse. Strip and continue parsing the modifier.
+    let mut after_name = name_end;
+    if inner.len() >= name_end + 3 {
+        let tail = &inner[name_end..name_end + 3];
+        if tail == "[@]" || tail == "[*]" {
+            after_name = name_end + 3;
+        }
+    }
+    let rest = &inner[after_name..];
     if rest.is_empty() {
         // No modifier — caller's `braced_var_ref` path should have caught
         // this already; treat as not-our-shape so we don't double-emit.
