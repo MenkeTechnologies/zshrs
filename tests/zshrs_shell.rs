@@ -4008,3 +4008,44 @@ fn test_param_flag_w_pound_returns_word_count() {
         run_zshrs(r#"a="x y z"; print "${(w)#a}""#);
     assert_eq!(output.trim(), "3", "got: {output:?}");
 }
+
+#[test]
+fn test_tr_complement_with_delete() {
+    // `tr -d -c "0-9"` deletes everything NOT in 0-9, leaving digits.
+    // The -c flag was being ignored entirely.
+    let mut child = std::process::Command::new(zshrs_bin())
+        .args(["-f", "-c", r#"tr -d -c "0-9""#])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child.stdin.as_mut().unwrap().write_all(b"abc123\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "123",
+        "got: {:?}",
+        out.stdout
+    );
+}
+
+#[test]
+fn test_wc_uses_bsd_8char_padding() {
+    // zsh's bundled wc on macOS right-pads counts to 8 chars
+    // (`       3` for line count of 3). Was trim_start'ing.
+    let mut child = std::process::Command::new(zshrs_bin())
+        .args(["-f", "-c", "wc -l"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    child.stdin.as_mut().unwrap().write_all(b"a\nb\nc\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        s.starts_with("       3"),
+        "expected 7-space padded count: {s:?}"
+    );
+}
