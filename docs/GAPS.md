@@ -1059,7 +1059,17 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The flag-prefix path `${(...)body}` extracted `var_name` by splitting `body` on non-alphanumeric chars — `#a` parsed as empty name then `a` as the rest, lookup returned empty, length returned 0. Added a special case for `rest.starts_with('#')`: parse the remaining identifier, return char-count by default (matches `(c)`'s semantics) or word-count when the `Words` flag is in the chain. Tests: `test_param_flag_c_pound_returns_char_count`, `test_param_flag_w_pound_returns_word_count`.
 
-## Still open (sixty-first-pass — remaining)
+## Closed (sixty-second-pass — `tr -c` complement + `wc` BSD 8-char padding)
+
+### `tr -d -c "0-9"` deleted digits instead of keeping them
+
+- The `-c` flag (complement: invert set1) was being ignored entirely. `tr -d -c "0-9"` should delete everything NOT in 0-9 (leaving only digits); was treating it as `tr -d "0-9"` (deleting 0-9). Added a `complement = args.iter().any(|a| a == "-c" || a == "-C")` parse, then an `in_set1` closure that XOR's the membership check. Also handled `-c` without `-d`: every char NOT in set1 maps to the LAST char of set2 (coreutils tr semantics). Test: `test_tr_complement_with_delete`.
+
+### `wc -l` printed `3` instead of `       3` (zsh-style 8-char padding)
+
+- The println had `out.trim_start()` which stripped the `{:8}` right-aligned padding. zsh's bundled wc on macOS keeps the BSD 8-char padding even on stdin output. Removed the `trim_start`. Updated 3 invariant tests in `tests/no_tree_walker_dispatch.rs` that hardcoded the old (no-padding) format. Test: `test_wc_uses_bsd_8char_padding`.
+
+## Still open (sixty-second-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).

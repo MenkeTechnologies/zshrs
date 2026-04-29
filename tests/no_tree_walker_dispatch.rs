@@ -227,7 +227,9 @@ fn pipeline_three_stages() {
 
 #[test]
 fn pipeline_with_builtin_consumer() {
-    ok_serial("seq 5 | wc -l", "5\n");
+    // BSD-style wc (what zsh's bundled wc emits on macOS) right-pads
+    // counts to 8 chars. Matches `/bin/zsh -f -c 'seq 5 | wc -l'`.
+    ok_serial("seq 5 | wc -l", "       5\n");
 }
 
 #[test]
@@ -486,9 +488,10 @@ fn cmd_subst_strips_trailing_newlines() {
 
 #[test]
 fn cmd_subst_multiline_preserved_inside() {
+    // BSD-style wc right-pads to 8 chars (matches zsh's bundled wc).
     ok(
         r#"x=$(printf 'a\nb\nc'); echo "$x" | wc -l"#,
-        "3\n",
+        "       3\n",
     );
 }
 
@@ -499,7 +502,10 @@ fn cmd_subst_nested() {
 
 #[test]
 fn cmd_subst_with_pipeline_inside() {
-    ok(r#"x=$(seq 5 | wc -l); echo "lines:$x""#, "lines:5\n");
+    // BSD-style wc right-pads to 8 chars (matches zsh's bundled wc).
+    // The cmd-subst then strips leading whitespace per zsh-defaults.
+    // Actually no — zsh keeps the padding in the cmd-subst result.
+    ok(r#"x=$(seq 5 | wc -l); echo "lines:$x""#, "lines:       5\n");
 }
 
 #[test]

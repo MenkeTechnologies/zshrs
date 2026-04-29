@@ -29172,7 +29172,10 @@ impl ShellExecutor {
             if *file != "-" {
                 out.push_str(&format!(" {}", file));
             }
-            println!("{}", out.trim_start());
+            // BSD wc (what zsh uses on macOS) preserves the 8-char
+            // right-aligned padding even on stdin output. trim_start
+            // here was stripping it; output then differed from zsh.
+            println!("{}", out);
         }
 
         if files.len() > 1 {
@@ -29574,6 +29577,10 @@ impl ShellExecutor {
         }
 
         let delete = args.iter().any(|a| a == "-d");
+        // -c / -C: complement the FIRST set. `tr -d -c "0-9"` keeps
+        // only digits (delete chars NOT in the set). Without this,
+        // -c was silently ignored and the set was used as-is.
+        let complement = args.iter().any(|a| a == "-c" || a == "-C");
         let set1_raw: &str;
         let set2_raw: &str;
 
@@ -29632,8 +29639,26 @@ impl ShellExecutor {
         let mut input = String::new();
         std::io::stdin().read_to_string(&mut input).ok();
 
+        let in_set1 = |c: char| -> bool {
+            let m = s1.contains(&c);
+            if complement { !m } else { m }
+        };
         let output: String = if delete {
-            input.chars().filter(|c| !s1.contains(c)).collect()
+            input.chars().filter(|c| !in_set1(*c)).collect()
+        } else if complement {
+            // With -c (without -d), every char NOT in set1 maps to
+            // the LAST char of set2 (or first if set2 has one). zsh
+            // / coreutils tr semantics.
+            let target = s2.last().copied().or_else(|| s2.first().copied());
+            input.chars().map(|c| {
+                if s1.contains(&c) {
+                    c
+                } else if let Some(t) = target {
+                    t
+                } else {
+                    c
+                }
+            }).collect()
         } else {
             input.chars().map(|c| {
                 if let Some(pos) = s1.iter().position(|&x| x == c) {
