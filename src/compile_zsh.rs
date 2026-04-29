@@ -224,7 +224,10 @@ impl ZshCompiler {
             ParamModifierKind::Substring { offset, length } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadInt(*offset), 0);
-                self.builder.emit(Op::LoadInt(length.unwrap_or(-1)), 0);
+                // i64::MIN is the "no length given" sentinel — lets
+                // the runtime distinguish from explicit negative
+                // length (`${s:0:-2}` truncates from end).
+                self.builder.emit(Op::LoadInt(length.unwrap_or(i64::MIN)), 0);
                 self.builder.emit(
                     Op::CallBuiltin(crate::exec::BUILTIN_PARAM_SUBSTRING, 3),
                     0,

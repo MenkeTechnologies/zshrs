@@ -691,7 +691,25 @@ A wide differential probe against `/bin/zsh` surfaced a fresh batch of gaps. The
 
 - Same shape as the prior fix to `${var/$pat/}`: pattern operand was emitted literally. `BUILTIN_PARAM_STRIP` now runs `expand_string` on the pattern before glob-matching. Tests: `test_strip_pattern_expands_dollar_var`, `test_strip_long_pattern_expands`.
 
-## Still open (twenty-sixth-pass — remaining)
+## Closed (twenty-seventh-pass — substring negative-length + shift validation + echo combined flags)
+
+### `${s:0:-N}` substring negative length truncates from end
+
+- The compile path passed `length=-1` for "no length given" — same value as an explicit `:0:-1`. Switched the sentinel to `i64::MIN` so the runtime can distinguish:
+  - `i64::MIN` → no length given, take rest
+  - `< 0` → "stop |N| chars before end" (bash/zsh)
+  - `>= 0` → take exactly N chars
+- Tests: `test_substring_negative_length_truncates_from_end`, `test_substring_offset_and_negative_length`, `test_substring_no_length_takes_rest`.
+
+### `shift N` errors when N > $#
+
+- Was silently shifting min(N, len). zsh emits `zsh:shift:1: shift count must be <= $#` and exits 1. Now matches. Test: `test_shift_too_many_errors`.
+
+### `echo -nE` combined flags
+
+- The flag parser only matched exact `-n`/`-e`/`-E` strings — combined forms like `-nE` were treated as positional args. Now walks the flag body char-by-char, requiring all chars to be recognised echo flags. Test: `test_echo_combined_flags`.
+
+## Still open (twenty-seventh-pass — remaining)
 
 (none — all probed gaps closed)
 - **Backtick nesting `` `echo \`echo nested\`` ``** — escaped inner backticks not parsed correctly. Parser-side issue; defer (parser is direct port).

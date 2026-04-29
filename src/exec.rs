@@ -4310,8 +4310,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
         } else {
             (offset as usize).min(chars.len())
         };
-        let take = if length < 0 {
+        // length sentinels:
+        //   i64::MIN → no length given, take rest of string
+        //   negative → "stop N chars before end" (bash/zsh)
+        //   positive → take exactly N chars
+        let take = if length == i64::MIN {
             chars.len().saturating_sub(start)
+        } else if length < 0 {
+            // Stop |length| chars before end.
+            let end = (len + length).max(start as i64) as usize;
+            end.saturating_sub(start)
         } else {
             (length as usize).min(chars.len().saturating_sub(start))
         };
@@ -13585,22 +13593,27 @@ impl ShellExecutor {
         let mut interpret_escapes = !bsd_echo;
         let mut start = 0;
 
+        // Accept combined flags like `-nE` (zsh: each char treated as
+        // its own flag). Walk while args look like flag tokens.
         for (i, arg) in args.iter().enumerate() {
-            match arg.as_str() {
-                "-n" => {
-                    newline = false;
-                    start = i + 1;
-                }
-                "-e" => {
-                    interpret_escapes = true;
-                    start = i + 1;
-                }
-                "-E" => {
-                    interpret_escapes = false;
-                    start = i + 1;
-                }
-                _ => break,
+            if !arg.starts_with('-') || arg.len() < 2 {
+                break;
             }
+            let body = &arg[1..];
+            // All chars must be recognised echo flags; otherwise this
+            // is a positional arg starting with `-`.
+            if !body.chars().all(|c| matches!(c, 'n' | 'e' | 'E')) {
+                break;
+            }
+            for ch in body.chars() {
+                match ch {
+                    'n' => newline = false,
+                    'e' => interpret_escapes = true,
+                    'E' => interpret_escapes = false,
+                    _ => {}
+                }
+            }
+            start = i + 1;
         }
 
         let output = args[start..].join(" ");
@@ -15487,6 +15500,11 @@ impl ShellExecutor {
         }
 
         if array_names.is_empty() {
+            // zsh: `shift N` errors and exits 1 if N > $#.
+            if count > self.positional_params.len() {
+                eprintln!("zshrs:shift:1: shift count must be <= $#");
+                return 1;
+            }
             // Shift positional parameters
             if from_end {
                 for _ in 0..count {
