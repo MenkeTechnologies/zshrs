@@ -11,6 +11,7 @@
 //   client.rs  — client-side IPC helpers used by z* builtins
 //   firstrun.rs — first-run detection + 6-line stderr notice
 
+pub mod builtins;
 pub mod client;
 pub mod firstrun;
 pub mod ipc;

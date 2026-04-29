@@ -185,8 +185,12 @@ async fn handle_connection(
         "client registered"
     );
 
+    // Drop the local handshake-helper sender so only the registered (state) and the
+    // request-loop's clone remain. Without this, the pump task would never see the
+    // channel close because handle_connection would be holding a dangling sender.
+    drop(out_tx);
+
     // ---- Pump task: drains out_rx → writer ----
-    let pump_state = Arc::clone(&state);
     let pump = async move {
         while let Some(frame) = out_rx.recv().await {
             if let Err(e) = ipc::write_frame(&mut writer, &frame).await {
@@ -194,12 +198,10 @@ async fn handle_connection(
                 break;
             }
         }
-        let _ = pump_state; // hold Arc alive for the pump's lifetime
     };
 
     // ---- Request loop ----
     let req_state = Arc::clone(&state);
-    let req_out = out_tx.clone();
     let request_loop = async move {
         loop {
             match ipc::read_frame(&mut reader).await {
@@ -209,14 +211,25 @@ async fn handle_connection(
                         Ok(payload) => Frame::ok_response(id, payload),
                         Err(err) => Frame::err_response(id, err),
                     };
-                    if req_out.send(frame).is_err() {
+                    // Send response via the per-session channel held by `state`. We
+                    // intentionally do NOT keep a local clone in this task — when the
+                    // request loop exits and we unregister, the channel closes and the
+                    // pump terminates cleanly.
+                    if !req_state.send_to(client_id, frame) {
                         break;
                     }
                 }
                 Ok(other) => {
                     tracing::debug!(?other, "ignoring unexpected post-handshake frame kind");
                 }
-                Err(DaemonError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(DaemonError::Io(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::UnexpectedEof
+                            | std::io::ErrorKind::BrokenPipe
+                            | std::io::ErrorKind::ConnectionReset
+                    ) =>
+                {
                     break;
                 }
                 Err(e) => {
@@ -225,11 +238,14 @@ async fn handle_connection(
                 }
             }
         }
+        // Unregister immediately on read-side end. This drops the state's outbound
+        // channel clone, which lets the pump task drain remaining messages and then
+        // exit when the receiver sees the closed channel.
+        req_state.unregister_session(client_id);
     };
 
     tokio::join!(pump, request_loop);
 
-    state.unregister_session(client_id);
     tracing::info!(client_id, "client unregistered");
     Ok(())
 }

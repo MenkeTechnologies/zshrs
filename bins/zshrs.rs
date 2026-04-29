@@ -689,6 +689,26 @@ pub fn zshrs_main() {
         return;
     }
 
+    // Handle --daemon: become the singleton zshrs-daemon process.
+    // POSIX mode never spawns the daemon (per docs/DAEMON.md "Three personality modes").
+    if args.iter().any(|a| a == "--daemon") {
+        if !is_zshrs_mode() {
+            eprintln!("zshrs: --daemon is only available in zshrs mode");
+            std::process::exit(1);
+        }
+        match zsh::daemon::run() {
+            Ok(()) => return,
+            Err(zsh::daemon::DaemonError::AlreadyRunning(pid)) => {
+                tracing::info!(pid, "another daemon is running; exiting cleanly");
+                return;
+            }
+            Err(e) => {
+                eprintln!("zshrs: --daemon: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Handle --doctor (zshrs-exclusive, not available in --zsh or --posix)
     if args.iter().any(|a| a == "--doctor") {
         if is_zshrs_mode() {
