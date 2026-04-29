@@ -65,14 +65,16 @@ impl MathNum {
     }
 
     /// Format for stored variable values (zsh `let` / `(( a=… ))`):
-    /// integers as plain `i`, floats as `%.10f`.
+    /// Format a math result for storage back into a shell variable.
+    /// Integers print plain; floats use `%.10f`. IEEE specials
+    /// (Inf/-Inf/NaN) get capitalized form. zsh has two slightly
+    /// different storage formats (`let` uses %.10f, `((a += float))`
+    /// uses %g) — the unified %.10f path is the closer fit for the
+    /// `let`/`(( a = … ))` flow which is the more common case.
     pub fn format_zsh(&self) -> String {
         match self {
             MathNum::Integer(i) => i.to_string(),
             MathNum::Float(f) => {
-                // IEEE specials (Inf/-Inf/NaN) keep zsh's capitalized
-                // form even when stored as a regular shell variable
-                // value. Rust's Display gives `inf`/`NaN` — fix.
                 if f.is_nan() {
                     "NaN".to_string()
                 } else if f.is_infinite() {
