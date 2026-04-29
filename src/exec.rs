@@ -10232,7 +10232,13 @@ impl ShellExecutor {
         let dotglob = self.options.get("dotglob").copied().unwrap_or(false)
             || qualifiers.contains('D')
             || pattern_starts_with_dot;
-        let nocaseglob = self.options.get("nocaseglob").copied().unwrap_or(false);
+        // `setopt nocaseglob` normalizes to `caseglob=false` in the
+        // options table (the `no` prefix is the negation marker).
+        // Read both forms so user code that flips either key works:
+        //   - `caseglob=false` → case-INSENSITIVE
+        //   - `nocaseglob=true` → case-INSENSITIVE (legacy / direct)
+        let nocaseglob = !self.options.get("caseglob").copied().unwrap_or(true)
+            || self.options.get("nocaseglob").copied().unwrap_or(false);
 
         // Parallel recursive glob: when pattern contains **/ we split the
         // directory walk across worker pool threads — one thread per top-level
@@ -19684,7 +19690,7 @@ impl ShellExecutor {
                         'm' => pattern_match = true,
                         'r' => {} // regular alias (default)
                         _ => {
-                            eprintln!("zshrs: alias: bad option: -{}", ch);
+                            eprintln!("zshrs:alias:1: bad option: -{}", ch);
                             return 1;
                         }
                     }
@@ -19836,11 +19842,20 @@ impl ShellExecutor {
                         || v.chars().any(|c| {
                             c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c)
                         });
-                    if needs_quote {
+                    let body = if needs_quote {
                         let escaped = v.replace('\'', "'\\''");
-                        println!("{}='{}'", arg, escaped);
+                        format!("{}='{}'", arg, escaped)
                     } else {
-                        println!("{}={}", arg, v);
+                        format!("{}={}", arg, v)
+                    };
+                    // `alias -L name` prints in re-input form
+                    // (`alias name=value`); the bare form is just
+                    // `name=value`. Was always omitting the `alias`
+                    // prefix even when -L was passed.
+                    if list_form {
+                        println!("alias {}", body);
+                    } else {
+                        println!("{}", body);
                     }
                 } else {
                     // zsh exits 1 silently when querying an

@@ -1639,6 +1639,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `^pat` (under extendedglob) matches everything that does NOT match `pat`. Was being passed through as a literal. Added a leading-`^` detector in `expand_glob`: walks the dir, filters out matches of the pattern, returns the remainder (sorted, dot-files excluded as zsh does). Test: `test_extendedglob_caret_negation`.
 
+### `alias -L name` printed `name=value` instead of `alias name=value`
+
+- zsh's `alias -L` is "list in re-input form" — output should round-trip back through the alias builtin. zshrs's bare-name lookup branch ignored the `list_form` flag. Added `if list_form { println!("alias {}", body) }` path. Test: `test_alias_dash_L_emits_alias_prefix`.
+
+### `setopt nocaseglob` was silently ignored
+
+- `setopt nocaseglob` normalises to `caseglob=false` in the options HashMap (the `no` prefix is the negation marker stripped by `normalize_option_name`). But `expand_glob` only read `nocaseglob` directly, so the option never took effect. Read BOTH `caseglob` (default-true) and `nocaseglob` keys to honor either form. Test: `test_setopt_nocaseglob_honored`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
