@@ -29,6 +29,7 @@ pub mod cond;
 pub mod config;
 pub mod context;
 pub mod curses;
+pub mod daemon;
 pub mod datetime;
 pub mod db_gdbm;
 pub mod exec;
