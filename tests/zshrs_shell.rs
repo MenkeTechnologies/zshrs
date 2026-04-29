@@ -4094,3 +4094,24 @@ fn test_umask_dash_S_symbolic_set() {
         run_zshrs(r#"umask 077; umask -S u=rwx,g=rx,o=; umask"#);
     assert_eq!(output.trim(), "027", "expected 027, got: {output:?}");
 }
+
+#[test]
+fn test_find_maxdepth_caps_recursion() {
+    // `find /tmp -maxdepth 0` should print only `/tmp` (no descent
+    // into children). Was recursing the whole tree because the
+    // -maxdepth flag was unrecognized.
+    let (_, output, _) = run_zshrs(r#"find /tmp -maxdepth 0"#);
+    assert_eq!(output.trim(), "/tmp", "got: {output:?}");
+}
+
+#[test]
+fn test_ulimit_dash_a_zsh_format() {
+    // zsh format: `-t: cpu time (seconds)<padding>unlimited` per line.
+    // First line of `ulimit -a` should always be cpu time (-t).
+    let (_, output, _) = run_zshrs(r#"ulimit -a"#);
+    let first = output.lines().next().unwrap_or("");
+    assert!(
+        first.starts_with("-t: cpu time"),
+        "expected `-t: cpu time` first line: {first:?}"
+    );
+}

@@ -24258,37 +24258,39 @@ impl ShellExecutor {
         use libc::{RLIMIT_AS, RLIMIT_CORE, RLIMIT_CPU, RLIMIT_DATA, RLIMIT_FSIZE};
         use libc::{RLIMIT_NOFILE, RLIMIT_NPROC, RLIMIT_RSS, RLIMIT_STACK};
 
+        // zsh format: each line `-flag: long-name (unit)<padding>value`,
+        // ordered to match `/bin/zsh -f -c 'ulimit -a'` output:
+        // -t cpu time, -f file size, -d data seg, -s stack, -c core,
+        // -m resident, -v virtual, -n descriptors, -u processes.
         let limits = [
-            (RLIMIT_CORE, "core file size", "blocks", 512),
-            (RLIMIT_DATA, "data seg size", "kbytes", 1024),
-            (RLIMIT_FSIZE, "file size", "blocks", 512),
-            (RLIMIT_NOFILE, "open files", "", 1),
-            (RLIMIT_STACK, "stack size", "kbytes", 1024),
-            (RLIMIT_CPU, "cpu time", "seconds", 1),
-            (RLIMIT_NPROC, "max user processes", "", 1),
-            (RLIMIT_AS, "virtual memory", "kbytes", 1024),
-            (RLIMIT_RSS, "max memory size", "kbytes", 1024),
+            ("-t", RLIMIT_CPU, "cpu time", "seconds", 1u64),
+            ("-f", RLIMIT_FSIZE, "file size", "blocks", 512),
+            ("-d", RLIMIT_DATA, "data seg size", "kbytes", 1024),
+            ("-s", RLIMIT_STACK, "stack size", "kbytes", 1024),
+            ("-c", RLIMIT_CORE, "core file size", "blocks", 512),
+            ("-m", RLIMIT_RSS, "resident set size", "kbytes", 1024),
+            ("-v", RLIMIT_AS, "address space", "kbytes", 1024),
+            ("-n", RLIMIT_NOFILE, "file descriptors", "", 1),
+            ("-u", RLIMIT_NPROC, "processes", "", 1),
         ];
 
-        for (resource, name, unit, divisor) in limits {
-            let mut rlim = rlimit {
-                rlim_cur: 0,
-                rlim_max: 0,
-            };
+        for (flag, resource, name, unit, divisor) in limits {
+            let mut rlim = rlimit { rlim_cur: 0, rlim_max: 0 };
             unsafe {
-                if getrlimit(resource, &mut rlim) == 0 {
-                    let limit = if soft { rlim.rlim_cur } else { rlim.rlim_max };
-                    let unit_str = if unit.is_empty() {
-                        ""
-                    } else {
-                        &format!("({})", unit)
-                    };
-                    if limit == libc::RLIM_INFINITY as libc::rlim_t {
-                        println!("{:25} {} unlimited", name, unit_str);
-                    } else {
-                        println!("{:25} {} {}", name, unit_str, limit / divisor);
-                    }
+                if getrlimit(resource, &mut rlim) != 0 {
+                    continue;
                 }
+            }
+            let limit = if soft { rlim.rlim_cur } else { rlim.rlim_max };
+            let label = if unit.is_empty() {
+                format!("{}: {}", flag, name)
+            } else {
+                format!("{}: {} ({})", flag, name, unit)
+            };
+            if limit == libc::RLIM_INFINITY as libc::rlim_t {
+                println!("{:34}  unlimited", label);
+            } else {
+                println!("{:34}  {}", label, limit / divisor);
             }
         }
     }
@@ -29446,6 +29448,11 @@ impl ShellExecutor {
         let mut paths: Vec<&str> = Vec::new();
         let mut name_pattern: Option<&str> = None;
         let mut type_filter: Option<char> = None;
+        // -maxdepth N caps recursion depth: 0 = only the starting
+        // path itself, 1 = starting path + immediate children, etc.
+        // Was missing — `find /tmp -maxdepth 0` recursed the whole
+        // tree.
+        let mut max_depth: Option<usize> = None;
         let mut i = 0;
 
         while i < args.len() {
@@ -29459,6 +29466,10 @@ impl ShellExecutor {
                     i += 1;
                     type_filter = args[i].chars().next();
                 }
+                "-maxdepth" if i + 1 < args.len() => {
+                    i += 1;
+                    max_depth = args[i].parse().ok();
+                }
                 a if !a.starts_with('-') => paths.push(a),
                 _ => {}
             }
@@ -29469,7 +29480,21 @@ impl ShellExecutor {
             paths.push(".");
         }
 
-        fn walk(dir: &Path, name_pat: Option<&str>, type_f: Option<char>) {
+        fn walk(
+            dir: &Path,
+            name_pat: Option<&str>,
+            type_f: Option<char>,
+            max_depth: Option<usize>,
+            cur_depth: usize,
+        ) {
+            // Stop recursion if max_depth is set and we're at the
+            // limit. (cur_depth is depth of `dir` itself; we descend
+            // into ITS children, so children would be cur_depth+1.)
+            if let Some(md) = max_depth {
+                if cur_depth >= md {
+                    return;
+                }
+            }
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
@@ -29496,7 +29521,7 @@ impl ShellExecutor {
                     }
 
                     if is_dir {
-                        walk(&path, name_pat, type_f);
+                        walk(&path, name_pat, type_f, max_depth, cur_depth + 1);
                     }
                 }
             }
@@ -29516,8 +29541,10 @@ impl ShellExecutor {
         for p in paths {
             let path = Path::new(p);
             if path.is_dir() {
+                // Print the starting path (counts as depth 0). With
+                // -maxdepth 0, this is the only output for that path.
                 println!("{}", path.display());
-                walk(path, name_pattern, type_filter);
+                walk(path, name_pattern, type_filter, max_depth, 0);
             } else if path.exists() {
                 println!("{}", path.display());
             } else {
