@@ -1483,6 +1483,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - POSIX numeric-signal-alias: `trap CMD 0` is equivalent to `trap CMD EXIT`. zshrs stored the trap under signal name `0`, which the EXIT-trap-runner (which keys on `"EXIT"`) never queried. Added a numeric→name normalisation in `builtin_trap`: `0` → `EXIT`, libc-derived numbers → canonical names (so `kill -l USR1`'s output round-trips). Test: `test_trap_signal_zero_is_exit`.
 
+### `echo X$?` (special-var after literal prefix) printed literal `X$?`
+
+- Same root cause for `X$#`, `X$$`, `X$*`, `X$!`, `X$-`. The lexer META-marks these chars (`?` → `\u{97}`, `*` → `\u{87}`, `#` → `\u{84}`, `!` → `\u{9c}`, `-` → `\u{9b}`, second `$` → `\u{85}`) so when `compile_zsh.rs::find_expansion_end` looked for the end of the `$?`-style expansion, the matcher (which only tested LITERAL chars) fell through to the default "advance by 1", leaving the META-encoded special-param char in the trailing literal segment. Extended the matcher to recognise both the literal char AND its META code-point. Test: `test_special_param_concat_after_literal`.
+
+### `printf "%x" -1` printed `0`
+
+- `arg.parse::<u64>()` rejected the leading `-` and unwrapped to 0. POSIX printf wraps negatives as unsigned (-1 → 0xFFFFFFFFFFFFFFFF). Parse as i64 first then `as u64` to get C-style two's-complement wrap. Same fix applied to `%X` and `%o`. Test: `test_printf_x_negative_wraps_unsigned`.
+
+### `printf "\NNN"` (no leading 0) printed literal `\NNN`
+
+- POSIX printf accepts both `\NNN` (1-3 octal digits, the standard form) and `\0NNN` (legacy bash-style with leading 0). zshrs's escape branch only matched `\0…`, so `\102` (= 'B') stayed literal. Extended the match to any digit `0`-`7` as the first octal char. The leading-zero form still works: `\0102` is up to 3 chars total including the `0`, so it consumes `010` (= backspace) and leaves `2` as literal — matching zsh's output. Tests: `test_printf_octal_escape_no_leading_zero`, `test_printf_octal_leading_zero_three_total_digits`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
