@@ -2219,6 +2219,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `$LINENO` was always `1` — never incremented per line, never reset on function entry
+
+- Two compounding bugs uncovered while porting zsh's `lineno` global from Src/input.c (line 330) and Src/init.c (line 1588). Filed by the iter-86 audit.
+
+- **Bug 1 (lexer): hungetc/getc lineno asymmetry on `\n`.** zshrs's `getc` incremented `self.lineno` on `\n` reads from FRESH input, but the unget_buf re-read path bypassed that increment. `hungetc` correctly decremented on putback. Net: every newline ungetted once and re-read leaves `lineno` permanently one short. The parser ungets the inter-statement newline once between top-level statements, so `lineno` was stuck at 1 for every line of input. Fix: increment `lineno` in the unget_buf branch of `getc` symmetrically to the fresh-input path.
+
+- **Bug 2 (compiler): no SET_LINENO emit, no function reset.** Even with the lexer tracking fixed, nothing wired the captured per-pipe `lineno` to a runtime `$LINENO` variable. Added a new `BUILTIN_SET_LINENO` (id 342) that writes the popped int to the variable table, and emit one call per top-level pipe in `compile_list`. For function bodies, set `ZshCompiler.lineno_offset = first_body_line - 1` so the emitted values are 1, 2, 3 relative to the body — direct port of zsh's `lineno = 1` reset on function entry at Src/init.c:1588.
+
+- ID collision found: `BUILTIN_HAS_STICKY` and `BUILTIN_SET_LINENO` were both u16=326 (the file has two more duplicate IDs at 325 — `FILE_OLDER` and `IS_TTY`). The HAS_STICKY register at line 4848 silently overwrote the SET_LINENO handler at line 4491, masking the runtime call entirely. Picked id=342 (next clean slot above 341) and noted the broader duplicate-ID problem in the const's docstring for future cleanup.
+
+- Tests: `test_lineno_increments_per_line_in_dash_c`, `test_lineno_resets_inside_function`.
+
 ### `${(M)var##pat}` / `(M)#pat` / `(M)%pat` / `(M)%%pat` returned the unstripped value instead of the matched portion
 
 - Direct port of zsh's `get_match_ret()` (Src/glob.c:2550). The `SUB_MATCH` flag (set by `(M)`) inverts the strip return: instead of the unmatched portion (default), return the matched portion. Was filed during the iter-86 audit.

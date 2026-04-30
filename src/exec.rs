@@ -4481,6 +4481,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(is_tty)
     });
 
+    // Set $LINENO before executing the next statement. Direct
+    // port of zsh's `lineno` global tracking from Src/input.c
+    // (`if ((inbufflags & INP_LINENO) || !strin) && c == '\n')
+    // lineno++;`). The compiler emits one of these before each
+    // top-level pipe in `compile_sublist`, carrying the line
+    // number captured by the parser at `ZshPipe.lineno`. Pops
+    // [n], updates `$LINENO` in the variable table.
+    vm.register_builtin(BUILTIN_SET_LINENO, |vm, _argc| {
+        let n = vm.pop().to_int();
+        with_executor(|exec| {
+            exec.variables
+                .insert("LINENO".to_string(), n.to_string());
+        });
+        fusevm::Value::Status(0)
+    });
+
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
         let name = vm.pop().to_str();
         // zsh strips a leading `no` (e.g. `[[ -o nounset ]]` and
@@ -6203,6 +6219,16 @@ pub const BUILTIN_UNKNOWN_COND: u16 = 324;
 /// `[[ -t fd ]]` — fd-is-a-tty check. Stack: [fd_string].
 /// Routes through libc::isatty. Pushes Bool.
 pub const BUILTIN_IS_TTY: u16 = 325;
+
+/// Update `$LINENO` to track the source line of the next statement.
+/// Stack: [n] (the line number from `ZshPipe.lineno`). Direct port
+/// of zsh's `lineno` global tracking (Src/input.c:330) — the
+/// compiler emits one of these per top-level pipe so `$LINENO`
+/// reflects the source position at runtime. ID 342 picked because
+/// the previous `326` collided with `BUILTIN_HAS_STICKY` (the file
+/// has several other duplicate IDs — 325 has two as well — but
+/// fixing those is out of scope for this port).
+pub const BUILTIN_SET_LINENO: u16 = 342;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)

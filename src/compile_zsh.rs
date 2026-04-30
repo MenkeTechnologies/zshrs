@@ -43,6 +43,13 @@ pub struct ZshCompiler {
     /// whitespace/newlines (`x=$(printf 'a\nb')` keeps both lines).
     /// Argument-context cmd-subst still splits.
     pub assign_context_depth: i32,
+    /// Subtract this from each pipe's `lineno` when emitting
+    /// SET_LINENO calls. Top-level program: 0 (linenos passed
+    /// verbatim). Function body: set to (first body line - 1) so
+    /// `$LINENO` inside the function reads 1, 2, 3 relative to the
+    /// body — matching zsh's `lineno = 1` reset on function entry
+    /// (Src/init.c:1588).
+    pub lineno_offset: u64,
 }
 
 impl ZshCompiler {
@@ -57,6 +64,7 @@ impl ZshCompiler {
             errexit_suppress_depth: 0,
             dq_context_depth: 0,
             assign_context_depth: 0,
+            lineno_offset: 0,
         }
     }
 
@@ -96,6 +104,22 @@ impl ZshCompiler {
     }
 
     fn compile_list(&mut self, list: &ZshList) {
+        // Update $LINENO before each top-level statement. Direct
+        // port of zsh's `lineno` global increment in Src/input.c
+        // — there it's tracked at the lexer level on every '\n';
+        // here we hoist that to compile-time by emitting a single
+        // SET_LINENO call per statement using the parser's
+        // captured `ZshPipe.lineno`. Subtract `lineno_offset` for
+        // function-body sub-chunks so they read 1, 2, 3 relative
+        // to the body (matches zsh's `lineno = 1` reset on
+        // function entry at Src/init.c:1588).
+        let raw_line = list.sublist.pipe.lineno;
+        let rel_line = raw_line.saturating_sub(self.lineno_offset).max(1);
+        self.builder.emit(Op::LoadInt(rel_line as i64), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_LINENO, 1), 0);
+        self.builder.emit(Op::Pop, 0);
+
         // ZshList = sublist + flags (async / disown).
         if list.flags.async_ {
             // Background: compile the sublist into a sub-chunk + emit
@@ -2075,7 +2099,20 @@ impl ZshCompiler {
         // The handler stores the chunk in functions_compiled and the source
         // text in function_source so introspection (whence, which, typeset
         // -f, ${functions[name]}) returns canonical body text.
-        let body_compiler = ZshCompiler::new();
+        //
+        // Set lineno_offset = (first_body_line - 1) so $LINENO
+        // inside the function reads 1, 2, 3 relative to the body
+        // (matches zsh's `lineno = 1` reset on function entry at
+        // Src/init.c:1588). Use the first list's pipe lineno as
+        // the offset anchor.
+        let mut body_compiler = ZshCompiler::new();
+        let first_body_line = f
+            .body
+            .lists
+            .first()
+            .map(|l| l.sublist.pipe.lineno)
+            .unwrap_or(1);
+        body_compiler.lineno_offset = first_body_line.saturating_sub(1);
         let body_chunk = body_compiler.compile(&f.body);
         let body_bytes = bincode::serialize(&body_chunk).unwrap_or_default();
         let body_str = base64_encode(&body_bytes);
