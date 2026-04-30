@@ -10248,6 +10248,20 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_print_minus_C_column_format() {
+    // `print -C N` formats args in N columns with 2-space separator
+    // (not tab). Each column is padded to the widest entry. Trailing
+    // partial rows don't get column-padding after the last present item.
+    let (_, output, _) = run_zshrs(r#"print -C 2 a b c d"#);
+    assert_eq!(output.trim_end(), "a  c\nb  d");
+    let (_, output, _) =
+        run_zshrs(r#"print -C 2 alpha beta gamma delta"#);
+    assert_eq!(output.trim_end(), "alpha  gamma\nbeta   delta");
+    let (_, output, _) = run_zshrs(r#"print -C 3 1 2 3 4 5 6 7"#);
+    assert_eq!(output.trim_end(), "1  4  7\n2  5\n3  6");
+}
+
+#[test]
 fn test_param_replace_strips_backslash_escape_in_pat() {
     // `${a//\:/-}` — the `\:` should match literal `:`. Was treating
     // `\:` as the literal pattern (no match because $a has `:`, not

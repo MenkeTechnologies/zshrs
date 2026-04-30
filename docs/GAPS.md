@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `print -C N` used tab separator instead of zsh's space-padded columns
+
+- zsh's `-C N` pads each column to the widest entry and joins with two-space separator (so `print -C 2 a b c d` reads `a  c` / `b  d`). We were using a single tab join, which renders wider (8 chars typically) and ignored column-width padding entirely. Reworked to compute per-column widths and emit `item + pad-to-width + "  "` for each non-last column. Trailing partial rows don't pad after the last present item. Test: `test_print_minus_C_column_format`.
+
 ### `${a//\:/-}` — backslash-escaped non-meta char treated as literal `\:`
 
 - zsh's pattern handling strips the backslash from `\X` when X is NOT a glob meta. Our `BUILTIN_PARAM_REPLACE` preserved the backslash, so the pattern looked for literal `\:` in the value (never matched). Added a pre-pass that strips backslash from non-meta escapes; preserves `\?`/`\*`/`\[`/`\]`/`\(`/`\)`/`\|`/`\\` for the regex compile downstream. Test: `test_param_replace_strips_backslash_escape_in_pat`.

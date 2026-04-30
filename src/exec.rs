@@ -30795,19 +30795,46 @@ impl ShellExecutor {
         let output = if one_per_line {
             processed.join("\n")
         } else if columns > 0 {
-            // Column output - calculate column widths
-            let mut result = String::new();
+            // Column output - calculate column widths. zsh's `print -C N`
+            // pads each column to the widest entry in that column and
+            // separates columns with TWO spaces (so "a c" / "b d" with
+            // single-char items reads as "a  c" / "b  d"). Earlier we
+            // joined with a single tab, which most terminals render
+            // wider than zsh's two-space output.
             let num_items = processed.len();
             let rows = (num_items + columns - 1) / columns;
-            for row in 0..rows {
-                let mut row_items = Vec::new();
-                for col in 0..columns {
+            // Compute width per column (max item width in that column).
+            let mut col_widths = vec![0usize; columns];
+            for col in 0..columns {
+                for row in 0..rows {
                     let idx = row + col * rows;
                     if idx < num_items {
-                        row_items.push(processed[idx].as_str());
+                        col_widths[col] = col_widths[col].max(processed[idx].chars().count());
                     }
                 }
-                result.push_str(&row_items.join("\t"));
+            }
+            let mut result = String::new();
+            for row in 0..rows {
+                // Find the last column in this row that actually has
+                // an item — only pad+separate columns BEFORE it.
+                let last_col_in_row = (0..columns)
+                    .rev()
+                    .find(|c| row + c * rows < num_items)
+                    .unwrap_or(0);
+                for col in 0..=last_col_in_row {
+                    let idx = row + col * rows;
+                    if idx < num_items {
+                        let item = processed[idx].as_str();
+                        result.push_str(item);
+                        if col < last_col_in_row {
+                            let pad = col_widths[col].saturating_sub(item.chars().count());
+                            for _ in 0..pad {
+                                result.push(' ');
+                            }
+                            result.push_str("  ");
+                        }
+                    }
+                }
                 if row < rows - 1 {
                     result.push('\n');
                 }
