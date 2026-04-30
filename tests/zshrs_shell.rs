@@ -6360,6 +6360,20 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_empty_cond_bracket_parse_error() {
+    // zsh: `[[ ]]` (empty condition) is a parse error. zshrs
+    // silently accepted and returned exit 0. Now `parse_cond`
+    // detects the empty case (immediate `Doutbrack` after the
+    // opening) and emits a parse error.
+    let (status, _, stderr) = run_zshrs("[[ ]]; echo done");
+    assert_ne!(status, 0);
+    assert!(stderr.contains("parse error"), "got: {stderr}");
+    // Non-empty cond still works.
+    let (_, output, _) = run_zshrs("[[ -d /tmp ]] && echo dir");
+    assert_eq!(output.trim(), "dir");
+}
+
+#[test]
 fn test_exec_non_executable_file_status_126() {
     // zsh: invoking a non-executable file (`chmod 644 file; ./file`)
     // emits `permission denied: ./file` on stderr and exits 126
