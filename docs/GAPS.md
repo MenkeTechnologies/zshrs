@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `$(([#16]255))` output radix in arith — `[#N]` adds `N#` prefix, `[##N]` drops it
+
+Direct port of zsh's math.c output-radix handling (lines 786-832 in patcompswitch's `[` case): single-`#` form keeps the `N#` prefix on the result, double-`##` drops it. Base must be 2..=36. zsh's convbase (Src/params.c:5586) special-cases base==10 to skip the prefix entirely (matches `[#10]42` → `42`).
+
+zshrs previously left `[#16]255` as a literal in the math expression, so the `$(())` expansion either parsed it as a subscript or errored. Added a prefix-strip + radix-capture step in `evaluate_arithmetic` BEFORE handing off to `MathEval`, then formatted the integer result with `format_int_in_base` honoring the no-prefix flag.
+
+Test: `test_arith_output_radix_with_prefix`.
+
 ### `integer -i N name=val` for output radix; `trap -p` rejection (zsh-compat)
 
 - **`integer -i 16 x=255`** now stores 255 with attribute base=16, so `echo $x` prints `16#FF` per zsh's typeset -i semantics (Src/builtin.c). zshrs's previous arg loop treated each flag arg as a single token (`-i` only), so the next arg `16` fell into the assignment-or-name path and triggered "not an identifier: 16" since `1` is a digit. Direct port: when `-i` is followed by an all-digit arg (separate or same-token), consume it as the base. Same logic works for both `-i 16` and `-i16`.

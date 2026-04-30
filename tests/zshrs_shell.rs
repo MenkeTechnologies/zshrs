@@ -8488,6 +8488,25 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_arith_output_radix_with_prefix() {
+    // Direct port of zsh's math.c output radix handling
+    // (line 786 onward): `[#N]EXPR` formats result with `N#`
+    // prefix; `[##N]EXPR` drops the prefix. Base must be 2..36.
+    let (_, output, _) = run_zshrs("echo $(([#16]255))");
+    assert_eq!(output.trim(), "16#FF", "got: {output:?}");
+    let (_, output, _) = run_zshrs("echo $(([##16]255))");
+    assert_eq!(output.trim(), "FF", "got: {output:?}");
+    let (_, output, _) = run_zshrs("echo $(([#8]255))");
+    assert_eq!(output.trim(), "8#377", "got: {output:?}");
+    let (_, output, _) = run_zshrs("echo $(([##2]10))");
+    assert_eq!(output.trim(), "1010", "got: {output:?}");
+    // Base 10 special case: zsh's convbase (params.c:5586)
+    // skips the `N#` prefix when N==10.
+    let (_, output, _) = run_zshrs("echo $(([#10]42))");
+    assert_eq!(output.trim(), "42", "got: {output:?}");
+}
+
+#[test]
 fn test_integer_dash_i_with_base_arg() {
     // zsh: `integer -i 16 x=255` -> stores `255` but displays
     // `16#FF` per typeset -i semantics (zsh's builtin.c

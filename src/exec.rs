@@ -17168,6 +17168,34 @@ impl ShellExecutor {
             return rhs_val.to_string();
         }
         let expr = self.pre_resolve_array_subscripts(&expr);
+        // Output radix prefix `[#N]EXPR` (with `N#` prefix) and
+        // `[##N]EXPR` (without). Direct port of zsh's math.c
+        // (line 786 onward in patcompswitch's `[` case): `n=1`
+        // for single-`#` (prefix kept), `n=-1` for double-`##`
+        // (prefix dropped). The base must be 2..=36. Strip the
+        // prefix from `expr`, store the radix for post-eval
+        // formatting, then continue with the inner expression.
+        let mut output_radix: Option<(u32, bool)> = None;
+        let expr = {
+            let mut e = expr.as_str();
+            if let Some(rest) = e.strip_prefix("[#") {
+                let (no_prefix_form, body) = if let Some(r2) = rest.strip_prefix('#') {
+                    (true, r2)
+                } else {
+                    (false, rest)
+                };
+                if let Some(close_idx) = body.find(']') {
+                    let n_str = &body[..close_idx];
+                    if let Ok(n) = n_str.parse::<u32>() {
+                        if (2..=36).contains(&n) {
+                            output_radix = Some((n, no_prefix_form));
+                            e = &body[close_idx + 1..];
+                        }
+                    }
+                }
+            }
+            e.to_string()
+        };
         let force_float = self.options.get("forcefloat").copied().unwrap_or(false);
         let c_prec = self.options.get("cprecedences").copied().unwrap_or(false);
         let octal = self.options.get("octalzeroes").copied().unwrap_or(false);
@@ -17207,6 +17235,31 @@ impl ShellExecutor {
                 for (k, v) in evaluator.extract_string_variables() {
                     self.variables.insert(k.clone(), v.clone());
                     env::set_var(&k, &v);
+                }
+                // If the expression had a `[#N]` / `[##N]` prefix,
+                // format the integer result in base N. zsh's
+                // single-`#` form prefixes `N#`; double-`##` drops
+                // the prefix (math.c: `outputradix < 0` means
+                // no-prefix). Floats fall back to the default %g
+                // format (zsh: same thing — radix only affects
+                // integer results).
+                if let Some((base, no_prefix)) = output_radix {
+                    let n = result.to_int();
+                    let body = format_int_in_base(n, base);
+                    // zsh's convbase (Src/params.c:5586): no prefix
+                    // when base == 10 (matches `[#10]42` -> `42`).
+                    // Same when the user asked for `##` form
+                    // (`[##16]255` -> `FF`). Only `[#N]` for N != 10
+                    // gets the `N#` prefix.
+                    return if no_prefix || base == 10 {
+                        if let Some(idx) = body.find('#') {
+                            body[idx + 1..].to_string()
+                        } else {
+                            body
+                        }
+                    } else {
+                        body
+                    };
                 }
                 // zsh splits formatting between the two contexts that
                 // share this code path:
