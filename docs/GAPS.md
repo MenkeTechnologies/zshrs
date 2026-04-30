@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${(j:sep:)$(cmd)}` over-applied join by splitting on whitespace first
+
+- The cmd-subst-as-flag-operand branch (added in batch 11) split the captured output on whitespace BEFORE joining with sep. zsh: `(j:::)` is a no-op on a scalar — the cmd-subst output is a single string, not an array. Result: newline-separated output got crammed onto one line. Fixed: drop the split-then-join in the Join arm; cmd-subst → scalar → (j) no-op. Tests: `test_param_j_flag_on_cmd_subst_no_op`, `test_param_jf_split_then_join_cmd_subst`.
+
 ### `${a:^b}` / `${a:^^b}` array-zip operators not implemented
 
 - zsh subst.c SUB_ZIP_SHORT (`:^`) interleaves up to min(len). SUB_ZIP_LONG (`:^^`) cycles the shorter array up to max(len). Both yield space-joined output. Was previously listed in the "Still open" GAPS section. Added detect at top of `expand_braced_variable` for plain-identifier names. Tests: `test_array_zip_short_form`, `test_array_zip_long_form_cycles`.

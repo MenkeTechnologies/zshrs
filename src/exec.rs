@@ -14261,8 +14261,14 @@ impl ShellExecutor {
                                 out = parts.join(" ");
                             }
                             ZshParamFlag::Join(sep) => {
-                                let parts: Vec<&str> = out.split_whitespace().collect();
-                                out = parts.join(sep);
+                                // (j:sep:) on a scalar is a no-op in
+                                // zsh — only fires when the operand is
+                                // an array. Cmd-subst returns a single
+                                // captured string; without splitting
+                                // first, joining is a no-op. Earlier
+                                // we split on whitespace which over-
+                                // applied for newline-separated output.
+                                let _ = sep;
                             }
                             ZshParamFlag::SplitWords => {
                                 // (z) — tokenize via shell lex. Approximate
