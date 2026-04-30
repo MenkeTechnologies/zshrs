@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-sixth-pass)
 
+### `$#a[N]` (unbraced length-of-element) printed `<count>[N]` instead of zsh's element length
+
+- zsh treats `$#NAME[idx]` as sugar for `${#NAME[idx]}` — length of the selected array element (1-indexed). zshrs's compile-time fast path for unbraced `$#` handled `$#NAME` and `$#NAME[@]`/`$#NAME[*]` (array length) but punted on numeric subscripts: `a=(one two three); echo $#a[2]` printed `3[2]` (count followed by literal `[2]`). Fix: extend the fast path in `compile_zsh::compile_word` to detect `[idx]` after the bare name, push the equivalent `${#NAME[idx]}` braced form, and dispatch to `BUILTIN_EXPAND_TEXT` mode 4 (HeredocBody — calls `exec.expand_string` verbatim) so the full subscript-flag machinery is reused without re-implementing it inline. Test: `test_dollar_hash_array_subscript`.
+
+### `{1..3..0}` (zero step) silently expanded to `1 2 3` instead of staying literal
+
+- zsh: `{N..M..0}` is invalid (zero step is meaningless) and the entire token stays literal. zshrs's `abs_step.max(1)` clamped step 0 → 1 and produced `1 2 3`. Negative steps still reverse the natural sequence (per zsh's rule); only exactly 0 should short-circuit. Added an early return when the parsed step is 0. Test: `test_brace_zero_step_stays_literal`.
+
 ### `pushd /tmp; echo $PWD` returned the pre-pushd cwd; `dirs` showed `/private/tmp` instead of zsh's logical `/tmp`
 
 - `pushd`/`popd` called `set_current_dir` (moving the OS-level cwd) but never synced `$PWD`/`$OLDPWD` in the shell's variable table. cd does this; pushd/popd skipped it. Two symptoms cascaded: (1) the shell-level `$PWD` continued to read the pre-pushd path even though the OS cwd had moved, breaking any code that consulted `$PWD` for "where am I"; (2) `dirs` read the OS cwd via `current_dir()` which canonicalizes — so on macOS where `/tmp` is a symlink to `/private/tmp`, `pushd /tmp; dirs` printed `/private/tmp ...`. zsh preserves the user-given logical path. Fix: in `pushd`/`popd`, after `set_current_dir`, write the logical path (user-given when -P not used) to `$PWD` and the prior path to `$OLDPWD` (mirroring `cd`'s behavior). In `dirs`, prefer `$PWD` over `current_dir()` for the current-dir entry, falling back only when `$PWD` is unset. Tests: `test_pushd_updates_pwd_variable`, `test_dirs_uses_logical_pwd_not_canonical`, `test_popd_restores_pwd_variable`.

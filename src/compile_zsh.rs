@@ -1109,13 +1109,51 @@ impl ZshCompiler {
         // count of array elements, same as `$#a` on an indexed array).
         if !has_bnull && untoked.len() >= 3 && untoked.starts_with("$#") {
             let rest = &untoked[2..];
-            // Strip a trailing `[@]` / `[*]` — both mean "array length"
-            // for the purpose of the # length operator.
-            let bare_name = if rest.ends_with("[@]") || rest.ends_with("[*]") {
-                &rest[..rest.len() - 3]
-            } else {
-                rest
-            };
+            // zsh: `$#NAME[idx]` is sugar for `${#NAME[idx]}` —
+            // length of the selected array element / subscripted
+            // value. Also handles `[@]`/`[*]` (array length).
+            // Without this, the trailing subscript was rendered
+            // as literal text (`3[2]` for an array of size 3).
+            // Substitute braces and recurse via expand_string at
+            // runtime so the full subscript-flag machinery
+            // (`(r)pat`, `(i)`, etc.) is reused, since we'd
+            // otherwise have to re-implement it inline.
+            if let Some(lb) = rest.find('[') {
+                if rest.ends_with(']') {
+                    let bare = &rest[..lb];
+                    let first = bare.chars().next();
+                    let is_ident = !bare.is_empty()
+                        && first
+                            .map(|c| c == '_' || c.is_ascii_alphabetic())
+                            .unwrap_or(false)
+                        && bare
+                            .chars()
+                            .all(|c| c == '_' || c.is_ascii_alphanumeric());
+                    let is_positional = !bare.is_empty()
+                        && bare.chars().all(|c| c.is_ascii_digit());
+                    if is_ident || is_positional {
+                        // Push the braced form `${#NAME[idx]}` and
+                        // hand off to BUILTIN_EXPAND_TEXT mode 4
+                        // (HeredocBody — just calls exec.expand_string
+                        // verbatim without re-escaping). This reuses
+                        // the full subscript-flag machinery so we
+                        // don't have to re-implement it inline.
+                        let braced = format!("${{#{}}}", rest);
+                        let idx = self.builder.add_constant(Value::str(braced));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                        self.builder.emit(Op::LoadInt(4), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(
+                                crate::exec::BUILTIN_EXPAND_TEXT,
+                                2,
+                            ),
+                            0,
+                        );
+                        return;
+                    }
+                }
+            }
+            let bare_name = rest;
             let first = bare_name.chars().next();
             // Accept identifier names AND positional digit names ($#1
             // = length of $1 string). zsh: `set -- ab; echo $#1` → 2.
