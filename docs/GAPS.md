@@ -2067,6 +2067,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's actual runtime rejects `RETURN` as a signal name despite some documentation hints at it (the parser's `getsignum` doesn't include it). zshrs's known-sig allowlist included `RETURN`. Removed it from the list to match zsh's rejection. Test: `test_trap_return_undefined`.
 
+### `print -u abc hi` printed to stdout instead of erroring "number expected after -u: abc"
+
+- zsh: `-u N` requires a numeric fd; non-numeric -> `print:1: number expected after -u: <arg>` exit 1. zshrs's `unwrap_or(1)` silently dropped non-numeric input and printed to stdout. Replaced with explicit parse + error before the print runs. Test: `test_print_u_non_numeric_errors`.
+
+### `fc -l x y z` reported "too many arguments" instead of "event not found: x"
+
+- zsh: 3+ positionals where args[0] is non-numeric -> `event not found: <args[0]>` (text-name miss takes precedence over count-error). zshrs's >2-positional arm always emitted `too many arguments`. Added a numeric-check on args[0]; non-numeric routes to the event-not-found diagnostic. Test: `test_fc_l_3plus_text_first_arg_errors_event_not_found`.
+
+### `zstyle X` (single non-flag arg) silently returned 0 instead of "not enough arguments"
+
+- zsh: `zstyle PATTERN STYLE [VALUE...]` requires at least pattern+style (or a flag-form). `zstyle X` -> `zstyle:1: not enough arguments` exit 1. zshrs's set-style path required `args.len() >= 2` silently. Added an `args.len() == 1 && !args[0].starts_with('-')` precheck. Test: `test_zstyle_one_arg_not_enough`.
+
+### `zformat -f result` (no format string) returned 1 silently
+
+- zsh: insufficient args to `zformat -f` -> `zformat:1: not enough arguments` exit 1. zshrs returned 1 silently with no diagnostic. Added the eprintln before the return. Test: `test_zformat_f_too_few_args_errors`.
+
+### `set --help` errored "can't change option: --" instead of treating as end-of-options
+
+- zsh treats `--xxx` (long-option-style) on `set` as `--` (end-of-options); remaining args become positional. zshrs's per-char letter loop hit the leading `-` of `--help` first and errored "can't change option: --". Added a `--`-prefix short-circuit that consumes the rest of args as positional. Test: `test_set_long_option_treated_as_endmark`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
