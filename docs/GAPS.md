@@ -1801,6 +1801,28 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `kill -INVALID 1` -> `kill:1: unknown signal: SIGINVALID` followed by `kill:1: type kill -l for a list of signals` exit 1. zshrs emitted the bash-style `kill: invalid signal: -INVALID` (with leading dash, no SIG prefix, no hint line). Replaced the `_-flag` else arm with the two-line zsh format (already used by the `-L`-as-signal arm). Test: `test_kill_bad_signal_uses_zsh_format`.
 
+## Closed (eighty-second-pass)
+
+### `source` (no args) printed bash-style banner with no shell-name prefix
+
+- zsh: bare `source` -> `source:1: not enough arguments` exit 1. zshrs printed `source: filename argument required` — bash-style banner without the canonical zsh `<shellname>:<builtin>:<line>:` prefix that scripts grep for. Refactored to `builtin_source_named(args, invoked_as)`; `builtin_source` is now a thin wrapper. The bare-source path emits zsh's terse format. Test: `test_source_no_args_zsh_format`.
+
+### `. ""` printed "is a directory" with exit 1 instead of "no such file or directory" exit 127
+
+- zsh: `. ""` -> `.:1: no such file or directory:` exit 127 (treats the empty path as a missing file with empty trailing identifier). zshrs's POSIX path resolver mapped "" to the current working directory, then `fs::read_to_string("")` returned `Is a directory`, so the diagnostic became `is a directory: ` exit 1 — wrong wording AND wrong exit. Special-cased empty-path early in `builtin_source_named` to emit zsh's diagnostic + exit 127. Test: `test_source_empty_path_uses_no_such_file`.
+
+### `[ a b c d ]` (4+ args, no operator) silently returned 1
+
+- zsh: `[ a b c d ]` -> `1: condition expected: a` exit 2 (more than 3 operands without a recognized connective is a syntax error). zshrs's default arm fell through every operator/connective check and returned 1, which a consumer would read as "false" rather than "syntax error". Added a `args.len() >= 4` arm at the very end of the default block that emits zsh's diagnostic and exits 2. Test: `test_test_4plus_args_no_op_errors`.
+
+### `[ \( \) ]` (matching empty parens) silently returned 1
+
+- zsh: `[ \( \) ]` -> `[:1: argument expected` exit 2 (parens around an empty expression is ill-formed). zshrs's recursive `inner.is_empty()` recursion landed at the bare-args-empty `1` arm and silently succeeded false. Added an `inner.is_empty()` check inside the strip-parens-and-recurse path that emits zsh's diagnostic and exits 2 before recursing. Test: `test_test_empty_paren_errors`.
+
+### `zle -l` listed built-in widgets in non-interactive scripts
+
+- zsh: in `-c`/`-f` non-interactive mode the ZLE module isn't loaded, so `zle -l` outputs nothing and returns 0. zshrs eagerly preloaded its built-in widget table on every interp startup, so `zle -l` always emitted the full list — diverging from zsh's silent-empty output and breaking scripts that grep for "zle module not loaded" semantics. Added an `atty::is(Stream::Stdin)` guard in both `-l` and `-la`/`-lL` arms; non-tty mode returns 0 immediately. Test: `test_zle_l_silent_in_script`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted

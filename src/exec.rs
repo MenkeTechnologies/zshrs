@@ -17310,9 +17310,25 @@ impl ShellExecutor {
     }
 
     fn builtin_source(&mut self, args: &[String]) -> i32 {
+        self.builtin_source_named(args, "source")
+    }
+
+    fn builtin_source_named(&mut self, args: &[String], invoked_as: &str) -> i32 {
         if args.is_empty() {
-            eprintln!("source: filename argument required");
+            // zsh: `source` -> `source:1: not enough arguments`,
+            // `.` -> `.:1: not enough arguments`. zshrs hard-coded
+            // a bash-style banner without the shell-name prefix.
+            eprintln!("zshrs:{}:1: not enough arguments", invoked_as);
             return 1;
+        }
+        // zsh: `. ""` (empty path) -> `.:1: no such file or
+        // directory:` (with empty trailing path). zshrs's POSIX
+        // path-resolver mapped "" to cwd which then opened as a
+        // directory and produced `is a directory: `. Special-case
+        // empty so the diagnostic matches zsh.
+        if args[0].is_empty() {
+            eprintln!("zshrs:{}:1: no such file or directory: ", invoked_as);
+            return 127;
         }
 
         let path = &args[0];
@@ -18339,6 +18355,17 @@ impl ShellExecutor {
                             .iter()
                             .map(|s| s.to_string())
                             .collect();
+                        // `[ \( \) ]` — empty parens. zsh: the
+                        // recursive call into the inner arg list
+                        // ought to error `argument expected` rather
+                        // than silently return 1 (which means
+                        // "false" but should really mean "syntax
+                        // error" since an empty test expression is
+                        // ill-formed).
+                        if inner.is_empty() {
+                            eprintln!("zshrs:[:1: argument expected");
+                            return 2;
+                        }
                         return self.builtin_test(&inner);
                     }
                 }
@@ -18360,6 +18387,15 @@ impl ShellExecutor {
                         return l;
                     }
                     return self.builtin_test(&right);
+                }
+                // 4+ args with no recognized operator/connective —
+                // `[ a b c d ]` errors `condition expected: a` exit
+                // 2. zshrs silently returned 1 ("false") which a
+                // consumer would read as a normal comparison-result
+                // rather than a syntax error.
+                if args.len() >= 4 {
+                    eprintln!("zshrs:1: condition expected: {}", args[0]);
+                    return 2;
                 }
                 1
             }
@@ -24535,7 +24571,8 @@ impl ShellExecutor {
             "hash" => self.builtin_hash(cmd_args),
             "add-zsh-hook" => self.builtin_add_zsh_hook(cmd_args),
             "autoload" => self.builtin_autoload(cmd_args),
-            "source" | "." => self.builtin_source(cmd_args),
+            "source" => self.builtin_source_named(cmd_args, "source"),
+            "." => self.builtin_source_named(cmd_args, "."),
             "functions" => self.builtin_functions(cmd_args),
             "zle" => self.builtin_zle(cmd_args),
             "bindkey" => self.builtin_bindkey(cmd_args),
@@ -30518,7 +30555,16 @@ impl ShellExecutor {
         while let Some(arg) = iter.next() {
             match arg.as_str() {
                 "-l" => {
-                    // List widgets
+                    // zsh: in non-interactive mode (`-c`), the ZLE
+                    // module is not loaded, so `zle -l` outputs
+                    // nothing and returns 0. zshrs eagerly preloads
+                    // its built-in widget table, so the listing fired
+                    // even in scripts — diverging from zsh's silent
+                    // empty output. Match zsh by returning 0 with no
+                    // listing when stdin is not a tty.
+                    if !atty::is(atty::Stream::Stdin) {
+                        return 0;
+                    }
                     let zle = zle();
                     let mut widgets: Vec<&str> = zle.list_widgets();
                     widgets.sort();
@@ -30528,7 +30574,10 @@ impl ShellExecutor {
                     return 0;
                 }
                 "-la" | "-lL" => {
-                    // List all widgets with details
+                    // Same non-tty silence rule as bare `-l`.
+                    if !atty::is(atty::Stream::Stdin) {
+                        return 0;
+                    }
                     let zle = zle();
                     let mut widgets: Vec<&str> = zle.list_widgets();
                     widgets.sort();
