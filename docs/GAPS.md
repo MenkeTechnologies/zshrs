@@ -1691,6 +1691,20 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's echo treats a bare `-` (single char) as a no-op flag — silently consumed. zshrs's flag parser skipped tokens shorter than 2 chars, so the lone `-` became a positional arg. Added an explicit `if arg == "-"` skip in the flag-walk. `--` (two dashes) is still NOT a recognized flag — stays literal. Test: `test_echo_bare_dash_is_noop_flag`.
 
+## Closed (seventy-ninth-pass)
+
+### `printf "%04x" 42` printed `  2a` instead of `002a`
+
+- The `%x`/`%X`/`%o` cases in `builtin_printf` had `left_align` and default-(right-pad-with-space) branches but no `zero_pad` branch — so `%04x` ignored the `0` flag and used spaces. Added a `zero_pad` arm to each that emits the prefix (`0x`/`0X`/`0` for alt-form), then `0`-fill for the width gap, then the digits. Test: `test_printf_hex_zero_pad`.
+
+### `for ((i=1; i<=$#a; i++))` never iterated
+
+- The arith COMMAND already routes through MathEval when the expr contains `$`, but the for-loop arith sections (init/cond/step) routed only on `,`. ArithCompiler's lexer can't parse `$`, so the cond became "0" (false) and the loop body never ran. Two-part fix: (1) extend `route_through_eval` in `compile_for_arith` to fire on `$` as well as `,`; (2) lift the routing decision to a single `needs_eval_global` so init/cond/step all use the SAME backend (otherwise init writes `i` into a slot via ArithCompiler but cond reads `i` from MathEval's variable map and sees 0). Test: `test_for_arith_with_dollar_param_in_cond`.
+
+### `set -y` (and any unknown flag letter) errored "invalid option"
+
+- zsh accepts unknown single-letter `set` flags silently — `set -y` is a no-op, `set -xy` enables xtrace and silently accepts -y. zshrs's `builtin_set` errored on the first unknown letter, breaking scripts that probe combinations. Default arm now silently ignores unknown letters (matching zsh's lenient flag-letter behavior). Test: `test_set_unknown_flag_silent`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
