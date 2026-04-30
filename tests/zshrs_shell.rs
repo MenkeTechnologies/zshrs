@@ -10248,6 +10248,16 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_nested_replace_expands_dollar_in_repl() {
+    // `${${a:-foo}/foo/$b}` — the replacement string `$b` was left
+    // literal instead of getting expanded. zsh expands $-refs in
+    // both pattern AND replacement.
+    let (_, output, _) =
+        run_zshrs(r#"b=fb; echo "${${a:-foo}/foo/$b}""#);
+    assert_eq!(output.trim(), "fb");
+}
+
+#[test]
 fn test_array_slice_at_preserves_splice_in_assignment() {
     // `b=("${a[@]:1}")` — array-slice with `[@]` should preserve
     // element boundaries when used in array-init context. Was

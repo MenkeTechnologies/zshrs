@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${${...}/pat/$var}` nested-replace path didn't expand `$var` in repl
+
+- The nested-expansion `/pat/repl` branch passed both `pat` and `repl` to `String::replace` without running them through `expand_string`. zsh expands $-refs in both. Added `expand_string` calls. Test: `test_nested_replace_expands_dollar_in_repl`.
+
 ### `${arr[@]:offset}` array slice collapsed splice in assignment context
 
 - `b=("${a[@]:1}")` should give `b` 2 elements (when `a` had 3); was giving 1 because BUILTIN_PARAM_SUBSTRING returned a joined scalar regardless of `[@]`. Compile path now re-attaches `[@]`/`[*]` to the name (parse_param_modifier dropped it). Runtime detects the suffix and returns `Value::Array` when `force_array`. Same fix for the EXPR variant. Without this, the canonical "shift-via-slice" idiom `while ((#a > 0)); do ...; a=("${a[@]:1}"); done` looped forever. Tests: `test_array_slice_at_preserves_splice_in_assignment`, `test_array_consume_loop_terminates`.
