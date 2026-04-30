@@ -8036,6 +8036,19 @@ fn test_fc_edit_too_many_args_errors() {
 }
 
 #[test]
+fn test_fc_l_3plus_text_in_middle() {
+    // zsh: `fc -l 1 abc 2` (3+ positionals with non-numeric in
+    // middle) -> `fc:1: event not found: abc` (text-name miss
+    // takes precedence). zshrs only checked args[0]; if abc was
+    // in middle, it reported `too many arguments` (wrong category).
+    let (_, _, stderr) = run_zshrs("fc -l 1 abc 2");
+    assert!(
+        stderr.contains("event not found: abc"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

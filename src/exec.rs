@@ -17848,6 +17848,15 @@ impl ShellExecutor {
 
     fn builtin_test(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
+            // zsh: `test` (bare) returns 1 silently; `[` (bare,
+            // no closing `]`) errors `[:1: ']' expected` exit 2.
+            // zshrs's dispatch can't distinguish `test` from `[` at
+            // this point (fusevm aliases both to BUILTIN_TEST), so
+            // matching exactly requires a separate BUILTIN_LBRACKET
+            // wired through the registry-published fusevm. Until
+            // then, return 1 silently — matches `test` exactly and
+            // is the more common case; `[` users see the wrong
+            // exit code but no spurious output.
             return 1;
         }
 
@@ -21635,12 +21644,18 @@ impl ShellExecutor {
                 // takes at most 2 range bounds). Single positional /
                 // no positional uses `no such event: N`.
                 if positional.len() > 2 {
-                    // zsh: 3+ positionals where args[0] is non-numeric
-                    // -> `event not found: <args[0]>` (text-name miss
-                    // takes precedence over count-error). All-numeric
-                    // 3+ -> `too many arguments`.
-                    if positional[0].parse::<i64>().is_err() {
-                        eprintln!("zshrs:fc:1: event not found: {}", positional[0]);
+                    // zsh: 3+ positionals where ANY positional is
+                    // non-numeric -> `event not found: <text>` for
+                    // the FIRST non-numeric (text-name miss takes
+                    // precedence over count-error). All-numeric
+                    // 3+ -> `too many arguments`. zshrs only
+                    // checked args[0] earlier; extended to scan all
+                    // bounds.
+                    let first_text = positional
+                        .iter()
+                        .find(|s| s.parse::<i64>().is_err());
+                    if let Some(text) = first_text {
+                        eprintln!("zshrs:fc:1: event not found: {}", text);
                     } else {
                         eprintln!("zshrs:fc:1: too many arguments");
                     }
