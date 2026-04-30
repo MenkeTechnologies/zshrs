@@ -695,15 +695,25 @@ impl<'a> MathEval<'a> {
             // of the bad digit sequence so the error context is
             // the full remaining digit string (`2#22` -> `22`,
             // not just the first `2`).
-            let val = match i64::from_str_radix(&val_str, base) {
-                Ok(v) => v,
-                Err(_) => {
-                    self.error = Some(format!(
-                        "bad math expression: operator expected at `{}'",
-                        val_str
-                    ));
-                    self.yyval = MathNum::Integer(0);
-                    return MathTok::Num;
+            //
+            // Empty digit sequence (`10#`, `36#` with nothing
+            // after) is NOT an error in zsh — it's silently 0.
+            // zshrs's `from_str_radix("", base)` returned Err,
+            // which used to land in the operator-expected arm and
+            // emit a nonsense `at \`'` message.
+            let val = if val_str.is_empty() {
+                0
+            } else {
+                match i64::from_str_radix(&val_str, base) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        self.error = Some(format!(
+                            "bad math expression: operator expected at `{}'",
+                            val_str
+                        ));
+                        self.yyval = MathNum::Integer(0);
+                        return MathTok::Num;
+                    }
                 }
             };
             self.yyval = if self.force_float {
