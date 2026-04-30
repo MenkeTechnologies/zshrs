@@ -10446,6 +10446,15 @@ impl ShellExecutor {
                             eprintln!("zshrs:1: command not found: {}", cmd);
                         }
                         Ok(127)
+                    } else if e.kind() == io::ErrorKind::PermissionDenied {
+                        // zsh: non-executable file → "permission denied"
+                        // on stderr and exit 126 (POSIX convention for
+                        // "command found but not executable"). zshrs
+                        // previously bubbled the IO error up via Err
+                        // and the surrounding code converted to 127
+                        // with no diagnostic.
+                        eprintln!("zshrs:1: permission denied: {}", cmd);
+                        Ok(126)
                     } else {
                         Err(format!("zshrs: {}: {}", cmd, e))
                     }
