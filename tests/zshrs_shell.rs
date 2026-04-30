@@ -10248,6 +10248,18 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_param_replace_strips_backslash_escape_in_pat() {
+    // `${a//\:/-}` — the `\:` should match literal `:`. Was treating
+    // `\:` as the literal pattern (no match because $a has `:`, not
+    // `\:`). zsh: backslash unescapes a non-meta char in the pattern.
+    let (_, output, _) = run_zshrs(r#"a="x:y:z"; echo "${a//\:/-}""#);
+    assert_eq!(output.trim(), "x-y-z");
+    let (_, output, _) =
+        run_zshrs(r#"a="x.y.z"; echo "${a//\./X}""#);
+    assert_eq!(output.trim(), "xXyXz");
+}
+
+#[test]
 fn test_param_p_indirect_with_cmd_subst() {
     // `${(P)$(...)}` — (P) indirect on cmd-subst result. Treat the
     // captured output as a NAME and look up that variable's value.

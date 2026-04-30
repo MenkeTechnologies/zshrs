@@ -5853,6 +5853,41 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // resolves $pat).
         let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
         let repl = with_executor(|exec| exec.expand_string(&repl_raw));
+        // Strip backslash escapes from the pattern. zsh: `\X` in a
+        // ${var/pat/repl} pattern means "literal X" — the backslash
+        // is removed and X is used as a literal char (regardless of
+        // whether X is a pattern metachar). Without this, `${a//\:/-}`
+        // tried to match the literal "\:" in $a which never matched.
+        // We preserve `\\` (literal backslash) and `\X` for X in the
+        // pattern-meta set, since regex compile expects those raw.
+        let pattern = {
+            let mut out = String::with_capacity(pattern.len());
+            let mut it = pattern.chars().peekable();
+            while let Some(c) = it.next() {
+                if c == '\\' {
+                    if let Some(&nx) = it.peek() {
+                        // For non-meta chars, drop the backslash.
+                        // For metas keep the escape so regex still
+                        // matches them literally below.
+                        // Keep escape only for actual zsh pattern
+                        // metachars (the ones that have special pattern
+                        // meaning). `.` is regex-meta but NOT zsh-meta,
+                        // so `\.` drops the backslash → literal `.`.
+                        if matches!(nx, '?' | '*' | '[' | ']' | '(' | ')' | '|' | '\\') {
+                            out.push(c);
+                        } else {
+                            out.push(nx);
+                            it.next();
+                        }
+                    } else {
+                        out.push(c);
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
         // Inline pattern flags `(#i)` / `(#l)` / `(#I)` etc. apply
         // to ${var//pat/repl} too, not just `[[ ... = pat ]]`.
         // Direct port of zsh's pattern.c (compswitch) — same

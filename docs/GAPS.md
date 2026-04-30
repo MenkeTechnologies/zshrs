@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${a//\:/-}` — backslash-escaped non-meta char treated as literal `\:`
+
+- zsh's pattern handling strips the backslash from `\X` when X is NOT a glob meta. Our `BUILTIN_PARAM_REPLACE` preserved the backslash, so the pattern looked for literal `\:` in the value (never matched). Added a pre-pass that strips backslash from non-meta escapes; preserves `\?`/`\*`/`\[`/`\]`/`\(`/`\)`/`\|`/`\\` for the regex compile downstream. Test: `test_param_replace_strips_backslash_escape_in_pat`.
+
 ### `${(P)$(...)}` — (P) indirect on cmd-subst result returned the captured output verbatim
 
 - The cmd-subst-as-flag-operand branch (added in batch 11) didn't honor (P) — it returned the captured output as the value, not the value of THE VARIABLE NAMED BY THE OUTPUT. zsh: `a=hi; ${(P)$(echo a)}` → `hi` (NOT `a`). Detect Parameter flag, look up the captured-output string as a variable name. Test: `test_param_p_indirect_with_cmd_subst`.
