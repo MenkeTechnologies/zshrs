@@ -1799,8 +1799,11 @@ impl<'a> MathEval<'a> {
             ""
         };
 
-        // Parse arguments
-        let args: Vec<f64> = if args_str.is_empty() {
+        // Parse arguments. Keep both the float view (for trig) and the
+        // original MathNum so int-preserving functions (abs/min/max/
+        // int/floor/ceil/trunc) can return integer when all inputs
+        // were integer.
+        let arg_nums: Vec<MathNum> = if args_str.is_empty() {
             vec![]
         } else {
             args_str
@@ -1809,12 +1812,30 @@ impl<'a> MathEval<'a> {
                     let mut eval = MathEval::new(s.trim());
                     eval.variables = self.variables.clone();
                     match eval.evaluate() {
-                        Ok(n) => Some(n.to_float()),
+                        Ok(n) => Some(n),
                         Err(_) => None,
                     }
                 })
                 .collect()
         };
+        let args: Vec<f64> = arg_nums.iter().map(|n| n.to_float()).collect();
+        let all_int = !arg_nums.is_empty()
+            && arg_nums.iter().all(|n| matches!(n, MathNum::Integer(_)));
+
+        // Functions that preserve int-ness: when all args are int,
+        // return MathNum::Integer instead of Float to avoid the
+        // trailing "." in the string output ("5." instead of "5").
+        let int_preserving = matches!(name, "abs" | "min" | "max" | "int" | "floor" | "ceil" | "trunc");
+        if all_int && int_preserving {
+            let i = match name {
+                "abs" => arg_nums.get(0).map(|n| n.to_int().abs()).unwrap_or(0),
+                "min" => arg_nums.iter().map(|n| n.to_int()).min().unwrap_or(0),
+                "max" => arg_nums.iter().map(|n| n.to_int()).max().unwrap_or(0),
+                "int" | "floor" | "ceil" | "trunc" => arg_nums.get(0).map(|n| n.to_int()).unwrap_or(0),
+                _ => 0,
+            };
+            return MathNum::Integer(i);
+        }
 
         // Built-in math functions
         let result = match name {

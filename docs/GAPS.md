@@ -1572,6 +1572,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${(flag)$(cmd)}` — cmd-subst as flag operand returned empty in DQ
+
+- The flag handler had a branch for `${(flag)${...}}` (nested expansion as operand) but not for `$(...)` (cmd-subst as operand). zsh subst.c runs the cmd-subst first, then applies flags to the captured output. Added `rest.starts_with("$(")` branch that calls `run_command_substitution` and applies U/L/Split/Join/SplitWords/SplitLines flags. Test: `test_param_flag_with_cmd_subst_operand`.
+
+### `abs(-5)` / `min(3,5)` / `max(3,5)` returned `5.` (float) instead of `5` (int)
+
+- All math functions returned `MathNum::Float`, even when the input was integer. Float-to-string formatting produced trailing `.` for whole numbers ("5."). Added int-preserving fast path for `abs`/`min`/`max`/`int`/`floor`/`ceil`/`trunc` — when all args are `MathNum::Integer`, return `MathNum::Integer`. Float inputs still produce float output. Test: `test_math_abs_min_max_preserve_int`.
+
 ### `b=("${a[@]}")` joined elements when assigning array-to-array
 
 - Earlier batch 6 fix forced JOIN_STAR on `[@]` when `assign_context_depth > 0` to handle scalar `b="${a[@]}"`. But array init (`b=(...)`) shares the same flag, so array-to-array splice collapsed: `a=("1 2" "3 4"); b=("${a[@]}")` → `b=("1 2 3 4")` (1 element). Added separate `scalar_assign_depth` counter — only bumped for scalar assignment RHS. Test: `test_array_assigns_array_via_at_splice`.
