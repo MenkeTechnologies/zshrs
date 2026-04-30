@@ -1797,6 +1797,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `alias` listing single-quotes the value when it contains shell metas — including `=`, because the bare form `alias g=x=y` would re-parse as `alias g=x` + positional arg `=y`. zshrs's `format_alias_kv` (and its inline copy in the per-name lookup) excluded `=` from the quote-trigger set. Added `=` to both. Test: `test_alias_listing_quotes_value_with_equals`.
 
+### Bare `fc` with session entries fell through to list mode instead of recurse-aborted
+
+- Bare `fc` (no -l, no positional) is the EDIT mode — re-execute the prior command. In -c mode the prior command is `fc` itself, which is infinite recursion; zsh refuses with `current history line would recurse endlessly, aborted`. zshrs's earlier guard required empty session_history_ids, so adding any `print -s` entry let bare `fc` fall through to the list-mode pass-through. Hoisted the recurse-aborted check to fire BEFORE the session-only branch. Test: `test_fc_no_args_with_session_still_recurses`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`

@@ -20850,6 +20850,21 @@ impl ShellExecutor {
             return 0;
         }
 
+        // Bare `fc` (no -l, no positional) ALWAYS errors recurse-
+        // endlessly in -c mode, regardless of session entries —
+        // the EDIT mode tries to re-execute the prior command, and
+        // since `fc` itself is the prior command in `-c`, that's
+        // infinite. (Without this guard, having a `print -s` entry
+        // turned bare `fc` into a list-mode pass-through.)
+        if !list_mode
+            && positional.is_empty()
+            && !atty::is(atty::Stream::Stdin)
+            && args.is_empty()
+        {
+            eprintln!("zsh:fc:1: current history line would recurse endlessly, aborted");
+            return 1;
+        }
+
         // List mode (fc -l)
         if list_mode || args.is_empty() {
             let (first, last) = match positional.len() {
