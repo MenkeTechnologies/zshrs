@@ -28292,12 +28292,24 @@ impl ShellExecutor {
                             }
                         }
                         'u' => {
+                            // zsh's printf %u treats negative ints
+                            // as their two's-complement u64 form
+                            // (`-1` -> 18446744073709551615) per
+                            // C/POSIX printf semantics. zshrs's
+                            // direct `arg.parse::<u64>()` rejected
+                            // the leading `-` and silently fell
+                            // back to 0. Fix: parse as i64 first;
+                            // if that succeeds, cast to u64
+                            // (Rust's `as` does the wraparound).
                             let val: u64 = if arg.starts_with("0x") || arg.starts_with("0X") {
                                 u64::from_str_radix(&arg[2..], 16).unwrap_or(0)
                             } else if arg.starts_with("0") && arg.len() > 1 {
                                 u64::from_str_radix(&arg[1..], 8).unwrap_or(0)
                             } else {
-                                arg.parse().unwrap_or(0)
+                                arg.parse::<i64>()
+                                    .map(|n| n as u64)
+                                    .or_else(|_| arg.parse::<u64>())
+                                    .unwrap_or(0)
                             };
                             let num_str = val.to_string();
                             if width_val > num_str.len() {
