@@ -10248,6 +10248,37 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_param_flag_with_cmd_subst_operand() {
+    // `${(z)$(echo a b c)}` — cmd-subst as flag operand. Without the
+    // new branch in expand_braced_variable, the flag handler treated
+    // `$(echo a b c)` as a literal var name and returned empty in DQ.
+    let (_, output, _) =
+        run_zshrs(r#"echo "${(z)$(echo a b c)}""#);
+    assert_eq!(output.trim(), "a b c");
+    let (_, output, _) =
+        run_zshrs(r#"echo "${(U)$(echo hello)}""#);
+    assert_eq!(output.trim(), "HELLO");
+    let (_, output, _) =
+        run_zshrs(r#"echo "${(s. .)$(echo a b c)}""#);
+    assert_eq!(output.trim(), "a b c");
+}
+
+#[test]
+fn test_math_abs_min_max_preserve_int() {
+    // abs/min/max/int/floor/ceil/trunc on integer args should return
+    // integer (not float). Was returning "5." instead of "5".
+    let (_, output, _) = run_zshrs(r#"echo $((abs(-5)))"#);
+    assert_eq!(output.trim(), "5");
+    let (_, output, _) = run_zshrs(r#"echo $((max(3,5,7)))"#);
+    assert_eq!(output.trim(), "7");
+    let (_, output, _) = run_zshrs(r#"echo $((min(3,5,7)))"#);
+    assert_eq!(output.trim(), "3");
+    // Float input still returns float.
+    let (_, output, _) = run_zshrs(r#"echo $((abs(-5.5)))"#);
+    assert_eq!(output.trim(), "5.5");
+}
+
+#[test]
 fn test_array_assigns_array_via_at_splice() {
     // `b=("${a[@]}")` — array RHS preserves element boundaries even
     // when elements contain spaces. Was joining to single string

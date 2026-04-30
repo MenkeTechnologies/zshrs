@@ -14016,6 +14016,53 @@ impl ShellExecutor {
                 let rest = &content[close_paren + 1..];
                 let mut flags = self.parse_zsh_flags(flags_str);
 
+                // Cmd-subst as the operand: `${(flags)$(...)}`. zsh
+                // subst.c runs the cmd-subst first, then applies flags
+                // to the captured output. Without this, the rest was
+                // treated as a literal var name and returned empty.
+                if rest.starts_with("$(") && rest.ends_with(')') {
+                    let cmd_text = &rest[2..rest.len() - 1];
+                    let inner_str = self.run_command_substitution(cmd_text);
+                    // Apply flags. Same dispatch as the ${...} branch.
+                    let mut out = inner_str.clone();
+                    for f in &flags {
+                        match f {
+                            ZshParamFlag::Upper => {
+                                out = out.to_uppercase();
+                            }
+                            ZshParamFlag::Lower => {
+                                out = out.to_lowercase();
+                            }
+                            ZshParamFlag::Split(sep) => {
+                                let parts: Vec<&str> = if sep.is_empty() {
+                                    out.split_whitespace().collect()
+                                } else {
+                                    out.split(sep.as_str()).collect()
+                                };
+                                out = parts.join(" ");
+                            }
+                            ZshParamFlag::Join(sep) => {
+                                let parts: Vec<&str> = out.split_whitespace().collect();
+                                out = parts.join(sep);
+                            }
+                            ZshParamFlag::SplitWords => {
+                                // (z) — tokenize via shell lex. Approximate
+                                // by collapsing whitespace then re-joining
+                                // by single space; full lex would handle
+                                // quotes/escapes but that's rare in DQ.
+                                let parts: Vec<&str> = out.split_whitespace().collect();
+                                out = parts.join(" ");
+                            }
+                            ZshParamFlag::SplitLines => {
+                                let parts: Vec<&str> = out.lines().collect();
+                                out = parts.join(" ");
+                            }
+                            _ => {}
+                        }
+                    }
+                    return out;
+                }
+
                 // Nested expansion as the operand: `${(flags)${...}}`.
                 // zsh subst.c paramsubst recursively evaluates the inner
                 // ${...} first, then applies the outer flags to the
