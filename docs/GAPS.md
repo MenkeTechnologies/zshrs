@@ -1871,6 +1871,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `autoload -Z` -> `autoload:1: bad option: -Z`; `autoload -l` -> `autoload:1: bad option: -l` exit 1. zshrs's silent `_ => {}` fallback in the flag char-loop accepted any letter, masking typos AND the bash-style `-l` flag that zsh doesn't have. Replaced the fallback with explicit `bad option:` error. Test: `test_autoload_unknown_flag_errors`.
 
+### `[ -lt 5 3 ]` (binop at args[0]) silently returned 1
+
+- zsh: `[ -lt 5 3 ]` -> `[:1: unknown condition: -lt` exit 2. The op-at-front looks like a unary condition zsh doesn't recognise. zshrs's 3-arg path only checked `args[1]` for the operator, so `args[0]=-lt args[1]=5 args[2]=3` slipped past every match arm and hit the catch-all `1`. Added a 3-arg arm that triggers on a known binop at args[0] and emits zsh's diagnostic. Test: `test_test_3arg_op_at_pos0_errors`.
+
+### `[ a -lt 3 5 ]` (4 args with valid binop) emitted "condition expected: a" instead of "too many arguments"
+
+- zsh: `[ a -lt 3 5 ]` -> `[:1: too many arguments` exit 2 — the binop is correctly placed but the operand count is wrong. zshrs's 4+-arg arm always emitted `condition expected: <args[0]>`, the wrong category for valid-but-overlong binop expressions. Split the 4+-arg arm: if args[1] is a known binop, emit `too many arguments`; otherwise stay on `condition expected:`. Test: `test_test_4args_with_binop_emits_too_many`.
+
+### `[ "" "" ]` (two operands, no operator) silently returned 1
+
+- zsh: `[ "" "" ]` -> `1: parse error: condition expected:` exit 2 (two operands without a connective is ill-formed). zshrs's 2-arg path only handled `[s1, s2]` for known string-comparator forms; the catch-all silently returned 1. Added a 2-arg arm that fires when neither operand is `-`-prefixed nor a paren, emitting zsh's parse-error diagnostic. Test: `test_test_two_operands_no_op_errors`.
+
+### `autoload -X` (no function name) silently no-op'd
+
+- zsh: `autoload -X` (no function name) -> `autoload:1: bad autoload` exit 1 — `-X` requires a function context. zshrs's loop set `execute_now=true` but the empty `functions` vec skipped both the listing branch (gated on `!execute_now`) AND the execute branch (no functions to load), returning 0 silently. Added an explicit `functions.is_empty() && execute_now` arm that emits zsh's diagnostic. Test: `test_autoload_X_no_function_errors`.
+
+### `shift 5 a` on a 1-element array silently shifted what it could
+
+- zsh: `a=(1); shift 5 a` -> `shift:1: shift count must be <= $#` exit 1 (the per-array bound is enforced). zshrs's array-shift loop iterated `for _ in 0..count` and just `arr.remove(0)`'d up to the array length, leaving partial state and returning 0. Added a precheck pass over array_names that compares `count > arr.len()` and errors before any mutation. Test: `test_shift_array_count_too_many_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
