@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `printf "abc" > file` left file empty AND leaked output to stdout
+
+- Rust's `print!` is block-buffered when stdout is a non-tty (file via dup2). The `redirect_scope` restored the original stdout fd via dup2 BEFORE the buffer flushed, so buffered data ended up on the original terminal and the file stayed empty. `echo "abc"` worked because `println!` triggered line-buffer flush. Added explicit `std::io::stdout().flush()` at the end of `builtin_printf`, `builtin_echo`, `builtin_print` so non-newline output reaches the redirect target before scope restoration. Test: `test_printf_redirect_to_file_writes_data`.
+
 ### `typeset -T PATH path :` didn't read inherited $PATH from env
 
 - The tied-pair init only consulted `self.variables`; vars like `PATH` that live in process env (not our shell-level map) read as empty so `path` was a 0-elem array. Fixed: fall back to `std::env::var(name)` when self.variables doesn't have it. Test: `test_typeset_t_reads_existing_env_value`.

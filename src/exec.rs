@@ -5456,15 +5456,38 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // positional parameters as ARRAY elements (not chars). zsh's
         // semantics: 1-based, inclusive offset; length counts elems.
         // For arrays/assoc-values arrays, same array semantics.
-        if name == "@" || name == "*" {
-            let result = with_executor(|exec| slice_positionals(exec, offset, length));
-            return fusevm::Value::str(result.join(" "));
+        // `[@]`/`[*]` suffix preserved by the compile path indicates
+        // the user wrote `${arr[@]:n}` and expects splice; return
+        // Value::Array so downstream array-init keeps element
+        // boundaries.
+        let (lookup_name, force_array) =
+            if let Some(stripped) = name
+                .strip_suffix("[@]")
+                .or_else(|| name.strip_suffix("[*]"))
+            {
+                (stripped.to_string(), true)
+            } else {
+                (name.clone(), false)
+            };
+        if lookup_name == "@" || lookup_name == "*" {
+            let result =
+                with_executor(|exec| slice_positionals(exec, offset, length));
+            return fusevm::Value::Array(
+                result.into_iter().map(fusevm::Value::str).collect(),
+            );
         }
-        let array_slice = with_executor(|exec| exec.arrays.get(&name).cloned());
+        let array_slice = with_executor(|exec| exec.arrays.get(&lookup_name).cloned());
         if let Some(arr) = array_slice {
             let result = slice_array_zero_based(&arr, offset, length);
-            return fusevm::Value::str(result.join(" "));
+            return if force_array {
+                fusevm::Value::Array(
+                    result.into_iter().map(fusevm::Value::str).collect(),
+                )
+            } else {
+                fusevm::Value::str(result.join(" "))
+            };
         }
+        let name = lookup_name;
         let val = with_executor(|exec| exec.get_variable(&name));
         let chars: Vec<char> = val.chars().collect();
         let len = chars.len() as i64;
@@ -5503,9 +5526,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // Match BUILTIN_PARAM_SUBSTRING's array-aware dispatch:
         // `${@:n:m}` / `${arr[@]:n:m}` slice positionals/array
         // ELEMENTS, not chars. Without this, the expr-form fell
-        // back to scalar char-slicing on the IFS-joined value
-        // (`${a[@]:1:$((2+0))}` produced " b" via char positions
-        // instead of zsh's "b c" via element positions).
+        // back to scalar char-slicing on the IFS-joined value.
         let (lookup_name, force_array) =
             if let Some(stripped) = name
                 .strip_suffix("[@]")
@@ -5515,6 +5536,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 (name.clone(), false)
             };
+        // Use a dual-result: Array when force_array, Str otherwise.
+        // zsh: `${a[@]:1}` keeps array splice for downstream array
+        // assignment (`b=("${a[@]:1}")` should give 2 elements, not
+        // a single space-joined string).
+        enum Result {
+            Str(String),
+            Arr(Vec<String>),
+        }
         let result = with_executor(|exec| {
             let offset = exec.eval_arith_expr(&off_expr);
             let length_opt: Option<i64> = if has_len {
@@ -5524,23 +5553,25 @@ fn register_builtins(vm: &mut fusevm::VM) {
             };
             // Positional-param slice (`${@:1:2}`).
             if lookup_name == "@" || lookup_name == "*" {
-                return slice_positionals(
+                let parts = slice_positionals(
                     exec,
                     offset,
                     length_opt.unwrap_or(i64::MIN),
-                )
-                .join(" ");
+                );
+                return Result::Arr(parts);
             }
             // Array slice (`${arr:1:2}` or `${arr[@]:1:2}`).
             if let Some(arr) = exec.arrays.get(&lookup_name).cloned() {
-                if force_array || true {
-                    return slice_array_zero_based(
-                        &arr,
-                        offset,
-                        length_opt.unwrap_or(i64::MIN),
-                    )
-                    .join(" ");
-                }
+                let sliced = slice_array_zero_based(
+                    &arr,
+                    offset,
+                    length_opt.unwrap_or(i64::MIN),
+                );
+                return if force_array {
+                    Result::Arr(sliced)
+                } else {
+                    Result::Str(sliced.join(" "))
+                };
             }
             // Scalar fallback.
             let val = exec.get_variable(&lookup_name);
@@ -5560,9 +5591,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     (length as usize).min(chars.len().saturating_sub(start))
                 }
             };
-            chars.iter().skip(start).take(take).collect::<String>()
+            Result::Str(chars.iter().skip(start).take(take).collect::<String>())
         });
-        fusevm::Value::str(result)
+        match result {
+            Result::Str(s) => fusevm::Value::str(s),
+            Result::Arr(parts) => {
+                fusevm::Value::Array(parts.into_iter().map(fusevm::Value::str).collect())
+            }
+        }
     });
 
     // `${var#pat}` / `${var##pat}` / `${var%pat}` / `${var%%pat}`
@@ -19101,6 +19137,11 @@ impl ShellExecutor {
         if newline {
             println!();
         }
+        // Flush so any redirect-scope dup2 restoration on the next
+        // statement doesn't strand buffered data on the original fd.
+        // See builtin_printf for the same fix and rationale.
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
         0
     }
 
@@ -29545,7 +29586,18 @@ impl ShellExecutor {
         if let Some(var) = assign_var {
             self.variables.insert(var, output);
         } else {
+            // Flush BEFORE the redirect scope closes — Rust's print!
+            // is line-buffered when stdout is a tty but block-buffered
+            // for non-tty (file/pipe). With our fd-level redirect via
+            // dup2, the buffered data still belongs to the original
+            // stdout fd; if we don't flush before the redirect_scope
+            // pops (and dup2 restores the original fd), the data
+            // ends up on the original terminal instead of the file.
+            // echo works because its print! emits a newline → triggers
+            // line-buffer flush; printf's "abc" without newline doesn't.
+            use std::io::Write as _;
             print!("{}", output);
+            let _ = std::io::stdout().flush();
         }
         if had_error {
             1
@@ -31001,6 +31053,18 @@ impl ShellExecutor {
                         );
                     }
                 }
+            }
+            // Same flush rationale as builtin_printf — block-buffered
+            // stdout strands data through redirect-scope restore.
+            use std::io::Write as _;
+            match fd {
+                1 => {
+                    let _ = std::io::stdout().flush();
+                }
+                2 => {
+                    let _ = std::io::stderr().flush();
+                }
+                _ => {}
             }
         }
 
