@@ -1993,6 +1993,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: bare `zparseopts` -> `zparseopts:1: not enough arguments` exit 1. zshrs returned 0 silently. Added an early `args.is_empty()` check. Test: `test_zparseopts_no_args_errors`.
 
+### `pwd extra arg` printed cwd instead of erroring "too many arguments"
+
+- zsh: `pwd` only takes flags; positional args -> `pwd:1: too many arguments` exit 1. zshrs ignored positional args and printed cwd. Added a `positional_count` tally; non-zero errors before the cwd lookup. Test: `test_pwd_too_many_args_errors`.
+
+### `umask 0Ab` reported "bad symbolic mode operator: 0" instead of "bad umask"
+
+- zsh: `umask 0Ab` (digit-prefixed but not all-digits) -> `bad umask` exit 1 — the digit prefix is a strong signal of an attempted numeric mode that failed parsing. zshrs's symbolic walker treated `0` as the start of a class+operator parse and emitted `bad symbolic mode operator: 0` (wrong category). Extended the `looks_numeric` precheck to also catch digit-prefixed inputs. Test: `test_umask_digit_prefix_uses_bad_umask`.
+
+### `fc -l 1 abc` reported "no events in that range" instead of "event not found: abc"
+
+- zsh: in a range query, if either bound is non-numeric, errors `event not found: <text>` for that bound. zshrs's range path lumped non-numeric bounds into the generic `no events in that range` (wrong category — text-name miss vs out-of-range have distinct diagnostics). Added per-bound numeric checks before the range error. Test: `test_fc_l_two_args_non_numeric_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted

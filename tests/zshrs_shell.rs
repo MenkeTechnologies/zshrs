@@ -7340,6 +7340,46 @@ fn test_zparseopts_no_args_errors() {
 }
 
 #[test]
+fn test_pwd_too_many_args_errors() {
+    // zsh: `pwd extra arg` -> `pwd:1: too many arguments` exit 1.
+    // pwd takes only flags; positional args are an error. zshrs
+    // ignored them silently and printed cwd.
+    let (status, _, stderr) = run_zshrs("pwd extra arg");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("too many arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_umask_digit_prefix_uses_bad_umask() {
+    // zsh: `umask 0Ab` (digit-prefixed but not all-digits) -> `bad
+    // umask` exit 1 — not the symbolic-mode-operator diagnostic.
+    // zshrs's symbolic walker treated `0` as the start of a
+    // class+operator parse and emitted the wrong category.
+    let (status, _, stderr) = run_zshrs("umask 0Ab");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad umask"), "got: {stderr}");
+    assert!(
+        !stderr.contains("symbolic mode operator"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_fc_l_two_args_non_numeric_errors() {
+    // zsh: `fc -l 1 abc` (range with non-numeric bound) -> `fc:1:
+    // event not found: abc` exit 1. zshrs's range path lumped
+    // non-numeric bounds into `no events in that range` (wrong
+    // category — should distinguish text-name from out-of-range).
+    let (_, _, stderr) = run_zshrs("fc -l 1 abc");
+    assert!(stderr.contains("event not found: abc"), "got: {stderr}");
+    let (_, _, stderr) = run_zshrs("fc -l xyz 1");
+    assert!(stderr.contains("event not found: xyz"), "got: {stderr}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

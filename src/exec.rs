@@ -17124,7 +17124,15 @@ impl ShellExecutor {
         // tracked $PWD with symlinks preserved). Default is logical to
         // match zsh.
         let mut physical = false;
+        let mut positional_count = 0;
         for arg in args {
+            if !arg.starts_with('-') {
+                // zsh: `pwd extra arg` -> `pwd:1: too many arguments`
+                // exit 1. pwd takes only flags; positional args are
+                // an error. zshrs ignored them and printed cwd.
+                positional_count += 1;
+                continue;
+            }
             for ch in arg.strip_prefix('-').unwrap_or("").chars() {
                 match ch {
                     'P' => physical = true,
@@ -17139,6 +17147,10 @@ impl ShellExecutor {
                     }
                 }
             }
+        }
+        if positional_count > 0 {
+            eprintln!("zshrs:pwd:1: too many arguments");
+            return 1;
         }
         let logical_pwd = self
             .variables
@@ -21345,6 +21357,20 @@ impl ShellExecutor {
                     return 1;
                 }
                 if positional.len() == 2 {
+                    // zsh: if either of the two range bounds is
+                    // non-numeric, error `event not found: <text>`
+                    // for the FIRST non-numeric bound. Both numeric
+                    // -> `no events in that range`.
+                    let p0_bad = positional[0].parse::<i64>().is_err();
+                    let p1_bad = positional[1].parse::<i64>().is_err();
+                    if p0_bad {
+                        eprintln!("zshrs:fc:1: event not found: {}", positional[0]);
+                        return 1;
+                    }
+                    if p1_bad {
+                        eprintln!("zshrs:fc:1: event not found: {}", positional[1]);
+                        return 1;
+                    }
                     eprintln!("zsh:fc:1: no events in that range");
                     return 1;
                 }
@@ -29053,12 +29079,18 @@ impl ShellExecutor {
             } else {
                 // Numeric parse failed AND no `=` for symbolic. zsh
                 // emits a single `bad umask` for invalid octal (e.g.
-                // `umask 999`); for malformed symbolic without `=`,
-                // walk the input and emit the operator-position
-                // diagnostic. Numeric-looking input with bad digits
-                // (8 or 9) gets the terse `bad umask`.
+                // `umask 999`, `umask 0Ab`); for malformed symbolic
+                // without `=`, walk the input and emit the
+                // operator-position diagnostic. Numeric-looking input
+                // (any all-digits OR digit-prefixed) goes the terse
+                // `bad umask` route.
                 let looks_numeric = !v.is_empty() && v.chars().all(|c| c.is_ascii_digit());
-                if looks_numeric {
+                let starts_with_digit = v
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false);
+                if looks_numeric || starts_with_digit {
                     eprintln!("zshrs:umask:1: bad umask");
                     return 1;
                 }
