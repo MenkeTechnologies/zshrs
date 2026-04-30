@@ -8488,6 +8488,29 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_nested_expansion_modifier_chain() {
+    // Direct port of zsh's hist.c modifier dispatch for
+    // `${${...}:MOD}` — outer history modifier applies to the
+    // inner expansion result. zshrs's nested-expansion handler
+    // only checked for `[idx]` after the inner; modifier chain
+    // and `/pat/repl` substitution were silently dropped.
+    let (_, output, _) = run_zshrs(r#"a=Hello.World; echo "${${a:l}:r}""#);
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"a=( file.txt other.csv ); echo "${${(j: :)a}:r}""#);
+    assert_eq!(output.trim(), "file.txt other", "got: {output:?}");
+}
+
+#[test]
+fn test_nested_expansion_replace() {
+    // `${${a}//l/L}` — replace operator after nested expansion.
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "${${a}//l/L}""#);
+    assert_eq!(output.trim(), "heLLo", "got: {output:?}");
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "${${a}/l/L}""#);
+    assert_eq!(output.trim(), "heLlo", "got: {output:?}");
+}
+
+#[test]
 fn test_typeset_array_quote_aware_split() {
     // Direct port of zsh's lex.c word-splitting for assignment
     // RHS — `local arr=( "a b" c )` keeps "a b" as one element,
