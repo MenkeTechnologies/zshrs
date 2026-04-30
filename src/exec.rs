@@ -5261,6 +5261,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
         if last == 0 {
             return fusevm::Value::Status(0);
         }
+        // ZERR / ERR trap fires whenever a command exits non-zero
+        // (zsh signals.c handle_signals path). Read the trap body
+        // BEFORE the errexit check so a trap on the failing
+        // command's last command can run before we exit.
+        let zerr_body = with_executor(|exec| {
+            exec.traps.get("ZERR").cloned()
+                .or_else(|| exec.traps.get("ERR").cloned())
+        });
+        if let Some(body) = zerr_body {
+            // Run the trap. Don't recurse on the trap's own failure
+            // (clear last_status during the run).
+            with_executor(|exec| {
+                let saved = exec.last_status;
+                exec.last_status = 0;
+                let _ = exec.execute_script(&body);
+                exec.last_status = saved;
+            });
+        }
         let should_exit = with_executor(|exec| {
             // zsh stores the option as `errexit` (default OFF). Honor
             // both keys (`errexit=true` from `setopt errexit` /
@@ -5331,10 +5349,21 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     return idx <= exec.positional_params.len();
                 }
             }
+            // zsh-special "always set" params: their getter computes
+            // a dynamic value, but the contains_key check fails. Treat
+            // them as set so `${SECONDS-default}` returns the seconds,
+            // not "default".
+            let is_zsh_special = matches!(
+                name.as_str(),
+                "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME"
+                    | "RANDOM" | "LINENO" | "HISTCMD" | "PPID"
+                    | "UID" | "EUID" | "GID" | "EGID" | "SHLVL"
+            );
             exec.variables.contains_key(&name)
                 || exec.arrays.contains_key(&name)
                 || exec.assoc_arrays.contains_key(&name)
                 || std::env::var(&name).is_ok()
+                || is_zsh_special
         });
         let is_empty = val.is_empty();
         // For colon variants, "missing" = unset OR empty.
@@ -14426,11 +14455,22 @@ impl ShellExecutor {
                 // Decide whether the default should fire. For `:-`, on
                 // empty (or unset). For `-` (no colon), only when the
                 // var is genuinely unset — empty value keeps the empty.
+                // zsh-special "always set" params: SECONDS, EPOCHSECONDS,
+                // RANDOM, LINENO, $$, $? etc. Their getter computes the
+                // value; the contains_key check fails because we don't
+                // store them. Treat them as set.
+                let is_zsh_special = matches!(
+                    var_name,
+                    "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME"
+                        | "RANDOM" | "LINENO" | "HISTCMD" | "PPID"
+                        | "UID" | "EUID" | "GID" | "EGID" | "SHLVL"
+                );
                 let var_is_set = !var_name.is_empty()
                     && (self.variables.contains_key(var_name)
                         || self.arrays.contains_key(var_name)
                         || self.assoc_arrays.contains_key(var_name)
-                        || std::env::var(var_name).is_ok());
+                        || std::env::var(var_name).is_ok()
+                        || is_zsh_special);
                 let needs_default = if default_unset_only {
                     !var_is_set
                 } else {
@@ -14634,10 +14674,19 @@ impl ShellExecutor {
                         let var_name: String = chars[..name_end].iter().collect();
                         let default_text: String = chars[name_end + op_len..].iter().collect();
                         let val = self.get_variable(&var_name);
+                        // Same zsh-special "always set" treatment as
+                        // the flag-aware path above (line ~14430).
+                        let is_zsh_special = matches!(
+                            var_name.as_str(),
+                            "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME"
+                                | "RANDOM" | "LINENO" | "HISTCMD" | "PPID"
+                                | "UID" | "EUID" | "GID" | "EGID" | "SHLVL"
+                        );
                         let var_is_set = self.variables.contains_key(&var_name)
                             || self.arrays.contains_key(&var_name)
                             || self.assoc_arrays.contains_key(&var_name)
-                            || std::env::var(&var_name).is_ok();
+                            || std::env::var(&var_name).is_ok()
+                            || is_zsh_special;
                         let needs_default = if unset_only {
                             !var_is_set
                         } else {
@@ -16813,6 +16862,13 @@ impl ShellExecutor {
                 }
             }
             "argv" => self.positional_params.join(" "),
+            "HISTCMD" => {
+                // zsh: HISTCMD = current history-event number. With -f
+                // (no rc loading) and history-tracking off, zsh shows
+                // 0. We mirror by returning the current session count
+                // (or 0 when history isn't engaged).
+                self.session_history_ids.len().to_string()
+            }
             "TTY" => {
                 // Path to the controlling terminal (`$TTY` in zsh).
                 // ttyname(0) gives the device path. Returns "" if no tty.

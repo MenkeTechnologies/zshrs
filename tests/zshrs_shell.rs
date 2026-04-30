@@ -10248,6 +10248,36 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_special_param_default_treats_as_set() {
+    // `${SECONDS-default}` — zsh-special params have dynamic getters
+    // and were treated as "unset" because they're not in the variables
+    // map. Default fired incorrectly. Now treated as always-set.
+    let (_, output, _) = run_zshrs(r#"echo "[${SECONDS-default}]""#);
+    assert!(output.trim() != "[default]");
+    let (_, output, _) = run_zshrs(r#"echo "[${UID-default}]""#);
+    assert!(output.trim() != "[default]");
+    let (_, output, _) = run_zshrs(r#"echo "[${HISTCMD-default}]""#);
+    assert_eq!(output.trim(), "[0]");
+}
+
+#[test]
+fn test_zerr_trap_fires_on_nonzero_status() {
+    // `trap "X" ZERR; false; echo done` — ZERR fires whenever a
+    // command exits non-zero. Was a no-op despite being recognized
+    // as a valid signal name. Now wired into BUILTIN_ERREXIT_CHECK.
+    let (_, output, _) =
+        run_zshrs(r#"trap "echo zerr" ZERR; false; echo done"#);
+    assert_eq!(output.trim(), "zerr\ndone");
+}
+
+#[test]
+fn test_err_trap_alias_for_zerr() {
+    let (_, output, _) =
+        run_zshrs(r#"trap "echo err" ERR; false; echo done"#);
+    assert_eq!(output.trim(), "err\ndone");
+}
+
+#[test]
 fn test_read_minus_E_echoes_and_assigns() {
     // `read -E` should echo the read line on stdout AND store it in
     // the variable. zsh's bin_read calls fputs(buf, stdout) under

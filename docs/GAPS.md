@@ -1572,6 +1572,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### zsh-special params `SECONDS`/`UID`/`HISTCMD`/etc. treated as unset for `${X-default}`
+
+- These have dynamic getters but aren't in `self.variables`, so `${SECONDS-default}` returned "default" instead of the live value. zsh treats them as always-set. Added matched whitelist (`SECONDS`, `EPOCHSECONDS`, `EPOCHREALTIME`, `RANDOM`, `LINENO`, `HISTCMD`, `PPID`, `UID`, `EUID`, `GID`, `EGID`, `SHLVL`) to all three `var_is_set` decision points (flag-aware path, no-modifier path, and `BUILTIN_PARAM_DEFAULT_FAMILY`). Also added `HISTCMD` to the dynamic getter (returns session history count). Test: `test_special_param_default_treats_as_set`.
+
+### `trap "..." ZERR` / `trap "..." ERR` were no-op stubs
+
+- `BUILTIN_ERREXIT_CHECK` only acted on `errexit`; the trap registered for ZERR/ERR was never fired. zsh's signals.c fires ZERR (and the alias ERR) whenever a command exits non-zero, before the errexit decision. Added `traps.get("ZERR").or(traps.get("ERR"))` lookup at the top of `BUILTIN_ERREXIT_CHECK` and run the body via `execute_script` (with last_status saved/restored to prevent recursion on trap-body failures). Tests: `test_zerr_trap_fires_on_nonzero_status`, `test_err_trap_alias_for_zerr`.
+
 ### `read -e` / `read -E` were no-op stubs
 
 - zsh's bin_read calls fputs(buf, stdout) under both -e and -E. -e prints the line and DOESN'T assign; -E prints AND assigns. Both were swallowed in our flag-char loop with a `// TODO` comment. Implemented per zsh: -e returns 0 after the echo (no assignment); -E falls through to the assignment block. Tests: `test_read_minus_E_echoes_and_assigns`, `test_read_minus_e_echoes_only`.
