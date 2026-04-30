@@ -10248,6 +10248,27 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_array_zip_short_form() {
+    // `${a:^b}` interleaves arrays up to min(len). Direct port of
+    // zsh subst.c SUB_ZIP_SHORT.
+    let (_, output, _) =
+        run_zshrs(r#"a=(1 2 3); b=(x y z); print ${a:^b}"#);
+    assert_eq!(output.trim(), "1 x 2 y 3 z");
+    let (_, output, _) =
+        run_zshrs(r#"a=(1 2); b=(x y z); print ${a:^b}"#);
+    assert_eq!(output.trim(), "1 x 2 y");
+}
+
+#[test]
+fn test_array_zip_long_form_cycles() {
+    // `${a:^^b}` interleaves up to max(len), cycling the shorter.
+    // SUB_ZIP_LONG.
+    let (_, output, _) =
+        run_zshrs(r#"a=(1 2); b=(x y z w); print ${a:^^b}"#);
+    assert_eq!(output.trim(), "1 x 2 y 1 z 2 w");
+}
+
+#[test]
 fn test_substring_offset_with_nested_arith() {
     // `${a:$((${#a}-2))}` — substring with nested arith in offset.
     // The compile-time substring shape detection rejected the case

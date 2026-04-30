@@ -14027,6 +14027,58 @@ impl ShellExecutor {
     }
 
     fn expand_braced_variable(&mut self, content: &str) -> String {
+        // `${a:^b}` / `${a:^^b}` — array zip operators. zsh subst.c
+        // SUB_ZIP_SHORT (`^`) interleaves up to min(len). SUB_ZIP_LONG
+        // (`^^`) cycles the shorter array. Both yield space-joined
+        // output. Detect first because the `:^` shape would otherwise
+        // get misread as a substring offset.
+        if let Some(colon_pos) = content.find(":^") {
+            let lhs_name = &content[..colon_pos];
+            let rest_after = &content[colon_pos + 2..];
+            let (cycle, rhs_name) = if let Some(r) = rest_after.strip_prefix('^') {
+                (true, r)
+            } else {
+                (false, rest_after)
+            };
+            // Both names must be plain identifiers — `${a:^b}` only.
+            // More elaborate forms (with modifiers, flags) fall
+            // through to the general path below.
+            let is_ident = |s: &str| {
+                !s.is_empty()
+                    && s.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                    && s.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+            };
+            if is_ident(lhs_name) && is_ident(rhs_name) {
+                let a: Vec<String> = self.arrays.get(lhs_name).cloned().unwrap_or_default();
+                let b: Vec<String> = self.arrays.get(rhs_name).cloned().unwrap_or_default();
+                let pairs = if cycle {
+                    let n = a.len().max(b.len());
+                    let mut out = Vec::with_capacity(n * 2);
+                    for i in 0..n {
+                        if a.is_empty() && b.is_empty() {
+                            break;
+                        }
+                        if !a.is_empty() {
+                            out.push(a[i % a.len()].clone());
+                        }
+                        if !b.is_empty() {
+                            out.push(b[i % b.len()].clone());
+                        }
+                    }
+                    out
+                } else {
+                    let n = a.len().min(b.len());
+                    let mut out = Vec::with_capacity(n * 2);
+                    for i in 0..n {
+                        out.push(a[i].clone());
+                        out.push(b[i].clone());
+                    }
+                    out
+                };
+                return pairs.join(" ");
+            }
+        }
+
         // Handle nested expansion: ${${inner}[subscript]} or ${${inner}modifier}
         if content.starts_with("${") {
             // Find matching closing brace for inner expansion

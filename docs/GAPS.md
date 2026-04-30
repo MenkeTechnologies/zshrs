@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${a:^b}` / `${a:^^b}` array-zip operators not implemented
+
+- zsh subst.c SUB_ZIP_SHORT (`:^`) interleaves up to min(len). SUB_ZIP_LONG (`:^^`) cycles the shorter array up to max(len). Both yield space-joined output. Was previously listed in the "Still open" GAPS section. Added detect at top of `expand_braced_variable` for plain-identifier names. Tests: `test_array_zip_short_form`, `test_array_zip_long_form_cycles`.
+
 ### `${a:$((${#a}-2))}` substring offset with nested `${...}` got rejected
 
 - The compile-time substring shape detection refused offsets containing `${...}` to "leave nested only in length". But `$((${#a}-2))` legitimately has nested `${...}` inside an arith form. Refined the check: when the operand starts with digit/`$`/`-`/`(` (substring-shape signal), allow nested forms — the runtime SubstringExpr handler arith-evaluates them via `expand_string`. Test: `test_substring_offset_with_nested_arith`.
