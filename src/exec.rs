@@ -8507,6 +8507,44 @@ pub enum VarKind {
     Association,
 }
 
+/// Insert `_` separators every `group` digits, counting from the end of
+/// the digit run (right-to-left). Direct port of `convbase_underscore`
+/// in src/zsh/Src/params.c:5645-5680. Operates on the digit suffix only,
+/// preserving any `BASE#` prefix and leading sign.
+pub fn underscore_separate_digits(s: &str, group: u32) -> String {
+    if group == 0 {
+        return s.to_string();
+    }
+    // Find where the digit run starts (after any `-`, `BASE#`, or `0x`).
+    let prefix_end = s.rfind(|c: char| !c.is_ascii_alphanumeric())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let (head, digits) = s.split_at(prefix_end);
+    if digits.len() <= group as usize {
+        return s.to_string();
+    }
+    // Walk from the end, insert `_` every `group` characters.
+    let mut out = String::with_capacity(s.len() + digits.len() / group as usize);
+    out.push_str(head);
+    let n = digits.len();
+    let first_group_len = n % group as usize;
+    let mut i = 0;
+    if first_group_len > 0 {
+        out.push_str(&digits[..first_group_len]);
+        i = first_group_len;
+    }
+    let mut first = first_group_len == 0;
+    while i < n {
+        if !first {
+            out.push('_');
+        }
+        first = false;
+        out.push_str(&digits[i..i + group as usize]);
+        i += group as usize;
+    }
+    out
+}
+
 /// Format an integer in the given base (2-36) using zsh's `BASE#DIGITS`
 /// form. Bases 2-9 are unsigned-style; uppercase A-Z are used for digits
 /// >= 10. A negative value is output as `-BASE#DIGITS`.
@@ -18690,18 +18728,15 @@ impl ShellExecutor {
         // prefix from `expr`, store the radix for post-eval
         // formatting, then continue with the inner expression.
         let mut output_radix: Option<(u32, bool)> = None;
+        let mut output_underscore: Option<u32> = None;
         let expr = {
-            // Direct port of zsh src/zsh/Src/math.c:786-833 — `[#N]`
-            // and `[##N]` are output-format specifiers that can appear
-            // ANYWHERE the lexer is expecting a token (typically at
-            // the start, but `(( [#N] expr ))` is also valid with
-            // leading whitespace and `(( [#N]expr ))` with no space).
-            // zsh's lexer scans for `[`, then `#` / `##`, then a
-            // decimal radix, then `]`. The radix is stashed in the
-            // global outputradix and the function continues parsing
-            // from after `]`. Mirror by allowing leading whitespace,
-            // and removing the `[#N]`/`[##N]` token from the expr —
-            // the inner expression then gets re-evaluated normally.
+            // Direct port of zsh src/zsh/Src/math.c:786-833. Handles:
+            //   [N]NUM       (base-N literal, processed elsewhere)
+            //   [#N]EXPR     (output radix N, prefixed `N#`)
+            //   [##N]EXPR    (output radix N, no prefix)
+            //   [#N_M]EXPR   (output radix N, group every M digits with `_`)
+            //   [##N_]EXPR   (output radix, group default 3 digits)
+            // Allow leading whitespace before `[#`; trim again after `]`.
             let mut e = expr.as_str().trim_start();
             if let Some(rest) = e.strip_prefix("[#") {
                 let (no_prefix_form, body) = if let Some(r2) = rest.strip_prefix('#') {
@@ -18710,12 +18745,27 @@ impl ShellExecutor {
                     (false, rest)
                 };
                 if let Some(close_idx) = body.find(']') {
-                    let n_str = &body[..close_idx];
+                    // Split radix and optional `_GROUP` per math.c:810-815:
+                    //   if (*ptr == '_') { ptr++; if (idigit(*ptr))
+                    //     outputunderscore=zstrtol(ptr,...); else outputunderscore=3; }
+                    let inside = &body[..close_idx];
+                    let (n_str, under_part) = match inside.find('_') {
+                        Some(p) => (&inside[..p], Some(&inside[p + 1..])),
+                        None => (inside, None),
+                    };
                     if let Ok(n) = n_str.parse::<u32>() {
                         if (2..=36).contains(&n) {
                             output_radix = Some((n, no_prefix_form));
-                            // Skip past `]`, also drop any leading
-                            // whitespace before the inner expression.
+                            // Underscore digit-group size. Empty
+                            // suffix means default 3 (matches zsh's
+                            // `else outputunderscore = 3`).
+                            output_underscore = under_part.map(|s| {
+                                if s.is_empty() {
+                                    3
+                                } else {
+                                    s.parse::<u32>().unwrap_or(3)
+                                }
+                            });
                             e = body[close_idx + 1..].trim_start();
                         }
                     }
@@ -18772,7 +18822,13 @@ impl ShellExecutor {
                 // integer results).
                 if let Some((base, no_prefix)) = output_radix {
                     let n = result.to_int();
-                    let body = format_int_in_base(n, base);
+                    let mut body = format_int_in_base(n, base);
+                    // Apply underscore digit grouping if `[#N_M]` was
+                    // given. Direct port of convbase_underscore at
+                    // src/zsh/Src/params.c:5645-5680.
+                    if let Some(group) = output_underscore {
+                        body = underscore_separate_digits(&body, group);
+                    }
                     // zsh's convbase (Src/params.c:5586): no prefix
                     // when base == 10 (matches `[#10]42` -> `42`).
                     // Same when the user asked for `##` form
