@@ -6360,6 +6360,46 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_printf_hex_zero_pad() {
+    // `printf "%04x" 42` should zero-pad to `002a`. zshrs only had
+    // the zero-pad branch on `%u`; `%x`/`%X`/`%o` always padded with
+    // spaces. Fixed by adding the `zero_pad` branch (with prefix
+    // emission preserved) to all three integer-radix conversions.
+    let (_, output, _) = run_zshrs(r#"printf "%04x\n" 42"#);
+    assert_eq!(output, "002a\n");
+    let (_, output, _) = run_zshrs(r#"printf "%04X\n" 42"#);
+    assert_eq!(output, "002A\n");
+    let (_, output, _) = run_zshrs(r#"printf "%04o\n" 8"#);
+    assert_eq!(output, "0010\n");
+}
+
+#[test]
+fn test_for_arith_with_dollar_param_in_cond() {
+    // `for ((i=1; i<=$#a; i++))` — cond contains `$#a` (param
+    // expansion). zshrs's `compile_for_arith` routed the cond
+    // through ArithCompiler when `,` wasn't present, but
+    // ArithCompiler's lexer can't parse `$`. Added `$` to the
+    // routing trigger AND made init/cond/step share a single
+    // `needs_eval_global` decision so all three sections use the
+    // same storage backend (MathEval/variables) — otherwise `i` set
+    // by ArithCompiler in init wouldn't be visible to MathEval in
+    // cond.
+    let (_, output, _) = run_zshrs(r#"a=(x y z); for ((i=1; i<=$#a; i++)); do echo "$i:$a[$i]"; done"#);
+    assert_eq!(output, "1:x\n2:y\n3:z\n");
+}
+
+#[test]
+fn test_set_unknown_flag_silent() {
+    // zsh accepts unknown single-letter `set` flags silently
+    // (`set -y`, `set -xy`). zshrs erroring on `-y` broke any
+    // script that combined set flags. Default arm now silently
+    // ignores unknown flag letters.
+    let (status, _, stderr) = run_zshrs("set -y; echo done");
+    assert_eq!(status, 0);
+    assert!(!stderr.contains("invalid option"), "got: {stderr}");
+}
+
+#[test]
 fn test_arith_division_by_zero_aborts() {
     // zsh: `echo $((1/0))` aborts the command — `echo` never runs.
     // zshrs previously returned "0" from `evaluate_arithmetic` on

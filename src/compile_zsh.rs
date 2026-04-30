@@ -1826,7 +1826,23 @@ impl ZshCompiler {
         // dropping the rest. Route through MathEval (via
         // BUILTIN_ARITH_EVAL) which evaluates the comma list in
         // order and writes back through extract_string_variables.
-        let route_through_eval = |s: &str| -> bool { s.contains(',') };
+        // Same routing for any `$`-bearing expr — ArithCompiler's
+        // lexer treats `$` as unknown so `for ((i=1; i<=$#a; i++))`
+        // never iterated. The two arith engines use different
+        // storage (ArithCompiler→slots, MathEval→variables); when ANY
+        // section needs MathEval, route ALL sections so the value of
+        // `i` survives across init/cond/step in the same backing store.
+        let untoked_init = crate::lexer::untokenize(init);
+        let untoked_cond = crate::lexer::untokenize(cond);
+        let untoked_step = crate::lexer::untokenize(step);
+        let needs_eval_global = untoked_init.contains(',')
+            || untoked_init.contains('$')
+            || untoked_cond.contains(',')
+            || untoked_cond.contains('$')
+            || untoked_step.contains(',')
+            || untoked_step.contains('$');
+        let route_through_eval =
+            move |_s: &str| -> bool { needs_eval_global };
         let emit_arith = |this: &mut Self, s: &str| {
             let untoked = crate::lexer::untokenize(s);
             if route_through_eval(&untoked) {
@@ -1847,8 +1863,9 @@ impl ZshCompiler {
         let loop_top = self.builder.current_pos();
         if !cond.is_empty() {
             // Cond is evaluated for truthiness — keep simple
-            // ArithCompiler path unless comma is present.
-            if cond.contains(',') {
+            // ArithCompiler path unless comma OR a `$`-bearing
+            // expansion is present (ArithCompiler can't lex `$`).
+            if needs_eval_global {
                 let untoked = crate::lexer::untokenize(cond);
                 let idx = self.builder.add_constant(Value::str(untoked.as_str()));
                 self.builder.emit(Op::LoadConst(idx), 0);

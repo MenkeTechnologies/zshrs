@@ -21237,8 +21237,14 @@ impl ShellExecutor {
                                     self.options.insert("notify".to_string(), true);
                                 }
                                 _ => {
-                                    eprintln!("zshrs: set: -{}: invalid option", c);
-                                    return 1;
+                                    // zsh silently accepts unknown
+                                    // single-letter `set` flags (legacy
+                                    // flag-letter table includes many
+                                    // historical reserved letters).
+                                    // Don't break scripts that pass
+                                    // `set -xy` or other multi-flag
+                                    // forms with letters zshrs doesn't
+                                    // map yet.
                                 }
                             }
                         }
@@ -25428,6 +25434,10 @@ impl ShellExecutor {
                                     output.push_str(prefix);
                                     output.push_str(&num_str);
                                     output.push_str(&" ".repeat(width_val - total_len));
+                                } else if zero_pad {
+                                    output.push_str(prefix);
+                                    output.push_str(&"0".repeat(width_val - total_len));
+                                    output.push_str(&num_str);
                                 } else {
                                     output.push_str(&" ".repeat(width_val - total_len));
                                     output.push_str(prefix);
@@ -25456,6 +25466,11 @@ impl ShellExecutor {
                                     output.push_str(prefix);
                                     output.push_str(&num_str);
                                     output.push_str(&" ".repeat(width_val - total_len));
+                                } else if zero_pad {
+                                    // `printf "%04x" 42` → `002a` (zero-pad).
+                                    output.push_str(prefix);
+                                    output.push_str(&"0".repeat(width_val - total_len));
+                                    output.push_str(&num_str);
                                 } else {
                                     output.push_str(&" ".repeat(width_val - total_len));
                                     output.push_str(prefix);
@@ -25480,6 +25495,10 @@ impl ShellExecutor {
                                     output.push_str(prefix);
                                     output.push_str(&num_str);
                                     output.push_str(&" ".repeat(width_val - total_len));
+                                } else if zero_pad {
+                                    output.push_str(prefix);
+                                    output.push_str(&"0".repeat(width_val - total_len));
+                                    output.push_str(&num_str);
                                 } else {
                                     output.push_str(&" ".repeat(width_val - total_len));
                                     output.push_str(prefix);
