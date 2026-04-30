@@ -3951,9 +3951,48 @@ fn subscripted_arith_assign_check(expr: &str) -> bool {
 /// (which handles the read-modify-write via subscripted_arith_eval).
 fn subscripted_arith_compound_check(expr: &str) -> bool {
     let trimmed = expr.trim();
-    let bytes = trimmed.as_bytes();
+    // Pre-increment/decrement on subscript: `++NAME[IDX]` / `--NAME[IDX]`.
+    // Strip the leading op and continue with name detection. The runtime
+    // arith eval handles the actual write-back via parse_subscript_arith_pre_inc.
+    let stripped = trimmed
+        .strip_prefix("++")
+        .or_else(|| trimmed.strip_prefix("--"))
+        .unwrap_or(trimmed)
+        .trim_start();
+    let bytes = stripped.as_bytes();
     if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
         return false;
+    }
+    // Pre-op shape: NAME[IDX] alone — accept and let runtime handle.
+    if !std::ptr::eq(stripped.as_ptr(), trimmed.as_ptr()) {
+        let mut i = 1;
+        while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] != b'[' {
+            return false;
+        }
+        let mut depth = 1;
+        let mut j = i + 1;
+        while j < bytes.len() && depth > 0 {
+            match bytes[j] {
+                b'[' => depth += 1,
+                b']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            j += 1;
+        }
+        // Must end with `]` (no further operator after pre-op).
+        let mut k = j + 1;
+        while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+            k += 1;
+        }
+        return k == bytes.len();
     }
     let mut i = 1;
     while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
