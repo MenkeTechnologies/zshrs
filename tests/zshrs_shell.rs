@@ -7380,6 +7380,67 @@ fn test_fc_l_two_args_non_numeric_errors() {
 }
 
 #[test]
+fn test_fc_r_d_recurse_endlessly_aborts() {
+    // zsh: bare `fc -r` and `fc -d` (no positional) re-edit the
+    // prior command — which IS `fc` itself in `-c` mode, hence the
+    // recurse-endlessly abort. zshrs's earlier guard required
+    // `args.is_empty()`, so `fc -r` slipped past and ran the
+    // previous command (often a bogus alias=).
+    let (_, _, stderr) = run_zshrs("fc -r");
+    assert!(
+        stderr.contains("would recurse endlessly"),
+        "got: {stderr}"
+    );
+    let (_, _, stderr) = run_zshrs("fc -d");
+    assert!(
+        stderr.contains("would recurse endlessly"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_test_4args_unary_flag_too_many() {
+    // zsh: `[ -z "" -X x ]` (4-arg with unary flag at args[0] +
+    // operand + extra junk) -> `[:1: too many arguments` exit 2.
+    // zshrs's catch-all 4+arg arm reported `condition expected:
+    // -z` (wrong category — args[0] IS a recognized unary flag).
+    let (status, _, stderr) = run_zshrs(r#"[ -z "" -X x ]"#);
+    assert_eq!(status, 2);
+    assert!(stderr.contains("too many arguments"), "got: {stderr}");
+}
+
+#[test]
+fn test_jobs_unknown_id_errors() {
+    // zsh: `jobs %1` (no jobs) -> `jobs:1: %1: no such job` exit 1.
+    // zshrs's filter-by-id loop silently produced no output.
+    let (status, _, stderr) = run_zshrs("jobs %1");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("%1: no such job"), "got: {stderr}");
+}
+
+#[test]
+fn test_fg_bg_no_job_control_in_script() {
+    // zsh: `fg %N` and `bg %N` in `-c` mode (no real job control)
+    // -> `<fg|bg>:1: no job control in this shell.` exit 1
+    // regardless of whether N exists. zshrs's option-based check
+    // (monitor or interactive) didn't reflect actual job-control
+    // availability — both are default-on. Use stdin-tty status as
+    // the real signal: `-c` mode has no tty on stdin.
+    let (status, _, stderr) = run_zshrs("fg %999");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("no job control in this shell"),
+        "got: {stderr}"
+    );
+    let (status, _, stderr) = run_zshrs("bg %999");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("no job control in this shell"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

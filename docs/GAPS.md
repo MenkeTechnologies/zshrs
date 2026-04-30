@@ -2005,6 +2005,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: in a range query, if either bound is non-numeric, errors `event not found: <text>` for that bound. zshrs's range path lumped non-numeric bounds into the generic `no events in that range` (wrong category — text-name miss vs out-of-range have distinct diagnostics). Added per-bound numeric checks before the range error. Test: `test_fc_l_two_args_non_numeric_errors`.
 
+### `fc -r` and `fc -d` re-executed the previous command instead of erroring "would recurse endlessly"
+
+- zsh: bare `fc -r` and `fc -d` (no positional) re-edit the prior command — which IS `fc` itself in `-c` mode, hence the recurse-endlessly abort. zshrs's recurse-guard required `args.is_empty()`, so `fc -r` (which has args=[`-r`]) slipped past and ran the previous command. Removed the `args.is_empty()` requirement; non-list-mode + no-positional + non-tty stdin is sufficient. Test: `test_fc_r_d_recurse_endlessly_aborts`.
+
+### `[ -z "" -X x ]` (4-arg with unary flag + junk) reported "condition expected: -z" instead of "too many arguments"
+
+- zsh: a 4-arg test with a known unary flag at args[0] (`-z`, `-n`, `-d`, etc.) followed by an operand and extra junk -> `[:1: too many arguments` exit 2 — the flag IS recognized; the count is the problem. zshrs's catch-all 4+arg arm only triggered "too many arguments" for known binops at args[1]; unary-flag layouts fell through to the generic "condition expected: -z" (wrong category). Extended the disambiguation arm with a `unary_flag_at_0` check covering zsh's full unary-test letter set. Test: `test_test_4args_unary_flag_too_many`.
+
+### `jobs %1` (no jobs) silently produced no output instead of "no such job"
+
+- zsh: `jobs %N` for an N that doesn't exist -> `jobs:1: %N: no such job` exit 1. zshrs's filter-by-id loop silently dropped non-matching ids and emitted nothing. Added a precheck that validates each requested id against the current job list before listing. Test: `test_jobs_unknown_id_errors`.
+
+### `fg %999` and `bg %999` reported "no such job" instead of "no job control in this shell"
+
+- zsh in `-c` mode has no real job-control regardless of the `monitor` option. `fg %N` / `bg %N` always error `<fg|bg>:1: no job control in this shell.` exit 1. zshrs's option-based check didn't work because the `monitor`/`interactive` options are default-on even in `-c` mode (zsh's option-display lies about job-control state). Switched to `atty::is(Stream::Stdin)` — real interactive shells have a tty on stdin, `-c` mode does not. Test: `test_fg_bg_no_job_control_in_script`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
