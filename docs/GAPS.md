@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `${a[@]:1:$((2+0))}` array slice with arith length now slices array elements (was char-slicing joined value)
+
+zshrs's `BUILTIN_PARAM_SUBSTRING_EXPR` (the arith-expr variant of `${var:N:M}`) treated all names as scalars — it called `get_variable(name)` and char-sliced the result. For `a[@]`, that gave the IFS-joined string "a b c d e", and char-slicing position 1 with length 2 returned " b" (space + 'b'), not zsh's "b c" (elements 2-3 of the array).
+
+The integer-only sibling `BUILTIN_PARAM_SUBSTRING` already had array-aware dispatch (strip `[@]`/`[*]`, lookup as array, slice elements). Direct port of that logic into the expr variant: `force_array` flag from suffix detection routes through `slice_array_zero_based` for the array case, or `slice_positionals` for `${@:N:M}`.
+
+Test: `test_array_slice_with_arith_length_expr`.
+
 ### Glob qualifier `*(L+N)` size check now uses lstat for symlinks (matches zsh)
 
 Direct port of zsh's pattern.c L qualifier. zsh uses lstat-based size — for a symlink, that's the LENGTH OF THE SYMLINK STRING (e.g. 9 bytes for "empty.txt"), NOT the target's size. zshrs's prefetched metadata had both followed (`m`) and symlink (`sm`) variants; the L qualifier was reading `m.len()` which gave the target size, so a symlink to an empty file appeared empty (size 0).

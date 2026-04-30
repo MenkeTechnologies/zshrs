@@ -5400,23 +5400,63 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let len_expr = vm.pop().to_str();
         let off_expr = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // Match BUILTIN_PARAM_SUBSTRING's array-aware dispatch:
+        // `${@:n:m}` / `${arr[@]:n:m}` slice positionals/array
+        // ELEMENTS, not chars. Without this, the expr-form fell
+        // back to scalar char-slicing on the IFS-joined value
+        // (`${a[@]:1:$((2+0))}` produced " b" via char positions
+        // instead of zsh's "b c" via element positions).
+        let (lookup_name, force_array) =
+            if let Some(stripped) = name
+                .strip_suffix("[@]")
+                .or_else(|| name.strip_suffix("[*]"))
+            {
+                (stripped.to_string(), true)
+            } else {
+                (name.clone(), false)
+            };
         let result = with_executor(|exec| {
-            let val = exec.get_variable(&name);
+            let offset = exec.eval_arith_expr(&off_expr);
+            let length_opt: Option<i64> = if has_len {
+                Some(exec.eval_arith_expr(&len_expr))
+            } else {
+                None
+            };
+            // Positional-param slice (`${@:1:2}`).
+            if lookup_name == "@" || lookup_name == "*" {
+                return slice_positionals(
+                    exec,
+                    offset,
+                    length_opt.unwrap_or(i64::MIN),
+                )
+                .join(" ");
+            }
+            // Array slice (`${arr:1:2}` or `${arr[@]:1:2}`).
+            if let Some(arr) = exec.arrays.get(&lookup_name).cloned() {
+                if force_array || true {
+                    return slice_array_zero_based(
+                        &arr,
+                        offset,
+                        length_opt.unwrap_or(i64::MIN),
+                    )
+                    .join(" ");
+                }
+            }
+            // Scalar fallback.
+            let val = exec.get_variable(&lookup_name);
             let chars: Vec<char> = val.chars().collect();
             let len = chars.len() as i64;
-            let offset = exec.eval_arith_expr(&off_expr);
             let start = if offset < 0 {
                 (len + offset).max(0) as usize
             } else {
                 (offset as usize).min(chars.len())
             };
-            let take = if !has_len {
-                chars.len().saturating_sub(start)
-            } else {
-                let length = exec.eval_arith_expr(&len_expr);
-                if length < 0 {
+            let take = match length_opt {
+                None => chars.len().saturating_sub(start),
+                Some(length) if length < 0 => {
                     chars.len().saturating_sub(start)
-                } else {
+                }
+                Some(length) => {
                     (length as usize).min(chars.len().saturating_sub(start))
                 }
             };

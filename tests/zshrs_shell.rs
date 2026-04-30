@@ -8488,6 +8488,27 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_array_slice_with_arith_length_expr() {
+    // zsh: `${arr[@]:1:$((2+0))}` slices the array — $((2+0))
+    // evaluates to 2, return elements 2 and 3 (1-indexed).
+    // zshrs's BUILTIN_PARAM_SUBSTRING_EXPR fell through to
+    // scalar char-slicing on the IFS-joined value, so
+    // `${a[@]:1:$((2+0))}` produced " b" via char positions
+    // instead of "b c" via array positions. Direct port of
+    // the existing PARAM_SUBSTRING (int) handler's array-aware
+    // dispatch — strip `[@]`/`[*]` suffix, lookup as array,
+    // fall back to scalar.
+    let (_, output, _) = run_zshrs(
+        r#"a=( a b c d e ); echo "${a[@]:1:$((2+0))}""#,
+    );
+    assert_eq!(output.trim(), "b c", "got: {output:?}");
+    let (_, output, _) = run_zshrs(
+        r#"a=( a b c d e ); echo "${a:1:$((2+0))}""#,
+    );
+    assert_eq!(output.trim(), "b c", "got: {output:?}");
+}
+
+#[test]
 fn test_glob_qualifier_size_uses_lstat_for_symlinks() {
     // Direct port of zsh's pattern.c L qualifier — lstat-based
     // size check. For a symlink, that's the LENGTH OF THE
