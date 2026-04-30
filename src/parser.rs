@@ -1582,8 +1582,15 @@ impl<'a> ZshParser<'a> {
                 break;
             }
 
-            // Skip optional (
-            if self.lexer.tok == LexTok::Inpar {
+            // Skip optional `(`. zsh's case grammar: `case W in (P)…)`.
+            // The leading `(` is paired with a matching `)` that closes
+            // the pattern itself; the arm-close `)` follows separately.
+            // Track whether we consumed it so we can skip the matching
+            // `)` after pattern parsing — otherwise the arm-close would
+            // be interpreted as the pattern-close and the actual body
+            // would get the leftover `)`.
+            let had_leading_paren = self.lexer.tok == LexTok::Inpar;
+            if had_leading_paren {
                 self.lexer.zshlex();
             }
 
@@ -1621,12 +1628,23 @@ impl<'a> ZshParser<'a> {
             }
             self.lexer.incasepat = 0;
 
-            // Expect )
+            // Expect ).  Also handle the `(P))` wrapped-pattern form:
+            // when a leading `(` was consumed, accept an extra `)` —
+            // the inner `)` closes the optional-paren wrapper, the
+            // outer `)` is the arm-close. zsh accepts BOTH `(P) BODY`
+            // (bare pattern, leading-paren is just the opt-marker, the
+            // close is arm-close) and `(P)) BODY` (paren-wrapped
+            // pattern, then arm-close). The first form is unambiguous
+            // when the bare pattern was simple; the second is needed
+            // when the body starts with `(`.
             if self.lexer.tok != LexTok::Outpar {
                 self.error("expected ')' in case pattern");
                 return None;
             }
             self.lexer.zshlex();
+            if had_leading_paren && self.lexer.tok == LexTok::Outpar {
+                self.lexer.zshlex();
+            }
 
             // Parse body
             let body = self.parse_program();
