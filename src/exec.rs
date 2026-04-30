@@ -2691,29 +2691,72 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         // still split that element. Same goes for true
                         // arrays — flat-map split each element.
                         //
-                        // Empty-field handling: zsh's bare `(s:,:)` drops
-                        // empty fields ("a,,b" -> ["a","b"]); `(@s:,:)`
-                        // preserves them ("a,,b" -> ["a","","b"]). The
-                        // `@` flag's position doesn't matter — anywhere
-                        // in the flag run it triggers preservation.
-                        // zshrs previously kept empties unconditionally,
-                        // so an unflagged `${(s:,:)x}` count was wrong.
+                        // Empty-field handling — verified against zsh's
+                        // C source (utils.c sepsplit + subst.c around
+                        // line 3273). The actual rule is NOT "drop all
+                        // empties" but more nuanced:
+                        //   - Boundary empties (leading or trailing
+                        //     run of separators) collapse to ONE empty
+                        //     each, regardless of how many separators.
+                        //   - Middle empties (consecutive separators
+                        //     between non-empties) drop ENTIRELY.
+                        //   - `(@)` flag preserves all empties verbatim.
+                        // Examples (no @):
+                        //   "a,,b,,c"   → [a,b,c]      (3)
+                        //   ",a,b"      → ["",a,b]     (3)
+                        //   "a,b,"      → [a,b,""]     (3)
+                        //   ",,a,,b,,"  → ["",a,b,""]  (4)
+                        //   "a,,,b"     → [a,b]        (2, 3 middle empties)
                         let keep_empty = chars.contains(&'@');
+                        let collapse = |s: &str, sep: &str| -> Vec<String> {
+                            let parts: Vec<String> =
+                                s.split(sep).map(String::from).collect();
+                            if keep_empty {
+                                return parts;
+                            }
+                            // Find first and last non-empty positions.
+                            let first_nonempty =
+                                parts.iter().position(|p| !p.is_empty());
+                            let last_nonempty =
+                                parts.iter().rposition(|p| !p.is_empty());
+                            match (first_nonempty, last_nonempty) {
+                                (None, _) => {
+                                    // All-empty input. Collapse to a
+                                    // single empty if input had any
+                                    // separator (parts.len() > 1) and
+                                    // therefore had a "boundary";
+                                    // empty input → empty output.
+                                    if parts.len() > 1 {
+                                        vec![String::new()]
+                                    } else {
+                                        Vec::new()
+                                    }
+                                }
+                                (Some(fi), Some(li)) => {
+                                    let mut out: Vec<String> = Vec::new();
+                                    if fi > 0 {
+                                        out.push(String::new());
+                                    }
+                                    // Push only non-empty middles; drop
+                                    // every internal empty.
+                                    for p in &parts[fi..=li] {
+                                        if !p.is_empty() {
+                                            out.push(p.clone());
+                                        }
+                                    }
+                                    if li < parts.len() - 1 {
+                                        out.push(String::new());
+                                    }
+                                    out
+                                }
+                                _ => parts,
+                            }
+                        };
                         state = match state {
                             St::S(s) if sep.is_empty() => {
                                 St::A(s.chars().map(|c| c.to_string()).collect())
                             }
-                            St::S(s) => {
-                                let parts: Vec<String> = s
-                                    .split(sep.as_str())
-                                    .map(String::from)
-                                    .collect();
-                                St::A(if keep_empty {
-                                    parts
-                                } else {
-                                    parts.into_iter().filter(|p| !p.is_empty()).collect()
-                                })
-                            }
+                            St::S(s) => St::A(collapse(&s, sep.as_str())),
                             St::A(a) => {
                                 let mut out: Vec<String> = Vec::with_capacity(a.len());
                                 for elem in a {
@@ -2722,11 +2765,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                             out.push(c.to_string());
                                         }
                                     } else {
-                                        for part in elem.split(sep.as_str()) {
-                                            if keep_empty || !part.is_empty() {
-                                                out.push(part.to_string());
-                                            }
-                                        }
+                                        out.extend(collapse(&elem, sep.as_str()));
                                     }
                                 }
                                 St::A(out)
