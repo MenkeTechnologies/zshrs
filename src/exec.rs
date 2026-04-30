@@ -13894,6 +13894,19 @@ impl ShellExecutor {
                 // unstripped value because the strip never ran.
                 if !default_fired {
                     let rest_after_var = &rest[var_name.len()..];
+                    // Reject bash-only case modifiers `^`/`^^`/
+                    // `,`/`,,` after the var name. zsh: errors
+                    // "bad substitution". Without this rejection,
+                    // `${(L)a^^}` silently dropped `^^` and
+                    // returned the lowercased value (bash compat
+                    // creep). zsh's parser bin_paramsubst rejects
+                    // these tokens with the standard error.
+                    if rest_after_var.starts_with('^')
+                        || rest_after_var.starts_with(',')
+                    {
+                        eprintln!("zshrs:1: bad substitution");
+                        std::process::exit(1);
+                    }
                     let (op, pat_str) = if let Some(p) = rest_after_var.strip_prefix("##") {
                         (Some(1u8), p)
                     } else if let Some(p) = rest_after_var.strip_prefix("%%") {
