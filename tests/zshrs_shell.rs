@@ -6400,6 +6400,19 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_alias_empty_name_errors() {
+    // zsh: `alias =val` / `alias =` (empty NAME) errors
+    // `bad assignment` exit 1. zshrs silently inserted an alias
+    // with name "" which couldn't be removed afterwards.
+    let (status, _, stderr) = run_zshrs("alias =");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad assignment"), "got: {stderr}");
+    let (status, _, stderr) = run_zshrs("alias =val");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad assignment"), "got: {stderr}");
+}
+
+#[test]
 fn test_ulimit_unknown_flag_errors() {
     // zsh: `ulimit -X` (unknown letter) errors `bad option: -X`
     // exit 1. zshrs's silent default arm let it fall through and
