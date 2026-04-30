@@ -257,15 +257,34 @@ fn assoc_subscript_flag(
 ) -> fusevm::Value {
     use fusevm::Value;
     let exact = flags.contains('e');
-    // zsh subst.c: on assoc, `(i)`/`(I)` search KEYS and return the
-    // matching key; `(r)`/`(R)` search VALUES and return the matching
-    // value. `(I)`/`(R)` find the last match (reverse iteration).
+    // zsh subst.c: on assoc, `(i)`/`(I)` search KEYS; `(r)`/`(R)`
+    // search VALUES. `(I)` returns ALL matching keys (space-joined);
+    // `(R)` returns ALL matching values; `(i)`/`(r)` return the
+    // FIRST match. Subtle but verified against zsh:
+    //   typeset -A h=(a 1 b 2); echo "${h[(I)*]}"  → "a b"
+    //   typeset -A h=(a 1 b 2); echo "${h[(i)*]}"  → "a"
     let search_keys = flags.contains('i') || flags.contains('I');
     let return_key = search_keys;
-    let reverse = flags.contains('R') || flags.contains('I');
-    let mut entries: Vec<(&String, &String)> = map.iter().collect();
-    if reverse {
-        entries.reverse();
+    let return_all = flags.contains('I') || flags.contains('R');
+    let entries: Vec<(&String, &String)> = map.iter().collect();
+    if return_all {
+        let mut out: Vec<String> = Vec::new();
+        for (k, v) in &entries {
+            let target = if search_keys { *k } else { *v };
+            let hit = if exact {
+                target == pat
+            } else {
+                ShellExecutor::glob_match_static(target, pat)
+            };
+            if hit {
+                out.push(if return_key {
+                    (*k).clone()
+                } else {
+                    (*v).clone()
+                });
+            }
+        }
+        return Value::str(out.join(" "));
     }
     for (k, v) in entries {
         let target = if search_keys { k } else { v };
@@ -20964,13 +20983,19 @@ impl ShellExecutor {
                 .unwrap_or(&var_args[0])
                 .to_string();
             let array_name = &var_args[1];
-            // If the scalar arg has =val form, use that as the initial value.
+            // If the scalar arg has =val form, use that as the initial
+            // value. Otherwise read the existing value — fall back to
+            // the OS environment for vars like PATH that we don't
+            // mirror into self.variables. zsh: `typeset -T PATH path`
+            // splits the inherited $PATH into the `path` array; without
+            // the env fallback `path` was empty.
             let scalar_val = if let Some(eq_pos) = var_args[0].find('=') {
                 var_args[0][eq_pos + 1..].to_string()
             } else {
                 self.variables
                     .get(&scalar_name)
                     .cloned()
+                    .or_else(|| std::env::var(&scalar_name).ok())
                     .unwrap_or_default()
             };
             let sep = var_args

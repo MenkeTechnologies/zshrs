@@ -10248,6 +10248,23 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_assoc_capital_i_returns_all_matching_keys() {
+    // `${h[(I)pat]}` on assoc returns ALL keys matching pat,
+    // space-joined. `${h[(i)pat]}` returns FIRST. Same for (R)/(r)
+    // on values. Was returning only one.
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h=(a 1 b 2); echo "[${h[(I)*]}]""#);
+    assert_eq!(output.trim(), "[a b]");
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h=(a 1 b 2); echo "[${h[(i)*]}]""#);
+    assert_eq!(output.trim(), "[a]");
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h=(a 1 b 1 c 2); echo "[${h[(R)1]}]""#,
+    );
+    assert_eq!(output.trim(), "[1 1]");
+}
+
+#[test]
 fn test_special_param_default_treats_as_set() {
     // `${SECONDS-default}` — zsh-special params have dynamic getters
     // and were treated as "unset" because they're not in the variables
