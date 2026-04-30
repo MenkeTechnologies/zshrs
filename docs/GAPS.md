@@ -2037,6 +2037,20 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's MathContext emits `bad math expression: operand expected at end of string` when a unary op has no operand. zshrs's bare `stack empty` had no match for scripts grepping zsh's canonical wording. Updated `src/math.rs` to emit the wrapped phrasing. Test: `test_let_unary_op_no_operand`.
 
+## Closed (eighty-fourth-pass)
+
+### `cd -- /tmp` errored "string not in pwd: --" instead of cd'ing to /tmp
+
+- zsh: `--` is the end-of-options marker; everything after is positional. zshrs's substitution-form path treated `--` as the OLD arg of `cd OLD NEW` and errored. Added an explicit `--` consumer that flips an `after_dashdash` flag, after which tokens are pushed to positional_args verbatim. Test: `test_cd_dashdash_end_of_options`.
+
+### `fc -p` errored "would recurse endlessly" instead of silent success
+
+- zsh: `fc -p` (push history stack) is silent success in `-c` mode — it doesn't run the prior command. zshrs treated `-p` as a no-op flag, and the no-positional non-list-mode recurse-abort then fired. Track a `silent_no_op_flag` for `-p`/`-P`/`-a`/`-I`/`-L`/`-m` (their presence signals an explicit non-edit-form invocation); exempt these from the recurse-abort and short-circuit to silent return 0 when no positional. Test: `test_fc_p_silent_success`.
+
+### `kill -s 0 $$` errored "invalid signal: 0" instead of accepting (existence check)
+
+- zsh accepts numeric values to `-s`; `-s 0` is the existence-check form (same as `-0`). zshrs's `-s` arm was name-only and rejected `0` as an invalid signal name. Extended the `-s` arm with a numeric-fast-path: `0` triggers existence-check; other numeric values match against the signal_map by number; non-numeric falls back to name lookup. Test: `test_kill_s_zero_signal`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted

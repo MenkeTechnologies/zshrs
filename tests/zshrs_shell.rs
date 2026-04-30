@@ -7486,6 +7486,41 @@ fn test_let_unary_op_no_operand() {
 }
 
 #[test]
+fn test_cd_dashdash_end_of_options() {
+    // zsh: `cd -- /tmp` treats `--` as end-of-options marker;
+    // everything after is positional. zshrs's substitution-form
+    // path treated `--` as the OLD arg and errored "string not in
+    // pwd: --".
+    let (status, output, _) = run_zshrs("cd -- /tmp; pwd");
+    assert_eq!(status, 0);
+    assert!(output.trim_end().ends_with("/tmp"), "got: {output}");
+}
+
+#[test]
+fn test_fc_p_silent_success() {
+    // zsh: `fc -p` (push history stack) is silent success in `-c`
+    // mode. zshrs treated -p as a no-op flag but the no-positional
+    // recurse-abort path still fired, emitting the wrong error.
+    // Exempted -p/-P/-a/-I/-L/-m from the abort.
+    let (status, _, stderr) = run_zshrs("fc -p");
+    assert_eq!(status, 0);
+    assert!(
+        !stderr.contains("recurse endlessly"),
+        "should be silent; got: {stderr}"
+    );
+}
+
+#[test]
+fn test_kill_s_zero_signal() {
+    // zsh accepts numeric values to `-s`; `-s 0` is the existence-
+    // check form. zshrs's name-only lookup rejected `0` as
+    // "invalid signal: 0".
+    let (status, _, _) = run_zshrs("kill -s 0 $$; echo $?");
+    // Kill of own pid with signal 0 succeeds (process exists).
+    assert_eq!(status, 0);
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
