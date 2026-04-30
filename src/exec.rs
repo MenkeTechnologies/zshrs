@@ -20800,7 +20800,13 @@ impl ShellExecutor {
                     return 1;
                 }
             } else if write_file || append_file {
-                // Export history to plain text file
+                // In `-c` (non-interactive) mode with no in-session
+                // history adds, zsh's `fc -W` writes nothing — there's
+                // no current-session log to dump. zshrs previously
+                // dumped the entire on-disk persistent history into
+                // the user's named file, leaking prior runs. Restrict
+                // to the current session entries only when atty is
+                // absent.
                 let mode = if append_file {
                     std::fs::OpenOptions::new()
                         .create(true)
@@ -20812,10 +20818,20 @@ impl ShellExecutor {
                 match mode {
                     Ok(mut file) => {
                         use std::io::Write;
-                        if let Ok(entries) = engine.recent(10000) {
-                            for entry in entries.iter().rev() {
-                                let _ = writeln!(file, ": {}:0;{}", entry.timestamp, entry.command);
+                        let entries = if !atty::is(atty::Stream::Stdin) {
+                            // Pull only session adds (matches zsh).
+                            let mut session_entries = Vec::new();
+                            for &id in &self.session_history_ids {
+                                if let Ok(Some(entry)) = engine.get_by_number(id) {
+                                    session_entries.push(entry);
+                                }
                             }
+                            session_entries
+                        } else {
+                            engine.recent(10000).unwrap_or_default()
+                        };
+                        for entry in entries.iter().rev() {
+                            let _ = writeln!(file, ": {}:0;{}", entry.timestamp, entry.command);
                         }
                     }
                     Err(e) => {
