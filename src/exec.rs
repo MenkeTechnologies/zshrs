@@ -3092,7 +3092,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         match level {
                             1 => {
                                 // q: backslash-escape every shell-special
-                                // char without surrounding quotes.
+                                // char without surrounding quotes. zsh
+                                // special-cases the empty string: `${(q)x}`
+                                // for empty `x` outputs `''` (a real
+                                // single-quoted empty pair) so the
+                                // value survives word-splitting in the
+                                // consumer.
+                                if s.is_empty() {
+                                    return "''".to_string();
+                                }
                                 let mut out = String::with_capacity(s.len() + 4);
                                 for c in s.chars() {
                                     if matches!(
@@ -20655,6 +20663,18 @@ impl ShellExecutor {
             // entries. Bypass the atty guard when we have session
             // entries.
             if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
+                // Bare `fc` (no -l, no positional) is the EDIT mode —
+                // zsh would re-execute the previous command. With
+                // empty history the previous command IS fc itself,
+                // so zsh refuses with "current history line would
+                // recurse endlessly, aborted". Distinct from the
+                // -l case which uses "no such event: N".
+                if !list_mode && positional.is_empty() {
+                    eprintln!(
+                        "zsh:fc:1: current history line would recurse endlessly, aborted"
+                    );
+                    return 1;
+                }
                 // Two-positional `fc -l N M` is a RANGE query — zsh
                 // emits a different error: `no events in that range`.
                 // Single positional / no positional uses
@@ -23813,8 +23833,15 @@ impl ShellExecutor {
                             break;
                         }
                         _ => {
-                            eprintln!("command: bad option: -{}", ch);
-                            return 1;
+                            // zsh treats an unknown -X as a command
+                            // name to invoke, not as a flag error.
+                            // `command -x ls` → "command not found: -x"
+                            // (and the rest of args become args to that
+                            // bogus command). Match by emitting the
+                            // command-not-found diagnostic instead of
+                            // the flag-error message.
+                            eprintln!("zshrs:1: command not found: -{}", ch);
+                            return 127;
                         }
                     }
                 }
