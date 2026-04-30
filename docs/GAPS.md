@@ -1801,6 +1801,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - Bare `fc` (no -l, no positional) is the EDIT mode — re-execute the prior command. In -c mode the prior command is `fc` itself, which is infinite recursion; zsh refuses with `current history line would recurse endlessly, aborted`. zshrs's earlier guard required empty session_history_ids, so adding any `print -s` entry let bare `fc` fall through to the list-mode pass-through. Hoisted the recurse-aborted check to fire BEFORE the session-only branch. Test: `test_fc_no_args_with_session_still_recurses`.
 
+### `command` (no args) silently returned 0 instead of "redirection with no command"
+
+- zsh: bare `command` (no args, no command name) errors `redirection with no command` exit 1 — `command` requires a command name. zshrs's empty-positional branch returned 0 silently, masking the missing CMD argument. Added the diagnostic and exit 1. Test: `test_command_no_args_redirection_error`.
+
+### `wait %1` after bg job already reaped errored "no such job"
+
+- zsh: `cmd & wait %1` works even after the bg process has completed and been reaped — missing job spec is silent success. zshrs's `wait` builtin emitted `wait: %1: no such job` and set status 127, breaking the common `cmd & wait` idiom. Now silently consumes missing job specs. Test: `test_wait_missing_job_silent`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
