@@ -19036,8 +19036,20 @@ impl ShellExecutor {
                 // already preserved the parent value for the function
                 // exit; here we just need to clear the live storage.
                 let in_function = self.local_scope_depth > 0 && !is_global;
+                // zsh defaults numeric vars to 0/0.0 when declared
+                // without a value: `typeset -i x` → x=0, `typeset
+                // -F y` → y=0.0000000000 (default precision 10).
+                // Without this, `typeset -p x` printed `x=''`.
+                let default_val = if is_integer {
+                    "0".to_string()
+                } else if is_float || is_float_exp {
+                    let prec = precision.unwrap_or(10);
+                    format!("{:.prec$}", 0.0_f64, prec = prec)
+                } else {
+                    String::new()
+                };
                 if in_function {
-                    self.variables.insert(arg.clone(), String::new());
+                    self.variables.insert(arg.clone(), default_val.clone());
                     // Also remove any lingering array/assoc binding so
                     // the local NAME starts genuinely fresh; the old
                     // values are restored on function exit via the
@@ -19048,7 +19060,7 @@ impl ShellExecutor {
                     && !self.arrays.contains_key(arg.as_str())
                     && !self.assoc_arrays.contains_key(arg.as_str())
                 {
-                    self.variables.insert(arg.clone(), String::new());
+                    self.variables.insert(arg.clone(), default_val);
                 }
                 if is_export {
                     let val = self
