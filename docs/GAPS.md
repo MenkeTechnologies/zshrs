@@ -1721,6 +1721,38 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - A previous batch added an unconditional error for bare `command` based on a misread of zsh's docs. Verified live: `command` (no args, no redirections) exits 0 silently in both zsh and bash; the "redirection with no command" diagnostic only fires when redirections are present without a command name (a parser-level concern, not the builtin's). Reverted the builtin-level error to a silent `return 0`. Test: `test_command_no_args_silent` (replaces the wrong `test_command_no_args_redirection_error`).
 
+### `[ a -ZZ b ]` silently returned 1 instead of "unknown condition: -ZZ"
+
+- zsh: `[ a -ZZ b ]` errors `[:1: unknown condition: -ZZ` exit 2 — the alphabetic operator at args[1] isn't a recognized comparator (`-eq`/`-ne`/etc., `=`/`!=`, `<`/`>`, `-nt`/`-ot`/`-ef`, `-a`/`-o`). zshrs's 3-arg path only checked the numeric-comparator subset, falling through to the AND/OR connective splitter for everything else; the splitter found nothing to split and returned 1. Added an "unknown alphabetic 3-arg operator" arm next to the numeric-comparator arm. Test: `test_test_unknown_3arg_op_errors`.
+
+### `[ \( a ]` silently returned 1 instead of "argument expected"
+
+- zsh: an unmatched `(` in `test`/`[` syntax errors `[:1: argument expected` exit 2. zshrs ignored paren depth at the top level, falling through to the single-string `[s]` arm (which evaluates `(` as truthy) or the catch-all 1-return. Walked the args once tracking paren depth; if depth ≠ 0 at end, emit zsh's diagnostic and exit 2. Conservative — only fires on actual mismatch, so legitimate `[ \( -n a \) -a \( -z "" \) ]` is unaffected. Test: `test_test_paren_mismatch_errors`.
+
+### `kill` and `kill -9` (no PID) printed bash-style multi-line usage banner
+
+- zsh: bare `kill` and `kill -SIG` (no PID) both error `kill:1: not enough arguments` exit 1 — terse zsh format. zshrs printed `kill: usage: kill [-s signal | -n num | -sig] pid ...` followed by `       kill -l [sig ...]` — bash-style two-line banner without the shell-name prefix. Replaced both `eprintln!` paths (no-args and missing-PID) with the zsh-format `zshrs:kill:1: not enough arguments`. Test: `test_kill_no_args_zsh_format`.
+
+### `trap "" BADSIGNAL` silently registered a never-firable trap
+
+- zsh validates the signal name before installing the handler — unknown errors `trap:1: undefined signal: NAME` exit 1 and the trap is NOT installed. zshrs's loop blindly inserted whatever uppercased token came in, so `trap "" BADSIG` quietly polluted the trap table. Added a known-signal allowlist (zsh's full SIG-prefixed table plus the pseudo-signals `EXIT`/`ZERR`/`DEBUG`/`ERR`/`RETURN` plus numeric forms) before insertion; on miss, emit zsh's diagnostic and return 1. Test: `test_trap_undefined_signal_errors`.
+
+### `trap -l` printed bash-style numbered SIGNAL list (not zsh's silent empty)
+
+- zsh's `trap` builtin doesn't recognize `-l` as a flag — it just falls into the no-args path which prints currently-installed traps (empty in `-f` mode). zshrs implemented `-l` bash-style, emitting a 6-row 5-col table of `1) SIGHUP   2) SIGINT …`. Replaced with `return 0;` to match zsh's silent output. Test: `test_trap_l_silent`.
+
+### `vared` (no args) printed `vared: not enough arguments` (no zsh prefix)
+
+- zsh prefixes error diagnostics with `<shellname>:<builtin>:<line>:` — `vared:1: not enough arguments`. zshrs emitted bare `vared:` (no shell name, no line number), breaking script consumers that grep for the canonical zsh error format. Both eprintln sites in `builtin_vared` now use `zshrs:vared:1:`. Test: `test_vared_no_args_zsh_format`.
+
+### `unset NAME` for read-only NAME silently removed the entry
+
+- zsh: `unset NAME` for a read-only NAME errors `read-only variable: NAME` exit 1 — the unset is rejected, not silently consumed. zshrs's `builtin_unset` blindly stripped the entry from `variables`/`arrays`/`assoc_arrays` without consulting the read-only bit, so `readonly x=1; unset x` left x unset and exit 0 — a compat regression that broke scripts probing for readonly state. Added a per-name read-only check (intrinsic specials + `readonly_vars` + `var_attrs.readonly`) before the remove() calls. Test: `test_unset_readonly_errors`.
+
+### `typeset -Q x=1` and `declare -Q x=1` silently succeeded
+
+- zsh: unknown typeset/declare flag errors `typeset:1: bad option: -Q` (or `declare:1:`) exit 1. zshrs's per-char flag loop had a silent `_ => {}` fallback in both the `-` and `+` arms, so unknown letters were accepted as no-ops and the variable was set without any attribute. Replaced both fallbacks with explicit `bad option:` errors; uses the `invoked_as` parameter so `declare -Q` and `typeset -Q` produce the right name. Test: `test_typeset_unknown_flag_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
