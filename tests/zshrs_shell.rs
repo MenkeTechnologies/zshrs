@@ -6400,6 +6400,24 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_fc_no_args_with_session_still_recurses() {
+    // Bare `fc` (no -l, no positional) ALWAYS errors recurse-
+    // endlessly in -c mode. Even when `print -s` added entries,
+    // the EDIT mode tries to re-execute `fc` (the prior command)
+    // which is infinite. zshrs previously fell into list-mode
+    // pass-through if session had any entries.
+    let (status, _, stderr) = run_zshrs("print -s a; fc");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("would recurse endlessly"),
+        "got: {stderr}"
+    );
+    // -l with session entries still lists them.
+    let (_, output, _) = run_zshrs("print -s a; fc -l");
+    assert!(output.contains("1  a"), "got: {output:?}");
+}
+
+#[test]
 fn test_alias_listing_quotes_value_with_equals() {
     // zsh: `alias g='x=y'; alias g` prints `g='x=y'` — quoted
     // because the body contains `=`. zshrs's `format_alias_kv` (and
