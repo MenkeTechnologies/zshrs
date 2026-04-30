@@ -553,6 +553,41 @@ fn format_alias_kv(name: &str, value: &str) -> String {
 
 /// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
 /// inclusive, char-aware (not byte). Negative indices count from end.
+/// Find the byte offset of the first top-level `~` in `pat` — i.e.
+/// not inside `[...]` (character class) or `(...)` (group) and not
+/// at position 0 (where it would be a literal). Returns `None` if
+/// no such `~` exists. Direct port of zsh's pattern.c P_EXCLUDE
+/// scan: backslash-escaped `~` doesn't count, and the search
+/// honors paren/bracket nesting so `[a~b]` (literal `~` in class)
+/// and `(a~b)` (nested exclusion within group, handled by the
+/// recursive parser in C — we treat as literal here since this
+/// helper only catches the common top-level case) both pass through.
+fn find_top_level_tilde(pat: &str) -> Option<usize> {
+    let bytes = pat.as_bytes();
+    let mut i = 0;
+    let mut bracket_depth = 0;
+    let mut paren_depth = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                // Skip escaped char.
+                i += 2;
+                continue;
+            }
+            b'[' => bracket_depth += 1,
+            b']' if bracket_depth > 0 => bracket_depth -= 1,
+            b'(' if bracket_depth == 0 => paren_depth += 1,
+            b')' if bracket_depth == 0 && paren_depth > 0 => paren_depth -= 1,
+            b'~' if bracket_depth == 0 && paren_depth == 0 && i > 0 => {
+                return Some(i);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Apply zsh's `${var#pat}` / `##` / `%` / `%%` strip operators with
 /// optional `(M)`-flag inversion. Direct port of zsh's
 /// `get_match_ret()` (Src/glob.c:2550) for the relevant flag mask:
@@ -5176,6 +5211,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // 2=`%` short-suffix, 3=`%%` long. Glob-pattern matching via the
     // existing glob_match_static helper.
     vm.register_builtin(BUILTIN_PARAM_STRIP, |vm, _argc| {
+        // The compiler now passes `dq_flag` as a 4th arg so the
+        // runtime can distinguish DQ-wrapped (join-then-strip)
+        // from unquoted (per-element) on array-valued names.
+        // Mirrors zsh's pattern.c split between `getmatch` (joined
+        // scalar) and `getmatcharr` (per-element).
+        let dq_flag = vm.pop().to_int() != 0;
         let op = vm.pop().to_int() as u8;
         let pattern_raw = vm.pop().to_str();
         let name = vm.pop().to_str();
@@ -5198,7 +5239,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
         //     gives `/tmp/foo /etc` (last `/bar` stripped from
         //     joined), not `/tmp /etc` (per-element).
         let result: String = with_executor(|exec| {
-            let in_dq = exec.in_dq_context > 0;
+            // Prefer the compiler-provided `dq_flag` over reading
+            // exec.in_dq_context — the fast path skips the
+            // BUILTIN_EXPAND_TEXT wrapper that bumps the runtime
+            // counter, so the runtime check would always be 0
+            // here. dq_flag is true when this expansion sits inside
+            // a `"..."` word at compile time. Fall back to runtime
+            // context if compile time didn't set it (defensive
+            // for paths we haven't migrated yet).
+            let in_dq = dq_flag || exec.in_dq_context > 0;
             if name == "@" || name == "*" {
                 if in_dq {
                     let joined = exec.positional_params.join(" ");
@@ -9498,6 +9547,20 @@ impl ShellExecutor {
             if let Some(rest) = pattern.strip_prefix('^') {
                 return !ShellExecutor::glob_match_static(s, rest);
             }
+            // Extendedglob `~` exclusion: `pat1~pat2` matches strings
+            // matching `pat1` AND NOT matching `pat2`. Direct port of
+            // zsh's pattern.c P_EXCLUDE handling (line 155 onward) for
+            // the top-level case — the canonical implementation also
+            // handles nested exclusions (`(a~b)c`) but the top-level
+            // form is what `*.txt~README*` and similar idioms produce.
+            // Walk the pattern looking for a `~` that's NOT inside
+            // `[...]` or `(...)` so nested specials stay literal.
+            if let Some(idx) = find_top_level_tilde(&pattern) {
+                let lhs = &pattern[..idx];
+                let rhs = &pattern[idx + 1..];
+                return ShellExecutor::glob_match_static(s, lhs)
+                    && !ShellExecutor::glob_match_static(s, rhs);
+            }
         }
 
         // ksh-style negation `!(p)` (gated on `setopt kshglob`): when
@@ -10847,8 +10910,38 @@ impl ShellExecutor {
                             let content = &s[start + 1..i];
                             let suffix = &s[i + 1..];
 
-                            // Check if this is a sequence {a..b} or a list {a,b,c}
-                            let expansions = if content.contains("..") {
+                            // Check if this is a sequence `{a..b}` or a
+                            // list `{a,b,c}`. The previous version's
+                            // `contains("..")` precedence was wrong for
+                            // mixed content like `{{1..3},x,y}` — the
+                            // outer braces contain `..` (inside the
+                            // nested `{1..3}`) AND a top-level `,`, but
+                            // it's a LIST at this level. zsh resolves
+                            // by checking nesting depth: a top-level
+                            // `,` (depth 0) makes the whole brace a
+                            // list; the `..` only counts if there's
+                            // no top-level comma. Same pattern as the
+                            // expand_brace_list scanner already does
+                            // for splitting.
+                            let has_top_comma = {
+                                let mut d = 0;
+                                let mut found = false;
+                                for c in content.chars() {
+                                    match c {
+                                        '{' => d += 1,
+                                        '}' => d -= 1,
+                                        ',' if d == 0 => {
+                                            found = true;
+                                            break;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                found
+                            };
+                            let expansions = if has_top_comma {
+                                self.expand_brace_list(content)
+                            } else if content.contains("..") {
                                 self.expand_brace_sequence(content)
                             } else if content.contains(',') {
                                 self.expand_brace_list(content)
@@ -13307,7 +13400,51 @@ impl ShellExecutor {
                     };
                     if let Some(op) = op {
                         let pat_expanded = self.expand_string(pat_str);
-                        val = strip_match_op(&val, op, &pat_expanded, has_match_flag);
+                        // Array-valued name + (@) flag: strip
+                        // applies PER-ELEMENT (matches zsh's
+                        // pattern.c getmatcharr path called from
+                        // subst.c when nojoin/(@) is set). Without
+                        // (@) on a bare name in DQ, zsh joins
+                        // first then strips the joined scalar.
+                        // Direct port: route to per-element when
+                        // the var is an array AND (@) is in the
+                        // flag run; otherwise fall back to the
+                        // joined-scalar strip on `val`.
+                        let has_at_flag = flags
+                            .iter()
+                            .any(|f| matches!(f, ZshParamFlag::At));
+                        if has_at_flag {
+                            if let Some(arr) =
+                                self.arrays.get(var_name).cloned()
+                            {
+                                let stripped: Vec<String> = arr
+                                    .iter()
+                                    .map(|e| {
+                                        strip_match_op(
+                                            e,
+                                            op,
+                                            &pat_expanded,
+                                            has_match_flag,
+                                        )
+                                    })
+                                    .collect();
+                                val = stripped.join(" ");
+                            } else {
+                                val = strip_match_op(
+                                    &val,
+                                    op,
+                                    &pat_expanded,
+                                    has_match_flag,
+                                );
+                            }
+                        } else {
+                            val = strip_match_op(
+                                &val,
+                                op,
+                                &pat_expanded,
+                                has_match_flag,
+                            );
+                        }
                     }
                 }
 
