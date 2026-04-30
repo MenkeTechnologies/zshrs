@@ -1823,6 +1823,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: in `-c`/`-f` non-interactive mode the ZLE module isn't loaded, so `zle -l` outputs nothing and returns 0. zshrs eagerly preloaded its built-in widget table on every interp startup, so `zle -l` always emitted the full list — diverging from zsh's silent-empty output and breaking scripts that grep for "zle module not loaded" semantics. Added an `atty::is(Stream::Stdin)` guard in both `-l` and `-la`/`-lL` arms; non-tty mode returns 0 immediately. Test: `test_zle_l_silent_in_script`.
 
+### `umask 999` reported "bad symbolic mode operator: 9" instead of "bad umask"
+
+- zsh: `umask 999` (digits but invalid octal — 9 isn't a valid octal digit) -> `umask:1: bad umask` exit 1. zshrs's `from_str_radix(v, 8)` failed, then the input fell into the symbolic-form parser, which interpreted `9` as a class char that wasn't followed by `+`/`-`/`=` and emitted `bad symbolic mode operator: 9` — wrong error category entirely. Added a `looks_numeric` (all-digits) precheck before the symbolic-form parser that emits `bad umask` instead. Test: `test_umask_bad_numeric_format`.
+
+### `umask u=Z` reported generic "invalid mask" instead of specific "bad symbolic mode permission: Z"
+
+- zsh: `umask u=Z` -> `umask:1: bad symbolic mode permission: Z` exit 1 — pinpoints the unknown rwx char. zshrs collapsed any symbolic-form failure to `umask: invalid mask: u=Z`. Refactored the rwx-char loop to track a `bad_perm: Option<char>` and emit zsh's specific diagnostic on miss before falling back. Test: `test_umask_bad_symbolic_permission`.
+
+### `pwd -X` printed cwd as if -X were a valid flag
+
+- zsh: `pwd -X` -> `pwd:1: bad option: -X` exit 1. zshrs's per-char flag loop had a silent `_ => {}` fallback, accepting any letter and continuing to print the cwd. Replaced with explicit `bad option: -X` error that exits 1 before the print. Test: `test_pwd_unknown_flag_errors`.
+
+### `cd /tmp /etc` (two-arg substitution form, OLD not in $PWD) silently used args[0] as target
+
+- zsh: `cd OLD NEW` is the path-substitution form — replaces OLD with NEW in $PWD and cd's there. If OLD isn't in $PWD, errors `cd:1: string not in pwd: OLD` exit 1. zshrs's two-arg branch only fired the substitution when OLD was in cwd; otherwise it silently fell through and treated args[0] as the target (bash-style `cd path1 path2 = cd path1` semantics). Added an explicit `string not in pwd:` error on miss. Test: `test_cd_two_args_substitution_or_error`.
+
+### `readonly -X x=1` silently inserted "-X" as a readonly variable
+
+- zsh: `readonly -X x=1` -> `readonly:1: bad option: -X` exit 1. zshrs's loop treated any non-`-p` argument as either an `=`-form binding or a bare name. So `-X` got inserted into `readonly_vars` and `var_attrs` as a junk readonly entry, masking the typo. Added a `starts_with('-')` flag-arg check before the binding/bare-name branches that emits zsh's `bad option:` diagnostic. Test: `test_readonly_unknown_flag_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted

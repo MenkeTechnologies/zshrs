@@ -16901,6 +16901,13 @@ impl ShellExecutor {
                     positional_args = vec![];
                     return self.do_cd(&new_path, quiet, use_cdpath, logical);
                 }
+                // zsh: if old is not in $PWD, the substitution fails
+                // with `cd:1: string not in pwd: <old>` exit 1. zshrs
+                // silently fell through and treated args[0] as the
+                // target dir, which is the bash-style `cd /tmp /etc`
+                // semantics — wrong for zsh.
+                eprintln!("zshrs:cd:1: string not in pwd: {}", old);
+                return 1;
             }
         }
 
@@ -17070,7 +17077,14 @@ impl ShellExecutor {
                 match ch {
                     'P' => physical = true,
                     'L' => physical = false,
-                    _ => {}
+                    // zsh: `pwd -X` -> `pwd:1: bad option: -X` exit 1.
+                    // zshrs's silent fallback ignored unknown letters
+                    // and continued, masking typos and letting `pwd
+                    // -X` print the cwd as if -X were valid.
+                    _ => {
+                        eprintln!("zshrs:pwd:1: bad option: -{}", ch);
+                        return 1;
+                    }
                 }
             }
         }
@@ -28620,19 +28634,23 @@ impl ShellExecutor {
                     let classes = &seg[..eq];
                     let bits_str = &seg[eq + 1..];
                     let mut bits: u32 = 0;
+                    let mut bad_perm: Option<char> = None;
                     for c in bits_str.chars() {
                         match c {
                             'r' => bits |= 4,
                             'w' => bits |= 2,
                             'x' => bits |= 1,
                             _ => {
-                                ok = false;
+                                bad_perm = Some(c);
                                 break;
                             }
                         }
                     }
-                    if !ok {
-                        break;
+                    if let Some(c) = bad_perm {
+                        // zsh: `bad symbolic mode permission: Z` exit 1
+                        // (specific diagnostic for the unknown rwx char).
+                        eprintln!("zshrs:umask:1: bad symbolic mode permission: {}", c);
+                        return 1;
                     }
                     for cls in classes.chars() {
                         match cls {
@@ -28663,11 +28681,17 @@ impl ShellExecutor {
                     umask(new_mask as libc::mode_t);
                 }
             } else {
-                // Symbolic form parser failed earlier; try to give zsh's
-                // more specific diagnostic. zsh validates the second
-                // character — must be a `+`/`-`/`=` operator after the
-                // class chars. `umask abcd` → first is `a` (class), then
-                // `b` is not an operator → `bad symbolic mode operator: b`.
+                // Numeric parse failed AND no `=` for symbolic. zsh
+                // emits a single `bad umask` for invalid octal (e.g.
+                // `umask 999`); for malformed symbolic without `=`,
+                // walk the input and emit the operator-position
+                // diagnostic. Numeric-looking input with bad digits
+                // (8 or 9) gets the terse `bad umask`.
+                let looks_numeric = !v.is_empty() && v.chars().all(|c| c.is_ascii_digit());
+                if looks_numeric {
+                    eprintln!("zshrs:umask:1: bad umask");
+                    return 1;
+                }
                 let bytes = v.as_bytes();
                 let mut i = 0;
                 while i < bytes.len() && matches!(bytes[i], b'u' | b'g' | b'o' | b'a') {
@@ -28679,7 +28703,7 @@ impl ShellExecutor {
                         bytes[i] as char
                     );
                 } else {
-                    eprintln!("umask: invalid mask: {}", v);
+                    eprintln!("zshrs:umask:1: bad umask");
                 }
                 return 1;
             }
@@ -30381,6 +30405,13 @@ impl ShellExecutor {
                         println!("declare -r {}=\"{}\"", name, val);
                     }
                 }
+            } else if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
+                // zsh: unknown `readonly` flag errors `readonly:1:
+                // bad option: -X` exit 1. zshrs accepted any `-X`
+                // silently as if it were a name to mark readonly.
+                let bad: String = arg[1..].chars().take(1).collect();
+                eprintln!("zshrs:readonly:1: bad option: -{}", bad);
+                return 1;
             } else if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
                 let value = &arg[eq_pos + 1..];
