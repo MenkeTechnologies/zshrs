@@ -6516,6 +6516,42 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_test_builtin_paren_grouping() {
+    // POSIX `[ ... ]` supports `\(` `\)` to group sub-expressions
+    // around `-a`/`-o` connectives. zshrs's default-arm split on the
+    // last `-a`/`-o` ignored paren depth, breaking grouped
+    // expressions like `[ \( -n a \) -a \( -z "" \) ]`.
+    let (_, output, _) = run_zshrs(r#"[ \( -n abc \) -a \( -z "" \) ] && echo paren"#);
+    assert_eq!(output.trim(), "paren");
+    let (_, output, _) = run_zshrs(r#"[ \( -n "" -o -n abc \) -a -z "" ] && echo nested"#);
+    assert_eq!(output.trim(), "nested");
+}
+
+#[test]
+fn test_fc_l_no_event_uses_resolved_index() {
+    // zsh: `fc -l 0` and `fc -l -5` (in -c mode with empty history)
+    // both report `no such event: 0`. Negative offsets resolve to 0
+    // when there are no entries; positive args echo verbatim. zshrs
+    // previously hardcoded "1" when the user passed 0 or negative.
+    let (_, _, stderr) = run_zshrs("fc -l 0");
+    assert!(stderr.contains("no such event: 0"), "got: {stderr}");
+    let (_, _, stderr) = run_zshrs("fc -l -5");
+    assert!(stderr.contains("no such event: 0"), "got: {stderr}");
+    let (_, _, stderr) = run_zshrs("fc -l 5");
+    assert!(stderr.contains("no such event: 5"), "got: {stderr}");
+}
+
+#[test]
+fn test_read_p_flag_means_coprocess_not_prompt() {
+    // zsh's `read -p` is "read from coprocess input" — NOT prompt
+    // (the prompt feature uses `read 'NAME?prompt'` syntax). Without
+    // a coprocess, zsh emits "no coprocess" and bails.
+    let (status, _, stderr) = run_zshrs("echo hi | read -p x");
+    assert!(stderr.contains("-p: no coprocess"), "got: {stderr}");
+    assert_ne!(status, 0);
+}
+
+#[test]
 fn test_alias_recursion_guard_self_disables() {
     // zsh's lexer disables an alias inside its own body so common
     // wrappers like `alias ls='ls -la'` work without infinite

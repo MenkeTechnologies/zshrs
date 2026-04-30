@@ -1761,6 +1761,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's lexer disables an alias inside its own body (so `alias ls='ls -la'` works without recursion; the lexer expands `ls` to `ls -la` once, then the inner `ls` stays literal). zshrs expands aliases at run time via `execute_script(&combined)`, which re-parses → re-dispatches → recurses forever. `alias g="g hi"; g` overflowed the stack. Added an `expanding_aliases: HashSet<String>` guard on `ShellExecutor`: insert the name before the recursive `execute_script`, remove on return, and skip alias lookup entirely for any name already in the set. The recursive `g` now misses the alias table and falls through to "command not found", matching zsh. Test: `test_alias_recursion_guard_self_disables`.
 
+### `[ \( -n a \) -a \( -z "" \) ]` (paren grouping) didn't work
+
+- POSIX `[ ... ]` (test) supports `\(` `\)` for grouping around `-a`/`-o` connectives. zshrs's default arm split on the LAST top-level `-a`/`-o` without tracking paren depth, so a paren-grouped expression got split on a connective that should have been inside a sub-group. Added a depth-tracking pass to `builtin_test`: only consider `-a`/`-o` at depth 0, AND if the entire expression is wrapped in matching outer parens, strip them and recurse on the inner. Test: `test_test_builtin_paren_grouping`.
+
+### `fc -l 0` and `fc -l -N` reported wrong event number
+
+- In `-c` (non-interactive) mode with empty history, zsh's `fc -l N` errors with `no such event: <resolved-N>`. Resolved is `max(0, N)` — both 0 and any negative offset collapse to `0`; positive arguments echo verbatim. zshrs hardcoded `"1"` for non-positive arguments, so `fc -l 0` reported `1` instead of `0`. Now uses `if first <= 0 { 0 } else { first }` for the message. Test: `test_fc_l_no_event_uses_resolved_index`.
+
+### `read -p` was treated as prompt (should be coprocess input)
+
+- zsh's `read -p` reads input from the coprocess; the prompt feature is `read 'NAME?prompt'`. zshrs misread `-p` as a prompt flag, ate the next arg as the prompt text, and printed it. Now emits `zshrs:read:1: -p: no coprocess` and exits 1, matching zsh in -c mode. Capital `-P` is left as a prompt-flag alias for back-compat with anything that relied on the old (wrong) shape. Test: `test_read_p_flag_means_coprocess_not_prompt`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
