@@ -1572,6 +1572,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `. file.sh ARG1 ARG2` didn't pass extra args as positionals to sourced script
+
+- zsh's source/`.` builtin passes `args[1..]` as `$1`/`$2`/... to the sourced file. We were ignoring extras — the script saw the parent's positionals (or empty in `-c` mode). Save outer positional_params, install args[1..] as new positionals, restore on exit. Tests: `test_source_passes_extra_args_as_positionals`, `test_source_preserves_outer_positionals`.
+
+### `b="${a[@]}"` captured only the first element, not the joined array
+
+- In an assignment context, both `[@]` and `[*]` join the array to a single string (zsh subst.c forces single-string output for scalar RHS). Our `${NAME[@]}` always emitted `BUILTIN_ARRAY_ALL` (Array splice). Compile path now forces `BUILTIN_ARRAY_JOIN_STAR` when `assign_context_depth > 0`. Test: `test_array_splice_in_scalar_assign_joins`.
+
+### `$a[@]` / `$a[*]` (no braces) joined instead of splicing
+
+- zsh treats bare `$NAME[@]`/`$NAME[*]` identically to the braced versions. `array_splice_ref` only matched `${NAME[@]}`/`${NAME[*]}`. Extended to also accept the no-braces form. Test: `test_array_bare_splice_no_braces`.
+
 ### `((i=a[2]))` set i to the joined-scalar of $a, not the second element
 
 - ArithCompiler doesn't pre-resolve `name[idx]` on the RHS — the assignment landed `a`'s value (joined "1 2 3") instead of `a[2]`. Added `inner_arith.contains('[')` to the needs_eval check so MathEval (BUILTIN_ARITH_EVAL → evaluate_arithmetic) handles it; that path runs `pre_resolve_array_subscripts` before the math eval. Test: `test_arith_assign_from_array_subscript`.

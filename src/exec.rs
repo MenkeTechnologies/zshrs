@@ -19041,6 +19041,19 @@ impl ShellExecutor {
         let saved_zero = self.variables.get("0").cloned();
         self.variables.insert("0".to_string(), abs_path.clone());
 
+        // zsh: `. file ARG1 ARG2` passes ARG1/ARG2 as $1/$2 to the
+        // sourced script. Save outer positional params, install
+        // args[1..] as new positionals, restore on exit. Without
+        // this the sourced file saw the parent shell's positionals
+        // (or empty when run from `-c`).
+        let saved_positionals = if args.len() > 1 {
+            let prev = self.positional_params.clone();
+            self.positional_params = args[1..].to_vec();
+            Some(prev)
+        } else {
+            None
+        };
+
         let result;
 
         if self.posix_mode {
@@ -19162,6 +19175,12 @@ impl ShellExecutor {
             self.variables.insert("0".to_string(), z);
         } else {
             self.variables.remove("0");
+        }
+
+        // Restore outer positional params (only when source was given
+        // explicit args).
+        if let Some(prev) = saved_positionals {
+            self.positional_params = prev;
         }
 
         final_result
