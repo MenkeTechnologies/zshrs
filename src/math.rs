@@ -162,16 +162,54 @@ impl MathNum {
                         raw
                     }
                 } else {
-                    // Rust's `{}` for f64 is shortest-roundtrip, which
-                    // almost always agrees with zsh's full-precision
-                    // float display.
-                    let s = format!("{}", f);
+                    // zsh uses C's `%.17g` to display non-integer
+                    // floats, which always shows 17 significant
+                    // digits. Rust's `{}` for f64 is shortest-
+                    // roundtrip and agreed for most values
+                    // (`0.5`, `0.25`, `0.30000000000000004`) but
+                    // diverged for inexact-representable cases:
+                    // `0.1` (rust) vs `0.10000000000000001` (zsh).
+                    // Replicate %.17g manually since std doesn't
+                    // expose it directly. Rule: if the decimal
+                    // exponent is in [-4, 17) use fixed-point
+                    // with (16 - exp) fractional digits;
+                    // otherwise use scientific. Values with
+                    // shorter exact representations come out
+                    // differently in the two formatters even
+                    // when both are technically %g-correct, so
+                    // we always emit the 17-sig-digit form for
+                    // parity.
+                    let abs = f.abs();
+                    let exp = abs.log10().floor() as i32;
+                    let raw = if exp < -4 || exp >= 17 {
+                        // Scientific: 17 sig digits → 16 frac
+                        // digits in mantissa.
+                        format!("{:.16e}", f)
+                    } else {
+                        let frac = (16i32 - exp).max(0) as usize;
+                        format!("{:.*}", frac, f)
+                    };
+                    // C's `%g` strips trailing zeros from the
+                    // fractional part (and the trailing `.` if
+                    // no digits follow). zsh inherits that
+                    // behavior: `0.5` stays `0.5`, not
+                    // `0.50000000000000000`. Apply the same trim
+                    // — but only on the mantissa side of any
+                    // `e±EE` exponent. The integer-fract==0
+                    // arm above handles the trailing-`.` case.
+                    let s = if let Some(epos) = raw.rfind('e') {
+                        let (mant, exp_part) = raw.split_at(epos);
+                        let trimmed = trim_g_zeros(mant);
+                        format!("{}{}", trimmed, exp_part)
+                    } else {
+                        trim_g_zeros(&raw).to_string()
+                    };
                     if s.contains('.') || s.contains('e') {
                         s
                     } else {
-                        // Edge case: Rust's Display dropped the dot
-                        // (shouldn't happen for non-integer-valued
-                        // floats, but be safe).
+                        // Edge case: e.g. `{:.0}` of 7.0 yields
+                        // "7" (no dot). Add a trailing zero so
+                        // the value still reads as a float.
                         format!("{}.0", s)
                     }
                 }
@@ -179,6 +217,31 @@ impl MathNum {
             MathNum::Unset => "0".to_string(),
         }
     }
+}
+
+/// Strip trailing zeros from the fractional part of a fixed-point
+/// number string, mirroring C's `%g` zero-suppression. Leaves the
+/// integer part untouched. Drops the trailing `.` if no fractional
+/// digits remain. Inputs without a `.` pass through verbatim.
+fn trim_g_zeros(s: &str) -> &str {
+    let Some(dot) = s.find('.') else {
+        return s;
+    };
+    let bytes = s.as_bytes();
+    let mut end = s.len();
+    while end > dot + 1 && bytes[end - 1] == b'0' {
+        end -= 1;
+    }
+    if end == dot + 1 {
+        // Only `<int>.` remains — drop the trailing dot too,
+        // matching `%g`'s "no fractional part" rule. The
+        // integer-fract==0 caller handles the "5." display
+        // separately, so this branch is reached only via the
+        // scientific-mantissa path (where the dot would be
+        // alone, e.g. `1.e10`).
+        end = dot;
+    }
+    &s[..end]
 }
 
 /// Math tokens - from math.c

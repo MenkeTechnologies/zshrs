@@ -2219,6 +2219,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-sixth-pass)
 
+### `$((0.1))` printed `0.1` instead of zsh's `0.10000000000000001` (and similar inexact-representable floats)
+
+- zsh uses C's `%.17g` for non-integer arithmetic-substitution display, which always shows 17 significant digits. Inexact-representable values surface their actual stored f64 form: `0.1` stored as f64 is `0.1000000000000000055511...`, which `%.17g` renders as `0.10000000000000001`. Rust's `Display` for f64 is shortest-roundtrip, so it picks the shorter `0.1` even though that's not the exact value. Most other cases (`0.5`, `0.25`, `0.30000000000000004`, NaN, Inf) already agreed since `%g` strips trailing zeros and the shortest representation happens to equal the 17-sig-digit one. Added a manual `%.17g`-style formatter in `format_zsh_subst`: pick scientific if `exp < -4 || exp >= 17`, else fixed-point with `(16 - exp)` fractional digits, then strip trailing zeros from the mantissa via a `trim_g_zeros` helper. Test: `test_arith_subst_float_pct_17g_inexact_form`.
+
 ### `declare -a arr=( "abc" "def" )` kept quotes attached to elements (`"abc"` instead of `abc`)
 
 - zsh's plain `arr=( "abc" "def" )` strips surrounding quotes at the shell-syntax level — quotes are word boundaries, not part of the value. The typeset/declare array-assignment path (separate code in zshrs's typeset_named) split the raw `arr=("abc" "def")` arg by whitespace and kept the quotes attached, so consumers saw `"abc"` as the literal first element. Same bug surfaced for `declare -a arr=( "[1]=second" "[3]=fourth" )` where the quotes were retained around the `[N]=...` form. Fix: in the typeset array-element collection loop, strip a matched pair of leading/trailing single or double quotes from each whitespace-split element. The quote-stripping is conservative — only strips when first AND last chars match (so internal quotes / mismatched pairs pass through unchanged). Test: `test_declare_array_strips_quoted_elements`.

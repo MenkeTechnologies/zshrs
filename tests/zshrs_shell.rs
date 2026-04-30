@@ -1021,6 +1021,37 @@ fn test_arith_subst_whole_float_trailing_dot() {
 }
 
 #[test]
+fn test_arith_subst_float_pct_17g_inexact_form() {
+    // zsh uses C's `%.17g` for non-integer floats, which expose
+    // the exact f64 representation when it differs from the
+    // user's literal: `0.1` is `0.10000000000000001` because
+    // 0.1 isn't exactly representable in binary. zshrs's
+    // shortest-roundtrip default printed `0.1` instead.
+    // Trailing zeros are stripped (per `%g`), so exact-
+    // representable values like `0.5` stay short.
+    let (_, output, _) = run_zshrs("echo $((0.1))");
+    assert_eq!(
+        output.trim(),
+        "0.10000000000000001",
+        "got: {output:?}"
+    );
+    let (_, output, _) = run_zshrs("echo $((0.5))");
+    assert_eq!(output.trim(), "0.5", "got: {output:?}");
+    let (_, output, _) = run_zshrs("echo $((1.0/3.0))");
+    assert_eq!(
+        output.trim(),
+        "0.33333333333333331",
+        "got: {output:?}"
+    );
+    let (_, output, _) = run_zshrs("echo $((0.05))");
+    assert_eq!(
+        output.trim(),
+        "0.050000000000000003",
+        "got: {output:?}"
+    );
+}
+
+#[test]
 fn test_arith_subst_integer_no_dot() {
     let (_, output, _) = run_zshrs("echo $((10+5))");
     assert_eq!(output.trim(), "15", "got: {output:?}");
