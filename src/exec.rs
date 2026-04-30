@@ -13719,6 +13719,22 @@ impl ShellExecutor {
                     }
                 }
 
+                // Strip operators after inner expansion: ${${a%.txt}#hel}
+                // shapes apply outer #/##/%/%% to the inner result. zsh
+                // subst.c reuses the same getarg machinery for inner and
+                // outer; we mirror by dispatching to strip_match_op.
+                // Order matters: check `##`/`%%` before `#`/`%`.
+                if rest.starts_with("##") || rest.starts_with("%%") {
+                    let op = if rest.starts_with("##") { 1u8 } else { 3u8 };
+                    let pat = &rest[2..];
+                    return strip_match_op(&inner_result, op, pat, false);
+                }
+                if rest.starts_with('#') || rest.starts_with('%') {
+                    let op = if rest.starts_with('#') { 0u8 } else { 2u8 };
+                    let pat = &rest[1..];
+                    return strip_match_op(&inner_result, op, pat, false);
+                }
+
                 // `/pat/repl` substitution after inner expansion.
                 // `${${a}//l/L}` for a=hello -> heLLo. Direct port
                 // of zsh's substitution dispatch when the outer
@@ -13782,6 +13798,96 @@ impl ShellExecutor {
                 let flags_str = &content[1..close_paren];
                 let rest = &content[close_paren + 1..];
                 let mut flags = self.parse_zsh_flags(flags_str);
+
+                // Nested expansion as the operand: `${(flags)${...}}`.
+                // zsh subst.c paramsubst recursively evaluates the inner
+                // ${...} first, then applies the outer flags to the
+                // resulting string/array. Without this, the outer flag
+                // path treated `${(j. .)a}` as a literal var name and
+                // returned empty.
+                if rest.starts_with("${") {
+                    // Find matching `}` for the inner expansion.
+                    let mut depth = 0i32;
+                    let mut inner_close: Option<usize> = None;
+                    for (i, b) in rest.bytes().enumerate() {
+                        if b == b'{' {
+                            depth += 1;
+                        } else if b == b'}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                inner_close = Some(i);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(end) = inner_close {
+                        // Recurse on inner contents (sans `${` `}`).
+                        let inner_content = &rest[2..end];
+                        let inner_str = self.expand_braced_variable(inner_content);
+                        // Apply outer flags to the inner string. (s::)
+                        // splits the scalar on a delimiter; (j::) joins
+                        // an array (no-op on scalar); (U)/(L)/(C) case
+                        // transforms; (q*)/Q quoting handled below.
+                        let mut out = inner_str.clone();
+                        for f in &flags {
+                            match f {
+                                ZshParamFlag::Upper => {
+                                    out = out.to_uppercase();
+                                }
+                                ZshParamFlag::Lower => {
+                                    out = out.to_lowercase();
+                                }
+                                ZshParamFlag::Capitalize => {
+                                    out = out
+                                        .split_whitespace()
+                                        .map(|word| {
+                                            let mut c = word.chars();
+                                            match c.next() {
+                                                None => String::new(),
+                                                Some(f) => {
+                                                    f.to_uppercase().collect::<String>()
+                                                        + c.as_str()
+                                                }
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
+                                }
+                                ZshParamFlag::Split(sep) => {
+                                    // Split scalar on sep, return space-joined
+                                    // (DQ context) or array-spliced. Here we
+                                    // return space-joined since we collapsed
+                                    // already.
+                                    let parts: Vec<&str> = if sep.is_empty() {
+                                        out.split_whitespace().collect()
+                                    } else {
+                                        out.split(sep.as_str()).collect()
+                                    };
+                                    out = parts.join(" ");
+                                }
+                                ZshParamFlag::Join(sep) => {
+                                    // Join is a no-op on a scalar; the inner
+                                    // already collapsed an array via space.
+                                    // Replace any single-space joins by sep.
+                                    let parts: Vec<&str> = out.split_whitespace().collect();
+                                    out = parts.join(sep);
+                                }
+                                _ => {}
+                            }
+                        }
+                        // Strip / replace operators after the inner ${...}.
+                        let after = &rest[end + 1..];
+                        if after.starts_with("##") || after.starts_with("%%") {
+                            let op = if after.starts_with("##") { 1u8 } else { 3u8 };
+                            return strip_match_op(&out, op, &after[2..], false);
+                        }
+                        if after.starts_with('#') || after.starts_with('%') {
+                            let op = if after.starts_with('#') { 0u8 } else { 2u8 };
+                            return strip_match_op(&out, op, &after[1..], false);
+                        }
+                        return out;
+                    }
+                }
 
                 // In double-quoted context, array-only flags are
                 // no-ops per zsh. Strip them so the join-as-scalar
@@ -17037,22 +17143,52 @@ impl ShellExecutor {
                             }
                             len_str.push(chars.next().unwrap());
                         }
-                        let mut fill = ' ';
-                        if let Some(&ch) = chars.peek() {
-                            if ch != ':' {
-                                fill = chars.next().unwrap();
-                                if chars.peek() == Some(&':') {
-                                    chars.next();
+                        // zsh subst.c: `l:expr:string1:string2:` — string1
+                        // is the LEFT pad (repeats), string2 is the prefix
+                        // applied once before string1. When string1 is
+                        // empty and string2 is given, string2 acts as
+                        // the fill char (so `(l:5::0:)42` pads with `0`s
+                        // to give `00042`). Default fill is space.
+                        let mut s1 = String::new();
+                        let mut s2 = String::new();
+                        let mut have_s2 = false;
+                        // Read string1 until next `:`
+                        while let Some(&ch) = chars.peek() {
+                            if ch == ':' {
+                                chars.next();
+                                // Read string2 until next `:` or `)`
+                                have_s2 = true;
+                                while let Some(&ch2) = chars.peek() {
+                                    if ch2 == ':' {
+                                        chars.next();
+                                        break;
+                                    }
+                                    if ch2 == ')' {
+                                        break;
+                                    }
+                                    s2.push(chars.next().unwrap());
                                 }
+                                break;
                             }
+                            if ch == ')' {
+                                break;
+                            }
+                            s1.push(chars.next().unwrap());
                         }
+                        let fill = if !s1.is_empty() {
+                            s1.chars().next().unwrap_or(' ')
+                        } else if have_s2 && !s2.is_empty() {
+                            s2.chars().next().unwrap_or(' ')
+                        } else {
+                            ' '
+                        };
                         if let Ok(len) = len_str.parse() {
                             flags.push(ZshParamFlag::PadLeft(len, fill));
                         }
                     }
                 }
                 'r' => {
-                    // r:len:fill: - pad right
+                    // r:len:fill[:fill2]: — pad right.
                     if chars.peek() == Some(&':') {
                         chars.next();
                         let mut len_str = String::new();
@@ -17063,15 +17199,37 @@ impl ShellExecutor {
                             }
                             len_str.push(chars.next().unwrap());
                         }
-                        let mut fill = ' ';
-                        if let Some(&ch) = chars.peek() {
-                            if ch != ':' {
-                                fill = chars.next().unwrap();
-                                if chars.peek() == Some(&':') {
-                                    chars.next();
+                        let mut s1 = String::new();
+                        let mut s2 = String::new();
+                        let mut have_s2 = false;
+                        while let Some(&ch) = chars.peek() {
+                            if ch == ':' {
+                                chars.next();
+                                have_s2 = true;
+                                while let Some(&ch2) = chars.peek() {
+                                    if ch2 == ':' {
+                                        chars.next();
+                                        break;
+                                    }
+                                    if ch2 == ')' {
+                                        break;
+                                    }
+                                    s2.push(chars.next().unwrap());
                                 }
+                                break;
                             }
+                            if ch == ')' {
+                                break;
+                            }
+                            s1.push(chars.next().unwrap());
                         }
+                        let fill = if !s1.is_empty() {
+                            s1.chars().next().unwrap_or(' ')
+                        } else if have_s2 && !s2.is_empty() {
+                            s2.chars().next().unwrap_or(' ')
+                        } else {
+                            ' '
+                        };
                         if let Ok(len) = len_str.parse() {
                             flags.push(ZshParamFlag::PadRight(len, fill));
                         }

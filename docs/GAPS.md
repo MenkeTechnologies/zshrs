@@ -1570,6 +1570,32 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
   2. `looks_like_glob_qualifiers` was missing `O` in its valid-char set, so `*(Om)` parsed as a literal pattern with unmatched `)` instead of as a qualifier set.
   Fixed both: skip the alpha sort when the qualifier set contains `o`/`O`, and added `O` to the valid char set. Same default-descending semantics now applied to `oa` (atime) and `oc` (ctime) too. Tests: `test_glob_om_sort_newest_first`, `test_glob_Om_sort_oldest_first`.
 
+## Closed (eighty-eighth-pass)
+
+### Glob `~` exclusion at PATH level matched RHS as a fresh CWD glob
+
+- `setopt extendedglob; echo $D/*.txt~*README*` should drop README.txt from the match set, but ours included it. The path-level handler recursively `expand_glob`'d the RHS in CWD instead of matching it as a PATTERN against each LHS candidate. Fixed by switching from a `HashSet`-based path equality check to per-candidate `glob_match_static` against basename and full path — direct port of zsh's pattern.c P_EXCLUDE which uses `pattry` per-candidate. Test: `test_glob_tilde_exclude_at_path_level`.
+
+### Associative-array key insertion order was random
+
+- `${(k)h}`, `${(kv)h}`, and `for k v in ${(kv)h}` returned keys in HashMap iteration order, not insertion order. zsh's params.c stores assoc entries in HashTable hnodes preserving insertion order. Switched `ParamValue::Assoc` and `ShellExecutor::assoc_arrays` inner type from `HashMap<String,String>` to `indexmap::IndexMap<String,String>`. Test: `test_assoc_keys_preserve_insertion_order`.
+
+### `for k v in arr` (multi-name for) only assigned to first name
+
+- zsh parse.c par_for accepts multiple identifier tokens before `in`; each iteration consumes N elements and assigns to N variables. Parser now collects all leading identifiers; compiler emits N-stride iteration with empty-string fill on short tail (mirrors exec.c forexec). Single-name path keeps the original 2-byte SET_VAR shape — no perf regression. Tests: `test_for_multi_var_pairs_consume_array`, `test_for_multi_var_three_consume_triples`, `test_for_multi_var_kv_iterates_assoc`.
+
+### Nested `${${a%.txt}#hel}` dropped outer strip operator
+
+- The nested-expansion handler dispatched outer `:MOD` and `/pat/repl` but fell through `#`/`##`/`%`/`%%`, returning the inner result unchanged. zsh subst.c reuses the same getarg machinery for inner and outer; we now mirror by calling `strip_match_op` on the inner result for all four operators. Test: `test_nested_expansion_strip_after_inner`.
+
+### Nested `${(s. .)${(j. .)a}}` ignored outer flag entirely
+
+- When `rest` after the flag block started with `${`, the flag-aware path treated it as a literal var name and returned empty. Added a recursive branch: detect leading `${`, find the matching `}`, recurse `expand_braced_variable` on the inner content, then apply the outer flags (U/L/C/Split/Join) to the inner result. Strip operators after the inner `${...}` also dispatch correctly. Test: `test_nested_expansion_outer_flag_applied_to_inner`.
+
+### `${(l:5::0:)42}` padded with spaces instead of `0`
+
+- The pad-flag parser only recognised the `l:LEN:FILL:` shape; zsh subst.c also accepts `l:LEN::S2:` where S1 is empty and S2 acts as the fill character (and l:LEN:S1:S2: where S1 prefixes once, S2 fills repeatedly). Reworked the parser to collect both strings and pick the fill: S1 if non-empty, else S2 if provided, else space. Test: `test_param_pad_zero_with_empty_string1`.
+
 ## Closed (seventy-seventh-pass)
 
 ### `history -c` had non-zsh error format

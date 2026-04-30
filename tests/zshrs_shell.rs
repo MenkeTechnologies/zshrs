@@ -10107,3 +10107,92 @@ fn test_alias_recursion_guard_self_disables() {
     let (_, output, _) = run_zshrs(r#"alias hi="echo hello"; hi"#);
     assert_eq!(output.trim(), "hello");
 }
+
+#[test]
+fn test_assoc_keys_preserve_insertion_order() {
+    // zsh stores assoc-array entries in insertion order (params.c
+    // hashtable hnodes). ${(k)h} and ${(kv)h} must iterate in
+    // insertion order, not random hash order.
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h; h=(a 1 b 2 c 3); echo ${(k)h}"#);
+    assert_eq!(output.trim(), "a b c");
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h; h=(a 1 b 2 c 3); echo ${(kv)h}"#);
+    assert_eq!(output.trim(), "a 1 b 2 c 3");
+}
+
+#[test]
+fn test_for_multi_var_pairs_consume_array() {
+    // zsh parse.c par_for accepts multiple identifier tokens before
+    // `in`. `for k v in arr` consumes pairs of values per iteration.
+    let (_, output, _) =
+        run_zshrs(r#"arr=(a 1 b 2 c 3); for k v in $arr; do echo "$k=$v"; done"#);
+    assert_eq!(output.trim(), "a=1\nb=2\nc=3");
+}
+
+#[test]
+fn test_for_multi_var_three_consume_triples() {
+    let (_, output, _) =
+        run_zshrs(r#"arr=(a 1 x b 2 y); for k v w in $arr; do echo "$k:$v:$w"; done"#);
+    assert_eq!(output.trim(), "a:1:x\nb:2:y");
+}
+
+#[test]
+fn test_for_multi_var_kv_iterates_assoc() {
+    // The driving real-world case: iterate an assoc by key+value.
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h; h=(a 1 b 2); for k v in ${(kv)h}; do echo "$k=$v"; done"#,
+    );
+    assert_eq!(output.trim(), "a=1\nb=2");
+}
+
+#[test]
+fn test_glob_tilde_exclude_at_path_level() {
+    // pattern.c P_EXCLUDE matches RHS as a pattern against each LHS
+    // candidate's basename — not a separate glob expansion in CWD.
+    let dir = std::env::temp_dir().join("zshrs_test_tilde_exclude");
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["a.txt", "b.txt", "README.txt"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+    }
+    let cmd = format!(
+        "setopt extendedglob; echo {}/*.txt~*README*",
+        dir.display()
+    );
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !output.contains("README.txt"),
+        "tilde exclusion should drop README.txt; got: {}",
+        output
+    );
+    assert!(output.contains("a.txt"));
+    assert!(output.contains("b.txt"));
+}
+
+#[test]
+fn test_nested_expansion_strip_after_inner() {
+    // ${${a%.txt}#hel}: inner strips suffix .txt from "hello.txt" giving
+    // "hello"; outer then strips prefix "hel" giving "lo".
+    let (_, output, _) = run_zshrs(r#"a=hello.txt; echo "${${a%.txt}#hel}""#);
+    assert_eq!(output.trim(), "lo");
+}
+
+#[test]
+fn test_nested_expansion_outer_flag_applied_to_inner() {
+    // ${(s. .)${(j. .)a}}: inner joins array on " " giving "a b c";
+    // outer split flag (s. .) splits scalar on " " giving "a b c"
+    // (printed space-joined when echoed).
+    let (_, output, _) =
+        run_zshrs(r#"a=(a b c); echo "${(s. .)${(j. .)a}}""#);
+    assert_eq!(output.trim(), "a b c");
+}
+
+#[test]
+fn test_param_pad_zero_with_empty_string1() {
+    // ${(l:5::0:)42}: empty string1 + string2="0" → repeat "0" to fill.
+    // zsh: 00000 (per subst.c when string1 is empty, string2 acts as
+    // the pad char and the value gets pushed off / not included).
+    let (_, output, _) = run_zshrs(r#"echo "${(l:5::0:)42}""#);
+    assert_eq!(output.trim(), "00000");
+}
