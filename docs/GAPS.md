@@ -2151,6 +2151,20 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `--` is end-of-options on `kill`; subsequent args are PIDs. zshrs's catch-all `-X` flag walker parsed `--` as `-` (separator) then `-` as the signal name, errored `unknown signal: SIG-`. Added an `after_dashdash` flag at the top of the parse loop that switches to PID-collection mode. Test: `test_kill_dashdash_end_of_options`.
 
+## Closed (eighty-fifth-pass)
+
+### `fc ""` triggered infinite recursion (re-executed `fc ""` until stack overflow)
+
+- zsh: `fc ""` -> `fc:1: event not found:` exit 1 (no match, no prior-command execution). zshrs's prefix-match found the most recent history entry (which is `fc ""` itself) and recursively re-executed it, triggering stack overflow. Added an `arg.is_empty()` fast path before the prefix search that emits zsh's diagnostic and exits 1. Test: `test_fc_empty_string_no_recursion`.
+
+### `umask z=r` reported "invalid mask: z=r" instead of "bad symbolic mode operator: z"
+
+- zsh: `umask z=r` -> `umask:1: bad symbolic mode operator: z` exit 1 (treats unknown class char as the operator-position diagnostic, distinct from "bad permission" for unknown rwx chars). zshrs's `_ => ok=false` collapsed all class errors to the generic `invalid mask:`. Tracked `bad_class: Option<char>` in the per-class loop; on hit, emits zsh's specific diagnostic. Test: `test_umask_bad_class_char`.
+
+### `cd /tmp /etc /usr` (3+ args) silently used args[0] as target
+
+- zsh: `cd ARG1 ARG2 ARG3` -> `cd:1: too many arguments` exit 1 (cd takes at most 2 args; the substitution form OLD NEW). zshrs's two-arg substitution path silently fell through with extras. Added a `positional_args.len() > 2` check before the path_arg lookup. Test: `test_cd_3plus_args_too_many`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
