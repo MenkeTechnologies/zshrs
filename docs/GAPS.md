@@ -2219,6 +2219,15 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### Subscript flags `(w)N` (word index) and `(s/sep/)N` (no-op for `[N]`) now recognized
+
+Direct port of zsh's zshparam(1) "Subscript Flags". `parse_subscript_flags` rejected anything outside `r/R/i/I/e/k/n` so `(w)2` and `(s/l/)2` were treated as bogus subscripts and routed to the math evaluator (which then failed on `(w)2`).
+
+- `(w)N` on a scalar splits by IFS (whitespace) and returns the Nth word; on an array, equivalent to `[N]` since the value is already split.
+- `(s/sep/)N` is a NO-OP for scalar `[N]` integer indexing per zsh's actual behavior — verified by spot-check: `a=hello; ${a[(s/l/)1]}` returns `h`, same as `${a[1]}`. The `(s)` flag only affects word-list contexts (`${(s/sep/)var}` without index, or `[@]` form). Strip the flag, parse the index normally, fall through to char slicing.
+
+Tests: `test_subscript_w_flag_word_index`, `test_subscript_s_flag_is_noop_for_int_index`.
+
 ### `${a//(#i)L/X}` now honors inline pattern flags (case-insensitive replace)
 
 Direct port of zsh's pattern.c — inline pattern flags `(#i)` / `(#l)` / `(#I)` apply to the replacement operator too, not just `[[ ... = pat ]]`. The same `parse_pattern_flags` helper that glob_match_static uses now runs before BUILTIN_PARAM_REPLACE compiles its regex; `(#i)` adds the `(?i)` regex prefix so the match is case-insensitive.

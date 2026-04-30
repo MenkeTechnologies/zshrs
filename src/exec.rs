@@ -149,11 +149,26 @@ fn parse_subscript_flags(idx: &str) -> Option<(&str, &str)> {
     if flags.is_empty() || flags.contains('[') || flags.contains(']') {
         return None;
     }
-    // Flags must be the recognized single-char subscript flag set —
-    // anything else means this `(...)` is something else (alternation).
+    // Flag set per zshparam(1) "Subscript Flags":
+    //   r/R   reverse search (return matching value)
+    //   i/I   index forms (return numeric index instead)
+    //   e     exact match (no glob)
+    //   k     return matching key (assoc)
+    //   n     numeric (used with r/R for "return Nth match")
+    //   w     word index — split scalar by IFS, then 1-based
+    //   s     followed by `/sep/` — split-by-separator before
+    //         indexing. Validated separately at the dispatch site
+    //         since the body has its own delimiter syntax.
+    // The `s` form's `/sep/` body confuses the simple "alpha
+    // chars only" check, so we accept any flag block whose first
+    // char is `s` and treat the rest as literal.
+    let first = flags.chars().next();
+    if first == Some('s') {
+        return Some((flags, &rest[end + 1..]));
+    }
     if !flags
         .chars()
-        .all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'n'))
+        .all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'n' | 'w'))
     {
         return None;
     }
@@ -173,6 +188,28 @@ fn parse_subscript_flags(idx: &str) -> Option<(&str, &str)> {
 /// - `re` / `Re` / `ie` / `Ie` — combine with `e` for literal search
 fn array_subscript_flag(arr: &[String], flags: &str, pat: &str) -> fusevm::Value {
     use fusevm::Value;
+    // `(w)N` on an array is just `arr[N]` — the word index is the
+    // same as the array index since the value is already split.
+    // Direct port of zsh's zshparam(1) "Subscript Flags" `w`:
+    // for arrays already in word form, no extra splitting; for
+    // scalars (handled in the scalar path), split by IFS first.
+    if flags.contains('w') {
+        if let Ok(n) = pat.parse::<i64>() {
+            let len = arr.len() as i64;
+            let idx = if n > 0 {
+                (n - 1) as usize
+            } else if n < 0 {
+                let off = len + n;
+                if off < 0 {
+                    return Value::str("");
+                }
+                off as usize
+            } else {
+                return Value::str("");
+            };
+            return Value::str(arr.get(idx).cloned().unwrap_or_default());
+        }
+    }
     let exact = flags.contains('e');
     let match_one = |s: &str| -> bool {
         if exact {
@@ -2552,12 +2589,62 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     None => {
                         // Fall back to scalar subscripting on `variables`.
                         // zsh treats `${str[N]}` and `${str[N,M]}` as
-                        // 1-based char indexing. Only handles plain int /
-                        // slice forms here; subscript flags on a scalar
-                        // are very rarely used and route through bridge.
+                        // 1-based char indexing. Subscript flags
+                        // `(w)`/`(s/sep/)` on scalars split before
+                        // indexing — direct port of zsh's
+                        // zshparam(1) "Subscript Flags" `w` and `s`.
                         let scalar = exec.get_variable(&name);
                         if scalar.is_empty() {
                             return Value::str("");
+                        }
+                        // `(w)N` on scalar: split by IFS into words,
+                        // return the Nth (1-based). zsh's word
+                        // separator defaults to IFS whitespace.
+                        // `(s/sep/)` overrides the separator. zsh
+                        // also accepts `(ws[chars])` — `s` followed
+                        // by a `[chars]` set treated as IFS for this
+                        // operation.
+                        if let Some((flags, pat)) = parse_subscript_flags(&idx) {
+                            if flags.contains('w') {
+                                if let Ok(n) = pat.parse::<i64>() {
+                                    let words: Vec<&str> =
+                                        scalar.split_whitespace().collect();
+                                    let len = words.len() as i64;
+                                    let i = if n > 0 {
+                                        (n - 1) as usize
+                                    } else if n < 0 {
+                                        let off = len + n;
+                                        if off < 0 {
+                                            return Value::str("");
+                                        }
+                                        off as usize
+                                    } else {
+                                        return Value::str("");
+                                    };
+                                    return Value::str(
+                                        words
+                                            .get(i)
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_default(),
+                                    );
+                                }
+                            }
+                            // `(s/sep/)N` is a NO-OP for scalar `[N]`
+                            // indexing — confirmed by testing zsh
+                            // (`a=hello; ${a[(s/l/)1]}` returns "h",
+                            // same as `${a[1]}`). The `(s)` flag
+                            // only affects splitting in word-list
+                            // contexts (`${(s/sep/)var}` without
+                            // index, or `[@]` form). Strip the
+                            // flag, parse the index normally, fall
+                            // through to char slicing.
+                            if flags.starts_with('s') {
+                                if let Ok(i) = pat.parse::<i64>() {
+                                    return Value::str(
+                                        slice_scalar(&scalar, i, i),
+                                    );
+                                }
+                            }
                         }
                         if let Some((start_s, end_s)) = idx.split_once(',') {
                             let s_opt = parse_subscript_index(exec, start_s);
