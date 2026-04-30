@@ -6400,6 +6400,29 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_fc_R_silent_on_missing_file() {
+    // zsh: `fc -R /no/such` returns 0 with no output (read errors
+    // silently ignored). zshrs printed `fc: cannot read /no/such`
+    // and exited 1 — script consumers shouldn't trip on missing
+    // log files.
+    let (status, output, stderr) = run_zshrs("fc -R /no/such/file");
+    assert_eq!(status, 0);
+    assert_eq!(output, "");
+    assert_eq!(stderr, "");
+}
+
+#[test]
+fn test_fc_lr_session_reverse() {
+    // zsh: `fc -lr` walks session entries backwards (most recent
+    // first) while keeping original event numbers — `3 c | 2 b | 1 a`
+    // for 3 entries. zshrs's session-only path ignored the `-r`
+    // flag and always emitted forward order.
+    let (_, output, _) = run_zshrs(r#"print -s a; print -s b; print -s c; fc -lr"#);
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(lines, vec!["    3  c", "    2  b", "    1  a"]);
+}
+
+#[test]
 fn test_fc_W_writes_session_entries_only_in_minus_c() {
     // zsh: `fc -W FILE` in non-interactive `-c` mode writes ONLY
     // session-added entries (typically empty when no `print -s`
