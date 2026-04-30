@@ -2219,6 +2219,12 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `"${a/o/O}"` array replace now joins-then-replaces in DQ; `"${a[@]/o/O}"` per-element
+
+Mirror of the array strip DQ split applied to the replace operator. zsh's pattern.c routes through getmatch (joined scalar in DQ) vs getmatcharr (per-element otherwise) for both strip and replace. zshrs's BUILTIN_PARAM_REPLACE always per-element-replaced for arrays. Fix: pass `dq_context_depth` from compiler as a 5th arg; when set AND the var is array, join via space then apply the replace once. `had_at` field on `ParamModifierKind::Replace` overrides DQ for explicit `[@]` subscript (forcing per-element). `[*]` keeps the bare-DQ semantics.
+
+Tests: `test_dq_array_replace_join_first`, `test_dq_array_replace_at_subscript_per_element`.
+
 ### `$(([#16]255))` output radix in arith — `[#N]` adds `N#` prefix, `[##N]` drops it
 
 Direct port of zsh's math.c output-radix handling (lines 786-832 in patcompswitch's `[` case): single-`#` form keeps the `N#` prefix on the result, double-`##` drops it. Base must be 2..=36. zsh's convbase (Src/params.c:5586) special-cases base==10 to skip the prefix entirely (matches `[#10]42` → `42`).

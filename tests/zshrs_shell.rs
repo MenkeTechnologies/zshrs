@@ -8488,6 +8488,33 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_dq_array_replace_join_first() {
+    // Same DQ-vs-unquoted split as strip, applied to the
+    // replace operator. zsh: `"${a/o/O}"` for `a=(one two three)`
+    // joins to "one two three" then replaces FIRST `o` ->
+    // "One two three". Unquoted does per-element first match.
+    let (_, output, _) =
+        run_zshrs(r#"a=( one two three ); echo "${a/o/O}""#);
+    assert_eq!(output.trim(), "One two three", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"a=( one two three ); echo ${a/o/O}"#);
+    assert_eq!(output.trim(), "One twO three", "got: {output:?}");
+}
+
+#[test]
+fn test_dq_array_replace_at_subscript_per_element() {
+    // Explicit `[@]` forces per-element replace even in DQ
+    // (matches the Strip behavior — `[@]` marks the array as
+    // splice-expanded). `[*]` keeps the bare-DQ semantics.
+    let (_, output, _) =
+        run_zshrs(r#"a=( one two three ); echo "${a[@]/o/O}""#);
+    assert_eq!(output.trim(), "One twO three", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"a=( one two three ); echo "${a[*]/o/O}""#);
+    assert_eq!(output.trim(), "One two three", "got: {output:?}");
+}
+
+#[test]
 fn test_arith_output_radix_with_prefix() {
     // Direct port of zsh's math.c output radix handling
     // (line 786 onward): `[#N]EXPR` formats result with `N#`
