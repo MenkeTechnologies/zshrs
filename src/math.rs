@@ -102,146 +102,71 @@ impl MathNum {
     pub fn format_zsh_subst(&self) -> String {
         match self {
             MathNum::Integer(i) => i.to_string(),
-            MathNum::Float(f) => {
-                // IEEE special values: zsh prints `Inf`, `-Inf`, `NaN`
-                // (capitalized, no decimal). Rust's Display gives
-                // `inf` / `-inf` / `NaN` so we have to special-case.
-                if f.is_nan() {
-                    return "NaN".to_string();
-                }
-                if f.is_infinite() {
-                    return if *f > 0.0 {
-                        "Inf".to_string()
-                    } else {
-                        "-Inf".to_string()
-                    };
-                }
-                // Cast-to-int only when the float actually fits in i64.
-                // For huge values like 1e100, `as i64` saturates to
-                // i64::MAX, hiding the real magnitude. Fall through to
-                // the float-display branch, which handles scientific
-                // notation properly (`1e100`, etc.).
-                let abs = f.abs();
-                let needs_scientific = abs >= 1e16 || (abs > 0.0 && abs < 1e-4);
-                if !needs_scientific
-                    && f.fract() == 0.0
-                    && *f >= i64::MIN as f64
-                    && *f <= i64::MAX as f64
-                {
-                    // Negative zero: `-0.0` should print `-0.` (zsh
-                    // preserves the sign on the IEEE -0.0 value).
-                    // `*f as i64` discards the sign bit on -0.0, so we
-                    // detect it explicitly.
-                    if *f == 0.0 && f.is_sign_negative() {
-                        return "-0.".to_string();
-                    }
-                    format!("{}.", *f as i64)
-                } else if needs_scientific {
-                    // Match zsh's `%g`-style scientific output: mantissa
-                    // (no `.0` padding when integral) + `e±DD`. Rust's
-                    // `{:e}` gives `e<exp>` (no sign, may be 1-digit) so
-                    // we only fix the exponent tail.
-                    let raw = format!("{:e}", f);
-                    if let Some(epos) = raw.rfind('e') {
-                        let (mantissa, exp) = raw.split_at(epos);
-                        let exp_body = &exp[1..];
-                        let (sign, digits) = if exp_body.starts_with('-') {
-                            ("-", &exp_body[1..])
-                        } else if exp_body.starts_with('+') {
-                            ("+", &exp_body[1..])
-                        } else {
-                            ("+", exp_body)
-                        };
-                        let padded = if digits.len() < 2 {
-                            format!("0{}", digits)
-                        } else {
-                            digits.to_string()
-                        };
-                        format!("{}e{}{}", mantissa, sign, padded)
-                    } else {
-                        raw
-                    }
-                } else {
-                    // zsh uses C's `%.17g` to display non-integer
-                    // floats, which always shows 17 significant
-                    // digits. Rust's `{}` for f64 is shortest-
-                    // roundtrip and agreed for most values
-                    // (`0.5`, `0.25`, `0.30000000000000004`) but
-                    // diverged for inexact-representable cases:
-                    // `0.1` (rust) vs `0.10000000000000001` (zsh).
-                    // Replicate %.17g manually since std doesn't
-                    // expose it directly. Rule: if the decimal
-                    // exponent is in [-4, 17) use fixed-point
-                    // with (16 - exp) fractional digits;
-                    // otherwise use scientific. Values with
-                    // shorter exact representations come out
-                    // differently in the two formatters even
-                    // when both are technically %g-correct, so
-                    // we always emit the 17-sig-digit form for
-                    // parity.
-                    let abs = f.abs();
-                    let exp = abs.log10().floor() as i32;
-                    let raw = if exp < -4 || exp >= 17 {
-                        // Scientific: 17 sig digits → 16 frac
-                        // digits in mantissa.
-                        format!("{:.16e}", f)
-                    } else {
-                        let frac = (16i32 - exp).max(0) as usize;
-                        format!("{:.*}", frac, f)
-                    };
-                    // C's `%g` strips trailing zeros from the
-                    // fractional part (and the trailing `.` if
-                    // no digits follow). zsh inherits that
-                    // behavior: `0.5` stays `0.5`, not
-                    // `0.50000000000000000`. Apply the same trim
-                    // — but only on the mantissa side of any
-                    // `e±EE` exponent. The integer-fract==0
-                    // arm above handles the trailing-`.` case.
-                    let s = if let Some(epos) = raw.rfind('e') {
-                        let (mant, exp_part) = raw.split_at(epos);
-                        let trimmed = trim_g_zeros(mant);
-                        format!("{}{}", trimmed, exp_part)
-                    } else {
-                        trim_g_zeros(&raw).to_string()
-                    };
-                    if s.contains('.') || s.contains('e') {
-                        s
-                    } else {
-                        // Edge case: e.g. `{:.0}` of 7.0 yields
-                        // "7" (no dot). Add a trailing zero so
-                        // the value still reads as a float.
-                        format!("{}.0", s)
-                    }
-                }
-            }
+            MathNum::Float(f) => format_zsh_float(*f),
             MathNum::Unset => "0".to_string(),
         }
     }
 }
 
-/// Strip trailing zeros from the fractional part of a fixed-point
-/// number string, mirroring C's `%g` zero-suppression. Leaves the
-/// integer part untouched. Drops the trailing `.` if no fractional
-/// digits remain. Inputs without a `.` pass through verbatim.
-fn trim_g_zeros(s: &str) -> &str {
-    let Some(dot) = s.find('.') else {
-        return s;
+/// Format a float for `$(( ))` arithmetic-substitution display the
+/// way zsh's `convfloat()` (Src/params.c) does it: a single
+/// `sprintf("%.*g", 17, val)` call plus zsh's "if no `e` and no `.`
+/// after, append `.`" trailing-dot rule for integer-valued floats.
+///
+/// Routed through `libc::snprintf` directly so the output matches
+/// the C runtime byte-for-byte across the full f64 range —
+/// 0.1 → `0.10000000000000001`, 9.9e16 → `99000000000000000.`,
+/// 1e-5 → `1.0000000000000001e-05`, etc. Earlier handwritten
+/// implementations partitioned the range and used Rust's
+/// shortest-roundtrip `{:e}`/`{}` for the edges, which diverged
+/// from zsh on inexact-representable values.
+///
+/// IEEE specials: zsh hand-formats `Inf`, `-Inf`, `NaN`
+/// (capitalized) — does NOT round-trip through `%g` for those,
+/// since C's `%g` lowercases.
+fn format_zsh_float(f: f64) -> String {
+    if f.is_nan() {
+        return "NaN".to_string();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() };
+    }
+    // Negative zero: zsh preserves the sign in the trailing-dot
+    // form (`-0.`). C's `%g` would print `-0` first; the
+    // append-dot rule then makes it `-0.`. Same code path as the
+    // generic case but worth calling out — earlier impls
+    // bypassed `%g` to detect this.
+    let buf_len = 64usize; // 17-digit %g + sign + exponent + NUL fits comfortably
+    let mut buf = vec![0u8; buf_len];
+    // SAFETY: buffer has room for any %.17g output (max ~25 chars
+    // for double); fmt is a NUL-terminated literal. snprintf
+    // writes UTF-8-compatible ASCII only (digits, `.`, `e`, `+`,
+    // `-`).
+    let n = unsafe {
+        libc::snprintf(
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf_len,
+            b"%.*g\0".as_ptr() as *const libc::c_char,
+            17 as libc::c_int,
+            f,
+        )
     };
-    let bytes = s.as_bytes();
-    let mut end = s.len();
-    while end > dot + 1 && bytes[end - 1] == b'0' {
-        end -= 1;
+    if n < 0 {
+        // snprintf failure — fall back to a plain Rust display so
+        // the shell doesn't crash. Should never happen for finite
+        // f64 with a 64-byte buffer.
+        return format!("{}", f);
     }
-    if end == dot + 1 {
-        // Only `<int>.` remains — drop the trailing dot too,
-        // matching `%g`'s "no fractional part" rule. The
-        // integer-fract==0 caller handles the "5." display
-        // separately, so this branch is reached only via the
-        // scientific-mantissa path (where the dot would be
-        // alone, e.g. `1.e10`).
-        end = dot;
+    let len = (n as usize).min(buf_len - 1);
+    buf.truncate(len);
+    let mut s = String::from_utf8(buf).unwrap_or_else(|_| format!("{}", f));
+    // zsh's convfloat appends `.` when the output has no `e` and
+    // no `.` — turning integer-valued floats like `5` into `5.`
+    // so callers can tell them apart from MathNum::Integer.
+    if !s.contains('e') && !s.contains('.') {
+        s.push('.');
     }
-    &s[..end]
+    s
 }
 
 /// Math tokens - from math.c
