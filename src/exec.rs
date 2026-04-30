@@ -963,7 +963,19 @@ fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_RETURN, |vm, argc| {
         let args = pop_args(vm, argc);
-        let status = with_executor(|exec| exec.builtin_return(&args));
+        // zsh: bare `return` (no arg) returns with the status of
+        // the most recently executed command — `false; return`
+        // returns 1, not 0. Direct port of zsh's bin_return.
+        // The executor's `last_status` is stale here (synced at
+        // statement boundaries, not after each VM op), so read
+        // the live `vm.last_status` instead.
+        let live_status = vm.last_status;
+        let status = with_executor(|exec| {
+            // Sync executor.last_status to the VM's view BEFORE
+            // builtin_return reads it for the no-arg fallback.
+            exec.last_status = live_status;
+            exec.builtin_return(&args)
+        });
         Value::Status(status)
     });
 
@@ -2840,7 +2852,6 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
         let mut flags = vm.pop().to_str();
         let name = vm.pop().to_str();
-        eprintln!("DEBUG_PARAM_FLAG: name={:?} flags={:?}", name, flags);
 
         // Compile path tags DQ-wrapped expressions with a leading
         // `\u{02}` sentinel. In DQ context, array-only flags are
