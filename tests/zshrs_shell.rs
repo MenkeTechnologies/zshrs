@@ -8457,6 +8457,22 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_declare_array_strips_quoted_elements() {
+    // zsh: `declare -a arr=( "abc" "def" )` produces
+    // arr=[abc, def] (quotes are syntactic, stripped at the
+    // shell-syntax level). zshrs's typeset array path
+    // split-by-whitespace'd the raw string and kept the quotes
+    // attached to each element, so consumers saw `"abc"` as
+    // the literal first element. Same bug for `[1]=second`-
+    // style elements which arrived as `"[1]=second"` complete
+    // with quotes.
+    let (_, output, _) = run_zshrs(
+        r#"declare -a arr=( "abc" "def" ); printf "[%s]\n" "${arr[@]}""#,
+    );
+    assert_eq!(output.trim(), "[abc]\n[def]", "got: {output:?}");
+}
+
+#[test]
 fn test_dollar_hash_array_subscript() {
     // zsh: `$#a[N]` is sugar for `${#a[N]}` — length of array
     // element N (1-indexed). zshrs's compile-time fast path

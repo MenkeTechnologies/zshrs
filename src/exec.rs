@@ -19508,17 +19508,42 @@ impl ShellExecutor {
                     let mut elements = Vec::new();
                     let current = rest[1..].to_string(); // skip '('
 
+                    // Strip surrounding matching quotes from each
+                    // element. The lexer hands us
+                    // `arr=("abc" "def")` as a single arg, and a
+                    // naive split-by-whitespace yields `"abc"` and
+                    // `"def"` — quotes still attached. zsh's plain
+                    // `arr=(...)` path (separate from typeset)
+                    // strips them at the shell-syntax level. Mirror
+                    // that here so `declare -a arr=( "abc" "def" )`
+                    // produces `[abc, def]` not `["abc", "def"]`.
+                    let strip_quotes = |s: &str| -> String {
+                        let bytes = s.as_bytes();
+                        if bytes.len() >= 2 {
+                            let first = bytes[0];
+                            let last = bytes[bytes.len() - 1];
+                            if (first == b'"' || first == b'\'') && first == last {
+                                return s[1..s.len() - 1].to_string();
+                            }
+                        }
+                        s.to_string()
+                    };
+
                     // Check if closing ) is in this arg
                     if let Some(close_pos) = current.find(')') {
                         let content = &current[..close_pos];
                         if !content.is_empty() {
-                            elements.extend(content.split_whitespace().map(|s| s.to_string()));
+                            elements.extend(
+                                content.split_whitespace().map(strip_quotes),
+                            );
                         }
                     } else {
                         // Single arg with just elements
                         if !current.is_empty() {
                             let trimmed = current.trim_end_matches(')');
-                            elements.extend(trimmed.split_whitespace().map(|s| s.to_string()));
+                            elements.extend(
+                                trimmed.split_whitespace().map(strip_quotes),
+                            );
                         }
                     }
 
