@@ -2219,6 +2219,12 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### Glob qualifier `*(:r)` — history modifiers applied per match
+
+Direct port of zsh's pattern.c qualifier modifier handling. `*(:r)` strips the extension from each match (`a.txt` → `a`); `*(:t)` keeps only the basename; `*(:e)` returns the extension. zshrs's `filter_by_qualifiers` had no `:` arm, so modifiers fell through to the catch-all and were ignored. Fix: detect `:` in the qualifier scan, consume the rest of the qualifier list as a modifier chain, and apply via the existing `apply_history_modifiers` helper to each match.
+
+Test: `test_glob_qualifier_history_modifier`.
+
 ### Glob qualifier `*(.,/)` — top-level `,` is OR (clause alternation)
 
 Direct port of zsh's pattern.c qualifier parsing. zshrs's `filter_by_qualifiers` chained all qualifier filters with AND, so `*(.,/)` (files OR dirs) errored "no matches found" because no file is BOTH a regular file AND a directory. Fix: detect a top-level `,` (honoring `[...]`/`(...)` nesting), split the qualifier into clauses, run the full AND filter on each clause, UNION the results in original-file order with dedup. Single-clause path is unchanged. Verified against zsh: `*(/,@)` (dirs OR symlinks), `*(.,/)` (files OR dirs) both produce union output.
