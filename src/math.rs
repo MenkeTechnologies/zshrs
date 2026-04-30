@@ -1163,7 +1163,15 @@ impl<'a> MathEval<'a> {
         // Binary operators
         if (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO)) != 0 {
             if self.stack.len() < 2 {
-                self.error = Some("not enough operands".to_string());
+                // zsh's exact wording for the same condition is
+                // `bad math expression: operand expected at end of
+                // string`. Matching it here means `let "1+"` and
+                // `$((5+))` produce the same diagnostic shape that
+                // scripts grep for.
+                self.error = Some(
+                    "bad math expression: operand expected at end of string"
+                        .to_string(),
+                );
                 return;
             }
 
@@ -1578,7 +1586,9 @@ impl<'a> MathEval<'a> {
                     self.mathparse(self.top_prec());
                     if self.mtok != MathTok::OutPar {
                         if self.error.is_none() {
-                            self.error = Some("')' expected".to_string());
+                            // Match zsh's `bad math expression: ')'
+                            // expected` so error diagnostics align.
+                            self.error = Some("bad math expression: ')' expected".to_string());
                         }
                         return;
                     }

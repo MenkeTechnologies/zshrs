@@ -20740,7 +20740,17 @@ impl ShellExecutor {
         // emit session entries (in case the script did `print -s`)
         // and abort when both session and atty are absent.
         if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
-            eprintln!("zshrs:fc:1: no such event: 1");
+            // Non-numeric positional `history XX` is a search-by-text
+            // (`-m` style); zsh's no-match wording differs: `event not
+            // found: XX`. Numeric / no positional uses `no such event:
+            // N`. Without this branch zshrs emitted `no such event: 1`
+            // even for non-numeric queries — wrong format AND wrong
+            // event identifier.
+            if let Some(ref q) = search_query {
+                eprintln!("zshrs:fc:1: event not found: {}", q);
+            } else {
+                eprintln!("zshrs:fc:1: no such event: 1");
+            }
             return 1;
         }
         if !atty::is(atty::Stream::Stdin) && !self.session_history_ids.is_empty() {
@@ -25832,7 +25842,7 @@ impl ShellExecutor {
     /// printf builtin - format and print data (zsh/bash compatible)
     fn builtin_printf(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("printf: usage: printf format [arguments]");
+            eprintln!("zshrs:printf:1: not enough arguments");
             return 1;
         }
 
@@ -25847,7 +25857,7 @@ impl ShellExecutor {
             args
         };
         if trimmed.is_empty() {
-            eprintln!("printf: usage: printf format [arguments]");
+            eprintln!("zshrs:printf:1: not enough arguments");
             return 1;
         }
         let (assign_var, format, format_args): (Option<String>, &String, &[String]) =
@@ -28090,8 +28100,12 @@ impl ShellExecutor {
                     }
                 }
 
-                // Check builtins
-                if self.is_builtin(name) {
+                // Check builtins. NOTE: `is_builtin()` includes a
+                // `_`-prefix bypass for completion functions, but
+                // `whence`/`where`/`which` should report only ACTUAL
+                // builtins (`BUILTIN_SET`), otherwise unknown names
+                // like `__notacmd__` get reported as builtins.
+                if BUILTIN_SET.contains(name) {
                     found = true;
                     word = "builtin";
                     if word_type {

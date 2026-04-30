@@ -6613,6 +6613,84 @@ fn test_typeset_unknown_flag_errors() {
 }
 
 #[test]
+fn test_printf_no_args_zsh_format() {
+    // zsh: `printf` -> `printf:1: not enough arguments` exit 1.
+    // zshrs printed `printf: usage: printf format [arguments]` —
+    // bash-style usage banner without the shell-name prefix.
+    let (status, _, stderr) = run_zshrs("printf");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:printf:1: not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_arith_trailing_op_uses_zsh_wording() {
+    // zsh: `$((5+))` and `let "1+"` both -> `bad math expression:
+    // operand expected at end of string`. zshrs returned the bare
+    // string `not enough operands`, mismatching the format scripts
+    // grep for.
+    let (_, _, stderr) = run_zshrs(r#"echo $((5+))"#);
+    assert!(
+        stderr.contains("bad math expression: operand expected at end of string"),
+        "got: {stderr}"
+    );
+    let (_, _, stderr) = run_zshrs(r#"let "1+""#);
+    assert!(
+        stderr.contains("bad math expression: operand expected at end of string"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_arith_open_paren_uses_zsh_wording() {
+    // zsh: `let "("` -> `bad math expression: ')' expected`. zshrs
+    // emitted bare `')' expected` without the `bad math expression:`
+    // prefix that scripts grep for.
+    let (_, _, stderr) = run_zshrs(r#"let "(""#);
+    assert!(
+        stderr.contains("bad math expression: ')' expected"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_where_unknown_command_not_found() {
+    // zsh: `where __notacmd__` -> `__notacmd__ not found` exit 1.
+    // zshrs treated any name starting with `_` as a builtin (a
+    // completion-function bypass that overreached) and reported
+    // `__notacmd__: shell built-in command` exit 0.
+    let (status, output, stderr) = run_zshrs("where __notacmd__");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("__notacmd__ not found"), "got: {stderr}");
+    assert!(
+        !output.contains("shell built-in command"),
+        "got: {output}"
+    );
+}
+
+#[test]
+fn test_which_unknown_command_not_found() {
+    // Companion to `where` — zsh's `which __notacmd__` errors `not
+    // found` exit 1.
+    let (status, _, stderr) = run_zshrs("which __notacmd__");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("__notacmd__ not found"), "got: {stderr}");
+}
+
+#[test]
+fn test_history_text_query_uses_event_not_found() {
+    // zsh: `history XX` (non-numeric arg, no matches) -> `fc:1:
+    // event not found: XX` exit 1. zshrs hardcoded `no such event:
+    // 1` for any miss in non-tty mode — wrong wording AND wrong
+    // event identifier (always "1").
+    let (status, _, stderr) = run_zshrs("history XX");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("event not found: XX"), "got: {stderr}");
+}
+
+#[test]
 fn test_fc_no_args_with_session_still_recurses() {
     // Bare `fc` (no -l, no positional) ALWAYS errors recurse-
     // endlessly in -c mode. Even when `print -s` added entries,
