@@ -1705,6 +1705,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh treats unknown `command` flags as command names (so `command -x ls` looks for an executable literally named `-x`, finds nothing, and emits `command not found: -x` with exit 127). zshrs's flag parser rejected with `command: bad option: -x` exit 1. Changed the unknown-flag arm to emit zsh's command-not-found diagnostic and return 127. Test: `test_command_unknown_flag_treated_as_command_name`.
 
+### `command --help` silently passed (was eating `--` mid-flag)
+
+- zsh: `command --help` (long-option-style) is treated as a command NAME (zsh's `command` builtin has no long-option support) — emits `command not found: --help` exit 127. zshrs's flag parser iterated `--help` char by char, hit `-` first which matched the `--` (end-of-options) arm, advanced the args index past `--help`, then returned with no positional args and exit 0. Two-part fix: (1) handle bare `--` BEFORE entering the per-char loop (proper end-of-options detection); (2) detect `--xxx` as a whole-arg long-option-style and emit the command-not-found diagnostic. Test: `test_command_long_option_treated_as_command_name`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
