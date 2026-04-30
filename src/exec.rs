@@ -18462,6 +18462,34 @@ impl ShellExecutor {
                 // by the unknown-flag arm). 3-arg with `args[1]=-lt
                 // args[2]=...` and missing third operand is rare;
                 // skip until a real probe surfaces it.
+                // 3-arg with a known unary flag at args[0] — `[ -z -n
+                // a ]` has flag-flag-arg layout. zsh: `too many
+                // arguments` (the parse expected `-z OPERAND` 2-arg
+                // form, with the extra `a` being the surplus). Match
+                // that BEFORE the unknown-binop check below to avoid
+                // the wrong "unknown condition" diagnostic.
+                if args.len() == 3
+                    && args[0].len() == 2
+                    && matches!(
+                        args[0],
+                        "-z" | "-n" | "-d" | "-f" | "-e" | "-r" | "-w"
+                            | "-x" | "-s" | "-h" | "-L" | "-O" | "-G"
+                            | "-N" | "-S" | "-p" | "-b" | "-c" | "-g"
+                            | "-k" | "-u" | "-t" | "-v"
+                    )
+                    && args[1].starts_with('-')
+                    && args[1].len() == 2
+                    && matches!(
+                        args[1],
+                        "-z" | "-n" | "-d" | "-f" | "-e" | "-r" | "-w"
+                            | "-x" | "-s" | "-h" | "-L" | "-O" | "-G"
+                            | "-N" | "-S" | "-p" | "-b" | "-c" | "-g"
+                            | "-k" | "-u" | "-t" | "-v"
+                    )
+                {
+                    eprintln!("zshrs:[:1: too many arguments");
+                    return 2;
+                }
                 // Three-arg `[ a -OP b ]` where -OP isn't a known
                 // numeric/string comparator: zsh errors at the OP
                 // position. Detect and emit the same kind of error
@@ -19940,6 +19968,13 @@ impl ShellExecutor {
             } else if arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) && arg.len() > 1 {
                 // zsh: negative count is rejected with this exact diagnostic.
                 eprintln!("zshrs:shift:1: argument to shift must be non-negative");
+                return 1;
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                // zsh: unknown shift flag (besides -p) -> `shift:1:
+                // bad option: -X` exit 1. zshrs's catch-all pushed
+                // the flag string into array_names, masking typos.
+                let bad: String = arg[1..].chars().take(1).collect();
+                eprintln!("zshrs:shift:1: bad option: -{}", bad);
                 return 1;
             } else if arg.chars().all(|c| c.is_ascii_digit()) {
                 count = arg.parse().unwrap_or(1);

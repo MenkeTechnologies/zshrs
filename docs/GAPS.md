@@ -2165,6 +2165,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `cd ARG1 ARG2 ARG3` -> `cd:1: too many arguments` exit 1 (cd takes at most 2 args; the substitution form OLD NEW). zshrs's two-arg substitution path silently fell through with extras. Added a `positional_args.len() > 2` check before the path_arg lookup. Test: `test_cd_3plus_args_too_many`.
 
+### `[ -z -n a ]` reported "unknown condition: -n" instead of "too many arguments"
+
+- zsh: `[ -z -n a ]` (unary-flag + unary-flag + arg layout) -> `[:1: too many arguments` exit 2 — `-z OPERAND` is the 2-arg form; the extra `a` is the surplus. zshrs's unknown-binop arm fired first and reported `unknown condition: -n` (wrong category — `-n` IS a recognized unary flag, just misplaced). Added a 3-arg arm checking for the unary+unary+arg layout BEFORE the unknown-binop check. Test: `test_test_3args_unary_unary_arg_too_many`.
+
+### `shift -X` silently treated `-X` as an array name
+
+- zsh: `shift -X` (unknown flag besides `-p`) -> `shift:1: bad option: -X` exit 1. zshrs's catch-all pushed the flag string into array_names, masking typos and trying to shift a non-existent array `-X`. Added a `starts_with('-') && len > 1` arm BEFORE the array-name fallback that emits zsh's diagnostic. Test: `test_shift_unknown_flag_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
