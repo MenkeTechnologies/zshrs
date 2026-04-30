@@ -8154,6 +8154,20 @@ fn test_fc_single_numeric_recurse() {
 }
 
 #[test]
+fn test_test_unmatched_close_paren_too_many() {
+    // zsh: `[ a \) ]` (operand + lone close paren) -> `[:1: too
+    // many arguments` exit 2 (the `)` is the surplus). zshrs's
+    // depth-check collapsed both surplus-close and surplus-open
+    // into "argument expected".
+    let (status, _, stderr) = run_zshrs(r"[ a \) ]");
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("too many arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

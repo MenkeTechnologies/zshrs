@@ -2239,6 +2239,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - Earlier iter 85 fix only covered 2-numeric-positional case. Extended to 1-numeric-positional too: any all-numeric edit-mode positional (count ≤ 2) routes to the recurse-endlessly path in `-c` mode. Test: `test_fc_single_numeric_recurse`.
 
+### `[ a \) ]` (surplus close paren) reported "argument expected" instead of "too many arguments"
+
+- zsh distinguishes paren-depth direction: surplus `(` -> `argument expected` (waiting for operand); surplus `)` -> `too many arguments` (the `)` is the extra arg). zshrs collapsed both into "argument expected". Split the depth-check arm: `d > 0` errors argument-expected; `d < 0` errors too-many. Test: `test_test_unmatched_close_paren_too_many`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
