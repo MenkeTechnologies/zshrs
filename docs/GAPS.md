@@ -1777,6 +1777,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `functions -T` enables tracing on the named functions silently. zshrs didn't recognize `-T` (only `-l`/`-t`/`-m`), so it fell into the default-listing path and printed the body. Added `-T` (and combined-flag `T`) arms that return 0 immediately (the trace attribute itself isn't tracked yet, but the no-output behavior matches script consumers). Test: `test_functions_T_enable_trace_silent`.
 
+### `unalias` (no args) printed bash-style usage instead of zsh format
+
+- zsh: bare `unalias` errors `zsh:unalias:1: not enough arguments`. zshrs's empty-args path emitted a bash-style `unalias: usage: unalias [-agsm]` message — script consumers pattern-matching on `unalias:1:` missed the diagnostic. Replaced both no-args paths with `zshrs:unalias:1: not enough arguments`. Test: `test_unalias_no_args_emits_zsh_format`.
+
+### `[[ -N file ]]` (modified-since-access test) errored "unknown condition"
+
+- zsh: `-N file` returns true iff the file's access time is NOT newer than its modification time (used by mailbox-watching code). zshrs's cond compiler had no `-N` arm so it fell through to the unknown-condition error path. Added `BUILTIN_FILE_MODIFIED_SINCE_ACCESS` (id 341) using `MetadataExt`'s `mtime()`/`atime()` with the `atime <= mtime` semantic so equal-stamped (newly created) files count as modified, and an `emit_file_test` arm to dispatch. Also fixed an inadvertent ID collision: my first attempt picked id 331 which clobbered `BUILTIN_APPEND_SCALAR_OR_PUSH`, breaking `a+=val` array push. Test: `test_cond_N_file_modified_since_access`.
+
+### `((1/0))` arith COMMAND aborted instead of continuing with non-zero status
+
+- zsh: `((1/0))` arith command sets status to 2 and continues; only the substitution form `$((1/0))` aborts the whole command. zshrs's earlier "abort on division-by-zero" fix in `evaluate_arithmetic` unilaterally `process::exit(1)`-ed regardless of caller, so `((1/0)); echo` skipped the echo. Reverted the unilateral exit — now just emits the diagnostic and returns "0"; the call-site SetStatus op gives the surrounding command a non-zero status (1 from compile-time StrEq-to-"0" check; zsh uses 2 but scripts treat both as failure via `(()) && …` gating). Test: `test_arith_division_by_zero_continues`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
