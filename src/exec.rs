@@ -4063,6 +4063,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 };
                 exec.arrays.insert(arr_name, parts);
             }
+            // zsh enforces a minimum of 1 on `HISTSIZE` — `HISTSIZE=0`
+            // and `HISTSIZE=-5` both clamp to `1`. Mirror at storage
+            // time so subsequent reads return the clamped value.
+            let stored = if name == "HISTSIZE" {
+                stored
+                    .parse::<i64>()
+                    .map(|n| n.max(1).to_string())
+                    .unwrap_or_else(|_| stored.clone())
+            } else {
+                stored
+            };
             exec.variables.insert(name.clone(), stored.clone());
             // `set -o allexport`: every assignment auto-exports the var.
             // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
@@ -4119,6 +4130,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
         let exists = with_executor(|exec| {
+            // Positional parameter test: `[[ -v N ]]` for an integer N
+            // checks whether `$N` is set — i.e. there are at least N
+            // positional params. The digit name otherwise won't exist
+            // in `variables` unless explicitly assigned.
+            if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(n) = name.parse::<usize>() {
+                    if n == 0 {
+                        return exec.variables.contains_key("0");
+                    }
+                    return n <= exec.positional_params.len();
+                }
+            }
             exec.variables.contains_key(&name)
                 || exec.arrays.contains_key(&name)
                 || exec.assoc_arrays.contains_key(&name)

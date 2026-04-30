@@ -1793,6 +1793,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh exposes argv[0] verbatim through `$0` in `-c` mode — `/bin/zsh -c 'echo $0'` prints `/bin/zsh`, plain `zsh -c '...'` prints `zsh`. zshrs basename-stripped argv[0] in the `-c` dispatch (`bins/zshrs.rs`), losing the path information. Now passes argv[0] through unchanged. Test renamed from `_returns_basename` to `_uses_argv0_verbatim` and updated to accept either basename or absolute path. Test: `test_dollar_zero_in_minus_c_uses_argv0_verbatim`.
 
+### `[[ -v 1 ]]` (positional param test) returned false even when set
+
+- zsh: `[[ -v N ]]` for a digit name N tests whether the Nth positional parameter is set (i.e. `$#` ≥ N). zshrs's `BUILTIN_VAR_EXISTS` only consulted `variables`/`arrays`/`assoc_arrays`/env, never the positional list — so `set -- one; [[ -v 1 ]]` returned false. Added a digit-name fast-path: parse name as `usize`, treat 0 specially (look up the `0` variable), otherwise compare against `positional_params.len()`. Test: `test_cond_v_with_positional_param`.
+
+### `HISTSIZE=0` left HISTSIZE at 0 (zsh clamps to 1)
+
+- zsh enforces a minimum of 1 on `HISTSIZE`. The internal `params.rs` setter already clamped via `.max(1)`, but the assignment path (`BUILTIN_SET_VAR`) writes directly into `variables` and skipped the clamp. So a script doing `HISTSIZE=0; echo $HISTSIZE` saw `0` instead of `1`. Added a name-specific clamp at the SET_VAR layer: `if name == "HISTSIZE"` parse, max with 1, store the clamped string. Test: `test_histsize_min_clamp_to_one`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
