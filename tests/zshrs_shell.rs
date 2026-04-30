@@ -7235,6 +7235,69 @@ fn test_read_d_empty_no_panic_on_nul() {
 }
 
 #[test]
+fn test_test_unknown_3arg_infix_op_errors() {
+    // zsh: `[ a := a ]` (made-up infix op at args[1]) -> `[:1:
+    // condition expected: :=` exit 2. zshrs's 3-arg arms only
+    // checked `-`-prefixed ops; non-`-`-prefixed ops like `:=` fell
+    // through every check and silently returned 1.
+    let (status, _, stderr) = run_zshrs("[ a := a ]");
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("condition expected: :="),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_print_u_bad_fd_errors() {
+    // zsh: `print -u 99 hello` (fd 99 not open) -> `print:1: bad
+    // file number: 99` exit 1 with NO output. zshrs's `let _ = fd`
+    // discarded the requested fd and always wrote to stdout.
+    let (status, output, stderr) = run_zshrs("print -u 99 hello");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad file number: 99"), "got: {stderr}");
+    assert!(!output.contains("hello"), "got: {output}");
+}
+
+#[test]
+fn test_kill_illegal_pid_zsh_format() {
+    // zsh: `kill -0 abc` (non-numeric pid) -> `kill:1: illegal pid:
+    // abc` exit 1. zshrs's bash-style `kill: abc: invalid pid` had
+    // no shell-name prefix and used different wording.
+    let (status, _, stderr) = run_zshrs("kill -0 abc");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("illegal pid: abc"), "got: {stderr}");
+}
+
+#[test]
+fn test_wait_stops_after_first_bad_arg() {
+    // zsh: `wait abc def` reports the first bad arg and stops —
+    // doesn't continue to `def`. zshrs emitted one error per bad
+    // arg, exceeding zsh's diagnostic count.
+    let (_, _, stderr) = run_zshrs("wait abc def");
+    assert!(stderr.contains("job not found: abc"), "got: {stderr}");
+    assert!(
+        !stderr.contains("job not found: def"),
+        "should stop at first miss; got: {stderr}"
+    );
+}
+
+#[test]
+fn test_vared_missing_value_after_flag_errors() {
+    // zsh: `vared -p` (no value after -p) -> `vared:1: argument
+    // expected: -p` exit 1. zshrs's earlier `if i + 1 < args.len()`
+    // guard silently dropped the flag without erroring, then
+    // triggered the catch-all `not enough arguments` for the
+    // missing var name (wrong diagnostic for the actual problem).
+    let (status, _, stderr) = run_zshrs("vared -p");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("argument expected: -p"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

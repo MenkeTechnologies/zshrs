@@ -1957,6 +1957,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `read -d ""` reads up to NUL; the captured value may contain NUL bytes. zshrs unconditionally called `env::set_var` which panics on NUL bytes (file-name validation), aborting the whole shell with a Rust backtrace. Guarded all `env::set_var` calls in `builtin_read` with a `processed.contains('\0')` check; NUL-containing values still update `self.variables` but skip the env export. Test: `test_read_d_empty_no_panic_on_nul`.
 
+### `[ a := a ]` (made-up infix op) silently returned 1 instead of "condition expected: :="
+
+- zsh: `[ a := a ]` -> `[:1: condition expected: :=` exit 2. zshrs's 3-arg arms only checked `-`-prefixed ops; non-`-`-prefixed operator-ish tokens at args[1] (`:=`, etc.) fell through every check. Added a 3-arg arm that fires when args[1] is non-`-`-prefixed AND contains a non-alphanumeric char AND isn't in zsh's known operator list. Test: `test_test_unknown_3arg_infix_op_errors`.
+
+### `print -u 99 hello` printed to stdout instead of erroring "bad file number: 99"
+
+- zsh: `print -u N` writes to fd N; if N isn't open, errors `print:1: bad file number: N` exit 1 with no output. zshrs's `let _ = fd` discarded the requested fd entirely and always wrote to stdout. Added an `fcntl(fd, F_GETFD)` precheck for fd ∉ {1,2}; closed fds emit zsh's diagnostic and exit 1 before the print runs. Test: `test_print_u_bad_fd_errors`.
+
+### `kill -0 abc` printed bash-style "kill: abc: invalid pid" instead of zsh's "kill:1: illegal pid: abc"
+
+- zsh: `kill -0 abc` (non-numeric pid) -> `kill:1: illegal pid: abc` exit 1. zshrs emitted bash-style `kill: abc: invalid pid` — no shell-name prefix, different wording. Updated the parse-error arm in the direct-PID branch. Test: `test_kill_illegal_pid_zsh_format`.
+
+### `wait abc def` continued to def after first bad arg, exceeding zsh's diagnostic count
+
+- zsh: `wait abc def` reports the first bad arg (`job not found: abc`) and STOPS — doesn't continue to `def`. zshrs's `continue` looped to the next arg, emitting two errors. Replaced `continue` with `return 127` so the first miss aborts the wait. Test: `test_wait_stops_after_first_bad_arg`.
+
+### `vared -p` (no value after flag) errored "not enough arguments" instead of "argument expected: -p"
+
+- zsh: `vared -p` (with no value) -> `vared:1: argument expected: -p` exit 1 — pinpoints the missing flag-value. zshrs's `if i + 1 < args.len()` guard silently dropped the flag and let the empty-var-name path emit the wrong diagnostic. Restructured `-p` and `-r` arms to error explicitly on missing value. Test: `test_vared_missing_value_after_flag_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
