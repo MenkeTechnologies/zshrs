@@ -1733,9 +1733,9 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: non-numeric event spec → `event not found: <text>` (distinct from numeric out-of-range `no such event: N`). zshrs's `parse::<i64>().unwrap_or(-16)` coerced `blah` to -16, then resolved to 0 and printed the numeric form. Added an explicit "single positional + non-numeric" arm BEFORE the numeric resolution that emits the text-event message. Test: `test_fc_non_numeric_event_spec`.
 
-### `history -w` / `-d` / `-X` (unknown flags) gave wrong error from fc
+### `history -w` / `-X` (bash-style flags) gave wrong error from fc
 
-- zsh: `history` is a `fc -l` synonym but rejects bash-style flags like `-w` / `-d` / `-X` with `bad option: -X`. zshrs's `builtin_history` had explicit arms for `-c`/`-a`/`-n`/numeric counts but treated unknown `-X` flags as search queries, then fell through to the empty-history error path (`fc:1: no such event: 1`) — wrong message AND wrong source-position prefix. Added a catch-all unknown-flag arm that emits `history:1: bad option: -X`. Test: `test_history_unknown_flag_errors`.
+- zsh's `history` is a `fc -l` synonym. It REJECTS bash-style flags like `-w` (write), `-X` (unknown) with `bad option: -X`, but ACCEPTS fc-passable flags like `-r` (reverse), `-D` (duration), date-format flags. zshrs's `builtin_history` had explicit arms for `-c`/`-a`/`-n`/numeric counts but treated unknown `-X` flags as search queries, then fell through to the empty-history path with the wrong message. Split the unknown-flag handling: bash-style (`-w`/`-X`) reject explicitly with `history:1: bad option: -X`; everything else falls through to the fc-list code path. Test: `test_history_unknown_flag_errors`.
 
 ### `type` (no args) returned 0 silently instead of exit 1
 
