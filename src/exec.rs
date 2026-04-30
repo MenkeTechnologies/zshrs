@@ -20345,7 +20345,7 @@ impl ShellExecutor {
             Ok(entries) => {
                 // Print in chronological order (reverse the results since recent() is newest-first)
                 for entry in entries.into_iter().rev() {
-                    println!("{:>6}  {}", entry.id, entry.command);
+                    println!("{:>5}  {}", entry.id, entry.command);
                 }
                 0
             }
@@ -20543,7 +20543,7 @@ impl ShellExecutor {
                         if no_numbers {
                             println!("{}", entry.command);
                         } else {
-                            println!("{:>6}  {}", n, entry.command);
+                            println!("{:>5}  {}", n, entry.command);
                         }
                     }
                 }
@@ -20570,7 +20570,7 @@ impl ShellExecutor {
                                 entry.command
                             );
                         } else {
-                            println!("{:>6}  {}", entry.id, entry.command);
+                            println!("{:>5}  {}", entry.id, entry.command);
                         }
                     }
                     0
