@@ -17280,6 +17280,27 @@ impl ShellExecutor {
                     }
                 }
             }
+            // zsh: `unset NAME` for a read-only NAME errors `read-only
+            // variable: NAME` exit 1 — the unset is rejected, not
+            // silently consumed. zshrs's unset blindly removed the
+            // entry from the variable maps without consulting the
+            // readonly bit, so `readonly x=1; unset x` left x unset
+            // and exit 0 (compat regression).
+            let is_intrinsic_ro = matches!(
+                arg.as_str(),
+                "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC" | "_"
+            );
+            let is_ro = is_intrinsic_ro
+                || self.readonly_vars.contains(arg)
+                || self
+                    .var_attrs
+                    .get(arg)
+                    .map(|a| a.readonly)
+                    .unwrap_or(false);
+            if is_ro {
+                eprintln!("zshrs:1: read-only variable: {}", arg);
+                return 1;
+            }
             env::remove_var(arg);
             self.variables.remove(arg);
             self.arrays.remove(arg);
@@ -18235,6 +18256,37 @@ impl ShellExecutor {
                             );
                             return 2;
                         }
+                    } else if !matches!(
+                        args[1],
+                        "=" | "!=" | "<" | ">" | "==" | "-a" | "-o"
+                            | "-nt" | "-ot" | "-ef"
+                    ) && args[1].len() > 1
+                        && args[1][1..].chars().all(|c| c.is_ascii_alphabetic())
+                    {
+                        // Unknown alphabetic 3-arg operator like `-ZZ`.
+                        // zsh: `[:1: unknown condition: -ZZ` exit 2.
+                        eprintln!("zshrs:[:1: unknown condition: {}", args[1]);
+                        return 2;
+                    }
+                }
+                // `[ \( a ]` — paren without matching close. zsh emits
+                // `[:1: argument expected` exit 2 (lexer realises it
+                // ran out of operands inside the open-paren context).
+                // Only fire when there's an unmatched paren depth at
+                // end of args — `[ \( a \) -a -z "" ]` has `(` first
+                // AND a matching `)` later, so it's NOT a mismatch.
+                {
+                    let mut d = 0i32;
+                    for a in args.iter() {
+                        match *a {
+                            "(" => d += 1,
+                            ")" => d -= 1,
+                            _ => {}
+                        }
+                    }
+                    if d != 0 {
+                        eprintln!("zshrs:[:1: argument expected");
+                        return 2;
                     }
                 }
                 // POSIX `-a` (and) / `-o` (or) connectives — split the
@@ -18436,7 +18488,12 @@ impl ShellExecutor {
                         'U' => is_unique = false,
                         'p' => print_mode = false,
                         'm' => pattern_match = false,
-                        _ => {}
+                        // `+` flag also handles `-i` removal etc. Unknown
+                        // letters error like the `-` arm: `bad option: +X`.
+                        other => {
+                            eprintln!("zshrs:{}:1: bad option: +{}", invoked_as, other);
+                            return 1;
+                        }
                     }
                 }
             } else if arg.starts_with('-') && arg.len() > 1 {
@@ -18550,7 +18607,15 @@ impl ShellExecutor {
                         'U' => is_unique = true,
                         'p' => print_mode = true,
                         'm' => pattern_match = true,
-                        _ => {}
+                        // zsh: unknown typeset/declare flag letter
+                        // errors `bad option: -X` exit 1. zshrs's
+                        // silent fallback masked typos and made
+                        // `typeset -Q x` succeed without setting any
+                        // attribute.
+                        other => {
+                            eprintln!("zshrs:{}:1: bad option: -{}", invoked_as, other);
+                            return 1;
+                        }
                     }
                 }
                 // `-Z 5`, `-L 5`, `-R 5` — width as a separate arg. The
@@ -20161,8 +20226,10 @@ impl ShellExecutor {
         use nix::sys::signal::Signal;
 
         if args.is_empty() {
-            eprintln!("kill: usage: kill [-s signal | -n num | -sig] pid ...");
-            eprintln!("       kill -l [sig ...]");
+            // zsh: bare `kill` -> `kill:1: not enough arguments` exit 1.
+            // zshrs printed a multi-line bash-style usage banner that
+            // didn't match zsh's terse format.
+            eprintln!("zshrs:kill:1: not enough arguments");
             return 1;
         }
 
@@ -20347,7 +20414,10 @@ impl ShellExecutor {
         }
 
         if pids.is_empty() {
-            eprintln!("kill: usage: kill [-s signal | -n num | -sig] pid ...");
+            // zsh: `kill -9` (signal but no pid) -> `kill:1: not enough
+            // arguments` exit 1. Match the same terse format used for
+            // bare `kill`.
+            eprintln!("zshrs:kill:1: not enough arguments");
             return 1;
         }
 
@@ -21155,20 +21225,13 @@ impl ShellExecutor {
             return 0;
         }
 
-        // trap -l: list signal names
+        // zsh: `-l` is NOT a recognized `trap` flag (that's a bash-ism).
+        // zsh's `trap -l` lists current traps (which are empty in -f
+        // mode), producing no output and exit 0. Earlier zshrs emitted
+        // the bash-style numbered SIGNAL list, mismatching zsh exactly.
+        // Keep the silent-empty behaviour to align with zsh's real trap
+        // builtin.
         if args.len() == 1 && args[0] == "-l" {
-            let signals = [
-                "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS", "FPE", "KILL", "USR1", "SEGV",
-                "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN",
-                "TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS",
-            ];
-            for (i, sig) in signals.iter().enumerate() {
-                print!("{:2}) SIG{:<8}", i + 1, sig);
-                if (i + 1) % 5 == 0 {
-                    println!();
-                }
-            }
-            println!();
             return 0;
         }
 
@@ -21244,6 +21307,27 @@ impl ShellExecutor {
             } else {
                 sig_upper
             };
+
+            // zsh validates the signal name before installing the
+            // handler — an unknown name errors `undefined signal: NAME`
+            // exit 1 and the trap is NOT installed. zshrs blindly
+            // inserted whatever uppercased token came in, so
+            // `trap "" BADSIG` quietly registered a never-firable trap.
+            let known_sig = matches!(
+                sig_name.as_str(),
+                "EXIT" | "ZERR" | "DEBUG" | "ERR" | "RETURN"
+                    | "HUP" | "INT" | "QUIT" | "ILL" | "TRAP"
+                    | "ABRT" | "EMT" | "BUS" | "FPE" | "KILL"
+                    | "USR1" | "SEGV" | "USR2" | "PIPE" | "ALRM"
+                    | "TERM" | "CHLD" | "CONT" | "STOP" | "TSTP"
+                    | "TTIN" | "TTOU" | "URG" | "XCPU" | "XFSZ"
+                    | "VTALRM" | "PROF" | "WINCH" | "IO" | "INFO"
+                    | "SYS" | "STKFLT" | "PWR"
+            ) || sig.parse::<u32>().is_ok();
+            if !known_sig {
+                eprintln!("zshrs:trap:1: undefined signal: {}", sig);
+                return 1;
+            }
 
             if action == "-" {
                 // `trap - SIG` resets to default (delete the entry).
@@ -31204,7 +31288,7 @@ impl ShellExecutor {
     /// vared - visually edit a variable
     fn builtin_vared(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("vared: not enough arguments");
+            eprintln!("zshrs:vared:1: not enough arguments");
             return 1;
         }
 
@@ -31242,7 +31326,7 @@ impl ShellExecutor {
         }
 
         if var_name.is_empty() {
-            eprintln!("vared: not enough arguments");
+            eprintln!("zshrs:vared:1: not enough arguments");
             return 1;
         }
 

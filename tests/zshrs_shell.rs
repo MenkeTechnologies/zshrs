@@ -6510,6 +6510,109 @@ fn test_disown_no_current_job_errors() {
 }
 
 #[test]
+fn test_test_unknown_3arg_op_errors() {
+    // zsh: `[ a -ZZ b ]` -> `[:1: unknown condition: -ZZ` exit 2.
+    // zshrs's 3-arg path silently returned 1, masking typos in the
+    // condition operator (-eq, -lt, etc.).
+    let (status, _, stderr) = run_zshrs("[ a -ZZ b ]");
+    assert_eq!(status, 2);
+    assert!(stderr.contains("unknown condition: -ZZ"), "got: {stderr}");
+}
+
+#[test]
+fn test_test_paren_mismatch_errors() {
+    // zsh: `[ \( a ]` -> `[:1: argument expected` exit 2 (open paren
+    // without a matching close at end-of-args). zshrs silently
+    // returned 1, hiding the syntactic mismatch.
+    let (status, _, stderr) = run_zshrs(r"[ \( a ]");
+    assert_eq!(status, 2);
+    assert!(stderr.contains("argument expected"), "got: {stderr}");
+}
+
+#[test]
+fn test_kill_no_args_zsh_format() {
+    // zsh: bare `kill` -> `kill:1: not enough arguments` exit 1.
+    // zshrs printed a multi-line bash-style usage banner; tests that
+    // grep for the zsh format silently saw nothing.
+    let (status, _, stderr) = run_zshrs("kill");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:kill:1: not enough arguments"),
+        "got: {stderr}"
+    );
+    let (status, _, stderr) = run_zshrs("kill -9");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:kill:1: not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_trap_undefined_signal_errors() {
+    // zsh: `trap "" BADSIGNAL` -> `trap:1: undefined signal:
+    // BADSIGNAL` exit 1 (trap NOT installed). zshrs blindly inserted
+    // any uppercased token into the trap table, registering a
+    // never-firable trap silently.
+    let (status, _, stderr) = run_zshrs(r#"trap "" BADSIGNAL"#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("undefined signal: BADSIGNAL"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_trap_l_silent() {
+    // zsh: `trap -l` lists current traps (empty in -f mode), no
+    // bash-style numbered SIGNAL list. zshrs previously emitted the
+    // bash-flavoured table that didn't match zsh exactly.
+    let (status, output, _) = run_zshrs("trap -l");
+    assert_eq!(status, 0);
+    assert!(
+        !output.contains("SIGHUP") && !output.contains("SIGTERM"),
+        "got: {output}"
+    );
+}
+
+#[test]
+fn test_vared_no_args_zsh_format() {
+    // zsh: bare `vared` -> `vared:1: not enough arguments`. zshrs's
+    // older `vared:` (no shell-name prefix) didn't match zsh's
+    // `<shellname>:<builtin>:<line>:` convention.
+    let (status, _, stderr) = run_zshrs("vared");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:vared:1: not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_unset_readonly_errors() {
+    // zsh: `readonly x=1; unset x` -> `read-only variable: x` exit 1
+    // (unset rejected). zshrs's unset blindly removed the entry from
+    // the variable maps, leaving x unset and exit 0 — a compat
+    // regression that broke scripts probing for readonly state.
+    let (status, _, stderr) = run_zshrs("readonly x=1; unset x");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("read-only variable: x"), "got: {stderr}");
+}
+
+#[test]
+fn test_typeset_unknown_flag_errors() {
+    // zsh: `typeset -Q x=1` -> `typeset:1: bad option: -Q` exit 1.
+    // zshrs's silent `_ => {}` fallback in the flag char-loop made
+    // unknown letters succeed without setting any attribute.
+    let (status, _, stderr) = run_zshrs("typeset -Q x=1");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -Q"), "got: {stderr}");
+    let (status, _, stderr) = run_zshrs("declare -Q x=1");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -Q"), "got: {stderr}");
+}
+
+#[test]
 fn test_fc_no_args_with_session_still_recurses() {
     // Bare `fc` (no -l, no positional) ALWAYS errors recurse-
     // endlessly in -c mode. Even when `print -s` added entries,
