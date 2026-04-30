@@ -16915,8 +16915,17 @@ impl ShellExecutor {
         let mut logical = true; // -L is default
         let mut positional_args: Vec<&str> = Vec::new();
 
+        let mut after_dashdash = false;
         for arg in args {
-            if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
+            // `--` is end-of-options; everything after is positional.
+            // Without this, `cd -- /tmp` treated `--` as the OLD arg
+            // of the substitution form and errored "string not in
+            // pwd: --".
+            if arg == "--" && !after_dashdash {
+                after_dashdash = true;
+                continue;
+            }
+            if !after_dashdash && arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
                 // Check if it's a stack index like -2
                 if arg[1..].chars().all(|c| c.is_ascii_digit()) {
                     positional_args.push(arg);
@@ -16934,7 +16943,8 @@ impl ShellExecutor {
                         }
                     }
                 }
-            } else if arg.starts_with('+')
+            } else if !after_dashdash
+                && arg.starts_with('+')
                 && arg.len() > 1
                 && arg[1..].chars().all(|c| c.is_ascii_digit())
             {
@@ -20624,19 +20634,35 @@ impl ShellExecutor {
                 eprintln!("zshrs:kill:1: type kill -l for a list of signals");
                 return 1;
             } else if arg == "-s" {
-                // -s signal_name
+                // -s signal_name (or numeric signal-by-name)
                 i += 1;
                 if i >= args.len() {
                     eprintln!("kill: -s requires an argument");
                     return 1;
                 }
-                let sig_name = args[i].to_uppercase();
-                let sig_name = sig_name.strip_prefix("SIG").unwrap_or(&sig_name);
-                if let Some((_, _, s)) = signal_map.iter().find(|(name, _, _)| *name == sig_name) {
-                    sig = *s;
+                // zsh accepts numeric values to `-s` too — `-s 0`
+                // is the existence-check form. zshrs's name-only
+                // lookup rejected `0` as an invalid signal.
+                if args[i] == "0" {
+                    signal_zero = true;
+                } else if let Ok(num) = args[i].parse::<i32>() {
+                    if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
+                        sig = *s;
+                    } else {
+                        eprintln!("kill: invalid signal: {}", args[i]);
+                        return 1;
+                    }
                 } else {
-                    eprintln!("kill: invalid signal: {}", args[i]);
-                    return 1;
+                    let sig_name = args[i].to_uppercase();
+                    let sig_name = sig_name.strip_prefix("SIG").unwrap_or(&sig_name);
+                    if let Some((_, _, s)) =
+                        signal_map.iter().find(|(name, _, _)| *name == sig_name)
+                    {
+                        sig = *s;
+                    } else {
+                        eprintln!("kill: invalid signal: {}", args[i]);
+                        return 1;
+                    }
                 }
             } else if arg == "-n" {
                 // -n signal_number
@@ -21193,6 +21219,7 @@ impl ShellExecutor {
         let mut write_file = false;
         let mut append_file = false;
         let mut substitute_mode = false;
+        let mut silent_no_op_flag = false;
         let mut positional: Vec<&str> = Vec::new();
         let mut substitutions: Vec<(String, String)> = Vec::new();
 
@@ -21249,7 +21276,17 @@ impl ShellExecutor {
                                 i += 1;
                             }
                         }
-                        'p' | 'P' | 'a' | 'I' | 'L' | 'm' => {} // Handled but no-op for now
+                        'p' | 'P' | 'a' | 'I' | 'L' | 'm' => {
+                            // `-p`/`-P` push/pop history stack;
+                            // `-a` modify-already-read; `-I`/`-L`
+                            // local variants; `-m` pattern. These
+                            // are no-ops in `-c` mode but their
+                            // PRESENCE means the user explicitly
+                            // requested this fc invocation (not
+                            // bare-fc-recurse). Mark so the
+                            // recurse-abort below skips.
+                            silent_no_op_flag = true;
+                        }
                         // `--help` / long-option-style typos: zsh
                         // skips the leading `-` and reports the
                         // FIRST recognisable letter as the bad
@@ -21365,16 +21402,28 @@ impl ShellExecutor {
         // since `fc` itself is the prior command in `-c`, that's
         // infinite. (Without this guard, having a `print -s` entry
         // turned bare `fc` into a list-mode pass-through.)
-        if !list_mode && positional.is_empty() && !atty::is(atty::Stream::Stdin) {
+        if !list_mode
+            && positional.is_empty()
+            && !atty::is(atty::Stream::Stdin)
+            && !silent_no_op_flag
+            && !read_file
+            && !write_file
+            && !append_file
+        {
             // No-positional non-list-mode `fc` (with or without
             // edit-form flags like `-r`, `-d`, `-e`) re-executes
             // the prior command — which IS `fc` itself in `-c`
-            // mode, hence the recurse abort. Earlier guard required
-            // `args.is_empty()`, so `fc -r` and `fc -d` slipped
-            // past and zshrs ran the previous command (often the
-            // bogus `alias =` from the surrounding test harness).
+            // mode, hence the recurse abort. EXEMPT: -p/-P push/
+            // pop, -a modify, -I/-L local, -m pattern, and
+            // -R/-W/-A read/write/append (handled below); these
+            // signal an explicit non-edit-form invocation.
             eprintln!("zsh:fc:1: current history line would recurse endlessly, aborted");
             return 1;
+        }
+        // `-p`/`-P` etc. exempt flags — silent success (no actual
+        // history-stack manipulation, but no edit-mode either).
+        if silent_no_op_flag && positional.is_empty() && !list_mode {
+            return 0;
         }
 
         // List mode (fc -l)
