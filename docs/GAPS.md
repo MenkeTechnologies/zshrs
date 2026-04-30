@@ -1805,6 +1805,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: invoking a non-executable file (`chmod 644 file; ./file`) emits `permission denied: ./file` on stderr and exits 126 (POSIX convention for "command found but not executable"). zshrs's `execute_external` only special-cased `NotFound` (→ 127); all other IO errors fell into the generic `Err` arm which the caller converted to 127 with no diagnostic. Added a `PermissionDenied` arm that emits zsh's diagnostic and returns 126. Test: `test_exec_non_executable_file_status_126`.
 
+### `[[ ]]` (empty condition) silently passed instead of parse error
+
+- zsh: `[[ ]]` is a parse error — a condition is required between the brackets. zshrs's `parse_cond` called `parse_cond_expr` which returned `None`, then silently consumed the `]]` and produced no command (exit 0). Added an early-return: if the immediate next token after `[[` is `]]`, emit a parse error. Test: `test_empty_cond_bracket_parse_error`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic

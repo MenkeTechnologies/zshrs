@@ -2112,6 +2112,15 @@ impl<'a> ZshParser<'a> {
     /// Parse [[ ... ]] conditional
     fn parse_cond(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip [[
+        // Empty cond `[[ ]]` is a parse error in zsh — emit the
+        // diagnostic and return None so the caller produces a
+        // non-zero exit. Without this, `[[ ]]` silently passed and
+        // returned exit 0.
+        if self.lexer.tok == LexTok::Doutbrack {
+            self.error("parse error near `]]'");
+            self.lexer.zshlex();
+            return None;
+        }
         let cond = self.parse_cond_expr();
 
         if self.lexer.tok == LexTok::Doutbrack {
