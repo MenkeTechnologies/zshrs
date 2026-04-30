@@ -6400,6 +6400,34 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_test_lt_gt_le_ge_non_numeric_errors() {
+    // Same fix as `-eq`/`-ne` extended to `-lt`/`-le`/`-gt`/`-ge`.
+    // Each comparator now returns 2 with `integer expression
+    // expected: <arg>` when either operand fails to parse as i64.
+    for op in &["-lt", "-le", "-gt", "-ge"] {
+        let cmd = format!("[ 5 {} abc ]", op);
+        let (status, _, stderr) = run_zshrs(&cmd);
+        assert_eq!(status, 2, "op={op}");
+        assert!(
+            stderr.contains("integer expression expected"),
+            "op={op}, stderr={stderr}"
+        );
+    }
+}
+
+#[test]
+fn test_type_unknown_flag_errors() {
+    // `type --help` should error `bad option: -h` exit 1. zshrs's
+    // unknown-flag arm previously did nothing, silently passing
+    // with no output. Added an `eprintln + return 1` and skipped
+    // additional `-` chars in the body so `--help` reports `-h`
+    // (the first letter after the leading dashes), matching zsh.
+    let (status, _, stderr) = run_zshrs("type --help");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -h"), "got: {stderr}");
+}
+
+#[test]
 fn test_test_eq_non_numeric_errors() {
     // `[ a -eq a ]` with non-numeric operands errors `integer
     // expression expected: a` exit 2. zshrs previously used

@@ -17990,40 +17990,72 @@ impl ShellExecutor {
                 }
             }
             [a, "-lt", b] => {
-                let a: i64 = a.parse().unwrap_or(0);
-                let b: i64 = b.parse().unwrap_or(0);
-                if a < b {
-                    0
-                } else {
-                    1
-                }
+                let av = match a.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        return 2;
+                    }
+                };
+                let bv = match b.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        return 2;
+                    }
+                };
+                if av < bv { 0 } else { 1 }
             }
             [a, "-le", b] => {
-                let a: i64 = a.parse().unwrap_or(0);
-                let b: i64 = b.parse().unwrap_or(0);
-                if a <= b {
-                    0
-                } else {
-                    1
-                }
+                let av = match a.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        return 2;
+                    }
+                };
+                let bv = match b.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        return 2;
+                    }
+                };
+                if av <= bv { 0 } else { 1 }
             }
             [a, "-gt", b] => {
-                let a: i64 = a.parse().unwrap_or(0);
-                let b: i64 = b.parse().unwrap_or(0);
-                if a > b {
-                    0
-                } else {
-                    1
-                }
+                let av = match a.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        return 2;
+                    }
+                };
+                let bv = match b.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        return 2;
+                    }
+                };
+                if av > bv { 0 } else { 1 }
             }
             [a, "-ge", b] => {
-                let a: i64 = a.parse().unwrap_or(0);
-                let b: i64 = b.parse().unwrap_or(0);
-                if a >= b {
-                    0
-                } else {
-                    1
-                }
+                let av = match a.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        return 2;
+                    }
+                };
+                let bv = match b.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        return 2;
+                    }
+                };
+                if av >= bv { 0 } else { 1 }
             }
 
             // File comparisons
@@ -23513,6 +23545,13 @@ impl ShellExecutor {
             if arg.starts_with('-') && arg.len() > 1 {
                 for c in arg[1..].chars() {
                     match c {
+                        '-' => {
+                            // Skip `-` chars in the body (zsh quirk:
+                            // for `--help` the second `-` is silently
+                            // consumed and `h` becomes the first
+                            // recognised letter — bad-option diag
+                            // reports `-h` not `--`).
+                        }
                         'a' => show_all = true,
                         'p' => path_only = true,
                         'P' => path_only = true,
@@ -23523,7 +23562,12 @@ impl ShellExecutor {
                         // shorthand (`builtin`/`command`/`function`/
                         // `alias`/`reserved`/`none`).
                         'w' => show_word = true,
-                        _ => {}
+                        _ => {
+                            // zsh: unknown flag → `bad option: -X`
+                            // exit 1. zshrs previously dropped silently.
+                            eprintln!("zshrs:type:1: bad option: -{}", c);
+                            return 1;
+                        }
                     }
                 }
             } else {
