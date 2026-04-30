@@ -1737,6 +1737,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - `looks_like_glob` walked the pattern looking for `*`/`?`/`[` and returned true on any occurrence — including `\*` where the `*` is escaped. So `echo \*` triggered the glob path, expanded against `cwd` (zero matches in most directories), and aborted in NOMATCH mode. Now the check walks character-by-character and skips `\X` escape pairs so backslash-escaped metachars don't count as glob triggers. The output still preserves the literal backslash (deeper unquoting fix needed for the full `\* → *` translation), but the script no longer aborts. Test: `test_escaped_glob_metachar_does_not_trigger_nomatch`.
 
+### `let` (no args) returned 1 silently — zsh emits a diagnostic
+
+- zsh's bare `let` errors `zsh:let:1: not enough arguments` and exits 1. zshrs returned 1 with no message, so script consumers couldn't distinguish "let with no args" from "let with arg that evaluated to 0". Added the diagnostic; status unchanged (still 1). Test: `test_let_no_args_errors`.
+
+### `history` in `-c` mode dumped the on-disk persistent log instead of aborting
+
+- In non-interactive `-c` mode with no in-session history adds, zsh's `history` (a `fc -l` synonym) errors `no such event: 1` rather than reading the persistent file. zshrs read the disk log and printed entries from prior sessions. Added the same atty + session-history-empty guard already used by `fc -l`; with session entries, only those are listed (numbered from 1). Test: `test_history_in_minus_c_mode_errors`.
+
+### `read -q` from a pipe (non-tty) read silently and returned 0
+
+- zsh's `read -q` is a single y/n character read from the terminal. Off a tty (`echo y | read -q ans`), zsh errors `not interactive and can't open terminal` and returns 1. zshrs read from stdin and returned 0 — scripts couldn't detect the missing terminal. Added an atty guard at the start of the `read` body before any stdin lock. Test: `test_read_q_requires_terminal`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
