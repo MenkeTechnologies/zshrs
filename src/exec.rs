@@ -251,7 +251,7 @@ fn array_subscript_flag(arr: &[String], flags: &str, pat: &str) -> fusevm::Value
 /// `i`/`I` return matching keys (zsh `i` flag for assoc returns the
 /// matching key, not a numeric index).
 fn assoc_subscript_flag(
-    map: &std::collections::HashMap<String, String>,
+    map: &IndexMap<String, String>,
     flags: &str,
     pat: &str,
 ) -> fusevm::Value {
@@ -2019,7 +2019,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     );
                     return true;
                 }
-                let mut map = std::collections::HashMap::new();
+                let mut map: IndexMap<String, String> = IndexMap::new();
                 let mut it = values.clone().into_iter();
                 while let Some(k) = it.next() {
                     if let Some(v) = it.next() {
@@ -3988,7 +3988,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             exec.variables.remove(&name);
             exec.assoc_arrays
                 .entry(name)
-                .or_insert_with(std::collections::HashMap::new)
+                .or_insert_with(IndexMap::new)
                 .insert(key, value);
         });
         Value::Status(0)
@@ -4193,7 +4193,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             let map = exec
                 .assoc_arrays
                 .entry(name)
-                .or_insert_with(std::collections::HashMap::new);
+                .or_insert_with(IndexMap::new);
             match map.get_mut(&key) {
                 Some(existing) => existing.push_str(&tail),
                 None => {
@@ -7949,6 +7949,7 @@ fn shell_quote_value(s: &str) -> String {
 use crate::jobs::{continue_job, wait_for_child, wait_for_job, JobState, JobTable};
 use crate::parser::{Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag};
 use crate::zwc::ZwcFile;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -8119,7 +8120,7 @@ pub enum LoopSignal {
 pub struct SubshellSnapshot {
     pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
-    pub assoc_arrays: HashMap<String, HashMap<String, String>>,
+    pub assoc_arrays: HashMap<String, IndexMap<String, String>>,
     pub positional_params: Vec<String>,
     pub env_vars: HashMap<String, String>,
     /// Process working directory at subshell entry. `cd` inside the
@@ -8611,7 +8612,7 @@ pub struct ShellExecutor {
     pub last_status: i32,
     pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
-    pub assoc_arrays: HashMap<String, HashMap<String, String>>, // zsh associative arrays
+    pub assoc_arrays: HashMap<String, IndexMap<String, String>>, // zsh associative arrays (insertion-ordered, mirrors zsh hashtable hnodes)
     pub jobs: JobTable,
     pub fpath: Vec<PathBuf>,
     pub zwc_cache: HashMap<PathBuf, ZwcFile>,
@@ -11607,11 +11608,17 @@ impl ShellExecutor {
                 let lhs: String = chars[..pos].iter().collect();
                 let rhs: String = chars[pos + 1..].iter().collect();
                 let lhs_matches = self.expand_glob(&lhs);
-                let rhs_matches: std::collections::HashSet<String> =
-                    self.expand_glob(&rhs).into_iter().collect();
+                // zsh pattern.c: `~` is an exclusion operator that matches
+                // RHS as a PATTERN against each LHS candidate, not a
+                // separate glob expansion in CWD. Match RHS against each
+                // result's basename and full path.
                 let filtered: Vec<String> = lhs_matches
                     .into_iter()
-                    .filter(|p| !rhs_matches.contains(p))
+                    .filter(|p| {
+                        let basename = p.rsplit('/').next().unwrap_or(p);
+                        !ShellExecutor::glob_match_static(basename, &rhs)
+                            && !ShellExecutor::glob_match_static(p, &rhs)
+                    })
                     .collect();
                 if !filtered.is_empty() {
                     return filtered;
@@ -20654,7 +20661,7 @@ impl ShellExecutor {
 
                     // Set array variable
                     if is_assoc {
-                        let mut assoc = std::collections::HashMap::new();
+                        let mut assoc: IndexMap<String, String> = IndexMap::new();
                         let mut iter = elements.iter();
                         while let Some(key) = iter.next() {
                             if let Some(val) = iter.next() {
@@ -20753,7 +20760,7 @@ impl ShellExecutor {
                 // Just declaring the variable
                 if is_assoc {
                     self.assoc_arrays
-                        .insert(arg.clone(), std::collections::HashMap::new());
+                        .insert(arg.clone(), IndexMap::new());
                 } else {
                     self.arrays.insert(arg.clone(), Vec::new());
                 }
@@ -27111,11 +27118,12 @@ impl ShellExecutor {
                                 "compinit: using cached completions"
                             );
                         }
-                        self.assoc_arrays.insert("_comps".to_string(), result.comps);
                         self.assoc_arrays
-                            .insert("_services".to_string(), result.services);
+                            .insert("_comps".to_string(), result.comps.into_iter().collect());
                         self.assoc_arrays
-                            .insert("_patcomps".to_string(), result.patcomps);
+                            .insert("_services".to_string(), result.services.into_iter().collect());
+                        self.assoc_arrays
+                            .insert("_patcomps".to_string(), result.patcomps.into_iter().collect());
 
                         // Background: fill bytecode blobs for any autoloads that have body but no ast.
                         // This populates the cache so subsequent autoload calls skip parsing.
@@ -27303,11 +27311,11 @@ impl ShellExecutor {
                 Ok(bg) => {
                     let comps = bg.result.comps.len();
                     self.assoc_arrays
-                        .insert("_comps".to_string(), bg.result.comps);
+                        .insert("_comps".to_string(), bg.result.comps.into_iter().collect());
                     self.assoc_arrays
-                        .insert("_services".to_string(), bg.result.services);
+                        .insert("_services".to_string(), bg.result.services.into_iter().collect());
                     self.assoc_arrays
-                        .insert("_patcomps".to_string(), bg.result.patcomps);
+                        .insert("_patcomps".to_string(), bg.result.patcomps.into_iter().collect());
                     self.compsys_cache = Some(bg.cache);
                     tracing::info!(
                         wall_ms = start.elapsed().as_millis() as u64,
@@ -27377,11 +27385,11 @@ impl ShellExecutor {
 
         // Set up _comps associative array
         self.assoc_arrays
-            .insert("_comps".to_string(), result.comps.clone());
+            .insert("_comps".to_string(), result.comps.clone().into_iter().collect());
         self.assoc_arrays
-            .insert("_services".to_string(), result.services.clone());
+            .insert("_services".to_string(), result.services.clone().into_iter().collect());
         self.assoc_arrays
-            .insert("_patcomps".to_string(), result.patcomps.clone());
+            .insert("_patcomps".to_string(), result.patcomps.clone().into_iter().collect());
 
         // No SQLite cache in compat mode
         self.compsys_cache = None;
@@ -32746,7 +32754,7 @@ impl ShellExecutor {
 
         // Store in associative array
         if let Some(assoc) = &assoc_name {
-            let mut map: HashMap<String, String> = HashMap::new();
+            let mut map: IndexMap<String, String> = IndexMap::new();
             for (opt, val, _) in &results {
                 map.insert(opt.clone(), val.clone().unwrap_or_default());
             }

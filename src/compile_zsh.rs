@@ -1906,14 +1906,28 @@ impl ZshCompiler {
         self.builder.emit(Op::NumLt, 0);
         let exit_jump = self.builder.emit(Op::JumpIfFalse(0), 0);
 
-        // var = array[i] via SET_VAR (visible to nested VMs)
-        let var_const = self.builder.add_constant(Value::str(var));
-        self.builder.emit(Op::LoadConst(var_const), 0);
-        self.builder.emit(Op::GetSlot(i_slot), 0);
-        self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
-        self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2), 0);
-        self.builder.emit(Op::Pop, 0);
+        // Multi-name `for k v in ...`: var holds names joined by spaces.
+        // For each iteration consume N elements (one per name); when fewer
+        // than N remain in the tail, fill missing names with empty strings
+        // (mirrors zsh's exec.c forexec). Single-name path (most common)
+        // keeps the original 2-byte SET_VAR shape.
+        let names: Vec<&str> = var.split_whitespace().collect();
+        let n = names.len() as i64;
+        for (k, name) in names.iter().enumerate() {
+            let var_const = self.builder.add_constant(Value::str(*name));
+            self.builder.emit(Op::LoadConst(var_const), 0);
+            if k == 0 {
+                self.builder.emit(Op::GetSlot(i_slot), 0);
+            } else {
+                self.builder.emit(Op::GetSlot(i_slot), 0);
+                self.builder.emit(Op::LoadInt(k as i64), 0);
+                self.builder.emit(Op::Add, 0);
+            }
+            self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
 
         self.break_patches.push(Vec::new());
         self.continue_patches.push(Vec::new());
@@ -1927,7 +1941,14 @@ impl ZshCompiler {
             }
         }
 
-        self.builder.emit(Op::PreIncSlotVoid(i_slot), 0);
+        if n == 1 {
+            self.builder.emit(Op::PreIncSlotVoid(i_slot), 0);
+        } else {
+            self.builder.emit(Op::GetSlot(i_slot), 0);
+            self.builder.emit(Op::LoadInt(n), 0);
+            self.builder.emit(Op::Add, 0);
+            self.builder.emit(Op::SetSlot(i_slot), 0);
+        }
         self.builder.emit(Op::Jump(loop_top), 0);
 
         let loop_exit = self.builder.current_pos();
