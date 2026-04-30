@@ -1765,6 +1765,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `(V)` flag makes non-printable characters visible (control chars → `^X`, `\n` → `\n`, `\t` → `\t`). zshrs had a `ZshParamFlag::Visible` handler in the multi-flag dispatcher, but the inline state machine for single-flag `${(V)x}` had no `V` arm — control chars passed through raw. Added a `V` arm to the inline state machine that mirrors the visible-char encoding. Test: `test_v_flag_visible_control_chars`.
 
+### `fc -W FILE` in `-c` mode dumped the entire on-disk persistent history
+
+- zsh: `fc -W FILE` in non-interactive `-c` mode writes ONLY session-added entries (typically empty unless `print -s` ran). zshrs called `engine.recent(10000)` and wrote the full persistent log, leaking prior runs' commands into the user's named file. Now restricts to `session_history_ids` when atty is absent (matches zsh's `-c` mode), and falls back to the full recent list only on a real tty. Test: `test_fc_W_writes_session_entries_only_in_minus_c`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`

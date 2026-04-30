@@ -6400,6 +6400,35 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_fc_W_writes_session_entries_only_in_minus_c() {
+    // zsh: `fc -W FILE` in non-interactive `-c` mode writes ONLY
+    // session-added entries (typically empty when no `print -s`
+    // ran). zshrs previously dumped the entire on-disk persistent
+    // history into FILE, leaking prior runs' commands. Now scopes
+    // to session_history_ids when atty is absent.
+    use std::fs;
+    let path = std::env::temp_dir().join(format!("zshrs_fcW_test_{}", std::process::id()));
+    let _ = fs::remove_file(&path);
+    let cmd = format!(r#"fc -W {}"#, path.to_string_lossy());
+    let (_, _, _) = run_zshrs(&cmd);
+    let body = fs::read_to_string(&path).unwrap_or_default();
+    let _ = fs::remove_file(&path);
+    assert_eq!(body, "", "got: {body:?}");
+    // With session entries via `print -s`, only those land in FILE.
+    let path2 = std::env::temp_dir().join(format!("zshrs_fcW_test2_{}", std::process::id()));
+    let _ = fs::remove_file(&path2);
+    let cmd = format!(r#"print -s "AAA"; print -s "BBB"; fc -W {}"#, path2.to_string_lossy());
+    let (_, _, _) = run_zshrs(&cmd);
+    let body = fs::read_to_string(&path2).unwrap_or_default();
+    let _ = fs::remove_file(&path2);
+    assert!(body.contains("AAA"), "got: {body:?}");
+    assert!(body.contains("BBB"), "got: {body:?}");
+    // Just two session entries (both lines containing those tokens).
+    let lines = body.lines().count();
+    assert_eq!(lines, 2, "got {lines} lines: {body:?}");
+}
+
+#[test]
 fn test_v_flag_visible_control_chars() {
     // zsh: `${(V)x}` makes non-printable characters visible —
     // control chars become `^X` (X = char + 64), `\n` → `\n`,
