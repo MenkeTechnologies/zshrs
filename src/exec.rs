@@ -19814,7 +19814,15 @@ impl ShellExecutor {
                         'd' => use_caller_dir = true,
                         'w' => {} // wordcode
                         'm' => {} // pattern match
-                        _ => {}
+                        // zsh: unknown autoload flag -> `autoload:1:
+                        // bad option: -X` exit 1. zshrs's silent
+                        // fallback accepted any letter, masking
+                        // typos like `-Z` or `-l` (bash-style flag
+                        // that zsh doesn't have).
+                        _ => {
+                            eprintln!("zshrs:autoload:1: bad option: -{}", c);
+                            return 1;
+                        }
                     }
                 }
             } else {
@@ -27167,19 +27175,44 @@ impl ShellExecutor {
                     argv0 = Some(args[i].clone());
                 }
             } else if arg.starts_with('-') && cmd_args.is_empty() {
-                // Combined flags like -cl
+                // zsh: any flag-only `exec` with no following command
+                // errors `exec requires a command to execute`. The
+                // "flag with no command" check below already fires on
+                // `-c`/`-l`/`-a`; track unrecognized flags too so
+                // `exec --bad` triggers the same diagnostic instead
+                // of silently no-op'ing.
+                let mut saw_any_flag = false;
                 for ch in arg[1..].chars() {
                     match ch {
-                        'c' => clear_env = true,
-                        'l' => login_shell = true,
+                        'c' => {
+                            clear_env = true;
+                            saw_any_flag = true;
+                        }
+                        'l' => {
+                            login_shell = true;
+                            saw_any_flag = true;
+                        }
                         'a' => {
+                            saw_any_flag = true;
                             i += 1;
                             if i < args.len() {
                                 argv0 = Some(args[i].clone());
                             }
                         }
-                        _ => {}
+                        '-' => {
+                            // `--` is end-of-options in some impls; in
+                            // `exec` zsh treats `--bad` as a flag-form
+                            // typo. Mark as a flag so the no-command
+                            // error fires below.
+                            saw_any_flag = true;
+                        }
+                        _ => {
+                            saw_any_flag = true;
+                        }
                     }
+                }
+                if !saw_any_flag {
+                    cmd_args.push(arg.clone());
                 }
             } else {
                 cmd_args.push(arg.clone());
@@ -27188,13 +27221,19 @@ impl ShellExecutor {
         }
 
         if cmd_args.is_empty() {
-            // zsh: `exec -c`, `exec -l`, `exec -a foo` (any flag form
-            // without a following command) errors `exec requires a
-            // command to execute` exit 1. Bare `exec` (no flags, no
-            // command) is the silent-environment-modify form per POSIX
-            // — accepted as a no-op. zshrs previously silently
-            // returned 0 in BOTH cases, masking flag-only typos.
-            if clear_env || login_shell || argv0.is_some() {
+            // zsh: `exec FLAG` (any flag form, including `--bad` long-
+            // option-style typos) errors `exec requires a command to
+            // execute` exit 1. Bare `exec` (no flags, no command) is
+            // the silent-environment-modify form per POSIX. Detect
+            // the flag-only case by scanning the original args for
+            // anything that started with `-`; the per-char loop above
+            // consumed those, so seeing one in the input is the
+            // signal.
+            let saw_flag = clear_env
+                || login_shell
+                || argv0.is_some()
+                || args.iter().any(|a| a.starts_with('-') && a.len() > 1);
+            if saw_flag {
                 eprintln!("zshrs:1: exec requires a command to execute");
                 return 1;
             }
@@ -27498,6 +27537,7 @@ impl ShellExecutor {
         let mut null_terminate = false;
         let mut push_to_stack = false;
         let mut add_to_history = false;
+        let mut split_word_history = false; // -S specifically (not -s)
         let mut sort_asc = false;
         let mut sort_desc = false;
         let mut named_dir_subst = false;
@@ -27575,8 +27615,14 @@ impl ShellExecutor {
                         // history form — like `-s` it adds the line
                         // to history INSTEAD of stdout. Without this,
                         // `print -S "hello"` printed `hello` to
-                        // stdout while zsh stayed silent.
-                        'S' => add_to_history = true,
+                        // stdout while zsh stayed silent. zsh also
+                        // restricts `-S` to a SINGLE positional arg,
+                        // erroring `option -S takes a single argument`
+                        // for `print -S foo bar` — track separately.
+                        'S' => {
+                            add_to_history = true;
+                            split_word_history = true;
+                        }
                         'o' => sort_asc = true,
                         'O' => sort_desc = true,
                         'D' => named_dir_subst = true,
@@ -27790,6 +27836,14 @@ impl ShellExecutor {
         // Add to history if -s — and per zsh, `-s` REPLACES stdout
         // output (the result goes to history INSTEAD OF stdout).
         if add_to_history {
+            // zsh: `-S` (split-words form) takes EXACTLY one arg —
+            // `print -S foo bar` errors `option -S takes a single
+            // argument` exit 1. zshrs's loop concatenated all args
+            // into the history entry silently.
+            if split_word_history && output_args.len() > 1 {
+                eprintln!("zshrs:print:1: option -S takes a single argument");
+                return 1;
+            }
             if let Some(ref mut engine) = self.history {
                 if let Ok(id) = engine.add(&output, None) {
                     self.session_history_ids.push(id);

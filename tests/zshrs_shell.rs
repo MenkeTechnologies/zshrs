@@ -6916,6 +6916,48 @@ fn test_trap_numeric_signal_out_of_range_errors() {
 }
 
 #[test]
+fn test_exec_long_option_typo_errors() {
+    // zsh: `exec --bad` (long-option-style flag) -> `exec requires a
+    // command to execute` exit 1. zshrs silently swallowed any flag
+    // it didn't recognize, masking the typo. Now scans the input for
+    // `-`-prefixed args; if none became `cmd_args` and any flag was
+    // present, the missing-command error fires.
+    let (status, _, stderr) = run_zshrs("exec --bad");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("exec requires a command to execute"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_print_S_takes_single_arg() {
+    // zsh: `print -S` is the split-shell-words history form and
+    // takes EXACTLY one positional. `print -S foo bar` -> `print:1:
+    // option -S takes a single argument` exit 1. zshrs concatenated
+    // all args into the history entry silently.
+    let (status, _, stderr) = run_zshrs("print -S foo bar");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("option -S takes a single argument"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_autoload_unknown_flag_errors() {
+    // zsh: `autoload -Z foo` -> `autoload:1: bad option: -Z` exit 1.
+    // zshrs's silent `_ => {}` fallback accepted any letter, masking
+    // typos AND the bash-style `-l` flag that zsh doesn't have.
+    let (status, _, stderr) = run_zshrs("autoload -Z foo");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -Z"), "got: {stderr}");
+    let (status, _, stderr) = run_zshrs("autoload -l");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -l"), "got: {stderr}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
