@@ -2217,6 +2217,43 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: edit-mode `fc N M` re-edits commands N..M; with empty -c session, that's the recurse-endlessly path. zshrs's prefix-search used `N` and reported `event not found: N` (wrong category for the range-edit form). Added a `positional.len() == 2 && both_numeric` precheck that emits zsh's recurse diagnostic. Test: `test_fc_2_numeric_positionals_recurse`.
 
+## Audit (eighty-sixth-pass — C-source-driven correction)
+
+After closing 27 gaps black-box (probing zsh -f -c output without
+reading C source), audited each fix against the canonical zsh
+source under `~/forkedRepos/zsh/Src/`. Three fixes had material
+divergences from the reference implementation:
+
+### Float `%.17g` (batch 10) — replaced with libc::snprintf
+
+zsh's `convfloat()` (Src/params.c:5690) calls `sprintf(buf, "%.*g", 17, dval)` directly. My handwritten implementation only patched the [1e-4, 1e16) range; very-small/very-large values still used Rust's shortest-roundtrip `{:e}` and the `1e16` threshold was wrong (zsh's `%g` switches at exp >= 17, not 16). Found mismatches on `0.0000123` (zsh: `1.2300000000000001e-05`, ours: `1.23e-05`), `1e-5`, and `9.9e16` (zsh: `99000000000000000.`, ours: `9.9e+16`). Replaced the entire branch system with a single `libc::snprintf("%.*g", 17, val)` call mirroring zsh verbatim. Now matches zsh byte-for-byte on a 20-case sweep across the full f64 range.
+
+### Math operator/operand error (batches 4 & 5) — direct port of `checkunary()`
+
+zsh's `checkunary()` (Src/math.c:1548) is a single function that handles BOTH error directions: "operand expected" (errmsg=1, binary op where operand expected) and "operator expected" (errmsg=2, operand where operator expected). My batch-4 fix only patched errmsg=1 inline, missing the symmetric case. Audit found `let "5 5"`, `let "5("`, `$((2#1011x))`, `$((2#10112))`, `$((16#ffg))`, `$((16#zz))` all silently accepted bogus input.
+
+Combined with batch 5's base-N parse: zsh's `zstrtol_underscore` is GREEDY (consumes valid digits, stops at first invalid), but my `from_str_radix` was all-or-nothing — a single bad digit nuked the whole literal. Replaced both with direct ports: `lex_constant` does greedy base-N digit consumption; `check_unary` is a verbatim port of `checkunary()` including the 10-char truncation + `...` overflow marker. 18-case audit (combining both fix scopes) now matches zsh byte-for-byte.
+
+### `(s::)` empty-field collapsing (batch 5) — boundary-aware rule
+
+The "drop empties when no @" rule I implemented from observation was wrong on boundary empties. Reading zsh's `sepsplit()` (Src/utils.c:3962) plus its post-processing at subst.c:3273 revealed the actual rule: leading run of separators collapses to ONE empty (not zero or many); trailing run collapses to ONE empty; middle runs collapse to ZERO empties. `(@)` flag preserves all empties verbatim. My over-aggressive drop missed the boundary preservation: `,,a,,c,,` produced `[a, c]` (2) instead of zsh's `["", a, c, ""]` (4). Replaced with proper boundary-aware collapse — 6-case audit now matches zsh.
+
+### Other fixes (24 of 27) — verified against C source, no changes needed
+
+The remaining 24 fixes were spot-checked against the canonical implementation and matched (identifier validation rule from builtin.c:2547 / params.c:3204 = `idigit(*pname)` first-char check; `kill %abc` jobspec lookup from jobs.c:2143 `findjobnam` fallthrough; `unset -X` flag rejection via the `BUILTIN("unset", ..., "fmvn", ...)` declaration at builtin.c:129; etc.).
+
+## New gaps surfaced by the audit (NOT in original 27)
+
+These are pre-existing bugs the audit exposed, NOT regressions from the iter-86 fixes. Filed for a future iteration:
+
+- `kill %?notfound` — pattern-search jobspec is being globbed before reaching `kill`, so `?` triggers `no matches found: %?notfound` instead of zsh's `kill:1: job not found: ?notfound`.
+- `test - a` — single dash as first arg should error `parse error: condition expected: -`; ours silently exits 1.
+- `test ! ! ]` — zsh succeeds (exit 0); ours exits 1. Some interaction between test's negation handling and the trailing `]`.
+- `$LINENO` in scripts — always 1 in zshrs; should increment per line.
+- `${(P)b}`-style indirection error wording divergences in some flag combos.
+- `${(M)a##*o}` (M flag with ##/#/% strip) returns the full string instead of just the matched portion.
+- `${a[@]:r}` array-context history modifier joins elements instead of preserving array shape.
+
 ## Closed (eighty-sixth-pass)
 
 ### Bare `typeset NAME` / `declare NAME` (no flags, no `=`) silently swallowed instead of printing the declaration
