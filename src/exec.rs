@@ -21045,21 +21045,24 @@ impl ShellExecutor {
         }
 
         // In non-interactive (`-c`) mode with no session adds, zsh's
-        // `history` (= `fc -l`) errors `no such event: 1` rather than
-        // listing the on-disk persistent history. Mirror that — only
-        // emit session entries (in case the script did `print -s`)
-        // and abort when both session and atty are absent.
+        // `history` (= `fc -l`) errors `no such event: N` rather
+        // than listing the on-disk persistent history. Mirror that —
+        // only emit session entries (in case the script did `print
+        // -s`) and abort when both session and atty are absent.
         if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
             // Non-numeric positional `history XX` is a search-by-text
             // (`-m` style); zsh's no-match wording differs: `event not
             // found: XX`. Numeric / no positional uses `no such event:
             // N`. Without this branch zshrs emitted `no such event: 1`
             // even for non-numeric queries — wrong format AND wrong
-            // event identifier.
+            // event identifier. The numeric path now uses the actual
+            // user-supplied count (e.g. `history -d 99` reports
+            // `no such event: 99` not `1`).
             if let Some(ref q) = search_query {
                 eprintln!("zshrs:fc:1: event not found: {}", q);
             } else {
-                eprintln!("zshrs:fc:1: no such event: 1");
+                let event_id = if count != 20 { count } else { 1 };
+                eprintln!("zshrs:fc:1: no such event: {}", event_id);
             }
             return 1;
         }
@@ -25696,7 +25699,14 @@ impl ShellExecutor {
                     }
                     return 0;
                 }
-                _ => {}
+                // zsh: unknown zstyle flag errors `zstyle:1: invalid
+                // option: -X` exit 1. zshrs's `_ => {}` silent
+                // fallback let any unknown flag drop through to the
+                // set-style path with `pattern=-X`.
+                other => {
+                    eprintln!("zshrs:zstyle:1: invalid option: {}", other);
+                    return 1;
+                }
             }
         }
 
@@ -30460,6 +30470,12 @@ impl ShellExecutor {
 
     /// zparseopts - parse options from positional parameters
     fn builtin_zparseopts(&mut self, args: &[String]) -> i32 {
+        // zsh: bare `zparseopts` -> `zparseopts:1: not enough
+        // arguments` exit 1. zshrs silently returned 0.
+        if args.is_empty() {
+            eprintln!("zshrs:zparseopts:1: not enough arguments");
+            return 1;
+        }
         let mut remove_parsed = false; // -D
         let mut keep_going = false; // -E
         let mut fail_on_error = false; // -F
@@ -30907,7 +30923,14 @@ impl ShellExecutor {
                     }
                     return 0;
                 }
-                _ => {}
+                // zsh: unknown bindkey flag errors `bindkey:1: bad
+                // option: -X` exit 1. zshrs's silent fallback let
+                // unknown flags drop into list-mode silently.
+                other => {
+                    let bad: String = other.chars().skip(1).take(1).collect();
+                    eprintln!("zshrs:bindkey:1: bad option: -{}", bad);
+                    return 1;
+                }
             }
         }
 

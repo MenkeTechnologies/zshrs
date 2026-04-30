@@ -7298,6 +7298,48 @@ fn test_vared_missing_value_after_flag_errors() {
 }
 
 #[test]
+fn test_history_d_event_id_propagates() {
+    // zsh: `history -d 99` (no entry 99) -> `fc:1: no such event:
+    // 99` exit 1. zshrs hardcoded `no such event: 1` regardless of
+    // the user's value.
+    let (status, _, stderr) = run_zshrs("history -d 99");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("no such event: 99"), "got: {stderr}");
+}
+
+#[test]
+fn test_zstyle_unknown_flag_errors() {
+    // zsh: `zstyle -X` -> `zstyle:1: invalid option: -X` exit 1.
+    // zshrs's `_ => {}` silent fallback let any unknown flag drop
+    // through to set-style with `pattern=-X`.
+    let (status, _, stderr) = run_zshrs("zstyle -X");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("invalid option: -X"), "got: {stderr}");
+}
+
+#[test]
+fn test_bindkey_unknown_flag_errors() {
+    // zsh: `bindkey -Z` -> `bindkey:1: bad option: -Z` exit 1.
+    // zshrs's silent fallback dropped unknown flags into list-mode
+    // silently.
+    let (status, _, stderr) = run_zshrs("bindkey -Z");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -Z"), "got: {stderr}");
+}
+
+#[test]
+fn test_zparseopts_no_args_errors() {
+    // zsh: bare `zparseopts` -> `zparseopts:1: not enough arguments`
+    // exit 1. zshrs silently returned 0.
+    let (status, _, stderr) = run_zshrs("zparseopts");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
