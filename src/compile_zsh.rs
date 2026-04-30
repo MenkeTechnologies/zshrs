@@ -2689,6 +2689,20 @@ fn is_splice_expansion(s: &str) -> bool {
         if inner.contains("[@]") || inner.contains("[*]") {
             return true;
         }
+        // Slice form `${arr[N,M]}` is a splice — surrounding literals
+        // stick to first and last elements; an empty slice keeps the
+        // surrounding text rather than dropping it (matches zsh's
+        // `print "[${a[5,10]}]"` → `[]` for out-of-range slices).
+        if let Some(open) = inner.find('[') {
+            if let Some(close) = inner.rfind(']') {
+                if close > open {
+                    let sub = &inner[open + 1..close];
+                    if sub.contains(',') {
+                        return true;
+                    }
+                }
+            }
+        }
     }
     false
 }

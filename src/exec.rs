@@ -255,6 +255,18 @@ fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<String> {
     if len == 0 {
         return Vec::new();
     }
+    // Out-of-range starts (positive past len, or negative below first
+    // element) collapse to empty in zsh — `a=(a b c); print ${a[5,10]}`
+    // is empty, not the trailing element clamped down.
+    if start > len {
+        return Vec::new();
+    }
+    if end < 0 && (len + end + 1) < 1 {
+        return Vec::new();
+    }
+    if start < 0 && end < 0 && start > end {
+        return Vec::new();
+    }
     let resolve = |i: i64| -> i64 {
         if i < 0 {
             (len + i + 1).max(1)
@@ -6268,7 +6280,16 @@ impl fusevm::ShellHost for ZshrsHost {
         // re-parsed + compiled + run on a nested VM with `args` appended.
         // Without this branch, aliases would be silently ignored at
         // run-time and `g` would fall through to "command not found".
-        let alias_body = with_executor(|exec| exec.aliases.get(name).cloned());
+        // Skip when this alias is mid-expansion already — zsh's lexer
+        // disables an alias inside its own body (so `alias ls='ls -la'`
+        // works without recursion). We do the same via a HashSet guard
+        // since we expand at run time, not parse time.
+        let already_expanding = with_executor(|exec| exec.expanding_aliases.contains(name));
+        let alias_body = if already_expanding {
+            None
+        } else {
+            with_executor(|exec| exec.aliases.get(name).cloned())
+        };
         if let Some(body) = alias_body {
             let combined = if args.is_empty() {
                 body
@@ -6282,9 +6303,11 @@ impl fusevm::ShellHost for ZshrsHost {
                     .collect();
                 format!("{} {}", body, quoted.join(" "))
             };
+            with_executor(|exec| exec.expanding_aliases.insert(name.to_string()));
             let status = with_executor(|exec| {
                 exec.execute_script(&combined).unwrap_or(1)
             });
+            with_executor(|exec| exec.expanding_aliases.remove(name));
             return Some(status);
         }
 
@@ -7651,6 +7674,12 @@ pub struct ShellExecutor {
     pub aliases: HashMap<String, String>,
     pub global_aliases: HashMap<String, String>, // alias -g: expand anywhere
     pub suffix_aliases: HashMap<String, String>, // alias -s: expand by file extension
+    /// Names whose alias is currently mid-expansion. zsh's lexer disables
+    /// an alias from re-expanding inside its own body (so `alias ls='ls
+    /// -la'` works without infinite recursion). zshrs expands aliases
+    /// at run time, so we need an explicit recursion guard. Cleared
+    /// when expansion of that name finishes.
+    pub expanding_aliases: std::collections::HashSet<String>,
     /// Set by `break`/`continue` keywords when no enclosing loop in the
     /// current chunk's patch lists. Outer-loop builtins (BUILTIN_RUN_SELECT)
     /// observe + clear this after each body run.
@@ -7871,6 +7900,7 @@ impl ShellExecutor {
             },
             global_aliases: HashMap::new(),
             suffix_aliases: HashMap::new(),
+            expanding_aliases: std::collections::HashSet::new(),
             loop_signal: None,
             subshell_snapshots: Vec::new(),
             last_status: 0,
@@ -16082,11 +16112,23 @@ impl ShellExecutor {
 
         // Pre-resolve dynamic special parameters that aren't in the
         // variables map: $RANDOM, $SECONDS, $EPOCHSECONDS,
-        // $EPOCHREALTIME, $LINENO. MathEval looks up names in a
-        // static HashMap, so without substitution these would resolve
-        // to 0. Inject the current value into a fresh extras HashMap.
+        // $EPOCHREALTIME, $LINENO, $PPID, $UID, $EUID, $GID, $EGID.
+        // MathEval looks up names in a static HashMap, so without
+        // substitution these would resolve to 0. Inject the current
+        // value into a fresh extras HashMap.
         let mut extras = self.variables.clone();
-        for special in ["RANDOM", "SECONDS", "EPOCHSECONDS", "EPOCHREALTIME", "LINENO"] {
+        for special in [
+            "RANDOM",
+            "SECONDS",
+            "EPOCHSECONDS",
+            "EPOCHREALTIME",
+            "LINENO",
+            "PPID",
+            "UID",
+            "EUID",
+            "GID",
+            "EGID",
+        ] {
             if !extras.contains_key(special) || special == "RANDOM" {
                 let v = self.get_variable(special);
                 extras.insert(special.to_string(), v);
@@ -23168,6 +23210,30 @@ impl ShellExecutor {
             "unset" => self.builtin_unset(cmd_args),
             "exit" => self.builtin_exit(cmd_args),
             "return" => self.builtin_return(cmd_args),
+            "logout" => {
+                // zsh: `logout` is the login-shell-only counterpart to
+                // `exit`. Outside a login shell it fails with "not
+                // login shell" (with `(anon):logout:` or
+                // `<funcname>:logout:` prefix in a function context,
+                // `zsh:logout:1:` at top level). Detect via the LOGIN
+                // option (set when invoked as `-l` or via `--login`).
+                if self.options.get("login").copied().unwrap_or(false) {
+                    self.builtin_exit(cmd_args)
+                } else {
+                    let prefix = if self.local_scope_depth > 0 {
+                        let name = self
+                            .arrays
+                            .get("funcstack")
+                            .and_then(|s| s.first().cloned())
+                            .unwrap_or_else(|| "anon".to_string());
+                        format!("({}):logout", name)
+                    } else {
+                        "zshrs:logout:1".to_string()
+                    };
+                    eprintln!("{}: not login shell", prefix);
+                    1
+                }
+            }
             "true" => 0,
             "false" => 1,
             ":" => 0,
