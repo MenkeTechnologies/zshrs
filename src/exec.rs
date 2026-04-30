@@ -20510,42 +20510,78 @@ impl ShellExecutor {
                     let mut elements = Vec::new();
                     let current = rest[1..].to_string(); // skip '('
 
-                    // Strip surrounding matching quotes from each
-                    // element. The lexer hands us
-                    // `arr=("abc" "def")` as a single arg, and a
-                    // naive split-by-whitespace yields `"abc"` and
-                    // `"def"` — quotes still attached. zsh's plain
-                    // `arr=(...)` path (separate from typeset)
-                    // strips them at the shell-syntax level. Mirror
-                    // that here so `declare -a arr=( "abc" "def" )`
-                    // produces `[abc, def]` not `["abc", "def"]`.
-                    let strip_quotes = |s: &str| -> String {
-                        let bytes = s.as_bytes();
-                        if bytes.len() >= 2 {
-                            let first = bytes[0];
-                            let last = bytes[bytes.len() - 1];
-                            if (first == b'"' || first == b'\'') && first == last {
-                                return s[1..s.len() - 1].to_string();
+                    // Quote-aware split: walk the body honoring
+                    // `"..."` and `'...'` so that DQ-quoted
+                    // strings stay as one element (preserving
+                    // embedded whitespace) but still get the
+                    // quote chars stripped from the result.
+                    // Direct port of zsh's lex.c word-splitting
+                    // for assignment RHS — naive split_whitespace
+                    // broke `local arr=( "a b" c )` because "a b"
+                    // tokenized to two elements.
+                    fn split_array_body(body: &str) -> Vec<String> {
+                        let mut out: Vec<String> = Vec::new();
+                        let bytes = body.as_bytes();
+                        let mut i = 0;
+                        while i < bytes.len() {
+                            // Skip whitespace.
+                            while i < bytes.len()
+                                && (bytes[i] as char).is_whitespace()
+                            {
+                                i += 1;
                             }
+                            if i >= bytes.len() {
+                                break;
+                            }
+                            let mut elem = String::new();
+                            while i < bytes.len()
+                                && !(bytes[i] as char).is_whitespace()
+                            {
+                                let c = bytes[i] as char;
+                                if c == '"' || c == '\'' {
+                                    let quote = c;
+                                    i += 1;
+                                    while i < bytes.len()
+                                        && (bytes[i] as char) != quote
+                                    {
+                                        // Inside DQ, `\"` and `\\`
+                                        // are escaped; pass through
+                                        // verbatim (the lexer
+                                        // already handled escapes
+                                        // before this point).
+                                        elem.push(bytes[i] as char);
+                                        i += 1;
+                                    }
+                                    if i < bytes.len() {
+                                        i += 1; // close quote
+                                    }
+                                } else if c == '\\' && i + 1 < bytes.len()
+                                {
+                                    // Backslash escape in arg —
+                                    // keep next char literally.
+                                    elem.push(bytes[i + 1] as char);
+                                    i += 2;
+                                } else {
+                                    elem.push(c);
+                                    i += 1;
+                                }
+                            }
+                            out.push(elem);
                         }
-                        s.to_string()
-                    };
+                        out
+                    }
 
                     // Check if closing ) is in this arg
                     if let Some(close_pos) = current.find(')') {
                         let content = &current[..close_pos];
                         if !content.is_empty() {
-                            elements.extend(
-                                content.split_whitespace().map(strip_quotes),
-                            );
+                            elements.extend(split_array_body(content));
                         }
                     } else {
                         // Single arg with just elements
                         if !current.is_empty() {
                             let trimmed = current.trim_end_matches(')');
-                            elements.extend(
-                                trimmed.split_whitespace().map(strip_quotes),
-                            );
+                            elements.extend(split_array_body(trimmed));
                         }
                     }
 
