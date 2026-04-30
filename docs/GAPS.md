@@ -2219,6 +2219,13 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `integer -i N name=val` for output radix; `trap -p` rejection (zsh-compat)
+
+- **`integer -i 16 x=255`** now stores 255 with attribute base=16, so `echo $x` prints `16#FF` per zsh's typeset -i semantics (Src/builtin.c). zshrs's previous arg loop treated each flag arg as a single token (`-i` only), so the next arg `16` fell into the assignment-or-name path and triggered "not an identifier: 16" since `1` is a digit. Direct port: when `-i` is followed by an all-digit arg (separate or same-token), consume it as the base. Same logic works for both `-i 16` and `-i16`.
+- **`trap -p EXIT` now rejects** the bash-style `-p` flag — zsh's bin_trap (Src/builtin.c:7347) doesn't recognize it. Without the `-p` shortcut, the dispatch treats `-p` as the action arg, fails the action+signal requirement, and the shell falls through to "command not found: -p" — matches zsh exactly. Removed the bash-compat `-p` block.
+
+Tests: `test_integer_dash_i_with_base_arg`, `test_trap_dash_p_not_a_flag`.
+
 ### Array `"${a%%pat}"` joined-then-stripped (DQ); `"${a[@]%%pat}"` per-element; brace `{{1..3},x,y}` nested
 
 Three closely-related fixes from the systematic differential audit. All driven by reading zsh source rather than guessing from output.
