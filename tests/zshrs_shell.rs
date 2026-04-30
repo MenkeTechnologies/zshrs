@@ -10248,6 +10248,28 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_param_j_flag_on_cmd_subst_no_op() {
+    // `${(j:,:)$(cmd)}` — the cmd-subst returns a SCALAR; (j:::) on
+    // a scalar is a no-op in zsh. We were over-applying by splitting
+    // on whitespace and rejoining, mangling newline-separated output.
+    let (_, output, _) = run_zshrs(
+        r#"echo "${(j:,:)$(echo a; echo b; echo c)}""#,
+    );
+    assert_eq!(output.trim(), "a\nb\nc");
+}
+
+#[test]
+fn test_param_jf_split_then_join_cmd_subst() {
+    // `${(j:,:)${(f)$(printf "...")}}` — (f) splits on newlines into
+    // an array, then (j:::) joins. The whole pipeline reduces lines
+    // to comma-separated.
+    let (_, output, _) = run_zshrs(
+        r#"echo "${(j:,:)${(f)$(printf "a\nb\nc")}}""#,
+    );
+    assert_eq!(output.trim(), "a,b,c");
+}
+
+#[test]
 fn test_array_zip_short_form() {
     // `${a:^b}` interleaves arrays up to min(len). Direct port of
     // zsh subst.c SUB_ZIP_SHORT.
