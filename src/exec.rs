@@ -17570,11 +17570,48 @@ impl ShellExecutor {
                 // on left=fail; OR short-circuits on left=success.
                 // Find the LAST connective so left binds tighter (zsh
                 // convention).
+                // Skip operators inside parens — `[ \( -n a \) -a \( -z "" \) ]`
+                // splits at the OUTER `-a`, not the operators wrapped in
+                // `(...)` subgroups. Track depth and only consider
+                // connectives at depth 0.
                 let mut and_idx: Option<usize> = None;
                 let mut or_idx: Option<usize> = None;
+                let mut depth = 0i32;
                 for (i, a) in args.iter().enumerate() {
-                    if *a == "-a" { and_idx = Some(i); }
-                    else if *a == "-o" { or_idx = Some(i); }
+                    match *a {
+                        "(" => depth += 1,
+                        ")" => depth -= 1,
+                        "-a" if depth == 0 => and_idx = Some(i),
+                        "-o" if depth == 0 => or_idx = Some(i),
+                        _ => {}
+                    }
+                }
+                // If the entire expression is wrapped in matching parens
+                // (`[ ( EXPR ) ]`), strip and recurse on the inner.
+                // Detect by walking depth — the outer `(` enters depth 1
+                // and the matching `)` is the LAST char that brings depth
+                // back to 0.
+                if args.first() == Some(&"(") && args.last() == Some(&")") {
+                    let mut d = 0i32;
+                    let mut closes_at_end = false;
+                    for (i, a) in args.iter().enumerate() {
+                        match *a {
+                            "(" => d += 1,
+                            ")" => {
+                                d -= 1;
+                                if d == 0 {
+                                    closes_at_end = i == args.len() - 1;
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if closes_at_end {
+                        let inner: Vec<String> =
+                            args[1..args.len() - 1].iter().map(|s| s.to_string()).collect();
+                        return self.builtin_test(&inner);
+                    }
                 }
                 // OR has lower precedence — split there first if present.
                 if let Some(i) = or_idx {
@@ -18527,6 +18564,21 @@ impl ShellExecutor {
                             break;
                         }
                         'p' => {
+                            // zsh's `read -p` means "read from
+                            // coprocess input" — NOT prompt. The
+                            // prompt feature is `read 'NAME?prompt'`
+                            // or `read -P prompt` (capital P) on some
+                            // ports. Without a coprocess set up, zsh
+                            // emits "no coprocess" and bails.
+                            eprintln!("zshrs:read:1: -p: no coprocess");
+                            return 1;
+                        }
+                        'P' => {
+                            // Capital `-P` is the prompt flag (some
+                            // shells use this; zsh's man docs say -p
+                            // is coprocess so we keep it that way and
+                            // route the prompt feature here for users
+                            // who relied on the old zshrs `-p` shape).
                             let rest: String = chars.collect();
                             if !rest.is_empty() {
                                 prompt_str = Some(rest);
@@ -20011,8 +20063,12 @@ impl ShellExecutor {
             // entries. Bypass the atty guard when we have session
             // entries.
             if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
-                let event = if first > 0 { first.to_string() } else { "1".to_string() };
-                eprintln!("zsh:fc:1: no such event: {}", event);
+                // zsh's "no such event" uses the resolved index. With
+                // an empty history, negative offsets resolve to 0 (zsh
+                // reports `no such event: 0` for both `0` and `-N`).
+                // Positive arguments are reported verbatim.
+                let resolved = if first <= 0 { 0 } else { first };
+                eprintln!("zsh:fc:1: no such event: {}", resolved);
                 return 1;
             }
 
