@@ -19120,6 +19120,15 @@ impl ShellExecutor {
         let _ = fd;
         let _ = silent;
 
+        // `read -q` reads a single character (y/n) from a terminal.
+        // zsh: outside a tty (`echo y | read -q`) it errors "not
+        // interactive and can't open terminal" and returns 1.
+        // zshrs previously read from stdin and returned 0 silently.
+        if quiet && !atty::is(atty::Stream::Stdin) {
+            eprintln!("not interactive and can't open terminal");
+            return 1;
+        }
+
         let input = if let Some(n) = nchars {
             let mut buf = vec![0u8; n];
             let stdin = io::stdin();
@@ -20369,6 +20378,26 @@ impl ShellExecutor {
 
         if show_all {
             count = 10000;
+        }
+
+        // In non-interactive (`-c`) mode with no session adds, zsh's
+        // `history` (= `fc -l`) errors `no such event: 1` rather than
+        // listing the on-disk persistent history. Mirror that — only
+        // emit session entries (in case the script did `print -s`)
+        // and abort when both session and atty are absent.
+        if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
+            eprintln!("zshrs:fc:1: no such event: 1");
+            return 1;
+        }
+        if !atty::is(atty::Stream::Stdin) && !self.session_history_ids.is_empty() {
+            // Only show session entries, numbered from 1.
+            for (i, &id) in self.session_history_ids.iter().enumerate() {
+                if let Ok(Some(entry)) = engine.get_by_number(id) {
+                    let n = (i as i64) + 1;
+                    println!("{:>5}  {}", n, entry.command);
+                }
+            }
+            return 0;
         }
 
         let entries = if let Some(ref q) = search_query {
@@ -23942,7 +23971,11 @@ impl ShellExecutor {
     }
 
     fn builtin_let(&mut self, args: &[String]) -> i32 {
+        // zsh: bare `let` errors "not enough arguments" with exit 1.
+        // Mirror by emitting the diagnostic to stderr (was silent
+        // exit 1) so script consumers see the same failure mode.
         if args.is_empty() {
+            eprintln!("zshrs:let:1: not enough arguments");
             return 1;
         }
 

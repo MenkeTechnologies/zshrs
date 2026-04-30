@@ -6360,6 +6360,41 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_let_no_args_errors() {
+    // zsh: bare `let` errors `not enough arguments` with exit 1.
+    // zshrs's `builtin_let` returned 1 silently (no diagnostic).
+    let (status, _, stderr) = run_zshrs("let");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("not enough arguments"), "got: {stderr}");
+}
+
+#[test]
+fn test_history_in_minus_c_mode_errors() {
+    // In `-c` (non-interactive) mode with no session entries,
+    // zsh's `history` (= `fc -l`) errors `no such event: 1`
+    // rather than dumping the on-disk persistent history.
+    // Mirrored — only show session entries (from `print -s`) and
+    // abort otherwise.
+    let (status, _, stderr) = run_zshrs("history");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("no such event: 1"), "got: {stderr}");
+    // With session adds, history shows them numbered from 1.
+    let (_, output, _) = run_zshrs("print -s a; print -s b; history");
+    assert!(output.contains("    1  a"), "got: {output:?}");
+    assert!(output.contains("    2  b"), "got: {output:?}");
+}
+
+#[test]
+fn test_read_q_requires_terminal() {
+    // zsh's `read -q` reads a single y/n from a terminal — outside
+    // a tty it errors "not interactive and can't open terminal".
+    // zshrs previously read from stdin and returned 0 silently.
+    let (status, _, stderr) = run_zshrs(r#"echo y | read -q ans"#);
+    assert_eq!(status, 1);
+    assert!(stderr.contains("can't open terminal"), "got: {stderr}");
+}
+
+#[test]
 fn test_escaped_glob_metachar_does_not_trigger_nomatch() {
     // `echo \*` should not abort with NOMATCH — the backslash escapes
     // the `*` so it's not a glob trigger. zshrs's `looks_like_glob`
