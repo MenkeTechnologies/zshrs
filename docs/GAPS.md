@@ -2219,6 +2219,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### Glob bracket `[!...]` / `[^...]` negation, POSIX class containment, extendedglob `pat#`/`pat##` postfix
+
+Direct port of zsh's pattern.c — the canonical pattern-class compile (`patcompcls` in pattern.c) and the POUND/POUND2 postfix cases in `patcompswitch`. zshrs's hand-rolled glob→regex translator had three independent bugs that all affected pattern matching:
+
+1. **`[!a]bc` matched `abc`.** zshrs copied `!` verbatim into the regex `[!a]bc`, which regex reads as "either `!` or `a`, then `bc`" — so any string starting with `a` matches. zsh's negation rule (POSIX `[!...]` ≡ regex `[^...]`) wasn't translated. Fix: when `!` is the first char inside `[...]`, emit `^` instead.
+
+2. **`[![:digit:]]*` failed.** The bracket scanner stopped at the first `]`, so `[![:digit:]]` was misread as `[![:digit:]` (no closing). Fix: detect POSIX class `[:NAME:]` inside the bracket scan and walk past `:]` as a unit, so the next `]` after the class isn't taken as the outer close.
+
+3. **`a##` / `[[:digit:]]##` left literal.** zshrs's translator pushed `a` then dropped the `##` postfix entirely. zsh's extendedglob `pat#` = zero-or-more (regex `*`), `pat##` = one-or-more (regex `+`). Direct port: after each atom (literal char, `?`, `[...]`, `(...)`), peek for `#`/`##` and emit `*`/`+` if extendedglob is set.
+
+Tests: `test_glob_bracket_negation_with_bang`, `test_glob_posix_class_with_negation`, `test_extglob_one_or_more_postfix`, `test_extglob_zero_or_more_postfix`.
+
 ### `$LINENO` was always `1` — never incremented per line, never reset on function entry
 
 - Two compounding bugs uncovered while porting zsh's `lineno` global from Src/input.c (line 330) and Src/init.c (line 1588). Filed by the iter-86 audit.

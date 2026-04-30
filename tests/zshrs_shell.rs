@@ -8488,6 +8488,56 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_glob_bracket_negation_with_bang() {
+    // Direct port of zsh's pattern.c bracket-class compile —
+    // `[!...]` and `[^...]` both negate. zshrs's compile-to-
+    // regex translator copied `!` verbatim, so `[!a]bc` matched
+    // "abc" via regex `[!a]bc` (`[!a]` = either `!` or `a`).
+    let (status, _, _) = run_zshrs(r#"[[ "abc" == [!a]bc ]] && echo y || echo n"#);
+    let _ = status;
+    let (_, output, _) = run_zshrs(r#"[[ "abc" == [!a]bc ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "n", "got: {output:?}");
+    let (_, output, _) = run_zshrs(r#"[[ "xyz" == [!a]yz ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+}
+
+#[test]
+fn test_glob_posix_class_with_negation() {
+    // POSIX char classes inside `[...]` were broken by the
+    // bracket scanner: it stopped at the first `]`, so
+    // `[![:digit:]]` was misread as `[![:digit:]` (incomplete).
+    let (_, output, _) = run_zshrs(r#"[[ "abc" == [![:digit:]]* ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+    let (_, output, _) = run_zshrs(r#"[[ "abc" == [[:digit:]]* ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "n", "got: {output:?}");
+}
+
+#[test]
+fn test_extglob_one_or_more_postfix() {
+    // Direct port of zsh's pattern.c POUND2 case — extendedglob
+    // `pat##` matches one or more of `pat`. Translated to regex
+    // `+`. zshrs's translator left the trailing `#` as a literal
+    // so `[[ "aaa" == a## ]]` failed to match.
+    let (_, output, _) =
+        run_zshrs(r#"setopt extendedglob; [[ "aaa" == a## ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"setopt extendedglob; [[ "abc123" == [[:alpha:]]##[[:digit:]]## ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+}
+
+#[test]
+fn test_extglob_zero_or_more_postfix() {
+    // `pat#` is zero-or-more. Empty input must match.
+    let (_, output, _) =
+        run_zshrs(r#"setopt extendedglob; [[ "" == a# ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"setopt extendedglob; [[ "aaa" == a# ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+}
+
+#[test]
 fn test_lineno_increments_per_line_in_dash_c() {
     // Direct port of zsh's `lineno` global tracking from
     // Src/input.c:330 — increments on each newline. Compiler

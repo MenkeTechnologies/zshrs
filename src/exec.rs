@@ -9555,6 +9555,27 @@ impl ShellExecutor {
         let mut regex_pattern = String::from("^");
         let mut numeric_ranges: Vec<(Option<i64>, Option<i64>)> = Vec::new();
         let mut chars = pattern.chars().peekable();
+        // Helper: after emitting any atom, check for zsh extendedglob
+        // postfix `#` (zero-or-more) / `##` (one-or-more) and append
+        // the equivalent regex quantifier. Direct port of zsh's
+        // pattern.c (`POUND` / `POUND2` cases in `patcompswitch`).
+        // Only fires when extendedglob is enabled.
+        let consume_extglob_postfix =
+            |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
+                if !extendedglob_on {
+                    return None;
+                }
+                if chars.peek() != Some(&'#') {
+                    return None;
+                }
+                chars.next();
+                if chars.peek() == Some(&'#') {
+                    chars.next();
+                    Some("+")
+                } else {
+                    Some("*")
+                }
+            };
         while let Some(c) = chars.next() {
             match c {
                 // ksh-style extglob: ?(p) *(p) +(p) @(p) — translate to
@@ -9600,7 +9621,12 @@ impl ShellExecutor {
                     regex_pattern.push_str(&format!("(?:{}){}", body_re, suffix));
                 }
                 '*' => regex_pattern.push_str(".*"),
-                '?' => regex_pattern.push('.'),
+                '?' => {
+                    regex_pattern.push('.');
+                    if let Some(q) = consume_extglob_postfix(&mut chars) {
+                        regex_pattern.push_str(q);
+                    }
+                }
                 '<' => {
                     // Try to parse `<lo-hi>`. If the form doesn't
                     // match, fall back to literal `<`.
@@ -9613,13 +9639,66 @@ impl ShellExecutor {
                     }
                 }
                 '[' => {
+                    // Direct port of zsh's character-class compile
+                    // (pattern.c, see `patcompcls` and the `[`
+                    // handling in `patcompswitch`):
+                    //   - `[!...]` and `[^...]` both negate (POSIX +
+                    //     zsh both accept; only `^` is canonical
+                    //     regex). Translate `!` -> `^` so the regex
+                    //     crate sees the right form. Was being
+                    //     copied verbatim, so `[!a]` matched `!` or
+                    //     `a` instead of "anything but a".
+                    //   - POSIX character classes `[:alpha:]` /
+                    //     `[:digit:]` etc. inside `[...]` already
+                    //     pass through the regex crate, but the
+                    //     trailing `]` of the class would be misread
+                    //     as the closing of the outer bracket. Walk
+                    //     past `[:NAME:]` as a unit so the next `]`
+                    //     after the class isn't taken as the close.
+                    //   - Backslash-escaped `]` (`[\\]]`) keeps the
+                    //     `]` as a literal class member.
                     regex_pattern.push('[');
+                    let mut first = true;
                     while let Some(cc) = chars.next() {
+                        if first && cc == '!' {
+                            regex_pattern.push('^');
+                            first = false;
+                            continue;
+                        }
+                        first = false;
                         if cc == ']' {
                             regex_pattern.push(']');
                             break;
                         }
+                        if cc == '\\' {
+                            // Pass escape + next char through.
+                            regex_pattern.push('\\');
+                            if let Some(nx) = chars.next() {
+                                regex_pattern.push(nx);
+                            }
+                            continue;
+                        }
+                        if cc == '[' && chars.peek() == Some(&':') {
+                            // POSIX class `[:NAME:]`. Read until
+                            // `:]` then push the class verbatim.
+                            regex_pattern.push('[');
+                            let mut prev_colon = false;
+                            for ic in chars.by_ref() {
+                                regex_pattern.push(ic);
+                                if prev_colon && ic == ']' {
+                                    break;
+                                }
+                                prev_colon = ic == ':';
+                            }
+                            continue;
+                        }
                         regex_pattern.push(cc);
+                    }
+                    // After a closed `[...]`, the bracket is a single
+                    // regex atom — apply extendedglob `#`/`##`
+                    // postfix as `*`/`+` directly.
+                    if let Some(q) = consume_extglob_postfix(&mut chars) {
+                        regex_pattern.push_str(q);
                     }
                 }
                 '(' => {
@@ -9653,7 +9732,14 @@ impl ShellExecutor {
                         regex_pattern.push('(');
                     }
                 }
-                ')' => regex_pattern.push(')'),
+                ')' => {
+                    regex_pattern.push(')');
+                    // Closed group is an atom — extendedglob `#`/`##`
+                    // postfix applies to the whole group.
+                    if let Some(q) = consume_extglob_postfix(&mut chars) {
+                        regex_pattern.push_str(q);
+                    }
+                }
                 '|' => regex_pattern.push('|'),
                 '\\' => {
                     // Backslash escapes the next char — treat literally.
@@ -9693,6 +9779,14 @@ impl ShellExecutor {
                         regex_pattern.push(']');
                     } else {
                         regex_pattern.push(c);
+                    }
+                    // After a literal/(#l)-class atom, extendedglob
+                    // `#`/`##` postfix maps to regex `*`/`+` and
+                    // binds to that single atom. Same as zsh's
+                    // pattern.c POUND/POUND2 handling on the atom
+                    // just compiled.
+                    if let Some(q) = consume_extglob_postfix(&mut chars) {
+                        regex_pattern.push_str(q);
                     }
                 }
             }
