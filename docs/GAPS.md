@@ -1572,6 +1572,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `typeset -a a` clobbered existing array to empty at top scope
+
+- The bare-declaration path always called `self.arrays.insert(name, Vec::new())`. zsh's typeset.c only zeroes a new binding at top scope; existing values are preserved unless you're inside a function (where bare `typeset NAME` shadows). Added `in_function || !exists` guard. Test: `test_typeset_a_preserves_existing_array_at_top_scope`.
+
+### `a=(...); typeset -aU a` didn't dedupe — array got cleared
+
+- Same root cause as above (clobber to empty). After the fix, also added an immediate dedupe pass when `-U` is given on an existing array, mirroring the dedupe block at line 21330+ that fires after var_attrs is set. Test: `test_typeset_aU_dedupes_existing_array`.
+
+### `${(U)${(s. .)s}[1]}` ignored the `[N]` subscript after the inner expansion
+
+- The nested-expansion handler returned the flag-applied joined-scalar without parsing a trailing `[N]` subscript. zsh treats inner-with-(s::) as an array; `[N]` selects an element. Added `[N]` parser after the inner close — splits on space, indexes (1-based, negative-from-end), then re-applies case-transform flags to the picked element. Test: `test_nested_expansion_subscript_after_flag`.
+
 ### `. file.sh ARG1 ARG2` didn't pass extra args as positionals to sourced script
 
 - zsh's source/`.` builtin passes `args[1..]` as `$1`/`$2`/... to the sourced file. We were ignoring extras — the script saw the parent's positionals (or empty in `-c` mode). Save outer positional_params, install args[1..] as new positionals, restore on exit. Tests: `test_source_passes_extra_args_as_positionals`, `test_source_preserves_outer_positionals`.
