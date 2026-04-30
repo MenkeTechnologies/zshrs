@@ -22583,26 +22583,16 @@ impl ShellExecutor {
             return 0;
         }
 
-        // trap -p [sigspec...]: print trap commands
-        if args.len() >= 1 && args[0] == "-p" {
-            let signals = if args.len() > 1 {
-                &args[1..]
-            } else {
-                &[] as &[String]
-            };
-            if signals.is_empty() {
-                for (sig, action) in &self.traps {
-                    println!("trap -- '{}' {}", action, sig);
-                }
-            } else {
-                for sig in signals {
-                    if let Some(action) = self.traps.get(sig) {
-                        println!("trap -- '{}' {}", action, sig);
-                    }
-                }
-            }
-            return 0;
-        }
+        // zsh's `trap` builtin does NOT accept `-p` (that's
+        // bash). zsh treats `-p` as a regular argument: with one
+        // arg `trap -p` becomes "set trap with action `-p` and no
+        // signal" which fails the action+signal requirement and
+        // falls through to the bare trap-name lookup. With no
+        // matching signal, it errors `command not found: -p`
+        // (the parser doesn't even reach the builtin — the shell
+        // sees `-p` as an unknown command name). Mirror that:
+        // don't intercept `-p`. Earlier zshrs added bash-style
+        // `-p` for compat but it diverged from zsh.
 
         // trap '' signal: reset to default
         // trap action signal...: set trap
@@ -28753,17 +28743,52 @@ impl ShellExecutor {
         // -x export, -g global, -U unique). Without -r tracking,
         // `integer -r I=42; ${(t)I}` returned just `integer` instead
         // of `integer-readonly`.
+        //
+        // `-i [BASE]` accepts an optional output radix (zsh:
+        // `integer -i 16 x=255` stores `255` but `echo $x` prints
+        // `16#FF` per the typeset -i semantics in builtin.c). The
+        // numeric arg is consumed when it directly follows `-i`.
         let mut readonly = false;
         let mut exported = false;
-        for arg in args {
+        let mut int_base: Option<u32> = None;
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
             if arg.starts_with('-') && arg.len() > 1 {
-                for ch in arg[1..].chars() {
+                let mut consumed_base = false;
+                let body = &arg[1..];
+                for (ci, ch) in body.chars().enumerate() {
                     match ch {
                         'r' => readonly = true,
                         'x' => exported = true,
+                        'i' => {
+                            // -i may be followed by a base in the
+                            // SAME arg ("-i16") or the NEXT arg
+                            // ("-i 16"). Same shape as zsh.
+                            let after = &body[ci + 1..];
+                            if !after.is_empty()
+                                && after.chars().all(|c| c.is_ascii_digit())
+                            {
+                                int_base = after.parse().ok();
+                                break;
+                            }
+                            // Look at next arg.
+                            if let Some(next) = args.get(i + 1) {
+                                if next.chars().all(|c| c.is_ascii_digit())
+                                    && !next.is_empty()
+                                {
+                                    int_base = next.parse().ok();
+                                    consumed_base = true;
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
+                if consumed_base {
+                    i += 1;
+                }
+                i += 1;
                 continue;
             }
             let (name, raw_value) = if let Some(eq_pos) = arg.find('=') {
@@ -28792,7 +28817,14 @@ impl ShellExecutor {
                 Some(v) => self.eval_arith_expr(v),
                 None => 0,
             };
-            self.variables.insert(name.to_string(), int_val.to_string());
+            // Format display value per the -i base if set. zsh's
+            // base-16 output reads `16#FF` for 255.
+            let stored = if let Some(b) = int_base {
+                format_int_in_base(int_val, b as u32)
+            } else {
+                int_val.to_string()
+            };
+            self.variables.insert(name.to_string(), stored);
             self.options.insert(format!("_integer_{}", name), true);
             let mut attr = VarAttr {
                 kind: VarKind::Integer,
@@ -28800,6 +28832,7 @@ impl ShellExecutor {
             };
             attr.readonly = readonly;
             attr.export = exported;
+            attr.int_base = int_base;
             self.var_attrs.insert(name.to_string(), attr);
             if readonly {
                 self.readonly_vars.insert(name.to_string());
@@ -28807,6 +28840,7 @@ impl ShellExecutor {
             if exported {
                 std::env::set_var(name, int_val.to_string());
             }
+            i += 1;
         }
         0
     }

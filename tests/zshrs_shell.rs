@@ -8488,6 +8488,41 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_integer_dash_i_with_base_arg() {
+    // zsh: `integer -i 16 x=255` -> stores `255` but displays
+    // `16#FF` per typeset -i semantics (zsh's builtin.c
+    // typeset_i flag accepts a base arg). zshrs's earlier
+    // arg-loop treated `16` as a separate name and errored
+    // "not an identifier: 16" because the previous flag-only
+    // loop didn't peek at the next arg for `-i`.
+    let (status, output, _) =
+        run_zshrs("integer -i 16 x=255; echo $x");
+    assert_eq!(status, 0);
+    assert_eq!(output.trim(), "16#FF", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs("integer -i 8 x=255; echo $x");
+    assert_eq!(output.trim(), "8#377", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs("integer -i 2 x=10; echo $x");
+    assert_eq!(output.trim(), "2#1010", "got: {output:?}");
+}
+
+#[test]
+fn test_trap_dash_p_not_a_flag() {
+    // zsh's trap builtin (Src/builtin.c bin_trap, line 7347)
+    // does NOT accept -p. zshrs added bash-style `-p` for compat
+    // but it diverged from zsh. With -p removed, `trap -p EXIT`
+    // becomes "set action `-p` for signal EXIT" which the shell
+    // dispatch treats as a missing command "-p" and emits
+    // `command not found: -p` — matches zsh exactly.
+    let (_, _, stderr) = run_zshrs("trap -p EXIT");
+    assert!(
+        stderr.contains("command not found: -p"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_extglob_tilde_exclusion() {
     // Direct port of zsh's pattern.c P_EXCLUDE handling — `pat1~pat2`
     // matches strings matching pat1 AND NOT matching pat2.
