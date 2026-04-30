@@ -1793,6 +1793,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `fc -l N M` (range query) emits `no events in that range` when the history is empty; the per-event `no such event: N` is reserved for single-positional / no-positional forms. zshrs collapsed both to the per-event form. Added a `positional.len() >= 2` arm that uses the range-specific message. Test: `test_fc_l_range_two_args_no_events_in_range`.
 
+### `umask abcd` printed generic "invalid mask" instead of zsh's per-char diagnostic
+
+- zsh validates symbolic umask values character-by-character: after class chars (`u`/`g`/`o`/`a`) it expects an operator (`+`/`-`/`=`). On invalid input it reports the specific bad operator: `umask abcd` → `bad symbolic mode operator: b`. zshrs printed a generic `umask: invalid mask: abcd`. Added a fallback parse: walk the leading class chars, then check if the next char is an operator; emit zsh's per-char message when it isn't. Test: `test_umask_bad_symbolic_operator_specific_error`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic

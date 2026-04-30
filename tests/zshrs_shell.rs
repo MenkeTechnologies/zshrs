@@ -6360,6 +6360,25 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_umask_bad_symbolic_operator_specific_error() {
+    // zsh validates symbolic umask args char by char; after the
+    // class chars (`u`/`g`/`o`/`a`) it expects an operator
+    // (`+`/`-`/`=`). `umask abcd` → first `a` is class, then `b`
+    // isn't an operator → `bad symbolic mode operator: b`. zshrs
+    // previously emitted a generic `invalid mask: abcd`.
+    let (_, _, stderr) = run_zshrs("umask abcd");
+    assert!(
+        stderr.contains("bad symbolic mode operator: b"),
+        "got: {stderr}"
+    );
+    let (_, _, stderr) = run_zshrs("umask uxyz");
+    assert!(
+        stderr.contains("bad symbolic mode operator: x"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_fc_l_range_two_args_no_events_in_range() {
     // zsh: `fc -l N M` (range query) errors `no events in that
     // range` when the history is empty — distinct from the

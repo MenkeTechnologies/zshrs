@@ -28019,7 +28019,24 @@ impl ShellExecutor {
                     umask(new_mask as libc::mode_t);
                 }
             } else {
-                eprintln!("umask: invalid mask: {}", v);
+                // Symbolic form parser failed earlier; try to give zsh's
+                // more specific diagnostic. zsh validates the second
+                // character — must be a `+`/`-`/`=` operator after the
+                // class chars. `umask abcd` → first is `a` (class), then
+                // `b` is not an operator → `bad symbolic mode operator: b`.
+                let bytes = v.as_bytes();
+                let mut i = 0;
+                while i < bytes.len() && matches!(bytes[i], b'u' | b'g' | b'o' | b'a') {
+                    i += 1;
+                }
+                if i < bytes.len() && !matches!(bytes[i], b'+' | b'-' | b'=') {
+                    eprintln!(
+                        "zshrs:umask:1: bad symbolic mode operator: {}",
+                        bytes[i] as char
+                    );
+                } else {
+                    eprintln!("umask: invalid mask: {}", v);
+                }
                 return 1;
             }
         } else {
