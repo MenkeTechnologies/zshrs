@@ -10248,6 +10248,52 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_source_passes_extra_args_as_positionals() {
+    // `. file.sh hi bye` should set $1=hi, $2=bye in the sourced
+    // script. Was leaving the parent's positionals (or empty) visible.
+    let path = std::env::temp_dir().join("zshrs_src_args_test.sh");
+    std::fs::write(&path, "echo a=$1 b=$2\n").unwrap();
+    let cmd = format!(". {} hi bye", path.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(output.trim(), "a=hi b=bye");
+}
+
+#[test]
+fn test_source_preserves_outer_positionals() {
+    // After source returns, the parent's positionals must be intact.
+    let path = std::env::temp_dir().join("zshrs_src_args_outer.sh");
+    std::fs::write(&path, ":\n").unwrap();
+    let cmd = format!(
+        r#"set -- a b c; . {} inner; echo "after=$@""#,
+        path.display()
+    );
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(output.trim(), "after=a b c");
+}
+
+#[test]
+fn test_array_splice_in_scalar_assign_joins() {
+    // `b="${a[@]}"` — assignment to a scalar joins like `[*]` does.
+    // Was capturing only the first element because the Array got
+    // truncated by scalar conversion.
+    let (_, output, _) = run_zshrs(r#"a=(1 2 3); b="${a[@]}"; echo $b"#);
+    assert_eq!(output.trim(), "1 2 3");
+}
+
+#[test]
+fn test_array_bare_splice_no_braces() {
+    // `$a[@]` (no braces) and `$a[*]` (no braces) — zsh treats these
+    // identically to the braced forms. Was joining to a single arg.
+    let (_, output, _) = run_zshrs(r#"a=(x y z); printf "%s\n" $a[@]"#);
+    assert_eq!(output.trim(), "x\ny\nz");
+    let (_, output, _) =
+        run_zshrs(r#"f() { echo $#; }; a=(x y z); f $a[@]"#);
+    assert_eq!(output.trim(), "3");
+}
+
+#[test]
 fn test_arith_assign_from_array_subscript() {
     // `((i=a[2]))` — the RHS array subscript must be pre-resolved so
     // the assignment lands `a[2]`'s VALUE in `i`, not the joined-scalar

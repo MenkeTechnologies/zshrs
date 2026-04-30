@@ -1296,11 +1296,17 @@ impl ZshCompiler {
         //   `[@]` → BUILTIN_ARRAY_ALL (returns Value::Array, splice).
         //   `[*]` → BUILTIN_ARRAY_JOIN_STAR (joins with first IFS
         //          char into a single Value::Str, matching zsh).
+        // In an ASSIGNMENT context (`b="${a[@]}"`), `[@]` joins like
+        // `[*]` — zsh's subst.c forces single-string output when the
+        // expansion is the RHS of a scalar assignment. Without this,
+        // `b="${a[@]}"` captured only the first element because the
+        // Array was implicitly truncated by the scalar conversion.
         if !has_bnull {
             if let Some(name) = array_splice_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                let bid = if array_splice_is_star(&untoked) {
+                let force_join = self.assign_context_depth > 0;
+                let bid = if array_splice_is_star(&untoked) || force_join {
                     crate::exec::BUILTIN_ARRAY_JOIN_STAR
                 } else {
                     crate::exec::BUILTIN_ARRAY_ALL
@@ -4102,9 +4108,26 @@ fn subscripted_arith_compound_check(expr: &str) -> bool {
 }
 
 fn array_splice_ref(s: &str) -> Option<&str> {
+    // Braced form: ${NAME[@]} / ${NAME[*]}
     for sub in &["[@]}", "[*]}"] {
         if let Some(rest) = s.strip_suffix(sub) {
             if let Some(name) = rest.strip_prefix("${") {
+                if !name.is_empty()
+                    && (name.chars().next().unwrap() == '_'
+                        || name.chars().next().unwrap().is_ascii_alphabetic())
+                    && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+                {
+                    return Some(name);
+                }
+            }
+        }
+    }
+    // Bare form: $NAME[@] / $NAME[*]. zsh treats these identically to
+    // the braced versions; without this match, `printf "%s\n" $a[@]`
+    // joined the array to a single arg.
+    for sub in &["[@]", "[*]"] {
+        if let Some(rest) = s.strip_suffix(sub) {
+            if let Some(name) = rest.strip_prefix('$') {
                 if !name.is_empty()
                     && (name.chars().next().unwrap() == '_'
                         || name.chars().next().unwrap().is_ascii_alphabetic())
@@ -4123,7 +4146,7 @@ fn array_splice_ref(s: &str) -> Option<&str> {
 /// each element separately) and BUILTIN_ARRAY_JOIN_STAR (joins with
 /// the first IFS char into a single string).
 fn array_splice_is_star(s: &str) -> bool {
-    s.ends_with("[*]}")
+    s.ends_with("[*]}") || s.ends_with("[*]")
 }
 
 /// For `[[ ... == PATTERN ]]` style tests, walk PATTERN and replace
