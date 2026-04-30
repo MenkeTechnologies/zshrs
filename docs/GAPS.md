@@ -1741,6 +1741,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: bare `type` (no args) exits 1 — type requires at least one name to look up. zshrs returned 0 silently. One-line fix in `builtin_type`'s empty-args guard. Test: `test_type_no_args_exits_1`.
 
+### `[${(@)a}]` for empty `a` dropped the surrounding brackets
+
+- The `(@)NAME` flag form is the splice equivalent of `[@]` — each element becomes its own arg; surrounding literals should stick to first/last (so `[${(@)a}]` for an empty `a` still prints `[]`). zshrs's `is_splice_expansion` only matched `[@]`/`[*]`/slice forms, so `(@)` fell into DISTRIBUTE which drops the brackets when the array is empty. Added a `(...)` flag-block check that returns true when the flag set contains `@`. Test: `test_paren_at_flag_empty_array_preserves_brackets`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
