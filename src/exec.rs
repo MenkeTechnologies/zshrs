@@ -16439,9 +16439,15 @@ impl ShellExecutor {
             }
             Err(msg) => {
                 // zsh writes arith errors to stderr in `zshrs:LINE: <msg>`
-                // form. Without this gate, `$((10/0))` returned "0" silently
-                // and masked real bugs in user scripts.
+                // form AND aborts the command (`echo $((1/0))` never
+                // runs echo). Mirror by exiting in `-c` mode and
+                // returning empty so the surrounding command sees no
+                // value. Without exit, the substitution returned "0"
+                // and `echo` printed it, masking the failure.
                 eprintln!("zshrs:1: {}", msg);
+                if msg == "division by zero" || msg.starts_with("division by zero") {
+                    std::process::exit(1);
+                }
                 "0".to_string()
             }
         }

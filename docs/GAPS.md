@@ -1801,6 +1801,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh enforces a minimum of 1 on `HISTSIZE`. The internal `params.rs` setter already clamped via `.max(1)`, but the assignment path (`BUILTIN_SET_VAR`) writes directly into `variables` and skipped the clamp. So a script doing `HISTSIZE=0; echo $HISTSIZE` saw `0` instead of `1`. Added a name-specific clamp at the SET_VAR layer: `if name == "HISTSIZE"` parse, max with 1, store the clamped string. Test: `test_histsize_min_clamp_to_one`.
 
+### `echo $((1/0))` printed `0` after the error message
+
+- zsh aborts the command on arithmetic division-by-zero — `echo` never runs. zshrs's `evaluate_arithmetic` printed the error then returned `"0"` from the `Err` arm, so `echo $((1/0))` printed `division by zero` to stderr AND `0` to stdout (status 0). The shell continued normally. Now matches zsh: division-by-zero in `evaluate_arithmetic` calls `process::exit(1)` after printing the error, aborting the surrounding command in `-c` mode. Other arith errors still return `"0"` (matches zsh's NumericContext defaults). Test: `test_arith_division_by_zero_aborts`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
