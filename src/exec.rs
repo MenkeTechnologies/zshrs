@@ -2902,9 +2902,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // still fire on the per-element list. Direct port of
         // zsh's subst.c nojoin/spbreak path. Without this,
         // `"${(o)a[@]}"` skipped the sort in DQ.
+        // The explicit `@` flag is also an array-context marker — zsh
+        // treats `${(@o)a}` same as `${(o)a[@]}` (both keep array-only
+        // sort flags active in DQ). Without checking flags too, the DQ
+        // strip dropped `o` for the bare-name `(@o)` case.
         let has_at_subscript = had_at_subscript
             || name.ends_with("[@]")
-            || name.ends_with("[*]");
+            || name.ends_with("[*]")
+            || flags.contains('@');
         if (dq_compile || dq_runtime) && !has_at_subscript {
             // Strip array-only flags (sort/unique/index variants).
             // (M) is NOT stripped here — it still modifies `:#pat`
@@ -2950,18 +2955,39 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 '#' => {
                     // `(#)` — evaluate each element as an arithmetic
                     // expression, then output the character with that
-                    // code point. `${(#)a}` with `a=(65 66 67)` → "A B C".
-                    // Distinct from `${#name}` (length) and `${(w)#s}`
-                    // (word count) — those are length ops, not flags.
+                    // code point. Direct port of substevalchar in
+                    // src/zsh/Src/subst.c:1490-1520. zsh's flow:
+                    //   ires = mathevali(ptr);     // line 1497
+                    //   if (errflag) return "";    // 1499-1502
+                    //   if (ires < 0) zerr("character not in range");  // 1504-1506
+                    //   if MULTIBYTE && ires>127: ucs4tomb           // 1508-1511
+                    //   else: single-byte sprintf                    // 1514-1518
                     let to_char = |s: &str| -> String {
                         let n = with_executor(|exec| exec.eval_arith_expr(s));
-                        if n < 0 {
-                            String::new()
-                        } else if let Some(c) = char::from_u32(n as u32) {
-                            c.to_string()
-                        } else {
-                            String::new()
+                        // zsh subst.c:1504-1518 — negative WARNS but
+                        // STILL outputs the low byte (truncated cast
+                        // through `(int)ires` + `%c` sprintf at line
+                        // 1514-1517). The zerr at line 1505 just sets
+                        // errflag without aborting the function. We
+                        // skip the error message (matches zsh's
+                        // observed silent behavior under -f -c) and
+                        // mirror the low-byte fallback.
+                        if n < 0 || n > 0x10FFFF {
+                            // Truncated cast: low 8 bits as Latin-1
+                            // byte (zsh's `%c` sprintf on `(int)ires`).
+                            let byte = (n as i32 as u32) & 0xFF;
+                            // Encode the byte as raw — for high bytes
+                            // (0x80-0xFF), wrap with the same UTF-8
+                            // promotion zsh's metafy() uses.
+                            return char::from_u32(byte)
+                                .map(|c| c.to_string())
+                                .unwrap_or_default();
                         }
+                        // Valid Unicode scalar — char::from_u32 returns
+                        // the right multi-byte UTF-8 sequence in Rust.
+                        char::from_u32(n as u32)
+                            .map(|c| c.to_string())
+                            .unwrap_or_default()
                     };
                     state = match state {
                         St::S(s) => St::S(to_char(&s)),

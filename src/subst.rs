@@ -1020,16 +1020,31 @@ pub fn dopadding(
     result
 }
 
-/// Get delimited string argument (from subst.c get_strarg lines 1346-1417)
+/// Get delimited string argument. Direct port of `get_strarg` in
+/// `src/zsh/Src/subst.c:1348-1417`. Reads the leading delimiter,
+/// computes the matching close (bracket pair or self for non-bracket
+/// delim), then scans for the close. Also handles the lexer's TOK
+/// markers (Inpar/Inang/Inbrace/Inbrack → Outpar/Outang/Outbrace/
+/// Outbrack) per subst.c:1379-1391 — these arise when the source has
+/// been pre-tokenized by the lexer (e.g. `(j(...))` shapes that go
+/// through gettokstr before reaching paramsubst).
 pub fn get_strarg(s: &str) -> Option<(&str, char)> {
+    use crate::tokens::char_tokens as tk;
     let mut chars = s.chars();
     let delim = chars.next()?;
 
     let end_delim = match delim {
+        // Plain bracket pairs (subst.c:1366-1378).
         '(' => ')',
         '[' => ']',
         '{' => '}',
         '<' => '>',
+        // TOK markers from the lexer (subst.c:1379-1391).
+        c if c == tk::INPAR => tk::OUTPAR,
+        c if c == tk::INANG => tk::OUTANG,
+        c if c == tk::INBRACE => tk::OUTBRACE,
+        c if c == tk::INBRACK => tk::OUTBRACK,
+        // Non-bracket delim: matching char is itself (e.g. `j::sep::`).
         _ => delim,
     };
 
