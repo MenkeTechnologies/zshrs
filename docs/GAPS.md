@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `${a//(#i)L/X}` now honors inline pattern flags (case-insensitive replace)
+
+Direct port of zsh's pattern.c — inline pattern flags `(#i)` / `(#l)` / `(#I)` apply to the replacement operator too, not just `[[ ... = pat ]]`. The same `parse_pattern_flags` helper that glob_match_static uses now runs before BUILTIN_PARAM_REPLACE compiles its regex; `(#i)` adds the `(?i)` regex prefix so the match is case-insensitive.
+
+zshrs previously left `(#i)L` as literal regex chars (no match) so `${a//(#i)L/X}` for `a=hello` returned `hello` instead of `heXXo`.
+
+Test: `test_param_replace_case_insensitive_inline_flag`.
+
 ### `IFS=: read x y <<< "a:b:c"` now puts `b:c` in `y` (separator preserved in remainder)
 
 Direct port of zsh's bin_read in builtin.c. When input has more fields than vars, the last var receives the unsplit REMAINDER from the position after the (N-1)th separator — meaning the separator chars between fields N..end are PRESERVED literally. zshrs previously split into a `Vec<&str>` and `join(" ")`d, collapsing all separators to spaces (so `IFS=: read x y <<< "a:b:c"` produced `y="b c"` instead of zsh's `y="b:c"`).

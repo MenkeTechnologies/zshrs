@@ -8488,6 +8488,24 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_param_replace_case_insensitive_inline_flag() {
+    // `(#i)` inline pattern flag (zsh extendedglob) makes the
+    // replacement match case-insensitively. zshrs's
+    // BUILTIN_PARAM_REPLACE didn't run patterns through
+    // parse_pattern_flags, so `${a//(#i)L/X}` left `(#i)L`
+    // as literal regex (no match). Direct port: same helper
+    // glob_match_static uses, with `(?i)` prefix applied.
+    let (_, output, _) = run_zshrs(
+        r#"setopt extendedglob; a=hello; echo "${a//(#i)L/X}""#,
+    );
+    assert_eq!(output.trim(), "heXXo", "got: {output:?}");
+    let (_, output, _) = run_zshrs(
+        r#"setopt extendedglob; a=Hello; echo "${a/(#i)hello/X}""#,
+    );
+    assert_eq!(output.trim(), "X", "got: {output:?}");
+}
+
+#[test]
 fn test_read_preserves_separator_in_last_var() {
     // Direct port of zsh's bin_read in builtin.c — when input
     // has more fields than vars, the last var gets the unsplit
