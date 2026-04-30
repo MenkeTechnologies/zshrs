@@ -8488,6 +8488,27 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_return_no_arg_uses_last_status() {
+    // zsh: `return` with no arg returns with the status of the
+    // most recently executed command. `foo() { false; return; }`
+    // returns 1 (false's status), not 0. Direct port of zsh's
+    // bin_return in builtin.c — exec.last_status is stale at
+    // builtin-time (only synced at statement boundaries), so
+    // BUILTIN_RETURN now reads vm.last_status (the live value)
+    // and syncs it before delegating to the executor method.
+    let (_, output, _) =
+        run_zshrs("foo() { false; return; }; foo; echo $?");
+    assert_eq!(output.trim(), "1", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs("foo() { true; return; }; foo; echo $?");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+    // Explicit arg overrides last_status.
+    let (_, output, _) =
+        run_zshrs("foo() { false; return 0; }; foo; echo $?");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}
+
+#[test]
 fn test_array_slice_with_arith_length_expr() {
     // zsh: `${arr[@]:1:$((2+0))}` slices the array — $((2+0))
     // evaluates to 2, return elements 2 and 3 (1-indexed).

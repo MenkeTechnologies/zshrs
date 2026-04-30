@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `return` with no arg now uses live `vm.last_status`, not stale `executor.last_status`
+
+zsh's bin_return (Src/builtin.c) returns the status of the most recently executed command when no arg is given — `foo() { false; return; }` returns 1, not 0. zshrs's `builtin_return` read `self.last_status`, which is the EXECUTOR's view; that value only gets synced from the VM at statement boundaries, so during the `return` builtin it was stale (held the value from BEFORE the function call started, typically 0).
+
+Direct port of the existing pattern used by other status-sensitive builtins: read `vm.last_status` (the live value) at the registration site and sync it into `exec.last_status` before delegating to `builtin_return`.
+
+Test: `test_return_no_arg_uses_last_status`.
+
 ### `${a[@]:1:$((2+0))}` array slice with arith length now slices array elements (was char-slicing joined value)
 
 zshrs's `BUILTIN_PARAM_SUBSTRING_EXPR` (the arith-expr variant of `${var:N:M}`) treated all names as scalars — it called `get_variable(name)` and char-sliced the result. For `a[@]`, that gave the IFS-joined string "a b c d e", and char-slicing position 1 with length 2 returned " b" (space + 'b'), not zsh's "b c" (elements 2-3 of the array).
