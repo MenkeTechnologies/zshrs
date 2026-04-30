@@ -51,20 +51,22 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
     // Watch for SIGTERM / SIGINT.
     let shutdown_signals = Arc::clone(&shutdown);
     tokio::spawn(async move {
-        let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(?e, "failed to install SIGTERM handler");
-                return;
-            }
-        };
-        let mut sigint = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(?e, "failed to install SIGINT handler");
-                return;
-            }
-        };
+        let mut sigterm =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(?e, "failed to install SIGTERM handler");
+                    return;
+                }
+            };
+        let mut sigint =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(?e, "failed to install SIGINT handler");
+                    return;
+                }
+            };
 
         tokio::select! {
             _ = sigterm.recv() => tracing::info!("received SIGTERM"),

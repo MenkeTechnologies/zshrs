@@ -276,7 +276,15 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(400)).await;
 
         let stats = watcher.stats();
-        assert!(stats.events_received >= 1, "events_received = {}", stats.events_received);
-        assert!(stats.events_routed >= 1, "events_routed = {}", stats.events_routed);
+        assert!(
+            stats.events_received >= 1,
+            "events_received = {}",
+            stats.events_received
+        );
+        assert!(
+            stats.events_routed >= 1,
+            "events_routed = {}",
+            stats.events_routed
+        );
     }
 }

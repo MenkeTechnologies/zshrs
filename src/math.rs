@@ -78,7 +78,11 @@ impl MathNum {
                 if f.is_nan() {
                     "NaN".to_string()
                 } else if f.is_infinite() {
-                    if *f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() }
+                    if *f > 0.0 {
+                        "Inf".to_string()
+                    } else {
+                        "-Inf".to_string()
+                    }
                 } else {
                     format!("{:.10}", f)
                 }
@@ -106,7 +110,11 @@ impl MathNum {
                     return "NaN".to_string();
                 }
                 if f.is_infinite() {
-                    return if *f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() };
+                    return if *f > 0.0 {
+                        "Inf".to_string()
+                    } else {
+                        "-Inf".to_string()
+                    };
                 }
                 // Cast-to-int only when the float actually fits in i64.
                 // For huge values like 1e100, `as i64` saturates to
@@ -137,10 +145,13 @@ impl MathNum {
                     if let Some(epos) = raw.rfind('e') {
                         let (mantissa, exp) = raw.split_at(epos);
                         let exp_body = &exp[1..];
-                        let (sign, digits) =
-                            if exp_body.starts_with('-') { ("-", &exp_body[1..]) }
-                            else if exp_body.starts_with('+') { ("+", &exp_body[1..]) }
-                            else { ("+", exp_body) };
+                        let (sign, digits) = if exp_body.starts_with('-') {
+                            ("-", &exp_body[1..])
+                        } else if exp_body.starts_with('+') {
+                            ("+", &exp_body[1..])
+                        } else {
+                            ("+", exp_body)
+                        };
                         let padded = if digits.len() < 2 {
                             format!("0{}", digits)
                         } else {

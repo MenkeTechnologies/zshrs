@@ -149,7 +149,12 @@ fn zcache_clean(args: &[String]) -> i32 {
     // zcache clean [shards|index|log|--all]
     let target = args
         .iter()
-        .find(|a| matches!(a.as_str(), "shards" | "index" | "log" | "stats" | "shard" | "catalog"))
+        .find(|a| {
+            matches!(
+                a.as_str(),
+                "shards" | "index" | "log" | "stats" | "shard" | "catalog"
+            )
+        })
         .map(|s| s.as_str())
         .unwrap_or_else(|| {
             if args.iter().any(|a| a == "--all") {
@@ -277,7 +282,10 @@ fn print_shells_table(shells: &Value) {
         println!("(no shells)");
         return;
     }
-    println!("{:<6} {:<8} {:<14} {:<8} {:<10} {}", "ID", "PID", "TTY", "UPTIME", "TAGS", "CWD");
+    println!(
+        "{:<6} {:<8} {:<14} {:<8} {:<10} {}",
+        "ID", "PID", "TTY", "UPTIME", "TAGS", "CWD"
+    );
     for s in arr {
         let id = s.get("client_id").and_then(Value::as_u64).unwrap_or(0);
         let pid = s.get("pid").and_then(Value::as_i64).unwrap_or(0);
@@ -294,10 +302,19 @@ fn print_shells_table(shells: &Value) {
                     .join(",")
             })
             .unwrap_or_default();
-        let tags = if tags.is_empty() { "-".to_string() } else { tags };
+        let tags = if tags.is_empty() {
+            "-".to_string()
+        } else {
+            tags
+        };
         println!(
             "{:<6} {:<8} {:<14} {:<8} {:<10} {}",
-            id, pid, tty, format!("{}s", uptime), tags, cwd
+            id,
+            pid,
+            tty,
+            format!("{}s", uptime),
+            tags,
+            cwd
         );
     }
 }
@@ -331,11 +348,11 @@ fn zping(args: &[String]) -> i32 {
     match client.call("ping", payload) {
         Ok(v) => {
             let rtt = start.elapsed();
-            let uptime = v.get("daemon_uptime_ms").and_then(Value::as_u64).unwrap_or(0);
-            println!(
-                "pong from daemon (uptime {} ms, rtt {:?})",
-                uptime, rtt
-            );
+            let uptime = v
+                .get("daemon_uptime_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            println!("pong from daemon (uptime {} ms, rtt {:?})", uptime, rtt);
             0
         }
         Err(e) => err_exit("zping", &e.to_string()),
@@ -368,7 +385,11 @@ fn zuntag(args: &[String]) -> i32 {
     let tags: Vec<String> = if all {
         Vec::new()
     } else {
-        args.iter().skip(1).filter(|a| !a.starts_with("--")).cloned().collect()
+        args.iter()
+            .skip(1)
+            .filter(|a| !a.starts_with("--"))
+            .cloned()
+            .collect()
     };
     if !all && tags.is_empty() {
         return err_exit("zuntag", "usage: zuntag <tag>... | --all");
@@ -400,7 +421,10 @@ fn zsend(args: &[String]) -> i32 {
     };
     match client.call("send", json!({ "target": target, "command": command })) {
         Ok(v) => {
-            let count = v.get("delivered_count").and_then(Value::as_u64).unwrap_or(0);
+            let count = v
+                .get("delivered_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
             println!("delivered to {} shell(s)", count);
             0
         }
@@ -422,7 +446,10 @@ fn znotify(args: &[String]) -> i32 {
         json!({ "target": target, "message": message, "urgency": "normal" }),
     ) {
         Ok(v) => {
-            let count = v.get("delivered_count").and_then(Value::as_u64).unwrap_or(0);
+            let count = v
+                .get("delivered_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
             println!("notified {} shell(s)", count);
             0
         }
@@ -454,7 +481,10 @@ fn parse_send_args(args: &[String], cmd: &str) -> Result<(Value, String), i32> {
         (json!({ "shell_id": id }), None)
     } else {
         // Treat as a literal text token; require at least one more arg as the target type.
-        return Err(err_exit(cmd, "first argument must be --all, --tag <n>, or <shell_id>"));
+        return Err(err_exit(
+            cmd,
+            "first argument must be --all, --tag <n>, or <shell_id>",
+        ));
     };
 
     let mut rest: Vec<String> = rest_first.into_iter().collect();
@@ -474,7 +504,10 @@ fn zlog(args: &[String]) -> i32 {
         "path" => zlog_path(),
         "tail" | "grep" | "level" | "clear" | "rotate" | "stats" => err_exit(
             "zlog",
-            &format!("`{}` not yet implemented in v1 foundation; use `tail` on the path", verb),
+            &format!(
+                "`{}` not yet implemented in v1 foundation; use `tail` on the path",
+                verb
+            ),
         ),
         _ => err_exit("zlog", &format!("unknown verb `{}`", verb)),
     }
@@ -536,9 +569,28 @@ mod tests {
     fn zshrs_builtin_names_no_zsh_clash() {
         // Per docs/DAEMON.md "z* builtin family (locked, no shadowing of zsh)".
         let zsh_owned: &[&str] = &[
-            "zmv", "zparseopts", "zformat", "zstat", "zstyle", "zprof", "zcompile",
-            "zargs", "zcurses", "zsystem", "ztie", "zuntie", "zselect", "zsocket",
-            "zftp", "zpty", "zed", "zcalc", "zregexparse", "zutil", "zmodload", "zle",
+            "zmv",
+            "zparseopts",
+            "zformat",
+            "zstat",
+            "zstyle",
+            "zprof",
+            "zcompile",
+            "zargs",
+            "zcurses",
+            "zsystem",
+            "ztie",
+            "zuntie",
+            "zselect",
+            "zsocket",
+            "zftp",
+            "zpty",
+            "zed",
+            "zcalc",
+            "zregexparse",
+            "zutil",
+            "zmodload",
+            "zle",
         ];
         for name in ZSHRS_BUILTIN_NAMES {
             assert!(

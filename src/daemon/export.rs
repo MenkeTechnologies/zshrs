@@ -69,33 +69,34 @@ fn render(
         "text" => render_text(state, target),
         other => Err(ErrPayload::new(
             "bad_format",
-            format!(
-                "format `{}` not supported (try sh|json|yaml|text)",
-                other
-            ),
+            format!("format `{}` not supported (try sh|json|yaml|text)", other),
         )),
     }
 }
 
-fn read_canonical(state: &DaemonState, subsystem: &str) -> std::result::Result<Vec<CanonicalRow>, ErrPayload> {
-    state.with_catalog(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT key, value, set_at_ns, set_by_shell FROM canonical \
+fn read_canonical(
+    state: &DaemonState,
+    subsystem: &str,
+) -> std::result::Result<Vec<CanonicalRow>, ErrPayload> {
+    state
+        .with_catalog(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT key, value, set_at_ns, set_by_shell FROM canonical \
              WHERE subsystem = ? ORDER BY key ASC",
-        )?;
-        let rows = stmt
-            .query_map(rusqlite::params![subsystem], |r| {
-                Ok(CanonicalRow {
-                    key: r.get(0)?,
-                    value: r.get(1)?,
-                    set_at_ns: r.get(2)?,
-                    set_by_shell: r.get(3)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok::<_, rusqlite::Error>(rows)
-    })
-    .map_err(ErrPayload::from)
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![subsystem], |r| {
+                    Ok(CanonicalRow {
+                        key: r.get(0)?,
+                        value: r.get(1)?,
+                        set_at_ns: r.get(2)?,
+                        set_by_shell: r.get(3)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok::<_, rusqlite::Error>(rows)
+        })
+        .map_err(ErrPayload::from)
 }
 
 /// Strip JSON quoting if the value-string came from canonical.value (which we stored
@@ -125,7 +126,11 @@ fn shell_quote(v: &str) -> String {
     format!("'{}'", escaped)
 }
 
-fn render_sh(state: &DaemonState, target: &str, additive: bool) -> std::result::Result<String, ErrPayload> {
+fn render_sh(
+    state: &DaemonState,
+    target: &str,
+    additive: bool,
+) -> std::result::Result<String, ErrPayload> {
     let mut out = String::new();
     let rows = read_canonical(state, &normalize_subsystem(target)?)?;
 
@@ -168,15 +173,25 @@ fn render_sh(state: &DaemonState, target: &str, additive: bool) -> std::result::
                 out.push_str("unalias -m '*' 2>/dev/null || true\n");
             }
             for r in &rows {
-                out.push_str(&format!("alias {}={}\n", r.key, shell_quote(&unjson(&r.value))));
+                out.push_str(&format!(
+                    "alias {}={}\n",
+                    r.key,
+                    shell_quote(&unjson(&r.value))
+                ));
             }
         }
         "galiases" => {
             if !additive {
-                out.push_str("# wipe global aliases by re-listing as no-op (zsh has no -gm wipe)\n");
+                out.push_str(
+                    "# wipe global aliases by re-listing as no-op (zsh has no -gm wipe)\n",
+                );
             }
             for r in &rows {
-                out.push_str(&format!("alias -g {}={}\n", r.key, shell_quote(&unjson(&r.value))));
+                out.push_str(&format!(
+                    "alias -g {}={}\n",
+                    r.key,
+                    shell_quote(&unjson(&r.value))
+                ));
             }
         }
         "saliases" => {
@@ -184,7 +199,11 @@ fn render_sh(state: &DaemonState, target: &str, additive: bool) -> std::result::
                 out.push_str("# wipe suffix aliases\n");
             }
             for r in &rows {
-                out.push_str(&format!("alias -s {}={}\n", r.key, shell_quote(&unjson(&r.value))));
+                out.push_str(&format!(
+                    "alias -s {}={}\n",
+                    r.key,
+                    shell_quote(&unjson(&r.value))
+                ));
             }
         }
         "env" => {
@@ -192,7 +211,11 @@ fn render_sh(state: &DaemonState, target: &str, additive: bool) -> std::result::
                 out.push_str("# (no global wipe — env is process-state)\n");
             }
             for r in &rows {
-                out.push_str(&format!("export {}={}\n", r.key, shell_quote(&unjson(&r.value))));
+                out.push_str(&format!(
+                    "export {}={}\n",
+                    r.key,
+                    shell_quote(&unjson(&r.value))
+                ));
             }
         }
         "params" => {
@@ -204,7 +227,11 @@ fn render_sh(state: &DaemonState, target: &str, additive: bool) -> std::result::
                 // Best-effort type detection — array values come as JSON arrays.
                 if val.starts_with('[') && val.ends_with(']') {
                     if let Ok(arr) = serde_json::from_str::<Vec<String>>(&val) {
-                        let joined = arr.iter().map(|s| shell_quote(s)).collect::<Vec<_>>().join(" ");
+                        let joined = arr
+                            .iter()
+                            .map(|s| shell_quote(s))
+                            .collect::<Vec<_>>()
+                            .join(" ");
                         out.push_str(&format!("typeset -ga {}=({})\n", r.key, joined));
                         continue;
                     }
@@ -255,13 +282,16 @@ fn render_sh(state: &DaemonState, target: &str, additive: bool) -> std::result::
             }
         }
         // Binary / introspection-only targets refuse sh format.
-        "shard" | "index" | "catalog" | "history" | "entry_stats" | "subscriptions"
-        | "shells" | "plugins" | "compiled_files" | "daemon_state" | "_comps"
-        | "_services" | "_patcomps" | "_describe_handlers" | "command_hash"
-        | "autoload_table" | "functions" | "theme" | "zcompdump" | "script" | "sourced" => {
+        "shard" | "index" | "catalog" | "history" | "entry_stats" | "subscriptions" | "shells"
+        | "plugins" | "compiled_files" | "daemon_state" | "_comps" | "_services" | "_patcomps"
+        | "_describe_handlers" | "command_hash" | "autoload_table" | "functions" | "theme"
+        | "zcompdump" | "script" | "sourced" => {
             return Err(ErrPayload::new(
                 "format_unsupported_for_target",
-                format!("target `{}` does not support sh format; try --format json", target),
+                format!(
+                    "target `{}` does not support sh format; try --format json",
+                    target
+                ),
             ));
         }
         other => {
@@ -296,7 +326,11 @@ fn render_yaml(state: &DaemonState, target: &str) -> std::result::Result<String,
     let mut out = String::new();
     out.push_str(&format!("subsystem: {}\nrows:\n", subsystem));
     for r in &rows {
-        out.push_str(&format!("  - key: {}\n    value: {}\n", yaml_quote(&r.key), yaml_quote(&unjson(&r.value))));
+        out.push_str(&format!(
+            "  - key: {}\n    value: {}\n",
+            yaml_quote(&r.key),
+            yaml_quote(&unjson(&r.value))
+        ));
     }
     Ok(out)
 }
@@ -325,14 +359,18 @@ fn yaml_quote(v: &str) -> String {
 /// (path/fpath/manpath/etc.) match by lowercasing.
 fn normalize_subsystem(target: &str) -> std::result::Result<String, ErrPayload> {
     Ok(match target {
-        "path" | "fpath" | "manpath" | "infopath" | "cdpath" | "ld_library_path" => target.to_string(),
+        "path" | "fpath" | "manpath" | "infopath" | "cdpath" | "ld_library_path" => {
+            target.to_string()
+        }
         "named_dir" | "aliases" | "galiases" | "saliases" => match target {
             "aliases" => "alias".to_string(),
             "galiases" => "galias".to_string(),
             "saliases" => "salias".to_string(),
             other => other.to_string(),
         },
-        "env" | "params" | "zstyle" | "bindkey" | "setopt" | "zmodload" | "compdef" => target.to_string(),
+        "env" | "params" | "zstyle" | "bindkey" | "setopt" | "zmodload" | "compdef" => {
+            target.to_string()
+        }
         "function" => "function".to_string(),
         // Fall-through: treat target as the subsystem name.
         other => other.to_string(),
@@ -366,9 +404,16 @@ mod tests {
     #[tokio::test]
     async fn export_aliases_sh_with_wipe() {
         let (_tmp, state) = fresh();
-        push(&state, "alias", json!({ "ll": "ls -la", "gst": "git status" })).await;
+        push(
+            &state,
+            "alias",
+            json!({ "ll": "ls -la", "gst": "git status" }),
+        )
+        .await;
 
-        let r = op_export(&state, json!({ "target": "aliases" })).await.unwrap();
+        let r = op_export(&state, json!({ "target": "aliases" }))
+            .await
+            .unwrap();
         let body = r["body"].as_str().unwrap();
         assert!(body.starts_with("unalias -m '*'"));
         assert!(body.contains("alias gst="));
@@ -380,7 +425,9 @@ mod tests {
         let (_tmp, state) = fresh();
         push(&state, "path", json!(["/usr/local/bin", "/usr/bin"])).await;
 
-        let r = op_export(&state, json!({ "target": "path" })).await.unwrap();
+        let r = op_export(&state, json!({ "target": "path" }))
+            .await
+            .unwrap();
         let body = r["body"].as_str().unwrap();
         assert!(body.contains("path=()"));
         assert!(body.contains("path+=("));
@@ -392,7 +439,9 @@ mod tests {
     async fn export_named_dir_sh() {
         let (_tmp, state) = fresh();
         push(&state, "named_dir", json!({ "proj": "/Users/wizard/p" })).await;
-        let r = op_export(&state, json!({ "target": "named_dir" })).await.unwrap();
+        let r = op_export(&state, json!({ "target": "named_dir" }))
+            .await
+            .unwrap();
         let body = r["body"].as_str().unwrap();
         assert!(body.contains("hash -d proj"));
     }
@@ -400,8 +449,15 @@ mod tests {
     #[tokio::test]
     async fn export_setopt_emits_setopt_unsetopt() {
         let (_tmp, state) = fresh();
-        push(&state, "setopt", json!({ "extended_glob": "on", "beep": "off" })).await;
-        let r = op_export(&state, json!({ "target": "setopt" })).await.unwrap();
+        push(
+            &state,
+            "setopt",
+            json!({ "extended_glob": "on", "beep": "off" }),
+        )
+        .await;
+        let r = op_export(&state, json!({ "target": "setopt" }))
+            .await
+            .unwrap();
         let body = r["body"].as_str().unwrap();
         assert!(body.contains("setopt extended_glob"));
         assert!(body.contains("unsetopt beep"));
@@ -411,12 +467,9 @@ mod tests {
     async fn export_json_format() {
         let (_tmp, state) = fresh();
         push(&state, "alias", json!({ "ll": "ls -la" })).await;
-        let r = op_export(
-            &state,
-            json!({ "target": "aliases", "format": "json" }),
-        )
-        .await
-        .unwrap();
+        let r = op_export(&state, json!({ "target": "aliases", "format": "json" }))
+            .await
+            .unwrap();
         let body = r["body"].as_str().unwrap();
         let parsed: Value = serde_json::from_str(body).unwrap();
         assert!(parsed.is_array());
@@ -425,11 +478,7 @@ mod tests {
     #[tokio::test]
     async fn export_unsupported_format_returns_error() {
         let (_tmp, state) = fresh();
-        let r = op_export(
-            &state,
-            json!({ "target": "shard", "format": "sh" }),
-        )
-        .await;
+        let r = op_export(&state, json!({ "target": "shard", "format": "sh" })).await;
         assert!(r.is_err());
     }
 
@@ -437,12 +486,9 @@ mod tests {
     async fn export_additive_skips_wipe_prefix() {
         let (_tmp, state) = fresh();
         push(&state, "alias", json!({ "ll": "ls -la" })).await;
-        let r = op_export(
-            &state,
-            json!({ "target": "aliases", "additive": true }),
-        )
-        .await
-        .unwrap();
+        let r = op_export(&state, json!({ "target": "aliases", "additive": true }))
+            .await
+            .unwrap();
         let body = r["body"].as_str().unwrap();
         assert!(!body.starts_with("unalias -m '*'"));
     }

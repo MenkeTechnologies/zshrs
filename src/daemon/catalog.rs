@@ -43,8 +43,7 @@ pub fn open_at(path: &Path) -> Result<Connection> {
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
 
-    let current_version: i64 =
-        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?;
+    let current_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?;
 
     if current_version == 0 {
         create_schema(&conn)?;
@@ -170,8 +169,7 @@ pub fn summary(conn: &Connection, db_path: &Path) -> Result<CatalogSummary> {
 
 /// PRAGMA integrity_check — used by `zcache verify`.
 pub fn integrity_check(conn: &Connection) -> Result<bool> {
-    let result: String =
-        conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))?;
+    let result: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))?;
     Ok(result == "ok")
 }
 
@@ -191,7 +189,9 @@ mod tests {
     fn open_creates_schema_at_version_1() {
         let (_tmp, paths) = fresh_paths();
         let conn = open(&paths).unwrap();
-        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
     }
 
@@ -337,8 +337,9 @@ mod tests {
     fn wal_mode_enabled() {
         let (_tmp, paths) = fresh_paths();
         let conn = open(&paths).unwrap();
-        let mode: String =
-            conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(mode, "wal");
     }
 }

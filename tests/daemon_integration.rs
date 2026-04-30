@@ -160,7 +160,9 @@ fn tag_then_untag_roundtrip() {
     let tags = r["tags"].as_array().unwrap();
     assert_eq!(tags, &vec![json!("canary")]);
 
-    let r = c.call("untag", json!({ "all": true })).expect("untag --all");
+    let r = c
+        .call("untag", json!({ "all": true }))
+        .expect("untag --all");
     assert!(r["tags"].as_array().unwrap().is_empty());
 }
 
@@ -345,7 +347,9 @@ fn clean_shards_removes_them() {
     let mut c = d.connect();
     c.call("rebuild", json!({})).unwrap();
 
-    let r = c.call("clean", json!({ "target": "shards" })).expect("clean");
+    let r = c
+        .call("clean", json!({ "target": "shards" }))
+        .expect("clean");
     assert_eq!(r["removed_count"].as_u64(), Some(1));
 
     let info = c.call("info", json!({})).expect("info");
@@ -363,7 +367,10 @@ fn source_resolve_miss_then_hit() {
     let path = tmp.path().to_str().unwrap().to_string();
 
     let r = c
-        .call("source_resolve", json!({ "path": path, "mtime_ns": 0, "inode": 0 }))
+        .call(
+            "source_resolve",
+            json!({ "path": path, "mtime_ns": 0, "inode": 0 }),
+        )
         .expect("source_resolve miss");
     assert_eq!(r["hit"], json!(false));
     assert!(r["bytes_in"].as_i64().unwrap() > 0);
@@ -371,7 +378,10 @@ fn source_resolve_miss_then_hit() {
 
     // Same path again — should hit.
     let r = c
-        .call("source_resolve", json!({ "path": path, "mtime_ns": 0, "inode": 0 }))
+        .call(
+            "source_resolve",
+            json!({ "path": path, "mtime_ns": 0, "inode": 0 }),
+        )
         .expect("source_resolve hit");
     assert_eq!(r["hit"], json!(true));
 }
@@ -410,7 +420,12 @@ fn history_append_then_query() {
     let d = DaemonHandle::spawn();
     let mut c = d.connect();
 
-    for cmd in ["git status", "cargo build --release", "git push origin main", "ls -la"] {
+    for cmd in [
+        "git status",
+        "cargo build --release",
+        "git push origin main",
+        "ls -la",
+    ] {
         c.call(
             "history_append",
             json!({ "line": cmd, "ts_ns": 1000, "exit_code": 0 }),
@@ -521,7 +536,10 @@ fn publish_deliver_to_matching_subscribers() {
 
     // unknown topic — zero subscribers.
     let r = publisher
-        .call("publish", json!({ "topic": "totally_unhandled", "data": {} }))
+        .call(
+            "publish",
+            json!({ "topic": "totally_unhandled", "data": {} }),
+        )
         .expect("publish");
     assert_eq!(r["delivered_to"].as_u64(), Some(0));
 }

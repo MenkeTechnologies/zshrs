@@ -369,7 +369,6 @@ impl TextFormatter {
         }
     }
 
-
     fn format_for(&mut self, var: &str, words: &Option<Vec<ShellWord>>, body: &[ShellCommand]) {
         self.add_str("for ");
         self.add_str(var);

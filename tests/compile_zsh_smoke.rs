@@ -136,18 +136,15 @@ fn smoke_if_elif() {
 
 #[test]
 fn smoke_while() {
-    let (status, out) = run_via_zsh_pipeline(
-        "i=0; while (( i < 3 )); do echo $i; (( i++ )); done",
-    );
+    let (status, out) = run_via_zsh_pipeline("i=0; while (( i < 3 )); do echo $i; (( i++ )); done");
     assert_eq!(status, 0);
     assert_eq!(out, "0\n1\n2\n");
 }
 
 #[test]
 fn smoke_until() {
-    let (status, out) = run_via_zsh_pipeline(
-        "i=0; until (( i >= 3 )); do echo $i; (( i++ )); done",
-    );
+    let (status, out) =
+        run_via_zsh_pipeline("i=0; until (( i >= 3 )); do echo $i; (( i++ )); done");
     assert_eq!(status, 0);
     assert_eq!(out, "0\n1\n2\n");
 }
@@ -176,8 +173,7 @@ fn smoke_case_match() {
 
 #[test]
 fn smoke_case_default() {
-    let (status, out) =
-        run_via_zsh_pipeline("case foo in a) echo a ;; *) echo def ;; esac");
+    let (status, out) = run_via_zsh_pipeline("case foo in a) echo a ;; *) echo def ;; esac");
     assert_eq!(status, 0);
     assert_eq!(out, "def\n");
 }
@@ -199,18 +195,16 @@ fn smoke_repeat() {
 
 #[test]
 fn smoke_break() {
-    let (status, out) = run_via_zsh_pipeline(
-        "for i in 1 2 3 4 5; do [[ $i -eq 3 ]] && break; echo $i; done",
-    );
+    let (status, out) =
+        run_via_zsh_pipeline("for i in 1 2 3 4 5; do [[ $i -eq 3 ]] && break; echo $i; done");
     assert_eq!(status, 0);
     assert_eq!(out, "1\n2\n");
 }
 
 #[test]
 fn smoke_continue() {
-    let (status, out) = run_via_zsh_pipeline(
-        "for i in 1 2 3; do [[ $i -eq 2 ]] && continue; echo $i; done",
-    );
+    let (status, out) =
+        run_via_zsh_pipeline("for i in 1 2 3; do [[ $i -eq 2 ]] && continue; echo $i; done");
     assert_eq!(status, 0);
     assert_eq!(out, "1\n3\n");
 }

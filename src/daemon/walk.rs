@@ -29,9 +29,9 @@ use super::Result;
 /// Result of a walk pass — derived state ready for serialization.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WalkResult {
-    pub command_hash: HashMap<String, String>,    // cmd → absolute path
-    pub autoload_table: HashMap<String, String>,  // function name → file path
-    pub completion_files: Vec<String>,            // _foo files in fpath
+    pub command_hash: HashMap<String, String>, // cmd → absolute path
+    pub autoload_table: HashMap<String, String>, // function name → file path
+    pub completion_files: Vec<String>,         // _foo files in fpath
     pub fpath: Vec<String>,
     pub path: Vec<String>,
     pub stats: WalkStats,
@@ -204,7 +204,10 @@ pub fn hydrate_catalog(state: &DaemonState, walk: &WalkResult, image_path: &Path
 
 /// Run the full Pass 3 + Pass 4 pipeline against the daemon's current env.
 /// Returns (image_path, hydrated_count, walk_stats).
-pub fn run_full_rebuild(state: &DaemonState, generation: u64) -> Result<(PathBuf, usize, WalkStats)> {
+pub fn run_full_rebuild(
+    state: &DaemonState,
+    generation: u64,
+) -> Result<(PathBuf, usize, WalkStats)> {
     let (path, fpath) = current_env_paths();
     let walk = walk_paths(&path, &fpath);
     let stats = walk.stats.clone();
@@ -313,14 +316,19 @@ mod tests {
             &[dir1.display().to_string(), dir2.display().to_string()],
             &[],
         );
-        assert_eq!(result.command_hash["greet"], dir1.join("greet").display().to_string());
+        assert_eq!(
+            result.command_hash["greet"],
+            dir1.join("greet").display().to_string()
+        );
     }
 
     #[test]
     fn build_system_shard_packs_entries() {
         let mut walk = WalkResult::default();
-        walk.command_hash.insert("ls".to_string(), "/usr/bin/ls".to_string());
-        walk.autoload_table.insert("_git".to_string(), "/u/funcs/_git".to_string());
+        walk.command_hash
+            .insert("ls".to_string(), "/usr/bin/ls".to_string());
+        walk.autoload_table
+            .insert("_git".to_string(), "/u/funcs/_git".to_string());
 
         let shard = build_system_shard(&walk, 1);
         assert!(shard.entries.contains_key("__walk_meta__"));

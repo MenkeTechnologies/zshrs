@@ -246,9 +246,7 @@ fn analyze_line(state: &mut CanonicalState, line: &str, raw: &str) -> bool {
     }
 
     // source FILE / . FILE
-    if let Some(rest) = strip_prefix_word(line, "source")
-        .or_else(|| strip_prefix_word(line, "."))
-    {
+    if let Some(rest) = strip_prefix_word(line, "source").or_else(|| strip_prefix_word(line, ".")) {
         // Skip if it has interpolation we can't resolve.
         let trimmed = rest.trim();
         let arg = strip_quotes(trimmed);
@@ -321,8 +319,8 @@ fn analyze_line(state: &mut CanonicalState, line: &str, raw: &str) -> bool {
     }
 
     // typeset / declare with simple form: `typeset NAME=value` (no flags).
-    if let Some(rest) = strip_prefix_word(line, "typeset")
-        .or_else(|| strip_prefix_word(line, "declare"))
+    if let Some(rest) =
+        strip_prefix_word(line, "typeset").or_else(|| strip_prefix_word(line, "declare"))
     {
         let toks: Vec<&str> = rest.split_whitespace().collect();
         let mut idx = 0;
@@ -456,7 +454,11 @@ fn match_function(lines: &[&str], start: usize) -> Option<(String, String, usize
         n
     } else if let Some(paren) = first.find("()") {
         let n = first[..paren].trim();
-        if n.is_empty() || !n.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+        if n.is_empty()
+            || !n
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        {
             return None;
         }
         n.to_string()
@@ -530,10 +532,7 @@ fn match_simple_assign(line: &str) -> Option<(String, String)> {
     if name.is_empty() {
         return None;
     }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
     let value = &line[eq + 1..];
@@ -547,7 +546,10 @@ fn parse_bindkey_args(rest: &str) -> Option<(String, String)> {
     while idx < toks.len() && toks[idx].starts_with('-') {
         // Skip flag and its arg if applicable.
         idx += 1;
-        if idx < toks.len() && !toks[idx - 1].chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        if idx < toks.len()
+            && !toks[idx - 1]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
         {
             // unlikely; protect against malformed flags
         }
@@ -605,7 +607,11 @@ fn match_plugin(line: &str, raw: &str) -> Option<PluginDecl> {
         }
         return Some(PluginDecl {
             manager: "zinit".to_string(),
-            name: rest.split_whitespace().nth(1).unwrap_or(first_tok).to_string(),
+            name: rest
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or(first_tok)
+                .to_string(),
             source_path: None,
             raw: raw.to_string(),
         });
@@ -659,7 +665,11 @@ fn match_plugin(line: &str, raw: &str) -> Option<PluginDecl> {
         if let Some(rest_after) = strip_prefix_word(rest, "source") {
             return Some(PluginDecl {
                 manager: "znap".to_string(),
-                name: rest_after.split_whitespace().next().unwrap_or("?").to_string(),
+                name: rest_after
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("?")
+                    .to_string(),
                 source_path: None,
                 raw: raw.to_string(),
             });
@@ -667,12 +677,16 @@ fn match_plugin(line: &str, raw: &str) -> Option<PluginDecl> {
     }
     for prefix in &["zgenom", "zgen"] {
         if let Some(rest) = strip_prefix_word(line, prefix) {
-            if let Some(rest_after) = strip_prefix_word(rest, "load")
-                .or_else(|| strip_prefix_word(rest, "loadall"))
+            if let Some(rest_after) =
+                strip_prefix_word(rest, "load").or_else(|| strip_prefix_word(rest, "loadall"))
             {
                 return Some(PluginDecl {
                     manager: prefix.to_string(),
-                    name: rest_after.split_whitespace().next().unwrap_or("?").to_string(),
+                    name: rest_after
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("?")
+                        .to_string(),
                     source_path: None,
                     raw: raw.to_string(),
                 });
@@ -786,7 +800,10 @@ setopt   share_history
     #[test]
     fn captures_named_dir() {
         let s = analyze_str("hash -d proj=/Users/wizard/projects\nhash -d cfg=/etc\n");
-        assert_eq!(s.named_dirs.get("proj"), Some(&"/Users/wizard/projects".to_string()));
+        assert_eq!(
+            s.named_dirs.get("proj"),
+            Some(&"/Users/wizard/projects".to_string())
+        );
         assert_eq!(s.named_dirs.get("cfg"), Some(&"/etc".to_string()));
     }
 
@@ -807,7 +824,8 @@ setopt   share_history
 
     #[test]
     fn captures_zmodload() {
-        let s = analyze_str("zmodload zsh/datetime\nzmodload zsh/regex\nzmodload -F zsh/zftp +bar\n");
+        let s =
+            analyze_str("zmodload zsh/datetime\nzmodload zsh/regex\nzmodload -F zsh/zftp +bar\n");
         assert!(s.zmodload.contains("zsh/datetime"));
         assert!(s.zmodload.contains("zsh/regex"));
         // -F flag is allowed; the module name still gets captured (positional).
@@ -816,10 +834,12 @@ setopt   share_history
 
     #[test]
     fn captures_export_simple() {
-        let s = analyze_str(r#"export EDITOR=vim
+        let s = analyze_str(
+            r#"export EDITOR=vim
 export FOO="bar"
 export DYNAMIC=$(date)
-"#);
+"#,
+        );
         assert_eq!(s.env_exports.get("EDITOR"), Some(&"vim".to_string()));
         assert_eq!(s.env_exports.get("FOO"), Some(&"bar".to_string()));
         // Dynamic value must NOT leak into canonical state.
@@ -911,9 +931,11 @@ export DYNAMIC=$(date)
 
     #[test]
     fn zinit_ice_config_recognized_separately() {
-        let s = analyze_str(r#"zinit ice wait lucid
+        let s = analyze_str(
+            r#"zinit ice wait lucid
 zinit load some/plugin
-"#);
+"#,
+        );
         assert_eq!(s.plugin_decls.len(), 2);
         assert_eq!(s.plugin_decls[0].manager, "zinit");
         assert!(s.plugin_decls[0].name.contains("ice"));
@@ -943,9 +965,11 @@ zinit load some/plugin
 
     #[test]
     fn captures_bindkey() {
-        let s = analyze_str(r#"bindkey '^A' beginning-of-line
+        let s = analyze_str(
+            r#"bindkey '^A' beginning-of-line
 bindkey -M vicmd 'k' up-line-or-history
-"#);
+"#,
+        );
         assert_eq!(s.bindkeys.get("^A"), Some(&"beginning-of-line".to_string()));
         // bindkey -M parsing is best-effort.
         assert!(s.bindkeys.contains_key("k") || s.bindkeys.is_empty() || s.bindkeys.len() >= 1);

@@ -79,7 +79,10 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
             format!("op `{op}` arrives with ZLE integration"),
         )),
 
-        _ => Err(ErrPayload::new("unknown_op", format!("unsupported op `{op}`"))),
+        _ => Err(ErrPayload::new(
+            "unknown_op",
+            format!("unsupported op `{op}`"),
+        )),
     };
 
     match &result {
@@ -185,7 +188,10 @@ async fn op_send(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult {
                 .map(|s| s.client_id)
                 .collect()
         } else {
-            return Err(ErrPayload::new("bad_args", "target.all must be true if present"));
+            return Err(ErrPayload::new(
+                "bad_args",
+                "target.all must be true if present",
+            ));
         }
     } else if let Some(tag) = target.get("tag").and_then(Value::as_str) {
         state.send_tag(tag, frame)
@@ -193,7 +199,10 @@ async fn op_send(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult {
         if state.send_to(shell_id, frame) {
             vec![shell_id]
         } else {
-            return Err(ErrPayload::new("no_shell", format!("shell_id {shell_id} not found")));
+            return Err(ErrPayload::new(
+                "no_shell",
+                format!("shell_id {shell_id} not found"),
+            ));
         }
     } else {
         return Err(ErrPayload::new(
@@ -245,7 +254,10 @@ async fn op_notify(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult
         if state.send_to(shell_id, frame) {
             vec![shell_id]
         } else {
-            return Err(ErrPayload::new("no_shell", format!("shell_id {shell_id} not found")));
+            return Err(ErrPayload::new(
+                "no_shell",
+                format!("shell_id {shell_id} not found"),
+            ));
         }
     } else {
         return Err(ErrPayload::new(
@@ -294,7 +306,10 @@ async fn op_daemon(state: &Arc<DaemonState>, args: Value) -> OpResult {
             "daemon restart requires a parent supervisor; use stop+spawn-on-demand",
         )),
 
-        _ => Err(ErrPayload::new("bad_verb", format!("unknown daemon verb `{verb}`"))),
+        _ => Err(ErrPayload::new(
+            "bad_verb",
+            format!("unknown daemon verb `{verb}`"),
+        )),
     }
 }
 
@@ -357,8 +372,8 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
         }
         "log" => {
             // Truncate today's rolled file (don't unlink — tracing-appender holds an fd).
-            for entry in std::fs::read_dir(&paths.root)
-                .map_err(|e| ErrPayload::new("io", e.to_string()))?
+            for entry in
+                std::fs::read_dir(&paths.root).map_err(|e| ErrPayload::new("io", e.to_string()))?
             {
                 if let Ok(entry) = entry {
                     let name = entry.file_name();
@@ -376,7 +391,10 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
         other => {
             return Err(ErrPayload::new(
                 "bad_target",
-                format!("clean target `{}` not supported (try all|shards|index|log)", other),
+                format!(
+                    "clean target `{}` not supported (try all|shards|index|log)",
+                    other
+                ),
             ));
         }
     }
@@ -407,11 +425,8 @@ async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
         issues.push("catalog.db: PRAGMA integrity_check failed".to_string());
     }
 
-    let tmp_swept = super::shard::sweep_tmp_files(
-        &state.paths,
-        std::time::Duration::from_secs(60),
-    )
-    .unwrap_or(0);
+    let tmp_swept = super::shard::sweep_tmp_files(&state.paths, std::time::Duration::from_secs(60))
+        .unwrap_or(0);
 
     Ok(json!({
         "shards_ok": shards_ok,
@@ -425,11 +440,8 @@ async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
 
 async fn op_compact(state: &Arc<DaemonState>) -> OpResult {
     // For v1: VACUUM the catalog + sweep tmp files.
-    let swept = super::shard::sweep_tmp_files(
-        &state.paths,
-        std::time::Duration::from_secs(60),
-    )
-    .unwrap_or(0);
+    let swept = super::shard::sweep_tmp_files(&state.paths, std::time::Duration::from_secs(60))
+        .unwrap_or(0);
     Ok(json!({
         "tmp_swept": swept,
     }))
@@ -613,9 +625,8 @@ async fn op_keys(state: &Arc<DaemonState>, args: Value) -> OpResult {
         other => other,
     };
     let keys: Vec<String> = state.with_catalog(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT key FROM canonical WHERE subsystem = ? ORDER BY key ASC",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT key FROM canonical WHERE subsystem = ? ORDER BY key ASC")?;
         let rows = stmt
             .query_map(rusqlite::params![subsystem], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -656,9 +667,8 @@ async fn op_export_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
     // _patcomps, _services, etc.); v1 emits the assignment-array form which legacy
     // tooling parses. Future iteration: full byte-compatible emission.
     let rows: Vec<(String, String)> = state.with_catalog(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT key, value FROM canonical WHERE subsystem = 'compdef' ORDER BY key",
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT key, value FROM canonical WHERE subsystem = 'compdef' ORDER BY key")?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -695,10 +705,7 @@ async fn op_export_catalog(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // Use sqlite's online backup API via VACUUM INTO (atomic, safe under WAL).
     let target = out_path.display().to_string();
     state.with_catalog(|conn| {
-        conn.execute(
-            &format!("VACUUM INTO ?"),
-            rusqlite::params![target],
-        )?;
+        conn.execute(&format!("VACUUM INTO ?"), rusqlite::params![target])?;
         Ok::<_, rusqlite::Error>(())
     })?;
     Ok(json!({ "path": out_path.display().to_string() }))
@@ -721,9 +728,9 @@ async fn op_export_shard(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .unwrap_or_default()
         .into_iter()
         .find(|p| {
-            p.file_name()
-                .and_then(|s| s.to_str())
-                .map_or(false, |s| s.contains(&format!("-{}.rkyv", name)) || s.contains(&name))
+            p.file_name().and_then(|s| s.to_str()).map_or(false, |s| {
+                s.contains(&format!("-{}.rkyv", name)) || s.contains(&name)
+            })
         })
         .ok_or_else(|| ErrPayload::new("no_shard", format!("shard `{}` not found", name)))?;
 
@@ -758,7 +765,9 @@ async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
             // _comps[KEY]=VALUE
             let close = line.find(']');
             let eq = line.find('=');
-            let (Some(c), Some(e)) = (close, eq) else { continue };
+            let (Some(c), Some(e)) = (close, eq) else {
+                continue;
+            };
             if e <= c {
                 continue;
             }
@@ -790,7 +799,9 @@ fn shell_quote_loose(v: &str) -> String {
     if v.is_empty() {
         return "''".to_string();
     }
-    if v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '.' | '-' | ':' | ',' | '+')) {
+    if v.chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '.' | '-' | ':' | ',' | '+'))
+    {
         return v.to_string();
     }
     format!("'{}'", v.replace('\'', "'\\''"))

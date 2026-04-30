@@ -1789,6 +1789,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The arith COMMAND `(( ... ))` (vs the arith SUBSTITUTION `$(( ... ))`) compiled through `ArithCompiler`, whose lexer can't parse `$` and treated the expansion as an unknown token. The expansion never ran, so the operand silently became 0 and the command exited 1 even when the value was 1. Added `$` to `needs_eval` triggers in `compile_command` for `(( ... ))` — any expr touching parameter expansion now routes through `BUILTIN_ARITH_EVAL` → `evaluate_arithmetic` which calls `expand_string` first. Test: `test_arith_command_with_parameter_expansion`.
 
+### `$0` in `-c` mode returned basename instead of argv[0] verbatim
+
+- zsh exposes argv[0] verbatim through `$0` in `-c` mode — `/bin/zsh -c 'echo $0'` prints `/bin/zsh`, plain `zsh -c '...'` prints `zsh`. zshrs basename-stripped argv[0] in the `-c` dispatch (`bins/zshrs.rs`), losing the path information. Now passes argv[0] through unchanged. Test renamed from `_returns_basename` to `_uses_argv0_verbatim` and updated to accept either basename or absolute path. Test: `test_dollar_zero_in_minus_c_uses_argv0_verbatim`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
