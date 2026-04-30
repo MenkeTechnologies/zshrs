@@ -21605,6 +21605,8 @@ impl ShellExecutor {
         let mut nchars: Option<usize> = None; // -k num: read exactly num chars
         let mut fd = 0; // -u fd: read from fd
         let mut quiet = false; // -q: test only, don't assign
+        let mut echo_line = false; // -e: echo line and don't assign
+        let mut echo_and_assign = false; // -E: echo line AND assign
         let mut var_names: Vec<String> = Vec::new();
 
         let mut i = 0;
@@ -21628,7 +21630,9 @@ impl ShellExecutor {
                         's' => silent = true,
                         'z' => to_history = true,
                         'A' => use_array = true,
-                        'c' | 'l' | 'e' | 'E' => {} // TODO
+                        'c' | 'l' => {} // TODO
+                        'e' => echo_line = true,
+                        'E' => echo_and_assign = true,
                         'n' => {
                             // bash-compat: -n N reads exactly N characters
                             // (zsh uses -k for the same; we accept both).
@@ -21901,6 +21905,18 @@ impl ShellExecutor {
 
         if quiet {
             return if processed.is_empty() { 1 } else { 0 };
+        }
+
+        // -e: echo the read line on stdout and DON'T assign. -E: echo
+        // AND assign. Both end here; -e returns before the assignment
+        // block. zsh's bin_read calls fputs(buf, stdout) under both,
+        // useful for completion functions that want to display the
+        // current line.
+        if echo_line || echo_and_assign {
+            println!("{}", processed);
+            if echo_line && !echo_and_assign {
+                return 0;
+            }
         }
 
         if use_array {

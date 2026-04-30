@@ -10248,6 +10248,27 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_read_minus_E_echoes_and_assigns() {
+    // `read -E` should echo the read line on stdout AND store it in
+    // the variable. zsh's bin_read calls fputs(buf, stdout) under
+    // -E. Was a TODO no-op.
+    let (_, output, _) = run_zshrs(
+        r#"echo "abc" | (read -E v; echo "[$v]")"#,
+    );
+    assert_eq!(output.trim(), "abc\n[abc]");
+}
+
+#[test]
+fn test_read_minus_e_echoes_only() {
+    // `read -e` echoes the line but does NOT assign — useful for
+    // completion functions that want to show the current input.
+    let (_, output, _) = run_zshrs(
+        r#"echo "abc" | (read -e v; echo "[$v]")"#,
+    );
+    assert_eq!(output.trim(), "abc\n[]");
+}
+
+#[test]
 fn test_print_minus_C_column_format() {
     // `print -C N` formats args in N columns with 2-space separator
     // (not tab). Each column is padded to the widest entry. Trailing

@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `read -e` / `read -E` were no-op stubs
+
+- zsh's bin_read calls fputs(buf, stdout) under both -e and -E. -e prints the line and DOESN'T assign; -E prints AND assigns. Both were swallowed in our flag-char loop with a `// TODO` comment. Implemented per zsh: -e returns 0 after the echo (no assignment); -E falls through to the assignment block. Tests: `test_read_minus_E_echoes_and_assigns`, `test_read_minus_e_echoes_only`.
+
 ### `print -C N` used tab separator instead of zsh's space-padded columns
 
 - zsh's `-C N` pads each column to the widest entry and joins with two-space separator (so `print -C 2 a b c d` reads `a  c` / `b  d`). We were using a single tab join, which renders wider (8 chars typically) and ignored column-width padding entirely. Reworked to compute per-column widths and emit `item + pad-to-width + "  "` for each non-last column. Trailing partial rows don't pad after the last present item. Test: `test_print_minus_C_column_format`.
