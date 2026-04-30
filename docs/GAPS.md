@@ -2049,6 +2049,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh aborts the command on arithmetic division-by-zero — `echo` never runs. zshrs's `evaluate_arithmetic` printed the error then returned `"0"` from the `Err` arm, so `echo $((1/0))` printed `division by zero` to stderr AND `0` to stdout (status 0). The shell continued normally. Now matches zsh: division-by-zero in `evaluate_arithmetic` calls `process::exit(1)` after printing the error, aborting the surrounding command in `-c` mode. Other arith errors still return `"0"` (matches zsh's NumericContext defaults). Test: `test_arith_division_by_zero_aborts`.
 
+### `wait NOT_A_PID` emitted "wait: NOT_A_PID: invalid pid" instead of zsh's job-not-found format
+
+- zsh treats an unparseable `wait` argument as a (failed) job-spec lookup: `zsh:wait:1: job not found: NOT_A_PID` exit 127. zshrs hand-rolled `wait: NOT_A_PID: invalid pid` from the parse-error arm, which neither matches zsh's `<shellname>:<builtin>:<line>:` prefix nor uses the canonical "job not found" wording — script consumers grep'ing stderr for the zsh format silently saw nothing. Changed the parse-error arm to emit `zshrs:wait:1: job not found: <arg>` (same exit 127). Test: `test_wait_invalid_pid_uses_zsh_format`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
