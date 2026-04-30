@@ -2310,6 +2310,18 @@ impl ZshCompiler {
                     .emit(Op::CallBuiltin(crate::exec::BUILTIN_OWNED_BY_GROUP, 1), 0);
                 return;
             }
+            "-N" => {
+                // File modified since last accessed (mtime > atime).
+                // zsh: used to gate mailbox-style "fresh content" checks.
+                self.builder.emit(
+                    Op::CallBuiltin(
+                        crate::exec::BUILTIN_FILE_MODIFIED_SINCE_ACCESS,
+                        1,
+                    ),
+                    0,
+                );
+                return;
+            }
             "-z" => {
                 self.builder.emit(Op::StringLen, 0);
                 self.builder.emit(Op::LoadInt(0), 0);

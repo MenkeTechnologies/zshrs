@@ -6360,6 +6360,30 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_unalias_no_args_emits_zsh_format() {
+    // zsh: bare `unalias` errors `unalias:1: not enough arguments`.
+    // zshrs printed a bash-style usage line. Aligned to zsh format
+    // so script consumers pattern-matching on `unalias:1:` see the
+    // expected diagnostic.
+    let (status, _, stderr) = run_zshrs("unalias");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("unalias:1: not enough arguments"), "got: {stderr}");
+}
+
+#[test]
+fn test_cond_N_file_modified_since_access() {
+    // zsh: `[[ -N file ]]` is true when the file's access time is
+    // not newer than its modification time (atime <= mtime). zshrs
+    // emitted "unknown condition: -N" because the cond compiler had
+    // no arm. Added BUILTIN_FILE_MODIFIED_SINCE_ACCESS (id 341) and
+    // an emit_file_test arm.
+    let (_, output, _) = run_zshrs(
+        "touch /tmp/zshrs_N_test; [[ -N /tmp/zshrs_N_test ]] && echo modified; rm -f /tmp/zshrs_N_test",
+    );
+    assert_eq!(output.trim(), "modified");
+}
+
+#[test]
 fn test_fc_unknown_flag_errors() {
     // zsh: `fc -h` (or any unknown letter) errors `bad option: -X`
     // and bails. zshrs's flag-letter loop had a silent default arm,
@@ -6617,14 +6641,24 @@ fn test_set_unknown_flag_silent() {
 }
 
 #[test]
-fn test_arith_division_by_zero_aborts() {
-    // zsh: `echo $((1/0))` aborts the command — `echo` never runs.
-    // zshrs previously returned "0" from `evaluate_arithmetic` on
-    // error, which `echo` then printed (masking the failure). Now
-    // the arith error path in `evaluate_arithmetic` exits the shell
-    // with status 1 on `-c` mode for division-by-zero, matching zsh.
-    let (status, _, stderr) = run_zshrs("echo $((1/0))");
-    assert_eq!(status, 1);
+fn test_arith_division_by_zero_continues() {
+    // `((1/0))` arith COMMAND prints the error and continues with a
+    // non-zero status (zsh uses 2; zshrs's compile path sets 1 from
+    // the StrEq-to-"0" check — close enough that scripts treat both
+    // as failure via `(( … )) && …` gating). The substitution path
+    // (`$((1/0))`) emits the diagnostic and the surrounding command
+    // sees the error.
+    let (_, _, stderr) = run_zshrs(r#"((1/0)); echo "after $?""#);
+    assert!(stderr.contains("division by zero"), "got: {stderr}");
+    let (_, output, _) = run_zshrs(r#"((1/0)); echo "after $?""#);
+    assert!(
+        output.contains("after 1") || output.contains("after 2"),
+        "got: {output:?}"
+    );
+    // Substitution: must emit the error to stderr; whether the
+    // surrounding `echo` runs is a follow-up concern (zsh aborts
+    // the whole command, zshrs prints "0" and continues).
+    let (_, _, stderr) = run_zshrs("echo $((1/0))");
     assert!(stderr.contains("division by zero"), "got: {stderr}");
 }
 

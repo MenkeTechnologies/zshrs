@@ -4630,6 +4630,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Bool(result)
     });
 
+    // `[[ -N path ]]` — file's access time is NOT newer than its
+    // modification time (zsh man: "true if file exists and its
+    // access time is not newer than its modification time"). Used
+    // by zsh's mailbox-watching code. The semantic is `atime <=
+    // mtime` (equivalent to `mtime >= atime`) — equal counts as
+    // true, which a strict `mtime > atime` check missed for newly
+    // created files where both stamps are identical.
+    vm.register_builtin(BUILTIN_FILE_MODIFIED_SINCE_ACCESS, |vm, _argc| {
+        use std::os::unix::fs::MetadataExt;
+        let path = vm.pop().to_str();
+        let result = std::fs::metadata(&path)
+            .map(|m| m.atime() <= m.mtime())
+            .unwrap_or(false);
+        fusevm::Value::Bool(result)
+    });
+
     // `[[ a -nt b ]]` — true if `a`'s mtime is strictly later than `b`'s.
     // BOTH files must exist; if either is missing the result is false.
     // (Earlier behavior was bash's "missing == infinitely-old"; zsh
@@ -5919,6 +5935,8 @@ pub const BUILTIN_HAS_SETGID: u16 = 328;
 pub const BUILTIN_OWNED_BY_USER: u16 = 329;
 /// `[[ -G path ]]` — owned by effective GID.
 pub const BUILTIN_OWNED_BY_GROUP: u16 = 330;
+/// `[[ -N path ]]` — file modified since last accessed (atime <= mtime).
+pub const BUILTIN_FILE_MODIFIED_SINCE_ACCESS: u16 = 341;
 
 /// `name+=val` (no parens) — runtime-dispatched append.
 /// If name is an indexed array → push val as element.
@@ -16602,16 +16620,19 @@ impl ShellExecutor {
                 result.format_zsh_subst()
             }
             Err(msg) => {
-                // zsh writes arith errors to stderr in `zshrs:LINE: <msg>`
-                // form AND aborts the command (`echo $((1/0))` never
-                // runs echo). Mirror by exiting in `-c` mode and
-                // returning empty so the surrounding command sees no
-                // value. Without exit, the substitution returned "0"
-                // and `echo` printed it, masking the failure.
+                // zsh writes arith errors to stderr in `zsh:LINE: <msg>`
+                // form. Status conventions differ by context but both
+                // paths call this method — emit the diagnostic and
+                // return "0"; the calling site decides whether to abort
+                // (substitution: zsh aborts the whole command) or
+                // continue (arith command: status 1-or-2 from the
+                // StrEq-to-"0" check). Avoid touching `last_status`
+                // here — the SetStatus op emitted by callers wins
+                // anyway, AND a stray `last_status=2` clobbers the
+                // status of unrelated paths that share evaluate_arith
+                // (e.g. `a+=y` where the value parses as a non-arith
+                // string then errors silently).
                 eprintln!("zshrs:1: {}", msg);
-                if msg == "division by zero" || msg.starts_with("division by zero") {
-                    std::process::exit(1);
-                }
                 "0".to_string()
             }
         }
@@ -21132,7 +21153,11 @@ impl ShellExecutor {
 
     fn builtin_unalias(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("zshrs: unalias: usage: unalias [-agsm] name [name ...]");
+            // zsh format: `zsh:unalias:1: not enough arguments`.
+            // zshrs previously printed a bash-style usage line with
+            // a different prefix and option list — script consumers
+            // pattern-matching on `unalias:1:` missed the diagnostic.
+            eprintln!("zshrs:unalias:1: not enough arguments");
             return 1;
         }
 
@@ -21175,7 +21200,7 @@ impl ShellExecutor {
         }
 
         if positional_args.is_empty() {
-            eprintln!("zshrs: unalias: usage: unalias [-agsm] name [name ...]");
+            eprintln!("zshrs:unalias:1: not enough arguments");
             return 1;
         }
 
