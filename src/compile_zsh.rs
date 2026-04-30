@@ -43,6 +43,13 @@ pub struct ZshCompiler {
     /// whitespace/newlines (`x=$(printf 'a\nb')` keeps both lines).
     /// Argument-context cmd-subst still splits.
     pub assign_context_depth: i32,
+    /// Depth tracker for "compiling a scalar assignment RHS" (NOT array
+    /// init). When >0, `"${a[@]}"` joins via JOIN_STAR instead of
+    /// splicing — scalar RHS forces single-string output. Array init
+    /// (`b=("${a[@]}")`) keeps the splice (each element a separate
+    /// array entry). Distinct from assign_context_depth which is set
+    /// for both forms.
+    pub scalar_assign_depth: i32,
     /// Subtract this from each pipe's `lineno` when emitting
     /// SET_LINENO calls. Top-level program: 0 (linenos passed
     /// verbatim). Function body: set to (first body line - 1) so
@@ -64,6 +71,7 @@ impl ZshCompiler {
             errexit_suppress_depth: 0,
             dq_context_depth: 0,
             assign_context_depth: 0,
+            scalar_assign_depth: 0,
             lineno_offset: 0,
         }
     }
@@ -893,12 +901,14 @@ impl ZshCompiler {
                         || s.contains('[') || s.contains('\u{91}') // INBRACK
                         || s.contains('{') || s.contains('\u{8f}')); // INBRACE
                 self.assign_context_depth += 1;
+                self.scalar_assign_depth += 1;
                 if needs_dq_wrap {
                     let wrapped = format!("\u{9e}{}\u{9e}", s);
                     self.compile_word_str(&wrapped);
                 } else {
                     self.compile_word_str(s);
                 }
+                self.scalar_assign_depth -= 1;
                 self.assign_context_depth -= 1;
                 let bid = if assign.append {
                     // `name+=val` — runtime-dispatch via APPEND_SCALAR_OR_PUSH:
@@ -1305,7 +1315,7 @@ impl ZshCompiler {
             if let Some(name) = array_splice_ref(&untoked) {
                 let idx = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                let force_join = self.assign_context_depth > 0;
+                let force_join = self.scalar_assign_depth > 0;
                 let bid = if array_splice_is_star(&untoked) || force_join {
                     crate::exec::BUILTIN_ARRAY_JOIN_STAR
                 } else {

@@ -10248,6 +10248,59 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_array_assigns_array_via_at_splice() {
+    // `b=("${a[@]}")` — array RHS preserves element boundaries even
+    // when elements contain spaces. Was joining to single string
+    // because scalar_assign_depth got bumped for ALL assignments.
+    // Now distinguishes scalar (`b="$a[@]"`) from array (`b=("$a[@]")`).
+    let (_, output, _) = run_zshrs(
+        r#"a=("1 2" "3 4"); b=("${a[@]}"); echo "${#b}""#,
+    );
+    assert_eq!(output.trim(), "2");
+}
+
+#[test]
+fn test_recursive_glob_sorts_full_path() {
+    // `**/*` should sort by full path (so `dir sub sub/g`, not
+    // basename-only which gives `f g sub`).
+    let dir = std::env::temp_dir().join("zshrs_recglob");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::create_dir_all(dir.join("sub"));
+    std::fs::File::create(dir.join("f")).unwrap();
+    std::fs::File::create(dir.join("sub/g")).unwrap();
+    let cmd = format!("echo {}/**/*", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    let parts: Vec<&str> = output.trim().split(' ').collect();
+    // Expect: f, sub, sub/g (in that order — lexicographic full path)
+    assert!(parts[0].ends_with("/f"));
+    assert!(parts[1].ends_with("/sub"));
+    assert!(parts[2].ends_with("/sub/g"));
+}
+
+#[test]
+fn test_subshell_exit_trap_fires_before_parent_continues() {
+    // `(trap "echo X" EXIT; true); echo done` — zsh forks for `(...)`
+    // so the trap fires when the subshell ends, BEFORE `echo done`.
+    // Was firing at parent's process exit (after `echo done`).
+    let (_, output, _) = run_zshrs(
+        r#"(trap "echo trapped" EXIT; true); echo done"#,
+    );
+    assert_eq!(output.trim(), "trapped\ndone");
+}
+
+#[test]
+fn test_subshell_trap_doesnt_leak_to_parent() {
+    // `(trap "echo X" USR1; ...); ...` — the trap dies with the
+    // subshell. Parent's traps (snapshotted at subshell entry) are
+    // restored on subshell_end.
+    let (_, output, _) = run_zshrs(
+        r#"trap "echo parent_exit" EXIT; (echo subshell)"#,
+    );
+    assert_eq!(output.trim(), "subshell\nparent_exit");
+}
+
+#[test]
 fn test_sort_flags_with_at_subscript_in_dq() {
     // `"${(o)a[@]}"` — DQ context normally strips array-only flags
     // (o/O/n/i/u), but explicit `[@]` keeps them active. Compile path

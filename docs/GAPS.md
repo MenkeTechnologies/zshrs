@@ -1572,6 +1572,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `b=("${a[@]}")` joined elements when assigning array-to-array
+
+- Earlier batch 6 fix forced JOIN_STAR on `[@]` when `assign_context_depth > 0` to handle scalar `b="${a[@]}"`. But array init (`b=(...)`) shares the same flag, so array-to-array splice collapsed: `a=("1 2" "3 4"); b=("${a[@]}")` → `b=("1 2 3 4")` (1 element). Added separate `scalar_assign_depth` counter — only bumped for scalar assignment RHS. Test: `test_array_assigns_array_via_at_splice`.
+
+### `**/*` recursive glob sorted by basename instead of full path
+
+- For non-recursive globs, zsh sorts by basename (with locale-aware case-folding). For recursive `**/*`, zsh sorts by FULL path so depth-first walk order is preserved (`dir/f sub sub/g`, not basename `f g sub` which makes no sense at multiple levels). Added pattern-based dispatch: full-path sort when pattern contains `**/`, basename sort otherwise. Test: `test_recursive_glob_sorts_full_path`.
+
+### Subshell EXIT trap fired AT PROCESS EXIT instead of subshell exit
+
+- zsh forks for `(...)` so the trap runs in the child process when the subshell ends. We run subshells in-process; without firing the trap at `subshell_end`, the parent's process-exit fired ALL accumulated EXIT traps after the parent's last command. Added `traps` field to `SubshellSnapshot`, fire-and-remove the EXIT trap at subshell_end (before restoring parent's traps), execute via `with_executor(|exec| exec.execute_script(&body))` so the inner script doesn't recurse. Subshell-only traps don't leak — parent's traps are restored after firing. Tests: `test_subshell_exit_trap_fires_before_parent_continues`, `test_subshell_trap_doesnt_leak_to_parent`.
+
 ### `"${(o)a[@]}"` / `"${(O)a[@]}"` / `"${(n)a[@]}"` skipped sort in DQ context
 
 - zsh subst.c: array-only flags (`o`/`O`/`n`/`i`/`u`) are stripped in DQ context UNLESS the user explicitly wrote `[@]`/`[*]` subscript. Our `parse_zsh_flag` strips `[@]`/`[*]` from `name` (the fast-path requires identifier-only), losing the splice-context information by the time the runtime DQ-strip decision runs. Encoded the at-subscript context through a new `\u{03}` sentinel in the runtime flags string so the handler can re-recognise `had_at_subscript`. Test: `test_sort_flags_with_at_subscript_in_dq`.
