@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${(no)a[@]}` (sort-modifier-before-sort) was applied sequentially
+
+- zsh's flag-string is order-agnostic: `n`/`i`/`a` are sort-MODIFIERS that pair with `o`/`O`. `(no)` and `(on)` should both produce numeric ascending. We were applying them as separate sort operations so `n`'s natural-sort got overwritten by the subsequent `o`'s alpha-sort. Fixed by detecting `n`/`i` BEFORE the `o`/`O` in the flags string when no inline sub-flag was given. Test: `test_sort_flag_with_numeric_modifier_either_order`.
+
 ### `${(j:sep:)$(cmd)}` over-applied join by splitting on whitespace first
 
 - The cmd-subst-as-flag-operand branch (added in batch 11) split the captured output on whitespace BEFORE joining with sep. zsh: `(j:::)` is a no-op on a scalar — the cmd-subst output is a single string, not an array. Result: newline-separated output got crammed onto one line. Fixed: drop the split-then-join in the Join arm; cmd-subst → scalar → (j) no-op. Tests: `test_param_j_flag_on_cmd_subst_no_op`, `test_param_jf_split_then_join_cmd_subst`.
@@ -3084,11 +3088,11 @@ These are pre-existing bugs the audit exposed, NOT regressions from the iter-86 
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
 - **`set -n` syntax-only mode** — `set -n; cmd` should parse but not execute. zshrs ignores -n. Deferred (needs runtime no-op gate).
-- **`${(j:sep:)$(cmd subst)}`** — cmd-subst as direct argument to flagged PE returns empty in zshrs; zsh splits-and-joins (`a,b,c`). Needs PE flag-context cmd-subst recognition before var-name extraction. Deferred.
+- ~~**`${(j:sep:)$(cmd subst)}`**~~ — closed in eighty-eighth-pass batch 25. (j) is now a no-op on scalar cmd-subst output (zsh-correct).
 - **Arith error full command-abort** — zsh: `echo $((10/0))` prints only the error and skips `echo`; zshrs prints the error then runs `echo 0`. Partial fix landed (error message now visible); full abort needs expansion-time error plumbing.
 - **`set` noargs print all variables** — `set` with no args should dump every shell parameter in name=value form. zshrs prints ~10 lines; zsh prints ~480. Massive output diff; deferred (needs full param-table walk + assoc/array formatting).
-- **`${a:^b}` zip-arrays** — zsh's interleave-arrays operator. `a=(1 2 3) b=(x y z); print ${a:^b}` should yield `1 x 2 y 3 z`. Not implemented.
-- **`${(v)assoc}` insertion order** — zshrs returns hash iteration order; zsh preserves insertion order. Tests show `${(v)h}` for `h=(a 1 b 2)` returns `2 1` instead of `1 2`. Needs assoc-array storage that preserves insertion order (IndexMap).
+- ~~**`${a:^b}` zip-arrays**~~ — closed in eighty-eighth-pass batch 24. SUB_ZIP_SHORT and SUB_ZIP_LONG implemented.
+- ~~**`${(v)assoc}` insertion order**~~ — closed in eighty-eighth-pass batch 1. Switched assoc storage to IndexMap.
 - **`${(s:l:)hello}` empty-element handling** — zsh drops empty elements when splitting (`hello` split by `l` → `he`, `o`); zshrs keeps empties (`he`, ``, `o`). Niche.
 - **`${#:-empty}` length-of-default** — zsh returns 5 (length of "empty"); zshrs returns 0. Esoteric edge case in `${#name:-default}` parsing.
 - **`*` glob ordering caseglob** — zsh sorts `bench bins Cargo.lock …` (case-insensitive); zshrs sorts `Cargo.lock … bench bins` (case-sensitive). Glob expansion needs to honor the `caseglob` option (default-on in zsh).
