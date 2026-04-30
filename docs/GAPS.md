@@ -1761,6 +1761,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `%L` outputs the in-shell SHLVL (incremented at startup over the parent's value). zshrs's `build_prompt_context` read `env::var("SHLVL")` which still held the parent's pre-increment value (the bump goes into `self.variables` only). So `print -P "%L"` showed `parent_shlvl` instead of `parent_shlvl + 1`. Now reads `self.variables["SHLVL"]` first, falling back to env. Test: `test_print_P_L_uses_in_shell_shlvl`.
 
+### `${(V)x}` for control-char string left chars raw instead of `^X`
+
+- zsh: `(V)` flag makes non-printable characters visible (control chars → `^X`, `\n` → `\n`, `\t` → `\t`). zshrs had a `ZshParamFlag::Visible` handler in the multi-flag dispatcher, but the inline state machine for single-flag `${(V)x}` had no `V` arm — control chars passed through raw. Added a `V` arm to the inline state machine that mirrors the visible-char encoding. Test: `test_v_flag_visible_control_chars`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`

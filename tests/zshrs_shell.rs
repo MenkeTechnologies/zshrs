@@ -6400,6 +6400,18 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_v_flag_visible_control_chars() {
+    // zsh: `${(V)x}` makes non-printable characters visible —
+    // control chars become `^X` (X = char + 64), `\n` → `\n`,
+    // `\t` → `\t`. zshrs's inline state-machine had no `V` arm
+    // (the multi-flag dispatcher had ZshParamFlag::Visible but
+    // the (V)-only single-flag path skipped it), so control chars
+    // passed through raw.
+    let (_, output, _) = run_zshrs(r#"x=$'a\x01b'; print "${(V)x}""#);
+    assert_eq!(output.trim(), "a^Ab");
+}
+
+#[test]
 fn test_print_P_L_uses_in_shell_shlvl() {
     // zsh: `print -P "%L"` outputs the in-shell SHLVL (already
     // incremented at startup over the parent's value). zshrs's
