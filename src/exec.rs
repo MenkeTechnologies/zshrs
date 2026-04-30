@@ -18558,8 +18558,17 @@ impl ShellExecutor {
                             _ => {}
                         }
                     }
-                    if d != 0 {
+                    if d > 0 {
+                        // More `(` than `)` — open paren without
+                        // close. zsh: `argument expected`.
                         eprintln!("zshrs:[:1: argument expected");
+                        return 2;
+                    } else if d < 0 {
+                        // More `)` than `(` — surplus close paren.
+                        // zsh: `[:1: too many arguments` (the `)`
+                        // is the extra arg). zshrs collapsed both
+                        // to "argument expected".
+                        eprintln!("zshrs:[:1: too many arguments");
                         return 2;
                     }
                 }

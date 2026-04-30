@@ -1798,6 +1798,10 @@ impl<'a> MathEval<'a> {
         while let Some(c) = self.peek() {
             if c.is_whitespace() {
                 self.advance();
+            } else if c == ')' {
+                // zsh's specific wording for the unmatched-close
+                // case: `bad math expression: unexpected ')'`.
+                return Err("bad math expression: unexpected ')'".to_string());
             } else {
                 return Err(format!("illegal character: {}", c));
             }
