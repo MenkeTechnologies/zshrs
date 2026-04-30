@@ -18383,14 +18383,18 @@ impl ShellExecutor {
                 // explicit arm, an unknown flag like `-i` fell through
                 // the AND/OR split and silently returned 1 (which a
                 // consumer would read as "false" instead of "syntax
-                // error"). Match zsh's diagnostic + exit-2.
+                // error"). Match zsh's diagnostic + exit-2. Also
+                // catches `[ -- foo ]` where `--` is treated as a
+                // bogus flag name (zsh: `unknown condition: --`).
                 if args.len() == 2
                     && args[0].starts_with('-')
                     && args[0].len() > 1
                     && !matches!(args[0], "-a" | "-o")
                 {
                     let bytes = args[0].as_bytes();
-                    if bytes[1..].iter().all(|b| b.is_ascii_alphabetic()) {
+                    if bytes[1..].iter().all(|b| b.is_ascii_alphabetic())
+                        || args[0] == "--"
+                    {
                         eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
                         return 2;
                     }
@@ -21855,15 +21859,16 @@ impl ShellExecutor {
                 eprintln!("zshrs:fc:1: too many arguments");
                 return 1;
             }
-            // Edit-mode `fc N M` (2 positionals, both numeric): zsh
-            // re-edits commands N..M. With empty session history in
-            // -c mode, that's the recurse-endlessly path. zshrs's
-            // prefix-search just used N and reported `event not
-            // found: N`, the wrong category for the range-edit form.
-            if positional.len() == 2 && !atty::is(atty::Stream::Stdin) {
-                let p0_num = positional[0].parse::<i64>().is_ok();
-                let p1_num = positional[1].parse::<i64>().is_ok();
-                if p0_num && p1_num {
+            // Edit-mode `fc N` / `fc N M` (numeric positionals): zsh
+            // re-edits commands N (or N..M). With empty session
+            // history in -c mode, that's the recurse-endlessly path.
+            // zshrs's prefix-search just used N and reported `event
+            // not found: N`, the wrong category for the range-edit
+            // form.
+            if !atty::is(atty::Stream::Stdin) {
+                let all_numeric = positional.iter()
+                    .all(|s| s.parse::<i64>().is_ok());
+                if all_numeric && positional.len() <= 2 {
                     eprintln!(
                         "zsh:fc:1: current history line would recurse endlessly, aborted"
                     );

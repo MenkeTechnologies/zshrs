@@ -8127,6 +8127,33 @@ fn test_type_S_k_accepted() {
 }
 
 #[test]
+fn test_test_dashdash_unknown_condition() {
+    // zsh: `[ -- a ]` -> `[:1: unknown condition: --` exit 2 (zsh
+    // treats `--` as a bogus flag name in `[`-test). zshrs's 2-arg
+    // unknown-flag arm only fired for all-alphabetic letters,
+    // missing the `--` case.
+    let (status, _, stderr) = run_zshrs("[ -- a ]");
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("unknown condition: --"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_fc_single_numeric_recurse() {
+    // zsh: edit-mode `fc N` (1 numeric positional) re-edits cmd N.
+    // With empty -c session, that's the recurse-endlessly path.
+    // zshrs's prefix-search reported `event not found: N` for
+    // single-positional case (only fixed for 2-positional earlier).
+    let (_, _, stderr) = run_zshrs("fc 1");
+    assert!(
+        stderr.contains("would recurse endlessly"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
