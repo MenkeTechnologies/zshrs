@@ -6360,6 +6360,30 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_set_a_enables_allexport() {
+    // `set -a` enables `allexport`. zshrs's multi-letter set-flag
+    // parser had no `a` arm, so `set -a` silently passed through
+    // without flipping the option. Now `a` enables allexport (and
+    // `+a` disables); `set -a; setopt | head -1` shows `allexport`
+    // matching zsh.
+    let (_, output, _) = run_zshrs("set -a; setopt | head -1");
+    assert_eq!(output.trim(), "allexport");
+}
+
+#[test]
+fn test_tilde_digit_is_dirstack_index() {
+    // zsh: `~N` for purely-digit N is shorthand for `~+N` —
+    // Nth entry on the directory stack, 0 = $PWD. zshrs treated
+    // `~0` as a user lookup and aborted "no such user". Added a
+    // digits-only branch above the `getpwnam` path so `~0` returns
+    // current PWD without going through user resolution.
+    let (_, output, _) = run_zshrs("echo ~0");
+    assert!(!output.is_empty(), "got: {output:?}");
+    // Should be a real path (starts with `/`), not an error.
+    assert!(output.trim().starts_with('/'), "got: {output:?}");
+}
+
+#[test]
 fn test_fc_l_event_number_width() {
     // zsh's `fc -l` prints event numbers right-aligned in a 5-char
     // field (`    1  hist1`). zshrs used `{:>6}` (6-char field), so

@@ -1725,6 +1725,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `fc -l` formats event numbers right-aligned in a 5-char field (`    1  cmd`). zshrs used `{:>6}` (6-char field), so the output column was shifted one space right of zsh's. Switched every `fc -l` print site (session-history loop, recent-iter loop, with-time/duration variants) to `{:>5}` so the alignment matches. Test: `test_fc_l_event_number_width`.
 
+### `set -a` did not enable `allexport`
+
+- The multi-letter set-flag parser (`-xy` / `-xa` / `+ax` etc.) had arms for `e`/`x`/`u`/`v`/`n`/`f`/`m`/`C`/`b` but no `a`. So `set -a` silently passed through the silent-unknown default and `allexport` stayed off. Added `a` (enable) and `+a` (disable) arms in both halves of the multi-letter parser. Test: `test_set_a_enables_allexport`.
+
+### `echo ~0` aborted "no such user or named directory: 0"
+
+- zsh's `~N` (digits only) is shorthand for `~+N` — Nth entry on the directory stack, 0 = $PWD. zshrs's `expand_tilde_named` checked for `~+N` and `~-N` explicitly but not bare digits, so `~0` fell through to the `getpwnam` path which (correctly for non-numeric usernames) aborted in `-c` mode. Added a digits-only branch above the user-lookup arm that resolves to PWD or `dir_stack[N-1]`. Test: `test_tilde_digit_is_dirstack_index`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
