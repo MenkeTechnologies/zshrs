@@ -23821,17 +23821,29 @@ impl ShellExecutor {
         let mut i = 0;
         while i < args.len() {
             let arg = &args[i];
+            if arg == "--" {
+                // Bare `--` ends options; rest are positional.
+                i += 1;
+                while i < args.len() {
+                    positional_args.push(&args[i]);
+                    i += 1;
+                }
+                break;
+            }
             if arg.starts_with('-') && arg.len() > 1 && positional_args.is_empty() {
+                // `command --foo` (long-option-style) — zsh treats the
+                // whole thing as a command NAME to invoke (no built-in
+                // long-option support). Mirror by emitting the
+                // command-not-found diagnostic for any `--xxx` form.
+                if arg.starts_with("--") {
+                    eprintln!("zshrs:1: command not found: {}", arg);
+                    return 127;
+                }
                 for ch in arg[1..].chars() {
                     match ch {
                         'p' => use_default_path = true,
                         'v' => print_path = true,
                         'V' => verbose = true,
-                        '-' => {
-                            // -- ends options
-                            i += 1;
-                            break;
-                        }
                         _ => {
                             // zsh treats an unknown -X as a command
                             // name to invoke, not as a flag error.

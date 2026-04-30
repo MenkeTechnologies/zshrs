@@ -6384,6 +6384,18 @@ fn test_q_flag_empty_returns_quoted_empty() {
 }
 
 #[test]
+fn test_command_long_option_treated_as_command_name() {
+    // `command --help` (and any `--xxx` long-option-style arg) is
+    // treated as a command name in zsh — `command not found: --help`
+    // exit 127. zshrs's flag parser hit the `--` arm (which it
+    // intended for the bare end-of-options token) and silently
+    // dropped the rest of the arg, returning 0 with no output.
+    let (status, _, stderr) = run_zshrs("command --help");
+    assert_eq!(status, 127);
+    assert!(stderr.contains("command not found: --help"), "got: {stderr}");
+}
+
+#[test]
 fn test_command_unknown_flag_treated_as_command_name() {
     // zsh: `command -x ls` treats `-x` as a command name (since `-x`
     // isn't a recognised `command` flag). Output: "command not found:
