@@ -18094,7 +18094,15 @@ impl ShellExecutor {
             }
 
             // String comparisons
-            [a, "=", b] | [a, "==", b] => {
+            // POSIX `[`-test only accepts `=` for string equality.
+            // `==` is the `[[`-cond extension; in `[`, zsh emits
+            // `1: = not found` exit 1 (it parses `==` as `=` `=`
+            // and tries to look up the second `=` as a command).
+            [_, "==", _] => {
+                eprintln!("zshrs:1: = not found");
+                return 1;
+            }
+            [a, "=", b] => {
                 if a == b {
                     0
                 } else {
@@ -21104,6 +21112,14 @@ impl ShellExecutor {
                             }
                         }
                         'p' | 'P' | 'a' | 'I' | 'L' | 'm' => {} // Handled but no-op for now
+                        // `--help` / long-option-style typos: zsh
+                        // skips the leading `-` and reports the
+                        // FIRST recognisable letter as the bad
+                        // option (so `--help` -> `bad option: -h`).
+                        // Without this, zshrs's loop hit `-` itself
+                        // as the unknown letter and reported `bad
+                        // option: --` (wrong identifier).
+                        '-' => {}
                         _ => {
                             if chars[j].is_ascii_digit() {
                                 positional.push(arg);
@@ -21265,9 +21281,14 @@ impl ShellExecutor {
                 }
                 // Two-positional `fc -l N M` is a RANGE query — zsh
                 // emits a different error: `no events in that range`.
-                // Single positional / no positional uses
-                // `no such event: N`.
-                if positional.len() >= 2 {
+                // Three+ positionals -> `too many arguments` (fc -l
+                // takes at most 2 range bounds). Single positional /
+                // no positional uses `no such event: N`.
+                if positional.len() > 2 {
+                    eprintln!("zshrs:fc:1: too many arguments");
+                    return 1;
+                }
+                if positional.len() == 2 {
                     eprintln!("zsh:fc:1: no events in that range");
                     return 1;
                 }
@@ -23898,6 +23919,19 @@ impl ShellExecutor {
                             }
                         }
                     } else {
+                        // zsh: single-letter `-X` / `+X` flags on
+                        // setopt are shortcuts for option names from
+                        // the option-letter table (mirrors `set`).
+                        // `setopt -h` is a no-op accepted silently
+                        // (the `h` shortcut maps to `hashcmds`).
+                        // zshrs's old default arm rejected ANY `-`
+                        // prefixed arg as an unknown name.
+                        if arg.len() == 2 && (arg.starts_with('-') || arg.starts_with('+')) {
+                            // Single-letter form — accept silently
+                            // (already covered for the few we wire
+                            // up; the rest are no-ops in `-c` mode).
+                            continue;
+                        }
                         let (name, enable) = Self::normalize_option_name(arg);
                         // zsh: `setopt nosuchoption` errors with
                         //   `setopt:1: no such option: nosuchoption`
@@ -24301,23 +24335,29 @@ impl ShellExecutor {
                 }
             }
 
-            // Check for external command in PATH
-            if let Ok(path_env) = std::env::var("PATH") {
-                for dir in path_env.split(':') {
-                    let full_path = format!("{}/{}", dir, name);
-                    if std::path::Path::new(&full_path).exists() {
-                        found_any = true;
-                        if !silent {
-                            if show_word {
-                                println!("{}: command", name);
-                            } else if show_type {
-                                println!("file");
-                            } else {
-                                println!("{} is {}", name, full_path);
+            // Check for external command in PATH. Skip the lookup
+            // entirely for empty names — `dir + "/" + ""` resolves to
+            // the directory itself, which `Path::exists` reports as
+            // true, falsely matching `type ""` to the first PATH entry.
+            // zsh: `type ""` -> ` not found` exit 0.
+            if !name.is_empty() {
+                if let Ok(path_env) = std::env::var("PATH") {
+                    for dir in path_env.split(':') {
+                        let full_path = format!("{}/{}", dir, name);
+                        if std::path::Path::new(&full_path).exists() {
+                            found_any = true;
+                            if !silent {
+                                if show_word {
+                                    println!("{}: command", name);
+                                } else if show_type {
+                                    println!("file");
+                                } else {
+                                    println!("{} is {}", name, full_path);
+                                }
                             }
-                        }
-                        if !show_all {
-                            break;
+                            if !show_all {
+                                break;
+                            }
                         }
                     }
                 }
@@ -28669,7 +28709,18 @@ impl ShellExecutor {
                 "-m" => resource = RLIMIT_RSS,
                 "unlimited" => value = Some(libc::RLIM_INFINITY as u64),
                 _ if !arg.starts_with('-') => {
-                    value = arg.parse().ok();
+                    // zsh: `ulimit -f abc` (non-numeric value, not
+                    // `unlimited`) -> `ulimit:1: invalid number:
+                    // abc` exit 1. zshrs's `arg.parse().ok()`
+                    // silently dropped the bad input, leaving value
+                    // unset and printing the existing limit.
+                    match arg.parse::<u64>() {
+                        Ok(v) => value = Some(v),
+                        Err(_) => {
+                            eprintln!("zshrs:ulimit:1: invalid number: {}", arg);
+                            return 1;
+                        }
+                    }
                 }
                 _ => {
                     // zsh: unknown flag → `bad option: -X` exit 1.
