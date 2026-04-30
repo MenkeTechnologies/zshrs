@@ -919,7 +919,12 @@ impl ZshCompiler {
                     crate::exec::BUILTIN_SET_VAR
                 };
                 self.builder.emit(Op::CallBuiltin(bid, 2), 0);
-                self.builder.emit(Op::Pop, 0);
+                // Propagate the assignment's status to $?. zsh:
+                // `a=$(false); echo $?` → 1. SET_VAR returns
+                // Value::Status(captured cmd-subst status); use
+                // SetStatus to update vm.last_status (so subsequent
+                // $? reads the right value).
+                self.builder.emit(Op::SetStatus, 0);
             }
             ZshAssignValue::Array(elements) => {
                 // Subscripted-array assign: `a[i]=(elements)`,
