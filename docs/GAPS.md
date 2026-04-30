@@ -2131,6 +2131,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: assoc-init with an odd number of values -> `bad set of key/value pairs for associative array` exit 1, no assignment. zshrs's `if let Some(v) = it.next()` silently dropped the orphaned key, leaving the assoc partially populated. Added an explicit `values.len() % 2 != 0` precheck. Test: `test_assoc_odd_kv_pairs_errors`.
 
+### `disown %999` and `disown -l`/`-h` silently returned 0 instead of erroring
+
+- zsh: `disown %N` for non-existent N -> `disown:1: %N: no such job` exit 1; `disown -l`/`-h` are NOT recognized flags (treated as job specs) -> `disown:1: job not found: -l` exit 1. zshrs's flagless impl emitted bash-style `disown: -l: no such job` and silently dropped non-existent ids. Restructured the loop: `%N` strips and validates against jobs; numeric routes to `%N: no such job`; non-numeric (including `-l`) errors `job not found:`. Tests: `test_disown_unknown_jobspec_errors`, `test_disown_dash_flag_treats_as_jobspec`.
+
+### `zstyle -` errored "invalid option: -" instead of "not enough arguments"
+
+- zsh: bare `-` (no recognized option letter) -> `zstyle:1: not enough arguments` (degenerate flag-only invocation). zshrs's catch-all unknown-flag fallback emitted `invalid option: -`. Added a dedicated `-` arm. Test: `test_zstyle_dash_only_not_enough_args`.
+
+### `fc -t` (no time-format arg) ran the recurse-endlessly path instead of erroring "argument expected: -t"
+
+- zsh: `-t TIMEFMT` requires a format string; missing -> `fc:1: argument expected: -t` exit 1. zshrs's `'t'` arm bumped `i` without bounds-check; the loop ended with no positional and the recurse-abort fired. Added an `i >= args.len()` check that emits zsh's specific diagnostic. Test: `test_fc_t_missing_arg_errors`.
+
+### `functions FOO` (FOO undefined) errored "no such function: FOO" instead of silent
+
+- zsh: `functions FOO` for non-existent FOO emits nothing and returns 0 (it's a query, not an enforce). zshrs erred `no such function: FOO`. Replaced the error with `continue` so unknown names skip silently. Test: `test_functions_unknown_silent`.
+
+### `kill -- 999` treated `--` as a signal name and errored "unknown signal: SIG-"
+
+- zsh: `--` is end-of-options on `kill`; subsequent args are PIDs. zshrs's catch-all `-X` flag walker parsed `--` as `-` (separator) then `-` as the signal name, errored `unknown signal: SIG-`. Added an `after_dashdash` flag at the top of the parse loop that switches to PID-collection mode. Test: `test_kill_dashdash_end_of_options`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
