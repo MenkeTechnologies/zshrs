@@ -8488,6 +8488,22 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_typeset_array_quote_aware_split() {
+    // Direct port of zsh's lex.c word-splitting for assignment
+    // RHS — `local arr=( "a b" c )` keeps "a b" as one element,
+    // not two. zshrs's typeset array path naively
+    // split-by-whitespace'd the body, breaking quoted strings.
+    // Replaced with quote-aware scanner that honors `"..."`/'...'`
+    // boundaries (still strips the quote chars from the result).
+    let (_, output, _) =
+        run_zshrs(r#"foo() { local arr=( "abc" "def ghi" jk ); echo "${#arr}|${arr[2]}"; }; foo"#);
+    assert_eq!(output.trim(), "3|def ghi", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"declare -a arr=( "x y" z ); echo "${#arr}|${arr[1]}|${arr[2]}""#);
+    assert_eq!(output.trim(), "2|x y|z", "got: {output:?}");
+}
+
+#[test]
 fn test_function_scope_exit_trap_fires_on_return() {
     // Direct port of zsh's exec.c dotrapargs(SIGEXIT, ...) —
     // a `trap "..." EXIT` set INSIDE a function fires when the

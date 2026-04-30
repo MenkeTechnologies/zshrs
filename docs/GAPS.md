@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `local arr=( "a b" c )` quote-aware split — preserves whitespace inside quoted elements
+
+zshrs's typeset/declare/local array path naively `split_whitespace()`'d the body, breaking quoted strings: `local arr=( "x y" z )` produced 3 elements `[x, y, z]` instead of zsh's 2 elements `["x y", z]`. Direct port of zsh's lex.c word-splitting for assignment RHS via a quote-aware scanner that honors `"..."`/`'...'` boundaries (and strips the quote chars from the result).
+
+Limitation: `"$@"` splicing inside `local arr=( "$@" )` still doesn't work — the splice happens BEFORE this path sees the args, and the parser's `$@`-as-words mechanism only fires for the regular `arr=(...)` (non-typeset) compile path. Tracked separately.
+
+Test: `test_typeset_array_quote_aware_split`.
+
 ### Function-scope EXIT trap fires on function return, preserves outer trap
 
 Direct port of zsh's exec.c `dotrapargs(SIGEXIT, ...)` deferred-fire pattern. An EXIT trap set INSIDE a function fires when the function RETURNS (not when the shell exits), and the outer EXIT trap is preserved across the call. zshrs's `call_function` didn't track function-scope traps, so:
