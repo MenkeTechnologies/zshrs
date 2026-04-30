@@ -8488,6 +8488,31 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_cli_o_flag_sets_options() {
+    // zsh's `-o NAME` and `+o NAME` CLI flags toggle options
+    // before the script runs. zshrs previously didn't parse
+    // them, so `zshrs -f +o nomatch -c '...'` errored
+    // "+o: No such file or directory" (treating `+o` as a
+    // script file argument because it didn't start with `-`).
+    // Direct port of zsh's main.c arg-parse loop: collect
+    // `-o NAME` (set) / `+o NAME` (unset) pairs, store
+    // verbatim into the options table. The `no` prefix is
+    // PART of the canonical option name (e.g. `nomatch`)
+    // for setopt/unsetopt — only the [[ -o ... ]] query path
+    // does prefix-stripping canonicalization.
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_zshrs");
+    let out = Command::new(bin)
+        .args(["-f", "+o", "nomatch", "-c", "echo *(/.)"])
+        .output()
+        .expect("spawn zshrs");
+    assert_eq!(out.status.code(), Some(0), "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.trim(), "*(/.)", "got: {stdout:?}");
+}
+
+#[test]
 fn test_glob_alternation_at_path_level() {
     // Direct port of zsh's pattern.c P_BRANCH `|` at the path
     // level. `/etc/(passwd|hostname)` matches paths whose last

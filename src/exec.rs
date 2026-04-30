@@ -2840,6 +2840,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
         let mut flags = vm.pop().to_str();
         let name = vm.pop().to_str();
+        eprintln!("DEBUG_PARAM_FLAG: name={:?} flags={:?}", name, flags);
 
         // Compile path tags DQ-wrapped expressions with a leading
         // `\u{02}` sentinel. In DQ context, array-only flags are
@@ -2852,7 +2853,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
             flags = flags[1..].to_string();
         }
         let dq_runtime = with_executor(|exec| exec.in_dq_context > 0);
-        if dq_compile || dq_runtime {
+        // `[@]` / `[*]` subscript on the name overrides the DQ
+        // strip — explicit `[@]` marks the array as splice-
+        // expanded so array-only flags (`o`/`O`/`n`/`i`/`u`)
+        // still fire on the per-element list. Direct port of
+        // zsh's subst.c nojoin/spbreak path. Without this,
+        // `"${(o)a[@]}"` skipped the sort in DQ.
+        let has_at_subscript =
+            name.ends_with("[@]") || name.ends_with("[*]");
+        if (dq_compile || dq_runtime) && !has_at_subscript {
             // Strip array-only flags (sort/unique/index variants).
             // (M) is NOT stripped here — it still modifies `:#pat`
             // filter behavior on the joined scalar in DQ context.

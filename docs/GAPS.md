@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `zshrs -f +o nomatch -c '...'` now parses `-o`/`+o NAME` like zsh's main.c arg loop
+
+zshrs previously rejected `+o nomatch` with "+o: No such file or directory" — neither `+o` nor the option name was in the recognized-flags filter, so `+o` fell through to the "treat as script file" path. Direct port of zsh's main.c arg-parse loop: collect `-o NAME` (set option) / `+o NAME` (unset option) pairs before the filter; apply them in `apply_cli_flags` as `executor.options.insert(name, value)`.
+
+The `no` prefix is part of the canonical option name (`nomatch`, `noglob`, `nounset`) for setopt/unsetopt purposes — only `[[ -o ... ]]` query canonicalization strips it. Mirror by storing verbatim (just lowercased + `_`/`-` separator-stripped). User-reported regression: `echo *(/.)` errored "no matches found" with `nomatch` still on, instead of leaving the literal alone with `+o nomatch`.
+
+Test: `test_cli_o_flag_sets_options`.
+
 ### `/etc/(passwd|hostname)` glob alternation at the path level — primary zsh feature
 
 Direct port of zsh's pattern.c `P_BRANCH` `|` handling at the path level. `/etc/(passwd|hostname)` matches paths where the last component is `passwd` OR `hostname` (no extendedglob required, unlike `~` exclusion). zshrs's compile path didn't list `(...|...)` as a glob trigger, so the parens reached the OS as literal chars and produced no match.
