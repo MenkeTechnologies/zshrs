@@ -364,6 +364,13 @@ impl Default for MathValue {
 pub struct MathEval<'a> {
     input: &'a str,
     pos: usize,
+    /// Byte position in `input` where the most recently lexed token began
+    /// (after whitespace skip). Used to format zsh-style error pointers
+    /// like `bad math expression: operand expected at `*'` for orphan
+    /// binary operators — zsh's error retains the input pointer at the
+    /// start of the bad operator, so the message includes the operator
+    /// (and any trailing input) rather than the post-consumption position.
+    tok_start: usize,
     yyval: MathNum,
     yylval: String,
     stack: Vec<MathValue>,
@@ -391,6 +398,7 @@ impl<'a> MathEval<'a> {
         MathEval {
             input,
             pos: 0,
+            tok_start: 0,
             yyval: MathNum::Integer(0),
             yylval: String::new(),
             stack: Vec::with_capacity(100),
@@ -723,13 +731,23 @@ impl<'a> MathEval<'a> {
         self.yyval = MathNum::Integer(0);
 
         loop {
+            let pre_pos = self.pos;
             let c = match self.advance() {
                 Some(c) => c,
-                None => return MathTok::Eoi,
+                None => {
+                    self.tok_start = pre_pos;
+                    return MathTok::Eoi;
+                }
             };
 
+            if matches!(c, ' ' | '\t' | '\n' | '"') {
+                continue;
+            }
+            // Record where this token began (post-whitespace) so error
+            // formatters can produce zsh-style "at `<remaining>`" messages.
+            self.tok_start = pre_pos;
+
             match c {
-                ' ' | '\t' | '\n' | '"' => continue,
 
                 '+' => {
                     if self.peek() == Some('+') {
@@ -1675,6 +1693,25 @@ impl<'a> MathEval<'a> {
                     let otok = self.mtok;
                     let onoeval = self.noeval;
                     let tp = OP_TYPE[otok as usize];
+                    // Orphan binary at start: `let "*"`, `let "*5"`,
+                    // `let "/"`. zsh keeps its input pointer at the
+                    // start of the bad operator and emits `operand
+                    // expected at \`<remaining>'`. zshrs previously
+                    // collapsed every operand-missing case into "at
+                    // end of string" which lost the operator
+                    // location for orphan-at-start expressions.
+                    let is_binary = (tp
+                        & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO))
+                        != 0;
+                    if self.stack.is_empty() && is_binary {
+                        let remaining =
+                            &self.input[self.tok_start..];
+                        self.error = Some(format!(
+                            "bad math expression: operand expected at `{}'",
+                            remaining
+                        ));
+                        return;
+                    }
                     if (tp & 0x03) == BOOL {
                         self.bop(otok);
                     }

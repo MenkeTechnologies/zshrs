@@ -8168,6 +8168,103 @@ fn test_test_unmatched_close_paren_too_many() {
 }
 
 #[test]
+fn test_kill_percent_text_jobspec() {
+    // zsh: `kill %abc` (non-numeric jobspec) -> `kill:1: job not
+    // found: abc` (no leading %, distinct format from numeric
+    // miss). zshrs reported `kill: %abc: no such job` (with %).
+    let (status, _, stderr) = run_zshrs("kill %abc");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("job not found: abc"),
+        "got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("%abc: no such job"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_unset_bad_option_X() {
+    // zsh: `unset -X foo` -> `unset:1: bad option: -X` exit 1.
+    // zshrs silently swallowed unknown flags via the `_ if
+    // arg.starts_with('-') => {}` arm, masking typo'd flags.
+    let (status, _, stderr) = run_zshrs("unset -X foo; echo done");
+    assert_eq!(status, 0); // last command (echo) is 0
+    assert!(
+        stderr.contains("bad option: -X"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_unset_dash_dash_end_of_options() {
+    // zsh: `unset -- foo` accepts `--` as end-of-options sentinel.
+    // Without this, our new bad-option rejection would fire on
+    // `--` itself.
+    let (status, _, stderr) = run_zshrs("unset -- foo; echo done");
+    assert_eq!(status, 0);
+    assert!(
+        !stderr.contains("bad option"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_let_orphan_mul_at_op() {
+    // zsh: `let "*"` -> `bad math expression: operand expected at
+    // \`*'`. zshrs collapsed every operand-missing case into "at
+    // end of string", which lost the operator location for
+    // orphan-at-start expressions like pure-binary ops with no
+    // unary form (Mul, Div, Mod, Power).
+    let (status, _, stderr) = run_zshrs("let \"*\"");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("operand expected at `*'"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_let_orphan_div_at_op() {
+    // Same orphan-binary case for Div.
+    let (status, _, stderr) = run_zshrs("let \"/\"");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("operand expected at `/'"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_let_orphan_mul_with_right_includes_remaining() {
+    // zsh: `let "*5"` -> `at \`*5'` — error retains the input
+    // pointer at the start of the bad operator, so the remaining
+    // input (operator + everything after) becomes the error
+    // context.
+    let (status, _, stderr) = run_zshrs("let \"*5\"");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("operand expected at `*5'"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_let_trailing_mul_still_end_of_string() {
+    // zsh: `let "5*"` -> still "at end of string" because the
+    // left operand was consumed; only the right is missing and
+    // input has been exhausted. Our orphan-at-start check
+    // explicitly only fires when stack.is_empty().
+    let (status, _, stderr) = run_zshrs("let \"5*\"");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("operand expected at end of string"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

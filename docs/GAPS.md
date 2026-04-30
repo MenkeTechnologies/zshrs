@@ -2219,6 +2219,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-sixth-pass)
 
+### `kill %abc` (non-numeric jobspec) reported `kill: %abc: no such job` instead of zsh's `kill:1: job not found: abc`
+
+- zsh's format strips the leading `%` and uses the `kill:LINE: job not found: NAME` form (consistent with the rest of zsh's builtin diagnostics). zshrs reported `kill: %abc: no such job` — wrong wording, kept the `%`, missing line number. Updated both fall-through paths (parse-failure on `%N` and `%N` not found in jobs table) to emit the zsh-shape message. Test: `test_kill_percent_text_jobspec`.
+
+### `unset -X foo` silently swallowed the bad flag (no diagnostic, exit 0)
+
+- zsh: `unset -X foo` -> `unset:1: bad option: -X` exit 1. zshrs's flag loop had a catch-all `_ if arg.starts_with('-') => {}` arm that masked typo'd flags. Replaced it with a bad-option rejection (preserving `--` as end-of-options sentinel for compat with `unset -- name`). Tests: `test_unset_bad_option_X`, `test_unset_dash_dash_end_of_options`.
+
+### `let "*"` reported "operand expected at end of string" instead of zsh's "at `*'"
+
+- zsh keeps its input pointer at the start of the bad operator and emits `operand expected at \`<remaining>'` for orphan-at-start binary ops (`*`, `/`, `%`, `**`, `&`, `|`, `^`, `&&`, `||`, `^^`, `==`, `!=`, `<`, `>`, `<=`, `>=`, `<<`, `>>`, ...). zshrs collapsed every operand-missing case into "at end of string", losing operator location for orphan-binary expressions. Added `tok_start: usize` field to `MathEval` (updated in `zzlex` after whitespace skip), then in `mathparse`'s binary-op arm, when `stack.is_empty()` AND op is binary, error with `at \`<input[tok_start..]>'` — captures both `let "*"` (just `*`) and `let "*5"` (operator + remaining input). Pure-unary cases (`let "+"`, `let "-"`) still fall through to the existing "at end of string" path. Tests: `test_let_orphan_mul_at_op`, `test_let_orphan_div_at_op`, `test_let_orphan_mul_with_right_includes_remaining`, `test_let_trailing_mul_still_end_of_string`.
+
 ### `[ a b c ]` (3 non-flag args, no operator) silently returned 1 instead of erroring "condition expected: b"
 
 - zsh: `[ a b c ]` -> `1: condition expected: b` exit 2 — points at args[1] which should have been an op. zshrs's 3-arg path only checked layouts where args[1] starts with `-`; pure-non-flag layouts fell through to the catch-all `1`. Added a 3-arg arm that fires when none of args[0..3] is `-`-prefixed, with `=`/`!=`/`==` excluded (those go through the regular comparison arms). Test: `test_test_3args_no_op_errors`.

@@ -17333,12 +17333,24 @@ impl ShellExecutor {
         // variables (the default), and `-m` for pattern matching.
         let mut function_mode = false;
         let mut names: Vec<String> = Vec::new();
+        let mut end_of_options = false;
         for arg in args {
+            if end_of_options {
+                names.push(arg.clone());
+                continue;
+            }
             match arg.as_str() {
+                "--" => end_of_options = true,
                 "-f" => function_mode = true,
                 "-v" => function_mode = false,
-                "-m" => {}                      // pattern-match mode (TODO)
-                _ if arg.starts_with('-') => {} // unknown flag, ignore
+                "-m" => {} // pattern-match mode (TODO)
+                _ if arg.starts_with('-') && arg.len() > 1 => {
+                    // zsh: `unset -X foo` errors `unset:1: bad
+                    // option: -X` exit 1. zshrs silently swallowed
+                    // unknown flags, which masked typos.
+                    eprintln!("zshrs:unset:1: bad option: {}", arg);
+                    return 1;
+                }
                 _ => names.push(arg.clone()),
             }
         }
@@ -20926,7 +20938,10 @@ impl ShellExecutor {
                 let id: usize = match arg[1..].parse() {
                     Ok(id) => id,
                     Err(_) => {
-                        eprintln!("kill: {}: no such job", arg);
+                        // zsh format: `kill:1: job not found:
+                        // <name-without-%>`. zshrs's `%abc: no such
+                        // job` had the % AND wrong wording.
+                        eprintln!("zshrs:kill:1: job not found: {}", &arg[1..]);
                         status = 1;
                         continue;
                     }
@@ -20937,7 +20952,7 @@ impl ShellExecutor {
                         status = 1;
                     }
                 } else {
-                    eprintln!("kill: {}: no such job", arg);
+                    eprintln!("zshrs:kill:1: {}: no such job", arg);
                     status = 1;
                 }
             } else {
