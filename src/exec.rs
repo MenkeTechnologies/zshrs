@@ -19278,6 +19278,54 @@ impl ShellExecutor {
             list_mode = true;
         }
 
+        // zsh's bare `typeset NAME` / `declare NAME` (no type
+        // flags, no `=`) prints the variable's current
+        // declaration if NAME is set — same SHAPE as `-p` but
+        // WITHOUT the `typeset`/`export` prefix. `typeset -p a`
+        // prints `typeset -a a=( ... )`; bare `typeset a`
+        // prints `a=( ... )`. Unset names still get declared.
+        // zshrs silently swallowed bare-name calls, dropping
+        // the listing entirely. Promote the call to print_mode
+        // when ALL bare-name args are already-set vars; track
+        // a separate `print_no_prefix` to drop the leading
+        // `typeset`/`export`.
+        let no_type_flags = !is_integer
+            && !is_float
+            && !is_float_exp
+            && !is_left_pad
+            && !is_right_pad
+            && !is_zero_pad
+            && !is_lower
+            && !is_upper
+            && !is_readonly
+            && !is_export
+            && !is_array
+            && !is_assoc
+            && !is_unique
+            && !plus_mode
+            && !print_mode
+            && !is_function
+            && !list_mode;
+        let mut print_no_prefix = false;
+        // Top-level only — inside a function, bare `typeset
+        // NAME` localizes (shadows parent, resets to empty). The
+        // print-the-declaration behavior fires only at the
+        // shell's top scope (matches zsh).
+        if no_type_flags
+            && self.local_scope_depth == 0
+            && !var_args.is_empty()
+            && var_args.iter().all(|a| {
+                !a.contains('=')
+                    && (self.variables.contains_key(a.as_str())
+                        || self.arrays.contains_key(a.as_str())
+                        || self.assoc_arrays.contains_key(a.as_str())
+                        || env::var(a.as_str()).is_ok())
+            })
+        {
+            print_mode = true;
+            print_no_prefix = true;
+        }
+
         if list_mode {
             // Type-filter: when -F/-E is set, narrow to float-typed
             // vars only. zsh: `declare -F` prints nothing without any
@@ -19419,6 +19467,15 @@ impl ShellExecutor {
                 } else {
                     format!("typeset -{}", attrs)
                 };
+                // Bare `typeset NAME` (no `-p`, no flags) drops
+                // the leading `typeset`/`export` prefix —
+                // matches zsh's `a=value` form rather than the
+                // re-executable `typeset a=value`.
+                let pfx_space = if print_no_prefix {
+                    String::new()
+                } else {
+                    format!("{} ", prefix)
+                };
                 if let Some(map) = self.assoc_arrays.get(name) {
                     let mut pairs: Vec<_> = map.iter().collect();
                     pairs.sort_by_key(|(k, _)| (*k).clone());
@@ -19429,16 +19486,16 @@ impl ShellExecutor {
                         })
                         .collect();
                     if formatted.is_empty() {
-                        println!("{} {}=( )", prefix, name);
+                        println!("{}{}=( )", pfx_space, name);
                     } else {
-                        println!("{} {}=( {} )", prefix, name, formatted.join(" "));
+                        println!("{}{}=( {} )", pfx_space, name, formatted.join(" "));
                     }
                 } else if let Some(arr) = self.arrays.get(name) {
                     let formatted: Vec<String> = arr.iter().map(|v| shell_quote_value(v)).collect();
-                    println!("{} {}=( {} )", prefix, name, formatted.join(" "));
+                    println!("{}{}=( {} )", pfx_space, name, formatted.join(" "));
                 } else if self.variables.contains_key(name) || env::var(name).is_ok() {
                     let val = self.get_variable(name);
-                    println!("{} {}={}", prefix, name, shell_quote_value(&val));
+                    println!("{}{}={}", pfx_space, name, shell_quote_value(&val));
                 } else {
                     // zsh emits `<invoked>:1: no such variable: NAME`
                     // to stderr and exits non-zero when the named
