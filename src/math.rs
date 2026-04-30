@@ -687,18 +687,20 @@ impl<'a> MathEval<'a> {
                 .filter(|&c| c != '_')
                 .collect();
             // zsh: `2#5` (digit out of range for the base) errors
-            // `bad math expression: operator expected at '5'` —
+            // `bad math expression: operator expected at \`5'` —
             // the lexer drops out of base-parse mode at the first
             // out-of-range char and the parser then trips on it.
             // zshrs's `unwrap_or(0)` silently produced 0, masking
-            // the typo.
+            // the typo. zsh keeps its input pointer at the start
+            // of the bad digit sequence so the error context is
+            // the full remaining digit string (`2#22` -> `22`,
+            // not just the first `2`).
             let val = match i64::from_str_radix(&val_str, base) {
                 Ok(v) => v,
                 Err(_) => {
-                    let bad_char = val_str.chars().next().unwrap_or('?');
                     self.error = Some(format!(
                         "bad math expression: operator expected at `{}'",
-                        bad_char
+                        val_str
                     ));
                     self.yyval = MathNum::Integer(0);
                     return MathTok::Num;

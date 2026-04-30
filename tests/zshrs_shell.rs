@@ -8265,6 +8265,61 @@ fn test_let_trailing_mul_still_end_of_string() {
 }
 
 #[test]
+fn test_arith_base_digit_full_remainder() {
+    // zsh: `$((2#22))` -> `bad math expression: operator
+    // expected at \`22'` — the lexer drops out of base-parse
+    // mode at the first out-of-range char and the parser then
+    // trips on the remainder. zsh reports the FULL bad digit
+    // sequence (`22`), not just the first char (`2`). zshrs
+    // grabbed only `val_str.chars().next()` which lost the
+    // location info for multi-digit out-of-range cases.
+    let (_, _, stderr) = run_zshrs("echo $((2#22))");
+    assert!(
+        stderr.contains("operator expected at `22'"),
+        "got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("at `2'"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_s_flag_drops_empty_fields_default() {
+    // zsh: `${(s:,:)foo}` for `foo="a,,b,,c"` drops empty fields
+    // -> 3 elements. zshrs preserved them -> 5 elements (off by
+    // 2). Empty-field dropping matches zsh's default split
+    // semantics; the `(@)` flag overrides to preserve empties.
+    let (_, output, _) = run_zshrs(
+        r#"foo="a,,b,,c"; arr=( "${(s:,:)foo}" ); echo "${#arr}""#,
+    );
+    assert_eq!(output.trim(), "3", "got: {output:?}");
+}
+
+#[test]
+fn test_at_s_flag_preserves_empty_fields() {
+    // zsh: `${(@s:,:)foo}` for `foo="a,,b,,c"` preserves empty
+    // fields -> 5 elements. The `@` flag's position in the flag
+    // run doesn't matter — anywhere triggers preservation.
+    let (_, output, _) = run_zshrs(
+        r#"foo="a,,b,,c"; arr=( "${(@s:,:)foo}" ); echo "${#arr}""#,
+    );
+    assert_eq!(output.trim(), "5", "got: {output:?}");
+}
+
+#[test]
+fn test_s_flag_drops_consecutive_empties_in_split() {
+    // zsh: `printf "[%s]\n" ${(s:l:)foo}` for `foo="hello"`
+    // splits "hello" by "l" -> ["he", "", "o"] — but bare
+    // `(s::)` drops the empty middle, so output is 2 lines
+    // ([he] and [o]). zshrs's keep-all-fields produced 3 lines
+    // including [].
+    let (_, output, _) =
+        run_zshrs(r#"foo=hello; printf "[%s]\n" ${(s:l:)foo}"#);
+    assert_eq!(output.trim(), "[he]\n[o]", "got: {output:?}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

@@ -2690,11 +2690,30 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         // wraps a scalar in a 1-elem array; `s` must
                         // still split that element. Same goes for true
                         // arrays — flat-map split each element.
+                        //
+                        // Empty-field handling: zsh's bare `(s:,:)` drops
+                        // empty fields ("a,,b" -> ["a","b"]); `(@s:,:)`
+                        // preserves them ("a,,b" -> ["a","","b"]). The
+                        // `@` flag's position doesn't matter — anywhere
+                        // in the flag run it triggers preservation.
+                        // zshrs previously kept empties unconditionally,
+                        // so an unflagged `${(s:,:)x}` count was wrong.
+                        let keep_empty = chars.contains(&'@');
                         state = match state {
                             St::S(s) if sep.is_empty() => {
                                 St::A(s.chars().map(|c| c.to_string()).collect())
                             }
-                            St::S(s) => St::A(s.split(sep.as_str()).map(String::from).collect()),
+                            St::S(s) => {
+                                let parts: Vec<String> = s
+                                    .split(sep.as_str())
+                                    .map(String::from)
+                                    .collect();
+                                St::A(if keep_empty {
+                                    parts
+                                } else {
+                                    parts.into_iter().filter(|p| !p.is_empty()).collect()
+                                })
+                            }
                             St::A(a) => {
                                 let mut out: Vec<String> = Vec::with_capacity(a.len());
                                 for elem in a {
@@ -2704,7 +2723,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                         }
                                     } else {
                                         for part in elem.split(sep.as_str()) {
-                                            out.push(part.to_string());
+                                            if keep_empty || !part.is_empty() {
+                                                out.push(part.to_string());
+                                            }
                                         }
                                     }
                                 }

@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-sixth-pass)
 
+### `${(s:,:)foo}` preserved empty fields (off-by-2) instead of dropping them like zsh
+
+- zsh: bare `(s:sep:)` drops empty fields after splitting, e.g. `${(s:,:)"a,,b,,c"}` -> 3 elements `[a, b, c]`. The `(@)` flag overrides to preserve empties (`${(@s:,:)…}` -> 5 elements `[a, "", b, "", c]`). zshrs's flag loop split with `s.split(sep)` and kept every field unconditionally — array counts were off, and `printf "[%s]\n" ${(s:l:)hello}` printed an extra blank `[]` between `[he]` and `[o]`. Fix: scan flags for `@` once (position-independent), drop empty fields when absent. Pure `(s::)` empty-separator (char-split) and `(s::)` over true arrays both honor the same rule. Tests: `test_s_flag_drops_empty_fields_default`, `test_at_s_flag_preserves_empty_fields`, `test_s_flag_drops_consecutive_empties_in_split`.
+
+### `$((2#22))` reported `at \`2'` instead of zsh's `at \`22'`
+
+- zsh keeps its input pointer at the start of the bad digit sequence, so the entire out-of-range remainder shows up in the error: `2#22` -> `operator expected at \`22'`, not just the first `2`. zshrs's base-error path used `val_str.chars().next()` which clipped to one char. Replaced with `val_str` so the full bad digit run is preserved. The original behavior was correct for single-digit cases (`2#5` -> `5`) but lost information for `2#22`, `2#1011x` etc. Test: `test_arith_base_digit_full_remainder`.
+
 ### `kill %abc` (non-numeric jobspec) reported `kill: %abc: no such job` instead of zsh's `kill:1: job not found: abc`
 
 - zsh's format strips the leading `%` and uses the `kill:LINE: job not found: NAME` form (consistent with the rest of zsh's builtin diagnostics). zshrs reported `kill: %abc: no such job` — wrong wording, kept the `%`, missing line number. Updated both fall-through paths (parse-failure on `%N` and `%N` not found in jobs table) to emit the zsh-shape message. Test: `test_kill_percent_text_jobspec`.
