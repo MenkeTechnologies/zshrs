@@ -186,6 +186,15 @@ impl JobTable {
         }
     }
 
+    /// Peek at the next id that would be assigned by `add_job`/`add_pid`.
+    /// Used by `wait %N` to distinguish a never-issued id (clear user
+    /// error) from a job that was issued and already reaped (silent
+    /// success in zshrs to keep the `cmd & wait %1` idiom working
+    /// across the races introduced by the threaded job table).
+    pub fn peek_next_id(&self) -> usize {
+        self.next_id
+    }
+
     /// Add a job with a Child process
     pub fn add_job(&mut self, child: Child, command: String, state: JobState) -> usize {
         let id = self.next_id;

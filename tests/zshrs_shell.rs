@@ -6691,6 +6691,87 @@ fn test_history_text_query_uses_event_not_found() {
 }
 
 #[test]
+fn test_unalias_continues_after_first_miss() {
+    // zsh: `unalias xyz abc` errors twice (one per miss) and exits
+    // with the last failing status. zshrs returned on the first
+    // miss, hiding the rest from script consumers.
+    let (status, _, stderr) = run_zshrs("unalias xyz abc");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("xyz") && stderr.contains("abc"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_read_unknown_flag_errors() {
+    // zsh: `read -Q v` -> `read:1: bad option: -Q` exit 1. zshrs's
+    // silent `_ => {}` fallback in the per-char flag loop accepted
+    // any letter, masking typos and letting the read run as if -Q
+    // were valid.
+    let (status, _, stderr) = run_zshrs("read -Q v <<< a");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -Q"), "got: {stderr}");
+}
+
+#[test]
+fn test_getopts_no_args_zsh_format() {
+    // zsh: bare `getopts` -> `getopts:1: not enough arguments` exit
+    // 1. zshrs printed `zshrs: getopts: usage: getopts ...` —
+    // bash-style banner without the line-number-prefixed format.
+    let (status, _, stderr) = run_zshrs("getopts");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:getopts:1: not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_wait_unrealistic_jobspec_errors() {
+    // zsh: `wait %999` (job id never created) -> `wait:1: %999: no
+    // such job` exit 127. zshrs silently returned 0 because all
+    // %ID misses were treated as "already-reaped" (silent for the
+    // bg/wait idiom). Now distinguishes via $! sentinel: errors
+    // when the session never backgrounded anything.
+    let (status, _, stderr) = run_zshrs("wait %999");
+    assert_eq!(status, 127);
+    assert!(stderr.contains("%999: no such job"), "got: {stderr}");
+    let (status, _, stderr) = run_zshrs("wait %1");
+    assert_eq!(status, 127);
+    assert!(stderr.contains("%1: no such job"), "got: {stderr}");
+    // Sanity: bg/wait idiom still works (silent success).
+    let (status, _, stderr) = run_zshrs("sleep 0.05 & wait %1");
+    assert_eq!(status, 0);
+    assert!(!stderr.contains("no such job"), "got: {stderr}");
+}
+
+#[test]
+fn test_exec_flag_only_no_command_errors() {
+    // zsh: `exec -c`, `exec -l`, `exec -a foo` (any flag form
+    // without a following command) -> `exec requires a command to
+    // execute` exit 1. zshrs silently no-op'd, masking flag-only
+    // typos. Bare `exec` (no flags, no command) is still the
+    // silent-environment-modify form per POSIX.
+    let (status, _, stderr) = run_zshrs("exec -c");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("exec requires a command to execute"),
+        "got: {stderr}"
+    );
+    let (status, _, stderr) = run_zshrs("exec -l 2>&1; echo done");
+    assert_eq!(status, 0);
+    assert!(
+        stderr.contains("exec requires a command to execute") ||
+            // Combined script: the error went to merged stdout/stderr
+            stderr.is_empty(),
+        "got: {stderr}"
+    );
+    let (status, _, _) = run_zshrs("exec");
+    assert_eq!(status, 0);
+}
+
+#[test]
 fn test_fc_no_args_with_session_still_recurses() {
     // Bare `fc` (no -l, no positional) ALWAYS errors recurse-
     // endlessly in -c mode. Even when `print -s` added entries,

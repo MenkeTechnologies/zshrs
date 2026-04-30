@@ -1773,6 +1773,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `history XX` (search-by-text with no match) -> `fc:1: event not found: XX` exit 1. zshrs's no-tty no-session branch had a hardcoded `no such event: 1` regardless of the user's input — wrong wording for non-numeric args AND wrong event identifier (always "1" instead of the user's text). Added a `search_query` branch: if the parsed positional was non-numeric, emit zsh's `event not found: XX`; otherwise stay on the existing `no such event: 1` path. Test: `test_history_text_query_uses_event_not_found`.
 
+### `unalias xyz abc` returned on first miss (hiding subsequent misses)
+
+- zsh: `unalias` continues processing remaining names after a miss, emitting one diagnostic per unknown entry and returning the last failing exit code. zshrs's loop returned on the first miss, hiding the rest from script consumers (`unalias xyz abc` only printed the `xyz` error and exited 1, never checking `abc`). Restructured the loop to collect status without early-exit. Test: `test_unalias_continues_after_first_miss`.
+
+### `read -Q v` silently accepted unknown flag
+
+- zsh: `read -Q v` -> `read:1: bad option: -Q` exit 1. zshrs's per-char flag loop in `builtin_read` had a silent `_ => {}` fallback, so unknown letters were accepted and the read ran as if -Q were valid. Replaced the fallback with an explicit `bad option:` error that exits 1 before reading. Test: `test_read_unknown_flag_errors`.
+
+### `getopts` (no args) printed bash-style usage banner
+
+- zsh: bare `getopts` -> `getopts:1: not enough arguments` exit 1. zshrs printed `zshrs: getopts: usage: getopts optstring name [arg ...]` — bash-style banner without the line-number-prefixed format. Replaced with `zshrs:getopts:1: not enough arguments`. Test: `test_getopts_no_args_zsh_format`.
+
+### `wait %999` (id never created) silently returned 0
+
+- zsh: `wait %N` for an N never assigned to a job -> `wait:1: %N: no such job` exit 127. zshrs's earlier "silent on missing %ID" rule (added to keep the `cmd & wait %1` idiom working) was too broad — `wait %999` with no jobs ever started silently returned 0 too. Distinguished via $! sentinel: errors when the session has never set $! (no bg ever run); silent only when bg was used (so `cmd & wait %1` still works after the bg child completes). Test: `test_wait_unrealistic_jobspec_errors`.
+
+### `exec -c`/`exec -l`/`exec -a foo` (no command) silently returned 0
+
+- zsh: `exec FLAG` (any flag form without a following command) -> `exec requires a command to execute` exit 1. zshrs collapsed all "no command" cases to silent return 0, masking flag-only typos. Bare `exec` (no flags, no command) still returns 0 silently per POSIX (the env-modify form). Now errors when any of `-c`/`-l`/`-a NAME` were specified without a command. Test: `test_exec_flag_only_no_command_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
