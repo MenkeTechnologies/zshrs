@@ -6400,6 +6400,21 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_paren_at_flag_empty_array_preserves_brackets() {
+    // `(@)NAME` is the splice equivalent of `[@]` — surrounding
+    // literals must stick to first/last elements (so `[${(@)a}]`
+    // for empty `a` still prints `[]` rather than dropping the
+    // brackets). zshrs's `is_splice_expansion` only matched `[@]`/
+    // `[*]`/slice forms; the `(@)` flag form fell to DISTRIBUTE
+    // which drops the brackets. Added a `(...)` flag-block check
+    // for `@`.
+    let (_, output, _) = run_zshrs(r#"a=(); print "[${(@)a}]""#);
+    assert_eq!(output.trim(), "[]");
+    let (_, output, _) = run_zshrs(r#"a=(x y); print "[${(@)a}]""#);
+    assert_eq!(output.trim(), "[x y]");
+}
+
+#[test]
 fn test_history_unknown_flag_errors() {
     // zsh: `history -w` / `-X` are bash-style flags zsh doesn't
     // accept — `history:1: bad option: -X`. `history -r` is fc-

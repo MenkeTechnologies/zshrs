@@ -2701,6 +2701,18 @@ fn is_splice_expansion(s: &str) -> bool {
         if inner.contains("[@]") || inner.contains("[*]") {
             return true;
         }
+        // `(@)NAME` flag form is the splice equivalent of `[@]` —
+        // each element becomes its own arg; surrounding literals
+        // should stick to first/last (so `[${(@)a}]` for empty `a`
+        // still emits `[]` rather than dropping the brackets).
+        if let Some(rest) = inner.strip_prefix('(') {
+            if let Some(close) = rest.find(')') {
+                let flags = &rest[..close];
+                if flags.chars().any(|c| c == '@') {
+                    return true;
+                }
+            }
+        }
         // Slice form `${arr[N,M]}` is a splice — surrounding literals
         // stick to first and last elements; an empty slice keeps the
         // surrounding text rather than dropping it (matches zsh's
