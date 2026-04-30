@@ -2119,6 +2119,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `kill -n abc 1` -> `kill:1: invalid signal number: abc` exit 1. zshrs emitted bash-style `kill: invalid signal number: abc` — no shell-name or line-number prefix. Updated both error paths in the `-n` arm. Test: `test_kill_n_invalid_signal_zsh_format`.
 
+### `alias -gs foo=bar` accepted both flags silently instead of erroring "illegal combination of options"
+
+- zsh: `-g` (global alias) and `-s` (suffix alias) are mutually exclusive — an alias is either global OR suffix, not both. `alias -gs foo=bar` -> `alias:1: illegal combination of options` exit 1. zshrs's flag walker set both flags and continued. Added a post-parse check that fires before the alias action. Test: `test_alias_g_s_mutually_exclusive`.
+
+### `kill 999999999` printed "kill: ESRCH: No such process" instead of zsh's "kill PID failed: no such process"
+
+- zsh: `kill PID` for a non-existent PID -> `kill:1: kill PID failed: no such process` exit 1 with the OS error reason lowercased and stripped of errno-code framing. zshrs emitted Rust's `nix::errno::Errno::Display` form `kill: ESRCH: No such process` — leaks the errno symbol. Reformatted the send_signal error path with the same lowercased + last-colon-segment cleanup used in `kill -0`. Test: `test_kill_unknown_pid_zsh_format`.
+
+### `typeset -A h; h=(a 1 b)` (odd k/v count) silently dropped the orphan key
+
+- zsh: assoc-init with an odd number of values -> `bad set of key/value pairs for associative array` exit 1, no assignment. zshrs's `if let Some(v) = it.next()` silently dropped the orphaned key, leaving the assoc partially populated. Added an explicit `values.len() % 2 != 0` precheck. Test: `test_assoc_odd_kv_pairs_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
