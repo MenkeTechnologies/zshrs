@@ -747,22 +747,63 @@ pub fn zshrs_main() {
     // empty list under `-f`.
     let no_rcs_flag = args.iter().any(|a| a == "-f" || a == "--no-rcs");
 
+    // Collect `-o NAME` (set option) and `+o NAME` (unset option)
+    // pairs from the CLI before filtering. Direct port of zsh's
+    // option-on-command-line behavior — `zsh -f +o nomatch -c '...'`
+    // disables nomatch for the run. Without parsing, `+o` was taken
+    // as a script file argument and zshrs errored.
+    let mut option_settings: Vec<(String, bool)> = Vec::new();
+    {
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if (a == "-o" || a == "+o") && i + 1 < args.len() {
+                let setval = a == "-o";
+                option_settings.push((args[i + 1].clone(), setval));
+                i += 2;
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     // Filter out flags that don't affect -c / script dispatch
-    let args: Vec<String> = args
-        .into_iter()
-        .filter(|a| {
-            a != "--zsh-compat"
-                && a != "--zsh"
-                && a != "--posix"
-                && a != "-f"
-                && a != "--no-rcs"
-                && a != "-x"
-                && a != "-v"
-        })
-        .collect();
+    let args: Vec<String> = {
+        let mut out: Vec<String> = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "--zsh-compat"
+                || a == "--zsh"
+                || a == "--posix"
+                || a == "-f"
+                || a == "--no-rcs"
+                || a == "-x"
+                || a == "-v"
+            {
+                i += 1;
+                continue;
+            }
+            if (a == "-o" || a == "+o") && i + 1 < args.len() {
+                // Consume the next arg as the option name and skip
+                // both — already captured above.
+                i += 2;
+                continue;
+            }
+            out.push(a.clone());
+            i += 1;
+        }
+        out
+    };
 
     /// Apply CLI flags and shell mode to executor
-    fn apply_cli_flags(executor: &mut ShellExecutor, xtrace: bool, verbose: bool, no_rcs: bool) {
+    fn apply_cli_flags(
+        executor: &mut ShellExecutor,
+        xtrace: bool,
+        verbose: bool,
+        no_rcs: bool,
+        opts: &[(String, bool)],
+    ) {
         // Apply shell mode
         executor.zsh_compat = is_zsh_mode();
         if is_posix_mode() {
@@ -781,6 +822,21 @@ pub fn zshrs_main() {
             executor.options.insert("rcs".to_string(), false);
             executor.options.insert("hashdirs".to_string(), false);
         }
+        // Apply CLI `-o NAME` / `+o NAME` option settings. zsh's
+        // option table stores names verbatim (e.g. `nomatch` is
+        // the canonical name; `unsetopt nomatch` and `+o nomatch`
+        // both produce `nomatch=false`). The `no` prefix is part
+        // of the canonical name, not a negation marker — query
+        // canonicalization (e.g. `[[ -o nonomatch ]]`) is a
+        // SEPARATE code path from `setopt`/`unsetopt`. Mirror by
+        // storing the option name verbatim (just lowercased +
+        // separator-stripped). zshrs's runtime nomatch check at
+        // expand_glob looks up "nomatch" directly.
+        for (raw, set_val) in opts {
+            let canonical =
+                raw.to_lowercase().replace('_', "").replace('-', "");
+            executor.options.insert(canonical, *set_val);
+        }
     }
 
     // Handle -c 'command' syntax
@@ -788,7 +844,7 @@ pub fn zshrs_main() {
         let code = &args[2];
 
         let mut executor = ShellExecutor::new();
-        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag);
+        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag, &option_settings);
         // In `-c` mode zsh sets `$0` to argv[0] verbatim — when
         // invoked as `/bin/zsh -c '...'` it's the full path; when
         // invoked as `zsh -c '...'` it's the basename. Mirror by
@@ -822,7 +878,7 @@ pub fn zshrs_main() {
     // Handle script file argument
     if args.len() >= 2 && !args[1].starts_with('-') {
         let mut executor = ShellExecutor::new();
-        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag);
+        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag, &option_settings);
         if let Err(e) = executor.execute_script_file(&args[1]) {
             eprintln!("zshrs: {}: {}", args[1], e);
             std::process::exit(1);
