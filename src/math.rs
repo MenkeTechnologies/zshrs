@@ -1631,6 +1631,7 @@ impl<'a> MathEval<'a> {
                         self.noeval += 1;
                     }
                     let colon_prec = self.prec[MathTok::Colon as usize];
+                    let stack_before = self.stack.len();
                     self.mathparse(colon_prec - 1);
                     if !q {
                         self.noeval -= 1;
@@ -1638,7 +1639,21 @@ impl<'a> MathEval<'a> {
 
                     if self.mtok != MathTok::Colon {
                         if self.error.is_none() {
-                            self.error = Some("':' expected".to_string());
+                            // Distinguish whether the inner parse
+                            // produced an operand: stack grew →
+                            // colon expected; stack same → operand
+                            // missing (input ran out at end of
+                            // string after `?`).
+                            if self.stack.len() > stack_before {
+                                self.error = Some(
+                                    "bad math expression: ':' expected".to_string(),
+                                );
+                            } else {
+                                self.error = Some(
+                                    "bad math expression: operand expected at end of string"
+                                        .to_string(),
+                                );
+                            }
                         }
                         return;
                     }
