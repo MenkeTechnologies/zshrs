@@ -2879,6 +2879,36 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         St::A(a) => St::A(a.into_iter().map(|s| cap(&s)).collect()),
                     };
                 }
+                'V' => {
+                    // Make non-printable characters visible. zsh:
+                    // `^X` for control chars (X = char + 64); `\M-X`
+                    // for high-bit chars; backslash escapes for
+                    // common forms (\n, \t, \r). zshrs's separate
+                    // ZshParamFlag::Visible path implements this for
+                    // the multi-flag dispatcher, but the inline state
+                    // machine had no `V` arm so `${(V)x}` left
+                    // control chars raw.
+                    let visible = |s: &str| -> String {
+                        let mut out = String::with_capacity(s.len());
+                        for c in s.chars() {
+                            match c {
+                                '\n' => out.push_str("\\n"),
+                                '\t' => out.push_str("\\t"),
+                                '\r' => out.push_str("\\r"),
+                                c if c.is_control() => {
+                                    out.push('^');
+                                    out.push((c as u8 + 64) as char);
+                                }
+                                _ => out.push(c),
+                            }
+                        }
+                        out
+                    };
+                    state = match state {
+                        St::S(s) => St::S(visible(&s)),
+                        St::A(a) => St::A(a.into_iter().map(|s| visible(&s)).collect()),
+                    };
+                }
                 'P' => {
                     // Indirect: current value is another var name.
                     // For Array (e.g. via `(@P)`), look up each
