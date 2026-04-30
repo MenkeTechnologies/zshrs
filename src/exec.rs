@@ -19403,7 +19403,15 @@ impl ShellExecutor {
                             }
                             break;
                         }
-                        _ => {}
+                        // zsh: unknown read flag errors `read:1: bad
+                        // option: -X` exit 1. zshrs's silent fallback
+                        // accepted any letter, masking typos and
+                        // letting `read -Q v` pass through to the
+                        // assignment phase as if -Q were valid.
+                        other => {
+                            eprintln!("zshrs:read:1: bad option: -{}", other);
+                            return 1;
+                        }
                     }
                 }
             } else {
@@ -20532,12 +20540,27 @@ impl ShellExecutor {
                         }
                     }
                 } else {
-                    // zsh: a missing job spec (already reaped or never
-                    // existed) is silent success — `sleep & wait %1`
-                    // works after the bg process completes. zshrs's
-                    // "no such job" error broke that idiom.
-                    // status stays at the prior value (0 unless a
-                    // previous arg failed).
+                    // Distinguish "reaped job" (silent — bg `&` path
+                    // doesn't currently flow through JobTable, so once
+                    // the bg child completes the wait can't find the
+                    // entry) from "never-existed id" (user error).
+                    // Heuristic: if the session has EVER backgrounded
+                    // a job (signalled by `$!` being set to a real
+                    // pid), accept missing %1 silently — the bg/wait
+                    // idiom relies on it. Otherwise error like zsh.
+                    let bg_was_used = self
+                        .variables
+                        .get("!")
+                        .and_then(|s| s.parse::<u32>().ok())
+                        .map(|p| p > 0)
+                        .unwrap_or(false);
+                    if !bg_was_used {
+                        eprintln!("zshrs:wait:1: {}: no such job", arg);
+                        status = 127;
+                    }
+                    // else: silent success (a bg job was started; we
+                    // can't tell if THIS specific id was the right one
+                    // without job-table integration in BUILTIN_RUN_BG).
                 }
             } else if arg.is_empty() {
                 // `wait $!` with no background job: $! is empty. zsh
@@ -21645,6 +21668,11 @@ impl ShellExecutor {
             return 1;
         }
 
+        // zsh continues processing remaining names after a miss,
+        // emitting one diagnostic per unknown entry and returning the
+        // last failing exit code. zshrs returned on first miss,
+        // hiding the rest of the misses from script consumers.
+        let mut status = 0;
         for name in positional_args {
             let removed = if is_suffix {
                 self.suffix_aliases.remove(&name).is_some()
@@ -21655,10 +21683,10 @@ impl ShellExecutor {
             };
             if !removed {
                 eprintln!("zshrs:unalias:1: no such hash table element: {}", name);
-                return 1;
+                status = 1;
             }
         }
-        0
+        status
     }
 
     fn builtin_set(&mut self, args: &[String]) -> i32 {
@@ -23719,7 +23747,10 @@ impl ShellExecutor {
 
     fn builtin_getopts(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("zshrs: getopts: usage: getopts optstring name [arg ...]");
+            // zsh: bare `getopts` (or with only one arg) errors
+            // `getopts:1: not enough arguments` exit 1. zshrs's
+            // bash-style usage banner had no shell-name prefix.
+            eprintln!("zshrs:getopts:1: not enough arguments");
             return 1;
         }
 
@@ -27051,11 +27082,15 @@ impl ShellExecutor {
         }
 
         if cmd_args.is_empty() {
-            // No command: just modify shell's environment
-            if clear_env {
-                for (key, _) in env::vars() {
-                    env::remove_var(&key);
-                }
+            // zsh: `exec -c`, `exec -l`, `exec -a foo` (any flag form
+            // without a following command) errors `exec requires a
+            // command to execute` exit 1. Bare `exec` (no flags, no
+            // command) is the silent-environment-modify form per POSIX
+            // — accepted as a no-op. zshrs previously silently
+            // returned 0 in BOTH cases, masking flag-only typos.
+            if clear_env || login_shell || argv0.is_some() {
+                eprintln!("zshrs:1: exec requires a command to execute");
+                return 1;
             }
             return 0;
         }
