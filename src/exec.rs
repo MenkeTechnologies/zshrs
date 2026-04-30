@@ -18691,7 +18691,18 @@ impl ShellExecutor {
         // formatting, then continue with the inner expression.
         let mut output_radix: Option<(u32, bool)> = None;
         let expr = {
-            let mut e = expr.as_str();
+            // Direct port of zsh src/zsh/Src/math.c:786-833 — `[#N]`
+            // and `[##N]` are output-format specifiers that can appear
+            // ANYWHERE the lexer is expecting a token (typically at
+            // the start, but `(( [#N] expr ))` is also valid with
+            // leading whitespace and `(( [#N]expr ))` with no space).
+            // zsh's lexer scans for `[`, then `#` / `##`, then a
+            // decimal radix, then `]`. The radix is stashed in the
+            // global outputradix and the function continues parsing
+            // from after `]`. Mirror by allowing leading whitespace,
+            // and removing the `[#N]`/`[##N]` token from the expr —
+            // the inner expression then gets re-evaluated normally.
+            let mut e = expr.as_str().trim_start();
             if let Some(rest) = e.strip_prefix("[#") {
                 let (no_prefix_form, body) = if let Some(r2) = rest.strip_prefix('#') {
                     (true, r2)
@@ -18703,7 +18714,9 @@ impl ShellExecutor {
                     if let Ok(n) = n_str.parse::<u32>() {
                         if (2..=36).contains(&n) {
                             output_radix = Some((n, no_prefix_form));
-                            e = &body[close_idx + 1..];
+                            // Skip past `]`, also drop any leading
+                            // whitespace before the inner expression.
+                            e = body[close_idx + 1..].trim_start();
                         }
                     }
                 }
