@@ -1721,6 +1721,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The lexer's `{` handler required whitespace, newline, or EOF after `{` to recognise it as Inbrace; `{}` consumed as a single literal token and the function-body parser failed. Two-part fix: (1) added `}` to the post-`{` accept list so `{}` lexes as Inbrace even when in cmd position; (2) for the OUT-of-cmd-position case (e.g. directly after `()` where `Outpar` cleared `incmdpos`), peek for `}` and force Inbrace recognition so `foo() {}` parses as a function with empty body. Other `{...}` shapes (brace expansion `{a,b,c}`, `${var}`) still work because they're consumed by separate token paths. Test: `test_empty_function_body`.
 
+### `fc -l` indented event numbers one space too far
+
+- zsh's `fc -l` formats event numbers right-aligned in a 5-char field (`    1  cmd`). zshrs used `{:>6}` (6-char field), so the output column was shifted one space right of zsh's. Switched every `fc -l` print site (session-history loop, recent-iter loop, with-time/duration variants) to `{:>5}` so the alignment matches. Test: `test_fc_l_event_number_width`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic

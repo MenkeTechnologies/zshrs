@@ -6360,6 +6360,18 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_fc_l_event_number_width() {
+    // zsh's `fc -l` prints event numbers right-aligned in a 5-char
+    // field (`    1  hist1`). zshrs used `{:>6}` (6-char field), so
+    // entries showed up indented one extra space. Switched all the
+    // `fc -l` print sites to `{:>5}` so the column alignment matches.
+    let (_, output, _) = run_zshrs(r#"print -s "hist1"; print -s "hist2"; fc -l"#);
+    let last_two: Vec<&str> = output.lines().rev().take(2).collect::<Vec<_>>().into_iter().rev().collect();
+    assert_eq!(last_two[0], "    1  hist1");
+    assert_eq!(last_two[1], "    2  hist2");
+}
+
+#[test]
 fn test_empty_function_body() {
     // zsh treats `{}` as an empty compound — `foo() {}` defines a
     // no-op function. zshrs's lexer required whitespace after `{`
