@@ -10964,20 +10964,44 @@ impl ShellExecutor {
         } else {
             pattern
         };
-        // `[` is only a glob metachar when it has a matching `]` that
-        // forms a character class. A bare `[` (the test builtin) or
-        // `[unclosed` text isn't a glob.
-        let has_bracket_class = body
-            .find('[')
-            .and_then(|i| body[i + 1..].find(']'))
-            .is_some();
+        // Walk character-by-character so escaped metachars (`\*`, `\?`,
+        // `\[`) are NOT counted as glob triggers. zsh: `echo \*` prints
+        // a literal `*`; without the unescaped check, looks_like_glob
+        // returned true on the bare `*` and the runtime glob expansion
+        // aborted with NOMATCH.
+        let chars: Vec<char> = body.chars().collect();
+        let mut i = 0;
+        let mut has_unescaped_star = false;
+        let mut has_unescaped_question = false;
+        let mut has_unescaped_bracket_open: Option<usize> = None;
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '\\' && i + 1 < chars.len() {
+                // Escaped char — skip both.
+                i += 2;
+                continue;
+            }
+            match c {
+                '*' => has_unescaped_star = true,
+                '?' => has_unescaped_question = true,
+                '[' if has_unescaped_bracket_open.is_none() => {
+                    has_unescaped_bracket_open = Some(i);
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        // `[` only counts when there's a matching `]` after it.
+        let has_bracket_class = has_unescaped_bracket_open
+            .map(|i| body[i + 1..].contains(']'))
+            .unwrap_or(false);
         // `<N-M>` numeric range glob is also a trigger — match shape
         // `<` + optional digits + `-` + optional digits + `>` outside
         // any bracket expression.
         let has_numeric_range =
             body.contains('<') && body.contains('>') && !extract_numeric_ranges(body).is_empty();
-        body.contains('*')
-            || body.contains('?')
+        has_unescaped_star
+            || has_unescaped_question
             || has_bracket_class
             || has_qual_suffix
             || has_numeric_range
