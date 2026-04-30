@@ -19952,6 +19952,11 @@ impl ShellExecutor {
             ("WINCH", libc::SIGWINCH, Signal::SIGWINCH),
             ("IO", libc::SIGIO, Signal::SIGIO),
             ("SYS", libc::SIGSYS, Signal::SIGSYS),
+            // macOS-only SIGINFO (29). zsh's `kill -l` lists it
+            // between WINCH and USR1; without this entry zshrs
+            // skipped INFO and the listing didn't match.
+            #[cfg(target_os = "macos")]
+            ("INFO", libc::SIGINFO, Signal::SIGINFO),
         ];
 
         let mut sig = Signal::SIGTERM;
@@ -20584,11 +20589,22 @@ impl ShellExecutor {
             // entries. Bypass the atty guard when we have session
             // entries.
             if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
-                // zsh's "no such event" uses the resolved index. With
-                // an empty history, negative offsets resolve to 0 (zsh
-                // reports `no such event: 0` for both `0` and `-N`).
-                // Positive arguments are reported verbatim.
-                let resolved = if first <= 0 { 0 } else { first };
+                // zsh's "no such event" uses the resolved index:
+                //   - explicit positive N → "no such event: N"
+                //   - explicit non-positive N → resolves to 0 (zsh's
+                //     "count from end" with empty history)
+                //   - DEFAULT (no positional, first defaults to -16
+                //     because `fc -l` shows the last 16 entries) →
+                //     resolves to 1 (zsh shows the lower bound of the
+                //     would-be range, which is event #1 in an empty
+                //     history)
+                let resolved = if positional.is_empty() {
+                    1
+                } else if first <= 0 {
+                    0
+                } else {
+                    first
+                };
                 eprintln!("zsh:fc:1: no such event: {}", resolved);
                 return 1;
             }
@@ -26873,7 +26889,13 @@ impl ShellExecutor {
             i += 1;
         }
 
-        let _ = push_to_stack; // TODO: implement push to buffer stack
+        // `print -z` pushes to the line editor's buffer stack — in
+        // non-interactive mode there's no editor, so the args are
+        // simply discarded with exit 0 (zsh behavior). Without this
+        // the args fell through to stdout and got printed.
+        if push_to_stack {
+            return 0;
+        }
         let _ = fd; // TODO: implement fd selection
 
         // `print -m PATTERN args…` — first positional is a glob pattern;

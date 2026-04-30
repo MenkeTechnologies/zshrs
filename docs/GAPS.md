@@ -1749,6 +1749,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `read -q` is a single y/n character read from the terminal. Off a tty (`echo y | read -q ans`), zsh errors `not interactive and can't open terminal` and returns 1. zshrs read from stdin and returned 0 — scripts couldn't detect the missing terminal. Added an atty guard at the start of the `read` body before any stdin lock. Test: `test_read_q_requires_terminal`.
 
+### `print -z "ls"` printed to stdout instead of pushing to ZLE buffer
+
+- zsh's `print -z` pushes the args onto the line-editor's pre-buffer (so the next prompt starts with that text). Non-interactive mode has no editor, so the args are silently discarded with exit 0. zshrs's `push_to_stack` flag was a `let _ = ` no-op, so the args fell through to the output-args path and printed. Now `push_to_stack` returns 0 immediately. Test: `test_print_z_does_not_emit_to_stdout`.
+
+### `kill -l` was missing SIGINFO on macOS
+
+- macOS's `kill -l` lists `INFO` between `WINCH` and `USR1` (signal 29). zshrs's `signal_map` didn't have an entry for it, so the listing was missing one column and `kill -l` output didn't match zsh. Added a macOS-cfg-gated `("INFO", libc::SIGINFO, Signal::SIGINFO)` row. Test: `test_kill_l_includes_info_on_macos`.
+
+### `fc -l` (no args) reported "no such event: 0" instead of "1"
+
+- zsh: `fc -l` (no args) defaults to the last 16 events. With empty history, the lower bound resolves to event #1 (which doesn't exist), so the error is `no such event: 1`. zshrs collapsed all non-positive args to `0`. Now distinguishes the no-arg default (resolves to 1) from explicit 0/negative args (resolve to 0). Test: `test_fc_l_default_no_args_event_one`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
