@@ -8488,6 +8488,37 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_subscript_w_flag_word_index() {
+    // `(w)N` subscript flag — direct port of zsh's zshparam(1)
+    // "Subscript Flags" w: returns the Nth IFS-separated word.
+    // For arrays, equivalent to plain [N] (already split).
+    // For scalars, splits by IFS first.
+    // zshrs's `parse_subscript_flags` previously rejected `w`,
+    // so the index fell through to math eval which errored.
+    let (_, output, _) =
+        run_zshrs(r#"a="hello world foo"; echo "${a[(w)2]}""#);
+    assert_eq!(output.trim(), "world", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"a=( one two three ); echo "${a[(w)2]}""#);
+    assert_eq!(output.trim(), "two", "got: {output:?}");
+}
+
+#[test]
+fn test_subscript_s_flag_is_noop_for_int_index() {
+    // zsh's `(s/sep/)` flag is a NO-OP for scalar `[N]` integer
+    // indexing — verified by testing zsh:
+    // `a=hello; ${a[(s/l/)1]}` returns "h" (same as `${a[1]}`).
+    // The `(s)` flag only affects word-list contexts
+    // (`${(s/sep/)var}` without an index, or `[@]` form).
+    let (_, output, _) =
+        run_zshrs(r#"a=hello; echo "${a[(s/l/)1]}""#);
+    assert_eq!(output.trim(), "h", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"a="aa::bb::cc"; echo "${a[(s/::/)2]}""#);
+    assert_eq!(output.trim(), "a", "got: {output:?}");
+}
+
+#[test]
 fn test_param_replace_case_insensitive_inline_flag() {
     // `(#i)` inline pattern flag (zsh extendedglob) makes the
     // replacement match case-insensitively. zshrs's
