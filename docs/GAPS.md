@@ -1733,6 +1733,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `~N` (digits only) is shorthand for `~+N` — Nth entry on the directory stack, 0 = $PWD. zshrs's `expand_tilde_named` checked for `~+N` and `~-N` explicitly but not bare digits, so `~0` fell through to the `getpwnam` path which (correctly for non-numeric usernames) aborted in `-c` mode. Added a digits-only branch above the user-lookup arm that resolves to PWD or `dir_stack[N-1]`. Test: `test_tilde_digit_is_dirstack_index`.
 
+### `echo \*` aborted with NOMATCH instead of printing the literal
+
+- `looks_like_glob` walked the pattern looking for `*`/`?`/`[` and returned true on any occurrence — including `\*` where the `*` is escaped. So `echo \*` triggered the glob path, expanded against `cwd` (zero matches in most directories), and aborted in NOMATCH mode. Now the check walks character-by-character and skips `\X` escape pairs so backslash-escaped metachars don't count as glob triggers. The output still preserves the literal backslash (deeper unquoting fix needed for the full `\* → *` translation), but the script no longer aborts. Test: `test_escaped_glob_metachar_does_not_trigger_nomatch`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic

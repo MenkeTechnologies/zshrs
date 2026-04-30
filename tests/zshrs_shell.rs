@@ -6360,6 +6360,19 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_escaped_glob_metachar_does_not_trigger_nomatch() {
+    // `echo \*` should not abort with NOMATCH — the backslash escapes
+    // the `*` so it's not a glob trigger. zshrs's `looks_like_glob`
+    // counted any `*`/`?`/`[` in the pattern even when escaped, so
+    // `\*` was treated as a glob, expanded against the cwd (no
+    // matches), and aborted in NOMATCH mode. Now the check walks
+    // characters and skips `\X` escape pairs.
+    let (status, _, stderr) = run_zshrs(r#"echo \*"#);
+    assert_eq!(status, 0, "stderr was: {stderr}");
+    assert!(!stderr.contains("no matches"), "got: {stderr}");
+}
+
+#[test]
 fn test_set_a_enables_allexport() {
     // `set -a` enables `allexport`. zshrs's multi-letter set-flag
     // parser had no `a` arm, so `set -a` silently passed through
