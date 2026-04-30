@@ -1713,6 +1713,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The bracket-modifier path in the array subscript expansion handled `:-` / `:+` / `:?` / `:=` / `:N:M` / history-modifier suffixes, but skipped the `/`, `//`, `/#`, `/%` pattern-replace forms. So `a=(file.txt other.txt); ${a[1]/.txt/.bak}` returned `file.txt` instead of `file.bak`. Added a `/`-prefix arm that decodes the op (0/1/2/3 for `/`/`//`/`/#`/`/%`) and dispatches through a new `zsh_pattern_replace` free function (extracted from the `BUILTIN_PARAM_REPLACE` `one()` closure so element-level callers can use it without going through the name-keyed builtin). Test: `test_array_element_pattern_replace`.
 
+### `$histchars` was empty (zsh defaults to `!^#`)
+
+- `$histchars` is the canonical 3-char string controlling history expansion (bang, hat, hash). zsh ships with `!^#`. zshrs left it unset so script reads of `$histchars` returned empty. Initialized in `ShellExecutor::new` next to the other special-name defaults. Test: `test_histchars_default`.
+
+### `foo() {}` (empty function body) failed "command not found: {}"
+
+- The lexer's `{` handler required whitespace, newline, or EOF after `{` to recognise it as Inbrace; `{}` consumed as a single literal token and the function-body parser failed. Two-part fix: (1) added `}` to the post-`{` accept list so `{}` lexes as Inbrace even when in cmd position; (2) for the OUT-of-cmd-position case (e.g. directly after `()` where `Outpar` cleared `incmdpos`), peek for `}` and force Inbrace recognition so `foo() {}` parses as a function with empty body. Other `{...}` shapes (brace expansion `{a,b,c}`, `${var}`) still work because they're consumed by separate token paths. Test: `test_empty_function_body`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
