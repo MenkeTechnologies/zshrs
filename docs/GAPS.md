@@ -1572,6 +1572,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `typeset -T PATH path :` didn't read inherited $PATH from env
+
+- The tied-pair init only consulted `self.variables`; vars like `PATH` that live in process env (not our shell-level map) read as empty so `path` was a 0-elem array. Fixed: fall back to `std::env::var(name)` when self.variables doesn't have it. Test: `test_typeset_t_reads_existing_env_value`.
+
+### `unset path` (tied-array side) didn't clear $PATH (scalar side)
+
+- zsh's tied-pair semantics: unsetting either side zeroes both. We only removed the named var, leaving the tied counterpart intact. Added bidirectional cleanup in `builtin_unset`: removing array side also unsets scalar (env + variables map); removing scalar side also unsets array. Test: `test_typeset_t_unset_propagates_to_tied`.
+
 ### `${h[(I)*]}` returned single key instead of all matches on assoc
 
 - `(I)` and `(R)` flags on assoc subscript should return ALL matching keys/values space-joined; `(i)`/`(r)` return the FIRST match. We were always returning a single match. Direct port of zsh subst.c haspats path. Test: `test_assoc_capital_i_returns_all_matching_keys`.

@@ -19296,6 +19296,24 @@ impl ShellExecutor {
             self.variables.remove(arg);
             self.arrays.remove(arg);
             self.assoc_arrays.remove(arg);
+            // typeset -T tied pair: unsetting the array side ALSO
+            // unsets the scalar side (and vice versa). zsh's
+            // `unset path` zeroes $PATH because they're tied. Without
+            // this, our path-array got removed but $PATH retained the
+            // pre-unset value.
+            if let Some((scalar_name, _sep)) =
+                self.tied_array_to_scalar.remove(arg)
+            {
+                env::remove_var(&scalar_name);
+                self.variables.remove(&scalar_name);
+                self.tied_scalar_to_array.remove(&scalar_name);
+            }
+            if let Some((array_name, _sep)) =
+                self.tied_scalar_to_array.remove(arg)
+            {
+                self.arrays.remove(&array_name);
+                self.tied_array_to_scalar.remove(&array_name);
+            }
         }
         0
     }

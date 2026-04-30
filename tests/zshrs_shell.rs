@@ -10248,6 +10248,27 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_typeset_t_reads_existing_env_value() {
+    // `typeset -T PATH path :` should split the inherited $PATH
+    // (from process env) into the `path` array. Was returning empty
+    // because we only checked self.variables, not env::var.
+    let (_, output, _) =
+        run_zshrs(r#"typeset -T PATH path :; (( $#path > 0 )) && echo y"#);
+    assert_eq!(output.trim(), "y");
+}
+
+#[test]
+fn test_typeset_t_unset_propagates_to_tied() {
+    // `unset path` should also clear $PATH because they're tied via
+    // `typeset -T`. zsh: PATH becomes empty. Was leaving the env
+    // value intact.
+    let (_, output, _) = run_zshrs(
+        r#"typeset -T PATH path :; unset path; echo "[$PATH]""#,
+    );
+    assert_eq!(output.trim(), "[]");
+}
+
+#[test]
 fn test_assoc_capital_i_returns_all_matching_keys() {
     // `${h[(I)pat]}` on assoc returns ALL keys matching pat,
     // space-joined. `${h[(i)pat]}` returns FIRST. Same for (R)/(r)

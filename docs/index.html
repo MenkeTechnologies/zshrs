@@ -166,7 +166,8 @@
         runtime if bytecodes are cached.</p>
 
         <p style="font-size: 14px; line-height: 1.8; color: var(--text);">
-        Compiled bytecodes are cached in SQLite. Function invocations deserialize cached bytecodes
+        Compiled bytecodes are cached as <code>rkyv</code> zero-copy archives mmap'd directly into
+        memory. Function invocations deserialize cached bytecodes
         in microseconds &mdash; skipping the lexer, parser, and compiler entirely. <code>source</code>&rsquo;d
         scripts and interpreted scripts follow the same path: compile once, cache, execute from bytecode
         forever. This has <span class="highlight">never been achieved in a Unix shell</span>.</p>
@@ -189,12 +190,12 @@
   │  ┌─────────────┐   Shell script / source file      VM::run()   │
   │  │ Script File  │──► Parser ──► ShellCompiler ──►   │           │
   │  └─────────────┘         │                          │           │
-  │                          └──► SQLite bytecode ──────┘           │
+  │                          └──► rkyv image  ──────────┘           │
   │                               (cached on first compile)         │
   │                                                                 │
   │  ┌─────────────┐   Autoload function (compinit)                 │
-  │  │  SQLite DB   │──► bincode::deserialize ──► fusevm::Chunk ──► │
-  │  │  .bytecode   │   (no lexer, no parser,      VM::run()       │
+  │  │ rkyv image  │──► mmap zero-copy archive ──► fusevm::Chunk ──►│
+  │  │  shard      │   (no lexer, no parser,      VM::run()        │
   │  └─────────────┘    no compiler — microseconds)                 │
   └─────────────────────────────────────────────────────────────────┘
         </div>
@@ -202,7 +203,7 @@
         <table class="arch-table">
           <tr><th>Path</th><th>Lex</th><th>Parse</th><th>Compile</th><th>Execute</th><th>Cache</th></tr>
           <tr><td>Interactive command</td><td>Yes</td><td>Yes</td><td>Yes</td><td>fusevm</td><td>No (ephemeral)</td></tr>
-          <tr><td>Script file (first run)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>fusevm</td><td>Yes &rarr; SQLite</td></tr>
+          <tr><td>Script file (first run)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>fusevm</td><td>Yes &rarr; rkyv</td></tr>
           <tr><td>Script file (cached)</td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td>fusevm</td><td>Hit &rarr; deserialize</td></tr>
           <tr><td>Autoload function (cached)</td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td>fusevm</td><td>Hit &rarr; deserialize</td></tr>
           <tr><td>Plugin source (cached)</td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td><span class="highlight">No</span></td><td>fusevm</td><td>Delta replay &rarr; &micro;s</td></tr>
@@ -228,15 +229,15 @@
   └──────┬─────────┬─────────┬─────────┬────────────────┘
          │         │         │         │
   ┌──────▼───┐ ┌───▼────┐ ┌─▼──────┐ ┌▼──────────────┐
-  │ Worker   │ │ SQLite │ │ fusevm │ │ compsys       │
-  │ Pool     │ │ Caches │ │ VM     │ │ completion    │
-  │ [2-18]   │ │        │ │        │ │ engine        │
-  │ threads  │ │history │ │ Op enum│ │               │
-  │          │ │compsys │ │ fused  │ │ MenuState     │
-  │ glob     │ │plugins │ │ super- │ │ MenuKeymap    │
-  │ rehash   │ │bytecode│ │ instr  │ │ SQLite FTS5   │
-  │ compinit │ │        │ │ JIT ►  │ │               │
-  │ history  │ │        │ │Cranelft│ │               │
+  │ Worker   │ │ rkyv   │ │ fusevm │ │ compsys       │
+  │ Pool     │ │ images │ │ VM     │ │ completion    │
+  │ [2-18]   │ │ +      │ │        │ │ engine        │
+  │ threads  │ │catalog │ │ Op enum│ │               │
+  │          │ │ .db    │ │ fused  │ │ MenuState     │
+  │ glob     │ │(query) │ │ super- │ │ MenuKeymap    │
+  │ rehash   │ │bytecode│ │ instr  │ │ FTS5 mirror   │
+  │ compinit │ │mmap'd  │ │ JIT ►  │ │               │
+  │ history  │ │ shards │ │Cranelft│ │               │
   └──────────┘ └────────┘ └────────┘ └───────────────┘
         </div>
       </section>
@@ -263,7 +264,7 @@
           <tr><td><code>&lt;(cmd)</code> / <code>&gt;(cmd)</code></td><td>fork + FIFO</td><td>Worker pool thread + FIFO</td><td>&mdash;</td></tr>
           <tr><td>Glob <code>**/*.rs</code></td><td>Single-threaded <code>opendir</code></td><td>Parallel <code>walkdir</code> per-subdir on pool</td><td>&mdash;</td></tr>
           <tr><td><code>rehash</code></td><td>Serial <code>readdir</code> per PATH dir</td><td>Parallel scan across pool</td><td>&mdash;</td></tr>
-          <tr><td>Autoload function</td><td>Read file + parse every time</td><td>Bytecode deserialization from SQLite (&micro;s)</td><td>100x</td></tr>
+          <tr><td>Autoload function</td><td>Read file + parse every time</td><td>Zero-copy mmap of rkyv-archived bytecode (&micro;s)</td><td>100x</td></tr>
         </table>
 
         <h3>Coreutils Builtins (23 commands, zero fork)</h3>
@@ -301,7 +302,7 @@ uname  date  mktemp</div>
           <div class="cat-card"><h4>Parallel Glob</h4><p><code>**/</code> recursive walk split per-subdir across pool</p></div>
           <div class="cat-card"><h4>Metadata Prefetch</h4><p>Glob qualifiers: one parallel <code>stat</code> batch, zero syscalls after</p></div>
           <div class="cat-card"><h4>PATH Rehash</h4><p>Parallel <code>readdir</code> across every PATH directory</p></div>
-          <div class="cat-card"><h4>History Writes</h4><p>SQLite inserts on pool thread &mdash; prompt never waits</p></div>
+          <div class="cat-card"><h4>History Writes</h4><p>Daemon-side writes via IPC &mdash; prompt never waits, zero client SQLite handle</p></div>
         </div>
       </section>
 
@@ -349,37 +350,42 @@ uname  date  mktemp</div>
 
       <!-- ════════════════════════════════════════════════════════════ -->
       <section class="tutorial-section">
-        <h2><span class="section-num">[0x04]</span> SQLITE CACHING LAYER</h2>
+        <h2><span class="section-num">[0x04]</span> RKYV ZERO-COPY CACHE LAYER</h2>
 
-        <p>Three SQLite databases power the shell. WAL mode, <code>mmap_size=256MB</code>,
-        <code>cache_size=64000</code> pages. FTS5 for instant fuzzy search.</p>
+        <p>Cached bytecode lives in <code>rkyv</code> archives mmap'd by clients &mdash; zero-copy
+        deserialization, no allocator pressure on hot paths. The daemon owns all writes; clients
+        only mmap. The single queryable mirror is <code>catalog.db</code> (SQLite) for
+        <code>dbview</code> introspection &mdash; never touched on the hot path.</p>
 
         <div class="cat-grid">
           <div class="cat-card">
-            <h4>compsys.db</h4>
-            <p>Completion cache: autoloads with source text + compiled bytecodes, comps mapping,
-            services, patcomps, PATH executables with FTS5 index</p>
+            <h4>images/{hash}-{slug}.rkyv</h4>
+            <p>Per-source-root rkyv shards. Compiled bytecode for autoloads, plugins, sourced
+            scripts. Daemon writes; clients mmap zero-copy. Validates with rkyv's bytecheck on first
+            access; format-versioned for migration safety.</p>
           </div>
           <div class="cat-card">
-            <h4>history.db</h4>
-            <p>Command history: frequency-ranked, timestamped, duration, exit status,
-            working directory. FTS5 search.</p>
+            <h4>index.rkyv</h4>
+            <p>Top-level shard index: source-root path &rarr; shard hash + mtime. Daemon rewrites
+            on changes; clients mmap to resolve which shard to load.</p>
           </div>
           <div class="cat-card">
-            <h4>plugins.db</h4>
-            <p>Plugin delta cache: functions, aliases, variables, exports, arrays,
-            completions, fpath, hooks, bindkeys, zstyles, options, autoloads.
-            Source once, replay microseconds.</p>
+            <h4>catalog.db (SQLite mirror)</h4>
+            <p>Daemon-hydrated FTS5-indexed mirror of all rkyv contents. Used ONLY by
+            <code>dbview</code> and <code>zcache</code> introspection &mdash; never read on the
+            hot path. Clients have ZERO SQLite handles. <code>history.db</code> sits next to it.</p>
           </div>
         </div>
 
         <p>Browse caches without SQL:</p>
-        <div class="code-block"><span class="keyword">dbview</span>                      <span class="comment"># list all tables + row counts</span>
+        <div class="code-block"><span class="keyword">dbview</span>                      <span class="comment"># list all tables + row counts (hits catalog.db)</span>
 <span class="keyword">dbview</span> autoloads             <span class="comment"># dump autoloads: name, body size, ast size</span>
 <span class="keyword">dbview</span> autoloads _git        <span class="comment"># single row: source, body, ast status, preview</span>
 <span class="keyword">dbview</span> comps git             <span class="comment"># search comps for "git"</span>
 <span class="keyword">dbview</span> executables rustc     <span class="comment"># search PATH cache</span>
-<span class="keyword">dbview</span> history docker        <span class="comment"># search history</span></div>
+<span class="keyword">dbview</span> history docker        <span class="comment"># search history</span>
+<span class="keyword">zcache</span> rebuild               <span class="comment"># force daemon to recompile every shard</span>
+<span class="keyword">zcache</span> verify                <span class="comment"># bytecheck every rkyv archive</span></div>
       </section>
 
       <!-- ════════════════════════════════════════════════════════════ -->
@@ -387,11 +393,12 @@ uname  date  mktemp</div>
         <h2><span class="section-num">[0x05]</span> BYTECODE CACHING</h2>
 
         <p>Every autoload function in fpath gets compiled to fusevm bytecodes during <code>compinit</code>.
-        The bytecodes are serialized to bincode and stored in SQLite. Subsequent loads
-        skip lexing, parsing, and compilation entirely &mdash; pure deserialization to executable bytecodes in microseconds.</p>
+        Compiled chunks are serialized via <code>rkyv</code> into per-source-root shards and written
+        by the daemon. Subsequent loads mmap the archive zero-copy, validate via <code>bytecheck</code>,
+        and dispatch directly &mdash; no lex, no parse, no compile, no allocator hit.</p>
 
         <div class="diagram">
-First call to _git:
+First call to _git (daemon path):
 
   fpath/_git (source text)
        │
@@ -406,20 +413,20 @@ First call to _git:
        │
        ├──► VM::run()              native dispatch
        │
-       └──► bincode::serialize()   ~0.1ms
+       └──► rkyv::to_bytes()       ~0.1ms (zero-copy archive)
             │
             ▼
-       SQLite autoloads.bytecode   (stored)
+       images/{hash}-fpath.rkyv    (daemon writes)
 
-Every subsequent call:
+Every subsequent call (client path, ZERO daemon RTT):
 
-  SQLite autoloads.bytecode
+  images/{hash}-fpath.rkyv         mmap (kernel page cache)
        │
        ▼
-  bincode::deserialize()           ~0.05ms
+  rkyv::access::&lt;ArchivedChunk&gt;   ~0 µs (zero-copy access)
        │
        ▼
-  fusevm::Chunk                    (no lexer, no parser, no compiler)
+  fusevm::Chunk                    (no lexer, no parser, no compiler, no alloc)
        │
        ▼
   VM::run()                        native bytecode dispatch
@@ -476,7 +483,7 @@ Every subsequent call:
           <tr><td><code>intercept</code></td><td>AOP before/after/around advice on any command. Glob pattern matching. Nanosecond timing.</td></tr>
           <tr><td><code>intercept_proceed</code></td><td>Call original command from around advice.</td></tr>
           <tr><td><code>doctor</code></td><td>Full diagnostic: worker pool metrics, cache stats, bytecode coverage, startup health.</td></tr>
-          <tr><td><code>dbview</code></td><td>Browse SQLite caches without SQL. Tables: autoloads, comps, executables, history, plugins.</td></tr>
+          <tr><td><code>dbview</code></td><td>Browse the daemon's catalog.db mirror without SQL. Tables: autoloads, comps, executables, history, plugins. Hot path uses rkyv mmap directly.</td></tr>
           <tr><td><code>profile</code></td><td>In-process command profiling. Nanosecond accuracy. No fork overhead in measurement.</td></tr>
         </table>
 
@@ -642,8 +649,8 @@ intercept list</div>
         <p>zshrs takes a different approach: keep everything that makes zsh powerful &mdash;
         glob qualifiers, parameter expansion flags, the completion system, ZLE, zstyle, modules &mdash;
         and replace the runtime with modern systems engineering. Rust instead of C. Thread pool
-        instead of fork. SQLite instead of flat files. Bytecode VM instead of tree-walker.
-        AOP instead of monkey-patching.</p>
+        instead of fork. <code>rkyv</code> mmap'd zero-copy archives instead of flat files. Bytecode VM
+        instead of tree-walker. AOP instead of monkey-patching.</p>
 
         <p>The result is the first shell that gets <em>faster</em> as you add more plugins,
         because the plugin cache means each plugin is only parsed once. The first shell where
@@ -654,7 +661,8 @@ intercept list</div>
         compiles to bytecodes and executes on a VM with fused superinstructions. The first
         shell where autoload functions load from pre-compiled bytecodes in microseconds. The first
         shell where <code>source ~/.zshrc</code> can skip the lexer, parser, and compiler entirely
-        because the bytecodes are cached in SQLite.</p>
+        because the bytecodes are mmap'd zero-copy from <code>rkyv</code> archives the daemon
+        already validated.</p>
 
         <p>Since the Bourne shell at Bell Labs in 1970, through csh, ksh, bash, zsh, and fish &mdash;
         every Unix shell has been an interpreter. zshrs is the first to be a compiler. Shell scripts
