@@ -2219,6 +2219,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-sixth-pass)
 
+### Bare `typeset NAME` / `declare NAME` (no flags, no `=`) silently swallowed instead of printing the declaration
+
+- zsh: at the top level, `typeset NAME` / `declare NAME` with no flags and no `=` prints the variable's current declaration if NAME is set — `a=( 1 2 3 )`, `a=hello`, etc. Same shape as `-p` but WITHOUT the `typeset`/`export` prefix (zsh's `typeset -p a` is `typeset -a a=(1 2 3)`; bare `typeset a` is `a=(1 2 3)`). Inside a function, bare `typeset NAME` instead localizes (shadows parent, resets to empty) — that's `local`-style declaration semantics. zshrs silently swallowed bare-name calls, dropping the listing at top level. Fix: detect "no type flags + all-args-without-`=` + all-args-name-an-existing-var + local_scope_depth == 0", promote to print_mode, and add a `print_no_prefix` flag that drops the leading `typeset`/`export` from each printed line. Function-scope behavior is unchanged. Tests: `test_bare_typeset_prints_declaration_at_top_level`, `test_bare_typeset_localizes_inside_function`.
+
 ### `$((0.1))` printed `0.1` instead of zsh's `0.10000000000000001` (and similar inexact-representable floats)
 
 - zsh uses C's `%.17g` for non-integer arithmetic-substitution display, which always shows 17 significant digits. Inexact-representable values surface their actual stored f64 form: `0.1` stored as f64 is `0.1000000000000000055511...`, which `%.17g` renders as `0.10000000000000001`. Rust's `Display` for f64 is shortest-roundtrip, so it picks the shorter `0.1` even though that's not the exact value. Most other cases (`0.5`, `0.25`, `0.30000000000000004`, NaN, Inf) already agreed since `%g` strips trailing zeros and the shortest representation happens to equal the 17-sig-digit one. Added a manual `%.17g`-style formatter in `format_zsh_subst`: pick scientific if `exp < -4 || exp >= 17`, else fixed-point with `(16 - exp)` fractional digits, then strip trailing zeros from the mantissa via a `trim_g_zeros` helper. Test: `test_arith_subst_float_pct_17g_inexact_form`.

@@ -8488,6 +8488,32 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_bare_typeset_prints_declaration_at_top_level() {
+    // zsh: bare `typeset NAME` / `declare NAME` (no flags, no
+    // `=`) at the top level prints `NAME=value` (or `NAME=( ... )`
+    // for arrays) when NAME is set, mirroring `-p` SHAPE without
+    // the `typeset`/`export` prefix. zshrs silently swallowed
+    // the call, dropping the listing entirely.
+    let (_, output, _) = run_zshrs("a=( 1 2 3 ); declare a");
+    assert_eq!(output.trim(), "a=( 1 2 3 )", "got: {output:?}");
+    let (_, output, _) = run_zshrs("a=hello; typeset a");
+    assert_eq!(output.trim(), "a=hello", "got: {output:?}");
+    let (_, output, _) = run_zshrs("integer a=42; declare a");
+    assert_eq!(output.trim(), "a=42", "got: {output:?}");
+}
+
+#[test]
+fn test_bare_typeset_localizes_inside_function() {
+    // Inside a function, bare `typeset NAME` localizes (shadows
+    // parent, resets to empty) — does NOT print. The
+    // print-the-declaration behavior is top-level-only per zsh.
+    let (_, output, _) = run_zshrs(
+        r#"a=hi; foo() { typeset a; echo "in[$a]"; }; foo; echo "out[$a]""#,
+    );
+    assert_eq!(output.trim(), "in[]\nout[hi]", "got: {output:?}");
+}
+
+#[test]
 fn test_declare_array_strips_quoted_elements() {
     // zsh: `declare -a arr=( "abc" "def" )` produces
     // arr=[abc, def] (quotes are syntactic, stripped at the
