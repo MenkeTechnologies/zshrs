@@ -8153,6 +8153,11 @@ impl ShellExecutor {
         // before exec; zsh wipes that. Initialize to empty so script
         // reads of `$_` before any command runs return empty.
         variables.insert("_".to_string(), String::new());
+        // `$histchars` defaults to `!^#` per zshparam(1) — bang
+        // (history expand), hat (quick subst), hash (comment).
+        // Initialize so script reads return the canonical 3-char
+        // string instead of empty.
+        variables.insert("histchars".to_string(), "!^#".to_string());
 
         let mut exec = Self {
             aliases: {

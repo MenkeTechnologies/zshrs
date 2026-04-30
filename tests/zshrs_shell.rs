@@ -6360,6 +6360,30 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_empty_function_body() {
+    // zsh treats `{}` as an empty compound — `foo() {}` defines a
+    // no-op function. zshrs's lexer required whitespace after `{`
+    // for Inbrace recognition, so `{}` lexed as one literal token
+    // and the function-body parser failed. Now `{` followed by `}`
+    // (or whitespace/newline) lexes as Inbrace even outside cmd
+    // position so `foo() {}` parses as a function with empty body.
+    let (_, _, _) = run_zshrs("foo() {}; foo");
+    let (_, output, _) = run_zshrs("foo() {}; foo; echo $?");
+    assert_eq!(output.trim(), "0");
+    let (_, output, _) = run_zshrs("{}; echo done");
+    assert_eq!(output.trim(), "done");
+}
+
+#[test]
+fn test_histchars_default() {
+    // zsh's `$histchars` is the 3-character string `!^#` by default
+    // (bang, hat, hash). zshrs left it unset so script reads of
+    // `$histchars` returned empty. Initialized in `ShellExecutor::new`.
+    let (_, output, _) = run_zshrs("echo $histchars");
+    assert_eq!(output.trim(), "!^#");
+}
+
+#[test]
 fn test_array_element_pattern_replace() {
     // `${a[1]/pat/repl}` — pattern replace on a single array element.
     // zshrs's bracket-modifier path skipped pattern replacement so

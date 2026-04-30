@@ -885,12 +885,22 @@ impl<'a> ZshLexer<'a> {
             ')' => LexTok::Outpar,
 
             '{' => {
-                // { is a command group only if followed by whitespace or newline
-                // {a,b} is brace expansion, not a command group
+                // { is a command group only if followed by whitespace,
+                // newline, or `}` (the empty-block form `{}`). zsh
+                // treats `{}` as an empty compound — `foo() {}` is a
+                // valid no-op function. Without `}` in this list,
+                // `{}` got consumed as one literal token and ran as a
+                // command, failing "command not found: {}".
+                // The empty `{}` is also recognised AFTER a function
+                // header `name()` even when `incmdpos` got cleared by
+                // the preceding Outpar — peek for `}` regardless and
+                // treat as Inbrace so `foo() {}` parses as a no-op
+                // function body.
+                let next = self.hgetc();
+                let next_is_close = matches!(next, Some('}'));
                 if self.incmdpos {
-                    let next = self.hgetc();
                     let is_brace_group = match next {
-                        Some(' ') | Some('\t') | Some('\n') | None => true,
+                        Some(' ') | Some('\t') | Some('\n') | Some('}') | None => true,
                         _ => false,
                     };
                     if let Some(ch) = next {
@@ -902,7 +912,19 @@ impl<'a> ZshLexer<'a> {
                     } else {
                         self.gettokstr(c, false)
                     }
+                } else if next_is_close {
+                    // `{}` empty block in non-cmd position (function
+                    // body after `()`). Treat as Inbrace; the parser
+                    // will follow with Outbrace.
+                    if let Some(ch) = next {
+                        self.hungetc(ch);
+                    }
+                    self.tokstr = Some("{".to_string());
+                    LexTok::Inbrace
                 } else {
+                    if let Some(ch) = next {
+                        self.hungetc(ch);
+                    }
                     self.gettokstr(c, false)
                 }
             }
