@@ -19636,14 +19636,21 @@ impl ShellExecutor {
                             break;
                         }
                         'd' => {
+                            // zsh: `-d` requires a delimiter
+                            // argument; missing -> `read:1: argument
+                            // expected: -d` exit 1. zshrs's `i+=1`
+                            // without bounds-check left delimiter at
+                            // default and continued.
                             let rest: String = chars.collect();
                             if !rest.is_empty() {
                                 delimiter = rest.chars().next().unwrap_or('\n');
                             } else {
                                 i += 1;
-                                if i < args.len() {
-                                    delimiter = args[i].chars().next().unwrap_or('\n');
+                                if i >= args.len() {
+                                    eprintln!("zshrs:read:1: argument expected: -d");
+                                    return 1;
                                 }
+                                delimiter = args[i].chars().next().unwrap_or('\n');
                             }
                             break;
                         }
@@ -20733,6 +20740,13 @@ impl ShellExecutor {
                 i += 1;
                 if i >= args.len() {
                     eprintln!("kill: -s requires an argument");
+                    return 1;
+                }
+                // zsh: empty signal name -> `kill:1: -: signal name
+                // expected`. zshrs's name lookup of "" produced
+                // "invalid signal:  " (with empty trailing).
+                if args[i].is_empty() {
+                    eprintln!("zshrs:kill:1: -: signal name expected");
                     return 1;
                 }
                 // zsh accepts numeric values to `-s` too — `-s 0`
@@ -28333,15 +28347,21 @@ impl ShellExecutor {
                             break;
                         }
                         'f' => {
-                            // -f format: printf-style format
+                            // -f format: printf-style format. zsh:
+                            // missing arg -> `print:1: argument
+                            // expected: -f` exit 1. zshrs's
+                            // `if i < args.len()` silently fell
+                            // through with no format set.
                             let rest: String = chars.collect();
                             if !rest.is_empty() {
                                 format_string = Some(rest);
                             } else {
                                 i += 1;
-                                if i < args.len() {
-                                    format_string = Some(args[i].clone());
+                                if i >= args.len() {
+                                    eprintln!("zshrs:print:1: argument expected: -f");
+                                    return 1;
                                 }
+                                format_string = Some(args[i].clone());
                             }
                             break;
                         }
@@ -29197,6 +29217,13 @@ impl ShellExecutor {
                 "-u" => resource = RLIMIT_NPROC,
                 "-v" => resource = RLIMIT_AS,
                 "-m" => resource = RLIMIT_RSS,
+                // -l (locked memory): macOS doesn't have RLIMIT_MEMLOCK
+                // exposed via libc, but zsh accepts the flag and
+                // returns "unlimited" (no kernel-enforced limit on
+                // mac). Map to RLIMIT_AS as a safe stand-in for the
+                // get-only path; real Linux RLIMIT_MEMLOCK could be
+                // wired with cfg(target_os="linux") later.
+                "-l" => resource = RLIMIT_AS,
                 "unlimited" => value = Some(libc::RLIM_INFINITY as u64),
                 _ if !arg.starts_with('-') => {
                     // zsh: `ulimit -f abc` (non-numeric value, not
