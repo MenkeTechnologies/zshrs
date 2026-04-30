@@ -19895,6 +19895,13 @@ impl ShellExecutor {
             let arg = &args[i];
             if arg == "-p" {
                 from_end = true;
+            } else if arg.is_empty() {
+                // zsh: `shift ""` treats empty arg as count 0
+                // (silent no-op). zshrs's `chars().all(is_digit)`
+                // matched the empty string vacuously and parse
+                // returned 1 by default, then the count check
+                // erred when positionals were short.
+                count = 0;
             } else if arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) && arg.len() > 1 {
                 // zsh: negative count is rejected with this exact diagnostic.
                 eprintln!("zshrs:shift:1: argument to shift must be non-negative");
@@ -25817,44 +25824,50 @@ impl ShellExecutor {
                     return 0;
                 }
                 "-g" => {
-                    // Get style into array
-                    if args.len() >= 4 {
-                        let array_name = &args[1];
-                        let context = &args[2];
-                        let style = &args[3];
-                        if let Some(values) = self.style_table.get(context, style) {
-                            self.arrays.insert(array_name.clone(), values.to_vec());
-                            return 0;
-                        }
+                    // Get style into array. zsh: too few args ->
+                    // `zstyle:1: not enough arguments` exit 1.
+                    if args.len() < 4 {
+                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        return 1;
+                    }
+                    let array_name = &args[1];
+                    let context = &args[2];
+                    let style = &args[3];
+                    if let Some(values) = self.style_table.get(context, style) {
+                        self.arrays.insert(array_name.clone(), values.to_vec());
+                        return 0;
                     }
                     return 1;
                 }
                 "-s" => {
-                    // Get style as scalar
-                    if args.len() >= 4 {
-                        let var_name = &args[1];
-                        let context = &args[2];
-                        let style = &args[3];
-                        let sep = args.get(4).map(|s| s.as_str()).unwrap_or(" ");
-                        if let Some(values) = self.style_table.get(context, style) {
-                            self.variables.insert(var_name.clone(), values.join(sep));
-                            return 0;
-                        }
+                    // Get style as scalar. Too few args -> error.
+                    if args.len() < 4 {
+                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        return 1;
+                    }
+                    let var_name = &args[1];
+                    let context = &args[2];
+                    let style = &args[3];
+                    let sep = args.get(4).map(|s| s.as_str()).unwrap_or(" ");
+                    if let Some(values) = self.style_table.get(context, style) {
+                        self.variables.insert(var_name.clone(), values.join(sep));
+                        return 0;
                     }
                     return 1;
                 }
                 "-t" => {
                     // Test style (check if true/yes)
-                    if args.len() >= 3 {
-                        let context = &args[1];
-                        let style = &args[2];
-                        return if self.style_table.test_bool(context, style).unwrap_or(false) {
-                            0
-                        } else {
-                            1
-                        };
+                    if args.len() < 3 {
+                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        return 1;
                     }
-                    return 1;
+                    let context = &args[1];
+                    let style = &args[2];
+                    return if self.style_table.test_bool(context, style).unwrap_or(false) {
+                        0
+                    } else {
+                        1
+                    };
                 }
                 "-T" => {
                     // Test style (like -t but defaults to TRUE for
@@ -25862,16 +25875,17 @@ impl ShellExecutor {
                     // when the style is set OR not set; only returns
                     // non-zero when explicitly set to false. zshrs's
                     // unknown-flag fallback rejected -T as invalid.
-                    if args.len() >= 3 {
-                        let context = &args[1];
-                        let style = &args[2];
-                        return if self.style_table.test_bool(context, style).unwrap_or(true) {
-                            0
-                        } else {
-                            1
-                        };
+                    if args.len() < 3 {
+                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        return 1;
                     }
-                    return 1;
+                    let context = &args[1];
+                    let style = &args[2];
+                    return if self.style_table.test_bool(context, style).unwrap_or(true) {
+                        0
+                    } else {
+                        1
+                    };
                 }
                 "-b" | "-a" | "-e" | "-m" => {
                     // Other zstyle flag forms: -b store-as-bool, -a
@@ -27634,9 +27648,16 @@ impl ShellExecutor {
                 login_shell = true;
             } else if arg == "-a" && cmd_args.is_empty() {
                 i += 1;
-                if i < args.len() {
-                    argv0 = Some(args[i].clone());
+                if i >= args.len() {
+                    // zsh: `exec -a NAME` requires a name argument
+                    // — no following arg is `exec flag -a requires
+                    // a parameter` exit 1, NOT the generic "exec
+                    // requires a command to execute". Pinpoints the
+                    // missing flag-value.
+                    eprintln!("zshrs:1: exec flag -a requires a parameter");
+                    return 1;
                 }
+                argv0 = Some(args[i].clone());
             } else if arg.starts_with('-') && cmd_args.is_empty() {
                 // zsh: any flag-only `exec` with no following command
                 // errors `exec requires a command to execute`. The
