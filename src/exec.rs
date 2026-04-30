@@ -16352,9 +16352,16 @@ impl ShellExecutor {
 
         let host_short = host.split('.').next().unwrap_or(&host).to_string();
 
-        let shlvl = env::var("SHLVL")
-            .ok()
+        // Prefer the in-shell SHLVL (already incremented by 1 over
+        // the parent's value at startup) over the env var which
+        // still holds the parent's pre-increment count. Without
+        // this, `print -P "%L"` was off by one (showed parent's
+        // SHLVL, not zshrs's).
+        let shlvl = self
+            .variables
+            .get("SHLVL")
             .and_then(|s| s.parse().ok())
+            .or_else(|| env::var("SHLVL").ok().and_then(|s| s.parse().ok()))
             .unwrap_or(1);
 
         PromptContext {

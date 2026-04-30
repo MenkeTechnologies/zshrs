@@ -1757,6 +1757,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `typeset -i NAME` (no value) initializes the integer to `0`; `typeset -F NAME` initializes the float to `0.0000000000` (default precision 10). zshrs's no-`=`-value branch always inserted an empty string, so `typeset -p x` printed `x=''` instead of `x=0`. Added a default-value computation: integer → `"0"`, float → formatted with the requested precision (or default 10), other → empty. Test: `test_typeset_integer_float_default_zero`.
 
+### `print -P "%L"` was off by 1 (used parent's pre-increment SHLVL)
+
+- zsh's `%L` outputs the in-shell SHLVL (incremented at startup over the parent's value). zshrs's `build_prompt_context` read `env::var("SHLVL")` which still held the parent's pre-increment value (the bump goes into `self.variables` only). So `print -P "%L"` showed `parent_shlvl` instead of `parent_shlvl + 1`. Now reads `self.variables["SHLVL"]` first, falling back to env. Test: `test_print_P_L_uses_in_shell_shlvl`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
