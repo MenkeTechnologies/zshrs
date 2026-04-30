@@ -10265,6 +10265,21 @@ fn test_sort_flag_with_numeric_modifier_either_order() {
 }
 
 #[test]
+fn test_cmd_subst_status_propagates_to_assign() {
+    // `a=$(false); echo $?` should print 1 — cmd-subst status is
+    // captured in last_status, then SET_VAR returns it as the
+    // assignment's exit. Compile-side now emits SetStatus after
+    // BUILTIN_SET_VAR so vm.last_status reflects the propagated
+    // value.
+    let (_, output, _) = run_zshrs(r#"a=$(false); echo $?"#);
+    assert_eq!(output.trim(), "1");
+    let (_, output, _) = run_zshrs(r#"a=$(true); echo $?"#);
+    assert_eq!(output.trim(), "0");
+    let (_, output, _) = run_zshrs(r#"a=hello; echo $?"#);
+    assert_eq!(output.trim(), "0");
+}
+
+#[test]
 fn test_param_j_flag_on_cmd_subst_no_op() {
     // `${(j:,:)$(cmd)}` — the cmd-subst returns a SCALAR; (j:::) on
     // a scalar is a no-op in zsh. We were over-applying by splitting

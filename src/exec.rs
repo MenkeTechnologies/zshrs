@@ -4660,7 +4660,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
             false
         });
-        Value::Status(if blocked { 1 } else { 0 })
+        if blocked {
+            return Value::Status(1);
+        }
+        // Propagate cmd-subst's exit status to $?. zsh: `a=$(false);
+        // echo $?` → 1. run_command_substitution sets last_status
+        // before returning; we pick it up here so the assignment's
+        // status reflects the cmd-subst result.
+        let captured = with_executor(|exec| exec.last_status);
+        Value::Status(captured)
     });
 
     // BUILTIN_REGISTER_FUNCTION (id 282) was a legacy JSON-AST body
@@ -16292,13 +16300,15 @@ impl ShellExecutor {
                 cmd_status = Some(vm.last_status);
             }
         }
-        // Inner cmd's status is captured but not propagated — see
-        // GAPS.md "command substitution exit status to $?". The post-
-        // assignment SetStatus(0) emitted by compile_simple would
-        // overwrite anything we set here, so a runtime-only fix
-        // doesn't help. Needs compile-side change to suppress the
-        // assignment's SetStatus when the value contains a cmd-subst.
-        let _ = cmd_status;
+        // Propagate the inner cmd's status to the parent shell. zsh:
+        // `a=$(false); echo $?` → 1 because cmd-subst status leaks to
+        // $?. Set last_status on the executor so $? reads the right
+        // value for callers that don't have a SetStatus(0) overwrite
+        // (echo, test, etc.). Bare assignment paths still get the
+        // SetStatus(0) from compile_simple — that's a separate gap.
+        if let Some(status) = cmd_status {
+            self.last_status = status;
+        }
 
         // Flush any buffered Rust-side stdout so it reaches the pipe
         // before we restore.

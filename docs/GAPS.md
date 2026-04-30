@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `a=$(false); echo $?` returned 0 (cmd-subst status not propagated to $?)
+
+- zsh: cmd-subst's exit status leaks into $?, so `a=$(false); echo $?` prints 1. We were always returning 0 for the assignment. Three-part fix: (1) `run_command_substitution` now sets `self.last_status` from the inner cmd's status; (2) `BUILTIN_SET_VAR` returns `Value::Status(captured)` from the executor's last_status (instead of constant 0); (3) compile_assign emits `Op::SetStatus` (was `Op::Pop`) so vm.last_status reflects the propagated value. Test: `test_cmd_subst_status_propagates_to_assign`.
+
 ### `${(no)a[@]}` (sort-modifier-before-sort) was applied sequentially
 
 - zsh's flag-string is order-agnostic: `n`/`i`/`a` are sort-MODIFIERS that pair with `o`/`O`. `(no)` and `(on)` should both produce numeric ascending. We were applying them as separate sort operations so `n`'s natural-sort got overwritten by the subsequent `o`'s alpha-sort. Fixed by detecting `n`/`i` BEFORE the `o`/`O` in the flags string when no inline sub-flag was given. Test: `test_sort_flag_with_numeric_modifier_either_order`.
