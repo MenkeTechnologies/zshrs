@@ -23407,6 +23407,7 @@ impl ShellExecutor {
         let mut path_only = false;
         let mut silent = false;
         let mut show_type = false;
+        let mut show_word = false;
         let mut names = Vec::new();
 
         let mut iter = args.iter();
@@ -23420,7 +23421,10 @@ impl ShellExecutor {
                         's' => silent = true,
                         't' => show_type = true,
                         'f' => {} // ignore functions (we still show them)
-                        'w' => {} // like -t but different format
+                        // `-w` is `name: type` form — zsh's "word"
+                        // shorthand (`builtin`/`command`/`function`/
+                        // `alias`/`reserved`/`none`).
+                        'w' => show_word = true,
                         _ => {}
                     }
                 }
@@ -23482,7 +23486,9 @@ impl ShellExecutor {
             if RESERVED_WORDS.contains(&name.as_str()) {
                 found_any = true;
                 if !silent {
-                    if show_type {
+                    if show_word {
+                        println!("{}: reserved", name);
+                    } else if show_type {
                         println!("reserved");
                     } else {
                         println!("{} is a reserved word", name);
@@ -23497,7 +23503,9 @@ impl ShellExecutor {
             if !path_only && self.aliases.contains_key(name) {
                 found_any = true;
                 if !silent {
-                    if show_type {
+                    if show_word {
+                        println!("{}: alias", name);
+                    } else if show_type {
                         println!("alias");
                     } else {
                         println!(
@@ -23518,7 +23526,9 @@ impl ShellExecutor {
             if !path_only && self.function_exists(name) {
                 found_any = true;
                 if !silent {
-                    if show_type {
+                    if show_word {
+                        println!("{}: function", name);
+                    } else if show_type {
                         println!("function");
                     } else {
                         println!("{} is a shell function from zsh", name);
@@ -23533,7 +23543,9 @@ impl ShellExecutor {
             if !path_only && (self.is_builtin(name) || name == ":" || name == "[") {
                 found_any = true;
                 if !silent {
-                    if show_type {
+                    if show_word {
+                        println!("{}: builtin", name);
+                    } else if show_type {
                         println!("builtin");
                     } else {
                         println!("{} is a shell builtin", name);
@@ -23551,7 +23563,9 @@ impl ShellExecutor {
                     if std::path::Path::new(&full_path).exists() {
                         found_any = true;
                         if !silent {
-                            if show_type {
+                            if show_word {
+                                println!("{}: command", name);
+                            } else if show_type {
                                 println!("file");
                             } else {
                                 println!("{} is {}", name, full_path);
@@ -23566,9 +23580,13 @@ impl ShellExecutor {
 
             if !found_any {
                 // zsh's format: `NAME not found` on stdout (no
-                // colon-separated prefix). Match it.
+                // colon-separated prefix). For -w, use `name: none`.
                 if !silent {
-                    println!("{} not found", name);
+                    if show_word {
+                        println!("{}: none", name);
+                    } else {
+                        println!("{} not found", name);
+                    }
                 }
                 status = 1;
             }

@@ -1797,6 +1797,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh validates symbolic umask values character-by-character: after class chars (`u`/`g`/`o`/`a`) it expects an operator (`+`/`-`/`=`). On invalid input it reports the specific bad operator: `umask abcd` → `bad symbolic mode operator: b`. zshrs printed a generic `umask: invalid mask: abcd`. Added a fallback parse: walk the leading class chars, then check if the next char is an operator; emit zsh's per-char message when it isn't. Test: `test_umask_bad_symbolic_operator_specific_error`.
 
+### `type -w NAME` printed descriptive form instead of `NAME: KIND`
+
+- zsh's `type -w NAME` is the "word" shorthand: prints `NAME: KIND` where KIND is one of `builtin`, `command`, `function`, `alias`, `reserved`, `none`. zshrs ignored `-w` and fell to the default descriptive output (`NAME is a shell builtin`, etc.). Added a `show_word` flag set by `-w`, plus per-kind branches that emit the `NAME: KIND` form. Test: `test_type_w_emits_name_colon_kind`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
