@@ -1717,6 +1717,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `[ a -eq a ]` errors `integer expression expected: a` exit 2 because the operands aren't integers. zshrs's `-eq`/`-ne` arms used `unwrap_or(0)`, silently coercing `a` to 0; `a -eq 0` then evaluated true (status 0). Added explicit `parse::<i64>()` checks in the `-eq` and `-ne` arms that emit the diagnostic and return 2 on parse failure. Test: `test_test_eq_non_numeric_errors`.
 
+### `[ 5 -lt abc ]` etc. silently returned 1 instead of "integer expression expected"
+
+- Same `unwrap_or(0)` issue extended to `-lt` / `-le` / `-gt` / `-ge`. Non-numeric operands silently coerced to 0 (so `[ 5 -lt abc ]` evaluated `5 < 0` → false → exit 1). All four arms now do explicit `parse::<i64>()` checks and emit zsh's `integer expression expected: <arg>` exit 2 on failure. Test: `test_test_lt_gt_le_ge_non_numeric_errors`.
+
+### `type --help` silently passed instead of "bad option: -h"
+
+- zsh: `type --help` errors `bad option: -h` exit 1 (the unknown-flag path; zsh treats the second `-` of `--help` as a no-op and reports the first non-`-` letter). zshrs's flag loop had a silent default arm that dropped unknown letters. Added an `eprintln + return 1` and a `'-' => { /* skip */ }` arm so the bad-option diagnostic reports the first letter after the leading dashes. Test: `test_type_unknown_flag_errors`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
