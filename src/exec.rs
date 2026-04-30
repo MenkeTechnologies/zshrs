@@ -19617,13 +19617,31 @@ impl ShellExecutor {
                             break;
                         }
                         'u' => {
+                            // zsh requires a numeric fd; missing arg
+                            // -> `read:1: argument expected: -u`,
+                            // non-numeric -> `read:1: number expected
+                            // after -u: <arg>`. zshrs's `unwrap_or(0)`
+                            // silently dropped non-numeric input AND
+                            // missing-arg.
                             let rest: String = chars.collect();
-                            if !rest.is_empty() {
-                                fd = rest.parse().unwrap_or(0);
+                            let value_str = if !rest.is_empty() {
+                                rest
                             } else {
                                 i += 1;
-                                if i < args.len() {
-                                    fd = args[i].parse().unwrap_or(0);
+                                if i >= args.len() {
+                                    eprintln!("zshrs:read:1: argument expected: -u");
+                                    return 1;
+                                }
+                                args[i].clone()
+                            };
+                            match value_str.parse::<i32>() {
+                                Ok(n) => fd = n,
+                                Err(_) => {
+                                    eprintln!(
+                                        "zshrs:read:1: number expected after -u: {}",
+                                        value_str
+                                    );
+                                    return 1;
                                 }
                             }
                             break;
@@ -20683,14 +20701,14 @@ impl ShellExecutor {
                 let num: i32 = match args[i].parse() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("kill: invalid signal number: {}", args[i]);
+                        eprintln!("zshrs:kill:1: invalid signal number: {}", args[i]);
                         return 1;
                     }
                 };
                 if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
                     sig = *s;
                 } else {
-                    eprintln!("kill: invalid signal number: {}", num);
+                    eprintln!("zshrs:kill:1: invalid signal number: {}", num);
                     return 1;
                 }
             } else if arg.starts_with('-') && arg.len() > 1 {
@@ -20759,7 +20777,10 @@ impl ShellExecutor {
                         }
                     } else {
                         // Name -> number
-                        let sig_upper = arg.to_uppercase();
+                        // Strip leading `-` in addition to SIG prefix
+                        // — `kill -l -X` should report `unknown
+                        // signal: SIGX`, not `SIG-X`.
+                        let sig_upper = arg.trim_start_matches('-').to_uppercase();
                         let sig_name = sig_upper.strip_prefix("SIG").unwrap_or(&sig_upper);
                         if let Some((_, num, _)) =
                             signal_map.iter().find(|(name, _, _)| *name == sig_name)
@@ -21129,10 +21150,15 @@ impl ShellExecutor {
                 s if s.starts_with('-') && s.len() > 1 => {
                     // Silently consume — fc handles or rejects.
                 }
-                s if s.chars().all(|c| c.is_ascii_digit()) => {
+                s if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) => {
                     count = s.parse().unwrap_or(20);
                 }
                 s => {
+                    // Non-numeric (or empty) -> search-by-text. zsh
+                    // treats `history ""` as event-not-found with
+                    // empty identifier. Without the !is_empty guard
+                    // above, empty matched the digit-only arm
+                    // vacuously and silently became count=20.
                     search_query = Some(s.to_string());
                 }
             }
@@ -31160,6 +31186,12 @@ impl ShellExecutor {
                         eprintln!("zshrs:bindkey:1: not enough arguments for -A");
                         return 1;
                     }
+                    return 0;
+                }
+                "-d" => {
+                    // bindkey -d: reset all keymaps to defaults.
+                    // zsh accepts silently; zshrs's unknown-flag
+                    // fallback rejected it.
                     return 0;
                 }
                 "-N" => {
