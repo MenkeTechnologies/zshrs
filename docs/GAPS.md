@@ -1769,6 +1769,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `fc -W FILE` in non-interactive `-c` mode writes ONLY session-added entries (typically empty unless `print -s` ran). zshrs called `engine.recent(10000)` and wrote the full persistent log, leaking prior runs' commands into the user's named file. Now restricts to `session_history_ids` when atty is absent (matches zsh's `-c` mode), and falls back to the full recent list only on a real tty. Test: `test_fc_W_writes_session_entries_only_in_minus_c`.
 
+### `fc -R FILE` (missing file) printed an error instead of silently ignoring
+
+- zsh: `fc -R /no/such` returns 0 with no output — read failures are silently ignored so script consumers don't trip on missing logs. zshrs emitted `fc: cannot read /no/such` and returned 1. Removed the eprintln + return; missing-file is now a no-op. Test: `test_fc_R_silent_on_missing_file`.
+
+### `fc -lr` ignored `-r` for session-only listings
+
+- zsh: `fc -lr` walks the same range backwards (most recent first) while keeping original event numbers — `3 c | 2 b | 1 a` for a 3-entry session. zshrs's session-only path iterated `session_history_ids` forward unconditionally; the `-r` flag was a no-op for this code path (it only worked on the engine.recent fallback). Now collects session entries into a Vec and reverses iteration when `reverse` is set. Test: `test_fc_lr_session_reverse`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`

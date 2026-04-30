@@ -20788,17 +20788,19 @@ impl ShellExecutor {
             };
 
             if read_file {
-                // Read plain text history file and import
+                // Read plain text history file and import. zsh
+                // silently ignores read failures (`fc -R /no/such`
+                // returns 0 with no output) — script consumers
+                // shouldn't trip on a missing log. zshrs previously
+                // emitted `fc: cannot read /no/such` and returned 1.
                 if let Ok(contents) = std::fs::read_to_string(&path) {
                     for line in contents.lines() {
                         if !line.is_empty() && !line.starts_with('#') && !line.starts_with(':') {
                             let _ = engine.add(line, None);
                         }
                     }
-                } else {
-                    eprintln!("fc: cannot read {}", path.display());
-                    return 1;
                 }
+                // No diagnostic on failure — matches zsh.
             } else if write_file || append_file {
                 // In `-c` (non-interactive) mode with no in-session
                 // history adds, zsh's `fc -W` writes nothing — there's
@@ -20923,14 +20925,34 @@ impl ShellExecutor {
             let session_only =
                 !atty::is(atty::Stream::Stdin) && !self.session_history_ids.is_empty();
             if session_only {
-                for (i, &id) in self.session_history_ids.iter().enumerate() {
-                    if let Ok(Some(entry)) = engine.get_by_number(id) {
-                        let n = (i as i64) + 1;
-                        if no_numbers {
-                            println!("{}", entry.command);
-                        } else {
-                            println!("{:>5}  {}", n, entry.command);
-                        }
+                // Build the numbered entries first, then optionally
+                // reverse the iteration order. zsh: `fc -lr` walks
+                // the same range backwards (most recent first) but
+                // keeps the original event numbers — `3 c | 2 b | 1 a`
+                // for a 3-entry session. Without reversing here the
+                // `-r` flag was a no-op for session-only listings.
+                let pairs: Vec<(i64, String)> = self
+                    .session_history_ids
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &id)| {
+                        engine
+                            .get_by_number(id)
+                            .ok()
+                            .flatten()
+                            .map(|e| ((i as i64) + 1, e.command))
+                    })
+                    .collect();
+                let iter: Box<dyn Iterator<Item = (i64, String)>> = if reverse {
+                    Box::new(pairs.into_iter().rev())
+                } else {
+                    Box::new(pairs.into_iter())
+                };
+                for (n, command) in iter {
+                    if no_numbers {
+                        println!("{}", command);
+                    } else {
+                        println!("{:>5}  {}", n, command);
                     }
                 }
                 return 0;
