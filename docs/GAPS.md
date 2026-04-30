@@ -1753,6 +1753,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: unknown typeset/declare flag errors `typeset:1: bad option: -Q` (or `declare:1:`) exit 1. zshrs's per-char flag loop had a silent `_ => {}` fallback in both the `-` and `+` arms, so unknown letters were accepted as no-ops and the variable was set without any attribute. Replaced both fallbacks with explicit `bad option:` errors; uses the `invoked_as` parameter so `declare -Q` and `typeset -Q` produce the right name. Test: `test_typeset_unknown_flag_errors`.
 
+### `printf` (no args) printed bash-style usage banner
+
+- zsh: `printf` -> `printf:1: not enough arguments` exit 1. zshrs emitted `printf: usage: printf format [arguments]` — bash-style usage line without the shell-name prefix. Replaced both eprintln sites in `builtin_printf` with `zshrs:printf:1: not enough arguments`. Test: `test_printf_no_args_zsh_format`.
+
+### `let "1+"` / `$((5+))` reported bare "not enough operands" instead of zsh's "bad math expression" wording
+
+- zsh: math-expression parser errors are wrapped in `bad math expression: <reason>` so script consumers can grep for the canonical prefix. zshrs's `MathContext::op` arm emitted a bare `not enough operands` diagnostic, missing the wrapper. Changed `src/math.rs` to emit `bad math expression: operand expected at end of string` for the binary-op underflow case (matches zsh's exact phrasing for `let "1+"` AND `$((5+))`). Test: `test_arith_trailing_op_uses_zsh_wording`.
+
+### `let "("` reported bare "')' expected" instead of zsh's wrapped wording
+
+- zsh: `let "("` -> `bad math expression: ')' expected`. zshrs emitted `')' expected` without the wrapper. Updated `MathContext::InPar` arm to use the wrapped phrasing. Test: `test_arith_open_paren_uses_zsh_wording`.
+
+### `where __notacmd__` and `which __notacmd__` reported "shell built-in command" exit 0
+
+- zsh: `where`/`which` for an unknown name -> `not found` exit 1. zshrs's `is_builtin()` helper has a `name.starts_with('_')` bypass for completion functions (so `_foo` lookups don't fall through to disk). The `whence` core path used `is_builtin()` directly, so `where __notacmd__` matched the `_` prefix, reported `__notacmd__: shell built-in command` and returned 0. Tightened the `whence` builtin-check arm to `BUILTIN_SET.contains(name)` (skip the `_`-prefix bypass) so completion functions still resolve via the function-lookup arm but unknown `_`-names report `not found`. Tests: `test_where_unknown_command_not_found`, `test_which_unknown_command_not_found`.
+
+### `history XX` (non-numeric arg) reported "no such event: 1" instead of "event not found: XX"
+
+- zsh: `history XX` (search-by-text with no match) -> `fc:1: event not found: XX` exit 1. zshrs's no-tty no-session branch had a hardcoded `no such event: 1` regardless of the user's input — wrong wording for non-numeric args AND wrong event identifier (always "1" instead of the user's text). Added a `search_query` branch: if the parsed positional was non-numeric, emit zsh's `event not found: XX`; otherwise stay on the existing `no such event: 1` path. Test: `test_history_text_query_uses_event_not_found`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
