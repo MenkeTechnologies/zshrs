@@ -8444,6 +8444,34 @@ fn test_dirs_uses_logical_pwd_not_canonical() {
 }
 
 #[test]
+fn test_brace_zero_step_stays_literal() {
+    // zsh: `{1..3..0}` (step 0) is invalid and stays literal —
+    // bash agrees. zshrs's `abs_step.max(1)` silently treated 0
+    // as 1 and produced `1 2 3`. Negative steps still reverse
+    // (per zsh's rule); only exactly 0 short-circuits.
+    let (_, output, _) = run_zshrs("echo {1..3..0}");
+    assert_eq!(output.trim(), "{1..3..0}", "got: {output:?}");
+    // Sanity: non-zero steps still expand.
+    let (_, output, _) = run_zshrs("echo {1..3..2}");
+    assert_eq!(output.trim(), "1 3", "got: {output:?}");
+}
+
+#[test]
+fn test_dollar_hash_array_subscript() {
+    // zsh: `$#a[N]` is sugar for `${#a[N]}` — length of array
+    // element N (1-indexed). zshrs's compile-time fast path
+    // handled `$#NAME` and `$#NAME[@]`/`$#NAME[*]` but left a
+    // numeric subscript as literal: `echo $#a[2]` printed
+    // `3[2]` (count-of-array followed by literal `[2]`).
+    let (_, output, _) =
+        run_zshrs("a=( one two three ); echo $#a[2]");
+    assert_eq!(output.trim(), "3", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs("a=( aa bb cc ); echo $#a[2]");
+    assert_eq!(output.trim(), "2", "got: {output:?}");
+}
+
+#[test]
 fn test_popd_restores_pwd_variable() {
     // popd should sync $PWD back to the previous directory.
     // Without the sync, $PWD stayed pointing at the pushd

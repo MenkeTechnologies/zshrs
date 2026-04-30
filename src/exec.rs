@@ -10745,6 +10745,13 @@ impl ShellExecutor {
         let start = parts[0];
         let end = parts[1];
         let step: i64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+        // zsh: step 0 is invalid — `{1..3..0}` stays literal
+        // `1..3..0`. zshrs's `abs_step.max(1)` silently treated 0
+        // as 1 and produced `1 2 3`. Negative steps reverse the
+        // sequence (per zsh) so we only short-circuit on exactly 0.
+        if parts.len() == 3 && step == 0 {
+            return vec![content.to_string()];
+        }
 
         // Try numeric sequence
         if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
@@ -14162,6 +14169,66 @@ impl ShellExecutor {
                                 } else {
                                     break;
                                 }
+                            }
+                            // zsh: `$#name[idx]` is sugar for
+                            // `${#name[idx]}` — length of the
+                            // selected array element. zshrs's
+                            // unbraced `$#` only handled the
+                            // bare-name case and left `[idx]` as
+                            // literal text appended to the
+                            // length output (e.g. `3[2]` for an
+                            // array of size 3).
+                            if chars.peek() == Some(&'[') {
+                                chars.next(); // consume [
+                                let mut idx_str = String::new();
+                                let mut depth = 1;
+                                while let Some(&c) = chars.peek() {
+                                    if c == '[' {
+                                        depth += 1;
+                                        idx_str.push(chars.next().unwrap());
+                                    } else if c == ']' {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            chars.next(); // consume ]
+                                            break;
+                                        }
+                                        idx_str.push(chars.next().unwrap());
+                                    } else {
+                                        idx_str.push(chars.next().unwrap());
+                                    }
+                                }
+                                if let Some(arr) = self.arrays.get(&name).cloned() {
+                                    let idx_val =
+                                        self.eval_arith_expr(&idx_str);
+                                    let len = arr.len() as i64;
+                                    let real_idx = if idx_val > 0 {
+                                        (idx_val - 1) as usize
+                                    } else if idx_val < 0 {
+                                        let off = len + idx_val;
+                                        if off < 0 {
+                                            result.push_str("0");
+                                            continue;
+                                        }
+                                        off as usize
+                                    } else {
+                                        result.push_str("0");
+                                        continue;
+                                    };
+                                    let elem_len = arr
+                                        .get(real_idx)
+                                        .map(|s| s.chars().count())
+                                        .unwrap_or(0);
+                                    result.push_str(&elem_len.to_string());
+                                    continue;
+                                }
+                                // Scalar with subscript = char-slice
+                                // length. Forward to the runtime
+                                // length-of-substring path via the
+                                // braced expand for consistency.
+                                let braced =
+                                    format!("${{#{}[{}]}}", name, idx_str);
+                                result.push_str(&self.expand_string(&braced));
+                                continue;
                             }
                             // Return length of variable or array
                             let len = if let Some(arr) = self.arrays.get(&name) {
