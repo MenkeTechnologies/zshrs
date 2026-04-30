@@ -10248,6 +10248,34 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_arith_ternary_assignment() {
+    // `((a = 5 > 3 ? 99 : 0))` — ArithCompiler doesn't implement `?:`
+    // so the assignment silently dropped. Routing to MathEval (which
+    // handles ternary fully) when the expr contains `?`.
+    let (_, output, _) =
+        run_zshrs(r#"((a = 5 > 3 ? 99 : 0)); echo $a"#);
+    assert_eq!(output.trim(), "99");
+    let (_, output, _) =
+        run_zshrs(r#"((x = 1 < 2 ? 10 : 20)); echo $x"#);
+    assert_eq!(output.trim(), "10");
+}
+
+#[test]
+fn test_case_paren_wrapped_pattern_with_alternation() {
+    // `case W in (P|Q)) BODY ;; esac` — paren-wrapped pattern with
+    // alternation. The leading `(` and matching inner `)` enclose the
+    // pattern; the outer `)` is the arm-close. Was failing because
+    // we consumed only one `)` total when leading `(` was present.
+    let (_, output, _) =
+        run_zshrs(r#"case foo in (foo|bar)) echo y;; esac"#);
+    assert_eq!(output.trim(), "y");
+    let (_, output, _) = run_zshrs(
+        r#"case file.txt in (*.txt|*.md)) echo y;; esac"#,
+    );
+    assert_eq!(output.trim(), "y");
+}
+
+#[test]
 fn test_typeset_a_preserves_existing_array_at_top_scope() {
     // `a=(1 2 3); typeset -a a` should keep the array. Was clobbering
     // to empty because the bare-declaration path always re-inited.

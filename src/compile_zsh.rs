@@ -2697,7 +2697,11 @@ impl ZshCompiler {
             // `((sum=a[1]+a[2]))`). ArithCompiler doesn't pre-resolve
             // `name[idx]` so the LHS gets the array's joined-scalar
             // form. MathEval's path runs pre_resolve_array_subscripts.
-            || inner_arith.contains('[');
+            || inner_arith.contains('[')
+            // Ternary operator. ArithCompiler's emit path doesn't
+            // implement `?:` and silently drops the expression,
+            // leaving the LHS unset. MathEval handles ternary fully.
+            || inner_arith.contains('?');
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);

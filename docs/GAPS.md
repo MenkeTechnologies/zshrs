@@ -1572,6 +1572,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `((a = cond ? T : F))` — ternary assignment dropped silently
+
+- ArithCompiler's emit path doesn't implement `?:`. Without the trigger, `((a = ... ? ... : ...))` left `a` unset (no error). Added `?` to the needs_eval check so the expr routes through MathEval (which has full ternary support). Test: `test_arith_ternary_assignment`.
+
+### `case W in (P|Q)) BODY ;; esac` — wrapped pattern with `|` failed
+
+- zsh's case grammar accepts both bare `(P) BODY` (leading `(` is the optional marker, single `)` closes the arm) AND wrapped `(P)) BODY` (the `(...)` is the pattern wrapper, the second `)` closes the arm). Our parser only consumed ONE Outpar after patterns, so the wrapped form left the second `)` for the body to choke on. Added `had_leading_paren && Outpar` consume after the arm-close. Test: `test_case_paren_wrapped_pattern_with_alternation`.
+
 ### `typeset -a a` clobbered existing array to empty at top scope
 
 - The bare-declaration path always called `self.arrays.insert(name, Vec::new())`. zsh's typeset.c only zeroes a new binding at top scope; existing values are preserved unless you're inside a function (where bare `typeset NAME` shadows). Added `in_function || !exists` guard. Test: `test_typeset_a_preserves_existing_array_at_top_scope`.
