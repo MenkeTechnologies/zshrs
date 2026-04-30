@@ -7570,6 +7570,72 @@ fn test_trap_return_undefined() {
 }
 
 #[test]
+fn test_print_u_non_numeric_errors() {
+    // zsh: `print -u abc hi` -> `print:1: number expected after -u:
+    // abc` exit 1. zshrs's `unwrap_or(1)` silently dropped non-numeric
+    // input and printed to stdout.
+    let (status, output, stderr) = run_zshrs("print -u abc hi");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("number expected after -u: abc"),
+        "got: {stderr}"
+    );
+    assert!(!output.contains("hi"), "got: {output}");
+}
+
+#[test]
+fn test_fc_l_3plus_text_first_arg_errors_event_not_found() {
+    // zsh: `fc -l x y z` (3+ positionals, first is non-numeric) ->
+    // `fc:1: event not found: x` (text-name miss takes precedence
+    // over count-error). zshrs always reported "too many arguments"
+    // for 3+ positionals.
+    let (_, _, stderr) = run_zshrs("fc -l x y z");
+    assert!(
+        stderr.contains("event not found: x"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_zstyle_one_arg_not_enough() {
+    // zsh: `zstyle X` (single non-flag positional) -> `zstyle:1:
+    // not enough arguments` exit 1. zshrs's set-style path required
+    // args.len() >= 2 silently.
+    let (status, _, stderr) = run_zshrs("zstyle X");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_zformat_f_too_few_args_errors() {
+    // zsh: `zformat -f result` (no format string) -> `zformat:1:
+    // not enough arguments` exit 1. zshrs returned 1 silently.
+    let (status, _, stderr) = run_zshrs("zformat -f result");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_set_long_option_treated_as_endmark() {
+    // zsh: `set --xxx` (long-option-style flag) is treated as `--`
+    // (end-of-options) — remaining args become positional. zshrs
+    // hit the per-char letter loop and errored "can't change
+    // option: --".
+    let (status, output, _) = run_zshrs(r#"set --foo bar; echo "[$1]""#);
+    assert_eq!(status, 0);
+    assert!(output.contains("[bar]"), "got: {output}");
+    let (status, output, _) = run_zshrs(r#"set --help; echo "[$1]""#);
+    assert_eq!(status, 0);
+    assert!(output.contains("[]"), "got: {output}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

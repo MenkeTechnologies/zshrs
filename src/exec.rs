@@ -21477,7 +21477,15 @@ impl ShellExecutor {
                 // takes at most 2 range bounds). Single positional /
                 // no positional uses `no such event: N`.
                 if positional.len() > 2 {
-                    eprintln!("zshrs:fc:1: too many arguments");
+                    // zsh: 3+ positionals where args[0] is non-numeric
+                    // -> `event not found: <args[0]>` (text-name miss
+                    // takes precedence over count-error). All-numeric
+                    // 3+ -> `too many arguments`.
+                    if positional[0].parse::<i64>().is_err() {
+                        eprintln!("zshrs:fc:1: event not found: {}", positional[0]);
+                    } else {
+                        eprintln!("zshrs:fc:1: too many arguments");
+                    }
                     return 1;
                 }
                 if positional.len() == 2 {
@@ -22416,6 +22424,23 @@ impl ShellExecutor {
                     return 0;
                 }
                 _ => {
+                    // `--anything` (long-option-style) is treated by
+                    // zsh as `--` (end-of-options) — the rest of args
+                    // become positional. zshrs's per-char letter loop
+                    // hit `-` first and errored "can't change option:
+                    // --". Detect and short-circuit to positional
+                    // assignment.
+                    if arg.starts_with("--") {
+                        let remaining: Vec<String> = iter.cloned().collect();
+                        if let Some(ref name) = array_name {
+                            if set_array == Some(true) {
+                                self.arrays.insert(name.clone(), remaining);
+                            }
+                        } else {
+                            self.positional_params = remaining;
+                        }
+                        return 0;
+                    }
                     // Handle single-letter options like -ex (multiple options)
                     if arg.starts_with('-') && arg.len() > 1 {
                         for c in arg[1..].chars() {
@@ -25754,6 +25779,14 @@ impl ShellExecutor {
 
     /// zsh zstyle - configure styles for completion
     fn builtin_zstyle(&mut self, args: &[String]) -> i32 {
+        // zsh: a single non-flag positional like `zstyle X` -> `zstyle:1:
+        // not enough arguments` (need at least pattern+style or
+        // flag-form). zshrs's catch-all set-style path required
+        // args.len() >= 2 silently.
+        if args.len() == 1 && !args[0].starts_with('-') {
+            eprintln!("zshrs:zstyle:1: not enough arguments");
+            return 1;
+        }
         if args.is_empty() {
             // Bare `zstyle` lists styles grouped by name:
             //   STYLE
@@ -28060,14 +28093,31 @@ impl ShellExecutor {
                         'm' => match_pattern_flag = true,
                         'a' | 'b' | 'i' | 'p' | 'x' | 'X' => {} // TODO
                         'u' => {
-                            // -u n: output to fd n
+                            // -u n: output to fd n. zsh requires a
+                            // numeric argument; non-numeric ->
+                            // `print:1: number expected after -u: <arg>`
+                            // exit 1. zshrs's `unwrap_or(1)` silently
+                            // dropped non-numeric input and printed
+                            // to stdout.
                             let rest: String = chars.collect();
-                            if !rest.is_empty() {
-                                fd = rest.parse().unwrap_or(1);
+                            let value_str = if !rest.is_empty() {
+                                rest
                             } else {
                                 i += 1;
-                                if i < args.len() {
-                                    fd = args[i].parse().unwrap_or(1);
+                                if i >= args.len() {
+                                    eprintln!("zshrs:print:1: number expected after -u");
+                                    return 1;
+                                }
+                                args[i].clone()
+                            };
+                            match value_str.parse::<i32>() {
+                                Ok(n) => fd = n,
+                                Err(_) => {
+                                    eprintln!(
+                                        "zshrs:print:1: number expected after -u: {}",
+                                        value_str
+                                    );
+                                    return 1;
                                 }
                             }
                             break;
@@ -31861,6 +31911,9 @@ impl ShellExecutor {
             "-f" => {
                 // Format string: zformat -f var format specs...
                 if args.len() < 3 {
+                    // zsh: insufficient args -> `zformat:1: not enough
+                    // arguments` exit 1. zshrs returned 1 silently.
+                    eprintln!("zshrs:zformat:1: not enough arguments");
                     return 1;
                 }
                 let var_name = args[1].clone();
