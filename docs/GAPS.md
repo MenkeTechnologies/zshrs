@@ -1709,6 +1709,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `command --help` (long-option-style) is treated as a command NAME (zsh's `command` builtin has no long-option support) — emits `command not found: --help` exit 127. zshrs's flag parser iterated `--help` char by char, hit `-` first which matched the `--` (end-of-options) arm, advanced the args index past `--help`, then returned with no positional args and exit 0. Two-part fix: (1) handle bare `--` BEFORE entering the per-char loop (proper end-of-options detection); (2) detect `--xxx` as a whole-arg long-option-style and emit the command-not-found diagnostic. Test: `test_command_long_option_treated_as_command_name`.
 
+### `[ -i /tmp ]` (unknown unary cond) silently returned 1
+
+- zsh: `[ -X path ]` for an unknown letter X errors `unknown condition: -X` exit 2. zshrs's `builtin_test` had no catch-all for unknown two-arg unary forms — they fell through the AND/OR split and silently returned 1, which a consumer would read as "false" rather than "syntax error". Added a 2-arg alphabetic-flag default arm before the AND/OR split that emits zsh's diagnostic and exits 2. Test: `test_test_unknown_unary_condition_errors`.
+
+### `[ a -eq a ]` (non-numeric operands) silently returned true
+
+- zsh: `[ a -eq a ]` errors `integer expression expected: a` exit 2 because the operands aren't integers. zshrs's `-eq`/`-ne` arms used `unwrap_or(0)`, silently coercing `a` to 0; `a -eq 0` then evaluated true (status 0). Added explicit `parse::<i64>()` checks in the `-eq` and `-ne` arms that emit the diagnostic and return 2 on parse failure. Test: `test_test_eq_non_numeric_errors`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
