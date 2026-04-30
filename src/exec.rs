@@ -20534,6 +20534,16 @@ impl ShellExecutor {
                 s if s.starts_with('-') && s[1..].chars().all(|c| c.is_ascii_digit()) => {
                     count = s[1..].parse().unwrap_or(20);
                 }
+                // Unknown `-X` flags: zsh's history (= fc -l) errors
+                // `bad option: -X`. Without this catch, `history -w` /
+                // `-d` / `-X` etc. fell through to the search-query
+                // branch which treated `-w` as a query and hit the
+                // empty-history error path with the wrong message.
+                s if s.starts_with('-') && s.len() > 1 => {
+                    let bad: String = s[1..].chars().take(1).collect();
+                    eprintln!("zshrs:history:1: bad option: -{}", bad);
+                    return 1;
+                }
                 s if s.chars().all(|c| c.is_ascii_digit()) => {
                     count = s.parse().unwrap_or(20);
                 }
@@ -23538,8 +23548,10 @@ impl ShellExecutor {
     }
 
     fn builtin_type(&mut self, args: &[String]) -> i32 {
+        // zsh: bare `type` (no args) exits 1 — type requires at
+        // least one name to look up. zshrs returned 0 silently.
         if args.is_empty() {
-            return 0;
+            return 1;
         }
 
         let mut show_all = false;
