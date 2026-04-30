@@ -1333,18 +1333,30 @@ impl<'a> ZshParser<'a> {
             return self.parse_for_cstyle();
         }
 
-        // Get variable name
-        let var = match self.lexer.tok {
-            LexTok::String => {
-                let v = self.lexer.tokstr.clone().unwrap_or_default();
-                self.lexer.zshlex();
-                v
+        // Get variable name(s). zsh parse.c par_for accepts multiple
+        // identifier tokens before `in`/`(`/newline — `for k v in ...`
+        // assigns each iteration's pair of values to k and v in turn.
+        // We store the names space-joined since variable identifiers
+        // can't contain whitespace.
+        let mut names: Vec<String> = Vec::new();
+        loop {
+            match self.lexer.tok {
+                LexTok::String => {
+                    let v = self.lexer.tokstr.clone().unwrap_or_default();
+                    if v == "in" {
+                        break;
+                    }
+                    names.push(v);
+                    self.lexer.zshlex();
+                }
+                _ => break,
             }
-            _ => {
-                self.error("expected variable name in for");
-                return None;
-            }
-        };
+        }
+        if names.is_empty() {
+            self.error("expected variable name in for");
+            return None;
+        }
+        let var = names.join(" ");
 
         // Skip newlines
         self.skip_separators();
