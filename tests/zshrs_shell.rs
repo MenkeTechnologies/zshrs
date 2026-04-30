@@ -6422,6 +6422,19 @@ fn test_wait_missing_job_silent() {
 }
 
 #[test]
+fn test_wait_invalid_pid_uses_zsh_format() {
+    // zsh: `wait NOT_A_PID` -> `zsh:wait:1: job not found: NOT_A_PID`
+    // (treats unparseable arg as a job-spec lookup that failed).
+    // zshrs previously emitted "wait: NOT_A_PID: invalid pid".
+    let (status, _, stderr) = run_zshrs("wait NOT_A_PID");
+    assert_eq!(status, 127);
+    assert!(
+        stderr.contains("zshrs:wait:1: job not found: NOT_A_PID"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_fc_no_args_with_session_still_recurses() {
     // Bare `fc` (no -l, no positional) ALWAYS errors recurse-
     // endlessly in -c mode. Even when `print -s` added entries,

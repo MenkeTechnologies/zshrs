@@ -20455,7 +20455,7 @@ impl ShellExecutor {
                 let pid: u32 = match arg.parse() {
                     Ok(p) => p,
                     Err(_) => {
-                        eprintln!("wait: {}: invalid pid", arg);
+                        eprintln!("zshrs:wait:1: job not found: {}", arg);
                         status = 127;
                         continue;
                     }
