@@ -18389,6 +18389,23 @@ impl ShellExecutor {
                     eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
                     return 2;
                 }
+                // 3-arg with unknown non-`-` operator at args[1] —
+                // `[ a := a ]` (or other made-up infix) -> zsh:
+                // `1: condition expected: :=` exit 2. Operands at
+                // args[0]/args[2] are non-flag, args[1] looks like
+                // an operator-ish token that's NOT `-`-prefixed
+                // (`-ZZ` etc. take the dedicated unknown-binop arm
+                // below) and not in zsh's table.
+                if args.len() == 3
+                    && !args[0].starts_with('-')
+                    && !args[2].starts_with('-')
+                    && !args[1].starts_with('-')
+                    && args[1].chars().any(|c| !c.is_ascii_alphanumeric())
+                    && !matches!(args[1], "=" | "!=" | "==")
+                {
+                    eprintln!("zshrs:[:1: condition expected: {}", args[1]);
+                    return 2;
+                }
                 // 3-arg with binop at args[1] but NO operand at
                 // args[2] (impossible since len==3, so args[2] always
                 // exists — but zsh handles `[ a -lt ]` (2 args) as
@@ -20703,7 +20720,10 @@ impl ShellExecutor {
                 let pid: u32 = match arg.parse() {
                     Ok(p) => p,
                     Err(_) => {
-                        eprintln!("kill: {}: invalid pid", arg);
+                        // zsh: `kill -0 abc` -> `kill:1: illegal pid:
+                        // abc` exit 1. zshrs's bash-style `kill: abc:
+                        // invalid pid` had no shell-name prefix.
+                        eprintln!("zshrs:kill:1: illegal pid: {}", arg);
                         status = 1;
                         continue;
                     }
@@ -20834,9 +20854,12 @@ impl ShellExecutor {
                 let pid: u32 = match arg.parse() {
                     Ok(p) => p,
                     Err(_) => {
+                        // zsh: stops processing remaining args after
+                        // the first non-PID. zshrs's `continue`
+                        // emitted one error per bad arg, exceeding
+                        // zsh's diagnostic count for `wait abc def`.
                         eprintln!("zshrs:wait:1: job not found: {}", arg);
-                        status = 127;
-                        continue;
+                        return 127;
                     }
                 };
                 // Verify the PID is one of OUR children. If we never
@@ -27917,7 +27940,22 @@ impl ShellExecutor {
         if push_to_stack {
             return 0;
         }
-        let _ = fd; // TODO: implement fd selection
+        // zsh: `print -u N` writes to fd N. If fd N isn't open,
+        // errors `print:1: bad file number: N` exit 1 and prints
+        // nothing. zshrs's `let _ = fd` discarded the requested fd
+        // and always wrote to stdout, ignoring -u entirely. Validate
+        // fd is open BEFORE the print runs.
+        if fd != 1 && fd != 2 {
+            // fcntl-check the fd via libc::fcntl(F_GETFD); -1 means
+            // closed. The 1/2 fast-path skips the syscall for stdout
+            // and stderr (always open in -c mode).
+            let rc = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            if rc < 0 {
+                eprintln!("zshrs:print:1: bad file number: {}", fd);
+                return 1;
+            }
+        }
+        let _ = fd; // TODO: actual fd-write routing for fd != 1/2
 
         // `print -m PATTERN args…` — first positional is a glob pattern;
         // only print the args that match. zsh: bare `print -m '*.txt'
@@ -31768,11 +31806,25 @@ impl ShellExecutor {
 
         while i < args.len() {
             match args[i].as_str() {
-                "-p" if i + 1 < args.len() => {
+                "-p" => {
+                    if i + 1 >= args.len() {
+                        // zsh: `vared -p` without value -> `vared:1:
+                        // argument expected: -p` exit 1. zshrs's
+                        // `if i + 1 < args.len()` guard silently
+                        // dropped the flag without erroring, which
+                        // then triggered the catch-all `not enough
+                        // arguments` for the missing var.
+                        eprintln!("zshrs:vared:1: argument expected: -p");
+                        return 1;
+                    }
                     i += 1;
                     prompt = args[i].clone();
                 }
-                "-r" if i + 1 < args.len() => {
+                "-r" => {
+                    if i + 1 >= args.len() {
+                        eprintln!("zshrs:vared:1: argument expected: -r");
+                        return 1;
+                    }
                     i += 1;
                     rprompt = args[i].clone();
                 }
