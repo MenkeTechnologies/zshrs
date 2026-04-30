@@ -6797,6 +6797,68 @@ fn test_test_empty_paren_errors() {
 }
 
 #[test]
+fn test_umask_bad_numeric_format() {
+    // zsh: `umask 999` -> `umask:1: bad umask` exit 1 (terse, no
+    // mention of which digit was invalid). zshrs's symbolic-mode
+    // walker treated the numeric input as malformed symbolic and
+    // emitted `bad symbolic mode operator: 9` — wrong category.
+    let (status, _, stderr) = run_zshrs("umask 999");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad umask"), "got: {stderr}");
+    assert!(
+        !stderr.contains("symbolic mode operator"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_umask_bad_symbolic_permission() {
+    // zsh: `umask u=Z` -> `umask:1: bad symbolic mode permission: Z`
+    // exit 1 (specific to the unknown rwx char). zshrs collapsed all
+    // symbolic-form failures to `umask: invalid mask: u=Z`.
+    let (status, _, stderr) = run_zshrs("umask u=Z");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("bad symbolic mode permission: Z"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_pwd_unknown_flag_errors() {
+    // zsh: `pwd -X` -> `pwd:1: bad option: -X` exit 1. zshrs's silent
+    // fallback ignored unknown letters and printed the cwd as if -X
+    // were valid.
+    let (status, _, stderr) = run_zshrs("pwd -X");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -X"), "got: {stderr}");
+}
+
+#[test]
+fn test_cd_two_args_substitution_or_error() {
+    // zsh: `cd OLD NEW` is the substitution form — replaces OLD with
+    // NEW in $PWD and cd's there. If OLD isn't in $PWD, errors `cd:1:
+    // string not in pwd: OLD` exit 1. zshrs silently fell through and
+    // treated args[0] as the target dir (bash-style).
+    let (status, _, stderr) = run_zshrs("cd /tmp /etc");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("string not in pwd: /tmp"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_readonly_unknown_flag_errors() {
+    // zsh: `readonly -X x=1` -> `readonly:1: bad option: -X` exit 1.
+    // zshrs treated `-X` as a name to mark readonly, masking the
+    // typo and silently inserting a junk readonly entry.
+    let (status, _, stderr) = run_zshrs("readonly -X x=1");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -X"), "got: {stderr}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
