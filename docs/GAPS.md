@@ -2219,6 +2219,12 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### Glob qualifier `*(.,/)` — top-level `,` is OR (clause alternation)
+
+Direct port of zsh's pattern.c qualifier parsing. zshrs's `filter_by_qualifiers` chained all qualifier filters with AND, so `*(.,/)` (files OR dirs) errored "no matches found" because no file is BOTH a regular file AND a directory. Fix: detect a top-level `,` (honoring `[...]`/`(...)` nesting), split the qualifier into clauses, run the full AND filter on each clause, UNION the results in original-file order with dedup. Single-clause path is unchanged. Verified against zsh: `*(/,@)` (dirs OR symlinks), `*(.,/)` (files OR dirs) both produce union output.
+
+Test: `test_glob_qualifier_comma_or`.
+
 ### `zshrs -f +o nomatch -c '...'` now parses `-o`/`+o NAME` like zsh's main.c arg loop
 
 zshrs previously rejected `+o nomatch` with "+o: No such file or directory" — neither `+o` nor the option name was in the recognized-flags filter, so `+o` fell through to the "treat as script file" path. Direct port of zsh's main.c arg-parse loop: collect `-o NAME` (set option) / `+o NAME` (unset option) pairs before the filter; apply them in `apply_cli_flags` as `executor.options.insert(name, value)`.

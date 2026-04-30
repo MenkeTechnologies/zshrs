@@ -12297,6 +12297,79 @@ impl ShellExecutor {
             return files;
         }
 
+        // Top-level `,` in the qualifier list is OR (zsh: `*(.,/)`
+        // = files OR dirs). Direct port of zsh's pattern.c
+        // qualifier parsing — comma splits at clause boundary,
+        // each clause runs its own AND filter, the results are
+        // UNIONed and de-duplicated. Single-clause (no comma)
+        // path is unchanged.
+        let has_or = {
+            let mut depth_b = 0;
+            let mut depth_p = 0;
+            let mut found = false;
+            for c in qualifiers.chars() {
+                match c {
+                    '[' => depth_b += 1,
+                    ']' if depth_b > 0 => depth_b -= 1,
+                    '(' if depth_b == 0 => depth_p += 1,
+                    ')' if depth_b == 0 && depth_p > 0 => depth_p -= 1,
+                    ',' if depth_b == 0 && depth_p == 0 => {
+                        found = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            found
+        };
+        if has_or {
+            // Split at top-level commas, recurse for each clause,
+            // union the results in original-file order. Each
+            // clause re-runs the full filter so qualifier flags
+            // (`L+0`, `om`, etc.) inside one clause stay scoped.
+            let mut clauses: Vec<String> = Vec::new();
+            let mut current = String::new();
+            let mut depth_b = 0;
+            let mut depth_p = 0;
+            for c in qualifiers.chars() {
+                match c {
+                    '[' => {
+                        depth_b += 1;
+                        current.push(c);
+                    }
+                    ']' if depth_b > 0 => {
+                        depth_b -= 1;
+                        current.push(c);
+                    }
+                    '(' if depth_b == 0 => {
+                        depth_p += 1;
+                        current.push(c);
+                    }
+                    ')' if depth_b == 0 && depth_p > 0 => {
+                        depth_p -= 1;
+                        current.push(c);
+                    }
+                    ',' if depth_b == 0 && depth_p == 0 => {
+                        clauses.push(std::mem::take(&mut current));
+                    }
+                    _ => current.push(c),
+                }
+            }
+            clauses.push(current);
+            let mut seen: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            let mut out: Vec<String> = Vec::new();
+            for clause in &clauses {
+                let matched = self.filter_by_qualifiers(files.clone(), clause);
+                for m in matched {
+                    if seen.insert(m.clone()) {
+                        out.push(m);
+                    }
+                }
+            }
+            return out;
+        }
+
         // Parallel metadata prefetch — all stat syscalls happen on pool threads,
         // then filter/sort uses cached metadata with zero syscalls.
         let meta_cache = self.prefetch_metadata(&files);

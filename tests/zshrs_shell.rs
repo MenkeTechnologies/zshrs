@@ -8488,6 +8488,31 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_glob_qualifier_comma_or() {
+    // Direct port of zsh's pattern.c qualifier parsing — top-
+    // level `,` in `(...)` is OR (alternation between qualifier
+    // clauses). zshrs's filter_by_qualifiers AND'd everything,
+    // so `*(.,/)` errored "no matches found" because no file
+    // is BOTH a regular file AND a directory.
+    let d = "/tmp/glob_qual_or_test";
+    let _ = std::fs::create_dir_all(d);
+    let _ = std::fs::write(format!("{}/a.txt", d), "");
+    let _ = std::fs::create_dir_all(format!("{}/sub", d));
+    let (_, output, _) = run_zshrs(&format!("echo {}/*(.,/)", d));
+    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    parts.sort();
+    assert_eq!(
+        parts,
+        vec![
+            format!("{}/a.txt", d).as_str(),
+            format!("{}/sub", d).as_str()
+        ],
+        "got: {output:?}"
+    );
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
 fn test_cli_o_flag_sets_options() {
     // zsh's `-o NAME` and `+o NAME` CLI flags toggle options
     // before the script runs. zshrs previously didn't parse
