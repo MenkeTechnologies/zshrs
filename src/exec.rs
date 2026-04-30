@@ -18471,25 +18471,16 @@ impl ShellExecutor {
                 // by the unknown-flag arm). 3-arg with `args[1]=-lt
                 // args[2]=...` and missing third operand is rare;
                 // skip until a real probe surfaces it.
-                // 3-arg with a known unary flag at args[0] — `[ -z -n
-                // a ]` has flag-flag-arg layout. zsh: `too many
-                // arguments` (the parse expected `-z OPERAND` 2-arg
-                // form, with the extra `a` being the surplus). Match
-                // that BEFORE the unknown-binop check below to avoid
-                // the wrong "unknown condition" diagnostic.
+                // 3-arg with a known unary flag at args[0] — covers
+                // both `[ -z -n a ]` (flag-flag-arg) and `[ -e /tmp
+                // X ]` (flag-operand-extra). Both layouts mean the
+                // parse expected `-FLAG OPERAND` (2-arg form), with
+                // the extra arg as the surplus. zsh: `too many
+                // arguments`.
                 if args.len() == 3
                     && args[0].len() == 2
                     && matches!(
                         args[0],
-                        "-z" | "-n" | "-d" | "-f" | "-e" | "-r" | "-w"
-                            | "-x" | "-s" | "-h" | "-L" | "-O" | "-G"
-                            | "-N" | "-S" | "-p" | "-b" | "-c" | "-g"
-                            | "-k" | "-u" | "-t" | "-v"
-                    )
-                    && args[1].starts_with('-')
-                    && args[1].len() == 2
-                    && matches!(
-                        args[1],
                         "-z" | "-n" | "-d" | "-f" | "-e" | "-r" | "-w"
                             | "-x" | "-s" | "-h" | "-L" | "-O" | "-G"
                             | "-N" | "-S" | "-p" | "-b" | "-c" | "-g"
@@ -21848,6 +21839,21 @@ impl ShellExecutor {
             if positional.len() > 2 {
                 eprintln!("zshrs:fc:1: too many arguments");
                 return 1;
+            }
+            // Edit-mode `fc N M` (2 positionals, both numeric): zsh
+            // re-edits commands N..M. With empty session history in
+            // -c mode, that's the recurse-endlessly path. zshrs's
+            // prefix-search just used N and reported `event not
+            // found: N`, the wrong category for the range-edit form.
+            if positional.len() == 2 && !atty::is(atty::Stream::Stdin) {
+                let p0_num = positional[0].parse::<i64>().is_ok();
+                let p1_num = positional[1].parse::<i64>().is_ok();
+                if p0_num && p1_num {
+                    eprintln!(
+                        "zsh:fc:1: current history line would recurse endlessly, aborted"
+                    );
+                    return 1;
+                }
             }
             if arg.starts_with('-') || arg.starts_with('+') {
                 // fc -N or fc +N: re-execute Nth command

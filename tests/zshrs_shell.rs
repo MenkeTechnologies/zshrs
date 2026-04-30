@@ -8067,6 +8067,33 @@ fn test_history_d_multi_args_error_categories() {
 }
 
 #[test]
+fn test_test_3args_unary_op_extra() {
+    // zsh: `[ -e /tmp 5 ]` (unary flag + operand + extra) -> `[:1:
+    // too many arguments` exit 2. zshrs's earlier 3-arg arm only
+    // matched flag-flag-arg layouts (`-z -n a`); the flag-op-extra
+    // case fell through to the 1 catch-all silently.
+    let (status, _, stderr) = run_zshrs("[ -e /tmp 5 ]");
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("too many arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_fc_2_numeric_positionals_recurse() {
+    // zsh: edit-mode `fc N M` (2 numeric positionals) re-edits
+    // commands N..M. With empty -c session, that's the recurse-
+    // endlessly path. zshrs's prefix-search used N and reported
+    // `event not found: N` (wrong category for the range-edit form).
+    let (_, _, stderr) = run_zshrs("fc 1 5");
+    assert!(
+        stderr.contains("would recurse endlessly"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
