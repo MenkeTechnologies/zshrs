@@ -27070,6 +27070,11 @@ impl ShellExecutor {
                 // attr isn't tracked yet, but the no-output behavior
                 // matches script consumers that just toggle).
                 "-T" => enable_trace = true,
+                // `+t` / `+T` DISABLE tracing — zsh: silent success
+                // (clears the `t` attr). zshrs treated `+t` as a
+                // function name and erred "no such function". Mirror
+                // by silently consuming.
+                "+t" | "+T" => enable_trace = true,
                 "-m" => pattern_match = true,
                 _ if arg.starts_with('-') && arg.len() > 1 => {
                     // Combined flags like `-lm`
@@ -27079,6 +27084,18 @@ impl ShellExecutor {
                             't' => show_trace = true,
                             'T' => enable_trace = true,
                             'm' => pattern_match = true,
+                            _ => {}
+                        }
+                    }
+                }
+                _ if arg.starts_with('+') && arg.len() > 1 => {
+                    // `+l`/`+t`/`+T`/`+m` — combined "off" flags.
+                    // For our purposes (no per-function trace state),
+                    // treat them all as silent no-ops matching zsh's
+                    // silent toggle behavior.
+                    for c in arg[1..].chars() {
+                        match c {
+                            'l' | 't' | 'T' | 'm' => enable_trace = true,
                             _ => {}
                         }
                     }
