@@ -2219,6 +2219,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### Function-scope EXIT trap fires on function return, preserves outer trap
+
+Direct port of zsh's exec.c `dotrapargs(SIGEXIT, ...)` deferred-fire pattern. An EXIT trap set INSIDE a function fires when the function RETURNS (not when the shell exits), and the outer EXIT trap is preserved across the call. zshrs's `call_function` didn't track function-scope traps, so:
+- `foo() { trap "echo X" EXIT; }; foo; echo done` either fired X at SHELL exit (if no outer trap) or polluted the outer `traps["EXIT"]`.
+- An outer `trap "echo OUTER" EXIT; foo() { trap "echo INNER" EXIT; }; foo` overwrote OUTER with INNER, so OUTER never fired at shell exit.
+
+Fix:
+1. Before function body: save current `traps["EXIT"]` into a local; remove it so an outer trap doesn't fire prematurely.
+2. After function body: pull the (possibly newly-set) EXIT trap, fire it now (script-pipeline) with the function's `last_status` in scope, restore the saved outer trap.
+
+Tests: `test_function_scope_exit_trap_fires_on_return`, `test_function_scope_exit_trap_preserves_outer`.
+
 ### `return` with no arg now uses live `vm.last_status`, not stale `executor.last_status`
 
 zsh's bin_return (Src/builtin.c) returns the status of the most recently executed command when no arg is given — `foo() { false; return; }` returns 1, not 0. zshrs's `builtin_return` read `self.last_status`, which is the EXECUTOR's view; that value only gets synced from the VM at statement boundaries, so during the `return` builtin it was stale (held the value from BEFORE the function call started, typically 0).
