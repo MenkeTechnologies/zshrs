@@ -2490,6 +2490,13 @@ impl ZshCompiler {
             // expressions in `a+=5, b*=2`. MathEval evaluates the
             // entire comma-list in order.
             || inner_arith.contains(',')
+            // Parameter expansion (`${…}`, `${+name}`, `${#x}`) —
+            // ArithCompiler's lexer treats `$` as an unknown char and
+            // either fails or computes the wrong thing. MathEval
+            // routes through `evaluate_arithmetic` → `expand_string`
+            // first, so the expansion produces a numeric string before
+            // arith evaluation.
+            || inner_arith.contains('$')
             ;
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
@@ -3128,10 +3135,40 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     if inner.is_empty() {
         return None;
     }
-    // Reject nested expansions and flag forms — those are handled by
-    // earlier fast-paths or the bridge.
-    if inner.starts_with('(') || inner.contains("${") {
+    // Reject flag forms — handled by earlier fast-paths.
+    if inner.starts_with('(') {
         return None;
+    }
+    // Nested `${…}` is allowed ONLY in substring offset/length operands
+    // (`${var:N:${#x}-2}` style). Other shapes (length-of-nested,
+    // strip with nested pattern, etc.) still fall through to the
+    // bridge. Detect by scanning for the `:N:` substring pattern and
+    // ensuring the nested `${` only appears after the second `:`.
+    if inner.contains("${") {
+        if let Some(first_colon) = inner.find(':') {
+            // Substring shape: must start with NAME:digit/$/-/...
+            // The substring path in this function handles the rest;
+            // we just need the offset operand to be a plain int (or
+            // `$NAME` simple) and the length to be the nested form.
+            // Check the offset segment: from after `:` up to the
+            // second `:` should NOT contain `${`. Allow nested only
+            // in the length operand.
+            let after_first = &inner[first_colon + 1..];
+            // Skip the offset's leading minus / spaces.
+            let off_section_end = after_first.find(':').unwrap_or(after_first.len());
+            let off_section = &after_first[..off_section_end];
+            if off_section.contains("${") {
+                return None;
+            }
+            // The first colon must be the var/op split, not the start
+            // of `:#` filter or `:-` default.
+            let after_first_first = inner.as_bytes().get(first_colon + 1).copied();
+            if matches!(after_first_first, Some(b'-') | Some(b'+') | Some(b'=') | Some(b'?') | Some(b'#') | Some(b'/')) {
+                return None;
+            }
+        } else {
+            return None;
+        }
     }
 
     // Find where the var name ends. Plain identifier rules: letters,

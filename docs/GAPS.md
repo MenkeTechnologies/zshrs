@@ -1781,6 +1781,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The condition `-v` (parameter-set test) takes a parameter NAME with optional subscript. zshrs's cond compiler called `compile_word_str(arg)` which triggered glob expansion — `a[1]` was treated as a `[1]` char-class glob and aborted with NOMATCH. Three-part fix: (1) `ZshCond::Unary` arm for `-v` emits the operand as a `LoadConst` literal, skipping glob; (2) `ZshCond::Binary` arm (which the parser uses when `-v` is followed by one operand and an empty third operand) gets the same `-v` literal-emission branch; (3) `BUILTIN_VAR_EXISTS` runtime now splits `name[key]` and looks up either the indexed array element (with negative-index resolution and bounds check) or the assoc-array key, returning `Bool`. Test: `test_cond_v_with_array_subscript`.
 
+### `${x:0:${#x}-2}` (substring with arithmetic length) returned full string
+
+- zshrs's `parse_param_modifier` rejected ANY shape with nested `${...}` (line 3133: `if inner.contains("${") { return None; }`), falling through to the bridge expander which doesn't handle the substring shape. Relaxed the rejection: nested `${…}` is now allowed in substring offset/length operands as long as it doesn't appear before the first `:` (the var-name segment) and the modifier op isn't a prefix-letter form (`:-`, `:#`, `:/`, `:?`, etc.). The length expression then routes through `BUILTIN_PARAM_SUBSTRING_EXPR` which calls `eval_arith_expr` after `expand_string`. Test: `test_substring_with_arithmetic_length`.
+
+### `(( ${+h[a]} ))` arith command with parameter expansion always saw 0
+
+- The arith COMMAND `(( ... ))` (vs the arith SUBSTITUTION `$(( ... ))`) compiled through `ArithCompiler`, whose lexer can't parse `$` and treated the expansion as an unknown token. The expansion never ran, so the operand silently became 0 and the command exited 1 even when the value was 1. Added `$` to `needs_eval` triggers in `compile_command` for `(( ... ))` — any expr touching parameter expansion now routes through `BUILTIN_ARITH_EVAL` → `evaluate_arithmetic` which calls `expand_string` first. Test: `test_arith_command_with_parameter_expansion`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.
