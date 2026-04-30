@@ -2217,6 +2217,19 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: edit-mode `fc N M` re-edits commands N..M; with empty -c session, that's the recurse-endlessly path. zshrs's prefix-search used `N` and reported `event not found: N` (wrong category for the range-edit form). Added a `positional.len() == 2 && both_numeric` precheck that emits zsh's recurse diagnostic. Test: `test_fc_2_numeric_positionals_recurse`.
 
+## Closed (eighty-seventh-pass — C-source-driven port)
+
+### `${(M)var##pat}` / `(M)#pat` / `(M)%pat` / `(M)%%pat` returned the unstripped value instead of the matched portion
+
+- Direct port of zsh's `get_match_ret()` (Src/glob.c:2550). The `SUB_MATCH` flag (set by `(M)`) inverts the strip return: instead of the unmatched portion (default), return the matched portion. Was filed during the iter-86 audit.
+- zshrs's flag-aware path (`expand_braced_variable` line 13085) extracted var names as the longest leading-alphanumeric run, then dropped any trailing `##*o`/`#*o`/`%o*`/`%%o*` operator silently. So `${(M)a##*o}` returned the full unstripped value because the strip never ran. The non-M variants worked because they took a different code path through `BUILTIN_PARAM_STRIP`.
+- Two-part fix:
+  1. New `strip_match_op(v, op, pattern, m_flag)` helper in `exec.rs` mirroring zsh's `get_match_ret` logic. `m_flag=true` swaps which slice of the original is returned at the same boundary index `i` (longest/shortest match) — `v[..i]` (matched) vs `v[i..]` (unmatched) for prefix ops, and the inverse for suffix ops.
+  2. Wire the strip detection into `expand_braced_variable` after var-name extraction: detect `##`/`#`/`%`/`%%` in `rest_after_var`, expand the pattern, call `strip_match_op` with `has_match_flag` from the `(M)` flag check above.
+- Also handles the no-match case per zsh: with `(M)` and no match, return empty (the matched portion doesn't exist); without `(M)`, return original (strip is a no-op).
+- Refactored existing `BUILTIN_PARAM_STRIP` to delegate to the same helper (was a 50-line inline closure with 4 nearly-identical match arms). Compile-time strip path stays `m_flag=false` since `parse_param_modifier` rejects flag forms and routes them through the bridge.
+- Tests: `test_m_flag_with_double_hash_strip`, `test_m_flag_with_single_hash_strip`, `test_m_flag_with_percent_strip`, `test_m_flag_with_percent_percent_strip`, `test_m_flag_no_match_returns_empty`.
+
 ## Audit (eighty-sixth-pass — C-source-driven correction)
 
 After closing 27 gaps black-box (probing zsh -f -c output without

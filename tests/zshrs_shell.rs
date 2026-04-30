@@ -8488,6 +8488,59 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_m_flag_with_double_hash_strip() {
+    // Direct port of zsh's get_match_ret() in glob.c:2550 — the
+    // (M) flag inverts the strip return: instead of the
+    // unmatched portion (default), return the matched portion.
+    // ${a##*o} with a="hello world": longest leading match of
+    // *o = "hello wo", default returns " rld", (M) returns
+    // "hello wo".
+    let (_, output, _) =
+        run_zshrs(r#"a="hello world"; echo "${(M)a##*o}""#);
+    assert_eq!(output.trim(), "hello wo", "got: {output:?}");
+}
+
+#[test]
+fn test_m_flag_with_single_hash_strip() {
+    // ${(M)a#*o}: shortest leading match of *o = "hello",
+    // (M) returns matched "hello".
+    let (_, output, _) =
+        run_zshrs(r#"a="hello world"; echo "${(M)a#*o}""#);
+    assert_eq!(output.trim(), "hello", "got: {output:?}");
+}
+
+#[test]
+fn test_m_flag_with_percent_strip() {
+    // ${(M)a%o*}: shortest trailing match of o* = "orld",
+    // (M) returns matched "orld".
+    let (_, output, _) =
+        run_zshrs(r#"a="hello world"; echo "${(M)a%o*}""#);
+    assert_eq!(output.trim(), "orld", "got: {output:?}");
+}
+
+#[test]
+fn test_m_flag_with_percent_percent_strip() {
+    // ${(M)a%%o*}: longest trailing match of o* = "o world",
+    // (M) returns matched "o world".
+    let (_, output, _) =
+        run_zshrs(r#"a="hello world"; echo "${(M)a%%o*}""#);
+    assert_eq!(output.trim(), "o world", "got: {output:?}");
+}
+
+#[test]
+fn test_m_flag_no_match_returns_empty() {
+    // (M) on a strip that finds no match: zsh returns empty
+    // (the matched portion doesn't exist). Without (M) the
+    // original string passes through unchanged.
+    let (_, output, _) =
+        run_zshrs(r#"a="hello"; echo "[${(M)a#nope}]""#);
+    assert_eq!(output.trim(), "[]", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"a="hello"; echo "[${a#nope}]""#);
+    assert_eq!(output.trim(), "[hello]", "got: {output:?}");
+}
+
+#[test]
 fn test_bare_typeset_prints_declaration_at_top_level() {
     // zsh: bare `typeset NAME` / `declare NAME` (no flags, no
     // `=`) at the top level prints `NAME=value` (or `NAME=( ... )`
