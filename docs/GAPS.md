@@ -1769,6 +1769,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `readonly y=1; typeset y=2` errors `read-only variable: y` and aborts the shell with exit 1 in -c mode. zshrs's `builtin_typeset_named` skipped the read-only check and overwrote the value. Added a check at the top of the assignment branch: if the name is in `readonly_vars` or has `var_attrs.readonly`, emit the diagnostic and `process::exit(1)` (matching `BUILTIN_SET_VAR`'s abort behavior). Test: `test_typeset_readonly_aborts`.
 
+### `fc -h` overflowed the stack via infinite re-execution
+
+- zsh: any unknown `fc` flag errors `bad option: -X` and bails. zshrs's flag-letter loop had a silent default arm — unknown flags fell through to the no-args path (re-execute last command), and since `fc -h` itself entered history that path infinitely recursed and overflowed. Added an `eprintln + return 1` for unknown flags so `fc -h`, `fc -w`, etc. fail cleanly. Test: `test_fc_unknown_flag_errors`.
+
+### `functions -T NAME` printed the function body instead of enabling trace
+
+- zsh: `functions -T` enables tracing on the named functions silently. zshrs didn't recognize `-T` (only `-l`/`-t`/`-m`), so it fell into the default-listing path and printed the body. Added `-T` (and combined-flag `T`) arms that return 0 immediately (the trace attribute itself isn't tracked yet, but the no-output behavior matches script consumers). Test: `test_functions_T_enable_trace_silent`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
