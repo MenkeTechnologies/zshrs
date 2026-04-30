@@ -6360,6 +6360,23 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_array_element_pattern_replace() {
+    // `${a[1]/pat/repl}` — pattern replace on a single array element.
+    // zshrs's bracket-modifier path skipped pattern replacement so
+    // the element returned unchanged. Now the `/`, `//`, `/#`, `/%`
+    // modifiers all dispatch through the new `zsh_pattern_replace`
+    // helper (extracted from `BUILTIN_PARAM_REPLACE`).
+    let (_, output, _) = run_zshrs(r#"a=(file.txt other.txt); print -- ${a[1]/.txt/.bak}"#);
+    assert_eq!(output.trim(), "file.bak");
+    let (_, output, _) = run_zshrs(r#"a=(hello world); print -- ${a[1]//l/L}"#);
+    assert_eq!(output.trim(), "heLLo");
+    let (_, output, _) = run_zshrs(r#"a=(hello); print -- ${a[1]/#h/H}"#);
+    assert_eq!(output.trim(), "Hello");
+    let (_, output, _) = run_zshrs(r#"a=(hello); print -- ${a[1]/%o/O}"#);
+    assert_eq!(output.trim(), "hellO");
+}
+
+#[test]
 fn test_print_S_adds_to_history_silently() {
     // zsh: `print -S "..."` adds the line to history INSTEAD of
     // emitting it on stdout (the "S" form is the split-words variant

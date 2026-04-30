@@ -7590,6 +7590,104 @@ fn expand_posix_char_classes(s: &str) -> String {
     out
 }
 
+/// Apply a `${var/pat/repl}` style pattern replacement to a single
+/// scalar string. `op`: 0=first-match, 1=all (`//`), 2=anchored prefix
+/// (`/#`), 3=anchored suffix (`/%`). Mirrors the runtime
+/// `BUILTIN_PARAM_REPLACE` `one()` closure but operates on a free value
+/// — used by the array-element subscript path
+/// (`${a[N]/pat/repl}`) which can't dispatch through the name-keyed
+/// builtin.
+fn zsh_pattern_replace(val: &str, pattern: &str, repl: &str, op: u8) -> String {
+    let has_glob = pattern
+        .chars()
+        .any(|c| matches!(c, '?' | '*' | '[' | ']' | '('));
+    let glob_re: Option<regex::Regex> = if has_glob {
+        let mut re = String::with_capacity(pattern.len() * 2);
+        let mut chars = pattern.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '?' => re.push('.'),
+                '*' => re.push_str(".*"),
+                '[' => {
+                    re.push('[');
+                    if chars.peek() == Some(&'!') {
+                        chars.next();
+                        re.push('^');
+                    }
+                    while let Some(cc) = chars.next() {
+                        re.push(cc);
+                        if cc == ']' {
+                            break;
+                        }
+                    }
+                }
+                '\\' => {
+                    re.push('\\');
+                    if let Some(next) = chars.next() {
+                        re.push(next);
+                    }
+                }
+                '(' | ')' | '|' => re.push(c),
+                '.' | '+' | '^' | '$' | '{' | '}' => {
+                    re.push('\\');
+                    re.push(c);
+                }
+                _ => re.push(c),
+            }
+        }
+        regex::Regex::new(&re).ok()
+    } else {
+        None
+    };
+    let val = val.to_string();
+    if let Some(rx) = glob_re {
+        return match op {
+            0 => rx.replacen(&val, 1, repl).to_string(),
+            1 => rx.replace_all(&val, repl).to_string(),
+            2 => {
+                if let Some(m) = rx.find(&val) {
+                    if m.start() == 0 {
+                        return format!("{}{}", repl, &val[m.end()..]);
+                    }
+                }
+                val
+            }
+            3 => {
+                let mut last_start: Option<usize> = None;
+                for m in rx.find_iter(&val) {
+                    if m.end() == val.len() {
+                        last_start = Some(m.start());
+                    }
+                }
+                if let Some(s) = last_start {
+                    return format!("{}{}", &val[..s], repl);
+                }
+                val
+            }
+            _ => val,
+        };
+    }
+    match op {
+        0 => val.replacen(pattern, repl, 1),
+        1 => val.replace(pattern, repl),
+        2 => {
+            if val.starts_with(pattern) {
+                format!("{}{}", repl, &val[pattern.len()..])
+            } else {
+                val
+            }
+        }
+        3 => {
+            if val.ends_with(pattern) {
+                format!("{}{}", &val[..val.len() - pattern.len()], repl)
+            } else {
+                val
+            }
+        }
+        _ => val,
+    }
+}
+
 /// Numeric range glob `<N-M>` parsed form. `None`/`None` means open-ended
 /// on that side (`<->` matches any digits, `<3->` ≥ 3, `<-5>` ≤ 5).
 #[derive(Debug, Clone)]
@@ -13098,6 +13196,31 @@ impl ShellExecutor {
                             return v;
                         }
                         return elem;
+                    }
+                    // `${arr[N]/pat/repl}` — pattern replace on the
+                    // resolved element. Mirror the scalar `${var/.../...}`
+                    // forms (`/`, `//`, `/#`, `/%`). Without this,
+                    // `${a[1]/.txt/.bak}` returned the unmodified
+                    // element because the bracket-modifier path skipped
+                    // pattern replacement.
+                    if after_bracket.starts_with('/') {
+                        let rest = &after_bracket[1..];
+                        let (op, body) = if let Some(b) = rest.strip_prefix('/') {
+                            (1u8, b) // // = global
+                        } else if let Some(b) = rest.strip_prefix('#') {
+                            (2u8, b) // /# = anchor at start
+                        } else if let Some(b) = rest.strip_prefix('%') {
+                            (3u8, b) // /% = anchor at end
+                        } else {
+                            (0u8, rest) // / = first match only
+                        };
+                        let (pat, repl) = match body.find('/') {
+                            Some(slash) => (&body[..slash], &body[slash + 1..]),
+                            None => (body, ""),
+                        };
+                        let pat_expanded = self.expand_string(pat);
+                        let repl_expanded = self.expand_string(repl);
+                        return zsh_pattern_replace(&elem, &pat_expanded, &repl_expanded, op);
                     }
                     // No-colon variants `${arr[N]-d}` / `${arr[N]+set}` /
                     // `${arr[N]?msg}` — same as colon forms but the test

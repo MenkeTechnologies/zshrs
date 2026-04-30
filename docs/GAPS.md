@@ -1709,6 +1709,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `print -S` adds to history INSTEAD of stdout (split-shell-words variant of `-s`). zshrs left `S` in the TODO list of unhandled flags so the line reached stdout. Now `S` sets `add_to_history=true` like `s`. Test: `test_print_S_adds_to_history_silently`.
 
+### `${a[N]/pat/repl}` returned the element unchanged
+
+- The bracket-modifier path in the array subscript expansion handled `:-` / `:+` / `:?` / `:=` / `:N:M` / history-modifier suffixes, but skipped the `/`, `//`, `/#`, `/%` pattern-replace forms. So `a=(file.txt other.txt); ${a[1]/.txt/.bak}` returned `file.txt` instead of `file.bak`. Added a `/`-prefix arm that decodes the op (0/1/2/3 for `/`/`//`/`/#`/`/%`) and dispatches through a new `zsh_pattern_replace` free function (extracted from the `BUILTIN_PARAM_REPLACE` `one()` closure so element-level callers can use it without going through the name-keyed builtin). Test: `test_array_element_pattern_replace`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
