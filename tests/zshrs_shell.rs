@@ -10248,6 +10248,31 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_array_subscript_remove_with_var_index() {
+    // `a[$n]=()` should remove the element at index $n. Compile path
+    // was emitting the literal "$n" key string; runtime int-parse
+    // failed and the removal was a no-op.
+    let (_, output, _) = run_zshrs(
+        r#"a=(1 2 3 4); a[$#a]=(); echo "${a[@]}""#,
+    );
+    assert_eq!(output.trim(), "1 2 3");
+    let (_, output, _) =
+        run_zshrs(r#"a=(1 2 3 4); n=3; a[$n]=(); echo "${a[@]}""#);
+    assert_eq!(output.trim(), "1 2 4");
+}
+
+#[test]
+fn test_local_assoc_array_shadows_outer() {
+    // `typeset -A h=(...)` inside a function should shadow the outer
+    // assoc binding. Without local_assoc_save_stack, the inner h
+    // leaked into the parent on function exit.
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h; h=(a 1); f() { typeset -A h=(b 2); echo "$h[b]"; }; f; echo "$h[a]"; echo "[$h[b]]""#,
+    );
+    assert_eq!(output.trim(), "2\n1\n[]");
+}
+
+#[test]
 fn test_param_flag_with_cmd_subst_operand() {
     // `${(z)$(echo a b c)}` — cmd-subst as flag operand. Without the
     // new branch in expand_braced_variable, the flag handler treated

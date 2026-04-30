@@ -1572,6 +1572,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `a[$n]=()` / `a[$#a]=()` — variable subscript in element-remove ignored
+
+- The compile path for subscripted-array assign emitted the LITERAL key string. For literal indices like `a[3]=()` this worked; but `a[$n]=()` reached the runtime as the literal "$n" which failed int-parse and the removal was a no-op. Compile path now routes the key through `compile_word_str` (var/cmd-subst expansion) when it contains `$` or `` ` ``. Test: `test_array_subscript_remove_with_var_index`.
+
+### `typeset -A h=(...)` inside function leaked to parent's assoc
+
+- `local_save_stack` and `local_array_save_stack` existed; no `local_assoc_save_stack`. So `typeset -A h=(b 2)` inside a function modified the outer `h` permanently. Added new save stack with the same lifecycle as the array stack — saved at typeset time, restored on function exit. Both `call_function` paths (legacy and bytecode) updated. Test: `test_local_assoc_array_shadows_outer`.
+
 ### `${(flag)$(cmd)}` — cmd-subst as flag operand returned empty in DQ
 
 - The flag handler had a branch for `${(flag)${...}}` (nested expansion as operand) but not for `$(...)` (cmd-subst as operand). zsh subst.c runs the cmd-subst first, then applies flags to the captured output. Added `rest.starts_with("$(")` branch that calls `run_command_substitution` and applies U/L/Split/Join/SplitWords/SplitLines flags. Test: `test_param_flag_with_cmd_subst_operand`.
