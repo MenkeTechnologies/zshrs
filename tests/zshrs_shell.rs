@@ -8488,6 +8488,38 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_glob_alternation_at_path_level() {
+    // Direct port of zsh's pattern.c P_BRANCH `|` at the path
+    // level. `/etc/(passwd|hostname)` matches paths whose last
+    // component is `passwd` OR `hostname`. zshrs's compile path
+    // didn't recognize `(...|...)` as a glob trigger, so the
+    // parens reached the OS as literal chars (no match).
+    // Two parts of the fix:
+    //   1. compile_zsh: `unquoted (` + `|` + `)` triggers the
+    //      glob path (alongside `*`/`?`/`[`).
+    //   2. expand_glob: pre-expand top-level `(...|...)` into
+    //      multiple alternatives via `expand_glob_alternation`,
+    //      glob each, dedup, sort (matches zsh's lexicographic
+    //      glob result order).
+    let (_, output, _) = run_zshrs("echo /etc/(passwd|hostname)");
+    assert_eq!(output.trim(), "/etc/passwd", "got: {output:?}");
+    let (_, output, _) = run_zshrs("echo /etc/(passwd|nonexistent)");
+    assert_eq!(output.trim(), "/etc/passwd", "got: {output:?}");
+    // Mixed literal + glob alternative.
+    let d = "/tmp/glob_alt_test";
+    let _ = std::fs::create_dir_all(d);
+    let _ = std::fs::write(format!("{}/a.txt", d), "");
+    let _ = std::fs::write(format!("{}/b.csv", d), "");
+    let (_, output, _) = run_zshrs(&format!("echo {}/(a|b)*", d));
+    assert_eq!(
+        output.trim(),
+        format!("{}/a.txt {}/b.csv", d, d),
+        "got: {output:?}"
+    );
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
 fn test_array_assign_with_cmd_subst_ifs_split() {
     // zsh: `arr=( $(echo "a:b:c") )` with `IFS=:` should
     // word-split the cmd-subst output on IFS, producing 3

@@ -2219,6 +2219,16 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `/etc/(passwd|hostname)` glob alternation at the path level — primary zsh feature
+
+Direct port of zsh's pattern.c `P_BRANCH` `|` handling at the path level. `/etc/(passwd|hostname)` matches paths where the last component is `passwd` OR `hostname` (no extendedglob required, unlike `~` exclusion). zshrs's compile path didn't list `(...|...)` as a glob trigger, so the parens reached the OS as literal chars and produced no match.
+
+Two-part fix:
+1. `compile_zsh`: `unquoted (` + `|` + `)` triggers the glob path alongside `*`/`?`/`[`. Without this, `echo /etc/(passwd|hostname)` was emitted as a literal arg.
+2. `expand_glob`: pre-expand top-level `(...|...)` into multiple alternatives via a new `expand_glob_alternation` helper that respects `[...]`/`(#...)` nesting. Each alternative is recursively globbed (so mixed literal + glob like `(a|b)*` works); literal alternatives that don't exist on disk are filtered out (zsh: alternation produces matching paths, not literal alternatives). Final result deduped and sorted (zsh's lexicographic glob result order).
+
+Test: `test_glob_alternation_at_path_level`.
+
 ### `arr=( $(echo "a:b:c") )` with `IFS=:` now produces 3 elements (was collapsing to 1)
 
 zshrs's compile path was emitting `BUILTIN_WORD_SPLIT` TWICE for `arr=( $(...) )` — once inside `compile_word_str` for the unquoted `$()` AND once in the array-element loop in `compile_assign`. The first split correctly produced a `Value::Array(["a", "b", "c"])` from the IFS-split. The second split called `vm.pop().to_str()` on that Array, which joined-with-space ("a b c"), then split that on IFS=":" — finding no `:` chars, returning a single element. Final result: `arr=("a b c")` (1 element) instead of `arr=(a b c)` (3 elements).
