@@ -2209,6 +2209,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: history (= `fc -l`) — 2 numeric positionals -> `fc:1: no events in that range`; 3+ -> `fc:1: too many arguments`. zshrs's loop just kept overwriting `count` with each numeric arg and reported `no such event: <last>` regardless. Track `positional_count`; check >2 (too many) and ==2 (range) BEFORE the no-such-event path. Test: `test_history_d_multi_args_error_categories`.
 
+### `[ -e /tmp 5 ]` (unary flag + operand + extra) silently returned 1 instead of erroring "too many arguments"
+
+- zsh: `[ -FLAG OPERAND EXTRA ]` -> `[:1: too many arguments` exit 2 — the parse expected `-FLAG OPERAND` (2-arg form), so the extra arg is the surplus. zshrs's 3-arg arm only matched flag-FLAG-arg layouts (`-z -n a`); the flag-operand-extra layout fell through to the catch-all `1`. Loosened the check: any 3-arg with a known unary flag at args[0] is "too many arguments". Test: `test_test_3args_unary_op_extra`.
+
+### `fc 1 5` (2 numeric positionals, edit form) reported "event not found: 1" instead of "would recurse endlessly"
+
+- zsh: edit-mode `fc N M` re-edits commands N..M; with empty -c session, that's the recurse-endlessly path. zshrs's prefix-search used `N` and reported `event not found: N` (wrong category for the range-edit form). Added a `positional.len() == 2 && both_numeric` precheck that emits zsh's recurse diagnostic. Test: `test_fc_2_numeric_positionals_recurse`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
