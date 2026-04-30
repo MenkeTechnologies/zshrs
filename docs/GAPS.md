@@ -1761,6 +1761,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `fc -l` (no args) defaults to the last 16 events. With empty history, the lower bound resolves to event #1 (which doesn't exist), so the error is `no such event: 1`. zshrs collapsed all non-positive args to `0`. Now distinguishes the no-arg default (resolves to 1) from explicit 0/negative args (resolve to 0). Test: `test_fc_l_default_no_args_event_one`.
 
+### `kill -l XYZ` printed wrong error format
+
+- zsh: unknown-signal error in `kill -l` is `zsh:kill:1: unknown signal: SIGXYZ` — both a typed `zsh:kill:1:` prefix AND the SIG prefix on the signal name (the SIG prefix is always added even when the user's input lacked it). zshrs printed `kill: unknown signal: XYZ` (missing both prefixes). Updated the eprintln!. Test: `test_kill_l_unknown_signal_format`.
+
+### `typeset` silently overwrote read-only variables
+
+- zsh: `readonly y=1; typeset y=2` errors `read-only variable: y` and aborts the shell with exit 1 in -c mode. zshrs's `builtin_typeset_named` skipped the read-only check and overwrote the value. Added a check at the top of the assignment branch: if the name is in `readonly_vars` or has `var_attrs.readonly`, emit the diagnostic and `process::exit(1)` (matching `BUILTIN_SET_VAR`'s abort behavior). Test: `test_typeset_readonly_aborts`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
