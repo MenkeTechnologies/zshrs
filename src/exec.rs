@@ -3262,11 +3262,31 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 'o' | 'O' => {
                     // Optional sub-flag: `n` numeric, `i` case-insensitive,
                     // `a` array-order (i.e. don't sort, just reverse for O).
+                    // Also detect `n`/`i` BEFORE the `o`/`O` (zsh's
+                    // `(no)` and `(io)` shapes — order-agnostic).
                     let sub = chars.get(i).copied();
                     let consume = matches!(sub, Some('n') | Some('i') | Some('a'));
                     if consume {
                         i += 1;
                     }
+                    // Look back: was `n` or `i` already in the flags
+                    // string before this `o`? zsh treats `(no)` same
+                    // as `(on)` — numeric sort applied to the
+                    // ascending order. Only relevant if no inline sub
+                    // was found.
+                    let sub = if consume {
+                        sub
+                    } else {
+                        let prefix = &chars[..i.saturating_sub(1)];
+                        if prefix.contains(&'n') {
+                            Some('n')
+                        } else if prefix.contains(&'i') {
+                            Some('i')
+                        } else {
+                            None
+                        }
+                    };
+                    let consume = consume || matches!(sub, Some('n') | Some('i') | Some('a'));
                     let descending = c == 'O';
                     state = match state {
                         St::A(mut a) => {

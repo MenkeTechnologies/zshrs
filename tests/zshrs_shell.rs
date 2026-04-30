@@ -10248,6 +10248,23 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_sort_flag_with_numeric_modifier_either_order() {
+    // `(no)` and `(on)` should both produce numeric ascending sort.
+    // zsh: order-agnostic — `n`/`i`/`a` are sort-modifiers that pair
+    // with `o`/`O`. Was applying them sequentially so `n` got
+    // overwritten by the subsequent `o`'s alpha sort.
+    let (_, output, _) =
+        run_zshrs(r#"a=(10 2 1 20); echo "${(no)a[@]}""#);
+    assert_eq!(output.trim(), "1 2 10 20");
+    let (_, output, _) =
+        run_zshrs(r#"a=(10 2 1 20); echo "${(on)a[@]}""#);
+    assert_eq!(output.trim(), "1 2 10 20");
+    let (_, output, _) =
+        run_zshrs(r#"a=(10 2 1 20); echo "${(nO)a[@]}""#);
+    assert_eq!(output.trim(), "20 10 2 1");
+}
+
+#[test]
 fn test_param_j_flag_on_cmd_subst_no_op() {
     // `${(j:,:)$(cmd)}` — the cmd-subst returns a SCALAR; (j:::) on
     // a scalar is a no-op in zsh. We were over-applying by splitting
