@@ -8488,6 +8488,27 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_array_assign_with_cmd_subst_ifs_split() {
+    // zsh: `arr=( $(echo "a:b:c") )` with `IFS=:` should
+    // word-split the cmd-subst output on IFS, producing 3
+    // elements `[a, b, c]`. zshrs's compile path was emitting
+    // BUILTIN_WORD_SPLIT TWICE — once inside compile_word_str
+    // for the unquoted $() AND once in the array-element loop.
+    // The second split saw the Value::Array converted to a
+    // single string "a b c" (with spaces, no `:`), which had
+    // no IFS chars to split on, so all 3 elements collapsed
+    // back into one. Direct port: assign_context_depth bumped
+    // for each element so the inner WORD_SPLIT is suppressed.
+    let (_, output, _) = run_zshrs(
+        r#"IFS=:; arr=( $(echo "a:b:c") ); echo "${#arr}|${arr[1]}|${arr[2]}|${arr[3]}""#,
+    );
+    assert_eq!(output.trim(), "3|a|b|c", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"arr=( "$(echo "a b c")" ); echo "${#arr}|${arr[1]}""#);
+    assert_eq!(output.trim(), "1|a b c", "got: {output:?}");
+}
+
+#[test]
 fn test_subscript_w_flag_word_index() {
     // `(w)N` subscript flag — direct port of zsh's zshparam(1)
     // "Subscript Flags" w: returns the Nth IFS-separated word.

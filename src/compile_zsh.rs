@@ -938,8 +938,18 @@ impl ZshCompiler {
                     return;
                 }
                 // arr=(a b c) / arr+=(d e).
+                //
+                // Bump assign_context_depth so compile_word_str's
+                // own WORD_SPLIT call (for unquoted `$(...)`) is
+                // suppressed — the outer loop emits ONE
+                // WORD_SPLIT per element below. Without this, both
+                // emitted, and the second split saw a Value::Array
+                // converted-to-string ("a b c") with no IFS chars,
+                // collapsing 3 elements back into 1.
                 for elem in elements {
+                    self.assign_context_depth += 1;
                     self.compile_word_str(elem);
+                    self.assign_context_depth -= 1;
                     // Same IFS-split rule as for-list words: unquoted
                     // `$(...)` / backtick inside an array literal
                     // (`a=($(...))`) should produce per-word elements.
