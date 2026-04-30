@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `$D/*` / `$D/(a|b)` — glob expansion skipped when var ref preceded glob meta
+
+- The segment-concat fast path (Phase 1 step 4) emitted CONCAT for words mixing var refs and glob metachars but never called `expand_glob` on the assembled scalar. zsh's word-expansion pipeline always pathname-expands the post-substitution string. Added `BUILTIN_GLOB_EXPAND` (id 343) — pops a scalar pattern, runs `expand_glob`, pushes Value::Array. Compile path detects glob meta in LITERAL segments only (so `$?`/`$#`/etc. don't trigger) and emits the builtin after the final concat. Tests: `test_glob_with_var_prefix_expands_paths`, `test_glob_with_var_prefix_alternation`.
+
 ### `${(j[+])a}` / `${(s[|])s}` — bracket-pair flag delimiters leaked close char
 
 - zsh subst.c `get_strarg` accepts matched bracket pairs as flag delimiters: `[`/`]`, `{`/`}`, `(`/`)`, `<`/`>`. Both flag parsers (`parse_zsh_flags` and the `BUILTIN_PARAM_FLAG` inline parser) used the OPEN char as both opener and closer, so `${(j[+])a}` consumed `[` as opener, then read the rest expecting another `[` (never found) and produced `a+]b+]c`. Added pair-aware close translation. Test: `test_param_join_split_bracket_pair_delim`.
