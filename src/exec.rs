@@ -26595,12 +26595,18 @@ impl ShellExecutor {
                         'N' => null_terminate = true,
                         'z' => push_to_stack = true,
                         's' => add_to_history = true,
+                        // `print -S` is the "split-shell-words"
+                        // history form — like `-s` it adds the line
+                        // to history INSTEAD of stdout. Without this,
+                        // `print -S "hello"` printed `hello` to
+                        // stdout while zsh stayed silent.
+                        'S' => add_to_history = true,
                         'o' => sort_asc = true,
                         'O' => sort_desc = true,
                         'D' => named_dir_subst = true,
                         'c' => columns = 1,
                         'm' => match_pattern_flag = true,
-                        'a' | 'b' | 'i' | 'p' | 'S' | 'x' | 'X' => {} // TODO
+                        'a' | 'b' | 'i' | 'p' | 'x' | 'X' => {} // TODO
                         'u' => {
                             // -u n: output to fd n
                             let rest: String = chars.collect();

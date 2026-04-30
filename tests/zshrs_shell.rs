@@ -6360,6 +6360,17 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_print_S_adds_to_history_silently() {
+    // zsh: `print -S "..."` adds the line to history INSTEAD of
+    // emitting it on stdout (the "S" form is the split-words variant
+    // of `-s`). zshrs printed the line to stdout because `S` was in
+    // the TODO list of unhandled flags. Now `-S` is treated like
+    // `-s` (add_to_history=true).
+    let (_, output, _) = run_zshrs(r#"print -S "hello""#);
+    assert_eq!(output, "");
+}
+
+#[test]
 fn test_printf_hex_zero_pad() {
     // `printf "%04x" 42` should zero-pad to `002a`. zshrs only had
     // the zero-pad branch on `%u`; `%x`/`%X`/`%o` always padded with

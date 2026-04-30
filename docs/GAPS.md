@@ -1705,6 +1705,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh accepts unknown single-letter `set` flags silently — `set -y` is a no-op, `set -xy` enables xtrace and silently accepts -y. zshrs's `builtin_set` errored on the first unknown letter, breaking scripts that probe combinations. Default arm now silently ignores unknown letters (matching zsh's lenient flag-letter behavior). Test: `test_set_unknown_flag_silent`.
 
+### `print -S "msg"` printed to stdout instead of history-only
+
+- zsh's `print -S` adds to history INSTEAD of stdout (split-shell-words variant of `-s`). zshrs left `S` in the TODO list of unhandled flags so the line reached stdout. Now `S` sets `add_to_history=true` like `s`. Test: `test_print_S_adds_to_history_silently`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic
