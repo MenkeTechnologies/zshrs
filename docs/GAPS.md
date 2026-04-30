@@ -1691,6 +1691,20 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's echo treats a bare `-` (single char) as a no-op flag — silently consumed. zshrs's flag parser skipped tokens shorter than 2 chars, so the lone `-` became a positional arg. Added an explicit `if arg == "-"` skip in the flag-walk. `--` (two dashes) is still NOT a recognized flag — stays literal. Test: `test_echo_bare_dash_is_noop_flag`.
 
+## Closed (eightieth-pass)
+
+### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
+
+- Bare `fc` (no `-l`, no positional) is the EDIT mode — re-execute the previous command. With empty history the previous command IS `fc` itself, so zsh refuses with `current history line would recurse endlessly, aborted`. zshrs collapsed this case into the same "no such event: N" path the `-l` form uses. Added an early branch: when not list-mode AND no positional args, emit zsh's recursion-aborted message. Test: `test_fc_no_args_recursion_message`.
+
+### `${(q)x}` for empty `x` returned empty instead of `''`
+
+- zsh's `(q)` flag on an empty value emits `''` (a single-quoted empty pair) so the value survives word-splitting in the consumer. zshrs's level-1 quote loop did nothing when input was empty, returning bare empty — which an unquoted consumer would drop silently. Added an `s.is_empty()` early return to the level-1 branch. Test: `test_q_flag_empty_returns_quoted_empty`.
+
+### `command -x ls` printed "bad option: -x" instead of "command not found: -x"
+
+- zsh treats unknown `command` flags as command names (so `command -x ls` looks for an executable literally named `-x`, finds nothing, and emits `command not found: -x` with exit 127). zshrs's flag parser rejected with `command: bad option: -x` exit 1. Changed the unknown-flag arm to emit zsh's command-not-found diagnostic and return 127. Test: `test_command_unknown_flag_treated_as_command_name`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`

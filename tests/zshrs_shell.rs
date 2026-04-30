@@ -6360,6 +6360,40 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_fc_no_args_recursion_message() {
+    // Bare `fc` (no -l, no positional) is the EDIT mode — re-execute
+    // the previous command. With empty history the previous command
+    // IS fc itself, so zsh refuses with "current history line would
+    // recurse endlessly, aborted". Distinct from the -l forms which
+    // use "no such event: N" or "no events in that range".
+    let (_, _, stderr) = run_zshrs("fc");
+    assert!(
+        stderr.contains("would recurse endlessly"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_q_flag_empty_returns_quoted_empty() {
+    // zsh: `${(q)x}` for an empty `x` returns `''` (single-quoted
+    // empty pair) so the value survives word-splitting. zshrs
+    // returned an actual empty string, which would silently get
+    // dropped by an unquoted consumer.
+    let (_, output, _) = run_zshrs(r#"a=""; print "${(q)a}""#);
+    assert_eq!(output.trim(), "''");
+}
+
+#[test]
+fn test_command_unknown_flag_treated_as_command_name() {
+    // zsh: `command -x ls` treats `-x` as a command name (since `-x`
+    // isn't a recognised `command` flag). Output: "command not found:
+    // -x". zshrs printed "command: bad option: -x" instead.
+    let (status, _, stderr) = run_zshrs("command -x ls");
+    assert_eq!(status, 127);
+    assert!(stderr.contains("command not found: -x"), "got: {stderr}");
+}
+
+#[test]
 fn test_umask_too_many_args() {
     // zsh: `umask 022 044` errors `too many arguments` and exits 1.
     // zshrs's loop overwrote `value` silently with the last
