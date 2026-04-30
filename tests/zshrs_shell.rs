@@ -6516,6 +6516,36 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_substring_with_arithmetic_length() {
+    // `${x:0:${#x}-2}` should compute length=len-2. zshrs's
+    // `parse_param_modifier` previously rejected ANY shape with
+    // nested `${...}`, falling through to the bridge which didn't
+    // handle substring properly. Now nested expansions in the
+    // length operand route through `SubstringExpr` which evaluates
+    // them at runtime via expand_string + arith.
+    let (_, output, _) = run_zshrs(r#"x=hello; echo "${x:0:${#x}-2}""#);
+    assert_eq!(output.trim(), "hel");
+    let (_, output, _) = run_zshrs(r#"x=hello; echo "${x:1:${#x}-3}""#);
+    assert_eq!(output.trim(), "el");
+    let (_, output, _) = run_zshrs(r#"x=hello; echo "${x:0:${#x}}""#);
+    assert_eq!(output.trim(), "hello");
+}
+
+#[test]
+fn test_arith_command_with_parameter_expansion() {
+    // `(( ${+h[k]} ))` — arith command operand contains parameter
+    // expansion. zshrs's `compile_arith_str` previously routed
+    // through ArithCompiler which can't parse `$` tokens, so the
+    // expansion stayed un-evaluated and `((  ))` saw 0. Added `$`
+    // to the `needs_eval` triggers so any expr touching parameter
+    // expansion routes through `BUILTIN_ARITH_EVAL` (MathEval).
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h; h[a]=1; (( ${+h[a]} )) && echo yes; (( ${+h[b]} )) || echo no"#,
+    );
+    assert_eq!(output.trim(), "yes\nno");
+}
+
+#[test]
 fn test_typeset_i_base_format_at_assignment() {
     // `typeset -i N x; x=255` should store `N#DIGITS` form (zsh's
     // base notation). Previously zshrs only formatted at the
