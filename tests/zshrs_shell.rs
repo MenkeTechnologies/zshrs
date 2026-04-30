@@ -7015,6 +7015,101 @@ fn test_shift_array_count_too_many_errors() {
 }
 
 #[test]
+fn test_jobs_Z_requires_argument() {
+    // zsh: `jobs -Z` (without a process-name arg) -> `jobs:1: -Z
+    // requires one argument` exit 1. zshrs's `'Z' => {}` silent
+    // arm meant the flag was consumed without diagnostic.
+    let (status, _, stderr) = run_zshrs("jobs -Z");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("-Z requires one argument"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_zformat_no_args_zsh_format() {
+    // zsh: `zformat` -> `zformat:1: not enough arguments`. zshrs
+    // emitted bare `zformat: not enough arguments` (no shell-name
+    // or line-number prefix).
+    let (_, _, stderr) = run_zshrs("zformat 2>&1");
+    assert!(
+        stderr.contains("zshrs:zformat:1: not enough arguments")
+            || run_zshrs("zformat").2.contains("zshrs:zformat:1: not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_test_two_args_binop_missing_operand() {
+    // zsh: `[ a -lt ]` (operand + binop, no second operand) ->
+    // `1: parse error: condition expected: a` exit 2. zshrs's path
+    // for 2-arg with args[1]=binop fell through every match and
+    // hit the catch-all `1`. Added an explicit arm.
+    let (status, _, stderr) = run_zshrs("[ a -lt ]");
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("parse error: condition expected: a"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_kill_zero_failed_uses_zsh_format() {
+    // zsh: `kill -0 1` (no permission to signal pid 1) -> `kill:1:
+    // kill 1 failed: operation not permitted` (lowercased, no
+    // `(os error N)` suffix). zshrs emitted bash-style `kill: 1:
+    // Operation not permitted (os error 1)`.
+    let (_, _, stderr) = run_zshrs("kill -0 1");
+    assert!(
+        stderr.contains("kill 1 failed:"),
+        "got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("(os error"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_funcnest_recursion_guard_no_overflow() {
+    // zsh: deep recursion is bounded by FUNCNEST (default 500) and
+    // errors `<name>: maximum nested function level reached;
+    // increase FUNCNEST?` exit 1. zshrs had no enforcement; the
+    // Rust stack overflowed (fatal abort) on `foo() { foo; }; foo`
+    // — both function-recursion AND builtin-shadow-recursion
+    // (`echo() { echo hi; }; echo hi`).
+    let (_, _, stderr) = run_zshrs("foo() { foo; }; foo");
+    assert!(
+        stderr.contains("maximum nested function level reached"),
+        "got: {stderr}"
+    );
+    let (_, _, stderr) = run_zshrs("echo() { echo overridden; }; echo hi");
+    assert!(
+        stderr.contains("maximum nested function level reached"),
+        "got: {stderr}"
+    );
+    // Sanity: shallow recursion still works.
+    let (_, output, _) = run_zshrs("foo() { echo hi; }; foo; foo");
+    assert!(output.contains("hi"), "got: {output}");
+}
+
+#[test]
+fn test_test_lt_gt_not_string_comparators() {
+    // zsh's POSIX `[`-test does NOT accept `<`/`>` as string
+    // comparators (they're redirection ops). `[ "5" \> "3" ]`
+    // errors `1: condition expected: >` exit 2. zshrs's earlier
+    // impl had string-compare arms for both, hiding the syntax
+    // error.
+    let (status, _, stderr) = run_zshrs(r#"[ "5" \> "3" ]"#);
+    assert_eq!(status, 2);
+    assert!(stderr.contains("condition expected: >"), "got: {stderr}");
+    let (status, _, stderr) = run_zshrs(r#"[ "5" \< "3" ]"#);
+    assert_eq!(status, 2);
+    assert!(stderr.contains("condition expected: <"), "got: {stderr}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

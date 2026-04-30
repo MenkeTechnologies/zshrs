@@ -1891,6 +1891,30 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `a=(1); shift 5 a` -> `shift:1: shift count must be <= $#` exit 1 (the per-array bound is enforced). zshrs's array-shift loop iterated `for _ in 0..count` and just `arr.remove(0)`'d up to the array length, leaving partial state and returning 0. Added a precheck pass over array_names that compares `count > arr.len()` and errors before any mutation. Test: `test_shift_array_count_too_many_errors`.
 
+### `jobs -Z` silently ignored the flag instead of erroring "requires one argument"
+
+- zsh: `jobs -Z` (without a process-name arg) -> `jobs:1: -Z requires one argument` exit 1 (`-Z` sets the shell's process name; required arg). zshrs's `'Z' => {}` arm silently consumed the flag. Replaced with explicit error. Test: `test_jobs_Z_requires_argument`.
+
+### `zformat` (no args) printed bare "zformat:" instead of zsh's prefixed format
+
+- zsh: bare `zformat` -> `zformat:1: not enough arguments`. zshrs emitted `zformat: not enough arguments` (no shell-name or line-number prefix). Updated the eprintln to use `zshrs:zformat:1:`. Test: `test_zformat_no_args_zsh_format`.
+
+### `[ a -lt ]` (operand + binop, missing right operand) silently returned 1
+
+- zsh: `[ a -lt ]` -> `1: parse error: condition expected: a` exit 2. zshrs's 2-arg path for `[s, "-lt"]` had no explicit arm; fell through to the catch-all `1`. Added a 2-arg arm that triggers when args[0] is a non-flag operand AND args[1] is a known binop, emitting zsh's parse-error. Test: `test_test_two_args_binop_missing_operand`.
+
+### `kill -0 1` printed bash-style "kill: 1: Operation not permitted (os error 1)" instead of zsh's lowercased format
+
+- zsh: `kill -0 1` (no permission to signal pid 1) -> `kill:1: kill 1 failed: operation not permitted` (lowercased reason, no `(os error N)` suffix, `kill <pid> failed:` framing). zshrs emitted Rust's `Display` of the OS error verbatim. Reformatted to strip the `(os error …)` tail, lowercase the reason, and use zsh's `kill <pid> failed:` shape. Test: `test_kill_zero_failed_uses_zsh_format`.
+
+### Function recursion overflowed the Rust stack instead of erroring "maximum nested function level reached"
+
+- zsh: deep recursion is bounded by `FUNCNEST` (default 500) and errors `<name>: maximum nested function level reached; increase FUNCNEST?` exit 1. zshrs had NO enforcement — `foo() { foo; }; foo` and the builtin-shadow form `echo() { echo hi; }; echo hi` both crashed the process with `fatal runtime error: stack overflow`. Added the guard at both `call_function` (the hot path) and `dispatch_function_call` (the fallback). Cap is 100 by default (the bytecode VM is host-recursive at ~40KB/frame, so the 8MB Rust stack tops at ~150 frames; 100 leaves headroom). Users with deeper need can raise `FUNCNEST` AND `RUST_MIN_STACK`. Test: `test_funcnest_recursion_guard_no_overflow`.
+
+### `[ "5" \> "3" ]` and `[ "5" \< "3" ]` silently returned 0 (string-compared) instead of erroring
+
+- zsh's POSIX `[`-test does NOT accept `<` or `>` as string comparators — they're redirection operators outside `[`/`]`. `[ "5" \> "3" ]` -> `1: condition expected: >` exit 2. zshrs's match arms had `[a, "<", b]` and `[a, ">", b]` doing string compares (a bashism), hiding the syntax error. Replaced both arms with the zsh diagnostic. The `[[`-cond compiler still handles them as proper string comparators where they ARE valid. Test: `test_test_lt_gt_not_string_comparators`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
