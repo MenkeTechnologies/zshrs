@@ -2051,6 +2051,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh accepts numeric values to `-s`; `-s 0` is the existence-check form (same as `-0`). zshrs's `-s` arm was name-only and rejected `0` as an invalid signal name. Extended the `-s` arm with a numeric-fast-path: `0` triggers existence-check; other numeric values match against the signal_map by number; non-numeric falls back to name lookup. Test: `test_kill_s_zero_signal`.
 
+### `unset _` errored "read-only variable: _" instead of accepting
+
+- zsh: `_` (last-arg auto-update) is NOT intrinsic-readonly despite being a shell-internal special. Both assignment and `unset` are allowed. zshrs's intrinsic-readonly list incorrectly included `_`, so `unset _` errored. Removed `_` from both intrinsic-RO matches (BUILTIN_SET_VAR and `builtin_unset`). Test: `test_unset_underscore_allowed`.
+
+### `bindkey -A nokm` (one arg) silently returned 0 instead of erroring
+
+- zsh: `bindkey -A NEW EXISTING` requires two keymap names; with fewer than 2 -> `bindkey:1: not enough arguments for -A` exit 1. zshrs's `-A` stub returned 0 immediately without consuming arg(s) or validating count. Now consumes two iterator entries; on miss, errors with zsh's diagnostic. Test: `test_bindkey_A_requires_two_args`.
+
+### `zstyle -T :foo style` errored "invalid option: -T" instead of accepting
+
+- zsh: `-T` is "test style with default-true for unset" — like `-t` but returns 0 when style is unset. zshrs's unknown-flag fallback (added when fixing `-X` rejection) rejected `-T` as invalid. Added a dedicated `-T` arm and `-b`/`-a`/`-e`/`-m` accept-silently arms for the other zsh-extension flags zshrs doesn't fully wire up. Test: `test_zstyle_T_unset_default_true`.
+
+### `trap "" RETURN` accepted but zsh rejects it
+
+- zsh's actual runtime rejects `RETURN` as a signal name despite some documentation hints at it (the parser's `getsignum` doesn't include it). zshrs's known-sig allowlist included `RETURN`. Removed it from the list to match zsh's rejection. Test: `test_trap_return_undefined`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
