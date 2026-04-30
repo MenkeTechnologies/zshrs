@@ -1941,6 +1941,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh skips the leading `-` of long-option-style typos and reports the FIRST recognisable letter as the bad option: `fc:1: bad option: -h`. zshrs's loop hit the first char `-` of `--help` and reported `bad option: --` — wrong identifier. Added a `'-' => {}` arm that consumes the extra dash silently so the next char becomes the diagnostic target. Test: `test_fc_long_option_reports_first_letter`.
 
+### `echo $((37#1))` and `echo $((2#5))` printed bogus 0 after the error
+
+- zsh aborts the surrounding command on arith errors — `echo $((37#1))` (base out of range) and `echo $((2#5))` (digit out of range for the base) emit the diagnostic but do NOT print `0`. zshrs's evaluator returned `"0"` from the error arm and the caller continued to print it, so script consumers saw the diagnostic AND the bogus value. Added a `process::exit(1)` after the diagnostic when the message starts with "bad math expression" or "invalid base" (the canonical "give up" signals). Test: `test_arith_invalid_base_aborts_command`.
+
+### `$((2#5))` silently produced 0 instead of erroring "operator expected at \`5'"
+
+- zsh: `$((2#5))` (5 is not a valid binary digit) errors `bad math expression: operator expected at \`5'`. zshrs's `i64::from_str_radix(val_str, base).unwrap_or(0)` silently dropped the parse error, masking the typo. Replaced with explicit `match` that emits zsh's diagnostic when the digit is out of range for the declared base. Test: `test_arith_bad_digit_for_base_errors`.
+
+### `wait ""` (literal empty arg) silently continued instead of erroring
+
+- zsh: `wait ""` -> `wait:1: job not found:` exit 127 (treats empty as a failed job-spec lookup with empty identifier). zshrs's earlier "silent on empty" branch (added for the `wait $!` no-bg-job idiom) was too broad — `$!` defaults to "0" (a literal pid value), not "", so the silent-empty branch only handles the literal-`""` case which zsh actually errors on. Replaced with the zsh diagnostic. Test: `test_wait_empty_string_errors`.
+
+### `read -d ""` panicked the shell on NUL-containing input
+
+- zsh: `read -d ""` reads up to NUL; the captured value may contain NUL bytes. zshrs unconditionally called `env::set_var` which panics on NUL bytes (file-name validation), aborting the whole shell with a Rust backtrace. Guarded all `env::set_var` calls in `builtin_read` with a `processed.contains('\0')` check; NUL-containing values still update `self.variables` but skip the env export. Test: `test_read_d_empty_no_panic_on_nul`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted

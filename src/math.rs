@@ -678,7 +678,24 @@ impl<'a> MathEval<'a> {
                 .chars()
                 .filter(|&c| c != '_')
                 .collect();
-            let val = i64::from_str_radix(&val_str, base).unwrap_or(0);
+            // zsh: `2#5` (digit out of range for the base) errors
+            // `bad math expression: operator expected at '5'` —
+            // the lexer drops out of base-parse mode at the first
+            // out-of-range char and the parser then trips on it.
+            // zshrs's `unwrap_or(0)` silently produced 0, masking
+            // the typo.
+            let val = match i64::from_str_radix(&val_str, base) {
+                Ok(v) => v,
+                Err(_) => {
+                    let bad_char = val_str.chars().next().unwrap_or('?');
+                    self.error = Some(format!(
+                        "bad math expression: operator expected at `{}'",
+                        bad_char
+                    ));
+                    self.yyval = MathNum::Integer(0);
+                    return MathTok::Num;
+                }
+            };
             self.yyval = if self.force_float {
                 MathNum::Float(if is_neg { -(val as f64) } else { val as f64 })
             } else {
