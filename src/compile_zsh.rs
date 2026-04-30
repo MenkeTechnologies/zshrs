@@ -302,15 +302,26 @@ impl ZshCompiler {
                 self.builder
                     .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_STRIP, 4), 0);
             }
-            ParamModifierKind::Replace { op, pattern, repl } => {
+            ParamModifierKind::Replace { op, pattern, repl, had_at } => {
+                // Pass dq_context_depth as a 5th arg so the runtime
+                // distinguishes DQ-wrapped (join-then-replace) from
+                // unquoted (per-element replace on arrays).
+                // `had_at` overrides — explicit `[@]` subscript
+                // forces per-element even inside DQ (matches Strip).
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let pat_const = self.builder.add_constant(Value::str(pattern));
                 self.builder.emit(Op::LoadConst(pat_const), 0);
                 let repl_const = self.builder.add_constant(Value::str(repl));
                 self.builder.emit(Op::LoadConst(repl_const), 0);
                 self.builder.emit(Op::LoadInt(*op as i64), 0);
+                let dq_for_runtime = if *had_at {
+                    0
+                } else {
+                    self.dq_context_depth as i64
+                };
+                self.builder.emit(Op::LoadInt(dq_for_runtime), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_REPLACE, 4), 0);
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_REPLACE, 5), 0);
             }
             ParamModifierKind::Length => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
@@ -3224,11 +3235,14 @@ pub(crate) enum ParamModifierKind {
         pattern: String,
         had_at: bool,
     },
-    /// `${var/pat/repl}` (op=0), `//` (1), `/#` (2), `/%` (3)
+    /// `${var/pat/repl}` (op=0), `//` (1), `/#` (2), `/%` (3).
+    /// `had_at` mirrors the Strip variant — explicit `[@]` on
+    /// the var name forces per-element semantics even in DQ.
     Replace {
         op: u8,
         pattern: String,
         repl: String,
+        had_at: bool,
     },
     /// `${#name}` — character length of a scalar OR element count of an
     /// indexed/assoc array. Dispatched at runtime by inspecting the var
@@ -3547,7 +3561,12 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         };
         return Some(ParamModifier {
             name,
-            kind: ParamModifierKind::Replace { op, pattern, repl },
+            kind: ParamModifierKind::Replace {
+                op,
+                pattern,
+                repl,
+                had_at,
+            },
         });
     }
 

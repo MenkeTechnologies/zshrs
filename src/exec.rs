@@ -5514,6 +5514,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // `${var/%pat/repl}` — Pops [name, pattern, replacement, op_byte].
     // op: 0=first, 1=all, 2=anchor-prefix (`/#`), 3=anchor-suffix (`/%`).
     vm.register_builtin(BUILTIN_PARAM_REPLACE, |vm, _argc| {
+        // The compiler now passes `dq_flag` as the 5th arg so the
+        // runtime can distinguish DQ-wrapped (join-then-replace)
+        // from unquoted (per-element on arrays). Mirrors the same
+        // split as BUILTIN_PARAM_STRIP — zsh's pattern.c routes
+        // through getmatch (joined scalar) in DQ vs getmatcharr
+        // (per-element) otherwise.
+        let dq_flag = vm.pop().to_int() != 0;
         let op = vm.pop().to_int() as u8;
         let repl_raw = vm.pop().to_str();
         let pattern_raw = vm.pop().to_str();
@@ -5642,9 +5649,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 }
             }
         };
-        // Array case: apply replacement to each element, return Array.
+        // Array case: per-element replacement (default), or
+        // join-then-replace when in DQ context. zsh: `"${a/o/O}"`
+        // for `a=(one two three)` joins to "one two three", then
+        // does the FIRST replacement only -> "One two three".
+        // Unquoted `${a/o/O}` per-element first -> "One twO three".
         let arr_val = with_executor(|exec| exec.arrays.get(&name).cloned());
         if let Some(arr) = arr_val {
+            if dq_flag {
+                let joined = arr.join(" ");
+                return fusevm::Value::str(one(joined));
+            }
             let mapped: Vec<fusevm::Value> = arr
                 .into_iter()
                 .map(|s| fusevm::Value::str(one(s)))
