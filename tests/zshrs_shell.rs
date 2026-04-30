@@ -7694,6 +7694,73 @@ fn test_exec_a_requires_parameter() {
 }
 
 #[test]
+fn test_bindkey_d_resets_keymaps() {
+    // zsh: `bindkey -d` resets all keymaps to defaults — silent
+    // success. zshrs's unknown-flag fallback rejected -d.
+    let (status, _, _) = run_zshrs("bindkey -d");
+    assert_eq!(status, 0);
+}
+
+#[test]
+fn test_history_empty_arg_event_not_found() {
+    // zsh: `history ""` (empty positional) -> `fc:1: event not
+    // found:` exit 1 (with empty trailing identifier). zshrs's
+    // all-digits arm matched empty vacuously and reported `no such
+    // event: 1`.
+    let (status, _, stderr) = run_zshrs(r#"history """#);
+    assert_eq!(status, 1);
+    assert!(stderr.contains("event not found:"), "got: {stderr}");
+}
+
+#[test]
+fn test_read_u_non_numeric_or_missing() {
+    // zsh: `read -u abc` -> `read:1: number expected after -u: abc`;
+    // `read -u` (no arg) -> `read:1: argument expected: -u`. zshrs's
+    // `unwrap_or(0)` silently dropped both.
+    let (status, _, stderr) = run_zshrs("read -u abc v");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("number expected after -u: abc"),
+        "got: {stderr}"
+    );
+    let (status, _, stderr) = run_zshrs("read -u");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("argument expected: -u"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_kill_l_dash_prefix_strips() {
+    // zsh: `kill -l -X` reports `kill:1: unknown signal: SIGX` —
+    // strips the leading `-` of the unknown name. zshrs preserved
+    // the `-` and reported `SIG-X`.
+    let (_, _, stderr) = run_zshrs("kill -l -X");
+    assert!(
+        stderr.contains("unknown signal: SIGX"),
+        "got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("SIG-X"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_kill_n_invalid_signal_zsh_format() {
+    // zsh: `kill -n abc 1` -> `kill:1: invalid signal number: abc`
+    // exit 1. zshrs emitted bash-style `kill: invalid signal
+    // number: abc` (no shell-name or line-number prefix).
+    let (status, _, stderr) = run_zshrs("kill -n abc 1");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:kill:1: invalid signal number: abc"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

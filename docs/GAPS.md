@@ -2099,6 +2099,26 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `-a NAME` requires a name argument; no-following-arg -> `exec flag -a requires a parameter` exit 1 — pinpoints the missing flag-value, not the generic "no command" error. zshrs's flag walker bumped `i` without a bounds-check, then the missing-command branch emitted the generic diagnostic. Added an `i >= args.len()` check after the increment that emits zsh's specific message. Test: `test_exec_a_requires_parameter`.
 
+### `bindkey -d` errored "bad option: -d" instead of accepting silently
+
+- zsh: `bindkey -d` resets all keymaps to defaults — silent success. zshrs's unknown-flag fallback (added when fixing `-Z` rejection) rejected `-d` as bad. Added a dedicated `-d` arm. Test: `test_bindkey_d_resets_keymaps`.
+
+### `history ""` reported "no such event: 1" instead of "event not found:"
+
+- zsh: `history ""` (empty positional) -> `fc:1: event not found:` (with empty trailing identifier). zshrs's all-digits arm matched the empty string vacuously, defaulted count to 20, and the no-events branch reported `no such event: 1`. Added a `!s.is_empty()` guard on the digit-only arm so empty strings route to the search-query path instead. Test: `test_history_empty_arg_event_not_found`.
+
+### `read -u abc` and `read -u` (missing/non-numeric fd) silently dropped to fd 0
+
+- zsh: `read -u abc` -> `read:1: number expected after -u: abc`; `read -u` (no arg) -> `read:1: argument expected: -u`. zshrs's `unwrap_or(0)` dropped both error paths silently and read from fd 0. Replaced with explicit parse + bounds checks. Test: `test_read_u_non_numeric_or_missing`.
+
+### `kill -l -X` reported "unknown signal: SIG-X" instead of "SIGX"
+
+- zsh strips the leading `-` (in addition to the `SIG` prefix) of unknown signal names: `kill -l -X` -> `unknown signal: SIGX`. zshrs preserved the `-` and reported `SIG-X` (visually weird). Added a `trim_start_matches('-')` to the lookup path. Test: `test_kill_l_dash_prefix_strips`.
+
+### `kill -n abc` printed bash-style "kill: invalid signal number: abc" instead of zsh's "kill:1: invalid signal number"
+
+- zsh: `kill -n abc 1` -> `kill:1: invalid signal number: abc` exit 1. zshrs emitted bash-style `kill: invalid signal number: abc` — no shell-name or line-number prefix. Updated both error paths in the `-n` arm. Test: `test_kill_n_invalid_signal_zsh_format`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
