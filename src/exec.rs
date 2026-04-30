@@ -21353,7 +21353,15 @@ impl ShellExecutor {
 
         for arg in &positional_args {
             if let Some(eq_pos) = arg.find('=') {
-                // Define alias: name=value
+                // Define alias: name=value. zsh: empty NAME (`=val`
+                // / `=`) is `bad assignment` exit 1 — the alias name
+                // is required. Without this guard zshrs silently
+                // created an alias with name "" which was then
+                // un-removable.
+                if eq_pos == 0 {
+                    eprintln!("zshrs:1: bad assignment");
+                    return 1;
+                }
                 let name = &arg[..eq_pos];
                 let value = &arg[eq_pos + 1..];
                 if is_suffix {
