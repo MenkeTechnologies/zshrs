@@ -2087,6 +2087,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh treats `--xxx` (long-option-style) on `set` as `--` (end-of-options); remaining args become positional. zshrs's per-char letter loop hit the leading `-` of `--help` first and errored "can't change option: --". Added a `--`-prefix short-circuit that consumes the rest of args as positional. Test: `test_set_long_option_treated_as_endmark`.
 
+### `zstyle -g`/`-s`/`-t`/`-T` (insufficient args) returned 1 silently
+
+- zsh: too-few-args to a zstyle get/test flag -> `zstyle:1: not enough arguments` exit 1. zshrs's branches returned 1 silently (no diagnostic). Restructured each arm to error explicitly before the indexing. Test: `test_zstyle_get_too_few_args_errors`.
+
+### `shift ""` errored "shift count must be <= $#" instead of accepting as count 0
+
+- zsh: `shift ""` treats empty arg as count 0 — silent no-op. zshrs's `chars().all(is_digit)` matched empty vacuously and the count defaulted to 1, then erred when positionals were short. Added an explicit empty-arg arm that sets count=0. Test: `test_shift_empty_arg_silent`.
+
+### `exec -a` (no name following) errored generic "exec requires a command to execute" instead of "exec flag -a requires a parameter"
+
+- zsh: `-a NAME` requires a name argument; no-following-arg -> `exec flag -a requires a parameter` exit 1 — pinpoints the missing flag-value, not the generic "no command" error. zshrs's flag walker bumped `i` without a bounds-check, then the missing-command branch emitted the generic diagnostic. Added an `i >= args.len()` check after the increment that emits zsh's specific message. Test: `test_exec_a_requires_parameter`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted

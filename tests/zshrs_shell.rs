@@ -7636,6 +7636,64 @@ fn test_set_long_option_treated_as_endmark() {
 }
 
 #[test]
+fn test_zstyle_get_too_few_args_errors() {
+    // zsh: `zstyle -g`/`-s`/`-T`/`-t` (insufficient args) ->
+    // `zstyle:1: not enough arguments` exit 1. zshrs returned 1
+    // silently in those branches.
+    let (status, _, stderr) = run_zshrs("zstyle -g");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments"),
+        "got: {stderr}"
+    );
+    let (status, _, stderr) = run_zshrs("zstyle -s");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments"),
+        "got: {stderr}"
+    );
+    let (status, _, stderr) = run_zshrs("zstyle -t");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments"),
+        "got: {stderr}"
+    );
+    let (status, _, stderr) = run_zshrs("zstyle -T");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_shift_empty_arg_silent() {
+    // zsh: `shift ""` treats empty arg as count 0 (silent no-op).
+    // zshrs's `chars().all(is_digit)` matched empty vacuously and
+    // parse defaulted to 1, then erred when positionals were short.
+    let (status, _, _) = run_zshrs(r#"shift """#);
+    assert_eq!(status, 0);
+    let (status, output, _) = run_zshrs(r#"set -- a b c; shift ""; echo "$@""#);
+    assert_eq!(status, 0);
+    assert!(output.contains("a b c"), "got: {output}");
+}
+
+#[test]
+fn test_exec_a_requires_parameter() {
+    // zsh: `exec -a` (no following name) -> `exec flag -a requires
+    // a parameter` exit 1 (NOT the generic "exec requires a command
+    // to execute"). zshrs's flag walker bumped i without checking
+    // bounds, then the missing-command branch emitted the wrong
+    // diagnostic.
+    let (status, _, stderr) = run_zshrs("exec -a");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("exec flag -a requires a parameter"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
