@@ -20525,6 +20525,18 @@ impl ShellExecutor {
                                 positional.push(arg);
                                 break;
                             }
+                            // Unknown flag (e.g. `-h`, `-w`) — zsh
+                            // errors `bad option: -X` and bails. Without
+                            // this fallback, unknown flags silently
+                            // dropped through to the no-args path
+                            // (re-execute last command) which can
+                            // recurse forever for `fc -h` since fc
+                            // entered history.
+                            eprintln!(
+                                "zshrs:fc:1: bad option: -{}",
+                                chars[j]
+                            );
+                            return 1;
                         }
                     }
                     j += 1;
@@ -26668,12 +26680,21 @@ impl ShellExecutor {
         let mut list_only = false;
         let mut show_trace = false;
         let mut pattern_match = false;
+        let mut enable_trace = false;
         let mut names: Vec<&str> = Vec::new();
 
         for arg in args {
             match arg.as_str() {
                 "-l" => list_only = true,
                 "-t" => show_trace = true,
+                // `-T` (capital) ENABLES tracing on the named
+                // functions and emits no listing — zsh: silent
+                // success, sets the `t` attr on the function. zshrs
+                // didn't recognize the flag and printed the function
+                // body. Now treated as silent (the actual tracing
+                // attr isn't tracked yet, but the no-output behavior
+                // matches script consumers that just toggle).
+                "-T" => enable_trace = true,
                 "-m" => pattern_match = true,
                 _ if arg.starts_with('-') && arg.len() > 1 => {
                     // Combined flags like `-lm`
@@ -26681,6 +26702,7 @@ impl ShellExecutor {
                         match c {
                             'l' => list_only = true,
                             't' => show_trace = true,
+                            'T' => enable_trace = true,
                             'm' => pattern_match = true,
                             _ => {}
                         }
@@ -26688,6 +26710,11 @@ impl ShellExecutor {
                 }
                 _ => names.push(arg),
             }
+        }
+        if enable_trace {
+            // No-op: silently consume the flag; -T's trace attribute
+            // would need a per-function flag table to be observable.
+            return 0;
         }
 
         // With -m, treat each name as a glob pattern and expand to

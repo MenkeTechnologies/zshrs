@@ -6360,6 +6360,33 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_fc_unknown_flag_errors() {
+    // zsh: `fc -h` (or any unknown letter) errors `bad option: -X`
+    // and bails. zshrs's flag-letter loop had a silent default arm,
+    // so `fc -h` fell through to the no-args path (re-execute last
+    // command), which on -c mode could recurse infinitely (fc just
+    // entered history). Now unknown flags emit the diagnostic and
+    // return 1.
+    let (status, _, stderr) = run_zshrs("fc -h");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -h"), "got: {stderr}");
+    let (status, _, stderr) = run_zshrs("fc -w");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -w"), "got: {stderr}");
+}
+
+#[test]
+fn test_functions_T_enable_trace_silent() {
+    // zsh: `functions -T NAME` enables tracing on NAME and emits no
+    // listing. zshrs didn't recognize `-T` and fell into the
+    // default-list-body path, printing the function source. Added a
+    // silent-no-op arm for `-T`.
+    let (status, output, _) = run_zshrs("foo() { echo a; }; functions -T foo");
+    assert_eq!(status, 0);
+    assert_eq!(output, "");
+}
+
+#[test]
 fn test_kill_l_unknown_signal_format() {
     // zsh: `kill -l XYZ` errors `zsh:kill:1: unknown signal: SIGXYZ`
     // (note the SIG prefix on the signal name AND the typed prefix).
