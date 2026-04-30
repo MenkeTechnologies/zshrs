@@ -21814,6 +21814,13 @@ impl ShellExecutor {
                 }
             }
         } else if let Some(arg) = positional.first() {
+            // zsh: edit-mode fc takes at most 2 positional bounds
+            // (`fc FIRST [LAST]`); 3+ -> `fc:1: too many arguments`
+            // exit 1.
+            if positional.len() > 2 {
+                eprintln!("zshrs:fc:1: too many arguments");
+                return 1;
+            }
             if arg.starts_with('-') || arg.starts_with('+') {
                 // fc -N or fc +N: re-execute Nth command
                 let n: usize = arg[1..].parse().unwrap_or(1);
@@ -29393,6 +29400,15 @@ impl ShellExecutor {
                 _ if !arg.starts_with('-') => {
                     value = Some(arg);
                     value_count += 1;
+                }
+                // zsh: unknown umask flag -> `umask:1: bad option:
+                // -X` exit 1. zshrs's silent `_ => {}` accepted any
+                // flag and then proceeded to print the umask, which
+                // for `umask -X` was the wrong category entirely.
+                _ if arg.starts_with('-') && arg.len() > 1 => {
+                    let bad: String = arg[1..].chars().take(1).collect();
+                    eprintln!("zshrs:umask:1: bad option: -{}", bad);
+                    return 1;
                 }
                 _ => {}
             }

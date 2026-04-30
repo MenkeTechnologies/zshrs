@@ -7994,6 +7994,48 @@ fn test_kill_s_empty_name_errors() {
 }
 
 #[test]
+fn test_let_ternary_missing_colon_vs_operand() {
+    // zsh distinguishes `let "1?"` (missing operand AND colon)
+    // from `let "1?2"` (operand present, colon missing). Former
+    // -> `bad math expression: operand expected at end of string`;
+    // latter -> `bad math expression: ':' expected`. zshrs's
+    // earlier `':' expected` for both was the wrong category for
+    // the missing-operand case.
+    let (_, _, stderr) = run_zshrs(r#"let "1?""#);
+    assert!(
+        stderr.contains("operand expected at end of string"),
+        "got: {stderr}"
+    );
+    let (_, _, stderr) = run_zshrs(r#"let "1?2""#);
+    assert!(
+        stderr.contains("':' expected"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_umask_unknown_flag_errors() {
+    // zsh: `umask -X` -> `umask:1: bad option: -X` exit 1. zshrs's
+    // silent `_ => {}` accepted any flag and printed the umask.
+    let (status, _, stderr) = run_zshrs("umask -X");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -X"), "got: {stderr}");
+}
+
+#[test]
+fn test_fc_edit_too_many_args_errors() {
+    // zsh: edit-mode fc takes at most 2 positional bounds; 3+ ->
+    // `fc:1: too many arguments` exit 1. zshrs's edit path took
+    // args.first() and ignored the rest, falling into the prefix
+    // search.
+    let (_, _, stderr) = run_zshrs("fc 1 2 3 4 5 6");
+    assert!(
+        stderr.contains("too many arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

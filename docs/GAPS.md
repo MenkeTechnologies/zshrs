@@ -2189,6 +2189,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `kill -s ""` -> `kill:1: -: signal name expected` exit 1. zshrs's name lookup of empty matched no signals and produced `invalid signal: ` (with trailing whitespace). Added an early-empty arm that emits zsh's specific diagnostic. Test: `test_kill_s_empty_name_errors`.
 
+### `let "1?"` reported "':' expected" instead of distinguishing operand-missing from colon-missing
+
+- zsh distinguishes `let "1?"` (input ran out mid-ternary, no operand AND no colon) from `let "1?2"` (operand present, colon missing). Former -> `bad math expression: operand expected at end of string`; latter -> `bad math expression: ':' expected`. zshrs's earlier `':' expected` for both was wrong-category for the missing-operand case. Added a stack-length check after the inner mathparse: stack grew → operand parsed (colon-expected); stack same → no operand (operand-expected). Test: `test_let_ternary_missing_colon_vs_operand`.
+
+### `umask -X` printed the current umask instead of erroring "bad option: -X"
+
+- zsh: `umask -X` -> `umask:1: bad option: -X` exit 1. zshrs's silent `_ => {}` arm accepted any flag and proceeded to print/set the umask. Added a `starts_with('-') && len > 1` arm that emits zsh's diagnostic. Test: `test_umask_unknown_flag_errors`.
+
+### `fc 1 2 3 4 5 6` (edit mode, 3+ positionals) ran prefix search instead of erroring "too many arguments"
+
+- zsh: edit-mode fc takes at most 2 positional bounds (`fc FIRST [LAST]`); 3+ -> `fc:1: too many arguments` exit 1. zshrs's edit path took args.first() and ignored the rest, falling into the prefix-search path. Added a `positional.len() > 2` precheck. Test: `test_fc_edit_too_many_args_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
