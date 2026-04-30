@@ -8488,6 +8488,34 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_lineno_increments_per_line_in_dash_c() {
+    // Direct port of zsh's `lineno` global tracking from
+    // Src/input.c:330 — increments on each newline. Compiler
+    // emits BUILTIN_SET_LINENO before each top-level pipe with
+    // the value captured by the parser at `ZshPipe.lineno`.
+    let (_, output, _) =
+        run_zshrs("echo $LINENO\necho $LINENO\necho $LINENO");
+    assert_eq!(output.trim(), "1\n2\n3", "got: {output:?}");
+}
+
+#[test]
+fn test_lineno_resets_inside_function() {
+    // zsh: `lineno = 1` on function entry (Src/init.c:1588);
+    // restore on return. zshrs's compile_funcdef sets
+    // `lineno_offset = first_body_line - 1` so the body's
+    // emitted SET_LINENO calls produce 1, 2, 3 relative to the
+    // body, not the absolute position in the source script.
+    let script = "foo() {
+  echo $LINENO
+  echo $LINENO
+}
+foo
+echo $LINENO";
+    let (_, output, _) = run_zshrs(script);
+    assert_eq!(output.trim(), "1\n2\n6", "got: {output:?}");
+}
+
+#[test]
 fn test_m_flag_with_double_hash_strip() {
     // Direct port of zsh's get_match_ret() in glob.c:2550 — the
     // (M) flag inverts the strip return: instead of the

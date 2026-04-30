@@ -240,7 +240,17 @@ impl<'a> ZshLexer<'a> {
             return None;
         }
 
+        // Re-read from unget_buf: increment lineno on `\n` HERE
+        // too. hungetc() decremented lineno when the char was put
+        // back; without a matching increment on the way out, every
+        // `\n` that's ungetted-then-reread leaves lineno
+        // permanently one short. Symptom: $LINENO stuck at 1 in
+        // every script statement because the parser ungets the
+        // separating newline once between statements.
         if let Some(c) = self.unget_buf.pop_front() {
+            if c == '\n' {
+                self.lineno += 1;
+            }
             return Some(c);
         }
 
