@@ -6603,6 +6603,32 @@ impl fusevm::ShellHost for ZshrsHost {
 
         let chunk = chunk?;
 
+        // FUNCNEST recursion guard. zsh enforces a max depth
+        // (default 500) — past that the call is refused with
+        // `<name>: maximum nested function level reached; increase
+        // FUNCNEST?` and exit 1. Without this, `foo() { foo; }; foo`
+        // overflowed the Rust stack instead of erroring gracefully.
+        // zshrs's effective ceiling is lower than zsh's: each
+        // `call_function` recursion consumes ~40KB of Rust stack
+        // (the bytecode VM is recursive at the host level), so the
+        // 8MB default stack tops out around ~150 frames. Cap at 100
+        // by default — users with deeper need can raise FUNCNEST
+        // explicitly AND run with a larger stack (RUST_MIN_STACK).
+        let funcnest_limit = with_executor(|exec| {
+            exec.variables
+                .get("FUNCNEST")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(100)
+        });
+        let cur_depth = with_executor(|exec| exec.local_scope_depth);
+        if cur_depth >= funcnest_limit {
+            eprintln!(
+                "{}: maximum nested function level reached; increase FUNCNEST?",
+                name
+            );
+            return Some(1);
+        }
+
         // Save and replace positional params, mirror local-scope save/restore
         // from the tree-walker `call_function`. The thread-local executor
         // pointer set by the outer VM remains valid for the nested VM —
@@ -10398,6 +10424,21 @@ impl ShellExecutor {
             self.functions_compiled.get(name).cloned()?
         };
 
+        // FUNCNEST guard — see `call_function` for the lower-than-
+        // zsh ceiling rationale. Cap at 100 by default (matches
+        // call_function's ceiling).
+        let funcnest_limit: usize = self
+            .variables
+            .get("FUNCNEST")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+        if self.local_scope_depth >= funcnest_limit {
+            eprintln!(
+                "{}: maximum nested function level reached; increase FUNCNEST?",
+                name
+            );
+            return Some(1);
+        }
         // Save and replace positional params + local-scope save/restore,
         // mirroring the legacy `call_function(&ShellCommand, args)` and
         // ZshrsHost::call_function.
@@ -18067,19 +18108,19 @@ impl ShellExecutor {
                     1
                 }
             }
-            [a, "<", b] => {
-                if *a < *b {
-                    0
-                } else {
-                    1
-                }
-            }
-            [a, ">", b] => {
-                if *a > *b {
-                    0
-                } else {
-                    1
-                }
+            // NOTE: zsh's `[`-test (POSIX-mode test) does NOT accept
+            // `<` or `>` as string comparators — they're redirection
+            // operators. `[ "5" \> "3" ]` errors `1: condition
+            // expected: >`. zshrs's earlier impl had string-compare
+            // arms for both, hiding the syntax error. Removed those
+            // arms so the operands fall through to the catch-all
+            // 3-arg arm which now reports `unknown condition: <op>`
+            // (it lists `<`/`>` as known so the diagnostic stays
+            // clean). The `[[`-cond compiler still handles them.
+            [a, "<", b] | [a, ">", b] => {
+                eprintln!("zshrs:1: condition expected: {}", args[1]);
+                let _ = (a, b);
+                return 2;
             }
 
             // Numeric comparisons
@@ -18297,6 +18338,24 @@ impl ShellExecutor {
                     );
                     return 2;
                 }
+                // `[ a -lt ]` (2 args: operand + binop, missing
+                // right-side operand) -> zsh: `1: parse error:
+                // condition expected: a` exit 2.
+                if args.len() == 2
+                    && !args[0].starts_with('-')
+                    && matches!(
+                        args[1],
+                        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
+                            | "=" | "!=" | "<" | ">" | "==" | "-nt"
+                            | "-ot" | "-ef"
+                    )
+                {
+                    eprintln!(
+                        "zshrs:1: parse error: condition expected: {}",
+                        args[0]
+                    );
+                    return 2;
+                }
                 // 3-arg with binary operator at position 0 (not 1) —
                 // `[ -lt 5 3 ]` is a syntax error in zsh:
                 // `[:1: unknown condition: -lt`. The operator-name
@@ -18311,6 +18370,15 @@ impl ShellExecutor {
                     eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
                     return 2;
                 }
+                // 3-arg with binop at args[1] but NO operand at
+                // args[2] (impossible since len==3, so args[2] always
+                // exists — but zsh handles `[ a -lt ]` (2 args) as
+                // a parse error too. That's covered by the earlier
+                // 2-arg arm if args[1].starts_with('-') AND the op
+                // is a known binop (treated as unary-flag-name miss
+                // by the unknown-flag arm). 3-arg with `args[1]=-lt
+                // args[2]=...` and missing third operand is rare;
+                // skip until a real probe surfaces it.
                 // Three-arg `[ a -OP b ]` where -OP isn't a known
                 // numeric/string comparator: zsh errors at the OP
                 // position. Detect and emit the same kind of error
@@ -20206,7 +20274,15 @@ impl ShellExecutor {
                         'd' => show_dir = true,
                         'r' => running_only = true,
                         's' => stopped_only = true,
-                        'Z' => {} // ignore
+                        // zsh: `jobs -Z` requires a process-name
+                        // argument (it sets the shell's process name
+                        // to that string). Without one, it errors
+                        // `jobs:1: -Z requires one argument` exit 1.
+                        // zshrs silently ignored `-Z` entirely.
+                        'Z' => {
+                            eprintln!("zshrs:jobs:1: -Z requires one argument");
+                            return 1;
+                        }
                         _ => {}
                     }
                 }
@@ -20605,8 +20681,19 @@ impl ShellExecutor {
                     // libc::kill(pid, 0) directly.
                     let rc = unsafe { libc::kill(pid as i32, 0) };
                     if rc != 0 {
+                        // zsh format: `kill:1: kill PID failed:
+                        // <reason>` with the OS error message
+                        // lowercased and the `(os error N)` suffix
+                        // stripped. zshrs's `{}: {}` form was
+                        // bash-style.
                         let err = std::io::Error::last_os_error();
-                        eprintln!("kill: {}: {}", pid, err);
+                        let raw = err.to_string();
+                        let cleaned = raw
+                            .split(" (os error")
+                            .next()
+                            .unwrap_or(&raw)
+                            .to_lowercase();
+                        eprintln!("zshrs:kill:1: kill {} failed: {}", pid, cleaned);
                         status = 1;
                     }
                 } else if let Err(e) = send_signal(pid as i32, sig) {
@@ -31431,7 +31518,7 @@ impl ShellExecutor {
     /// zformat - format strings
     fn builtin_zformat(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("zformat: not enough arguments");
+            eprintln!("zshrs:zformat:1: not enough arguments");
             return 1;
         }
 
