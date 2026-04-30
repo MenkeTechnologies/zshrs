@@ -8720,6 +8720,18 @@ impl ShellExecutor {
                 if let Ok(oldpwd) = std::env::var("OLDPWD") {
                     return format!("{}{}", oldpwd, suffix);
                 }
+            } else if name.chars().all(|c| c.is_ascii_digit()) && !name.is_empty() {
+                // `~N` (digits only) — same as `~+N`: Nth entry on
+                // dir stack, 0 = $PWD. zsh accepts both forms.
+                if let Ok(n) = name.parse::<usize>() {
+                    if n == 0 {
+                        if let Ok(pwd) = std::env::var("PWD") {
+                            return format!("{}{}", pwd, suffix);
+                        }
+                    } else if let Some(d) = self.dir_stack.get(n - 1) {
+                        return format!("{}{}", d.display(), suffix);
+                    }
+                }
             } else if let Some(stripped) = name.strip_prefix('+') {
                 // `~+N` — Nth entry on dir stack (1-indexed; 0 = $PWD).
                 if let Ok(n) = stripped.parse::<usize>() {
@@ -21337,6 +21349,9 @@ impl ShellExecutor {
                     if arg.starts_with('-') && arg.len() > 1 {
                         for c in arg[1..].chars() {
                             match c {
+                                'a' => {
+                                    self.options.insert("allexport".to_string(), true);
+                                }
                                 'e' => {
                                     self.options.insert("errexit".to_string(), true);
                                 }
@@ -21381,6 +21396,9 @@ impl ShellExecutor {
                     if arg.starts_with('+') && arg.len() > 1 {
                         for c in arg[1..].chars() {
                             match c {
+                                'a' => {
+                                    self.options.insert("allexport".to_string(), false);
+                                }
                                 'e' => {
                                     self.options.insert("errexit".to_string(), false);
                                 }
@@ -21409,8 +21427,9 @@ impl ShellExecutor {
                                     self.options.insert("notify".to_string(), false);
                                 }
                                 _ => {
-                                    eprintln!("zshrs: set: +{}: invalid option", c);
-                                    return 1;
+                                    // Match the `-` arm's silent
+                                    // acceptance — zsh tolerates
+                                    // unknown letters in `+xyz` too.
                                 }
                             }
                         }
