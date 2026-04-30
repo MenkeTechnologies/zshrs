@@ -26547,12 +26547,33 @@ impl ShellExecutor {
             target.clone()
         };
 
-        self.dir_stack.push(current);
+        self.dir_stack.push(current.clone());
         if let Err(e) = std::env::set_current_dir(&resolved) {
             eprintln!("pushd: {}: {}", arg, e);
             self.dir_stack.pop();
             return 1;
         }
+        // Sync $PWD/$OLDPWD with the new cwd. cd updates these but
+        // pushd's path didn't, so `pushd /tmp; echo $PWD` continued
+        // to show the pre-pushd cwd. Use the user-provided `arg`
+        // (logical) when not -P so symlink-preserving `pushd /tmp`
+        // keeps `/tmp` rather than `/private/tmp`.
+        let new_pwd = if physical {
+            resolved.display().to_string()
+        } else {
+            // Logical mode: prefer the as-given arg if it's an
+            // absolute path; otherwise fall back to canonicalized.
+            if target.is_absolute() {
+                target.display().to_string()
+            } else {
+                resolved.display().to_string()
+            }
+        };
+        let old_pwd = current.display().to_string();
+        std::env::set_var("OLDPWD", &old_pwd);
+        std::env::set_var("PWD", &new_pwd);
+        self.variables.insert("OLDPWD".to_string(), old_pwd);
+        self.variables.insert("PWD".to_string(), new_pwd);
         // zsh's `pushd` in non-interactive mode (e.g. `-c`) suppresses
         // the dir-stack listing — only `dirs` actively prints. Detect
         // non-interactive via stdin-is-tty since `options[interactive]`
@@ -26651,6 +26672,23 @@ impl ShellExecutor {
             self.dir_stack.push(target);
             return 1;
         }
+        // Sync $PWD/$OLDPWD with the new cwd (logical for default,
+        // physical for -P). pushd updates these; popd needs to too
+        // or the dir-stack listing reads stale $PWD.
+        let new_pwd = if physical {
+            resolved.display().to_string()
+        } else {
+            target.display().to_string()
+        };
+        let old_pwd = self
+            .variables
+            .get("PWD")
+            .cloned()
+            .unwrap_or_default();
+        std::env::set_var("OLDPWD", &old_pwd);
+        std::env::set_var("PWD", &new_pwd);
+        self.variables.insert("OLDPWD".to_string(), old_pwd);
+        self.variables.insert("PWD".to_string(), new_pwd);
         // Same -c-mode silence as pushd above.
         use std::io::IsTerminal;
         let stdin_is_tty = std::io::stdin().is_terminal();
@@ -26709,7 +26747,15 @@ impl ShellExecutor {
             return 0;
         }
 
-        let current = std::env::current_dir().unwrap_or_default();
+        // zsh's `dirs` uses $PWD (logical, symlink-preserving) for
+        // the current entry, not the OS-level cwd. `pushd /tmp;
+        // dirs` should show `/tmp`, not `/private/tmp` on macOS.
+        // Fall back to OS cwd only if $PWD is unset.
+        let current = self
+            .variables
+            .get("PWD")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         let home = dirs::home_dir().unwrap_or_default();
 
         let format_path = |p: &std::path::Path| -> String {

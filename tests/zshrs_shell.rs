@@ -8409,6 +8409,52 @@ fn test_readonly_invalid_identifier_rejects() {
 }
 
 #[test]
+fn test_pushd_updates_pwd_variable() {
+    // zsh: `pushd /tmp; echo $PWD` -> `/tmp`. zshrs's pushd
+    // called set_current_dir (so the OS cwd moved) but didn't
+    // sync $PWD/$OLDPWD, so the shell-level $PWD still pointed
+    // at the pre-pushd directory. Symptoms: `dirs` showed the
+    // canonicalized cwd (`/private/tmp` on macOS) instead of
+    // the user-given logical path (`/tmp`).
+    let (_, output, _) =
+        run_zshrs(r#"pushd /tmp >/dev/null; echo "$PWD""#);
+    assert_eq!(output.trim(), "/tmp", "got: {output:?}");
+}
+
+#[test]
+fn test_dirs_uses_logical_pwd_not_canonical() {
+    // zsh's `dirs` uses $PWD (symlink-preserving) for the
+    // current entry. zshrs's `dirs` read OS cwd via
+    // `current_dir()` which canonicalizes — so on macOS
+    // `pushd /tmp; dirs` showed `/private/tmp` instead of
+    // zsh's `/tmp`. Verify by pushing to /tmp (which is a
+    // symlink to /private/tmp on macOS) and checking the
+    // first path in dirs output.
+    let (_, output, _) =
+        run_zshrs(r#"pushd /tmp >/dev/null; dirs"#);
+    let first_token = output
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    assert_eq!(
+        first_token, "/tmp",
+        "expected /tmp (logical), got: {output:?}"
+    );
+}
+
+#[test]
+fn test_popd_restores_pwd_variable() {
+    // popd should sync $PWD back to the previous directory.
+    // Without the sync, $PWD stayed pointing at the pushd
+    // location even after popd.
+    let (_, output, _) = run_zshrs(
+        r#"start="$PWD"; pushd /tmp >/dev/null; popd >/dev/null; [[ "$PWD" == "$start" ]] && echo same || echo "diff: $PWD vs $start""#,
+    );
+    assert_eq!(output.trim(), "same", "got: {output:?}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
