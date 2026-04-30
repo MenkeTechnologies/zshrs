@@ -2231,6 +2231,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `-S` and `-k` are silent-accept on `type` (no observable effect in `-c` mode). zshrs's unknown-flag fallback (added when fixing `-Z` rejection) rejected them. Added an `S | k => {}` arm before the catch-all. Test: `test_type_S_k_accepted`.
 
+### `[ -- a ]` silently returned 1 instead of erroring "unknown condition: --"
+
+- zsh: `[ -- a ]` -> `[:1: unknown condition: --` exit 2 (zsh treats `--` as a bogus flag name in `[`-test, distinct from POSIX shell-end-of-options usage). zshrs's 2-arg unknown-flag arm only fired for all-alphabetic letters, missing the `--` case. Extended the check to include `--` as a valid trigger. Test: `test_test_dashdash_unknown_condition`.
+
+### `fc 1` (single numeric positional, edit form) reported "event not found: 1" instead of "would recurse endlessly"
+
+- Earlier iter 85 fix only covered 2-numeric-positional case. Extended to 1-numeric-positional too: any all-numeric edit-mode positional (count ≤ 2) routes to the recurse-endlessly path in `-c` mode. Test: `test_fc_single_numeric_recurse`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
