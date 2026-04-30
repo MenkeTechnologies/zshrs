@@ -6400,6 +6400,20 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_alias_listing_quotes_value_with_equals() {
+    // zsh: `alias g='x=y'; alias g` prints `g='x=y'` — quoted
+    // because the body contains `=`. zshrs's `format_alias_kv` (and
+    // its inline copy in the per-name listing path) didn't include
+    // `=` in the quote-trigger set, so `alias g=x=y` round-tripped
+    // as bare which would re-parse as `alias g=x` + arg `=y`.
+    let (_, output, _) = run_zshrs(r#"alias g="x=y"; alias g"#);
+    assert_eq!(output.trim(), "g='x=y'");
+    // Plain ls value still bare.
+    let (_, output, _) = run_zshrs("alias x=ls; alias x");
+    assert_eq!(output.trim(), "x=ls");
+}
+
+#[test]
 fn test_functions_plus_t_disable_trace_silent() {
     // zsh: `functions +t NAME` / `+T NAME` clears the trace attr
     // silently. zshrs treated `+t` as a function name and emitted

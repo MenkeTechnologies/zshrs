@@ -1793,6 +1793,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `functions +t NAME` / `+T` clears the trace attr silently (the off-switch counterpart to `-t`/`-T`). zshrs's flag matcher had no `+`-prefix arm — `+t` fell through to the names list, then the per-name lookup emitted `no such function: +t`. Added explicit `+t` / `+T` arms (and a combined `+xyz` arm for `+lt` etc.) that silently consume the flag. Test: `test_functions_plus_t_disable_trace_silent`.
 
+### `alias g="x=y"; alias g` listed value bare instead of single-quoted
+
+- zsh's `alias` listing single-quotes the value when it contains shell metas — including `=`, because the bare form `alias g=x=y` would re-parse as `alias g=x` + positional arg `=y`. zshrs's `format_alias_kv` (and its inline copy in the per-name lookup) excluded `=` from the quote-trigger set. Added `=` to both. Test: `test_alias_listing_quotes_value_with_equals`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`

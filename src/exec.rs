@@ -534,10 +534,15 @@ fn apply_subst_modifier(
 /// when it's a single safe word, single-quoted (with escaped inner
 /// quotes) when it contains whitespace or shell metachars.
 fn format_alias_kv(name: &str, value: &str) -> String {
+    // zsh quotes the value when it contains shell-meaningful chars
+    // OR an `=` sign — `alias g='x=y'`, not `alias g=x=y` (the
+    // latter wouldn't round-trip back into an alias definition
+    // because the parser would see `g=x` as the alias and `=y` as
+    // a separate arg).
     let needs_quote = value.is_empty()
         || value
             .chars()
-            .any(|c| c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c));
+            .any(|c| c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!=".contains(c));
     if needs_quote {
         let escaped = value.replace('\'', "'\\''");
         format!("{}='{}'", name, escaped)
@@ -21422,9 +21427,11 @@ impl ShellExecutor {
                     // zsh emits bare value if no shell metas / spaces;
                     // single-quoted otherwise. Match that exactly so
                     // `alias x=ls` prints `x=ls` not `x='ls'`.
+                    // Includes `=` because `alias x=a=b` parses as
+                    // `alias x=a` plus arg `=b` without the quoting.
                     let needs_quote = v.is_empty()
                         || v.chars()
-                            .any(|c| c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c));
+                            .any(|c| c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!=".contains(c));
                     let body = if needs_quote {
                         let escaped = v.replace('\'', "'\\''");
                         format!("{}='{}'", arg, escaped)
