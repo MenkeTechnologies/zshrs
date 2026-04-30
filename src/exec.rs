@@ -20931,26 +20931,47 @@ impl ShellExecutor {
                 // keeps the original event numbers — `3 c | 2 b | 1 a`
                 // for a 3-entry session. Without reversing here the
                 // `-r` flag was a no-op for session-only listings.
-                let pairs: Vec<(i64, String)> = self
+                // Tuple holds (number, timestamp, duration_ms, command).
+                let pairs: Vec<(i64, i64, i64, String)> = self
                     .session_history_ids
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &id)| {
-                        engine
-                            .get_by_number(id)
-                            .ok()
-                            .flatten()
-                            .map(|e| ((i as i64) + 1, e.command))
+                        engine.get_by_number(id).ok().flatten().map(|e| {
+                            (
+                                (i as i64) + 1,
+                                e.timestamp,
+                                e.duration_ms.unwrap_or(0),
+                                e.command,
+                            )
+                        })
                     })
                     .collect();
-                let iter: Box<dyn Iterator<Item = (i64, String)>> = if reverse {
+                let iter: Box<dyn Iterator<Item = (i64, i64, i64, String)>> = if reverse {
                     Box::new(pairs.into_iter().rev())
                 } else {
                     Box::new(pairs.into_iter())
                 };
-                for (n, command) in iter {
+                for (n, ts, dur_ms, command) in iter {
                     if no_numbers {
                         println!("{}", command);
+                    } else if show_time {
+                        // Format timestamp as HH:MM (zsh's `-d`
+                        // default: short time). zshrs previously
+                        // dropped the timestamp column entirely.
+                        let dt = chrono::DateTime::<chrono::Local>::from(
+                            std::time::UNIX_EPOCH
+                                + std::time::Duration::from_secs(ts as u64),
+                        );
+                        let stamp = dt.format("%H:%M").to_string();
+                        println!("{:>5}  {}  {}", n, stamp, command);
+                    } else if show_duration {
+                        // Duration in M:SS form (zsh's -D). zshrs
+                        // previously dropped the duration column.
+                        let secs = dur_ms / 1000;
+                        let mins = secs / 60;
+                        let s = secs % 60;
+                        println!("{:>5}  {}:{:02}  {}", n, mins, s, command);
                     } else {
                         println!("{:>5}  {}", n, command);
                     }
@@ -28111,7 +28132,15 @@ impl ShellExecutor {
                 _ if !arg.starts_with('-') => {
                     value = arg.parse().ok();
                 }
-                _ => {}
+                _ => {
+                    // zsh: unknown flag → `bad option: -X` exit 1.
+                    // zshrs's silent default arm let `ulimit -X` fall
+                    // through, then proceed with the default resource
+                    // (FSIZE) and print "unlimited" — masking the
+                    // typo. Now reject explicitly.
+                    eprintln!("zshrs:ulimit:1: bad option: {}", arg);
+                    return 1;
+                }
             }
         }
 

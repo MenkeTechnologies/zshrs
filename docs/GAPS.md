@@ -1777,6 +1777,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `fc -lr` walks the same range backwards (most recent first) while keeping original event numbers — `3 c | 2 b | 1 a` for a 3-entry session. zshrs's session-only path iterated `session_history_ids` forward unconditionally; the `-r` flag was a no-op for this code path (it only worked on the engine.recent fallback). Now collects session entries into a Vec and reverses iteration when `reverse` is set. Test: `test_fc_lr_session_reverse`.
 
+### `ulimit -X` (unknown flag) silently fell back to `-f` and printed "unlimited"
+
+- zsh: `ulimit -X` errors `bad option: -X` exit 1. zshrs's silent default arm let unknown flags slip through, then proceeded with the default resource (FSIZE) and emitted "unlimited" — masking the typo. Added an explicit error in the unknown-flag arm. Test: `test_ulimit_unknown_flag_errors`.
+
+### `fc -ld` / `-lD` skipped time/duration columns in session-only mode
+
+- zsh's `fc -ld` adds an `HH:MM` time column; `-lD` adds an `M:SS` duration column. zshrs's session-only listing path emitted only `N  command` regardless. Updated the session-only loop to read each entry's `timestamp` and `duration_ms` fields and format them when `show_time` / `show_duration` is set. Test: `test_fc_ld_lD_show_time_duration`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
