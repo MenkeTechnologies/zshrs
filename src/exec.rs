@@ -553,6 +553,93 @@ fn format_alias_kv(name: &str, value: &str) -> String {
 
 /// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
 /// inclusive, char-aware (not byte). Negative indices count from end.
+/// Apply zsh's `${var#pat}` / `##` / `%` / `%%` strip operators with
+/// optional `(M)`-flag inversion. Direct port of zsh's
+/// `get_match_ret()` (Src/glob.c:2550) for the relevant flag mask:
+///
+///   - `SUB_MATCH` set (passed as `m_flag=true`): return the matched
+///     portion (chars b..e of the original string)
+///   - `SUB_MATCH` unset (default): return the unmatched portion
+///     (chars 0..b plus chars e..end)
+///
+/// `op` matches the existing `BUILTIN_PARAM_STRIP` numbering:
+///   0 = `#`  (shortest leading match)
+///   1 = `##` (longest leading match)
+///   2 = `%`  (shortest trailing match)
+///   3 = `%%` (longest trailing match)
+///
+/// Glob matching uses the existing `glob_match_static` helper, which
+/// already handles extendedglob, character classes, and `^pat`
+/// negation, so the M-flag fix above is purely about which slice of
+/// the original to return — not about how matches are found.
+fn strip_match_op(v: &str, op: u8, pattern: &str, m_flag: bool) -> String {
+    // Helper: encode the "no match" return value. Without (M),
+    // strip ops return the unchanged string (per zsh spec — strip
+    // is a no-op when nothing matches). With (M), the matched
+    // portion doesn't exist, so return empty (zsh: `${(M)a#nope}`
+    // → "").
+    let no_match = || if m_flag { String::new() } else { v.to_string() };
+    match op {
+        0 => {
+            // Shortest leading: scan increasing prefix lengths,
+            // first match wins (b=0, e=i).
+            for i in 0..=v.len() {
+                if !v.is_char_boundary(i) {
+                    continue;
+                }
+                let prefix = &v[..i];
+                if ShellExecutor::glob_match_static(prefix, pattern) {
+                    return if m_flag { v[..i].to_string() } else { v[i..].to_string() };
+                }
+            }
+            no_match()
+        }
+        1 => {
+            // Longest leading: scan decreasing prefix lengths,
+            // first match wins.
+            for i in (0..=v.len()).rev() {
+                if !v.is_char_boundary(i) {
+                    continue;
+                }
+                let prefix = &v[..i];
+                if ShellExecutor::glob_match_static(prefix, pattern) {
+                    return if m_flag { v[..i].to_string() } else { v[i..].to_string() };
+                }
+            }
+            no_match()
+        }
+        2 => {
+            // Shortest trailing: scan decreasing suffix start
+            // (= shortest suffix length first), first match wins.
+            for i in (0..=v.len()).rev() {
+                if !v.is_char_boundary(i) {
+                    continue;
+                }
+                let suffix = &v[i..];
+                if ShellExecutor::glob_match_static(suffix, pattern) {
+                    return if m_flag { v[i..].to_string() } else { v[..i].to_string() };
+                }
+            }
+            no_match()
+        }
+        3 => {
+            // Longest trailing: scan increasing suffix start
+            // (= longest suffix length first), first match wins.
+            for i in 0..=v.len() {
+                if !v.is_char_boundary(i) {
+                    continue;
+                }
+                let suffix = &v[i..];
+                if ShellExecutor::glob_match_static(suffix, pattern) {
+                    return if m_flag { v[i..].to_string() } else { v[..i].to_string() };
+                }
+            }
+            no_match()
+        }
+        _ => v.to_string(),
+    }
+}
+
 fn slice_scalar(s: &str, start: i64, end: i64) -> String {
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len() as i64;
@@ -5079,54 +5166,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // Pattern may contain `$var` / `$(cmd)` / `$((expr))` — zsh
         // expands these before applying the strip. Was emitted as-is.
         let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
-        let strip_one = move |v: &str, op: u8, pattern: &str| -> String {
-            match op {
-                0 => {
-                    let mut out = v.to_string();
-                    for i in 0..=v.len() {
-                        let prefix = &v[..i];
-                        if ShellExecutor::glob_match_static(prefix, pattern) {
-                            out = v[i..].to_string();
-                            break;
-                        }
-                    }
-                    out
-                }
-                1 => {
-                    let mut out = v.to_string();
-                    for i in (0..=v.len()).rev() {
-                        let prefix = &v[..i];
-                        if ShellExecutor::glob_match_static(prefix, pattern) {
-                            out = v[i..].to_string();
-                            break;
-                        }
-                    }
-                    out
-                }
-                2 => {
-                    let mut out = v.to_string();
-                    for i in (0..=v.len()).rev() {
-                        let suffix = &v[i..];
-                        if ShellExecutor::glob_match_static(suffix, pattern) {
-                            out = v[..i].to_string();
-                            break;
-                        }
-                    }
-                    out
-                }
-                3 => {
-                    let mut out = v.to_string();
-                    for i in 0..=v.len() {
-                        let suffix = &v[i..];
-                        if ShellExecutor::glob_match_static(suffix, pattern) {
-                            out = v[..i].to_string();
-                            break;
-                        }
-                    }
-                    out
-                }
-                _ => v.to_string(),
-            }
+        // Delegate to the shared `strip_match_op` helper (also used
+        // by the flag-aware `expand_braced_variable` path so M-flag
+        // inversion works consistently). The compile-time fast path
+        // never carries (M) since `parse_param_modifier` rejects
+        // flag forms and routes them through the bridge — so always
+        // pass `m_flag=false` here.
+        let strip_one = |v: &str, op: u8, pattern: &str| -> String {
+            strip_match_op(v, op, pattern, false)
         };
         // `${arr#pat}` / `${arr%pat}` / etc. on an array:
         //   - Unquoted form: iterate per element.
@@ -13114,6 +13161,35 @@ impl ShellExecutor {
                 } else {
                     false
                 };
+
+                // Strip operators (`#`/`##`/`%`/`%%`) after the var
+                // name. Direct port of zsh's get_match_ret() in
+                // Src/glob.c (line 2550): the SUB_MATCH flag (set by
+                // `(M)`) inverts the return — instead of the
+                // unmatched portion (default), return the matched
+                // portion. zshrs's flag path used to extract the
+                // var name as the longest leading-alphanumeric run
+                // and silently drop the strip operator that
+                // followed; `${(M)a##*o}` returned the full
+                // unstripped value because the strip never ran.
+                if !default_fired {
+                    let rest_after_var = &rest[var_name.len()..];
+                    let (op, pat_str) = if let Some(p) = rest_after_var.strip_prefix("##") {
+                        (Some(1u8), p)
+                    } else if let Some(p) = rest_after_var.strip_prefix("%%") {
+                        (Some(3u8), p)
+                    } else if let Some(p) = rest_after_var.strip_prefix('#') {
+                        (Some(0u8), p)
+                    } else if let Some(p) = rest_after_var.strip_prefix('%') {
+                        (Some(2u8), p)
+                    } else {
+                        (None, "")
+                    };
+                    if let Some(op) = op {
+                        let pat_expanded = self.expand_string(pat_str);
+                        val = strip_match_op(&val, op, &pat_expanded, has_match_flag);
+                    }
+                }
 
                 // Apply flags in order. Skip the (P) parameter-indirect
                 // flag when the default fired — zsh: `${(P):-test}` →
