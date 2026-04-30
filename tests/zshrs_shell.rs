@@ -6360,6 +6360,29 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_umask_too_many_args() {
+    // zsh: `umask 022 044` errors `too many arguments` and exits 1.
+    // zshrs's loop overwrote `value` silently with the last
+    // positional, accepting the call. Now counts positionals and
+    // errors when > 1.
+    let (status, _, stderr) = run_zshrs("umask 022 044");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("too many arguments"), "got: {stderr}");
+}
+
+#[test]
+fn test_functions_t_no_trace_set_silent() {
+    // zsh: `functions -t NAME` lists only functions whose trace
+    // attribute IS set. For a vanilla function with no trace
+    // marking, output is empty. zshrs printed `functions -t NAME`
+    // unconditionally. Now silent for the common no-trace case
+    // (matches zsh's per-function trace gating; per-function trace
+    // tracking is a follow-up).
+    let (_, output, _) = run_zshrs("foo() { :; }; functions -t foo");
+    assert_eq!(output, "");
+}
+
+#[test]
 fn test_empty_cond_bracket_parse_error() {
     // zsh: `[[ ]]` (empty condition) is a parse error. zshrs
     // silently accepted and returned exit 0. Now `parse_cond`

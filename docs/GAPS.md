@@ -1809,6 +1809,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `[[ ]]` is a parse error — a condition is required between the brackets. zshrs's `parse_cond` called `parse_cond_expr` which returned `None`, then silently consumed the `]]` and produced no command (exit 0). Added an early-return: if the immediate next token after `[[` is `]]`, emit a parse error. Test: `test_empty_cond_bracket_parse_error`.
 
+### `umask 022 044` (multiple values) silently used the last value
+
+- zsh: multiple positional values to `umask` errors `too many arguments` and exits 1. zshrs's flag loop overwrote `value` with each positional, silently using only the last. Added a `value_count` counter and an early error when > 1. Test: `test_umask_too_many_args`.
+
+### `functions -t NAME` printed unconditionally instead of trace-attr-gated
+
+- zsh: `functions -t NAME` lists only functions whose trace attribute IS set; vanilla functions with no trace marking produce no output. zshrs printed `functions -t NAME` unconditionally, leaking output for the common no-trace case. Per-function trace tracking is a follow-up; for now `-t` falls into a continue/silent path that matches zsh's no-trace output. Test: `test_functions_t_no_trace_set_silent`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic

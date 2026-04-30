@@ -26826,7 +26826,13 @@ impl ShellExecutor {
                     return 1;
                 }
                 if show_trace {
-                    println!("functions -t {}", name);
+                    // zsh: `functions -t NAME` lists only functions
+                    // whose trace attribute IS set (output `functions
+                    // -t NAME`). Without per-function trace tracking
+                    // we have no way to know which functions are
+                    // marked, so emit nothing — matches zsh's silent
+                    // output for the common "no trace set" case.
+                    continue;
                 } else if let Some(body) = self.function_definition_text(name) {
                     println!(
                         "{} () {{\n\t{}\n}}",
@@ -27957,13 +27963,25 @@ impl ShellExecutor {
 
         let mut symbolic = false;
         let mut value: Option<&str> = None;
+        let mut value_count = 0usize;
 
         for arg in args {
             match arg.as_str() {
                 "-S" => symbolic = true,
-                _ if !arg.starts_with('-') => value = Some(arg),
+                _ if !arg.starts_with('-') => {
+                    value = Some(arg);
+                    value_count += 1;
+                }
                 _ => {}
             }
+        }
+
+        // zsh: `umask 022 044` (multiple positional values) errors
+        // `too many arguments` and exits 1. zshrs's loop just
+        // overwrote `value` silently with the last positional.
+        if value_count > 1 {
+            eprintln!("zshrs:umask:1: too many arguments");
+            return 1;
         }
 
         if let Some(v) = value {
