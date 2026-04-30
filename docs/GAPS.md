@@ -2205,6 +2205,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: text-name miss takes precedence over count-error in the 3+arg fc-list path. zshrs only checked `positional[0]` — if the non-numeric was in the middle, "too many arguments" fired instead. Extended the scan to find the FIRST non-numeric across all positions. Test: `test_fc_l_3plus_text_in_middle`.
 
+### `history -d 1 2` and `history -d 1 2 3` reported "no such event: N" instead of zsh's range/too-many wording
+
+- zsh: history (= `fc -l`) — 2 numeric positionals -> `fc:1: no events in that range`; 3+ -> `fc:1: too many arguments`. zshrs's loop just kept overwriting `count` with each numeric arg and reported `no such event: <last>` regardless. Track `positional_count`; check >2 (too many) and ==2 (range) BEFORE the no-such-event path. Test: `test_history_d_multi_args_error_categories`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
