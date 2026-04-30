@@ -7945,6 +7945,55 @@ fn test_shift_unknown_flag_errors() {
 }
 
 #[test]
+fn test_print_f_missing_arg_errors() {
+    // zsh: `print -f` (no following format string) -> `print:1:
+    // argument expected: -f` exit 1. zshrs's `if i < args.len()`
+    // silently fell through with no format set.
+    let (status, _, stderr) = run_zshrs("print -f");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("argument expected: -f"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_ulimit_l_accepted() {
+    // zsh: `ulimit -l` (locked memory) returns the current limit
+    // ("unlimited" on macOS). zshrs's flag-letter table didn't
+    // include `-l` and erred "bad option: -l".
+    let (status, output, _) = run_zshrs("ulimit -l");
+    assert_eq!(status, 0);
+    assert!(!output.is_empty(), "should print limit; got: {output}");
+}
+
+#[test]
+fn test_read_d_missing_arg_errors() {
+    // zsh: `read -d` (no following delimiter) -> `read:1: argument
+    // expected: -d` exit 1. zshrs's bounds-less `i+=1` left
+    // delimiter at default and continued.
+    let (status, _, stderr) = run_zshrs("read -d");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("argument expected: -d"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_kill_s_empty_name_errors() {
+    // zsh: `kill -s "" 1` (empty signal name) -> `kill:1: -:
+    // signal name expected` exit 1. zshrs's name lookup of empty
+    // produced `invalid signal: ` (with trailing whitespace).
+    let (status, _, stderr) = run_zshrs(r#"kill -s "" 1"#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("signal name expected"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

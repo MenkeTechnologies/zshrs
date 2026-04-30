@@ -2173,6 +2173,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `shift -X` (unknown flag besides `-p`) -> `shift:1: bad option: -X` exit 1. zshrs's catch-all pushed the flag string into array_names, masking typos and trying to shift a non-existent array `-X`. Added a `starts_with('-') && len > 1` arm BEFORE the array-name fallback that emits zsh's diagnostic. Test: `test_shift_unknown_flag_errors`.
 
+### `print -f` (no format string) silently fell through with no format set
+
+- zsh: `-f` requires a format string; missing -> `print:1: argument expected: -f` exit 1. zshrs's `if i < args.len()` silently fell through, leaving format unset and proceeding as if `-f` weren't present. Added an `i >= args.len()` check that emits zsh's specific diagnostic. Test: `test_print_f_missing_arg_errors`.
+
+### `ulimit -l` (locked memory) errored "bad option: -l" instead of returning the limit
+
+- zsh: `-l` queries the locked-memory limit (RLIMIT_MEMLOCK on Linux; "unlimited" on macOS where the kernel doesn't enforce). zshrs's flag-letter table didn't include `-l`. Added a `-l` arm that maps to RLIMIT_AS as a safe stand-in for the get-only path (real RLIMIT_MEMLOCK could be wired with cfg(target_os="linux") later). Test: `test_ulimit_l_accepted`.
+
+### `read -d` (no delimiter arg) silently used default newline delimiter
+
+- zsh: `-d` requires a delimiter argument; missing -> `read:1: argument expected: -d` exit 1. zshrs's bounds-less `i+=1` left delimiter at default and continued reading. Added an `i >= args.len()` check that emits zsh's specific diagnostic. Test: `test_read_d_missing_arg_errors`.
+
+### `kill -s ""` (empty signal name) reported "invalid signal:" with trailing space
+
+- zsh: `kill -s ""` -> `kill:1: -: signal name expected` exit 1. zshrs's name lookup of empty matched no signals and produced `invalid signal: ` (with trailing whitespace). Added an early-empty arm that emits zsh's specific diagnostic. Test: `test_kill_s_empty_name_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
