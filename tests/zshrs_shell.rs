@@ -6360,6 +6360,37 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_print_z_does_not_emit_to_stdout() {
+    // zsh's `print -z` pushes to the line editor's buffer stack —
+    // in non-interactive mode there's no editor, so the args are
+    // discarded silently with exit 0. zshrs previously fell through
+    // to stdout and printed the args.
+    let (status, output, _) = run_zshrs(r#"print -z "ls""#);
+    assert_eq!(status, 0);
+    assert_eq!(output, "");
+}
+
+#[test]
+fn test_kill_l_includes_info_on_macos() {
+    // zsh's `kill -l` lists SIGINFO between WINCH and USR1 on macOS.
+    // zshrs's signal_map didn't include INFO, so the listing
+    // skipped it and the column count was off by one.
+    if cfg!(target_os = "macos") {
+        let (_, output, _) = run_zshrs("kill -l");
+        assert!(output.contains("INFO"), "got: {output:?}");
+    }
+}
+
+#[test]
+fn test_fc_l_default_no_args_event_one() {
+    // zsh: `fc -l` (no args) in -c mode with empty history reports
+    // `no such event: 1` (the lower bound of the would-be -16..-1
+    // range, clamped to 1). zshrs previously reported 0.
+    let (_, _, stderr) = run_zshrs("fc -l");
+    assert!(stderr.contains("no such event: 1"), "got: {stderr}");
+}
+
+#[test]
 fn test_let_no_args_errors() {
     // zsh: bare `let` errors `not enough arguments` with exit 1.
     // zshrs's `builtin_let` returned 1 silently (no diagnostic).
