@@ -10248,6 +10248,21 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_printf_redirect_to_file_writes_data() {
+    // `printf "abc" > file` was leaking output to stdout AND leaving
+    // the file empty because Rust's print! is block-buffered when
+    // stdout is a non-tty file (post-dup2). The redirect_scope's
+    // dup2-restore happened before the buffer flushed. Added explicit
+    // flush at end of builtin_printf, builtin_echo, builtin_print.
+    let path = std::env::temp_dir().join("zshrs_printf_redir_test.txt");
+    let cmd = format!(r#"printf "%s" "abc" > {}"#, path.display());
+    let _ = run_zshrs(&cmd);
+    let contents = std::fs::read_to_string(&path).unwrap_or_default();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(contents, "abc");
+}
+
+#[test]
 fn test_typeset_t_reads_existing_env_value() {
     // `typeset -T PATH path :` should split the inherited $PATH
     // (from process env) into the `path` array. Was returning empty

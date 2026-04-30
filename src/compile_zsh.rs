@@ -3599,6 +3599,15 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             let len_str: Option<String> = split_at.map(|i| chars[i + 1..].iter().collect());
             let off_str = off_str.trim().to_string();
             let len_str = len_str.map(|s| s.trim().to_string());
+            // Re-attach `[@]` / `[*]` suffix to the name when had_at
+            // was true so the runtime substring handler can route to
+            // the array-splice path. Without this, `${a[@]:1}` was
+            // bound to plain `a` and returned a joined scalar.
+            let runtime_name = if had_at {
+                format!("{}[@]", name)
+            } else {
+                name.clone()
+            };
             // Literal-only fast path: integer offset (and length).
             if let (Ok(offset), len_opt) = (
                 off_str.parse::<i64>(),
@@ -3609,7 +3618,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
                     Some(Some(v)) => Some(v),
                     Some(None) => {
                         return Some(ParamModifier {
-                            name,
+                            name: runtime_name,
                             kind: ParamModifierKind::SubstringExpr {
                                 offset_expr: offset.to_string(),
                                 length_expr: len_str,
@@ -3618,13 +3627,13 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
                     }
                 };
                 return Some(ParamModifier {
-                    name,
+                    name: runtime_name,
                     kind: ParamModifierKind::Substring { offset, length },
                 });
             }
             // Variable / arith case — defer to runtime.
             return Some(ParamModifier {
-                name,
+                name: runtime_name,
                 kind: ParamModifierKind::SubstringExpr {
                     offset_expr: off_str,
                     length_expr: len_str,
