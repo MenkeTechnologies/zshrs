@@ -18524,6 +18524,21 @@ impl ShellExecutor {
                         return 2;
                     }
                 }
+                // 3-arg with no recognized operator anywhere — `[ a
+                // b c ]` -> `1: condition expected: b` exit 2 (zsh
+                // points at args[1] which should have been an op).
+                if args.len() == 3
+                    && !args[0].starts_with('-')
+                    && !args[1].starts_with('-')
+                    && !args[2].starts_with('-')
+                    && args[0] != "("
+                    && args[1] != "("
+                    && args[2] != ")"
+                    && !matches!(args[1], "=" | "!=" | "==")
+                {
+                    eprintln!("zshrs:1: condition expected: {}", args[1]);
+                    return 2;
+                }
                 // `[ \( a ]` — paren without matching close. zsh emits
                 // `[:1: argument expected` exit 2 (lexer realises it
                 // ran out of operands inside the open-paren context).
@@ -24641,6 +24656,12 @@ impl ShellExecutor {
                         // shorthand (`builtin`/`command`/`function`/
                         // `alias`/`reserved`/`none`).
                         'w' => show_word = true,
+                        // zsh's `-S` flag is silently accepted (no
+                        // documented effect in `-c` mode); zshrs's
+                        // unknown-flag fallback erred. zsh's `-k`
+                        // (lookup as keyword/builtin only) is also
+                        // silent-accept.
+                        'S' | 'k' => {}
                         _ => {
                             // zsh: unknown flag → `bad option: -X`
                             // exit 1. zshrs previously dropped silently.
@@ -28596,7 +28617,26 @@ impl ShellExecutor {
         if let Some(var) = store_var {
             self.variables.insert(var, output);
         } else {
-            print!("{}{}", output, terminator);
+            // Route to the requested fd. fd=1 (stdout) and fd=2
+            // (stderr) get the standard io macros; other fds use
+            // libc::write directly. Without this, `print -u 2 hi`
+            // wrote to stdout (fd=1) regardless of the user's
+            // request, breaking `2>/dev/null` redirects.
+            let to_print = format!("{}{}", output, terminator);
+            match fd {
+                1 => print!("{}", to_print),
+                2 => eprint!("{}", to_print),
+                n => {
+                    let bytes = to_print.as_bytes();
+                    unsafe {
+                        libc::write(
+                            n as i32,
+                            bytes.as_ptr() as *const libc::c_void,
+                            bytes.len(),
+                        );
+                    }
+                }
+            }
         }
 
         0

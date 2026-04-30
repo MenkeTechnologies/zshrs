@@ -8094,6 +8094,39 @@ fn test_fc_2_numeric_positionals_recurse() {
 }
 
 #[test]
+fn test_test_3args_no_op_errors() {
+    // zsh: `[ a b c ]` (3 non-flag args, no operator) -> `1:
+    // condition expected: b` exit 2 (points at args[1] which
+    // should have been an op). zshrs silently returned 1.
+    let (status, _, stderr) = run_zshrs("[ a b c ]");
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("condition expected: b"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_print_u_routes_to_fd() {
+    // zsh: `print -u 2 hi` writes to stderr; with `2>/dev/null`
+    // the output is suppressed. zshrs always wrote to stdout
+    // regardless of -u.
+    let (_, output, _) = run_zshrs("print -u 2 hi 2>/dev/null");
+    assert!(!output.contains("hi"), "got: {output}");
+}
+
+#[test]
+fn test_type_S_k_accepted() {
+    // zsh's `-S` and `-k` are silent-accept on `type` (no
+    // observable effect in -c mode). zshrs's unknown-flag fallback
+    // rejected them as bad options.
+    let (status, _, _) = run_zshrs("type -S echo");
+    assert_eq!(status, 0);
+    let (status, _, _) = run_zshrs("type -k echo");
+    assert_eq!(status, 0);
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

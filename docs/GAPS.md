@@ -2217,6 +2217,20 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: edit-mode `fc N M` re-edits commands N..M; with empty -c session, that's the recurse-endlessly path. zshrs's prefix-search used `N` and reported `event not found: N` (wrong category for the range-edit form). Added a `positional.len() == 2 && both_numeric` precheck that emits zsh's recurse diagnostic. Test: `test_fc_2_numeric_positionals_recurse`.
 
+## Closed (eighty-sixth-pass)
+
+### `[ a b c ]` (3 non-flag args, no operator) silently returned 1 instead of erroring "condition expected: b"
+
+- zsh: `[ a b c ]` -> `1: condition expected: b` exit 2 — points at args[1] which should have been an op. zshrs's 3-arg path only checked layouts where args[1] starts with `-`; pure-non-flag layouts fell through to the catch-all `1`. Added a 3-arg arm that fires when none of args[0..3] is `-`-prefixed, with `=`/`!=`/`==` excluded (those go through the regular comparison arms). Test: `test_test_3args_no_op_errors`.
+
+### `print -u 2 hi` always wrote to stdout instead of routing to fd 2
+
+- zsh: `print -u N` writes to fd N. zshrs validated the fd was open (added in iter 84) but the actual write still always went to stdout via `print!()`. Routed via match-on-fd: 1 → `print!`, 2 → `eprint!`, others → `libc::write`. Now `print -u 2 hi 2>/dev/null` correctly suppresses the output. Test: `test_print_u_routes_to_fd`.
+
+### `type -S` and `type -k` errored "bad option" instead of accepting silently
+
+- zsh's `-S` and `-k` are silent-accept on `type` (no observable effect in `-c` mode). zshrs's unknown-flag fallback (added when fixing `-Z` rejection) rejected them. Added an `S | k => {}` arm before the catch-all. Test: `test_type_S_k_accepted`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
