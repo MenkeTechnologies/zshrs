@@ -10189,6 +10189,65 @@ fn test_nested_expansion_outer_flag_applied_to_inner() {
 }
 
 #[test]
+fn test_param_join_split_bracket_pair_delim() {
+    // zsh subst.c get_strarg accepts matched bracket pairs as flag
+    // delimiters: `[`/`]`, `{`/`}`, `(`/`)`, `<`/`>`. Without pair-aware
+    // close, `j[+]` left `]` in the separator and produced `a+]b+]c`.
+    let (_, output, _) = run_zshrs(r#"a=(a b c); echo "${(j[+])a}""#);
+    assert_eq!(output.trim(), "a+b+c");
+    let (_, output, _) = run_zshrs(r#"a=(1 2 3); echo "${(j[, ])a}""#);
+    assert_eq!(output.trim(), "1, 2, 3");
+    let (_, output, _) =
+        run_zshrs(r#"a="x|y|z"; echo "${(s[|])a}""#);
+    assert_eq!(output.trim(), "x y z");
+    let (_, output, _) = run_zshrs(r#"a=(a b c); echo "${(j<X>)a}""#);
+    assert_eq!(output.trim(), "aXbXc");
+}
+
+#[test]
+fn test_param_q_modifier_strips_backslash_escapes() {
+    // `:Q` should remove shell quoting INCLUDING backslash escapes
+    // (zsh hist.c remquote). Previously only stripped matched
+    // `'`/`"` pairs.
+    let (_, output, _) = run_zshrs(r#"a="a\\ b"; echo ${a:Q}"#);
+    assert_eq!(output.trim(), "a b");
+    let (_, output, _) = run_zshrs(r#"a="hello\\ world"; echo ${a:Q}"#);
+    assert_eq!(output.trim(), "hello world");
+}
+
+#[test]
+fn test_arith_assoc_subscript_postinc() {
+    // `((h[k]++))` requires the lvalue to retain identity through the
+    // operator — without intercepting the compound op shape, the
+    // pre-resolve pass substituted h[k] with its value and `5++`
+    // errored "lvalue required".
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h; h[a]=5; ((h[a]++)); echo $h[a]"#);
+    assert_eq!(output.trim(), "6");
+}
+
+#[test]
+fn test_arith_assoc_subscript_compound_assign() {
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h; h[a]=5; ((h[a]+=10)); echo $h[a]"#);
+    assert_eq!(output.trim(), "15");
+}
+
+#[test]
+fn test_arith_array_subscript_pre_inc() {
+    // `((++a[i]))` — pre-increment on subscripted array.
+    let (_, output, _) = run_zshrs(r#"a=(10 20 30); ((++a[2])); echo $a"#);
+    assert_eq!(output.trim(), "10 21 30");
+}
+
+#[test]
+fn test_arith_assoc_subscript_pre_inc() {
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h; h[a]=5; ((++h[a])); echo $h[a]"#);
+    assert_eq!(output.trim(), "6");
+}
+
+#[test]
 fn test_param_pad_zero_with_empty_string1() {
     // ${(l:5::0:)42}: empty string1 + string2="0" → repeat "0" to fill.
     // zsh: 00000 (per subst.c when string1 is empty, string2 acts as

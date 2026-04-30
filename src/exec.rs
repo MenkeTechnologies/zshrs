@@ -3015,12 +3015,21 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // flags (alphabetic) aren't accidentally swallowed —
                     // `(jL)` should be `j` (no delim, default IFS) followed
                     // by `L`, not `j` with delim `L`. Recognized delim chars
-                    // mirror what zsh allows: punctuation only.
+                    // mirror what zsh allows: punctuation only. zsh subst.c
+                    // get_strarg also accepts matched bracket pairs:
+                    // `[`/`]`, `{`/`}`, `(`/`)`, `<`/`>`.
                     let mut sep = String::new();
                     if i < chars.len() && ZshrsHost::is_zsh_flag_delim(chars[i]) {
                         let delim = chars[i];
+                        let close = match delim {
+                            '[' => ']',
+                            '{' => '}',
+                            '(' => ')',
+                            '<' => '>',
+                            c => c,
+                        };
                         i += 1;
-                        while i < chars.len() && chars[i] != delim {
+                        while i < chars.len() && chars[i] != close {
                             sep.push(chars[i]);
                             i += 1;
                         }
@@ -6117,6 +6126,61 @@ fn parse_subscript_arith_compound(expr: &str) -> Option<(String, String, String,
         return None;
     }
     Some((name, idx_expr, op.to_string(), rhs))
+}
+
+/// Pre-increment/decrement on subscript: `++NAME[IDX]` / `--NAME[IDX]`.
+/// Returns (name, idx_expr, op) where op is "++" or "--".
+fn parse_subscript_arith_pre_inc(expr: &str) -> Option<(String, String, String)> {
+    let trimmed = expr.trim();
+    let (after_op, pre_op) = if let Some(s) = trimmed.strip_prefix("++") {
+        (s, "++")
+    } else if let Some(s) = trimmed.strip_prefix("--") {
+        (s, "--")
+    } else {
+        return None;
+    };
+    let after_op = after_op.trim_start();
+    let bytes = after_op.as_bytes();
+    if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
+        return None;
+    }
+    let mut i = 1;
+    while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+        i += 1;
+    }
+    let name = after_op[..i].to_string();
+    if i >= bytes.len() || bytes[i] != b'[' {
+        return None;
+    }
+    let idx_start = i + 1;
+    let mut depth = 1;
+    let mut j = idx_start;
+    while j < bytes.len() && depth > 0 {
+        match bytes[j] {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if j >= bytes.len() {
+        return None;
+    }
+    let idx_expr = after_op[idx_start..j].to_string();
+    // After ], must be end of input (or whitespace).
+    let mut k = j + 1;
+    while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+        k += 1;
+    }
+    if k != bytes.len() {
+        return None;
+    }
+    Some((name, idx_expr, pre_op.to_string()))
 }
 
 fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String, String)> {
@@ -10855,9 +10919,52 @@ impl ShellExecutor {
                     sline = format!("'{}'", sline.replace('\'', "'\\''"));
                 }
                 'Q' => {
-                    // Unquote — strip one level of quotes
+                    // Unquote — remove one level of shell quoting.
+                    // zsh hist.c remquote: strips matching `'`/`"` pairs
+                    // AND backslash escapes (`\X` → `X`). Without the
+                    // backslash unescape, `a="a\\ b"; echo ${a:Q}` left
+                    // the `\ ` sequence intact instead of giving `a b`.
                     i += 1;
-                    sline = sline.replace('\'', "").replace('"', "");
+                    let bytes: Vec<char> = sline.chars().collect();
+                    let mut out = String::with_capacity(sline.len());
+                    let mut j = 0;
+                    let mut in_dq = false;
+                    let mut in_sq = false;
+                    while j < bytes.len() {
+                        let c = bytes[j];
+                        if in_sq {
+                            if c == '\'' {
+                                in_sq = false;
+                            } else {
+                                out.push(c);
+                            }
+                            j += 1;
+                            continue;
+                        }
+                        if in_dq {
+                            if c == '"' {
+                                in_dq = false;
+                            } else if c == '\\' && j + 1 < bytes.len() {
+                                j += 1;
+                                out.push(bytes[j]);
+                            } else {
+                                out.push(c);
+                            }
+                            j += 1;
+                            continue;
+                        }
+                        match c {
+                            '\'' => in_sq = true,
+                            '"' => in_dq = true,
+                            '\\' if j + 1 < bytes.len() => {
+                                j += 1;
+                                out.push(bytes[j]);
+                            }
+                            _ => out.push(c),
+                        }
+                        j += 1;
+                    }
+                    sline = out;
                 }
                 'a' => {
                     // Absolute path
@@ -16977,12 +17084,49 @@ impl ShellExecutor {
                     result = out;
                 }
                 'Q' => {
-                    if result.starts_with('\'') && result.ends_with('\'') && result.len() >= 2 {
-                        result = result[1..result.len() - 1].to_string();
-                    } else if result.starts_with('"') && result.ends_with('"') && result.len() >= 2
-                    {
-                        result = result[1..result.len() - 1].to_string();
+                    // Same shell-quote-remove as the other :Q path
+                    // (hist.c remquote): strips matching `'`/`"` pairs
+                    // AND backslash escapes inside or unquoted.
+                    let bytes: Vec<char> = result.chars().collect();
+                    let mut out = String::with_capacity(result.len());
+                    let mut j = 0;
+                    let mut in_dq = false;
+                    let mut in_sq = false;
+                    while j < bytes.len() {
+                        let c = bytes[j];
+                        if in_sq {
+                            if c == '\'' {
+                                in_sq = false;
+                            } else {
+                                out.push(c);
+                            }
+                            j += 1;
+                            continue;
+                        }
+                        if in_dq {
+                            if c == '"' {
+                                in_dq = false;
+                            } else if c == '\\' && j + 1 < bytes.len() {
+                                j += 1;
+                                out.push(bytes[j]);
+                            } else {
+                                out.push(c);
+                            }
+                            j += 1;
+                            continue;
+                        }
+                        match c {
+                            '\'' => in_sq = true,
+                            '"' => in_dq = true,
+                            '\\' if j + 1 < bytes.len() => {
+                                j += 1;
+                                out.push(bytes[j]);
+                            }
+                            _ => out.push(c),
+                        }
+                        j += 1;
                     }
+                    result = out;
                 }
                 'P' => {
                     if let Ok(real) = std::fs::canonicalize(&result) {
@@ -17039,12 +17183,23 @@ impl ShellExecutor {
                 'U' => flags.push(ZshParamFlag::Upper),
                 'C' => flags.push(ZshParamFlag::Capitalize),
                 'j' => {
-                    // j<delim>sep<delim> — join with separator (delim can be any char)
+                    // j<delim>sep<delim> — join with separator. zsh's
+                    // subst.c get_strarg also accepts matched bracket
+                    // pairs: `[`/`]`, `{`/`}`, `(`/`)`, `<`/`>`. Without
+                    // the pair-aware close, `j[+]` left `]` in the
+                    // separator and produced `a+]b+]c`.
                     if let Some(&delim) = chars.peek() {
                         chars.next(); // consume delimiter char
+                        let close = match delim {
+                            '[' => ']',
+                            '{' => '}',
+                            '(' => ')',
+                            '<' => '>',
+                            c => c,
+                        };
                         let mut sep = String::new();
                         while let Some(&ch) = chars.peek() {
-                            if ch == delim {
+                            if ch == close {
                                 chars.next();
                                 break;
                             }
@@ -17055,12 +17210,21 @@ impl ShellExecutor {
                 }
                 'F' => flags.push(ZshParamFlag::JoinNewline),
                 's' => {
-                    // s:sep: - split on separator
-                    if chars.peek() == Some(&':') {
+                    // s<delim>sep<delim> - split on separator. Same
+                    // bracket-pair-aware parsing as `j` (subst.c
+                    // get_strarg).
+                    if let Some(&delim) = chars.peek() {
                         chars.next();
+                        let close = match delim {
+                            '[' => ']',
+                            '{' => '}',
+                            '(' => ')',
+                            '<' => '>',
+                            c => c,
+                        };
                         let mut sep = String::new();
                         while let Some(&ch) = chars.peek() {
-                            if ch == ':' {
+                            if ch == close {
                                 chars.next();
                                 break;
                             }
@@ -17821,69 +17985,118 @@ impl ShellExecutor {
         // current value, apply the operation, write back. MathEval
         // can't write through `a[i]` for compound forms (only the
         // bare `=` write was special-cased below), so handle here.
-        if let Some((name, idx_expr, op, rhs)) = parse_subscript_arith_compound(&expr) {
-            let idx_val = self.eval_arith_expr(&idx_expr);
+        // Subscript compound op: `((a[i]++))`, `((h[k]+=5))`, etc.
+        // Combined post-op + pre-op detection. Direct port of zsh
+        // math.c LVAL_NUM_SUBSC: the subscript receiver retains its
+        // lvalue identity across the operator. Without this,
+        // pre_resolve_array_subscripts substitutes the value first
+        // and `5++` errors "lvalue required".
+        let compound = parse_subscript_arith_compound(&expr)
+            .map(|(n, i, o, r)| (n, i, o, r, false))
+            .or_else(|| {
+                parse_subscript_arith_pre_inc(&expr)
+                    .map(|(n, i, o)| (n, i, o, String::new(), true))
+            });
+        if let Some((name, idx_expr, op, rhs, is_pre)) = compound {
+            let is_assoc = self.assoc_arrays.contains_key(&name);
+            let idx_val = if is_assoc {
+                0
+            } else {
+                self.eval_arith_expr(&idx_expr)
+            };
+            let key_str = if is_assoc {
+                let s = idx_expr.trim();
+                if (s.starts_with('"') && s.ends_with('"'))
+                    || (s.starts_with('\'') && s.ends_with('\''))
+                {
+                    s[1..s.len() - 1].to_string()
+                } else {
+                    s.to_string()
+                }
+            } else {
+                String::new()
+            };
             let rhs_val = if rhs.is_empty() {
                 1
             } else {
                 self.eval_arith_expr(&rhs)
             };
-            let arr_opt = self.arrays.get(&name).cloned();
-            if let Some(arr) = arr_opt {
-                let i_pos = if idx_val < 0 {
-                    arr.len() as i64 + idx_val
+            let cur: i64 = if is_assoc {
+                self.assoc_arrays
+                    .get(&name)
+                    .and_then(|m| m.get(&key_str))
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0)
+            } else if let Some(arr) = self.arrays.get(&name) {
+                let len = arr.len() as i64;
+                let pos = if idx_val < 0 { len + idx_val } else { idx_val - 1 };
+                if pos >= 0 && (pos as usize) < arr.len() {
+                    arr[pos as usize].parse().unwrap_or(0)
                 } else {
-                    idx_val - 1
-                };
-                if i_pos >= 0 {
-                    let pos = i_pos as usize;
-                    let cur: i64 = arr.get(pos).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let new_val = match op.as_str() {
-                        "++" => cur + 1,
-                        "--" => cur - 1,
-                        "+=" => cur + rhs_val,
-                        "-=" => cur - rhs_val,
-                        "*=" => cur * rhs_val,
-                        "/=" => {
-                            if rhs_val == 0 {
-                                eprintln!("zshrs:1: division by zero");
-                                return cur.to_string();
-                            }
-                            cur / rhs_val
-                        }
-                        "%=" => {
-                            if rhs_val == 0 {
-                                eprintln!("zshrs:1: division by zero");
-                                return cur.to_string();
-                            }
-                            cur % rhs_val
-                        }
-                        "&=" => cur & rhs_val,
-                        "|=" => cur | rhs_val,
-                        "^=" => cur ^ rhs_val,
-                        "<<=" => cur << rhs_val,
-                        ">>=" => cur >> rhs_val,
-                        "**=" => (cur as f64).powi(rhs_val as i32) as i64,
-                        _ => cur,
-                    };
-                    if let Some(arr_mut) = self.arrays.get_mut(&name) {
-                        if pos >= arr_mut.len() {
-                            arr_mut.resize(pos + 1, "0".to_string());
-                        }
-                        arr_mut[pos] = new_val.to_string();
-                    }
-                    // Post-increment/decrement returns OLD value;
-                    // others return new. Pre-increment isn't covered
-                    // by this parser — those route through the write-
-                    // back done above.
-                    let result = if op == "++" || op == "--" {
-                        cur
-                    } else {
-                        new_val
-                    };
-                    return result.to_string();
+                    0
                 }
+            } else {
+                0
+            };
+            let new_val: i64 = match op.as_str() {
+                "++" => cur + 1,
+                "--" => cur - 1,
+                "+=" => cur + rhs_val,
+                "-=" => cur - rhs_val,
+                "*=" => cur * rhs_val,
+                "/=" => {
+                    if rhs_val == 0 {
+                        eprintln!("zshrs:1: division by zero");
+                        return cur.to_string();
+                    }
+                    cur / rhs_val
+                }
+                "%=" => {
+                    if rhs_val == 0 {
+                        eprintln!("zshrs:1: division by zero");
+                        return cur.to_string();
+                    }
+                    cur % rhs_val
+                }
+                "&=" => cur & rhs_val,
+                "|=" => cur | rhs_val,
+                "^=" => cur ^ rhs_val,
+                "<<=" => cur << rhs_val,
+                ">>=" => cur >> rhs_val,
+                "**=" => (cur as f64).powi(rhs_val as i32) as i64,
+                _ => cur,
+            };
+            // Write back.
+            if is_assoc {
+                if let Some(map) = self.assoc_arrays.get_mut(&name) {
+                    map.insert(key_str, new_val.to_string());
+                }
+            } else if let Some(arr) = self.arrays.get_mut(&name) {
+                let len = arr.len() as i64;
+                let pos = if idx_val < 0 { len + idx_val } else { idx_val - 1 };
+                if pos >= 0 {
+                    let p = pos as usize;
+                    if p >= arr.len() {
+                        arr.resize(p + 1, "0".to_string());
+                    }
+                    arr[p] = new_val.to_string();
+                }
+            } else {
+                // Auto-create indexed array.
+                let mut arr: Vec<String> = Vec::new();
+                let pos = (idx_val - 1).max(0) as usize;
+                arr.resize(pos + 1, "0".to_string());
+                arr[pos] = new_val.to_string();
+                self.arrays.insert(name, arr);
             }
+            // Post `++`/`--` returns OLD value; pre-op + compound
+            // assigns return NEW value.
+            let result = if !is_pre && (op == "++" || op == "--") {
+                cur
+            } else {
+                new_val
+            };
+            return result.to_string();
         }
         // Subscripted-array arith assignment: `((a[i]=expr))`. Without
         // this special case, pre_resolve_array_subscripts would

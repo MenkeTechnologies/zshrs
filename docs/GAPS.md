@@ -1572,6 +1572,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${(j[+])a}` / `${(s[|])s}` — bracket-pair flag delimiters leaked close char
+
+- zsh subst.c `get_strarg` accepts matched bracket pairs as flag delimiters: `[`/`]`, `{`/`}`, `(`/`)`, `<`/`>`. Both flag parsers (`parse_zsh_flags` and the `BUILTIN_PARAM_FLAG` inline parser) used the OPEN char as both opener and closer, so `${(j[+])a}` consumed `[` as opener, then read the rest expecting another `[` (never found) and produced `a+]b+]c`. Added pair-aware close translation. Test: `test_param_join_split_bracket_pair_delim`.
+
+### `:Q` history modifier didn't strip backslash escapes
+
+- zsh hist.c `remquote` removes single/double quote pairs AND backslash escapes (`\X` → `X`). Both `:Q` paths only stripped paired quotes; `a="a\\ b"; echo ${a:Q}` left `\ ` intact instead of giving `a b`. Replaced the simple `replace('\'',"")` with a stateful walk that tracks SQ/DQ and consumes `\X` outside SQ. Test: `test_param_q_modifier_strips_backslash_escapes`.
+
+### `((h[a]++))` / `((h[a]+=v))` on assoc-array elements errored "lvalue required"
+
+- zsh math.c LVAL_NUM_SUBSC keeps the subscript receiver's lvalue identity through compound operators. Our `pre_resolve_array_subscripts` substituted `h[a]` with its current value first, so `5++` reached MathEval and errored. The existing compound handler in `evaluate_arithmetic` only matched indexed arrays. Extended to detect the assoc case (`is_assoc = self.assoc_arrays.contains_key(&name)`) and walk the value through map.get/insert. Tests: `test_arith_assoc_subscript_postinc`, `test_arith_assoc_subscript_compound_assign`.
+
+### `((++a[i]))` / `((++h[k]))` — pre-increment on subscript silently no-op'd
+
+- The compile-side `subscripted_arith_compound_check` only matched POST-op shapes (`name[idx]++`/`+=`/etc.); pre-op (`++name[idx]`) fell through to ArithCompiler which couldn't write back. Added a new `parse_subscript_arith_pre_inc` parser and merged into the runtime compound handler with `is_pre` flag. Compile-side check also accepts the `++NAME[IDX]` shape. Pre-op returns NEW value (matches zsh); post-op returns OLD. Tests: `test_arith_array_subscript_pre_inc`, `test_arith_assoc_subscript_pre_inc`.
+
 ### Glob `~` exclusion at PATH level matched RHS as a fresh CWD glob
 
 - `setopt extendedglob; echo $D/*.txt~*README*` should drop README.txt from the match set, but ours included it. The path-level handler recursively `expand_glob`'d the RHS in CWD instead of matching it as a PATTERN against each LHS candidate. Fixed by switching from a `HashSet`-based path equality check to per-candidate `glob_match_static` against basename and full path — direct port of zsh's pattern.c P_EXCLUDE which uses `pattry` per-candidate. Test: `test_glob_tilde_exclude_at_path_level`.
