@@ -18719,6 +18719,24 @@ impl ShellExecutor {
                 let name = &arg[..eq_pos];
                 let rest = &arg[eq_pos + 1..];
 
+                // Read-only check before any mutation: zsh's typeset
+                // refuses to overwrite a read-only variable and emits
+                // `read-only variable: NAME`. zshrs's typeset path
+                // skipped the check and silently overwrote. Per zsh's
+                // -c mode, read-only assignment failure aborts the
+                // surrounding shell with status 1 (matches the
+                // BUILTIN_SET_VAR path's behavior).
+                if self.readonly_vars.contains(name)
+                    || self
+                        .var_attrs
+                        .get(name)
+                        .map(|a| a.readonly)
+                        .unwrap_or(false)
+                {
+                    eprintln!("zshrs:1: read-only variable: {}", name);
+                    std::process::exit(1);
+                }
+
                 if rest.starts_with('(') {
                     // Array assignment - collect all elements until we find ')'
                     let mut elements = Vec::new();
@@ -20083,7 +20101,13 @@ impl ShellExecutor {
                         {
                             println!("{}", num);
                         } else {
-                            eprintln!("kill: unknown signal: {}", arg);
+                            // zsh's diagnostic always uses the SIG prefix
+                            // even when the user's input lacked it:
+                            // `kill -l XYZ` → `unknown signal: SIGXYZ`.
+                            eprintln!(
+                                "zshrs:kill:1: unknown signal: SIG{}",
+                                sig_name
+                            );
                         }
                     }
                 }

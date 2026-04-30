@@ -6360,6 +6360,29 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_kill_l_unknown_signal_format() {
+    // zsh: `kill -l XYZ` errors `zsh:kill:1: unknown signal: SIGXYZ`
+    // (note the SIG prefix on the signal name AND the typed prefix).
+    // zshrs printed `kill: unknown signal: XYZ` (missing both).
+    let (status, _, stderr) = run_zshrs("kill -l XYZ");
+    assert_eq!(status, 0);
+    assert!(stderr.contains("unknown signal: SIGXYZ"), "got: {stderr}");
+    assert!(stderr.contains("zshrs:kill:1:"), "got: {stderr}");
+}
+
+#[test]
+fn test_typeset_readonly_aborts() {
+    // zsh: `readonly y=1; typeset y=2` errors `read-only variable: y`
+    // and aborts the shell in -c mode (status 1, no output after).
+    // zshrs's typeset path didn't check `readonly_vars` and silently
+    // overwrote the value.
+    let (status, output, stderr) = run_zshrs(r#"readonly y=1; typeset y=2; echo after"#);
+    assert_eq!(status, 1);
+    assert!(stderr.contains("read-only variable: y"), "got: {stderr}");
+    assert!(!output.contains("after"), "got: {output:?}");
+}
+
+#[test]
 fn test_print_z_does_not_emit_to_stdout() {
     // zsh's `print -z` pushes to the line editor's buffer stack —
     // in non-interactive mode there's no editor, so the args are
