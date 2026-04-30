@@ -2219,6 +2219,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-sixth-pass)
 
+### `declare -a arr=( "abc" "def" )` kept quotes attached to elements (`"abc"` instead of `abc`)
+
+- zsh's plain `arr=( "abc" "def" )` strips surrounding quotes at the shell-syntax level — quotes are word boundaries, not part of the value. The typeset/declare array-assignment path (separate code in zshrs's typeset_named) split the raw `arr=("abc" "def")` arg by whitespace and kept the quotes attached, so consumers saw `"abc"` as the literal first element. Same bug surfaced for `declare -a arr=( "[1]=second" "[3]=fourth" )` where the quotes were retained around the `[N]=...` form. Fix: in the typeset array-element collection loop, strip a matched pair of leading/trailing single or double quotes from each whitespace-split element. The quote-stripping is conservative — only strips when first AND last chars match (so internal quotes / mismatched pairs pass through unchanged). Test: `test_declare_array_strips_quoted_elements`.
+
 ### `$#a[N]` (unbraced length-of-element) printed `<count>[N]` instead of zsh's element length
 
 - zsh treats `$#NAME[idx]` as sugar for `${#NAME[idx]}` — length of the selected array element (1-indexed). zshrs's compile-time fast path for unbraced `$#` handled `$#NAME` and `$#NAME[@]`/`$#NAME[*]` (array length) but punted on numeric subscripts: `a=(one two three); echo $#a[2]` printed `3[2]` (count followed by literal `[2]`). Fix: extend the fast path in `compile_zsh::compile_word` to detect `[idx]` after the bare name, push the equivalent `${#NAME[idx]}` braced form, and dispatch to `BUILTIN_EXPAND_TEXT` mode 4 (HeredocBody — calls `exec.expand_string` verbatim) so the full subscript-flag machinery is reused without re-implementing it inline. Test: `test_dollar_hash_array_subscript`.
