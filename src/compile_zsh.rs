@@ -1556,6 +1556,31 @@ impl ZshCompiler {
                 if parent_is_dq {
                     self.dq_context_depth += 1;
                 }
+                // Detect glob metachars in the LITERAL segments (var
+                // refs in Expansion segments are ignored — `?` after
+                // `$` is part of `$?`, not a glob). When found, after
+                // the concat, emit BUILTIN_GLOB_PATH which runs
+                // expand_glob on the assembled scalar. zsh's word-
+                // expansion pipeline always pathname-expands the
+                // post-substitution string; without this we kept
+                // `$D/*` literal because the segment fast path
+                // skipped pathname expansion entirely.
+                let mut needs_glob = false;
+                for seg in &segs {
+                    if let WordSegment::Literal(lit) = seg {
+                        let cleaned = crate::lexer::untokenize(lit);
+                        if cleaned.contains('*')
+                            || cleaned.contains('?')
+                            || cleaned.contains('[')
+                            || (cleaned.contains('(')
+                                && cleaned.contains('|')
+                                && cleaned.contains(')'))
+                        {
+                            needs_glob = true;
+                            break;
+                        }
+                    }
+                }
                 for (i, seg) in segs.iter().enumerate() {
                     match seg {
                         WordSegment::Literal(lit) => {
@@ -1578,6 +1603,13 @@ impl ZshCompiler {
                 }
                 if parent_is_dq {
                     self.dq_context_depth -= 1;
+                }
+                if needs_glob && !parent_is_dq {
+                    // Glob-expand the assembled scalar at runtime. The
+                    // builtin pops a Value::Str, runs expand_glob, and
+                    // pushes Value::Array (or single-elem when no match).
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_GLOB_EXPAND, 0), 0);
                 }
                 return;
             }

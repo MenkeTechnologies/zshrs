@@ -10248,6 +10248,37 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_glob_with_var_prefix_expands_paths() {
+    // `$D/*` should glob-expand after $D substitution. Was leaking
+    // `*` literal because the segment-concat fast path skipped
+    // pathname expansion entirely.
+    let dir = std::env::temp_dir().join("zshrs_glob_var");
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::File::create(dir.join("a")).unwrap();
+    std::fs::File::create(dir.join("b")).unwrap();
+    let cmd = format!(r#"D={}; echo $D/*"#, dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(output.contains("/a"));
+    assert!(output.contains("/b"));
+    assert!(!output.contains("/*"));
+}
+
+#[test]
+fn test_glob_with_var_prefix_alternation() {
+    let dir = std::env::temp_dir().join("zshrs_glob_var_alt");
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::File::create(dir.join("a")).unwrap();
+    std::fs::File::create(dir.join("b")).unwrap();
+    let cmd = format!(r#"D={}; echo $D/(a|b)"#, dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(output.contains("/a"));
+    assert!(output.contains("/b"));
+    assert!(!output.contains("(a|b)"));
+}
+
+#[test]
 fn test_param_pad_zero_with_empty_string1() {
     // ${(l:5::0:)42}: empty string1 + string2="0" → repeat "0" to fill.
     // zsh: 00000 (per subst.c when string1 is empty, string2 acts as

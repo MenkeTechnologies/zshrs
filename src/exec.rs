@@ -4078,6 +4078,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
     //   on/On — sort by name asc/desc (default)
     //   oL/OL — sort by length
     //   om/Om — sort by mtime
+    // Pop a scalar pattern, run expand_glob, push Value::Array. Used
+    // by the segment-concat compile path for `$D/*`-style words.
+    vm.register_builtin(BUILTIN_GLOB_EXPAND, |vm, _argc| {
+        let pattern = vm.pop().to_str();
+        let matches = with_executor(|exec| exec.expand_glob(&pattern));
+        if matches.is_empty() {
+            // expand_glob handles NOMATCH internally; if it returns
+            // empty here, nullglob was on. Yield empty array.
+            return fusevm::Value::Array(Vec::new());
+        }
+        if matches.len() == 1 && matches[0] == pattern {
+            // No real matches; expand_glob returned the literal. Pass
+            // back as scalar so downstream ops don't re-flatten.
+            return fusevm::Value::str(pattern);
+        }
+        fusevm::Value::Array(matches.into_iter().map(fusevm::Value::str).collect())
+    });
+
     vm.register_builtin(BUILTIN_GLOB_QUALIFIED, |vm, _argc| {
         let qual = vm.pop().to_str();
         let pattern = vm.pop().to_str();
@@ -6652,6 +6670,13 @@ pub const BUILTIN_IS_TTY: u16 = 325;
 /// has several other duplicate IDs — 325 has two as well — but
 /// fixing those is out of scope for this port).
 pub const BUILTIN_SET_LINENO: u16 = 342;
+
+/// Pop a scalar from the VM stack, run expand_glob on it, push the
+/// result as Value::Array. Used by the segment-concat compile path
+/// when var refs concatenate with glob meta literals (`$D/*`,
+/// `${prefix}*`, etc.) — those skip the bridge's pathname-expansion
+/// pass and would otherwise leak the glob meta to argv as a literal.
+pub const BUILTIN_GLOB_EXPAND: u16 = 343;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)
