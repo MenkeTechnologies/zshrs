@@ -6400,6 +6400,37 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_ulimit_unknown_flag_errors() {
+    // zsh: `ulimit -X` (unknown letter) errors `bad option: -X`
+    // exit 1. zshrs's silent default arm let it fall through and
+    // proceed with the default resource (FSIZE), printing
+    // `unlimited` and masking the typo.
+    let (status, _, stderr) = run_zshrs("ulimit -X");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -X"), "got: {stderr}");
+}
+
+#[test]
+fn test_fc_ld_lD_show_time_duration() {
+    // zsh: `fc -ld` shows HH:MM time column; `-lD` shows M:SS
+    // duration column. zshrs's session-only listing path skipped
+    // both columns, emitting just `N  command`. Now both flags
+    // route through the show_time / show_duration formatters.
+    let (_, output, _) = run_zshrs(r#"print -s a; fc -ld"#);
+    let line = output.lines().next().unwrap();
+    // Expect 3 columns: number, HH:MM, command. HH:MM matches
+    // \d\d:\d\d at the right position.
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(parts.len(), 3, "got: {line:?}");
+    assert!(parts[1].contains(':'), "got: {line:?}");
+    let (_, output, _) = run_zshrs(r#"print -s a; fc -lD"#);
+    let line = output.lines().next().unwrap();
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(parts.len(), 3, "got: {line:?}");
+    assert!(parts[1].contains(':'), "got: {line:?}");
+}
+
+#[test]
 fn test_fc_R_silent_on_missing_file() {
     // zsh: `fc -R /no/such` returns 0 with no output (read errors
     // silently ignored). zshrs printed `fc: cannot read /no/such`
