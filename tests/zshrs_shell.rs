@@ -10248,6 +10248,23 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_sort_flags_with_at_subscript_in_dq() {
+    // `"${(o)a[@]}"` — DQ context normally strips array-only flags
+    // (o/O/n/i/u), but explicit `[@]` keeps them active. Compile path
+    // now encodes the at-subscript context through `\u{03}` sentinel
+    // since `parse_zsh_flag` strips the suffix from `name`.
+    let (_, output, _) =
+        run_zshrs(r#"a=(c a b); echo "${(o)a[@]}""#);
+    assert_eq!(output.trim(), "a b c");
+    let (_, output, _) =
+        run_zshrs(r#"a=(c a b); echo "${(O)a[@]}""#);
+    assert_eq!(output.trim(), "c b a");
+    let (_, output, _) =
+        run_zshrs(r#"a=(10 2 1 22); echo "${(n)a[@]}""#);
+    assert_eq!(output.trim(), "1 2 10 22");
+}
+
+#[test]
 fn test_arith_ternary_assignment() {
     // `((a = 5 > 3 ? 99 : 0))` — ArithCompiler doesn't implement `?:`
     // so the assignment silently dropped. Routing to MathEval (which

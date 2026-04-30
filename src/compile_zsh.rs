@@ -1389,13 +1389,25 @@ impl ZshCompiler {
                 // DQ-wrapped parent (tracked via dq_context_depth).
                 let dq_wrapped = (s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2)
                     || self.dq_context_depth > 0;
-                let flags_for_runtime = if dq_wrapped {
-                    let mut f = String::from("\u{02}");
-                    f.push_str(flags);
-                    f
-                } else {
-                    flags.to_string()
-                };
+                // Detect `[@]`/`[*]` on the ORIGINAL untoked text since
+                // parse_zsh_flag stripped the suffix from `name`. This
+                // flag is encoded into the runtime flags string with
+                // sentinel `\u{03}` so the runtime handler knows the
+                // user wrote `[@]` (which keeps array-only flags
+                // active in DQ context per zsh subst.c).
+                let inner = untoked
+                    .strip_prefix("${")
+                    .and_then(|s| s.strip_suffix('}'))
+                    .unwrap_or(&untoked);
+                let had_at_or_star = inner.ends_with("[@]") || inner.ends_with("[*]");
+                let mut flags_for_runtime = String::new();
+                if dq_wrapped {
+                    flags_for_runtime.push('\u{02}');
+                }
+                if had_at_or_star {
+                    flags_for_runtime.push('\u{03}');
+                }
+                flags_for_runtime.push_str(flags);
                 let name_const = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let flags_const = self.builder.add_constant(Value::str(flags_for_runtime));
@@ -3787,11 +3799,10 @@ fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {
     let close = close?;
     let flags = &inner[1..close];
     let mut name = &inner[close + 1..];
-    // Strip `[@]` / `[*]` suffix — `${(kv)m[@]}` should apply the flag
-    // to the whole array, same shape as `${(kv)m}` (which already
-    // returns Value::Array for the (kv) interleave). Without this strip
-    // the matcher rejected the name and the bridge path returned wrong
-    // results (just values, ignoring the (k) flag).
+    // Strip `[@]` / `[*]` suffix — they reach the runtime handler via
+    // the bare-name lookup of arrays/assocs. The handler decides
+    // whether to splice/join based on context. zsh subst.c routes the
+    // name lookup the same way for `${(F)m}` and `${(F)m[@]}`.
     if let Some(stripped) = name
         .strip_suffix("[@]")
         .or_else(|| name.strip_suffix("[*]"))
