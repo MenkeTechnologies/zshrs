@@ -1859,6 +1859,18 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: numeric signals must be in (0, 63] (signal 0 is `EXIT`, max is `SIGRTMAX`). `trap "" 99` -> `trap:1: undefined signal: 99` exit 1. zshrs's known-sig validator accepted ANY parseable u32, registering a never-firable trap silently. Bounded the numeric arm to `n > 0 && n <= 63`. Test: `test_trap_numeric_signal_out_of_range_errors`.
 
+### `exec --bad` (long-option-style typo) silently no-op'd
+
+- zsh: `exec --bad` -> `exec requires a command to execute` exit 1. zshrs's flag walker hit `_ => {}` for unknown letters, so `--bad` was silently consumed without setting any flag, the cmd_args stayed empty, and the existing flag-only check (gated on `clear_env || login_shell || argv0.is_some()`) didn't fire because none of those got set. Tightened the check by scanning the input args for any `-`-prefixed token; if seen with empty cmd_args, the missing-command error fires. Test: `test_exec_long_option_typo_errors`.
+
+### `print -S foo bar` silently concatenated into history
+
+- zsh: `print -S` is the split-shell-words history form and takes EXACTLY one positional. `print -S foo bar` -> `print:1: option -S takes a single argument` exit 1. zshrs treated `-S` as `add_to_history = true` (same as `-s`) and concatenated all args into the history entry silently. Added a separate `split_word_history: bool` track for `-S`; if multiple positionals follow, emit zsh's diagnostic and exit 1 before adding. Test: `test_print_S_takes_single_arg`.
+
+### `autoload -Z foo` and `autoload -l` silently accepted unknown flags
+
+- zsh: `autoload -Z` -> `autoload:1: bad option: -Z`; `autoload -l` -> `autoload:1: bad option: -l` exit 1. zshrs's silent `_ => {}` fallback in the flag char-loop accepted any letter, masking typos AND the bash-style `-l` flag that zsh doesn't have. Replaced the fallback with explicit `bad option:` error. Test: `test_autoload_unknown_flag_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
