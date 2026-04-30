@@ -3935,13 +3935,25 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // If the variable was previously declared `integer` (or
             // `typeset -i`), arith-evaluate the value before storing.
             // zsh: `integer i; i=5*3` stores 15.
-            let is_integer = exec
-                .var_attrs
-                .get(&name)
+            let attrs = exec.var_attrs.get(&name).cloned();
+            let is_integer = attrs
+                .as_ref()
                 .map(|a| matches!(a.kind, VarKind::Integer))
                 .unwrap_or(false);
+            let int_base = attrs.as_ref().and_then(|a| a.int_base);
             let stored = if is_integer && !value.is_empty() {
-                exec.eval_arith_expr(&value).to_string()
+                let evaluated = exec.eval_arith_expr(&value).to_string();
+                // Apply `typeset -i N` base-formatting at storage time.
+                // Without this, `typeset -i 16 x; x=255` stored `255`
+                // instead of zsh's `16#FF` form.
+                if let Some(base) = int_base {
+                    evaluated
+                        .parse::<i64>()
+                        .map(|n| format_int_in_base(n, base))
+                        .unwrap_or(evaluated)
+                } else {
+                    evaluated
+                }
             } else {
                 value.clone()
             };
@@ -3987,6 +3999,33 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // Bool. Matches bash's -v semantics; zsh's `(t)` flag overlaps.
     vm.register_builtin(BUILTIN_VAR_EXISTS, |vm, _argc| {
         let name = vm.pop().to_str();
+        // `[[ -v a[N] ]]` checks element existence, not just the array.
+        // Split on `[`, look up the array, and verify the resolved
+        // index falls within the populated range. `[[ -v h[key] ]]`
+        // checks an associative array key.
+        if let Some(open) = name.find('[') {
+            if name.ends_with(']') {
+                let arr_name = &name[..open];
+                let key = &name[open + 1..name.len() - 1];
+                let exists = with_executor(|exec| {
+                    if let Some(arr) = exec.arrays.get(arr_name) {
+                        // 1-based index, supports negatives.
+                        let parsed = key.parse::<i64>().ok();
+                        if let Some(i) = parsed {
+                            let len = arr.len() as i64;
+                            let resolved = if i < 0 { len + i + 1 } else { i };
+                            return resolved >= 1 && resolved <= len;
+                        }
+                        return false;
+                    }
+                    if let Some(h) = exec.assoc_arrays.get(arr_name) {
+                        return h.contains_key(key);
+                    }
+                    false
+                });
+                return fusevm::Value::Bool(exists);
+            }
+        }
         let exists = with_executor(|exec| {
             exec.variables.contains_key(&name)
                 || exec.arrays.contains_key(&name)

@@ -2161,7 +2161,20 @@ impl ZshCompiler {
                 // ZshLexer encodes operator chars in the META range
                 // (0x83-0x9f). Un-tokenize before matching.
                 let op_clean = crate::lexer::untokenize(op);
-                self.compile_word_str(arg);
+                // `-v` takes a parameter NAME (with optional subscript)
+                // — never glob-expand the operand. Without this,
+                // `[[ -v a[1] ]]` errored "no matches found: a[1]"
+                // because `a[1]` was treated as a `[1]` char-class
+                // glob. Emit the literal text so the runtime's
+                // BUILTIN_VAR_EXISTS handler sees `a[1]` intact and
+                // can split on `[` to look up `arr[1]` element.
+                if op_clean == "-v" {
+                    let arg_clean = crate::lexer::untokenize(arg);
+                    let idx = self.builder.add_constant(Value::str(arg_clean.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                } else {
+                    self.compile_word_str(arg);
+                }
                 self.emit_file_test(&op_clean);
             }
             ZshCond::Binary(left, op, right) => {
@@ -2175,7 +2188,20 @@ impl ZshCompiler {
                     && left_clean.len() == 2
                     && right.is_empty()
                 {
-                    self.compile_word_str(op);
+                    // `-v` parameter-existence test must NOT glob-
+                    // expand the operand: `[[ -v a[1] ]]` is "is array
+                    // element a[1] set", not a `[1]` char-class glob.
+                    // Treat the operand as a literal name string and
+                    // let the runtime parse the subscript.
+                    if left_clean == "-v" {
+                        let op_clean_arg = crate::lexer::untokenize(op);
+                        let idx = self
+                            .builder
+                            .add_constant(Value::str(op_clean_arg.as_str()));
+                        self.builder.emit(Op::LoadConst(idx), 0);
+                    } else {
+                        self.compile_word_str(op);
+                    }
                     self.emit_file_test(&left_clean);
                     return;
                 }

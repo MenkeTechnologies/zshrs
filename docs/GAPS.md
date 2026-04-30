@@ -1773,6 +1773,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `read -p` reads input from the coprocess; the prompt feature is `read 'NAME?prompt'`. zshrs misread `-p` as a prompt flag, ate the next arg as the prompt text, and printed it. Now emits `zshrs:read:1: -p: no coprocess` and exits 1, matching zsh in -c mode. Capital `-P` is left as a prompt-flag alias for back-compat with anything that relied on the old (wrong) shape. Test: `test_read_p_flag_means_coprocess_not_prompt`.
 
+### `typeset -i N x; x=255` did not format in base N
+
+- `typeset -i N x` declares an integer that should display in base N (`N#DIGITS`). zshrs only applied the base format when the typeset call also assigned in the same statement (`typeset -i 16 x=255` → `16#FF` worked); a later bare `x=255` skipped the format because `BUILTIN_SET_VAR` only consulted `VarKind::Integer`, not `var_attrs.int_base`. Pulled the full attrs out, applied `format_int_in_base` on store. Test: `test_typeset_i_base_format_at_assignment`.
+
+### `[[ -v a[1] ]]` errored "no matches found: a[1]"
+
+- The condition `-v` (parameter-set test) takes a parameter NAME with optional subscript. zshrs's cond compiler called `compile_word_str(arg)` which triggered glob expansion — `a[1]` was treated as a `[1]` char-class glob and aborted with NOMATCH. Three-part fix: (1) `ZshCond::Unary` arm for `-v` emits the operand as a `LoadConst` literal, skipping glob; (2) `ZshCond::Binary` arm (which the parser uses when `-v` is followed by one operand and an empty third operand) gets the same `-v` literal-emission branch; (3) `BUILTIN_VAR_EXISTS` runtime now splits `name[key]` and looks up either the indexed array element (with negative-index resolution and bounds check) or the assoc-array key, returning `Bool`. Test: `test_cond_v_with_array_subscript`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

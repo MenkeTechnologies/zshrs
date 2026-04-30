@@ -6516,6 +6516,37 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_typeset_i_base_format_at_assignment() {
+    // `typeset -i N x; x=255` should store `N#DIGITS` form (zsh's
+    // base notation). Previously zshrs only formatted at the
+    // `typeset` call itself, not later assignments.
+    let (_, output, _) = run_zshrs("typeset -i 16 x; x=255; echo $x");
+    assert_eq!(output.trim(), "16#FF");
+    let (_, output, _) = run_zshrs("typeset -i 8 y; y=8; echo $y");
+    assert_eq!(output.trim(), "8#10");
+    let (_, output, _) = run_zshrs("typeset -i 2 z; z=10; echo $z");
+    assert_eq!(output.trim(), "2#1010");
+}
+
+#[test]
+fn test_cond_v_with_array_subscript() {
+    // `[[ -v a[N] ]]` checks whether array element N is populated.
+    // zshrs previously glob-expanded `a[1]` (treating `[1]` as a
+    // char-class), failing with "no matches found". Now the cond
+    // compiler emits the operand as a literal so the runtime
+    // BUILTIN_VAR_EXISTS sees `a[1]` intact and splits it into
+    // (array, key).
+    let (_, output, _) = run_zshrs("a=(1 2); [[ -v a[1] ]] && echo elem-1");
+    assert_eq!(output.trim(), "elem-1");
+    let (_, output, _) = run_zshrs("a=(1 2); [[ -v a[5] ]] && echo set || echo unset");
+    assert_eq!(output.trim(), "unset");
+    let (_, output, _) = run_zshrs("typeset -A h=(k v); [[ -v h[k] ]] && echo hash-key");
+    assert_eq!(output.trim(), "hash-key");
+    let (_, output, _) = run_zshrs("typeset -A h=(k v); [[ -v h[m] ]] && echo set || echo unset");
+    assert_eq!(output.trim(), "unset");
+}
+
+#[test]
 fn test_test_builtin_paren_grouping() {
     // POSIX `[ ... ]` supports `\(` `\)` to group sub-expressions
     // around `-a`/`-o` connectives. zshrs's default-arm split on the
