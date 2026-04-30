@@ -6988,7 +6988,14 @@ impl fusevm::ShellHost for ZshrsHost {
                 env_vars: std::env::vars().collect(),
                 cwd: std::env::current_dir().ok(),
                 umask: cur_umask,
+                traps: exec.traps.clone(),
             });
+            // Subshell starts with EXIT trap cleared so the parent's
+            // EXIT handler doesn't fire when the subshell ends. zsh:
+            // each subshell has its own trap context. Other signals
+            // are inherited (well, parent's are still in place — but
+            // a trap set INSIDE the subshell shouldn't leak out).
+            exec.traps.remove("EXIT");
             let level = exec
                 .variables
                 .get("ZSH_SUBSHELL")
@@ -7000,6 +7007,20 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn subshell_end(&mut self) {
+        // Fire subshell's EXIT trap BEFORE restoring parent state so
+        // the trap body sees the subshell's vars and exit status. zsh
+        // forks for `(...)` so the trap runs in the child process,
+        // before exit. We mirror by running it here, just before the
+        // pop+restore. REMOVE the trap before firing so the inner
+        // execute_script doesn't fire it again at its own end.
+        let exit_trap_body = with_executor(|exec| exec.traps.remove("EXIT"));
+        if let Some(body) = exit_trap_body {
+            // Execute the trap body. Errors during trap execution
+            // don't bubble — zsh ignores trap-body errors.
+            with_executor(|exec| {
+                let _ = exec.execute_script(&body);
+            });
+        }
         with_executor(|exec| {
             if let Some(snap) = exec.subshell_snapshots.pop() {
                 exec.variables = snap.variables;
@@ -7033,6 +7054,10 @@ impl fusevm::ShellHost for ZshrsHost {
                 unsafe {
                     libc::umask(snap.umask as libc::mode_t);
                 }
+                // Restore parent's traps (the subshell's own traps die
+                // with it). zsh: `(trap "X" USR1)` doesn't leak the
+                // USR1 trap out of the subshell.
+                exec.traps = snap.traps;
             }
         });
     }
@@ -8250,6 +8275,13 @@ pub struct SubshellSnapshot {
     /// process so we must restore the mask on End. Otherwise
     /// `umask 022; (umask 077); umask` shows 077 in the parent.
     pub umask: u32,
+    /// Parent's traps at subshell entry. zsh's `(trap "echo X" EXIT;
+    /// true)` runs the trap when the subshell exits — BEFORE the parent
+    /// continues. Without this snapshot, the trap inherited from parent
+    /// would fire, OR a trap set inside the subshell would leak to the
+    /// parent's process exit. Restored on subshell_end after the
+    /// subshell's own EXIT trap (if any) has fired.
+    pub traps: HashMap<String, String>,
 }
 
 /// Variable attribute record for `(t)` flag introspection. Mirrors
@@ -11953,11 +11985,23 @@ impl ShellExecutor {
         // clobber the result.
         let user_sort = qualifiers.contains('o') || qualifiers.contains('O');
         if !user_sort {
-            expanded.sort_by(|a, b| {
-                let an = a.rsplit('/').next().unwrap_or(a);
-                let bn = b.rsplit('/').next().unwrap_or(b);
-                crate::glob::locale_aware_name_cmp(an, bn)
-            });
+            // For `**/...` recursive globs, sort by the FULL path so
+            // depth-first / breadth-first walk order is preserved
+            // (zsh's natural recursive order: `dir/f sub sub/g`, not
+            // basename-sorted `f g sub`). For plain (non-recursive)
+            // globs, sort by BASENAME to match zsh's locale-aware
+            // case-folded output.
+            if glob_pattern.contains("**/") {
+                expanded.sort_by(|a, b| {
+                    crate::glob::locale_aware_name_cmp(a, b)
+                });
+            } else {
+                expanded.sort_by(|a, b| {
+                    let an = a.rsplit('/').next().unwrap_or(a);
+                    let bn = b.rsplit('/').next().unwrap_or(b);
+                    crate::glob::locale_aware_name_cmp(an, bn)
+                });
+            }
         }
 
         if expanded.is_empty() {
@@ -12419,6 +12463,12 @@ impl ShellExecutor {
                 .map(|s| s.strip_prefix("./").map(|t| t.to_string()).unwrap_or(s))
                 .collect();
         }
+
+        // zsh sorts the recursive-glob result lexicographically. Without
+        // this, the parallel-walker order leaks through and `**/*`
+        // returns paths in worker-completion order (`f sub/g sub`
+        // instead of `f sub sub/g`).
+        results.sort();
 
         results
     }
