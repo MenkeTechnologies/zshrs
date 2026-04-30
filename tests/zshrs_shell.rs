@@ -7761,6 +7761,45 @@ fn test_kill_n_invalid_signal_zsh_format() {
 }
 
 #[test]
+fn test_alias_g_s_mutually_exclusive() {
+    // zsh: `-g` (global) and `-s` (suffix) are mutually exclusive on
+    // alias — `alias -gs foo=bar` -> `alias:1: illegal combination
+    // of options` exit 1. zshrs accepted both flags silently.
+    let (status, _, stderr) = run_zshrs("alias -gs foo=bar");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("illegal combination of options"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_kill_unknown_pid_zsh_format() {
+    // zsh: `kill 999999999` -> `kill:1: kill 999999999 failed: no
+    // such process` exit 1. zshrs emitted bash-style `kill: ESRCH:
+    // No such process` with the errno code verbatim.
+    let (status, _, stderr) = run_zshrs("kill 999999999");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("kill 999999999 failed: no such process"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_assoc_odd_kv_pairs_errors() {
+    // zsh: assoc-init with odd number of values -> `bad set of
+    // key/value pairs for associative array` exit 1, no assignment.
+    // zshrs's `if let Some(v) = it.next()` silently dropped the
+    // orphaned key.
+    let (_, _, stderr) = run_zshrs("typeset -A h; h=(a 1 b)");
+    assert!(
+        stderr.contains("bad set of key/value pairs"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

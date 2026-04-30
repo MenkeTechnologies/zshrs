@@ -1715,6 +1715,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
             // Two-statement assoc init: `typeset -A m; m=(k v k v ...)`.
             if exec.assoc_arrays.contains_key(&name) {
+                // zsh: odd number of values -> `bad set of key/value
+                // pairs for associative array` exit 1, no
+                // assignment. zshrs's `if let Some(v) = it.next()`
+                // silently dropped the orphaned key.
+                if values.len() % 2 != 0 {
+                    eprintln!(
+                        "zshrs:1: bad set of key/value pairs for associative array"
+                    );
+                    return true;
+                }
                 let mut map = std::collections::HashMap::new();
                 let mut it = values.clone().into_iter();
                 while let Some(k) = it.next() {
@@ -20865,7 +20875,18 @@ impl ShellExecutor {
                         status = 1;
                     }
                 } else if let Err(e) = send_signal(pid as i32, sig) {
-                    eprintln!("kill: {}", e);
+                    // zsh format: `kill:1: kill PID failed: <reason>`
+                    // with the OS error message lowercased and the
+                    // `(os error N)` suffix stripped. zshrs's `kill:
+                    // ESRCH: ...` printed the errno code verbatim.
+                    let raw = e.to_string();
+                    let cleaned = raw
+                        .split(':')
+                        .last()
+                        .unwrap_or(&raw)
+                        .trim()
+                        .to_lowercase();
+                    eprintln!("zshrs:kill:1: kill {} failed: {}", pid, cleaned);
                     status = 1;
                 }
             }
@@ -21943,6 +21964,14 @@ impl ShellExecutor {
                 positional_args.push(arg.clone());
             }
             i += 1;
+        }
+
+        // zsh: `-g` and `-s` are mutually exclusive — alias is
+        // either global OR suffix, not both. `alias -gs foo=bar`
+        // -> `alias:1: illegal combination of options` exit 1.
+        if is_global && is_suffix {
+            eprintln!("zshrs:alias:1: illegal combination of options");
+            return 1;
         }
 
         // If +g/+s/+r used, list those types
