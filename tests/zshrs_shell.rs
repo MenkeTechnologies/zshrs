@@ -6360,6 +6360,22 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_type_w_emits_name_colon_kind() {
+    // zsh's `type -w NAME` prints `NAME: KIND` (one of `builtin`,
+    // `command`, `function`, `alias`, `reserved`, `none`). zshrs
+    // ignored the flag and printed the descriptive default form
+    // (`NAME is a shell builtin`, `NAME is /bin/...`).
+    let (_, output, _) = run_zshrs("type -w cd ls echo");
+    assert!(output.contains("cd: builtin"), "got: {output:?}");
+    assert!(output.contains("ls: command"), "got: {output:?}");
+    assert!(output.contains("echo: builtin"), "got: {output:?}");
+    let (_, output, _) = run_zshrs("type -w nosuchcmdxyz");
+    assert!(output.contains("nosuchcmdxyz: none"), "got: {output:?}");
+    let (_, output, _) = run_zshrs("foo() { :; }; type -w foo");
+    assert!(output.contains("foo: function"), "got: {output:?}");
+}
+
+#[test]
 fn test_umask_bad_symbolic_operator_specific_error() {
     // zsh validates symbolic umask args char by char; after the
     // class chars (`u`/`g`/`o`/`a`) it expects an operator
