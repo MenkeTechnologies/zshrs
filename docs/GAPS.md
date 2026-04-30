@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `arr=( $(echo "a:b:c") )` with `IFS=:` now produces 3 elements (was collapsing to 1)
+
+zshrs's compile path was emitting `BUILTIN_WORD_SPLIT` TWICE for `arr=( $(...) )` — once inside `compile_word_str` for the unquoted `$()` AND once in the array-element loop in `compile_assign`. The first split correctly produced a `Value::Array(["a", "b", "c"])` from the IFS-split. The second split called `vm.pop().to_str()` on that Array, which joined-with-space ("a b c"), then split that on IFS=":" — finding no `:` chars, returning a single element. Final result: `arr=("a b c")` (1 element) instead of `arr=(a b c)` (3 elements).
+
+Fix: bump `assign_context_depth` for the duration of each `compile_word_str(elem)` call in the Array branch, so the inner `compile_word_str`'s WORD_SPLIT is suppressed (`!in_dq && !in_assign` becomes false). The outer loop's WORD_SPLIT then runs once per element, correctly.
+
+Test: `test_array_assign_with_cmd_subst_ifs_split`.
+
 ### Subscript flags `(w)N` (word index) and `(s/sep/)N` (no-op for `[N]`) now recognized
 
 Direct port of zsh's zshparam(1) "Subscript Flags". `parse_subscript_flags` rejected anything outside `r/R/i/I/e/k/n` so `(w)2` and `(s/l/)2` were treated as bogus subscripts and routed to the math evaluator (which then failed on `(w)2`).
