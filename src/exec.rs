@@ -18279,6 +18279,38 @@ impl ShellExecutor {
                         return 2;
                     }
                 }
+                // `[ "" "" ]` (2 args, neither operator nor unary
+                // flag, neither paren) -> zsh: `1: parse error:
+                // condition expected:` exit 2. Two operands without
+                // a connective is ill-formed. Exclude `(`/`)` so
+                // the paren-handling code below still gets to run
+                // for `[ \( \) ]`.
+                if args.len() == 2
+                    && !args[0].starts_with('-')
+                    && !args[1].starts_with('-')
+                    && args[0] != "("
+                    && args[1] != ")"
+                {
+                    eprintln!(
+                        "zshrs:1: parse error: condition expected: {}",
+                        args[0]
+                    );
+                    return 2;
+                }
+                // 3-arg with binary operator at position 0 (not 1) —
+                // `[ -lt 5 3 ]` is a syntax error in zsh:
+                // `[:1: unknown condition: -lt`. The operator-name
+                // appearing as the FIRST operand looks like a unary
+                // condition zsh doesn't recognise.
+                if args.len() == 3
+                    && matches!(
+                        args[0],
+                        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
+                    )
+                {
+                    eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
+                    return 2;
+                }
                 // Three-arg `[ a -OP b ]` where -OP isn't a known
                 // numeric/string comparator: zsh errors at the OP
                 // position. Detect and emit the same kind of error
@@ -18416,13 +18448,23 @@ impl ShellExecutor {
                     }
                     return self.builtin_test(&right);
                 }
-                // 4+ args with no recognized operator/connective —
-                // `[ a b c d ]` errors `condition expected: a` exit
-                // 2. zshrs silently returned 1 ("false") which a
-                // consumer would read as a normal comparison-result
-                // rather than a syntax error.
+                // 4+ args: distinguish two zsh diagnostics. If
+                // args[1] is a known binary operator (-eq/-lt/etc.,
+                // =/!=, etc.) and there are MORE than 3 args, zsh
+                // says `[:1: too many arguments`. Otherwise it's
+                // `condition expected: <args[0]>`.
                 if args.len() >= 4 {
-                    eprintln!("zshrs:1: condition expected: {}", args[0]);
+                    let known_binop = matches!(
+                        args[1],
+                        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
+                            | "=" | "!=" | "<" | ">" | "==" | "-nt"
+                            | "-ot" | "-ef"
+                    );
+                    if known_binop {
+                        eprintln!("zshrs:[:1: too many arguments");
+                    } else {
+                        eprintln!("zshrs:1: condition expected: {}", args[0]);
+                    }
                     return 2;
                 }
                 1
@@ -19725,6 +19767,18 @@ impl ShellExecutor {
             }
         } else {
             // Shift specified arrays
+            for name in &array_names {
+                // zsh: `shift N arr` errors `shift count must be <=
+                // $#` if N exceeds the array length. zshrs silently
+                // shifted as much as it could, masking the count
+                // error.
+                if let Some(arr) = self.arrays.get(name) {
+                    if count > arr.len() {
+                        eprintln!("zshrs:shift:1: shift count must be <= $#");
+                        return 1;
+                    }
+                }
+            }
             for name in array_names {
                 if let Some(arr) = self.arrays.get_mut(&name) {
                     if from_end {
@@ -19849,6 +19903,14 @@ impl ShellExecutor {
                 }
             }
             return 0;
+        }
+        // zsh: `autoload -X` with no function name -> `autoload:1:
+        // bad autoload` exit 1. zshrs silently no-op'd because
+        // `execute_now=true && functions.is_empty()` skipped both
+        // the listing branch and the execute branch below.
+        if functions.is_empty() && execute_now {
+            eprintln!("zshrs:autoload:1: bad autoload");
+            return 1;
         }
 
         // Handle -X: load and execute function immediately (called from stub)

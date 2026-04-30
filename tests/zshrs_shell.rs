@@ -6958,6 +6958,63 @@ fn test_autoload_unknown_flag_errors() {
 }
 
 #[test]
+fn test_test_3arg_op_at_pos0_errors() {
+    // zsh: `[ -lt 5 3 ]` (3 args with binary operator at args[0]
+    // instead of args[1]) -> `[:1: unknown condition: -lt` exit 2.
+    // The op-at-front looks like a unary condition that zsh doesn't
+    // recognise. zshrs silently returned 1.
+    let (status, _, stderr) = run_zshrs("[ -lt 5 3 ]");
+    assert_eq!(status, 2);
+    assert!(stderr.contains("unknown condition: -lt"), "got: {stderr}");
+}
+
+#[test]
+fn test_test_4args_with_binop_emits_too_many() {
+    // zsh: `[ a -lt 3 5 ]` (binop in correct position but 4+ args)
+    // -> `[:1: too many arguments` exit 2. zshrs's earlier `condition
+    // expected: a` was the wrong category for this layout (the binop
+    // IS recognised but the operand-count is wrong).
+    let (status, _, stderr) = run_zshrs("[ a -lt 3 5 ]");
+    assert_eq!(status, 2);
+    assert!(stderr.contains("too many arguments"), "got: {stderr}");
+}
+
+#[test]
+fn test_test_two_operands_no_op_errors() {
+    // zsh: `[ "" "" ]` (two operands, no connective) -> `1: parse
+    // error: condition expected:` exit 2. zshrs silently returned 1.
+    let (status, _, stderr) = run_zshrs(r#"[ "" "" ]"#);
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("parse error: condition expected:"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_autoload_X_no_function_errors() {
+    // zsh: `autoload -X` (no function name) -> `autoload:1: bad
+    // autoload` exit 1 — `-X` requires a function context. zshrs
+    // silently no-op'd because `execute_now=true && functions.is_empty()`
+    // skipped both list and execute branches.
+    let (status, _, stderr) = run_zshrs("autoload -X");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad autoload"), "got: {stderr}");
+}
+
+#[test]
+fn test_shift_array_count_too_many_errors() {
+    // zsh: `a=(1); shift 5 a` -> `shift:1: shift count must be <=
+    // $#` exit 1. zshrs silently shifted as much as it could, leaving
+    // the array partially mutated AND not signaling failure.
+    let (_, _, stderr) = run_zshrs("a=(1); shift 5 a");
+    assert!(
+        stderr.contains("shift count must be <= $#"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
