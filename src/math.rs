@@ -662,48 +662,46 @@ impl<'a> MathEval<'a> {
             }
             self.lastbase = base as i32;
 
-            let val_start = self.pos;
+            // Mirror zsh's `zstrtol_underscore(ptr, &ptr, base, 1)`
+            // semantics: consume ONLY chars valid for the base
+            // (greedy), stopping at the first invalid digit.
+            // Underscore-as-thousands-separator is allowed
+            // mid-number. The remaining input becomes the next
+            // token, which the parser will then trip on as
+            // "operator expected at `<rest>'" via the regular
+            // checkunary/parser path.
+            //
+            // Earlier version used Rust's `from_str_radix` which
+            // is all-or-nothing — a single bad digit nuked the
+            // entire literal. For `2#1011x` zsh consumes the
+            // valid `1011` (= 11) and errors on the trailing `x`;
+            // ours errored on the whole `1011x` as one chunk.
+            // Same for `2#10112` (zsh: at `2`, ours: at `10112`).
+            //
+            // Empty-digit-sequence case (`10#`, `2#`) silently
+            // yields 0, matching zsh's `zstrtol` returning 0 when
+            // no valid digits follow.
+            let mut val: i64 = 0;
+            let base_i64 = base as i64;
             while let Some(c) = self.peek() {
-                if c.is_ascii_alphanumeric() || c == '_' {
+                if c == '_' {
                     self.advance();
+                    continue;
+                }
+                let digit_val: Option<u32> = if c.is_ascii_digit() {
+                    Some(c as u32 - '0' as u32)
+                } else if c.is_ascii_alphabetic() {
+                    Some(c.to_ascii_lowercase() as u32 - 'a' as u32 + 10)
                 } else {
+                    None
+                };
+                let Some(d) = digit_val else { break; };
+                if d >= base as u32 {
                     break;
                 }
+                val = val.saturating_mul(base_i64).saturating_add(d as i64);
+                self.advance();
             }
-            let val_str: String = self.input[val_start..self.pos]
-                .chars()
-                .filter(|&c| c != '_')
-                .collect();
-            // zsh: `2#5` (digit out of range for the base) errors
-            // `bad math expression: operator expected at \`5'` —
-            // the lexer drops out of base-parse mode at the first
-            // out-of-range char and the parser then trips on it.
-            // zshrs's `unwrap_or(0)` silently produced 0, masking
-            // the typo. zsh keeps its input pointer at the start
-            // of the bad digit sequence so the error context is
-            // the full remaining digit string (`2#22` -> `22`,
-            // not just the first `2`).
-            //
-            // Empty digit sequence (`10#`, `36#` with nothing
-            // after) is NOT an error in zsh — it's silently 0.
-            // zshrs's `from_str_radix("", base)` returned Err,
-            // which used to land in the operator-expected arm and
-            // emit a nonsense `at \`'` message.
-            let val = if val_str.is_empty() {
-                0
-            } else {
-                match i64::from_str_radix(&val_str, base) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        self.error = Some(format!(
-                            "bad math expression: operator expected at `{}'",
-                            val_str
-                        ));
-                        self.yyval = MathNum::Integer(0);
-                        return MathTok::Num;
-                    }
-                }
-            };
             self.yyval = if self.force_float {
                 MathNum::Float(if is_neg { -(val as f64) } else { val as f64 })
             } else {
@@ -1568,9 +1566,68 @@ impl<'a> MathEval<'a> {
     }
 
     fn check_unary(&mut self) {
+        // Direct port of zsh math.c checkunary() (line 1548).
+        // Two roles:
+        //   1. Validate that the just-lexed token (`self.mtok`)
+        //      matches the parser's expectation (operator vs
+        //      operand). Mismatch emits zsh's
+        //      "bad math expression: <kind> expected at <ctx>"
+        //      with `<kind>` = `operator` (errmsg=2) or `operand`
+        //      (errmsg=1). zshrs previously only did step 2,
+        //      which left e.g. `let "5 5"` and `$((2#1011x))`
+        //      silently accepting bogus input.
+        //   2. Update `self.unary` for the next iteration.
         let tp = OP_TYPE[self.mtok as usize];
-        // After this token, do we expect an operand (unary=true) or operator (unary=false)?
-        // OP_OPF means "followed by operator" - after this, next should be operator
+        let is_op_token = (tp
+            & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO | OP_OP))
+            != 0;
+        let errmsg = if is_op_token {
+            if self.unary { 1 } else { 0 }
+        } else if !self.unary {
+            2
+        } else {
+            0
+        };
+        if errmsg != 0 && self.error.is_none() {
+            let errtype = if errmsg == 2 { "operator" } else { "operand" };
+            // zsh's `mptr` is the input position BEFORE zzlex
+            // consumed the bad token. We track the same via
+            // `tok_start` which zzlex updates after whitespace
+            // skip. Walk forward past whitespace (mirrors zsh's
+            // `inblank` skip) so the error context starts at
+            // the first visible char.
+            let bytes = self.input.as_bytes();
+            let mut start = self.tok_start;
+            while start < bytes.len()
+                && matches!(bytes[start], b' ' | b'\t' | b'\n')
+            {
+                start += 1;
+            }
+            // zsh truncates after 10 chars and appends `...` if
+            // there's more remaining (the over flag in the C
+            // source). Mirror that to keep error messages
+            // bounded for long bogus expressions.
+            let remaining = &self.input[start..];
+            let (ctx, over) = if remaining.chars().count() > 10 {
+                let truncated: String = remaining.chars().take(10).collect();
+                (truncated, true)
+            } else {
+                (remaining.to_string(), false)
+            };
+            if ctx.is_empty() {
+                self.error = Some(format!(
+                    "bad math expression: {} expected at end of string",
+                    errtype
+                ));
+            } else {
+                self.error = Some(format!(
+                    "bad math expression: {} expected at `{}{}'",
+                    errtype,
+                    ctx,
+                    if over { "..." } else { "" }
+                ));
+            }
+        }
         self.unary = (tp & OP_OPF) == 0;
     }
 
