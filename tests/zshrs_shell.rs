@@ -10248,6 +10248,19 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_substring_offset_with_nested_arith() {
+    // `${a:$((${#a}-2))}` — substring with nested arith in offset.
+    // The compile-time substring shape detection rejected the case
+    // because `off_section.contains("${")` returned None. Now allowed
+    // when the operand starts with `$`/`(`/`-`/digit.
+    let (_, output, _) = run_zshrs(r#"a=hello; echo "${a:$((${#a}-2))}""#);
+    assert_eq!(output.trim(), "lo");
+    let (_, output, _) =
+        run_zshrs(r#"a=hello; echo "${a:0:${#a}-1}""#);
+    assert_eq!(output.trim(), "hell");
+}
+
+#[test]
 fn test_nested_replace_expands_dollar_in_repl() {
     // `${${a:-foo}/foo/$b}` — the replacement string `$b` was left
     // literal instead of getting expanded. zsh expands $-refs in

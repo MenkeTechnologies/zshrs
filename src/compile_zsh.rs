@@ -3401,25 +3401,31 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     if inner.starts_with('(') {
         return None;
     }
-    // Nested `${…}` is allowed ONLY in substring offset/length operands
-    // (`${var:N:${#x}-2}` style). Other shapes (length-of-nested,
-    // strip with nested pattern, etc.) still fall through to the
-    // bridge. Detect by scanning for the `:N:` substring pattern and
-    // ensuring the nested `${` only appears after the second `:`.
+    // Nested `${…}` is allowed in substring offset/length operands
+    // (`${var:N:${#x}-2}`, `${var:$((${#x}-2))}` etc.). Other shapes
+    // (length-of-nested, strip with nested pattern, etc.) still fall
+    // through to the bridge. Detect by scanning for the `:N:` shape
+    // and routing the substring path. The offset and length operands
+    // can both contain `${...}` and `$((...))` — they're evaluated
+    // by the runtime arith path which calls expand_string first.
     if inner.contains("${") {
         if let Some(first_colon) = inner.find(':') {
             // Substring shape: must start with NAME:digit/$/-/...
-            // The substring path in this function handles the rest;
-            // we just need the offset operand to be a plain int (or
-            // `$NAME` simple) and the length to be the nested form.
-            // Check the offset segment: from after `:` up to the
-            // second `:` should NOT contain `${`. Allow nested only
-            // in the length operand.
+            // The substring path in this function handles the rest.
+            // Both offset and length operands may contain `${…}` /
+            // `$((…))` — those are arith-evaluated by SubstringExpr.
             let after_first = &inner[first_colon + 1..];
             // Skip the offset's leading minus / spaces.
             let off_section_end = after_first.find(':').unwrap_or(after_first.len());
             let off_section = &after_first[..off_section_end];
-            if off_section.contains("${") {
+            // Only reject if `${…}` shows up in non-substring shapes
+            // (no leading `:`-then-digit/`$`/`-`/`(` pattern).
+            let after_first_trim = after_first.trim_start_matches(' ');
+            let is_substring_shape =
+                matches!(after_first_trim.chars().next(),
+                    Some(c) if c.is_ascii_digit()
+                        || c == '-' || c == '$' || c == '(');
+            if !is_substring_shape && off_section.contains("${") {
                 return None;
             }
             // The first colon must be the var/op split, not the start

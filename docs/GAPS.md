@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${a:$((${#a}-2))}` substring offset with nested `${...}` got rejected
+
+- The compile-time substring shape detection refused offsets containing `${...}` to "leave nested only in length". But `$((${#a}-2))` legitimately has nested `${...}` inside an arith form. Refined the check: when the operand starts with digit/`$`/`-`/`(` (substring-shape signal), allow nested forms — the runtime SubstringExpr handler arith-evaluates them via `expand_string`. Test: `test_substring_offset_with_nested_arith`.
+
 ### `${${...}/pat/$var}` nested-replace path didn't expand `$var` in repl
 
 - The nested-expansion `/pat/repl` branch passed both `pat` and `repl` to `String::replace` without running them through `expand_string`. zsh expands $-refs in both. Added `expand_string` calls. Test: `test_nested_replace_expands_dollar_in_repl`.
