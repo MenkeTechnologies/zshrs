@@ -6360,6 +6360,34 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_cond_v_with_positional_param() {
+    // `[[ -v N ]]` for an integer name N should test whether the Nth
+    // positional parameter is set. zshrs's `BUILTIN_VAR_EXISTS`
+    // checked only `variables`/`arrays`/`assoc_arrays`/env — so even
+    // after `set -- one`, `[[ -v 1 ]]` returned false.
+    let (_, output, _) = run_zshrs("set -- one; [[ -v 1 ]] && echo set");
+    assert_eq!(output.trim(), "set");
+    let (_, output, _) = run_zshrs("set -- a b c; [[ -v 3 ]] && echo set");
+    assert_eq!(output.trim(), "set");
+    let (_, output, _) = run_zshrs("[[ -v 1 ]] && echo set || echo unset");
+    assert_eq!(output.trim(), "unset");
+}
+
+#[test]
+fn test_histsize_min_clamp_to_one() {
+    // zsh enforces a minimum of 1 on `HISTSIZE` — `HISTSIZE=0` and
+    // negative values both clamp to 1. zshrs stored the literal value
+    // unchanged. Now `BUILTIN_SET_VAR` re-clamps when name is
+    // `HISTSIZE` so subsequent reads match zsh.
+    let (_, output, _) = run_zshrs("HISTSIZE=0; echo $HISTSIZE");
+    assert_eq!(output.trim(), "1");
+    let (_, output, _) = run_zshrs("HISTSIZE=-5; echo $HISTSIZE");
+    assert_eq!(output.trim(), "1");
+    let (_, output, _) = run_zshrs("HISTSIZE=100; echo $HISTSIZE");
+    assert_eq!(output.trim(), "100");
+}
+
+#[test]
 fn test_substring_with_arithmetic_length() {
     // `${x:0:${#x}-2}` should compute length=len-2. zshrs's
     // `parse_param_modifier` previously rejected ANY shape with
