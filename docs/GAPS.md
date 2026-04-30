@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `*(l2)` link-count glob qualifier not implemented
+
+- zsh pattern.c qualifier `l[+-]N` matches files by hard-link count. Was missing from our `filter_by_qualifiers` handler. Added the parser block (cmp + digit run) and `MetadataExt::nlink()` filter. Also added `l` to the `looks_like_glob_qualifiers` valid-chars set so `*(l2)` parses as a qualifier set instead of falling back to literal pattern. Test: `test_glob_l_link_count_qualifier`.
+
 ### `a=$(false); echo $?` returned 0 (cmd-subst status not propagated to $?)
 
 - zsh: cmd-subst's exit status leaks into $?, so `a=$(false); echo $?` prints 1. We were always returning 0 for the assignment. Three-part fix: (1) `run_command_substitution` now sets `self.last_status` from the inner cmd's status; (2) `BUILTIN_SET_VAR` returns `Value::Status(captured)` from the executor's last_status (instead of constant 0); (3) compile_assign emits `Op::SetStatus` (was `Op::Pop`) so vm.last_status reflects the propagated value. Test: `test_cmd_subst_status_propagates_to_assign`.

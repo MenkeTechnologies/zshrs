@@ -12716,7 +12716,7 @@ impl ShellExecutor {
         // `O` (reverse-sort prefix, complementing `o`) was missing —
         // `*(Om)` was being treated as a literal pattern instead of a
         // qualifier set, leaving the trailing `)` unmatched. Added.
-        let valid_chars = "./@=p*%bghirwxAIERWXsStfHedDLNnMmcaouUYHTk^-+:0123456789,[]FO";
+        let valid_chars = "./@=p*%bghilrwxAIERWXsStfHedDLNnMmcaouUYHTk^-+:0123456789,[]FO";
         s.chars()
             .all(|c| valid_chars.contains(c) || c.is_whitespace())
     }
@@ -13136,6 +13136,47 @@ impl ShellExecutor {
                             } else {
                                 pass
                             }
+                        })
+                        .collect();
+                    negate = false;
+                }
+
+                // l[+-]N — link-count qualifier. zsh: `*(l2)` = files
+                // with exactly 2 hard links (e.g. one regular + one
+                // hardlink). `+N` matches more, `-N` matches fewer.
+                'l' => {
+                    let mut cmp = '=';
+                    if let Some(&peek) = chars.peek() {
+                        if peek == '+' || peek == '-' {
+                            cmp = peek;
+                            chars.next();
+                        }
+                    }
+                    let mut num_str = String::new();
+                    while let Some(&peek) = chars.peek() {
+                        if peek.is_ascii_digit() {
+                            num_str.push(peek);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    let target: u64 = num_str.parse().unwrap_or(0);
+                    use std::os::unix::fs::MetadataExt;
+                    result = result
+                        .into_iter()
+                        .filter(|f| {
+                            let nlink = meta_cache
+                                .get(f)
+                                .and_then(|(m, _)| m.as_ref())
+                                .map(|m| m.nlink())
+                                .unwrap_or(0);
+                            let matches = match cmp {
+                                '+' => nlink > target,
+                                '-' => nlink < target,
+                                _ => nlink == target,
+                            };
+                            if negate { !matches } else { matches }
                         })
                         .collect();
                     negate = false;

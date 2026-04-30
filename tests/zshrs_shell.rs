@@ -10265,6 +10265,21 @@ fn test_sort_flag_with_numeric_modifier_either_order() {
 }
 
 #[test]
+fn test_glob_l_link_count_qualifier() {
+    // `*(l2)` matches files with link count == 2; `+N` more, `-N` fewer.
+    // zsh pattern.c qualifier — was missing from our handler.
+    let dir = std::env::temp_dir().join("zshrs_link_qual");
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::File::create(dir.join("f")).unwrap();
+    let _ = std::fs::hard_link(dir.join("f"), dir.join("h"));
+    let cmd = format!("echo {}/*(l2)", dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(output.contains("/f"));
+    assert!(output.contains("/h"));
+}
+
+#[test]
 fn test_cmd_subst_status_propagates_to_assign() {
     // `a=$(false); echo $?` should print 1 — cmd-subst status is
     // captured in last_status, then SET_VAR returns it as the
