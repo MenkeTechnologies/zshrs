@@ -8488,6 +8488,57 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_extglob_tilde_exclusion() {
+    // Direct port of zsh's pattern.c P_EXCLUDE handling — `pat1~pat2`
+    // matches strings matching pat1 AND NOT matching pat2.
+    let (_, output, _) =
+        run_zshrs(r#"setopt extendedglob; [[ "abc" == a*~b* ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "y", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"setopt extendedglob; [[ "bbb" == a*~b* ]] && echo y || echo n"#);
+    assert_eq!(output.trim(), "n", "got: {output:?}");
+}
+
+#[test]
+fn test_brace_nested_sequence_in_list() {
+    // zsh: `{{1..3},x,y}` is a LIST containing one sequence and
+    // two literals. Previously zshrs's brace-detector preferred
+    // `..` over `,` for type detection — content with both was
+    // miscategorized as a sequence, and the sequence parser
+    // returned identity ({1..3} not at the top), so the whole
+    // brace was left literal.
+    let (_, output, _) = run_zshrs("echo {{1..3},x,y}");
+    assert_eq!(output.trim(), "1 2 3 x y", "got: {output:?}");
+    let (_, output, _) = run_zshrs("echo {1,{2..4},5}");
+    assert_eq!(output.trim(), "1 2 3 4 5", "got: {output:?}");
+}
+
+#[test]
+fn test_dq_array_strip_joins_scalar() {
+    // zsh: `"${a%%pat}"` (DQ + bare array name) joins via $IFS
+    // first then strips the joined scalar. zshrs's fast path
+    // didn't propagate the compile-time DQ context to
+    // BUILTIN_PARAM_STRIP, so it always per-element-stripped.
+    let (_, output, _) =
+        run_zshrs(r#"a=( hello world ); echo "${a%%[lo]*}""#);
+    assert_eq!(output.trim(), "he", "got: {output:?}");
+}
+
+#[test]
+fn test_dq_array_strip_at_subscript_per_element() {
+    // zsh: explicit `[@]` subscript on the var forces per-
+    // element strip even inside DQ — `[@]` marks the array as
+    // splice-expanded, the strip applies to each element.
+    // `[*]` (join-with-IFS) keeps the bare-DQ semantics.
+    let (_, output, _) =
+        run_zshrs(r#"a=( hello world ); echo "${a[@]%%[lo]*}""#);
+    assert_eq!(output.trim(), "he w", "got: {output:?}");
+    let (_, output, _) =
+        run_zshrs(r#"a=( hello world ); echo "${a[*]%%[lo]*}""#);
+    assert_eq!(output.trim(), "he", "got: {output:?}");
+}
+
+#[test]
 fn test_glob_bracket_negation_with_bang() {
     // Direct port of zsh's pattern.c bracket-class compile —
     // `[!...]` and `[^...]` both negate. zshrs's compile-to-

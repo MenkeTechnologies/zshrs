@@ -280,13 +280,27 @@ impl ZshCompiler {
                     0,
                 );
             }
-            ParamModifierKind::Strip { op, pattern } => {
+            ParamModifierKind::Strip { op, pattern, had_at } => {
+                // Pass dq_context_depth as an additional arg so the
+                // runtime knows whether to join arrays before
+                // stripping (DQ form: `"${a%%pat}"`) or strip
+                // per-element (unquoted: `${a%%pat}`). `had_at`
+                // overrides — explicit `[@]` subscript on the var
+                // forces per-element even inside DQ (zsh marks
+                // `[@]` arrays as splice-expanded; the strip
+                // applies to each element individually).
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let pat_const = self.builder.add_constant(Value::str(pattern));
                 self.builder.emit(Op::LoadConst(pat_const), 0);
                 self.builder.emit(Op::LoadInt(*op as i64), 0);
+                let dq_for_runtime = if *had_at {
+                    0
+                } else {
+                    self.dq_context_depth as i64
+                };
+                self.builder.emit(Op::LoadInt(dq_for_runtime), 0);
                 self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_STRIP, 3), 0);
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_STRIP, 4), 0);
             }
             ParamModifierKind::Replace { op, pattern, repl } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
@@ -1385,7 +1399,26 @@ impl ZshCompiler {
         // replace (`/`/`//`/`/#`/`/%`).
         if !has_bnull {
             if let Some(modifier) = parse_param_modifier(&untoked) {
+                // The whole-word DNULL wrapping (`"${...}"`) gets
+                // stripped from `untoked` before parse_param_modifier
+                // sees it, but downstream emitters need to know the
+                // DQ context (e.g. strip op: join-then-strip in DQ
+                // vs per-element unquoted). Bump dq_context_depth
+                // for the duration of emit_param_modifier when the
+                // raw word is DNULL-wrapped, mirroring the
+                // segments-loop above. Without this, the strip
+                // fast path passed dq=0 to BUILTIN_PARAM_STRIP
+                // even inside `"..."`.
+                let raw_dq = s.starts_with('\u{9e}')
+                    && s.ends_with('\u{9e}')
+                    && s.len() >= 2;
+                if raw_dq {
+                    self.dq_context_depth += 1;
+                }
                 self.emit_param_modifier(&modifier);
+                if raw_dq {
+                    self.dq_context_depth -= 1;
+                }
                 return;
             }
         }
@@ -3177,8 +3210,20 @@ pub(crate) enum ParamModifierKind {
         offset_expr: String,
         length_expr: Option<String>,
     },
-    /// `${var#pat}` (op=0), `##` (1), `%` (2), `%%` (3)
-    Strip { op: u8, pattern: String },
+    /// `${var#pat}` (op=0), `##` (1), `%` (2), `%%` (3).
+    /// `had_at` records whether the source form used `[@]` /
+    /// `[*]` subscript on the var name — those force per-element
+    /// strip even inside `"..."` (zsh: `[@]` in DQ marks the
+    /// array as splice-expanded; the strip applies to each
+    /// element individually). Without this bit, `"${a[@]%%pat}"`
+    /// joined-then-stripped because the DQ context bit said
+    /// "join first" and the [@] info was lost in the modifier
+    /// parse.
+    Strip {
+        op: u8,
+        pattern: String,
+        had_at: bool,
+    },
     /// `${var/pat/repl}` (op=0), `//` (1), `/#` (2), `/%` (3)
     Replace {
         op: u8,
@@ -3300,11 +3345,23 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     let name = inner[..name_end].to_string();
     // Optional `[@]` / `[*]` subscript suffix — for arrays and assocs
     // these are no-ops on the lookup but shouldn't break the modifier
-    // parse. Strip and continue parsing the modifier.
+    // parse. Strip and continue parsing the modifier. Track whether
+    // we saw it so downstream Strip emit can force per-element
+    // semantics inside DQ (`"${a[@]%%pat}"` = per-element, not
+    // joined-then-stripped).
     let mut after_name = name_end;
+    let mut had_at = false;
     if inner.len() >= name_end + 3 {
         let tail = &inner[name_end..name_end + 3];
-        if tail == "[@]" || tail == "[*]" {
+        if tail == "[@]" {
+            // `[@]` = splice-expand (per-element even in DQ)
+            after_name = name_end + 3;
+            had_at = true;
+        } else if tail == "[*]" {
+            // `[*]` = join-with-IFS-then-scalar (matches the bare-
+            // name DQ join-then-strip behavior — leave had_at false
+            // so the runtime treats it like the unsubscripted
+            // `"${a%%pat}"` case).
             after_name = name_end + 3;
         }
     }
@@ -3501,6 +3558,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             kind: ParamModifierKind::Strip {
                 op: 1,
                 pattern: b.to_string(),
+                had_at,
             },
         });
     }
@@ -3510,6 +3568,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             kind: ParamModifierKind::Strip {
                 op: 3,
                 pattern: b.to_string(),
+                had_at,
             },
         });
     }
@@ -3519,6 +3578,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             kind: ParamModifierKind::Strip {
                 op: 0,
                 pattern: b.to_string(),
+                had_at,
             },
         });
     }
@@ -3528,6 +3588,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             kind: ParamModifierKind::Strip {
                 op: 2,
                 pattern: b.to_string(),
+                had_at,
             },
         });
     }
