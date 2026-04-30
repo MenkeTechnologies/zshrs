@@ -2021,6 +2021,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh in `-c` mode has no real job-control regardless of the `monitor` option. `fg %N` / `bg %N` always error `<fg|bg>:1: no job control in this shell.` exit 1. zshrs's option-based check didn't work because the `monitor`/`interactive` options are default-on even in `-c` mode (zsh's option-display lies about job-control state). Switched to `atty::is(Stream::Stdin)` — real interactive shells have a tty on stdin, `-c` mode does not. Test: `test_fg_bg_no_job_control_in_script`.
 
+### `fc -e` (no editor arg) ran the recurse-endlessly path instead of erroring "argument expected: -e"
+
+- zsh: `fc -e` with no following editor arg -> `fc:1: argument expected: -e` exit 1. zshrs's `'e'` arm let the missing-arg case fall through (i+=1 with no bounds-check guard), so the loop ended with no editor set and the no-positional path triggered the recurse-endlessly diagnostic. Added an explicit error when `i >= args.len()` after the increment. Test: `test_fc_e_missing_editor_arg_errors`.
+
+### `history -d -1` reported "no such event: 1" instead of "no such event: 0"
+
+- zsh: a negative count (`-N` / `-d -N`) resolves to event 0 in count-from-end semantics with empty history. zshrs reported the absolute count value (1 for `-1`). Tracked an explicit-negative-count flag through the option-parse loop; the no-events path uses event_id=0 when set. Test: `test_history_d_negative_resolves_to_zero`.
+
+### `history -S` silently dropped through to no-such-event instead of erroring "bad option: -S"
+
+- zsh: `history -S` is a bash-only "save" flag that zsh's history (= `fc -l`) doesn't accept; -> `history:1: bad option: -S` exit 1. zshrs silently consumed the flag and emitted `no such event: 1` from the `-c` mode no-history path. Added `-S` to the bash-incompatibility list. Test: `test_history_S_bad_option`.
+
+### `let "!"` reported "stack empty" instead of zsh's "operand expected" wording
+
+- zsh's MathContext emits `bad math expression: operand expected at end of string` when a unary op has no operand. zshrs's bare `stack empty` had no match for scripts grepping zsh's canonical wording. Updated `src/math.rs` to emit the wrapped phrasing. Test: `test_let_unary_op_no_operand`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
