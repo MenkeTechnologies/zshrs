@@ -6400,6 +6400,26 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_history_unknown_flag_errors() {
+    // zsh: `history -w` / `-d` / `-X` etc. error `bad option: -X`.
+    // zshrs delegated to fc which tried to interpret the flag
+    // and gave a misleading error. Added an unknown-flag catch
+    // in `builtin_history` that matches zsh's diagnostic.
+    let (_, _, stderr) = run_zshrs("history -w");
+    assert!(stderr.contains("history:1: bad option: -w"), "got: {stderr}");
+    let (_, _, stderr) = run_zshrs("history -X");
+    assert!(stderr.contains("history:1: bad option: -X"), "got: {stderr}");
+}
+
+#[test]
+fn test_type_no_args_exits_1() {
+    // zsh: bare `type` (no args) exits 1 — type requires at least
+    // one name to look up. zshrs returned 0 silently.
+    let (status, _, _) = run_zshrs("type");
+    assert_eq!(status, 1);
+}
+
+#[test]
 fn test_unalias_bad_option_format() {
     // zsh: `unalias -X x` errors `unalias:1: bad option: -X`.
     // zshrs previously emitted `unalias: bad option: -X` (extra
