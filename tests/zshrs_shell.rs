@@ -6400,6 +6400,17 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_typeset_integer_float_default_zero() {
+    // zsh: `typeset -i x` initializes x=0; `typeset -F y` initializes
+    // y=0.0000000000 (default precision 10). zshrs left them empty.
+    // `typeset -p` then printed `x=''` instead of zsh's `x=0`.
+    let (_, output, _) = run_zshrs("typeset -i x; typeset -p x");
+    assert_eq!(output.trim(), "typeset -i x=0");
+    let (_, output, _) = run_zshrs("typeset -F y; typeset -p y");
+    assert_eq!(output.trim(), "typeset -F y=0.0000000000");
+}
+
+#[test]
 fn test_qq_flag_empty_array_emits_quoted_pair() {
     // zsh: `${(qq)a}` for an empty array emits `''` (one empty
     // quoted pair) — the array is treated as `[""]` for quoting so

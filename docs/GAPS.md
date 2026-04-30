@@ -1753,6 +1753,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: when the negative start index is below the array's lower bound (e.g. `-5` on a 3-element array), the slice empties — zsh treats the start as "past the array's start" and returns nothing. zshrs's `slice_indexed_array` clamped both negatives to valid range and returned the full array. Added an explicit `start < -len` check that short-circuits to empty. Test: `test_array_slice_neg_start_below_neg_len_empty`.
 
+### `typeset -i x` left x empty instead of defaulting to 0
+
+- zsh: `typeset -i NAME` (no value) initializes the integer to `0`; `typeset -F NAME` initializes the float to `0.0000000000` (default precision 10). zshrs's no-`=`-value branch always inserted an empty string, so `typeset -p x` printed `x=''` instead of `x=0`. Added a default-value computation: integer → `"0"`, float → formatted with the requested precision (or default 10), other → empty. Test: `test_typeset_integer_float_default_zero`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
