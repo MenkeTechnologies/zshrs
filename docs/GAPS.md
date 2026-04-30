@@ -1789,6 +1789,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `((1/0))` arith command sets status to 2 and continues; only the substitution form `$((1/0))` aborts the whole command. zshrs's earlier "abort on division-by-zero" fix in `evaluate_arithmetic` unilaterally `process::exit(1)`-ed regardless of caller, so `((1/0)); echo` skipped the echo. Reverted the unilateral exit — now just emits the diagnostic and returns "0"; the call-site SetStatus op gives the surrounding command a non-zero status (1 from compile-time StrEq-to-"0" check; zsh uses 2 but scripts treat both as failure via `(()) && …` gating). Test: `test_arith_division_by_zero_continues`.
 
+### `fc -l N M` (range query) used the single-arg "no such event" message
+
+- zsh: `fc -l N M` (range query) emits `no events in that range` when the history is empty; the per-event `no such event: N` is reserved for single-positional / no-positional forms. zshrs collapsed both to the per-event form. Added a `positional.len() >= 2` arm that uses the range-specific message. Test: `test_fc_l_range_two_args_no_events_in_range`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic

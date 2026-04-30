@@ -20646,6 +20646,14 @@ impl ShellExecutor {
             // entries. Bypass the atty guard when we have session
             // entries.
             if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
+                // Two-positional `fc -l N M` is a RANGE query — zsh
+                // emits a different error: `no events in that range`.
+                // Single positional / no positional uses
+                // `no such event: N`.
+                if positional.len() >= 2 {
+                    eprintln!("zsh:fc:1: no events in that range");
+                    return 1;
+                }
                 // zsh's "no such event" uses the resolved index:
                 //   - explicit positive N → "no such event: N"
                 //   - explicit non-positive N → resolves to 0 (zsh's
