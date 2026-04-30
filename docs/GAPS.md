@@ -1843,6 +1843,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `readonly -X x=1` -> `readonly:1: bad option: -X` exit 1. zshrs's loop treated any non-`-p` argument as either an `=`-form binding or a bare name. So `-X` got inserted into `readonly_vars` and `var_attrs` as a junk readonly entry, masking the typo. Added a `starts_with('-')` flag-arg check before the binding/bare-name branches that emits zsh's `bad option:` diagnostic. Test: `test_readonly_unknown_flag_errors`.
 
+### `type __notexist__` reported "is a shell builtin" instead of "not found"
+
+- zsh: `type __notexist__` -> `__notexist__ not found`. zshrs's `is_builtin()` helper has a `_`-prefix bypass for completion functions, so any `_*` name was falsely classified as a builtin. The `type` builtin used `is_builtin()` directly, mirroring the same bug already fixed in `whence`/`where`/`which`. Tightened the `type` builtin-check arm to consult `BUILTIN_SET.contains(name)` directly. Test: `test_type_underscore_unknown_not_builtin`.
+
+### `unsetopt nonexistentopt` silently inserted junk into the option map
+
+- zsh: `unsetopt nonexistentopt` -> `unsetopt:1: no such option: nonexistentopt` exit 1. zshrs blindly inserted whatever name `normalize_option_name` returned into `self.options`, leaving stale junk in the map and silencing typos (mirror of the `setopt`-bug fixed earlier). Added a `ZSH_OPTIONS_SET.contains(name)` guard before insertion in the default arm of the per-arg loop. Test: `test_unsetopt_unknown_option_errors`.
+
+### `exit 1 2 3` silently swallowed extra args
+
+- zsh: `exit 1 2 3` -> `exit:1: too many arguments` exit 1. zshrs silently parsed args[0] as the code and ignored the rest. NOTE: zsh's bytecode actually CONTINUES past the failed exit (the rest of the script runs); zshrs's compiler unconditionally jumps to script end after `BUILTIN_EXIT`, so we can't replicate "continue past failed exit" here — the best we can do is emit the diagnostic before exiting, which catches the typo instead of silently swallowing. Test: `test_exit_too_many_args_diagnoses`.
+
+### `trap "" 99` silently registered an out-of-range numeric signal
+
+- zsh: numeric signals must be in (0, 63] (signal 0 is `EXIT`, max is `SIGRTMAX`). `trap "" 99` -> `trap:1: undefined signal: 99` exit 1. zshrs's known-sig validator accepted ANY parseable u32, registering a never-firable trap silently. Bounded the numeric arm to `n > 0 && n <= 63`. Test: `test_trap_numeric_signal_out_of_range_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
