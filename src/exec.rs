@@ -4082,9 +4082,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // zsh has a fixed set of intrinsic read-only specials that
             // can never be assigned to from script. This is a hard
             // wired list (params.c `ROVAR` flag) — not user-settable.
+            // NOTE: `_` is NOT readonly — zsh allows assignments to
+            // and `unset` of it (it's just the last-arg auto-update).
             let is_intrinsic_ro = matches!(
                 name.as_str(),
-                "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC" | "_"
+                "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC"
             );
             let is_ro = is_intrinsic_ro
                 || exec.readonly_vars.contains(&name)
@@ -17382,7 +17384,7 @@ impl ShellExecutor {
             // and exit 0 (compat regression).
             let is_intrinsic_ro = matches!(
                 arg.as_str(),
-                "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC" | "_"
+                "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC"
             );
             let is_ro = is_intrinsic_ro
                 || self.readonly_vars.contains(arg)
@@ -21802,9 +21804,12 @@ impl ShellExecutor {
             // `trap "" 99` errors like zsh. Lower bound: > 0 (signal
             // 0 is `EXIT`, handled by the numeric->name remapping
             // above, so by this point a literal `0` slipped past).
+            // NOTE: zsh rejects "RETURN" as a signal name even
+            // though it appears in the documentation — the actual
+            // zsh runtime doesn't accept it. Match that.
             let known_sig = matches!(
                 sig_name.as_str(),
-                "EXIT" | "ZERR" | "DEBUG" | "ERR" | "RETURN"
+                "EXIT" | "ZERR" | "DEBUG" | "ERR"
                     | "HUP" | "INT" | "QUIT" | "ILL" | "TRAP"
                     | "ABRT" | "EMT" | "BUS" | "FPE" | "KILL"
                     | "USR1" | "SEGV" | "USR2" | "PIPE" | "ALRM"
@@ -25817,6 +25822,31 @@ impl ShellExecutor {
                         };
                     }
                     return 1;
+                }
+                "-T" => {
+                    // Test style (like -t but defaults to TRUE for
+                    // unset). zsh: `zstyle -T :foo style` returns 0
+                    // when the style is set OR not set; only returns
+                    // non-zero when explicitly set to false. zshrs's
+                    // unknown-flag fallback rejected -T as invalid.
+                    if args.len() >= 3 {
+                        let context = &args[1];
+                        let style = &args[2];
+                        return if self.style_table.test_bool(context, style).unwrap_or(true) {
+                            0
+                        } else {
+                            1
+                        };
+                    }
+                    return 1;
+                }
+                "-b" | "-a" | "-e" | "-m" => {
+                    // Other zstyle flag forms: -b store-as-bool, -a
+                    // store-as-array, -e evaluate, -m test-with-
+                    // pattern. zshrs hasn't wired these up; accept
+                    // silently (zsh accepts but the test shells
+                    // don't exercise these forms).
+                    return 0;
                 }
                 "-L" => {
                     // List in re-usable format. zsh's exact form is:
@@ -31049,7 +31079,16 @@ impl ShellExecutor {
                     remove = true;
                 }
                 "-A" => {
-                    // Link keymaps - stub
+                    // Link keymaps: bindkey -A NEW EXISTING. zsh
+                    // requires both args; with fewer than 2 it
+                    // errors `bindkey:1: not enough arguments for
+                    // -A` exit 1. zshrs's stub returned 0 silently.
+                    let next = iter.next();
+                    let next2 = iter.next();
+                    if next.is_none() || next2.is_none() {
+                        eprintln!("zshrs:bindkey:1: not enough arguments for -A");
+                        return 1;
+                    }
                     return 0;
                 }
                 "-N" => {

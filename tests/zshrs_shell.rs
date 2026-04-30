@@ -7521,6 +7521,55 @@ fn test_kill_s_zero_signal() {
 }
 
 #[test]
+fn test_unset_underscore_allowed() {
+    // zsh: `unset _` is allowed — `_` (last-arg auto-update) is NOT
+    // intrinsic-readonly despite being a zsh-internal special.
+    // zshrs incorrectly listed it among the read-only intrinsics.
+    let (status, _, stderr) = run_zshrs("unset _");
+    assert_eq!(status, 0);
+    assert!(
+        !stderr.contains("read-only variable"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_bindkey_A_requires_two_args() {
+    // zsh: `bindkey -A NEW EXISTING` requires both keymap names;
+    // `bindkey -A nokm` -> `bindkey:1: not enough arguments for -A`
+    // exit 1. zshrs's stub accepted any -A form and returned 0.
+    let (status, _, stderr) = run_zshrs("bindkey -A nokm");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments for -A"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_zstyle_T_unset_default_true() {
+    // zsh: `zstyle -T context style` is like `-t` but defaults to
+    // TRUE for unset styles. zshrs's unknown-flag fallback rejected
+    // -T as invalid.
+    let (status, _, _) = run_zshrs("zstyle -T :foo style");
+    assert_eq!(status, 0);
+}
+
+#[test]
+fn test_trap_return_undefined() {
+    // zsh's actual runtime rejects `RETURN` as a signal name (the
+    // documentation hints at it but the parser's signal-name table
+    // doesn't include it). zshrs accepted it as valid. Match zsh's
+    // rejection.
+    let (status, _, stderr) = run_zshrs(r#"trap "" RETURN"#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("undefined signal: RETURN"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
