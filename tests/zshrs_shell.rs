@@ -6747,6 +6747,70 @@ fn test_wait_unrealistic_jobspec_errors() {
 }
 
 #[test]
+fn test_source_no_args_zsh_format() {
+    // zsh: bare `source` -> `source:1: not enough arguments` exit
+    // 1. zshrs printed `source: filename argument required` —
+    // bash-style banner with no shell-name or line-number prefix.
+    let (status, _, stderr) = run_zshrs("source");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:source:1: not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_source_empty_path_uses_no_such_file() {
+    // zsh: `. ""` -> `.:1: no such file or directory:` (with empty
+    // trailing path). zshrs's POSIX path resolver mapped "" to cwd,
+    // which then opened as a directory and produced `is a
+    // directory: ` — wrong wording AND wrong exit code (1 vs 127).
+    let (status, _, stderr) = run_zshrs(r#". """#);
+    assert_eq!(status, 127);
+    assert!(
+        stderr.contains("no such file or directory:"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_test_4plus_args_no_op_errors() {
+    // zsh: `[ a b c d ]` (4+ args, no recognized operator/connective)
+    // -> `1: condition expected: a` exit 2. zshrs silently returned
+    // 1 ("false"), masking the syntax error.
+    let (status, _, stderr) = run_zshrs("[ a b c d ]");
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("condition expected: a"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_test_empty_paren_errors() {
+    // zsh: `[ \( \) ]` (matching but empty parens) -> `[:1:
+    // argument expected` exit 2. zshrs stripped the parens, hit the
+    // empty-args base case, and silently returned 1.
+    let (status, _, stderr) = run_zshrs(r"[ \( \) ]");
+    assert_eq!(status, 2);
+    assert!(stderr.contains("argument expected"), "got: {stderr}");
+}
+
+#[test]
+fn test_zle_l_silent_in_script() {
+    // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
+    // -l` outputs nothing and returns 0. zshrs preloads its built-in
+    // widget table and listed widgets even in scripts. Now matches
+    // zsh by checking !atty(stdin) and returning 0 silently.
+    let (status, output, _) = run_zshrs("zle -l");
+    assert_eq!(status, 0);
+    assert!(
+        !output.contains("accept-line") && !output.contains("self-insert"),
+        "got: {output}"
+    );
+}
+
+#[test]
 fn test_kill_bad_signal_uses_zsh_format() {
     // zsh: `kill -INVALID 1` -> `kill:1: unknown signal: SIGINVALID`
     // followed by `kill:1: type kill -l for a list of signals` exit
