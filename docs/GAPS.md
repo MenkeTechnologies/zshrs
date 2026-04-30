@@ -1745,6 +1745,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's numeric range glob `<N-M>` matches any digit sequence whose decimal value is in `[N, M]`. zshrs threw `parse error: expected word after redirection` because the lexer consumed `<` as a redirection operator mid-word. Three-part fix: (1) lexer's mid-word `<` handler peeks for `<digits?-digits?>` shape and absorbs it into the current word; (2) compile-time word classifier (`compile_word_str`) recognises the `<...>` shape via `has_numeric_range_glob` and triggers glob compilation; (3) runtime adds `expand_glob_with_numeric_range` that walks the directory and filters by a regex with `(\d+)` captures, validating each capture against the `[lo, hi]` range. Open-ended forms (`<3->`, `<-5>`, `<->`) work via `Option<i64>` bounds. Tests: `test_glob_numeric_range_finite`, `test_glob_numeric_range_open_high`, `test_glob_numeric_range_open_both`.
 
+### `$((PPID))`, `$((UID))`, `$((EUID))`, `$((GID))`, `$((EGID))` resolved to `0`
+
+- zsh resolves bareword identifiers in arithmetic context against live process-id specials. zshrs's `evaluate_arithmetic` only injected `RANDOM` / `SECONDS` / `EPOCHSECONDS` / `EPOCHREALTIME` / `LINENO` into MathEval's extras map, so `PPID` and the user/group ids fell through to the static-zero default. Added the 5 process-id specials to the inject list. Test: `test_arith_ppid_uid_special_names`.
+
+### `${a[5,10]}` (out-of-range slice) returned the trailing element
+
+- zsh: out-of-range starts collapse to empty (`a=(a b c); print ${a[5,10]}` → empty). zshrs's `slice_indexed_array` clamped the start index down to len, returning the last element. Added explicit out-of-range checks (start > len; both negatives crossing) that short-circuit to `Vec::new()`. Test: `test_array_slice_out_of_range_is_empty`.
+
+### Empty array slice in DQ context dropped surrounding literals
+
+- `print "[${a[5,10]}]"` with empty slice should print `[]` (surrounding `[` `]` literals stick to first/last element via splice semantics). zshrs's compiler routed slice forms through `BUILTIN_CONCAT_DISTRIBUTE` because `is_splice_expansion` only matched `[@]` / `[*]` — the cartesian-distribute path drops empty arrays AND surrounding literals together. Extended `is_splice_expansion` to recognise `[N,M]` slice subscripts so they pick `BUILTIN_CONCAT_SPLICE` (which preserves the LHS scalar when the RHS array is empty). Same test: `test_array_slice_out_of_range_is_empty`.
+
+### Recursive aliases caused stack overflow
+
+- zsh's lexer disables an alias inside its own body (so `alias ls='ls -la'` works without recursion; the lexer expands `ls` to `ls -la` once, then the inner `ls` stays literal). zshrs expands aliases at run time via `execute_script(&combined)`, which re-parses → re-dispatches → recurses forever. `alias g="g hi"; g` overflowed the stack. Added an `expanding_aliases: HashSet<String>` guard on `ShellExecutor`: insert the name before the recursive `execute_script`, remove on return, and skip alias lookup entirely for any name already in the set. The recursive `g` now misses the alias table and falls through to "command not found", matching zsh. Test: `test_alias_recursion_guard_self_disables`.
+
 ## Still open (seventy-fifth-pass — remaining)
 
 - **`nocorrect CMD args`** — parser drops the rest of the line after `nocorrect` appears. Lexer needs to recognize `nocorrect` (and `noglob` as well, eventually for purity) as a precommand modifier and skip past it. Deferred.

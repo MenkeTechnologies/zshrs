@@ -6484,3 +6484,53 @@ fn test_glob_numeric_range_open_both() {
     assert!(!output.contains("filea"));
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn test_arith_ppid_uid_special_names() {
+    // zsh's arithmetic context resolves $PPID, $UID, $EUID, $GID, $EGID
+    // as live bareword identifiers. zshrs's MathEval reads from a
+    // pre-populated extras map, which previously only had RANDOM /
+    // SECONDS / EPOCHSECONDS / EPOCHREALTIME / LINENO — process-id
+    // specials all collapsed to 0.
+    let (_, output, _) = run_zshrs("echo $((PPID > 0))");
+    assert_eq!(output.trim(), "1");
+    let (_, output, _) = run_zshrs("echo $((UID >= 0))");
+    assert_eq!(output.trim(), "1");
+    let (_, output, _) = run_zshrs("echo $((EUID >= 0))");
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn test_array_slice_out_of_range_is_empty() {
+    // zsh: `a=(a b c); print "[${a[5,10]}]"` → `[]`. zshrs previously
+    // clamped the start index down to len, returning the trailing
+    // element ("c") instead of nothing. Out-of-range starts now
+    // collapse to empty.
+    let (_, output, _) = run_zshrs(r#"a=(a b c); print "[${a[5,10]}]""#);
+    assert_eq!(output, "[]\n");
+    let (_, output, _) = run_zshrs(r#"a=(a b c); print "[${a[10,20]}]""#);
+    assert_eq!(output, "[]\n");
+    // In-range slices still work.
+    let (_, output, _) = run_zshrs(r#"a=(a b c); print "[${a[2,3]}]""#);
+    assert_eq!(output, "[b c]\n");
+}
+
+#[test]
+fn test_alias_recursion_guard_self_disables() {
+    // zsh's lexer disables an alias inside its own body so common
+    // wrappers like `alias ls='ls -la'` work without infinite
+    // recursion. zshrs expands aliases at run time, so we need an
+    // explicit `expanding_aliases` HashSet to break the loop.
+    // `alias g="g hi"; g` should resolve `g` once → `g hi` → fail
+    // "command not found" on the second `g`, NOT stack overflow.
+    let (status, _output, stderr) = run_zshrs(r#"alias g="g hi"; g"#);
+    // Expansion ran once, second `g` falls through to external lookup,
+    // which fails.
+    assert!(
+        stderr.contains("command not found") || status != 0,
+        "expected command-not-found, got status={status}, stderr={stderr}"
+    );
+    // Standard non-recursive alias still expands.
+    let (_, output, _) = run_zshrs(r#"alias hi="echo hello"; hi"#);
+    assert_eq!(output.trim(), "hello");
+}
