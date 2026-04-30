@@ -140,7 +140,12 @@ impl<'a> ArithCompiler<'a> {
                 }
                 i += 1;
                 let start = i;
-                if bytes.get(i).copied().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                if bytes
+                    .get(i)
+                    .copied()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+                {
                     while i < bytes.len() && bytes[i].is_ascii_digit() {
                         i += 1;
                     }
@@ -153,9 +158,7 @@ impl<'a> ArithCompiler<'a> {
             }
             if b.is_ascii_alphabetic() || b == b'_' || (with_dollar && i < bytes.len()) {
                 let start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-                {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
                 let name = expr[start..i].to_string();

@@ -403,8 +403,7 @@ fn test_subscript_flag_i_first_index() {
 
 #[test]
 fn test_subscript_flag_I_last_index() {
-    let (_, output, _) =
-        run_zshrs("arr=(apple banana cherry banana); print ${arr[(I)b*]}");
+    let (_, output, _) = run_zshrs("arr=(apple banana cherry banana); print ${arr[(I)b*]}");
     assert_eq!(output.trim(), "4", "got: {output:?}");
 }
 
@@ -434,9 +433,8 @@ fn test_subscript_flag_I_no_match() {
 
 #[test]
 fn test_typeset_a_two_statement_init() {
-    let (_, output, _) = run_zshrs(
-        "typeset -A m; m=(a 1 b 2 c 3); print \"${m[a]}-${m[b]}-${m[c]}\"",
-    );
+    let (_, output, _) =
+        run_zshrs("typeset -A m; m=(a 1 b 2 c 3); print \"${m[a]}-${m[b]}-${m[c]}\"");
     assert_eq!(output.trim(), "1-2-3", "got: {output:?}");
 }
 
@@ -444,9 +442,8 @@ fn test_typeset_a_two_statement_init() {
 fn test_typeset_a_then_indexed_assoc_remains_assoc() {
     // After `typeset -A m; m=(...)`, `m` should still respond to assoc
     // syntax. Test by appending another key/val pair.
-    let (_, output, _) = run_zshrs(
-        "typeset -A m; m=(a 1 b 2); m[c]=3; print \"${m[a]}|${m[b]}|${m[c]}\"",
-    );
+    let (_, output, _) =
+        run_zshrs("typeset -A m; m=(a 1 b 2); m[c]=3; print \"${m[a]}|${m[b]}|${m[c]}\"");
     assert_eq!(output.trim(), "1|2|3", "got: {output:?}");
 }
 
@@ -456,25 +453,20 @@ fn test_typeset_a_then_indexed_assoc_remains_assoc() {
 
 #[test]
 fn test_assoc_subscript_dynamic_key() {
-    let (_, output, _) = run_zshrs(
-        "typeset -A m=(foo 1 bar 2); k=foo; print \"${m[$k]}\"",
-    );
+    let (_, output, _) = run_zshrs("typeset -A m=(foo 1 bar 2); k=foo; print \"${m[$k]}\"");
     assert_eq!(output.trim(), "1", "got: {output:?}");
 }
 
 #[test]
 fn test_assoc_subscript_dynamic_key_loop() {
-    let (_, output, _) = run_zshrs(
-        "typeset -A m=(a 1 b 2); for k in a b; do print \"$k=${m[$k]}\"; done",
-    );
+    let (_, output, _) =
+        run_zshrs("typeset -A m=(a 1 b 2); for k in a b; do print \"$k=${m[$k]}\"; done");
     assert_eq!(output.trim(), "a=1\nb=2", "got: {output:?}");
 }
 
 #[test]
 fn test_indexed_subscript_dynamic_key_in_loop() {
-    let (_, output, _) = run_zshrs(
-        "arr=(x y z); for i in 1 2 3; do print \"$i:${arr[$i]}\"; done",
-    );
+    let (_, output, _) = run_zshrs("arr=(x y z); for i in 1 2 3; do print \"$i:${arr[$i]}\"; done");
     assert_eq!(output.trim(), "1:x\n2:y\n3:z", "got: {output:?}");
 }
 
@@ -486,16 +478,14 @@ fn test_indexed_subscript_dynamic_key_in_loop() {
 fn test_extendedglob_negation_in_filter() {
     // `:#^*.txt` removes elements matching the negation of `*.txt`
     // → keeps only `*.txt` elements.
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; arr=(foo.txt bar.log baz.txt); print -l ${arr:#^*.txt}",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; arr=(foo.txt bar.log baz.txt); print -l ${arr:#^*.txt}");
     assert_eq!(output.trim(), "foo.txt\nbaz.txt", "got: {output:?}");
 }
 
 #[test]
 fn test_extendedglob_negation_literal_inverse() {
-    let (_, output, _) =
-        run_zshrs("setopt extendedglob; arr=(a b c); print -l ${arr:#^a}");
+    let (_, output, _) = run_zshrs("setopt extendedglob; arr=(a b c); print -l ${arr:#^a}");
     assert_eq!(output.trim(), "a", "got: {output:?}");
 }
 
@@ -503,8 +493,7 @@ fn test_extendedglob_negation_literal_inverse() {
 fn test_extendedglob_negation_off_when_option_unset() {
     // Without `extendedglob`, `^a` is a literal pattern (no element
     // matches the literal char `^a`), so all 3 stay.
-    let (_, output, _) =
-        run_zshrs("arr=(a b c); print -l ${arr:#^a}");
+    let (_, output, _) = run_zshrs("arr=(a b c); print -l ${arr:#^a}");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
 
@@ -514,25 +503,22 @@ fn test_extendedglob_negation_off_when_option_unset() {
 
 #[test]
 fn test_pattern_flag_case_insensitive() {
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ \"ABC\" = (#i)abc ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ \"ABC\" = (#i)abc ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_pattern_flag_case_insensitive_uppercase_pat() {
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ \"abc\" = (#i)ABC ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ \"abc\" = (#i)ABC ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_pattern_flag_l_lowercase_matches_either_case() {
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ \"AbC\" = (#l)abc ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ \"AbC\" = (#l)abc ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
@@ -540,34 +526,30 @@ fn test_pattern_flag_l_lowercase_matches_either_case() {
 fn test_pattern_flag_l_uppercase_must_match_exactly() {
     // (#l) is asymmetric: uppercase pattern char requires exact case
     // in input. So `(#l)ABC` does NOT match "abc".
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ \"abc\" = (#l)ABC ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ \"abc\" = (#l)ABC ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
 
 #[test]
 fn test_pattern_flag_approximate_one_error() {
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ \"abcd\" = (#a1)abce ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ \"abcd\" = (#a1)abce ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_pattern_flag_approximate_zero_error_diff() {
     // (#a0) requires exact match.
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ \"abcd\" = (#a0)abce ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ \"abcd\" = (#a0)abce ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
 
 #[test]
 fn test_pattern_flag_approximate_insertion() {
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ \"abc12\" = (#a1)abc1 ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ \"abc12\" = (#a1)abc1 ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
@@ -577,8 +559,7 @@ fn test_pattern_flag_approximate_insertion() {
 
 #[test]
 fn test_at_s_flag_split_in_double_quotes() {
-    let (_, output, _) =
-        run_zshrs("str='a,b,c'; print -l \"${(@s:,:)str}\"");
+    let (_, output, _) = run_zshrs("str='a,b,c'; print -l \"${(@s:,:)str}\"");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
 
@@ -592,16 +573,13 @@ fn test_at_s_flag_capture_into_array() {
 
 #[test]
 fn test_at_f_flag_split_newlines_in_dq() {
-    let (_, output, _) =
-        run_zshrs("str=$'a\\nb\\nc'; print -l \"${(@f)str}\"");
+    let (_, output, _) = run_zshrs("str=$'a\\nb\\nc'; print -l \"${(@f)str}\"");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
 
 #[test]
 fn test_s_flag_splits_each_array_element() {
-    let (_, output, _) = run_zshrs(
-        "arr=('a,b' 'c,d'); print -l \"${(@s:,:)arr}\"",
-    );
+    let (_, output, _) = run_zshrs("arr=('a,b' 'c,d'); print -l \"${(@s:,:)arr}\"");
     assert_eq!(output.trim(), "a\nb\nc\nd", "got: {output:?}");
 }
 
@@ -612,25 +590,20 @@ fn test_s_flag_splits_each_array_element() {
 #[test]
 fn test_kv_flag_with_at_subscript() {
     // Sort because assoc HashMap iteration order is non-deterministic.
-    let (_, output, _) = run_zshrs(
-        "typeset -A m=(a 1 b 2 c 3); print -l \"${(kv)m[@]}\" | sort",
-    );
+    let (_, output, _) = run_zshrs("typeset -A m=(a 1 b 2 c 3); print -l \"${(kv)m[@]}\" | sort");
     assert_eq!(output.trim(), "1\n2\n3\na\nb\nc", "got: {output:?}");
 }
 
 #[test]
 fn test_k_flag_with_at_subscript() {
-    let (_, output, _) = run_zshrs(
-        "typeset -A m=(a 1 b 2 c 3); print -l \"${(k)m[@]}\" | sort",
-    );
+    let (_, output, _) = run_zshrs("typeset -A m=(a 1 b 2 c 3); print -l \"${(k)m[@]}\" | sort");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
 
 #[test]
 fn test_o_sort_flag_with_at_subscript() {
     // (o) only fires in array context — no DQ wrapper.
-    let (_, output, _) =
-        run_zshrs("arr=(c a b); print -l ${(o)arr[@]}");
+    let (_, output, _) = run_zshrs("arr=(c a b); print -l ${(o)arr[@]}");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
 
@@ -646,16 +619,14 @@ fn test_function_keyword_anonymous() {
 
 #[test]
 fn test_function_keyword_anonymous_with_args() {
-    let (_, output, _) =
-        run_zshrs("function () { echo \"args:\" \"$@\" } a b c");
+    let (_, output, _) = run_zshrs("function () { echo \"args:\" \"$@\" } a b c");
     assert_eq!(output.trim(), "args: a b c", "got: {output:?}");
 }
 
 #[test]
 fn test_function_keyword_anonymous_local_scope() {
-    let (_, output, _) = run_zshrs(
-        "x=outer; function () { local x=inner; print \"$x\" } ; print \"$x\"",
-    );
+    let (_, output, _) =
+        run_zshrs("x=outer; function () { local x=inner; print \"$x\" } ; print \"$x\"");
     assert_eq!(output.trim(), "inner\nouter", "got: {output:?}");
 }
 
@@ -741,9 +712,8 @@ fn test_mapfile_with_f_flag_split_lines() {
 
 #[test]
 fn test_mapfile_missing_file_is_empty() {
-    let (_, output, _) = run_zshrs(
-        "zmodload zsh/mapfile; print \"len=${#mapfile[/no/such/path/here]}\"",
-    );
+    let (_, output, _) =
+        run_zshrs("zmodload zsh/mapfile; print \"len=${#mapfile[/no/such/path/here]}\"");
     assert_eq!(output.trim(), "len=0", "got: {output:?}");
 }
 
@@ -753,9 +723,7 @@ fn test_mapfile_missing_file_is_empty() {
 
 #[test]
 fn test_flag_with_assoc_subscript_split() {
-    let (_, output, _) = run_zshrs(
-        "typeset -A m=(k1 'a:b:c'); print -l \"${(s.:.)m[k1]}\"",
-    );
+    let (_, output, _) = run_zshrs("typeset -A m=(k1 'a:b:c'); print -l \"${(s.:.)m[k1]}\"");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
 
@@ -790,8 +758,7 @@ fn test_indexed_array_negative_assign() {
 
 #[test]
 fn test_indexed_array_grow_on_assign() {
-    let (_, output, _) =
-        run_zshrs("a=(x y z); a[5]=E; print -l \"${a[@]}\"");
+    let (_, output, _) = run_zshrs("a=(x y z); a[5]=E; print -l \"${a[@]}\"");
     assert_eq!(output.trim(), "x\ny\nz\n\nE", "got: {output:?}");
 }
 
@@ -803,8 +770,7 @@ fn test_indexed_array_append_at_index() {
 
 #[test]
 fn test_indexed_array_slice_assign() {
-    let (_, output, _) =
-        run_zshrs("a=(x y z w v); a[2,4]=(YY ZZ WW); print \"${a[*]}\"");
+    let (_, output, _) = run_zshrs("a=(x y z w v); a[2,4]=(YY ZZ WW); print \"${a[*]}\"");
     assert_eq!(output.trim(), "x YY ZZ WW v", "got: {output:?}");
 }
 
@@ -816,8 +782,7 @@ fn test_indexed_array_element_delete() {
 
 #[test]
 fn test_indexed_array_slice_delete() {
-    let (_, output, _) =
-        run_zshrs("a=(x y z w v); a[2,4]=(); print \"${a[*]}\"");
+    let (_, output, _) = run_zshrs("a=(x y z w v); a[2,4]=(); print \"${a[*]}\"");
     assert_eq!(output.trim(), "x v", "got: {output:?}");
 }
 
@@ -825,17 +790,14 @@ fn test_indexed_array_slice_delete() {
 fn test_unset_indexed_element_clears_to_empty() {
     // zsh `unset 'arr[N]'` for indexed arrays sets the slot to "" but
     // does NOT remove it (slot count preserved). Differs from `a[N]=()`.
-    let (_, output, _) = run_zshrs(
-        "arr=(a b c); unset 'arr[2]'; print \"len=${#arr}\"; print -l \"${arr[@]}\"",
-    );
+    let (_, output, _) =
+        run_zshrs("arr=(a b c); unset 'arr[2]'; print \"len=${#arr}\"; print -l \"${arr[@]}\"");
     assert_eq!(output.trim(), "len=3\na\n\nc", "got: {output:?}");
 }
 
 #[test]
 fn test_unset_assoc_element() {
-    let (_, output, _) = run_zshrs(
-        "typeset -A m=(a 1 b 2); unset 'm[a]'; print \"${(k)m[@]}\"",
-    );
+    let (_, output, _) = run_zshrs("typeset -A m=(a 1 b 2); unset 'm[a]'; print \"${(k)m[@]}\"");
     assert_eq!(output.trim(), "b", "got: {output:?}");
 }
 
@@ -845,17 +807,14 @@ fn test_unset_assoc_element() {
 
 #[test]
 fn test_regex_match_full_match_var() {
-    let (_, output, _) = run_zshrs(
-        "[[ \"hello\" =~ ll ]] && print \"$MATCH\"",
-    );
+    let (_, output, _) = run_zshrs("[[ \"hello\" =~ ll ]] && print \"$MATCH\"");
     assert_eq!(output.trim(), "ll", "got: {output:?}");
 }
 
 #[test]
 fn test_regex_match_capture_groups() {
-    let (_, output, _) = run_zshrs(
-        "[[ \"a1b2\" =~ ([a-z])([0-9]) ]] && print \"${match[1]}|${match[2]}\"",
-    );
+    let (_, output, _) =
+        run_zshrs("[[ \"a1b2\" =~ ([a-z])([0-9]) ]] && print \"${match[1]}|${match[2]}\"");
     assert_eq!(output.trim(), "a|1", "got: {output:?}");
 }
 
@@ -916,46 +875,40 @@ fn test_wordchars_default() {
 
 #[test]
 fn test_numeric_range_inclusive_match() {
-    let (_, output, _) =
-        run_zshrs("[[ file5 = file<1-10> ]] && echo match || echo nomatch");
+    let (_, output, _) = run_zshrs("[[ file5 = file<1-10> ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_numeric_range_out_of_bounds() {
-    let (_, output, _) =
-        run_zshrs("[[ file20 = file<1-10> ]] && echo match || echo nomatch");
+    let (_, output, _) = run_zshrs("[[ file20 = file<1-10> ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
 
 #[test]
 fn test_numeric_range_open_lo() {
     // `<-10>` means ≤ 10.
-    let (_, output, _) =
-        run_zshrs("[[ 7 = <-10> ]] && echo match || echo nomatch");
+    let (_, output, _) = run_zshrs("[[ 7 = <-10> ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_numeric_range_open_hi() {
     // `<50->` means ≥ 50.
-    let (_, output, _) =
-        run_zshrs("[[ 100 = <50-> ]] && echo match || echo nomatch");
+    let (_, output, _) = run_zshrs("[[ 100 = <50-> ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_numeric_range_any_integer() {
     // `<->` matches any non-negative integer.
-    let (_, output, _) =
-        run_zshrs("[[ 42 = <-> ]] && echo match || echo nomatch");
+    let (_, output, _) = run_zshrs("[[ 42 = <-> ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_numeric_range_rejects_non_digits() {
-    let (_, output, _) =
-        run_zshrs("[[ abc = <-> ]] && echo match || echo nomatch");
+    let (_, output, _) = run_zshrs("[[ abc = <-> ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
 
@@ -986,7 +939,11 @@ fn test_where_function_prints_definition() {
 #[test]
 fn test_where_alias_csh_style() {
     let (_, output, _) = run_zshrs("alias gst='git status'; where gst");
-    assert_eq!(output.trim(), "gst: aliased to git status", "got: {output:?}");
+    assert_eq!(
+        output.trim(),
+        "gst: aliased to git status",
+        "got: {output:?}"
+    );
 }
 
 #[test]
@@ -1023,8 +980,7 @@ fn test_print_p_underline_bytes() {
 fn test_print_p_color_chain() {
     let (_, output, _) = run_zshrs("print -P \"%F{green}g%f%F{red}r%f\"");
     assert_eq!(
-        output,
-        "\x1b[32mg\x1b[39m\x1b[31mr\x1b[39m\n",
+        output, "\x1b[32mg\x1b[39m\x1b[31mr\x1b[39m\n",
         "got: {output:?}"
     );
 }
@@ -1164,8 +1120,7 @@ fn test_bare_subscript_indexed_int() {
 
 #[test]
 fn test_bare_subscript_assoc_string_key() {
-    let (_, output, _) =
-        run_zshrs("typeset -A m=(a 1 b 2); print $m[a]");
+    let (_, output, _) = run_zshrs("typeset -A m=(a 1 b 2); print $m[a]");
     assert_eq!(output.trim(), "1", "got: {output:?}");
 }
 
@@ -1206,15 +1161,13 @@ fn test_t_flag_float() {
 
 #[test]
 fn test_t_flag_scalar_left() {
-    let (_, output, _) =
-        run_zshrs("typeset -L 5 s=hello; print \"${(t)s}\"");
+    let (_, output, _) = run_zshrs("typeset -L 5 s=hello; print \"${(t)s}\"");
     assert_eq!(output.trim(), "scalar-left", "got: {output:?}");
 }
 
 #[test]
 fn test_t_flag_scalar_readonly() {
-    let (_, output, _) =
-        run_zshrs("typeset -r ro=foo; print \"${(t)ro}\"");
+    let (_, output, _) = run_zshrs("typeset -r ro=foo; print \"${(t)ro}\"");
     assert_eq!(output.trim(), "scalar-readonly", "got: {output:?}");
 }
 
@@ -1247,8 +1200,7 @@ fn test_glob_qualifier_mh_too_old_excludes() {
     // the filter so the resolved path is NOT printed. (zshrs falls back
     // to the literal pattern instead of erroring "no matches found";
     // either way the resolved /tmp/... shouldn't appear bare.)
-    let (_, stdout, _) =
-        run_zshrs(&format!("print {}(mh+10000) 2>/dev/null", path));
+    let (_, stdout, _) = run_zshrs(&format!("print {}(mh+10000) 2>/dev/null", path));
     let _ = fs::remove_file(path);
     let line = stdout.trim();
     assert!(
@@ -1274,8 +1226,7 @@ fn test_recursive_glob_dirs_only() {
     let _ = fs::remove_dir_all(root);
     fs::create_dir_all(format!("{}/a", root)).unwrap();
     fs::create_dir_all(format!("{}/b/c", root)).unwrap();
-    let (_, output, _) =
-        run_zshrs(&format!("cd {} && print -l **/", root));
+    let (_, output, _) = run_zshrs(&format!("cd {} && print -l **/", root));
     let _ = fs::remove_dir_all(root);
     let mut lines: Vec<&str> = output.lines().collect();
     lines.sort();
@@ -1290,16 +1241,11 @@ fn test_recursive_glob_files_and_dirs() {
     fs::create_dir_all(format!("{}/a", root)).unwrap();
     fs::create_dir_all(format!("{}/b/c", root)).unwrap();
     fs::write(format!("{}/a/x.txt", root), "x").unwrap();
-    let (_, output, _) =
-        run_zshrs(&format!("cd {} && print -l **/*", root));
+    let (_, output, _) = run_zshrs(&format!("cd {} && print -l **/*", root));
     let _ = fs::remove_dir_all(root);
     let mut lines: Vec<&str> = output.lines().collect();
     lines.sort();
-    assert_eq!(
-        lines,
-        vec!["a", "a/x.txt", "b", "b/c"],
-        "got: {output:?}"
-    );
+    assert_eq!(lines, vec!["a", "a/x.txt", "b", "b/c"], "got: {output:?}");
 }
 
 #[test]
@@ -1312,8 +1258,7 @@ fn test_recursive_glob_filter_by_extension() {
     fs::write(format!("{}/a/x.txt", root), "x").unwrap();
     fs::write(format!("{}/b/c/y.txt", root), "y").unwrap();
     fs::write(format!("{}/a/skip.log", root), "z").unwrap();
-    let (_, output, _) =
-        run_zshrs(&format!("cd {} && print -l **/*.txt", root));
+    let (_, output, _) = run_zshrs(&format!("cd {} && print -l **/*.txt", root));
     let _ = fs::remove_dir_all(root);
     let mut lines: Vec<&str> = output.lines().collect();
     lines.sort();
@@ -1326,22 +1271,19 @@ fn test_recursive_glob_filter_by_extension() {
 
 #[test]
 fn test_subst_modifier_first_only() {
-    let (_, output, _) =
-        run_zshrs("p=hello; echo ${p:s/l/L/}");
+    let (_, output, _) = run_zshrs("p=hello; echo ${p:s/l/L/}");
     assert_eq!(output.trim(), "heLlo", "got: {output:?}");
 }
 
 #[test]
 fn test_subst_modifier_global() {
-    let (_, output, _) =
-        run_zshrs("p=hello; echo ${p:gs/l/L/}");
+    let (_, output, _) = run_zshrs("p=hello; echo ${p:gs/l/L/}");
     assert_eq!(output.trim(), "heLLo", "got: {output:?}");
 }
 
 #[test]
 fn test_subst_modifier_chained_with_t() {
-    let (_, output, _) =
-        run_zshrs("p=/a/b.txt; echo ${p:s/b/B/:t}");
+    let (_, output, _) = run_zshrs("p=/a/b.txt; echo ${p:s/b/B/:t}");
     assert_eq!(output.trim(), "B.txt", "got: {output:?}");
 }
 
@@ -1364,16 +1306,13 @@ fn test_dollar_zero_in_function() {
 
 #[test]
 fn test_funcstack_top_is_current_fn() {
-    let (_, output, _) =
-        run_zshrs("foo() { echo $funcstack[1]; }; foo");
+    let (_, output, _) = run_zshrs("foo() { echo $funcstack[1]; }; foo");
     assert_eq!(output.trim(), "foo", "got: {output:?}");
 }
 
 #[test]
 fn test_funcstack_nested() {
-    let (_, output, _) = run_zshrs(
-        "foo() { bar() { echo \"${funcstack[*]}\"; }; bar; }; foo",
-    );
+    let (_, output, _) = run_zshrs("foo() { bar() { echo \"${funcstack[*]}\"; }; bar; }; foo");
     assert_eq!(output.trim(), "bar foo", "got: {output:?}");
 }
 
@@ -1404,25 +1343,22 @@ fn test_print_n_null_between_args() {
 
 #[test]
 fn test_kshglob_question_alternation() {
-    let (_, output, _) = run_zshrs(
-        "setopt kshglob; [[ a = ?(a|b) ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt kshglob; [[ a = ?(a|b) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_kshglob_plus_one_or_more() {
-    let (_, output, _) = run_zshrs(
-        "setopt kshglob; [[ aaa = +(a) ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt kshglob; [[ aaa = +(a) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_kshglob_at_exactly_one() {
-    let (_, output, _) = run_zshrs(
-        "setopt kshglob; [[ foo = @(foo|bar) ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt kshglob; [[ foo = @(foo|bar) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
@@ -1430,8 +1366,7 @@ fn test_kshglob_at_exactly_one() {
 fn test_kshglob_off_no_match() {
     // Without `setopt kshglob`, ?(a|b) is the default zsh-glob shape
     // and doesn't match the bare letter `a` (literal `?(...)`).
-    let (_, output, _) =
-        run_zshrs("[[ a = ?(a|b) ]] && echo match || echo nomatch");
+    let (_, output, _) = run_zshrs("[[ a = ?(a|b) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
 
@@ -1441,25 +1376,22 @@ fn test_kshglob_off_no_match() {
 
 #[test]
 fn test_pattern_repeat_exact() {
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ aa = a(#c2) ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ aa = a(#c2) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_pattern_repeat_range() {
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ aaa = a(#c2,3) ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ aaa = a(#c2,3) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_pattern_repeat_out_of_range() {
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ aaaa = a(#c2,3) ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt extendedglob; [[ aaaa = a(#c2,3) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
 
@@ -1471,8 +1403,7 @@ fn test_pattern_repeat_out_of_range() {
 fn test_special_param_euid() {
     let (_, output, _) = run_zshrs("echo $EUID");
     assert!(
-        output.trim().chars().all(|c| c.is_ascii_digit())
-            && !output.trim().is_empty(),
+        output.trim().chars().all(|c| c.is_ascii_digit()) && !output.trim().is_empty(),
         "got: {output:?}"
     );
 }
@@ -1481,8 +1412,7 @@ fn test_special_param_euid() {
 fn test_special_param_uid() {
     let (_, output, _) = run_zshrs("echo $UID");
     assert!(
-        output.trim().chars().all(|c| c.is_ascii_digit())
-            && !output.trim().is_empty(),
+        output.trim().chars().all(|c| c.is_ascii_digit()) && !output.trim().is_empty(),
         "got: {output:?}"
     );
 }
@@ -1491,8 +1421,7 @@ fn test_special_param_uid() {
 fn test_special_param_ppid() {
     let (_, output, _) = run_zshrs("echo $PPID");
     assert!(
-        output.trim().chars().all(|c| c.is_ascii_digit())
-            && !output.trim().is_empty(),
+        output.trim().chars().all(|c| c.is_ascii_digit()) && !output.trim().is_empty(),
         "got: {output:?}"
     );
 }
@@ -1530,8 +1459,7 @@ fn test_dollar_hash_star_count() {
 
 #[test]
 fn test_sysparams_pid() {
-    let (_, output, _) =
-        run_zshrs("zmodload zsh/system; print $sysparams[pid]");
+    let (_, output, _) = run_zshrs("zmodload zsh/system; print $sysparams[pid]");
     let pid = output.trim();
     assert!(
         pid.chars().all(|c| c.is_ascii_digit()) && !pid.is_empty(),
@@ -1541,8 +1469,7 @@ fn test_sysparams_pid() {
 
 #[test]
 fn test_sysparams_ppid() {
-    let (_, output, _) =
-        run_zshrs("zmodload zsh/system; print $sysparams[ppid]");
+    let (_, output, _) = run_zshrs("zmodload zsh/system; print $sysparams[ppid]");
     let ppid = output.trim();
     assert!(
         ppid.chars().all(|c| c.is_ascii_digit()) && !ppid.is_empty(),
@@ -1556,17 +1483,15 @@ fn test_sysparams_ppid() {
 
 #[test]
 fn test_kshglob_negation_match() {
-    let (_, output, _) = run_zshrs(
-        "setopt kshglob; [[ baz = !(foo|bar) ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt kshglob; [[ baz = !(foo|bar) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "match", "got: {output:?}");
 }
 
 #[test]
 fn test_kshglob_negation_no_match() {
-    let (_, output, _) = run_zshrs(
-        "setopt kshglob; [[ foo = !(foo|bar) ]] && echo match || echo nomatch",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt kshglob; [[ foo = !(foo|bar) ]] && echo match || echo nomatch");
     assert_eq!(output.trim(), "nomatch", "got: {output:?}");
 }
 
@@ -1576,8 +1501,7 @@ fn test_kshglob_negation_no_match() {
 
 #[test]
 fn test_F_flag_joins_array_with_newlines() {
-    let (_, output, _) =
-        run_zshrs("arr=(a b c); echo \"${(F)arr}\"");
+    let (_, output, _) = run_zshrs("arr=(a b c); echo \"${(F)arr}\"");
     assert_eq!(output.trim(), "a\nb\nc", "got: {output:?}");
 }
 
@@ -1599,8 +1523,7 @@ fn test_typeset_p_array() {
 
 #[test]
 fn test_typeset_p_assoc() {
-    let (_, output, _) =
-        run_zshrs("typeset -A m=(a 1 b 2); typeset -p m");
+    let (_, output, _) = run_zshrs("typeset -A m=(a 1 b 2); typeset -p m");
     assert_eq!(
         output.trim(),
         "typeset -A m=( [a]=1 [b]=2 )",
@@ -1610,8 +1533,7 @@ fn test_typeset_p_assoc() {
 
 #[test]
 fn test_export_p_lists_var() {
-    let (_, output, _) =
-        run_zshrs("export X=hello; export -p 2>&1 | grep '^export X='");
+    let (_, output, _) = run_zshrs("export X=hello; export -p 2>&1 | grep '^export X='");
     assert_eq!(output.trim(), "export X=hello", "got: {output:?}");
 }
 
@@ -1627,10 +1549,7 @@ fn test_zmv_dry_run_capture_substitution() {
     fs::create_dir_all(dir).unwrap();
     fs::write(format!("{}/a.txt", dir), "x").unwrap();
     fs::write(format!("{}/b.txt", dir), "y").unwrap();
-    let (_, output, _) = run_zshrs(&format!(
-        "cd {} && zmv -n '(*).txt' '$1.bak'",
-        dir
-    ));
+    let (_, output, _) = run_zshrs(&format!("cd {} && zmv -n '(*).txt' '$1.bak'", dir));
     let _ = fs::remove_dir_all(dir);
     let mut lines: Vec<&str> = output.lines().collect();
     lines.sort();
@@ -1648,14 +1567,16 @@ fn test_zmv_real_renames() {
     let _ = fs::remove_dir_all(dir);
     fs::create_dir_all(dir).unwrap();
     fs::write(format!("{}/foo.txt", dir), "x").unwrap();
-    let (_, _, _) = run_zshrs(&format!(
-        "cd {} && zmv '(*).txt' '$1.bak'",
-        dir
-    ));
+    let (_, _, _) = run_zshrs(&format!("cd {} && zmv '(*).txt' '$1.bak'", dir));
     let exists_bak = std::path::Path::new(&format!("{}/foo.bak", dir)).exists();
     let exists_orig = std::path::Path::new(&format!("{}/foo.txt", dir)).exists();
     let _ = fs::remove_dir_all(dir);
-    assert!(exists_bak && !exists_orig, "bak={} orig={}", exists_bak, exists_orig);
+    assert!(
+        exists_bak && !exists_orig,
+        "bak={} orig={}",
+        exists_bak,
+        exists_orig
+    );
 }
 
 #[test]
@@ -1667,10 +1588,7 @@ fn test_zmv_collision_detection() {
     fs::create_dir_all(dir).unwrap();
     fs::write(format!("{}/a.txt", dir), "1").unwrap();
     fs::write(format!("{}/b.txt", dir), "2").unwrap();
-    let (status, _, stderr) = run_zshrs(&format!(
-        "cd {} && zmv '*.txt' 'merged.bak'",
-        dir
-    ));
+    let (status, _, stderr) = run_zshrs(&format!("cd {} && zmv '*.txt' 'merged.bak'", dir));
     let _ = fs::remove_dir_all(dir);
     assert_eq!(status, 1, "should exit 1 on collision");
     assert!(
@@ -1698,9 +1616,7 @@ fn test_cond_nt_newer_than() {
     // mtime granularity on some filesystems is 1s — sleep past that.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     fs::write("/tmp/zsh_nt_b", "y").unwrap();
-    let (_, output, _) = run_zshrs(
-        "[[ /tmp/zsh_nt_b -nt /tmp/zsh_nt_a ]] && echo yes || echo no",
-    );
+    let (_, output, _) = run_zshrs("[[ /tmp/zsh_nt_b -nt /tmp/zsh_nt_a ]] && echo yes || echo no");
     let _ = fs::remove_file("/tmp/zsh_nt_a");
     let _ = fs::remove_file("/tmp/zsh_nt_b");
     // ignore trailing zpwr log noise from cwd hook
@@ -1709,8 +1625,7 @@ fn test_cond_nt_newer_than() {
 
 #[test]
 fn test_cond_k_sticky_bit() {
-    let (_, output, _) =
-        run_zshrs("[[ -k /tmp ]] && echo yes || echo no");
+    let (_, output, _) = run_zshrs("[[ -k /tmp ]] && echo yes || echo no");
     assert!(output.starts_with("yes"), "got: {output:?}");
 }
 
@@ -1719,8 +1634,7 @@ fn test_cond_O_owned_by_user() {
     // /tmp is typically root-owned; not us. /Users/$USER/... is. We
     // just check the operator runs without erroring — exit status of 0
     // (yes) or 1 (no) is fine.
-    let (_, output, _) =
-        run_zshrs("[[ -O /tmp ]] && echo yes || echo no");
+    let (_, output, _) = run_zshrs("[[ -O /tmp ]] && echo yes || echo no");
     assert!(
         output.starts_with("yes") || output.starts_with("no"),
         "got: {output:?}"
@@ -1729,8 +1643,7 @@ fn test_cond_O_owned_by_user() {
 
 #[test]
 fn test_cond_G_owned_by_group() {
-    let (_, output, _) =
-        run_zshrs("[[ -G /tmp ]] && echo yes || echo no");
+    let (_, output, _) = run_zshrs("[[ -G /tmp ]] && echo yes || echo no");
     assert!(
         output.starts_with("yes") || output.starts_with("no"),
         "got: {output:?}"
@@ -1744,18 +1657,14 @@ fn test_cond_G_owned_by_group() {
 #[test]
 fn test_cond_neg_pattern_excludes_match() {
     // `[[ apple = ^a* ]]` with extendedglob → false (apple DOES match a*).
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ apple = ^a* ]] && echo y || echo n",
-    );
+    let (_, output, _) = run_zshrs("setopt extendedglob; [[ apple = ^a* ]] && echo y || echo n");
     assert_eq!(output.trim(), "n", "got: {output:?}");
 }
 
 #[test]
 fn test_cond_neg_pattern_includes_non_match() {
     // `[[ banana = ^a* ]]` with extendedglob → true.
-    let (_, output, _) = run_zshrs(
-        "setopt extendedglob; [[ banana = ^a* ]] && echo y || echo n",
-    );
+    let (_, output, _) = run_zshrs("setopt extendedglob; [[ banana = ^a* ]] && echo y || echo n");
     assert_eq!(output.trim(), "y", "got: {output:?}");
 }
 
@@ -1763,8 +1672,7 @@ fn test_cond_neg_pattern_includes_non_match() {
 fn test_cond_neg_literal_without_extendedglob() {
     // Without extendedglob, `^` is a literal char and `^a*` doesn't
     // match `apple`.
-    let (_, output, _) =
-        run_zshrs("[[ apple = ^a* ]] && echo y || echo n");
+    let (_, output, _) = run_zshrs("[[ apple = ^a* ]] && echo y || echo n");
     assert_eq!(output.trim(), "n", "got: {output:?}");
 }
 
@@ -1796,8 +1704,7 @@ fn test_print_m_glob_filter() {
 
 #[test]
 fn test_print_m_extension_filter() {
-    let (_, output, _) =
-        run_zshrs("print -m '*.txt' a.txt b.log c.txt");
+    let (_, output, _) = run_zshrs("print -m '*.txt' a.txt b.log c.txt");
     assert_eq!(output.trim(), "a.txt c.txt", "got: {output:?}");
 }
 
@@ -1835,36 +1742,31 @@ fn test_integer_init_division_truncates() {
 
 #[test]
 fn test_at_subscript_slice() {
-    let (_, output, _) =
-        run_zshrs("set -- a b c d e; echo \"${@[2,3]}\"");
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo \"${@[2,3]}\"");
     assert_eq!(output.trim(), "b c", "got: {output:?}");
 }
 
 #[test]
 fn test_at_subscript_single() {
-    let (_, output, _) =
-        run_zshrs("set -- a b c d e; echo \"${@[1]}\"");
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo \"${@[1]}\"");
     assert_eq!(output.trim(), "a", "got: {output:?}");
 }
 
 #[test]
 fn test_at_subscript_negative() {
-    let (_, output, _) =
-        run_zshrs("set -- a b c d e; echo \"${@[-1]}\"");
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo \"${@[-1]}\"");
     assert_eq!(output.trim(), "e", "got: {output:?}");
 }
 
 #[test]
 fn test_star_subscript_slice() {
-    let (_, output, _) =
-        run_zshrs("set -- a b c d e; echo \"${*[2,4]}\"");
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo \"${*[2,4]}\"");
     assert_eq!(output.trim(), "b c d", "got: {output:?}");
 }
 
 #[test]
 fn test_argv_subscript_slice() {
-    let (_, output, _) =
-        run_zshrs("set -- a b c d e; echo \"${argv[2,4]}\"");
+    let (_, output, _) = run_zshrs("set -- a b c d e; echo \"${argv[2,4]}\"");
     assert_eq!(output.trim(), "b c d", "got: {output:?}");
 }
 
@@ -1880,9 +1782,8 @@ fn test_bare_at_subscript() {
 
 #[test]
 fn test_for_in_array_splices() {
-    let (_, output, _) = run_zshrs(
-        "arr=(apple banana cherry); for f in $arr; do echo \"$f\"; done",
-    );
+    let (_, output, _) =
+        run_zshrs("arr=(apple banana cherry); for f in $arr; do echo \"$f\"; done");
     assert_eq!(output.trim(), "apple\nbanana\ncherry", "got: {output:?}");
 }
 
@@ -1890,9 +1791,7 @@ fn test_for_in_array_splices() {
 fn test_for_quoted_array_joins() {
     // "$arr" (DQ) joins to a scalar — single iteration with the joined
     // string. Matches zsh DQ-array semantics.
-    let (_, output, _) = run_zshrs(
-        "arr=(a b c); for f in \"$arr\"; do echo \"got=$f\"; done",
-    );
+    let (_, output, _) = run_zshrs("arr=(a b c); for f in \"$arr\"; do echo \"got=$f\"; done");
     // zsh joins with first char of $IFS (default space)
     assert_eq!(output.trim(), "got=a b c", "got: {output:?}");
 }
@@ -1903,15 +1802,13 @@ fn test_for_quoted_array_joins() {
 
 #[test]
 fn test_array_append_single_no_parens() {
-    let (_, output, _) =
-        run_zshrs("a=(x); a+=y; echo \"${a[@]} ${#a}\"");
+    let (_, output, _) = run_zshrs("a=(x); a+=y; echo \"${a[@]} ${#a}\"");
     assert_eq!(output.trim(), "x y 2", "got: {output:?}");
 }
 
 #[test]
 fn test_array_append_to_multi_element() {
-    let (_, output, _) =
-        run_zshrs("a=(x y); a+=z; echo \"${a[@]} ${#a}\"");
+    let (_, output, _) = run_zshrs("a=(x y); a+=z; echo \"${a[@]} ${#a}\"");
     assert_eq!(output.trim(), "x y z 3", "got: {output:?}");
 }
 
@@ -1940,8 +1837,7 @@ fn test_no_colon_default_empty_keeps_empty() {
 
 #[test]
 fn test_no_colon_assign() {
-    let (_, output, _) =
-        run_zshrs("unset xx; echo \"${xx=set-and-use}\"; echo \"$xx\"");
+    let (_, output, _) = run_zshrs("unset xx; echo \"${xx=set-and-use}\"; echo \"$xx\"");
     assert_eq!(output.trim(), "set-and-use\nset-and-use", "got: {output:?}");
 }
 
@@ -2012,9 +1908,8 @@ fn test_cond_p_fifo_negative() {
 
 #[test]
 fn test_unset_dash_f_removes_function() {
-    let (status, _, _) = run_zshrs(
-        "foo() { :; }; unset -f foo; type foo 2>&1 | grep -q 'not found'",
-    );
+    let (status, _, _) =
+        run_zshrs("foo() { :; }; unset -f foo; type foo 2>&1 | grep -q 'not found'");
     assert_eq!(status, 0, "type should report 'not found' after unset -f");
 }
 
@@ -2025,18 +1920,15 @@ fn test_unset_dash_f_removes_function() {
 #[test]
 fn test_for_scalar_no_ifs_split_default() {
     // zsh: `for w in $s` iterates ONCE with the scalar value.
-    let (_, output, _) = run_zshrs(
-        "IFS=,; s='a,b,c'; for w in $s; do echo \"[$w]\"; done",
-    );
+    let (_, output, _) = run_zshrs("IFS=,; s='a,b,c'; for w in $s; do echo \"[$w]\"; done");
     assert_eq!(output.trim(), "[a,b,c]", "got: {output:?}");
 }
 
 #[test]
 fn test_for_scalar_splits_under_shwordsplit() {
     // bash-compat: under setopt shwordsplit, scalar IS IFS-split.
-    let (_, output, _) = run_zshrs(
-        "setopt shwordsplit; IFS=,; s='a,b,c'; for w in $s; do echo \"[$w]\"; done",
-    );
+    let (_, output, _) =
+        run_zshrs("setopt shwordsplit; IFS=,; s='a,b,c'; for w in $s; do echo \"[$w]\"; done");
     assert_eq!(output.trim(), "[a]\n[b]\n[c]", "got: {output:?}");
 }
 
@@ -2084,9 +1976,7 @@ fn test_inline_funcdef_one_line_body() {
 
 #[test]
 fn test_inline_funcdef_one_line_body_args() {
-    let (_, output, _) = run_zshrs(
-        "foo() echo \"args:\" \"$@\"; foo a b",
-    );
+    let (_, output, _) = run_zshrs("foo() echo \"args:\" \"$@\"; foo a b");
     assert_eq!(output.trim(), "args: a b", "got: {output:?}");
 }
 
@@ -2104,7 +1994,10 @@ fn test_amp_redir_restores_stderr() {
     let tmp = std::env::temp_dir().join("zr_test_amp_redir_restores.out");
     let _ = std::fs::remove_file(&tmp);
     let path = tmp.to_string_lossy().into_owned();
-    let code = format!("{{ echo out; echo err >&2; }} &> {p}; echo done; cat {p}", p = path);
+    let code = format!(
+        "{{ echo out; echo err >&2; }} &> {p}; echo done; cat {p}",
+        p = path
+    );
     let (_, output, _) = run_zshrs(&code);
     assert_eq!(output.trim(), "done\nout\nerr", "got: {output:?}");
     let _ = std::fs::remove_file(&tmp);
@@ -2123,9 +2016,7 @@ fn test_typeset_m_glob_lists_matching() {
 fn test_print_stops_flag_processing_at_first_non_option() {
     // `print "rest:$@"` with positionals `-a -b foo` must not interpret
     // `-b` as a print flag once a non-flag arg has been seen.
-    let (_, output, _) = run_zshrs(
-        "set -- -a -b foo; print \"rest:$@\"",
-    );
+    let (_, output, _) = run_zshrs("set -- -a -b foo; print \"rest:$@\"");
     assert_eq!(output.trim(), "rest:-a -b foo", "got: {output:?}");
 }
 
@@ -2133,9 +2024,8 @@ fn test_print_stops_flag_processing_at_first_non_option() {
 fn test_zparseopts_dash_d_removes_only_consumed() {
     // `zparseopts -D a=opta` consumes `-a` only — `-b foo` must remain
     // in the positional params untouched.
-    let (_, output, _) = run_zshrs(
-        "zmodload zsh/zutil; set -- -a -b foo; zparseopts -D a=opta; echo \"rest:$@\"",
-    );
+    let (_, output, _) =
+        run_zshrs("zmodload zsh/zutil; set -- -a -b foo; zparseopts -D a=opta; echo \"rest:$@\"");
     assert_eq!(output.trim(), "rest:-b foo", "got: {output:?}");
 }
 
@@ -2153,9 +2043,8 @@ fn test_zparseopts_dash_m_alias_redirects_to_canonical() {
 fn test_zformat_width_padding() {
     // zformat `%-Ns` right-aligns (pads on left) and `%Ns` left-aligns
     // (pads on right) — opposite of printf, matches zsh observed.
-    let (_, output, _) = run_zshrs(
-        "zmodload zsh/zutil; zformat -f r \"%-10s|%10s\" \"s:foo\"; echo \"[$r]\"",
-    );
+    let (_, output, _) =
+        run_zshrs("zmodload zsh/zutil; zformat -f r \"%-10s|%10s\" \"s:foo\"; echo \"[$r]\"");
     assert_eq!(output.trim(), "[       foo|foo       ]", "got: {output:?}");
 }
 
@@ -2163,9 +2052,7 @@ fn test_zformat_width_padding() {
 fn test_getopts_unknown_uses_zsh_format() {
     // Zsh emits `zsh:1: bad option: -X` for unknown opts when the
     // optstring isn't quiet (no leading `:`). We mirror with `zshrs:1:`.
-    let (_, _, stderr) = run_zshrs(
-        "set -- -x; while getopts \"ab\" opt; do :; done",
-    );
+    let (_, _, stderr) = run_zshrs("set -- -x; while getopts \"ab\" opt; do :; done");
     assert!(stderr.contains("bad option: -x"), "stderr: {stderr:?}");
 }
 
@@ -2173,9 +2060,7 @@ fn test_getopts_unknown_uses_zsh_format() {
 fn test_print_f_format_cycles_args() {
     // POSIX printf semantics: when args remain after one pass through
     // the format, cycle the format until args are exhausted.
-    let (_, output, _) = run_zshrs(
-        r#"print -f "%-5s|%-5s\n" a b c d"#,
-    );
+    let (_, output, _) = run_zshrs(r#"print -f "%-5s|%-5s\n" a b c d"#);
     assert_eq!(output, "a    |b    \nc    |d    \n", "got: {output:?}");
 }
 
@@ -2187,9 +2072,7 @@ fn test_printf_width_left_align() {
 
 #[test]
 fn test_functions_dash_m_glob_lists_matching() {
-    let (_, output, _) = run_zshrs(
-        r#"fa() { :; }; fb() { :; }; functions -lm "f*""#,
-    );
+    let (_, output, _) = run_zshrs(r#"fa() { :; }; fb() { :; }; functions -lm "f*""#);
     let mut lines: Vec<&str> = output.trim().lines().collect();
     lines.sort();
     assert_eq!(lines, vec!["fa", "fb"], "got: {output:?}");
@@ -2199,10 +2082,12 @@ fn test_functions_dash_m_glob_lists_matching() {
 fn test_zstyle_dash_l_uses_pattern_first_format() {
     // `zstyle -L` emits `zstyle <pattern> <style> <values>...` — the
     // pattern slot must be `:foo:bar`, not the style name.
-    let (_, output, _) = run_zshrs(
-        r#"zstyle ":foo:bar" key value; zstyle -L"#,
+    let (_, output, _) = run_zshrs(r#"zstyle ":foo:bar" key value; zstyle -L"#);
+    assert_eq!(
+        output.trim(),
+        "zstyle :foo:bar key value",
+        "got: {output:?}"
     );
-    assert_eq!(output.trim(), "zstyle :foo:bar key value", "got: {output:?}");
 }
 
 #[test]
@@ -2216,9 +2101,7 @@ fn test_zsh_param_q_flag_backslash_only() {
 #[test]
 fn test_zsh_param_q_flag_gradient() {
     // q→\ , qq→single-quote, qqq→double-quote, qqqq→$'...'
-    let (_, output, _) = run_zshrs(
-        r#"a=hi; print "${(q)a}|${(qq)a}|${(qqq)a}|${(qqqq)a}""#,
-    );
+    let (_, output, _) = run_zshrs(r#"a=hi; print "${(q)a}|${(qq)a}|${(qqq)a}|${(qqqq)a}""#);
     assert_eq!(output.trim(), "hi|'hi'|\"hi\"|$'hi'", "got: {output:?}");
 }
 
@@ -2226,9 +2109,7 @@ fn test_zsh_param_q_flag_gradient() {
 fn test_assoc_subscript_in_double_quotes() {
     // `"$m[a]"` (no braces, in DQ context) should expand to the assoc
     // value, not append the literal `[a]` after `$m`.
-    let (_, output, _) = run_zshrs(
-        r#"typeset -A m; m[a]=1; m[b]=2; echo "$m[a] $m[b]""#,
-    );
+    let (_, output, _) = run_zshrs(r#"typeset -A m; m[a]=1; m[b]=2; echo "$m[a] $m[b]""#);
     assert_eq!(output.trim(), "1 2", "got: {output:?}");
 }
 
@@ -2240,9 +2121,7 @@ fn test_array_subscript_in_double_quotes() {
 
 #[test]
 fn test_assoc_subscript_with_dynamic_key_in_dq() {
-    let (_, output, _) = run_zshrs(
-        r#"typeset -A m; m[a]=1; k=a; echo "$m[$k]""#,
-    );
+    let (_, output, _) = run_zshrs(r#"typeset -A m; m[a]=1; k=a; echo "$m[$k]""#);
     assert_eq!(output.trim(), "1", "got: {output:?}");
 }
 
@@ -2262,9 +2141,7 @@ fn test_set_dash_u_exits_on_unbound_variable() {
 fn test_setopt_nounset_exits_on_unbound() {
     // `setopt nounset` and `set -u` both turn the same option off
     // (zsh stores the inverted-name `unset` internally).
-    let (status, _, stderr) = run_zshrs(
-        r#"setopt nounset; echo "${undef}"; echo done"#,
-    );
+    let (status, _, stderr) = run_zshrs(r#"setopt nounset; echo "${undef}"; echo done"#);
     assert_ne!(status, 0, "should exit non-zero");
     assert!(
         stderr.contains("undef: parameter not set"),
@@ -2301,19 +2178,18 @@ fn test_unmatched_glob_default_errors_with_nomatch() {
     // with "no matches found" rather than passing the literal through.
     let (status, _, stderr) = run_zshrs("echo /tmp/zr_no_such_pattern_*");
     assert_ne!(status, 0, "should exit non-zero");
-    assert!(
-        stderr.contains("no matches found"),
-        "stderr: {stderr:?}"
-    );
+    assert!(stderr.contains("no matches found"), "stderr: {stderr:?}");
 }
 
 #[test]
 fn test_unsetopt_nomatch_passes_literal_through() {
-    let (status, output, _) = run_zshrs(
-        "unsetopt nomatch; echo /tmp/zr_no_such_pattern_*",
-    );
+    let (status, output, _) = run_zshrs("unsetopt nomatch; echo /tmp/zr_no_such_pattern_*");
     assert_eq!(status, 0);
-    assert_eq!(output.trim(), "/tmp/zr_no_such_pattern_*", "got: {output:?}");
+    assert_eq!(
+        output.trim(),
+        "/tmp/zr_no_such_pattern_*",
+        "got: {output:?}"
+    );
 }
 
 #[test]
@@ -2345,9 +2221,7 @@ fn test_cd_dash_p_realpaths() {
         .args(["-f", "-c", "cd -P /tmp; pwd"])
         .output()
         .expect("zsh failed");
-    let zsh_pwd = String::from_utf8_lossy(&zsh_out.stdout)
-        .trim()
-        .to_string();
+    let zsh_pwd = String::from_utf8_lossy(&zsh_out.stdout).trim().to_string();
     assert_eq!(zshrs_pwd, zsh_pwd, "zsh: {zsh_pwd}, zshrs: {zshrs_pwd}");
 }
 
@@ -2360,9 +2234,7 @@ fn test_set_e_exits_on_failure() {
 
 #[test]
 fn test_set_e_suppressed_in_if_test() {
-    let (status, output, _) = run_zshrs(
-        "set -e; if false; then echo nope; fi; echo got_here",
-    );
+    let (status, output, _) = run_zshrs("set -e; if false; then echo nope; fi; echo got_here");
     assert_eq!(status, 0);
     assert!(output.contains("got_here"), "got: {output:?}");
 }
@@ -2371,36 +2243,28 @@ fn test_set_e_suppressed_in_if_test() {
 fn test_set_e_suppressed_in_and_chain() {
     // `false && cmd` returns 1 but doesn't trigger errexit (POSIX:
     // failures inside an AND-OR list are consumed by the connector).
-    let (status, output, _) = run_zshrs(
-        "set -e; false && echo nope; echo got_here",
-    );
+    let (status, output, _) = run_zshrs("set -e; false && echo nope; echo got_here");
     assert_eq!(status, 0);
     assert!(output.contains("got_here"), "got: {output:?}");
 }
 
 #[test]
 fn test_set_e_suppressed_in_or_chain() {
-    let (status, output, _) = run_zshrs(
-        "set -e; false || true; echo got_here",
-    );
+    let (status, output, _) = run_zshrs("set -e; false || true; echo got_here");
     assert_eq!(status, 0);
     assert!(output.contains("got_here"), "got: {output:?}");
 }
 
 #[test]
 fn test_set_e_suppressed_in_negation() {
-    let (status, output, _) = run_zshrs(
-        "set -e; ! false; echo got_here",
-    );
+    let (status, output, _) = run_zshrs("set -e; ! false; echo got_here");
     assert_eq!(status, 0);
     assert!(output.contains("got_here"), "got: {output:?}");
 }
 
 #[test]
 fn test_set_e_suppressed_in_while_test() {
-    let (status, output, _) = run_zshrs(
-        "set -e; while false; do echo nope; done; echo got_here",
-    );
+    let (status, output, _) = run_zshrs("set -e; while false; do echo nope; done; echo got_here");
     assert_eq!(status, 0);
     assert!(output.contains("got_here"), "got: {output:?}");
 }
@@ -2408,12 +2272,17 @@ fn test_set_e_suppressed_in_while_test() {
 #[test]
 fn test_subshell_isolates_cwd() {
     // `(cd /tmp); pwd` must not leak the cd into the parent.
-    let (_, output, _) = run_zshrs("pwd > /tmp/zr_pwd_pre.txt; (cd /tmp); pwd > /tmp/zr_pwd_post.txt");
+    let (_, output, _) =
+        run_zshrs("pwd > /tmp/zr_pwd_pre.txt; (cd /tmp); pwd > /tmp/zr_pwd_post.txt");
     let pre = std::fs::read_to_string("/tmp/zr_pwd_pre.txt").unwrap_or_default();
     let post = std::fs::read_to_string("/tmp/zr_pwd_post.txt").unwrap_or_default();
     let _ = std::fs::remove_file("/tmp/zr_pwd_pre.txt");
     let _ = std::fs::remove_file("/tmp/zr_pwd_post.txt");
-    assert_eq!(pre.trim(), post.trim(), "subshell cd leaked: pre={pre:?} post={post:?} output={output:?}");
+    assert_eq!(
+        pre.trim(),
+        post.trim(),
+        "subshell cd leaked: pre={pre:?} post={post:?} output={output:?}"
+    );
 }
 
 #[test]
@@ -2448,10 +2317,7 @@ fn test_read_dash_a_default_ifs_collapses_whitespace() {
 fn test_tilde_unknown_user_errors() {
     let (status, _, stderr) = run_zshrs("echo ~nonexistent_user_zrs");
     assert_ne!(status, 0, "should exit non-zero");
-    assert!(
-        stderr.contains("no such user"),
-        "stderr: {stderr:?}"
-    );
+    assert!(stderr.contains("no such user"), "stderr: {stderr:?}");
 }
 
 #[test]
@@ -2562,8 +2428,14 @@ fn test_noclobber_blocks_overwrite_and_sinks_output() {
     let _ = std::fs::remove_file("/tmp/zr_nclob_test.out");
     assert!(stderr.contains("file exists"), "stderr: {stderr:?}");
     assert!(output.contains("done"), "got: {output:?}");
-    assert!(output.contains("first"), "should preserve original content, got: {output:?}");
-    assert!(!output.contains("second"), "second should be sunk, got: {output:?}");
+    assert!(
+        output.contains("first"),
+        "should preserve original content, got: {output:?}"
+    );
+    assert!(
+        !output.contains("second"),
+        "second should be sunk, got: {output:?}"
+    );
 }
 
 #[test]
@@ -2575,7 +2447,10 @@ fn test_noclobber_force_overwrites_with_bang() {
     );
     let _ = std::fs::remove_file("/tmp/zr_nclob_force_test.out");
     assert!(output.contains("second"), "got: {output:?}");
-    assert!(!output.contains("first"), "should be overwritten, got: {output:?}");
+    assert!(
+        !output.contains("first"),
+        "should be overwritten, got: {output:?}"
+    );
 }
 
 #[test]
@@ -2605,7 +2480,11 @@ fn test_dq_suppresses_array_only_sort_flags() {
     // zsh: (o)/(O)/(n)/(i)/(u) only fire in array context. Inside DQ
     // the array is joined as a scalar with original element order.
     let (_, output, _) = run_zshrs(r#"a=(c b a); print -- "${(o)a}""#);
-    assert_eq!(output.trim(), "c b a", "DQ should preserve order, got: {output:?}");
+    assert_eq!(
+        output.trim(),
+        "c b a",
+        "DQ should preserve order, got: {output:?}"
+    );
 }
 
 #[test]
@@ -2618,14 +2497,16 @@ fn test_no_dq_sort_flags_still_apply() {
 #[test]
 fn test_dq_suppresses_unique_flag() {
     let (_, output, _) = run_zshrs(r#"a=(c b a c); print -- "${(ou)a}""#);
-    assert_eq!(output.trim(), "c b a c", "DQ should preserve order+dups, got: {output:?}");
+    assert_eq!(
+        output.trim(),
+        "c b a c",
+        "DQ should preserve order+dups, got: {output:?}"
+    );
 }
 
 #[test]
 fn test_dq_suppresses_natural_sort() {
-    let (_, output, _) = run_zshrs(
-        r#"a=(file10 file2 file1); print -- "${(on)a}""#,
-    );
+    let (_, output, _) = run_zshrs(r#"a=(file10 file2 file1); print -- "${(on)a}""#);
     assert_eq!(output.trim(), "file10 file2 file1", "got: {output:?}");
 }
 
@@ -2661,7 +2542,10 @@ fn test_bang_pid_after_background() {
     // `cmd &` records pid into $! so wait $! works.
     let (_, output, _) = run_zshrs("sleep 0.1 & echo $!");
     let pid = output.trim();
-    assert!(pid.parse::<i64>().is_ok(), "expected numeric pid, got: {pid:?}");
+    assert!(
+        pid.parse::<i64>().is_ok(),
+        "expected numeric pid, got: {pid:?}"
+    );
     assert!(pid != "0", "should be a real pid, got: {pid:?}");
 }
 
@@ -2673,18 +2557,14 @@ fn test_bang_pid_initial_zero() {
 
 #[test]
 fn test_declare_ra_blocks_array_assign() {
-    let (status, _, stderr) = run_zshrs(
-        "declare -ra arr=(a b c); arr=(x y z); echo done",
-    );
+    let (status, _, stderr) = run_zshrs("declare -ra arr=(a b c); arr=(x y z); echo done");
     assert_ne!(status, 0, "should exit non-zero");
     assert!(stderr.contains("read-only"), "stderr: {stderr:?}");
 }
 
 #[test]
 fn test_declare_ra_blocks_append() {
-    let (status, _, stderr) = run_zshrs(
-        "declare -ra arr=(a b c); arr+=(x); echo done",
-    );
+    let (status, _, stderr) = run_zshrs("declare -ra arr=(a b c); arr+=(x); echo done");
     assert_ne!(status, 0, "should exit non-zero");
     assert!(stderr.contains("read-only"), "stderr: {stderr:?}");
 }
@@ -2693,9 +2573,7 @@ fn test_declare_ra_blocks_append() {
 fn test_print_s_silent_and_records_history() {
     // `print -s X` saves X to history INSTEAD OF stdout. fc -l in
     // -c mode shows only the entries added in this session.
-    let (_, output, _) = run_zshrs(
-        r#"print -s "echo from-history"; fc -l"#,
-    );
+    let (_, output, _) = run_zshrs(r#"print -s "echo from-history"; fc -l"#);
     // No "echo from-history" leaked to stdout (only fc -l output).
     let trimmed = output.trim();
     assert!(
@@ -2704,7 +2582,10 @@ fn test_print_s_silent_and_records_history() {
     );
     // Make sure print -s didn't echo to stdout itself.
     assert_eq!(
-        output.lines().filter(|l| l.contains("echo from-history")).count(),
+        output
+            .lines()
+            .filter(|l| l.contains("echo from-history"))
+            .count(),
         1,
         "print -s should not echo to stdout, got: {output:?}"
     );
@@ -2714,18 +2595,14 @@ fn test_print_s_silent_and_records_history() {
 fn test_z_split_emits_metas_as_separate_tokens() {
     // ${(z)str} tokenises a command line like the parser would —
     // shell metas (;, &, |, etc.) become their own tokens.
-    let (_, output, _) = run_zshrs(
-        r#"a="echo hi; ls"; print -l "${(z)a}""#,
-    );
+    let (_, output, _) = run_zshrs(r#"a="echo hi; ls"; print -l "${(z)a}""#);
     let lines: Vec<&str> = output.trim().lines().collect();
     assert_eq!(lines, vec!["echo", "hi", ";", "ls"], "got: {output:?}");
 }
 
 #[test]
 fn test_z_split_pipe_token() {
-    let (_, output, _) = run_zshrs(
-        r#"a="ls | grep foo"; print -l "${(z)a}""#,
-    );
+    let (_, output, _) = run_zshrs(r#"a="ls | grep foo"; print -l "${(z)a}""#);
     let lines: Vec<&str> = output.trim().lines().collect();
     assert_eq!(lines, vec!["ls", "|", "grep", "foo"], "got: {output:?}");
 }
@@ -2734,9 +2611,7 @@ fn test_z_split_pipe_token() {
 fn test_alias_query_silent_when_unknown() {
     // After unalias, `alias NAME` should return non-zero with NO
     // diagnostic — matches zsh.
-    let (status, _output, stderr) = run_zshrs(
-        "alias hi=echo; unalias hi; alias hi 2>&1",
-    );
+    let (status, _output, stderr) = run_zshrs("alias hi=echo; unalias hi; alias hi 2>&1");
     assert_ne!(status, 0, "should exit non-zero");
     assert!(
         !stderr.contains("not found"),
@@ -2749,9 +2624,18 @@ fn test_kill_dash_l_lists_bare_names() {
     let (_, output, _) = run_zshrs("kill -l");
     let trimmed = output.trim();
     // Should be space-separated bare names on a single line.
-    assert!(!trimmed.contains("SIG"), "expected bare names, not 'SIG' prefix, got: {trimmed:?}");
-    assert!(trimmed.contains("HUP"), "should contain HUP, got: {trimmed:?}");
-    assert!(trimmed.contains("TERM"), "should contain TERM, got: {trimmed:?}");
+    assert!(
+        !trimmed.contains("SIG"),
+        "expected bare names, not 'SIG' prefix, got: {trimmed:?}"
+    );
+    assert!(
+        trimmed.contains("HUP"),
+        "should contain HUP, got: {trimmed:?}"
+    );
+    assert!(
+        trimmed.contains("TERM"),
+        "should contain TERM, got: {trimmed:?}"
+    );
 }
 
 #[test]
@@ -2759,8 +2643,10 @@ fn test_kill_dash_capital_l_unknown_signal() {
     // zsh treats `-L` as `- + L` → unknown signal SIGL.
     let (status, _, stderr) = run_zshrs("kill -L");
     assert_ne!(status, 0);
-    assert!(stderr.contains("SIGL") || stderr.contains("unknown signal"),
-        "stderr: {stderr:?}");
+    assert!(
+        stderr.contains("SIGL") || stderr.contains("unknown signal"),
+        "stderr: {stderr:?}"
+    );
 }
 
 #[test]
@@ -2791,7 +2677,10 @@ fn test_type_unknown_format_matches_zsh() {
     // `NAME not found` on stdout, not `zshrs: type: NAME: not found`.
     let (_, output, _) = run_zshrs("type nonexistent_xyz_abc");
     assert!(output.contains("not found"), "got: {output:?}");
-    assert!(!output.contains("type:"), "should not have 'type:' prefix, got: {output:?}");
+    assert!(
+        !output.contains("type:"),
+        "should not have 'type:' prefix, got: {output:?}"
+    );
 }
 
 #[test]
@@ -2834,7 +2723,11 @@ fn test_set_plus_x_disables_xtrace() {
         .lines()
         .filter(|l| l.contains("echo hidden"))
         .collect();
-    assert_eq!(trace_lines.len(), 0, "echo should not be traced after +x, got: {stderr:?}");
+    assert_eq!(
+        trace_lines.len(),
+        0,
+        "echo should not be traced after +x, got: {stderr:?}"
+    );
 }
 
 #[test]
@@ -2919,10 +2812,7 @@ fn test_array_at_keeps_separate_words() {
 fn test_wait_unknown_pid_errors() {
     let (status, _, stderr) = run_zshrs("wait 99999");
     assert_eq!(status, 127);
-    assert!(
-        stderr.contains("not a child"),
-        "stderr: {stderr:?}"
-    );
+    assert!(stderr.contains("not a child"), "stderr: {stderr:?}");
 }
 
 #[test]
@@ -3013,10 +2903,7 @@ fn test_substring_no_length_takes_rest() {
 fn test_shift_too_many_errors() {
     let (status, _, stderr) = run_zshrs("set -- a; shift 2");
     assert_ne!(status, 0);
-    assert!(
-        stderr.contains("shift count must be"),
-        "stderr: {stderr:?}"
-    );
+    assert!(stderr.contains("shift count must be"), "stderr: {stderr:?}");
 }
 
 #[test]
@@ -3124,7 +3011,10 @@ fn test_tilde_with_dollar_var() {
         output.contains(&user),
         "expected USER in output, got: {output:?}"
     );
-    assert!(!output.starts_with('~'), "expected expansion, got: {output:?}");
+    assert!(
+        !output.starts_with('~'),
+        "expected expansion, got: {output:?}"
+    );
 }
 
 #[test]
@@ -3138,7 +3028,10 @@ fn test_tilde_with_quoted_dollar_var() {
         output.contains(&user),
         "expected USER in output, got: {output:?}"
     );
-    assert!(!output.starts_with('~'), "expected expansion, got: {output:?}");
+    assert!(
+        !output.starts_with('~'),
+        "expected expansion, got: {output:?}"
+    );
 }
 
 #[test]
@@ -3148,7 +3041,10 @@ fn test_glob_qualifier_size_l_uses_bytes() {
     std::fs::write(path, "12345").unwrap();
     let (_, output, _) = run_zshrs(&format!("echo {}(L+3)", path));
     let _ = std::fs::remove_file(path);
-    assert!(output.contains(path), "5 bytes > 3, should match: {output:?}");
+    assert!(
+        output.contains(path),
+        "5 bytes > 3, should match: {output:?}"
+    );
 }
 
 #[test]
@@ -3192,15 +3088,15 @@ fn test_test_builtin_bracket_form_returns_correct_status() {
 
 #[test]
 fn test_if_elif_chain_with_bracket_test() {
-    let (_, output, _) =
-        run_zshrs(r#"x=2; if [ $x -eq 1 ]; then echo one; elif [ $x -eq 2 ]; then echo two; else echo other; fi"#);
+    let (_, output, _) = run_zshrs(
+        r#"x=2; if [ $x -eq 1 ]; then echo one; elif [ $x -eq 2 ]; then echo two; else echo other; fi"#,
+    );
     assert_eq!(output.trim(), "two", "got: {output:?}");
 }
 
 #[test]
 fn test_until_loop_with_bracket_test() {
-    let (_, output, _) =
-        run_zshrs(r#"i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done"#);
+    let (_, output, _) = run_zshrs(r#"i=0; until [ $i -ge 3 ]; do echo $i; i=$((i+1)); done"#);
     assert_eq!(output.trim(), "0\n1\n2", "got: {output:?}");
 }
 
@@ -3323,10 +3219,12 @@ fn test_param_flag_pound_arith_to_char() {
 #[test]
 fn test_param_flag_n_natural_sort() {
     // `(n)` natural sort: "file2" < "file10" < "file20".
-    let (_, output, _) = run_zshrs(
-        r#"arr=(file10 file2 file1 file20); echo ${(on)arr}"#,
+    let (_, output, _) = run_zshrs(r#"arr=(file10 file2 file1 file20); echo ${(on)arr}"#);
+    assert_eq!(
+        output.trim(),
+        "file1 file2 file10 file20",
+        "got: {output:?}"
     );
-    assert_eq!(output.trim(), "file1 file2 file10 file20", "got: {output:?}");
 }
 
 #[test]
@@ -3335,18 +3233,20 @@ fn test_subshell_export_does_not_leak_to_parent() {
     // zshrs runs subshells in-process, so we snapshot+restore the OS
     // env around subshell entry/exit. Without this, `(export y=v)`
     // would leak `y` to the parent shell.
-    let (_, output, _) = run_zshrs(
-        r#"x=outer; (export y=sub; echo "in: $y"); echo "out y=${y:-empty}""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"x=outer; (export y=sub; echo "in: $y"); echo "out y=${y:-empty}""#);
     assert_eq!(output.trim(), "in: sub\nout y=empty", "got: {output:?}");
 }
 
 #[test]
 fn test_subshell_unset_does_not_leak_to_parent() {
-    let (_, output, _) = run_zshrs(
-        r#"export X=parent; (unset X; echo "sub: ${X:-empty}"); echo "outer: $X""#,
+    let (_, output, _) =
+        run_zshrs(r#"export X=parent; (unset X; echo "sub: ${X:-empty}"); echo "outer: $X""#);
+    assert_eq!(
+        output.trim(),
+        "sub: empty\nouter: parent",
+        "got: {output:?}"
     );
-    assert_eq!(output.trim(), "sub: empty\nouter: parent", "got: {output:?}");
 }
 
 #[test]
@@ -3358,23 +3258,30 @@ fn test_user_function_overrides_coreutils_builtins() {
         ("cat", r#"cat() { echo USER-CAT; }; cat"#, "USER-CAT"),
         ("wc", r#"wc() { echo USER-WC; }; wc -l"#, "USER-WC"),
         ("sort", r#"sort() { echo USER-SORT; }; sort"#, "USER-SORT"),
-        ("sleep", r#"sleep() { echo USER-SLEEP; }; sleep 999"#, "USER-SLEEP"),
+        (
+            "sleep",
+            r#"sleep() { echo USER-SLEEP; }; sleep 999"#,
+            "USER-SLEEP",
+        ),
         ("head", r#"head() { echo USER-HEAD; }; head"#, "USER-HEAD"),
         ("tail", r#"tail() { echo USER-TAIL; }; tail"#, "USER-TAIL"),
         ("seq", r#"seq() { echo USER-SEQ; }; seq 5"#, "USER-SEQ"),
         ("uniq", r#"uniq() { echo USER-UNIQ; }; uniq"#, "USER-UNIQ"),
         ("date", r#"date() { echo USER-DATE; }; date"#, "USER-DATE"),
-        ("uname", r#"uname() { echo USER-UNAME; }; uname"#, "USER-UNAME"),
-        ("mkdir", r#"mkdir() { echo USER-MKDIR; }; mkdir foo"#, "USER-MKDIR"),
+        (
+            "uname",
+            r#"uname() { echo USER-UNAME; }; uname"#,
+            "USER-UNAME",
+        ),
+        (
+            "mkdir",
+            r#"mkdir() { echo USER-MKDIR; }; mkdir foo"#,
+            "USER-MKDIR",
+        ),
     ];
     for (name, code, expected) in cases {
         let (_, output, _) = run_zshrs(code);
-        assert_eq!(
-            output.trim(),
-            expected,
-            "{}: got {output:?}",
-            name
-        );
+        assert_eq!(output.trim(), expected, "{}: got {output:?}", name);
     }
 }
 
@@ -3400,9 +3307,7 @@ fn test_pipeline_last_stage_runs_in_current_shell() {
 
 #[test]
 fn test_pipeline_last_stage_assignment_persists() {
-    let (_, output, _) = run_zshrs(
-        r#"printf "a\nb\nc\n" | { read first; echo "first=$first"; }"#,
-    );
+    let (_, output, _) = run_zshrs(r#"printf "a\nb\nc\n" | { read first; echo "first=$first"; }"#);
     assert_eq!(output.trim(), "first=a", "got: {output:?}");
 }
 
@@ -3452,7 +3357,11 @@ fn test_command_v_missing_returns_nonzero() {
 fn test_which_for_builtin_shows_csh_format() {
     // zsh `which echo` → "echo: shell built-in command".
     let (_, output, _) = run_zshrs(r#"which echo"#);
-    assert_eq!(output.trim(), "echo: shell built-in command", "got: {output:?}");
+    assert_eq!(
+        output.trim(),
+        "echo: shell built-in command",
+        "got: {output:?}"
+    );
 }
 
 #[test]
@@ -3461,9 +3370,7 @@ fn test_read_processes_backslash_escapes_without_dash_r() {
     // `\<newline>` is a line-continuation (both stripped). Without
     // this, an input of "a\b\n" was producing the backspace
     // control character via Rust's String::replace stub.
-    let (_, output, _) = run_zshrs(
-        r#"printf 'a\\b\n' | { read line; echo "[$line]"; }"#,
-    );
+    let (_, output, _) = run_zshrs(r#"printf 'a\\b\n' | { read line; echo "[$line]"; }"#);
     assert_eq!(output.trim(), "[ab]", "got: {output:?}");
 }
 
@@ -3471,24 +3378,21 @@ fn test_read_processes_backslash_escapes_without_dash_r() {
 fn test_cmd_subst_word_splits_in_argument_context() {
     // `f $(echo a b c)` must pass three args, not one. zsh's default
     // for bare cmd-subst in argument position is IFS word-split.
-    let (_, output, _) =
-        run_zshrs(r#"f() { echo "argc=$#"; }; f $(echo a b c)"#);
+    let (_, output, _) = run_zshrs(r#"f() { echo "argc=$#"; }; f $(echo a b c)"#);
     assert_eq!(output.trim(), "argc=3", "got: {output:?}");
 }
 
 #[test]
 fn test_cmd_subst_no_split_in_dq_context() {
     // `f "$(echo a b c)"` is one arg — DQ suppresses the split.
-    let (_, output, _) =
-        run_zshrs(r#"f() { echo "argc=$#"; }; f "$(echo a b c)""#);
+    let (_, output, _) = run_zshrs(r#"f() { echo "argc=$#"; }; f "$(echo a b c)""#);
     assert_eq!(output.trim(), "argc=1", "got: {output:?}");
 }
 
 #[test]
 fn test_cmd_subst_no_split_in_assignment() {
     // Assignment RHS preserves whitespace/newlines — no IFS split.
-    let (_, output, _) =
-        run_zshrs("x=$(printf 'a\nb\nc'); echo \"$x\" | wc -l");
+    let (_, output, _) = run_zshrs("x=$(printf 'a\nb\nc'); echo \"$x\" | wc -l");
     assert_eq!(output.trim(), "3", "got: {output:?}");
 }
 
@@ -3507,8 +3411,7 @@ fn test_default_aliases_match_zsh() {
     // zsh ships compiled-in aliases `run-help=man` and
     // `which-command=whence` — visible in `zsh -f -c 'alias'`.
     let (_, output, _) = run_zshrs(r#"alias"#);
-    let mut lines: Vec<String> =
-        output.lines().map(|s| s.to_string()).collect();
+    let mut lines: Vec<String> = output.lines().map(|s| s.to_string()).collect();
     lines.sort();
     assert!(
         lines.contains(&"run-help=man".to_string()),
@@ -3531,8 +3434,7 @@ fn test_dot_glob_excludes_dot_and_dotdot() {
     File::create(format!("{}/.hide", dir)).unwrap();
     File::create(format!("{}/.other", dir)).unwrap();
     File::create(format!("{}/visible", dir)).unwrap();
-    let (_, output, _) =
-        run_zshrs(&format!("cd {}; echo .*", dir));
+    let (_, output, _) = run_zshrs(&format!("cd {}; echo .*", dir));
     let _ = std::fs::remove_dir_all(dir);
     let trimmed = output.trim();
     assert!(
@@ -3544,7 +3446,9 @@ fn test_dot_glob_excludes_dot_and_dotdot() {
         ".* should match .other: {output:?}"
     );
     assert!(
-        !trimmed.split_whitespace().any(|w| w == "." || w == ".." || w == "./." || w == "./.."),
+        !trimmed
+            .split_whitespace()
+            .any(|w| w == "." || w == ".." || w == "./." || w == "./.."),
         ".* must exclude . and ..: {output:?}"
     );
     assert!(
@@ -3601,17 +3505,15 @@ fn test_param_replace_global_with_glob() {
 #[test]
 fn test_cond_regex_with_variable() {
     // [[ str =~ $pat ]] must expand $pat before applying the regex.
-    let (_, output, _) =
-        run_zshrs(r#"pat="^h"; [[ "hello" =~ $pat ]] && echo M"#);
+    let (_, output, _) = run_zshrs(r#"pat="^h"; [[ "hello" =~ $pat ]] && echo M"#);
     assert_eq!(output.trim(), "M", "got: {output:?}");
 }
 
 #[test]
 fn test_cond_regex_with_capture_groups() {
     // $match[N] is populated from regex captures.
-    let (_, output, _) = run_zshrs(
-        r#"pat="^(h)(.*)"; [[ "hello" =~ $pat ]] && echo "$match[1]:$match[2]""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"pat="^(h)(.*)"; [[ "hello" =~ $pat ]] && echo "$match[1]:$match[2]""#);
     assert_eq!(output.trim(), "h:ello", "got: {output:?}");
 }
 
@@ -3629,8 +3531,7 @@ fn test_glob_qualifier_in_pipeline_child() {
     for i in 0..40 {
         File::create(format!("{}/file{:03}", dir, i)).unwrap();
     }
-    let (_, output, _) =
-        run_zshrs(&format!("echo {}/file*(N) | wc -w", dir));
+    let (_, output, _) = run_zshrs(&format!("echo {}/file*(N) | wc -w", dir));
     let _ = std::fs::remove_dir_all(dir);
     assert_eq!(
         output.trim().parse::<usize>().unwrap_or(0),
@@ -3662,8 +3563,7 @@ fn test_exit_builtin_fires_exit_trap() {
     // `trap 'cleanup' EXIT; exit N` must run the EXIT trap before
     // the process terminates. Implicit script-end already fired the
     // trap; explicit `exit N` was bypassing it via std::process::exit.
-    let (status, output, _) =
-        run_zshrs(r#"trap 'echo CLEANUP' EXIT; exit 5"#);
+    let (status, output, _) = run_zshrs(r#"trap 'echo CLEANUP' EXIT; exit 5"#);
     assert_eq!(status, 5, "exit code should propagate");
     assert_eq!(output.trim(), "CLEANUP", "got: {output:?}");
 }
@@ -3672,8 +3572,7 @@ fn test_exit_builtin_fires_exit_trap() {
 fn test_exit_trap_with_explicit_exit_in_trap_body() {
     // Trap body is removed BEFORE running so a recursive exit
     // doesn't re-fire the trap.
-    let (status, output, _) =
-        run_zshrs(r#"trap 'echo TRAP1' EXIT; exit 7"#);
+    let (status, output, _) = run_zshrs(r#"trap 'echo TRAP1' EXIT; exit 7"#);
     assert_eq!(status, 7);
     assert_eq!(output.trim(), "TRAP1", "got: {output:?}");
 }
@@ -3684,16 +3583,13 @@ fn test_function_name_with_hyphen_dispatches_correctly() {
     // `foo\u{9b}bar` (the lexer's META encoding of `-`) and missed
     // the registered function. Untokenize before add_name in the
     // CallFunction emit path.
-    let (_, output, _) =
-        run_zshrs(r#"foo-bar() { echo F; }; foo-bar"#);
+    let (_, output, _) = run_zshrs(r#"foo-bar() { echo F; }; foo-bar"#);
     assert_eq!(output.trim(), "F", "got: {output:?}");
 }
 
 #[test]
 fn test_function_name_with_hyphen_passes_args() {
-    let (_, output, _) = run_zshrs(
-        r#"my-cmd() { echo "called: $@"; }; my-cmd hello world"#,
-    );
+    let (_, output, _) = run_zshrs(r#"my-cmd() { echo "called: $@"; }; my-cmd hello world"#);
     assert_eq!(output.trim(), "called: hello world", "got: {output:?}");
 }
 
@@ -3703,8 +3599,7 @@ fn test_typeset_f_preserves_first_word_of_body() {
     // past the first body token, so `typeset -f f` for
     // `f() { echo a; echo b; }` printed `a; echo b;` (missing the
     // first `echo`). Capture body_start BEFORE the zshlex.
-    let (_, output, _) =
-        run_zshrs(r#"f() { echo a; echo b; }; typeset -f f"#);
+    let (_, output, _) = run_zshrs(r#"f() { echo a; echo b; }; typeset -f f"#);
     assert!(
         output.contains("echo a"),
         "body should preserve first echo: {output:?}"
@@ -3727,8 +3622,7 @@ fn test_t_flag_includes_readonly_modifier() {
     // readonly_vars but not var_attrs.readonly.
     let (_, output, _) = run_zshrs(r#"readonly R=x; echo "${(t)R}""#);
     assert_eq!(output.trim(), "scalar-readonly", "got: {output:?}");
-    let (_, output, _) =
-        run_zshrs(r#"typeset -r R=x; echo "${(t)R}""#);
+    let (_, output, _) = run_zshrs(r#"typeset -r R=x; echo "${(t)R}""#);
     assert_eq!(output.trim(), "scalar-readonly", "got: {output:?}");
 }
 
@@ -3765,8 +3659,7 @@ fn test_argv_length_returns_positional_count() {
     // ${#argv} / ${#argv[@]} — `argv` is zsh's named alias for the
     // positional array. Was returning the byte length of the IFS-
     // joined string (5 for "a b c") instead of the count (3).
-    let (_, output, _) =
-        run_zshrs(r#"set -- a b c; echo "${#argv} ${#argv[@]}""#);
+    let (_, output, _) = run_zshrs(r#"set -- a b c; echo "${#argv} ${#argv[@]}""#);
     assert_eq!(output.trim(), "3 3", "got: {output:?}");
 }
 
@@ -3776,11 +3669,9 @@ fn test_dq_star_assignment_joins_with_ifs() {
     // positional. GET_VAR for `*` returns Array which pop_args
     // flattens — for DQ scalar context, we now follow GET_VAR with
     // ARRAY_JOIN_STAR (which joins by $IFS first char).
-    let (_, output, _) =
-        run_zshrs(r#"set -- a b c; v="$*"; echo "[$v]""#);
+    let (_, output, _) = run_zshrs(r#"set -- a b c; v="$*"; echo "[$v]""#);
     assert_eq!(output.trim(), "[a b c]", "got: {output:?}");
-    let (_, output, _) =
-        run_zshrs(r#"IFS=":"; set -- a b c; v="$*"; echo "[$v]""#);
+    let (_, output, _) = run_zshrs(r#"IFS=":"; set -- a b c; v="$*"; echo "[$v]""#);
     assert_eq!(output.trim(), "[a:b:c]", "got: {output:?}");
 }
 
@@ -3788,9 +3679,7 @@ fn test_dq_star_assignment_joins_with_ifs() {
 fn test_dq_at_preserves_splice_semantics() {
     // `"$@"` must keep splice semantics — each positional its own
     // word, even in DQ. Only `$*` joins; my $* fix must not affect $@.
-    let (_, output, _) = run_zshrs(
-        r#"set -- a "b c" d; for x in "$@"; do echo "[$x]"; done"#,
-    );
+    let (_, output, _) = run_zshrs(r#"set -- a "b c" d; for x in "$@"; do echo "[$x]"; done"#);
     assert_eq!(output.trim(), "[a]\n[b c]\n[d]", "got: {output:?}");
 }
 
@@ -3826,8 +3715,7 @@ fn test_arith_subscripted_array_assign() {
     // `((a[i]=val))` — the runtime arith eval (and compile_arith via
     // BUILTIN_ARITH_EVAL bypass) now writes back to the array element
     // instead of substituting a[i] with its current value.
-    let (_, output, _) =
-        run_zshrs(r#"a=(0 0 0); echo $((a[2]=42)); echo $a[2]"#);
+    let (_, output, _) = run_zshrs(r#"a=(0 0 0); echo $((a[2]=42)); echo $a[2]"#);
     assert_eq!(output.trim(), "42\n42", "arith subst form: {output:?}");
 }
 
@@ -3836,8 +3724,7 @@ fn test_source_missing_file_zsh_format_and_exit_127() {
     // zsh format: `zshrs:source:1: no such file or directory: PATH`
     // and exit 127. Was emitting Rust's io::Error display unchanged
     // (with "(os error 2)" suffix) and exiting 1 — both wrong.
-    let (status, _stdout, stderr) =
-        run_zshrs(r#"source /no/such/file"#);
+    let (status, _stdout, stderr) = run_zshrs(r#"source /no/such/file"#);
     assert_eq!(status, 127, "exit code should be 127 for not-found");
     assert!(
         stderr.contains("source:1: no such file or directory:"),
@@ -3854,8 +3741,7 @@ fn test_array_zero_subscript_assignment_errors() {
     // zsh: arrays/positionals are 1-based — `a[0]=v` is an
     // "assignment to invalid subscript range" error and the shell
     // exits 1. Was silently accepting the assignment as a no-op.
-    let (status, _stdout, stderr) =
-        run_zshrs(r#"a=(); a[0]=hi; echo "[${a[@]}]""#);
+    let (status, _stdout, stderr) = run_zshrs(r#"a=(); a[0]=hi; echo "[${a[@]}]""#);
     assert_eq!(status, 1, "should exit non-zero");
     assert!(
         stderr.contains("assignment to invalid subscript range"),
@@ -3904,8 +3790,7 @@ fn test_abs_path_missing_says_no_such_file_not_command_not_found() {
     // zsh distinguishes: relative names not in PATH say "command not
     // found"; absolute paths that don't exist say "no such file or
     // directory" (since no PATH search was attempted).
-    let (status, _stdout, stderr) =
-        run_zshrs(r#"/nonexistent_abs_path_xyz"#);
+    let (status, _stdout, stderr) = run_zshrs(r#"/nonexistent_abs_path_xyz"#);
     assert_eq!(status, 127);
     assert!(
         stderr.contains("no such file or directory:"),
@@ -3925,7 +3810,10 @@ fn test_kill_l_uses_platform_signal_numbers() {
     let (_, output, _) = run_zshrs(r#"kill -l USR1"#);
     let n: i32 = output.trim().parse().unwrap_or(0);
     let expected = libc::SIGUSR1 as i32;
-    assert_eq!(n, expected, "got: {output:?}, expected libc::SIGUSR1={expected}");
+    assert_eq!(
+        n, expected,
+        "got: {output:?}, expected libc::SIGUSR1={expected}"
+    );
 }
 
 #[test]
@@ -3971,8 +3859,7 @@ fn test_param_flag_at_P_indirects_each_element() {
     // `${(@P)var}` should dereference: var holds "x" → look up x.
     // Was returning the raw var name because the P arm only handled
     // scalar state, leaving the (@)-forced array unchanged.
-    let (_, output, _) =
-        run_zshrs(r#"x=hello; var=x; print "${(@P)var}""#);
+    let (_, output, _) = run_zshrs(r#"x=hello; var=x; print "${(@P)var}""#);
     assert_eq!(output.trim(), "hello", "got: {output:?}");
 }
 
@@ -3982,13 +3869,8 @@ fn test_typeset_f_zsh_format_one_stmt_per_line() {
     // semicolons, indented with TAB. Was preserving the input's
     // semicolons (`echo a; echo b`) because we stored body_source
     // verbatim — now `format_function_body_zsh()` normalizes.
-    let (_, output, _) =
-        run_zshrs(r#"f() { echo a; echo b; }; typeset -f f"#);
-    assert_eq!(
-        output,
-        "f () {\n\techo a\n\techo b\n}\n",
-        "got: {output:?}"
-    );
+    let (_, output, _) = run_zshrs(r#"f() { echo a; echo b; }; typeset -f f"#);
+    assert_eq!(output, "f () {\n\techo a\n\techo b\n}\n", "got: {output:?}");
 }
 
 #[test]
@@ -4004,8 +3886,7 @@ fn test_param_flag_c_pound_returns_char_count() {
 fn test_param_flag_w_pound_returns_word_count() {
     // `${(w)#name}` splits on whitespace and counts words.
     // Same swallowed-# bug as (c)#.
-    let (_, output, _) =
-        run_zshrs(r#"a="x y z"; print "${(w)#a}""#);
+    let (_, output, _) = run_zshrs(r#"a="x y z"; print "${(w)#a}""#);
     assert_eq!(output.trim(), "3", "got: {output:?}");
 }
 
@@ -4020,7 +3901,12 @@ fn test_tr_complement_with_delete() {
         .spawn()
         .unwrap();
     use std::io::Write;
-    child.stdin.as_mut().unwrap().write_all(b"abc123\n").unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"abc123\n")
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
@@ -4041,7 +3927,12 @@ fn test_wc_uses_bsd_8char_padding() {
         .spawn()
         .unwrap();
     use std::io::Write;
-    child.stdin.as_mut().unwrap().write_all(b"a\nb\nc\n").unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"a\nb\nc\n")
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -4075,7 +3966,12 @@ fn test_tail_dash_c_byte_count() {
         .spawn()
         .unwrap();
     use std::io::Write;
-    child.stdin.as_mut().unwrap().write_all(b"abcdefgh\n").unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"abcdefgh\n")
+        .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim_end(),
@@ -4090,8 +3986,7 @@ fn test_umask_dash_S_symbolic_set() {
     // `umask -S u=rwx,g=rx,o=` sets the umask via symbolic perms.
     // Was rejecting symbolic input as "invalid mask" — only numeric
     // (`022`) was parsed.
-    let (_, output, _) =
-        run_zshrs(r#"umask 077; umask -S u=rwx,g=rx,o=; umask"#);
+    let (_, output, _) = run_zshrs(r#"umask 077; umask -S u=rwx,g=rx,o=; umask"#);
     assert_eq!(output.trim(), "027", "expected 027, got: {output:?}");
 }
 
@@ -4236,7 +4131,10 @@ fn test_minus_f_skips_eager_fpath_autoload() {
     // (a path we know doesn't exist) — zshrs should fall through to the
     // external rm without trying to load any FPATH wrapper.
     let (_, output, stderr) = run_zshrs(r#"rm -f /tmp/zshrs_never_existed_$$; echo done"#);
-    assert!(output.trim().ends_with("done"), "expected `done`: {output:?}");
+    assert!(
+        output.trim().ends_with("done"),
+        "expected `done`: {output:?}"
+    );
     assert!(
         !stderr.contains("zpwrLogConsoleErr"),
         "FPATH wrapper leaked into -f mode: {stderr:?}"
@@ -4285,13 +4183,18 @@ fn test_dollar_dash_includes_x_when_xtrace_on() {
 }
 
 #[test]
-fn test_dollar_zero_in_minus_c_returns_basename() {
-    // zsh's `$0` in `-c` mode is the shell name (`zsh` / `zshrs`), not
-    // the absolute argv0 path. Regression: zshrs returned the full
-    // `./target/debug/zshrs` build path. Fixed by setting `$0` to
-    // basename(argv[0]) in the `-c` dispatch.
+fn test_dollar_zero_in_minus_c_uses_argv0_verbatim() {
+    // zsh's `$0` in `-c` mode is argv[0] verbatim — `/bin/zsh -c '...'`
+    // gives `/bin/zsh`, plain `zsh -c '...'` gives `zsh`. zshrs now
+    // matches: `$0` is whatever path the binary was invoked with.
+    // Test asserts that `$0` ends with the binary name (handles both
+    // absolute-path and basename invocations).
     let (_, output, _) = run_zshrs(r#"echo $0"#);
-    assert_eq!(output.trim(), "zshrs", "got: {output:?}");
+    let s = output.trim();
+    assert!(
+        s.ends_with("zshrs") || s.ends_with("/zshrs"),
+        "expected $0 to end with `zshrs`, got: {s:?}"
+    );
 }
 
 #[test]
@@ -4742,8 +4645,7 @@ fn test_array_empty_index_default_modifier() {
 #[test]
 fn test_array_oob_index_assign_modifier() {
     // `${arr[N]:=fresh}` should assign fresh when OOB and return fresh.
-    let (_, output, _) =
-        run_zshrs(r#"arr=(); echo "${arr[1]:=fresh}"; echo "${arr[1]}""#);
+    let (_, output, _) = run_zshrs(r#"arr=(); echo "${arr[1]:=fresh}"; echo "${arr[1]}""#);
     let lines: Vec<&str> = output.trim().lines().collect();
     assert_eq!(lines.len(), 2, "expected 2 lines: {output:?}");
     assert_eq!(lines[0], "fresh");
@@ -4932,18 +4834,16 @@ fn test_local_no_value_resets_to_empty() {
     // shadow with EMPTY value, not parent's value. Regression: zshrs
     // preserved the parent value because the no-value typeset path
     // was set to "preserve existing".
-    let (_, output, _) = run_zshrs(
-        r#"a=hi; foo() { local a; echo "in[$a]"; }; foo; echo "out[$a]""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"a=hi; foo() { local a; echo "in[$a]"; }; foo; echo "out[$a]""#);
     assert_eq!(output.trim(), "in[]\nout[hi]");
 }
 
 #[test]
 fn test_typeset_no_value_resets_in_function_scope() {
     // Same behavior for `typeset` (which `local` aliases to).
-    let (_, output, _) = run_zshrs(
-        r#"a=hi; foo() { typeset a; echo "in[$a]"; }; foo; echo "out[$a]""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"a=hi; foo() { typeset a; echo "in[$a]"; }; foo; echo "out[$a]""#);
     assert_eq!(output.trim(), "in[]\nout[hi]");
 }
 
@@ -4951,9 +4851,8 @@ fn test_typeset_no_value_resets_in_function_scope() {
 fn test_typeset_g_keeps_parent_value() {
     // `typeset -g` opts out of localization — should keep parent value
     // (regression guard for the local-resets fix).
-    let (_, output, _) = run_zshrs(
-        r#"a=hi; foo() { typeset -g a; echo "in[$a]"; }; foo; echo "out[$a]""#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"a=hi; foo() { typeset -g a; echo "in[$a]"; }; foo; echo "out[$a]""#);
     assert_eq!(output.trim(), "in[hi]\nout[hi]");
 }
 
@@ -5106,10 +5005,7 @@ fn test_dirs_v_uses_tab_separator() {
     // `dirs -v` separates index and path with TAB.
     let (_, output, _) = run_zshrs(r#"pushd /tmp >/dev/null; dirs -v"#);
     let first = output.lines().next().unwrap_or("");
-    assert!(
-        first.contains('\t'),
-        "expected TAB in dirs -v: {first:?}"
-    );
+    assert!(first.contains('\t'), "expected TAB in dirs -v: {first:?}");
 }
 
 #[test]
@@ -5119,10 +5015,7 @@ fn test_arith_int_times_float_promotes() {
     // MathEval via the float-literal trigger in compile_arith.
     let (_, output, _) = run_zshrs(r#"a=10; ((a *= 1.5)); echo $a"#);
     let s = output.trim();
-    assert!(
-        s.starts_with("15"),
-        "expected 15.x or 15.0…, got: {s:?}"
-    );
+    assert!(s.starts_with("15"), "expected 15.x or 15.0…, got: {s:?}");
     assert!(s.contains('.'), "expected float result: {s:?}");
 }
 
@@ -5131,8 +5024,7 @@ fn test_assoc_bare_returns_joined_values() {
     // `declare -A h; h[k]=v; echo "${h:-default}"` — bare `${h}`
     // should return joined values, NOT the default. Regression:
     // zshrs's get_variable returned empty for assoc.
-    let (_, output, _) =
-        run_zshrs(r#"declare -A h; h[k]=v; echo "${h:-default}""#);
+    let (_, output, _) = run_zshrs(r#"declare -A h; h[k]=v; echo "${h:-default}""#);
     assert_eq!(output.trim(), "v");
 }
 
@@ -5227,15 +5119,13 @@ fn test_array_element_no_colon_set_oob() {
 
 #[test]
 fn test_assoc_element_no_colon_set() {
-    let (_, output, _) =
-        run_zshrs(r#"declare -A h; h[k]=v; echo "${h[k]+set}""#);
+    let (_, output, _) = run_zshrs(r#"declare -A h; h[k]=v; echo "${h[k]+set}""#);
     assert_eq!(output.trim(), "set");
 }
 
 #[test]
 fn test_assoc_element_no_colon_unset() {
-    let (_, output, _) =
-        run_zshrs(r#"declare -A h; h[k]=v; echo "${h[m]+set}""#);
+    let (_, output, _) = run_zshrs(r#"declare -A h; h[k]=v; echo "${h[m]+set}""#);
     assert_eq!(output.trim(), "");
 }
 
@@ -5249,7 +5139,8 @@ fn test_t_flag_array_unique() {
 #[test]
 fn test_test_nt_both_must_exist() {
     // `[[ a -nt b ]]` requires BOTH files to exist; missing → false.
-    let (_, output, _) = run_zshrs(r#"[[ /etc/passwd -nt /tmp/nope_zshrs ]] && echo nt || echo not_nt"#);
+    let (_, output, _) =
+        run_zshrs(r#"[[ /etc/passwd -nt /tmp/nope_zshrs ]] && echo nt || echo not_nt"#);
     assert_eq!(output.trim(), "not_nt");
 }
 
@@ -5294,8 +5185,7 @@ fn test_arith_comma_compound_assigns() {
 #[test]
 fn test_arith_comma_two_vars() {
     // `((a += 5, b *= 2))` — both vars get updated.
-    let (_, output, _) =
-        run_zshrs(r#"a=10; b=20; ((a += 5, b *= 2)); echo "$a $b""#);
+    let (_, output, _) = run_zshrs(r#"a=10; b=20; ((a += 5, b *= 2)); echo "$a $b""#);
     assert_eq!(output.trim(), "15 40");
 }
 
@@ -5395,17 +5285,15 @@ fn test_anonymous_function_no_parens() {
 
 #[test]
 fn test_anonymous_function_no_parens_multi_arg() {
-    let (_, output, _) =
-        run_zshrs("function { echo $#; echo $@ } a b c");
+    let (_, output, _) = run_zshrs("function { echo $#; echo $@ } a b c");
     assert_eq!(output.trim(), "3\na b c");
 }
 
 #[test]
 fn test_zsh_subshell_increments() {
     // `$ZSH_SUBSHELL` increments by one for each subshell nesting level.
-    let (_, output, _) = run_zshrs(
-        "echo $ZSH_SUBSHELL; (echo $ZSH_SUBSHELL); ( ( echo $ZSH_SUBSHELL ) )",
-    );
+    let (_, output, _) =
+        run_zshrs("echo $ZSH_SUBSHELL; (echo $ZSH_SUBSHELL); ( ( echo $ZSH_SUBSHELL ) )");
     assert_eq!(output.trim(), "0\n1\n2");
 }
 
@@ -5435,7 +5323,12 @@ fn test_glob_sort_locale_aware() {
     let lang = std::env::var("LANG").unwrap_or_default();
     let active = if !lc_all.is_empty() { lc_all } else { lang };
     let is_c = matches!(
-        active.split('.').next().unwrap_or("").to_uppercase().as_str(),
+        active
+            .split('.')
+            .next()
+            .unwrap_or("")
+            .to_uppercase()
+            .as_str(),
         "" | "C" | "POSIX"
     );
     if is_c {
@@ -5448,12 +5341,10 @@ fn test_glob_sort_locale_aware() {
 #[test]
 fn test_typeset_integer_base_output() {
     // `typeset -i N name=value` displays in base N as `N#DIGITS`.
-    let (_, output, _) =
-        run_zshrs("typeset -i 16 a=255; echo $a");
+    let (_, output, _) = run_zshrs("typeset -i 16 a=255; echo $a");
     assert_eq!(output.trim(), "16#FF");
 
-    let (_, output, _) =
-        run_zshrs("typeset -i 2 a=10; echo $a");
+    let (_, output, _) = run_zshrs("typeset -i 2 a=10; echo $a");
     assert_eq!(output.trim(), "2#1010");
 }
 
@@ -5504,32 +5395,28 @@ fn test_herestring_inside_command_substitution() {
 #[test]
 fn test_array_suffix_strip_per_element() {
     // `${arr%pat}` strips suffix per element, not after joining.
-    let (_, output, _) =
-        run_zshrs("a=(a.txt b.bin c.txt); echo ${a%.txt}");
+    let (_, output, _) = run_zshrs("a=(a.txt b.bin c.txt); echo ${a%.txt}");
     assert_eq!(output.trim(), "a b.bin c");
 }
 
 #[test]
 fn test_array_prefix_strip_per_element() {
     // `${arr#pat}` strips prefix per element.
-    let (_, output, _) =
-        run_zshrs("a=(/tmp/x /tmp/y); echo ${a#/tmp/}");
+    let (_, output, _) = run_zshrs("a=(/tmp/x /tmp/y); echo ${a#/tmp/}");
     assert_eq!(output.trim(), "x y");
 }
 
 #[test]
 fn test_array_long_suffix_strip_per_element() {
     // `${arr%%pat}` strips longest suffix per element.
-    let (_, output, _) =
-        run_zshrs("a=(a.b.c d.e.f); echo ${a%%.*}");
+    let (_, output, _) = run_zshrs("a=(a.b.c d.e.f); echo ${a%%.*}");
     assert_eq!(output.trim(), "a d");
 }
 
 #[test]
 fn test_array_long_prefix_strip_per_element() {
     // `${arr##pat}` strips longest prefix per element.
-    let (_, output, _) =
-        run_zshrs("a=(/tmp/a /tmp/b); echo ${a##*/}");
+    let (_, output, _) = run_zshrs("a=(/tmp/a /tmp/b); echo ${a##*/}");
     assert_eq!(output.trim(), "a b");
 }
 
@@ -5566,9 +5453,7 @@ fn test_print_double_dash_terminator() {
 fn test_heredoc_backslash_terminator_disables_expansion() {
     // `<<\EOF` is shorthand for `<<'EOF'` — disables variable /
     // command-sub / arithmetic expansion in the body.
-    let (_, output, _) = run_zshrs(
-        "a=42; cat <<\\EOF\nval=$a\nEOF",
-    );
+    let (_, output, _) = run_zshrs("a=42; cat <<\\EOF\nval=$a\nEOF");
     assert_eq!(output.trim(), "val=$a");
 }
 
@@ -5646,8 +5531,7 @@ fn test_double_bracket_o_unknown_option_warns() {
     // `[[ -o no_such_option ]]` should emit "no such option" to
     // stderr (and the test result is false). Was silently returning
     // false with no diagnostic.
-    let (_, _, stderr) =
-        run_zshrs("[[ -o no_such_option_zzz ]] && echo y || echo n");
+    let (_, _, stderr) = run_zshrs("[[ -o no_such_option_zzz ]] && echo y || echo n");
     assert!(
         stderr.contains("no such option"),
         "expected 'no such option' in stderr, got: {}",
@@ -5662,8 +5546,7 @@ fn test_heredoc_body_no_glob_expansion() {
     // expansion pipeline including glob, which fired NOMATCH on the
     // literal `[42]` pattern. Now uses a heredoc-specific mode that
     // expands $vars / cmd-subst / arith but skips glob+brace.
-    let (_, output, _) =
-        run_zshrs("a=42; cat <<EOF\n[$a]\nEOF");
+    let (_, output, _) = run_zshrs("a=42; cat <<EOF\n[$a]\nEOF");
     assert_eq!(output.trim(), "[42]");
 }
 
@@ -5681,16 +5564,13 @@ fn test_array_at_subscript_history_modifier_per_element() {
     // `${arr[@]:h}` should apply :h per element (`/a/b/c /d/e/f` →
     // `/a/b /d/e`), not collapse to scalar then strip. Same for
     // :t / :r / :l / :u modifiers.
-    let (_, output, _) =
-        run_zshrs(r#"a=(/a/b/c /d/e/f); echo "${a[@]:h}""#);
+    let (_, output, _) = run_zshrs(r#"a=(/a/b/c /d/e/f); echo "${a[@]:h}""#);
     assert_eq!(output.trim(), "/a/b /d/e");
 
-    let (_, output, _) =
-        run_zshrs(r#"a=(foo.txt bar.bin); echo "${a[@]:r}""#);
+    let (_, output, _) = run_zshrs(r#"a=(foo.txt bar.bin); echo "${a[@]:r}""#);
     assert_eq!(output.trim(), "foo bar");
 
-    let (_, output, _) =
-        run_zshrs(r#"a=(/a/b/c /d/e); echo "${a[@]:t}""#);
+    let (_, output, _) = run_zshrs(r#"a=(/a/b/c /d/e); echo "${a[@]:t}""#);
     assert_eq!(output.trim(), "c e");
 }
 
@@ -5774,11 +5654,9 @@ fn test_array_element_length_via_hash() {
     // `${#arr[N]}` should return char-count of the Nth element
     // (zsh: `a=(hello world); ${#a[1]}` → 5). Was returning 0
     // because the [N] subscript path wasn't reached for `${#…}`.
-    let (_, output, _) =
-        run_zshrs(r#"a=(hello world); echo "${#a[1]}""#);
+    let (_, output, _) = run_zshrs(r#"a=(hello world); echo "${#a[1]}""#);
     assert_eq!(output.trim(), "5");
-    let (_, output, _) =
-        run_zshrs(r#"a=(short verylongstring); echo "${#a[2]}""#);
+    let (_, output, _) = run_zshrs(r#"a=(short verylongstring); echo "${#a[2]}""#);
     assert_eq!(output.trim(), "14");
 }
 
@@ -5787,8 +5665,7 @@ fn test_printf_dot_s_zero_precision_suppresses_arg() {
     // `%.s` (period, no digits) means precision-0 — the string arg
     // is suppressed. zshrs was treating the missing digits as
     // "no precision" and printing the full arg.
-    let (_, output, _) =
-        run_zshrs(r#"printf "[%.s]" "ignore""#);
+    let (_, output, _) = run_zshrs(r#"printf "[%.s]" "ignore""#);
     assert_eq!(output, "[]");
 }
 
@@ -5808,8 +5685,7 @@ fn test_set_e_in_subshell_doesnt_kill_parent() {
     // `std::process::exit` which tore down the parent process.
     // Now the errexit-check skips the exit when inside a subshell
     // snapshot (parent stays alive; subshell continues to end).
-    let (_, output, _) =
-        run_zshrs(r#"true; (set -e; false); echo "alive=$?""#);
+    let (_, output, _) = run_zshrs(r#"true; (set -e; false); echo "alive=$?""#);
     assert!(output.contains("alive="));
 }
 
@@ -5895,11 +5771,9 @@ fn test_case_multi_pattern_with_brackets() {
     // patterns in subsequent case arms were parse-erroring because
     // the lexer tokenized `[` as Inbrack (not part of pattern) when
     // incasepat had reset to 0 across the `;;` advance.
-    let (_, output, _) =
-        run_zshrs("case a in [a-z]) echo lower;; [A-Z]) echo upper;; esac");
+    let (_, output, _) = run_zshrs("case a in [a-z]) echo lower;; [A-Z]) echo upper;; esac");
     assert_eq!(output.trim(), "lower");
-    let (_, output, _) =
-        run_zshrs("case X in [a-z]) echo lower;; [A-Z]) echo upper;; esac");
+    let (_, output, _) = run_zshrs("case X in [a-z]) echo lower;; [A-Z]) echo upper;; esac");
     assert_eq!(output.trim(), "upper");
 }
 
@@ -5918,11 +5792,9 @@ fn test_dollar_hash_at_in_double_quotes() {
     // `"$#@"` should expand to positional count (zsh shorthand for
     // ${#@}). zshrs was splitting `$#` from `@` so the literal `@`
     // got appended. Same for `"$#*"`.
-    let (_, output, _) =
-        run_zshrs(r#"set -- a b c; echo "$#@""#);
+    let (_, output, _) = run_zshrs(r#"set -- a b c; echo "$#@""#);
     assert_eq!(output.trim(), "3");
-    let (_, output, _) =
-        run_zshrs(r#"set -- a b c; echo "$#*""#);
+    let (_, output, _) = run_zshrs(r#"set -- a b c; echo "$#*""#);
     assert_eq!(output.trim(), "3");
 }
 
@@ -5931,8 +5803,7 @@ fn test_dollar_hash_name_concat() {
     // `X$#Y` for unset Y should return `X0` (length of empty Y).
     // Was returning `X3Y` because the segment-splitter only consumed
     // `$#` and left `Y` as a literal trailing segment.
-    let (_, output, _) =
-        run_zshrs("set -- a b c; echo X$#Y");
+    let (_, output, _) = run_zshrs("set -- a b c; echo X$#Y");
     assert_eq!(output.trim(), "X0");
 }
 
@@ -5971,8 +5842,7 @@ fn test_random_resolves_in_arithmetic() {
     assert!(val >= 0 && val <= 32767, "RANDOM out of range: {}", val);
 
     // RANDOM should differ per arith-subst (zsh contract).
-    let (_, output, _) =
-        run_zshrs("a=$((RANDOM)); b=$((RANDOM)); [[ $a != $b ]] && echo diff");
+    let (_, output, _) = run_zshrs("a=$((RANDOM)); b=$((RANDOM)); [[ $a != $b ]] && echo diff");
     assert_eq!(output.trim(), "diff");
 }
 
@@ -5993,11 +5863,9 @@ fn test_double_bracket_pattern_with_quoted_parens() {
     // are literal). Quoted-glob-meta escaping was missing `(`,
     // `)`, `|`, `~`, `#`, `^` so the pattern matcher saw them as
     // alternation grouping (`@(...)` form).
-    let (_, output, _) =
-        run_zshrs(r#"[[ "foo()" == "foo()" ]] && echo y"#);
+    let (_, output, _) = run_zshrs(r#"[[ "foo()" == "foo()" ]] && echo y"#);
     assert_eq!(output.trim(), "y");
-    let (_, output, _) =
-        run_zshrs(r#"[[ "x|y" == "x|y" ]] && echo y"#);
+    let (_, output, _) = run_zshrs(r#"[[ "x|y" == "x|y" ]] && echo y"#);
     assert_eq!(output.trim(), "y");
 }
 
@@ -6006,8 +5874,7 @@ fn test_command_v_function_shows_source() {
     // `command -V foo` for a function should say "is a shell
     // function from zsh" (matching zsh's exact format). Was just
     // "is a shell function".
-    let (_, output, _) =
-        run_zshrs(r#"foo() { :; }; command -V foo"#);
+    let (_, output, _) = run_zshrs(r#"foo() { :; }; command -V foo"#);
     assert!(output.contains("from zsh"));
 }
 
@@ -6017,25 +5884,21 @@ fn test_arith_subscripted_post_increment() {
     // ArithCompiler couldn't write back through arr[idx] for compound
     // forms — only the bare `=` assign was caught. Now routed through
     // a runtime parse_subscript_arith_compound + read-modify-write.
-    let (_, output, _) =
-        run_zshrs(r#"a=(0 0); (( a[1]++ )); echo "${a[1]}""#);
+    let (_, output, _) = run_zshrs(r#"a=(0 0); (( a[1]++ )); echo "${a[1]}""#);
     assert_eq!(output.trim(), "1");
 }
 
 #[test]
 fn test_arith_subscripted_compound_plus_eq() {
-    let (_, output, _) =
-        run_zshrs(r#"a=(10 20); (( a[1] += 5 )); echo "${a[1]}""#);
+    let (_, output, _) = run_zshrs(r#"a=(10 20); (( a[1] += 5 )); echo "${a[1]}""#);
     assert_eq!(output.trim(), "15");
-    let (_, output, _) =
-        run_zshrs(r#"a=(5 5); (( a[1] *= 3 )); echo "${a[1]}""#);
+    let (_, output, _) = run_zshrs(r#"a=(5 5); (( a[1] *= 3 )); echo "${a[1]}""#);
     assert_eq!(output.trim(), "15");
 }
 
 #[test]
 fn test_arith_subscripted_post_increment_returns_old() {
-    let (_, output, _) =
-        run_zshrs(r#"a=(5 10); echo "$(( a[1]++ ))"; echo "${a[1]}""#);
+    let (_, output, _) = run_zshrs(r#"a=(5 10); echo "$(( a[1]++ ))"; echo "${a[1]}""#);
     // Post-increment returns OLD value, then variable updates.
     assert_eq!(output.trim(), "5\n6");
 }
@@ -6088,10 +5951,7 @@ fn test_extendedglob_caret_negation() {
     for name in ["a", "b", "c"] {
         std::fs::File::create(dir.join(name)).unwrap();
     }
-    let cmd = format!(
-        "setopt extendedglob; cd {} && echo ^b",
-        dir.display()
-    );
+    let cmd = format!("setopt extendedglob; cd {} && echo ^b", dir.display());
     let (_, output, _) = run_zshrs(&cmd);
     let _ = std::fs::remove_dir_all(&dir);
     let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
@@ -6119,10 +5979,7 @@ fn test_setopt_nocaseglob_honored() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     std::fs::File::create(dir.join("Aa")).unwrap();
-    let cmd = format!(
-        "setopt nocaseglob; cd {} && echo a*",
-        dir.display()
-    );
+    let cmd = format!("setopt nocaseglob; cd {} && echo a*", dir.display());
     let (_, output, _) = run_zshrs(&cmd);
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(output.trim(), "Aa");
@@ -6177,12 +6034,10 @@ fn test_dollar_underscore_after_function_call() {
     // After `foo arg`, `$_` should be `arg` (last call arg). After
     // `foo` (no args), `$_` should be `foo` (function name). zshrs
     // was leaking the internal `return 42` arg as `$_=42`.
-    let (_, output, _) =
-        run_zshrs(r#"foo() { return 42; }; foo; echo "[$_]""#);
+    let (_, output, _) = run_zshrs(r#"foo() { return 42; }; foo; echo "[$_]""#);
     assert_eq!(output.trim(), "[foo]");
 
-    let (_, output, _) =
-        run_zshrs(r#"foo() { :; }; foo arg1; echo "[$_]""#);
+    let (_, output, _) = run_zshrs(r#"foo() { :; }; foo arg1; echo "[$_]""#);
     assert_eq!(output.trim(), "[arg1]");
 }
 
@@ -6207,14 +6062,11 @@ fn test_array_element_substring() {
     // zsh: `a=(hello); ${a[1]:0:1}` → `h`. zshrs was returning
     // the full element because the substring branch only fired
     // for the top-level scalar form, not after `[N]` resolution.
-    let (_, output, _) =
-        run_zshrs(r#"a=(hello); echo "[${a[1]:0:1}]""#);
+    let (_, output, _) = run_zshrs(r#"a=(hello); echo "[${a[1]:0:1}]""#);
     assert_eq!(output.trim(), "[h]");
-    let (_, output, _) =
-        run_zshrs(r#"a=(hello world); echo "[${a[2]:0:3}]""#);
+    let (_, output, _) = run_zshrs(r#"a=(hello world); echo "[${a[2]:0:3}]""#);
     assert_eq!(output.trim(), "[wor]");
-    let (_, output, _) =
-        run_zshrs(r##"a=(abcdef); echo "[${a[1]:1:3}]""##);
+    let (_, output, _) = run_zshrs(r##"a=(abcdef); echo "[${a[1]:1:3}]""##);
     assert_eq!(output.trim(), "[bcd]");
 }
 
@@ -6244,8 +6096,7 @@ fn test_dash_t_fd_is_tty() {
     // `[[ -t fd ]]` checks if fd is a tty. In a pipe, stdin is
     // not a tty. Was emitting "unknown condition: -t" because the
     // compile_cond_expr unary handler had no case for `-t`.
-    let (_, output, _) =
-        run_zshrs(r#"echo hi | { [[ -t 0 ]] && echo tty || echo notty; }"#);
+    let (_, output, _) = run_zshrs(r#"echo hi | { [[ -t 0 ]] && echo tty || echo notty; }"#);
     assert_eq!(output.trim(), "notty");
 }
 
@@ -6295,9 +6146,7 @@ fn test_for_arith_comma_init_and_step() {
     // i and j updating. ArithCompiler only handled ONE op per
     // call and dropped the comma-trailing statements. Now the
     // comma form routes through BUILTIN_ARITH_EVAL (MathEval).
-    let (_, output, _) = run_zshrs(
-        r#"for ((i=0,j=10; i<3; i++,j--)); do echo "$i:$j"; done"#,
-    );
+    let (_, output, _) = run_zshrs(r#"for ((i=0,j=10; i<3; i++,j--)); do echo "$i:$j"; done"#);
     assert_eq!(output.trim(), "0:10\n1:9\n2:8");
 }
 
@@ -6321,8 +6170,7 @@ fn test_dollar_underscore_inside_function_body() {
     // the function body runs.
     let (_, output, _) = run_zshrs(r#"foo() { echo "[$_]"; }; foo"#);
     assert_eq!(output.trim(), "[foo]");
-    let (_, output, _) =
-        run_zshrs(r#"foo() { echo "[$_]"; }; foo arg1"#);
+    let (_, output, _) = run_zshrs(r#"foo() { echo "[$_]"; }; foo arg1"#);
     assert_eq!(output.trim(), "[arg1]");
 }
 
@@ -6364,8 +6212,7 @@ fn test_array_element_history_modifier() {
     assert_eq!(output.trim(), "file");
     let (_, output, _) = run_zshrs(r#"a=(file.tar.gz); echo "${a[1]:e}""#);
     assert_eq!(output.trim(), "gz");
-    let (_, output, _) =
-        run_zshrs(r#"a=(/usr/local/bin/file); echo "${a[1]:t}""#);
+    let (_, output, _) = run_zshrs(r#"a=(/usr/local/bin/file); echo "${a[1]:t}""#);
     assert_eq!(output.trim(), "file");
     let (_, output, _) = run_zshrs(r#"a=(HELLO); echo "${a[1]:l}""#);
     assert_eq!(output.trim(), "hello");
@@ -6416,10 +6263,7 @@ fn test_glob_globdots_setopt_alias_for_dotglob() {
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(".hidden"), b"").unwrap();
     fs::write(dir.join("visible"), b"").unwrap();
-    let cmd = format!(
-        r#"cd {}; setopt globdots; print *"#,
-        dir.to_string_lossy()
-    );
+    let cmd = format!(r#"cd {}; setopt globdots; print *"#, dir.to_string_lossy());
     let (_, output, _) = run_zshrs(&cmd);
     assert!(output.contains(".hidden"), "want .hidden in {output}");
     assert!(output.contains("visible"), "want visible in {output}");
@@ -6539,9 +6383,8 @@ fn test_arith_command_with_parameter_expansion() {
     // expansion stayed un-evaluated and `((  ))` saw 0. Added `$`
     // to the `needs_eval` triggers so any expr touching parameter
     // expansion routes through `BUILTIN_ARITH_EVAL` (MathEval).
-    let (_, output, _) = run_zshrs(
-        r#"typeset -A h; h[a]=1; (( ${+h[a]} )) && echo yes; (( ${+h[b]} )) || echo no"#,
-    );
+    let (_, output, _) =
+        run_zshrs(r#"typeset -A h; h[a]=1; (( ${+h[a]} )) && echo yes; (( ${+h[b]} )) || echo no"#);
     assert_eq!(output.trim(), "yes\nno");
 }
 

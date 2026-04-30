@@ -151,7 +151,10 @@ fn parse_subscript_flags(idx: &str) -> Option<(&str, &str)> {
     }
     // Flags must be the recognized single-char subscript flag set —
     // anything else means this `(...)` is something else (alternation).
-    if !flags.chars().all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'n')) {
+    if !flags
+        .chars()
+        .all(|c| matches!(c, 'r' | 'R' | 'i' | 'I' | 'e' | 'k' | 'n'))
+    {
         return None;
     }
     Some((flags, &rest[end + 1..]))
@@ -224,7 +227,11 @@ fn assoc_subscript_flag(
         entries.reverse();
     }
     for (k, v) in entries {
-        let hit = if exact { v == pat } else { ShellExecutor::glob_match_static(v, pat) };
+        let hit = if exact {
+            v == pat
+        } else {
+            ShellExecutor::glob_match_static(v, pat)
+        };
         if hit {
             return Value::str(if return_key { k.clone() } else { v.clone() });
         }
@@ -308,9 +315,18 @@ fn parse_pattern_flags(pat: &str) -> (String, bool, bool, Option<usize>) {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'i' => { case_i = true; i += 1; }
-            b'I' => { case_i = false; i += 1; }
-            b'l' => { l = true; i += 1; }
+            b'i' => {
+                case_i = true;
+                i += 1;
+            }
+            b'I' => {
+                case_i = false;
+                i += 1;
+            }
+            b'l' => {
+                l = true;
+                i += 1;
+            }
             b'a' => {
                 // `a` may be followed by digits indicating max errors;
                 // bare `a` defaults to 1.
@@ -355,10 +371,12 @@ fn approximate_match(s: &str, pat: &str, n: usize) -> bool {
     for i in 1..=m {
         curr[0] = i;
         for j in 1..=k {
-            let cost = if s_chars[i - 1] == p_chars[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + cost);
+            let cost = if s_chars[i - 1] == p_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }
@@ -415,9 +433,8 @@ fn parse_numeric_range<I: Iterator<Item = char> + Clone>(
 /// of the pattern (zsh negation operator). Falls through to plain
 /// glob_match otherwise.
 fn extendedglob_match(s: &str, pat: &str) -> bool {
-    let extendedglob = with_executor(|exec| {
-        exec.options.get("extendedglob").copied().unwrap_or(false)
-    });
+    let extendedglob =
+        with_executor(|exec| exec.options.get("extendedglob").copied().unwrap_or(false));
     if extendedglob {
         if let Some(neg) = pat.strip_prefix('^') {
             return !ShellExecutor::glob_match_static(s, neg);
@@ -510,9 +527,9 @@ fn apply_subst_modifier(
 /// quotes) when it contains whitespace or shell metachars.
 fn format_alias_kv(name: &str, value: &str) -> String {
     let needs_quote = value.is_empty()
-        || value.chars().any(|c| {
-            c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c)
-        });
+        || value
+            .chars()
+            .any(|c| c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c));
     if needs_quote {
         let escaped = value.replace('\'', "'\\''");
         format!("{}='{}'", name, escaped)
@@ -533,8 +550,12 @@ fn slice_scalar(s: &str, start: i64, end: i64) -> String {
     // 5-char string is "" not the last char. Detect when both bounds
     // are the same value and exceed the bounds in either direction.
     if start == end {
-        if start > len { return String::new(); }
-        if start < -len { return String::new(); }
+        if start > len {
+            return String::new();
+        }
+        if start < -len {
+            return String::new();
+        }
     }
     let resolve = |i: i64| -> i64 {
         if i < 0 {
@@ -1554,9 +1575,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // With `setopt pipefail` (or `set -o pipefail`), use the
         // first non-zero stage status (so failures earlier in the
         // pipeline propagate even if the last stage succeeded).
-        let pipefail_on = with_executor(|exec| {
-            exec.options.get("pipefail").copied().unwrap_or(false)
-        });
+        let pipefail_on =
+            with_executor(|exec| exec.options.get("pipefail").copied().unwrap_or(false));
         let last_status = if pipefail_on {
             pipestatus
                 .iter()
@@ -1694,11 +1714,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
             // Mirror array→scalar if name is the array side of a typeset -T tie.
             // `typeset -U arr` dedupes; first-wins per zsh.
-            let is_unique = exec
-                .var_attrs
-                .get(&name)
-                .map(|a| a.unique)
-                .unwrap_or(false);
+            let is_unique = exec.var_attrs.get(&name).map(|a| a.unique).unwrap_or(false);
             if is_unique {
                 let mut seen = std::collections::HashSet::new();
                 values.retain(|v| seen.insert(v.clone()));
@@ -1768,15 +1784,10 @@ fn register_builtins(vm: &mut fusevm::VM) {
             exec.variables.remove(&name);
             // `typeset -U arr` dedupes — append must respect existing
             // elements too. Skip values that are already present.
-            let is_unique = exec
-                .var_attrs
-                .get(&name)
-                .map(|a| a.unique)
-                .unwrap_or(false);
+            let is_unique = exec.var_attrs.get(&name).map(|a| a.unique).unwrap_or(false);
             let target = exec.arrays.entry(name).or_insert_with(Vec::new);
             if is_unique {
-                let existing: std::collections::HashSet<String> =
-                    target.iter().cloned().collect();
+                let existing: std::collections::HashSet<String> = target.iter().cloned().collect();
                 for v in values {
                     if !existing.contains(&v) {
                         target.push(v);
@@ -1987,7 +1998,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         }),
                     ))
                 }
-                "aliases" => Some(Value::str(exec.aliases.get(idx).cloned().unwrap_or_default())),
+                "aliases" => Some(Value::str(
+                    exec.aliases.get(idx).cloned().unwrap_or_default(),
+                )),
                 "galiases" => Some(Value::str(
                     exec.global_aliases.get(idx).cloned().unwrap_or_default(),
                 )),
@@ -2012,18 +2025,61 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // Return "defined" for known builtins; empty for unknown
                     let known = matches!(
                         idx,
-                        "echo" | "print" | "printf" | "cd" | "pwd" | "exit" | "return"
-                            | "true" | "false" | ":" | "test" | "[" | "local"
-                            | "private" | "declare" | "typeset" | "read"
-                            | "shift" | "eval" | "alias" | "unalias" | "set"
-                            | "unset" | "export" | "source" | "."
-                            | "history" | "fc" | "jobs" | "fg" | "bg"
-                            | "kill" | "wait" | "trap" | "ulimit" | "umask"
-                            | "hash" | "unhash" | "type" | "whence" | "which"
-                            | "where" | "command" | "builtin" | "exec"
-                            | "getopts" | "let" | "setopt"
-                            | "unsetopt" | "emulate" | "zstyle" | "compdef"
-                            | "compadd" | "compinit" | "compset"
+                        "echo"
+                            | "print"
+                            | "printf"
+                            | "cd"
+                            | "pwd"
+                            | "exit"
+                            | "return"
+                            | "true"
+                            | "false"
+                            | ":"
+                            | "test"
+                            | "["
+                            | "local"
+                            | "private"
+                            | "declare"
+                            | "typeset"
+                            | "read"
+                            | "shift"
+                            | "eval"
+                            | "alias"
+                            | "unalias"
+                            | "set"
+                            | "unset"
+                            | "export"
+                            | "source"
+                            | "."
+                            | "history"
+                            | "fc"
+                            | "jobs"
+                            | "fg"
+                            | "bg"
+                            | "kill"
+                            | "wait"
+                            | "trap"
+                            | "ulimit"
+                            | "umask"
+                            | "hash"
+                            | "unhash"
+                            | "type"
+                            | "whence"
+                            | "which"
+                            | "where"
+                            | "command"
+                            | "builtin"
+                            | "exec"
+                            | "getopts"
+                            | "let"
+                            | "setopt"
+                            | "unsetopt"
+                            | "emulate"
+                            | "zstyle"
+                            | "compdef"
+                            | "compadd"
+                            | "compinit"
+                            | "compset"
                     );
                     if known {
                         Some(Value::str("defined"))
@@ -2034,14 +2090,40 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 "reswords" => {
                     let known = matches!(
                         idx,
-                        "if" | "then" | "elif" | "else" | "fi" | "for" | "do"
-                            | "done" | "while" | "until" | "case" | "esac"
-                            | "in" | "function" | "select" | "time"
-                            | "{" | "}" | "[[" | "]]" | "!"
-                            | "coproc" | "always" | "foreach" | "end"
-                            | "repeat" | "nocorrect" | "noglob" | "declare"
-                            | "typeset" | "local" | "readonly" | "export"
-                            | "integer" | "float"
+                        "if" | "then"
+                            | "elif"
+                            | "else"
+                            | "fi"
+                            | "for"
+                            | "do"
+                            | "done"
+                            | "while"
+                            | "until"
+                            | "case"
+                            | "esac"
+                            | "in"
+                            | "function"
+                            | "select"
+                            | "time"
+                            | "{"
+                            | "}"
+                            | "[["
+                            | "]]"
+                            | "!"
+                            | "coproc"
+                            | "always"
+                            | "foreach"
+                            | "end"
+                            | "repeat"
+                            | "nocorrect"
+                            | "noglob"
+                            | "declare"
+                            | "typeset"
+                            | "local"
+                            | "readonly"
+                            | "export"
+                            | "integer"
+                            | "float"
                     );
                     if known {
                         Some(Value::str("reserved"))
@@ -2051,11 +2133,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 "options" => {
                     let opt_name = idx.to_lowercase().replace('_', "");
-                    Some(Value::str(if exec.options.get(&opt_name).copied().unwrap_or(false) {
-                        "on"
-                    } else {
-                        "off"
-                    }))
+                    Some(Value::str(
+                        if exec.options.get(&opt_name).copied().unwrap_or(false) {
+                            "on"
+                        } else {
+                            "off"
+                        },
+                    ))
                 }
                 "parameters" => {
                     if exec.assoc_arrays.contains_key(idx) {
@@ -2130,13 +2214,34 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // Loaded modules — fixed list of modules zshrs always
                     // exposes (compiled-in, not dlopen'd).
                     let known_modules = [
-                        "zsh/datetime", "zsh/sched", "zsh/zutil", "zsh/parameter",
-                        "zsh/files", "zsh/complete", "zsh/complist", "zsh/regex",
-                        "zsh/system", "zsh/stat", "zsh/net/tcp", "zsh/net/socket",
-                        "zsh/private", "zsh/zftp", "zsh/zselect", "zsh/zle",
-                        "zsh/random", "zsh/pcre", "zsh/db/gdbm", "zsh/cap",
-                        "zsh/clone", "zsh/curses", "zsh/mapfile", "zsh/nearcolor",
-                        "zsh/newuser", "zsh/mathfunc", "zsh/termcap", "zsh/terminfo",
+                        "zsh/datetime",
+                        "zsh/sched",
+                        "zsh/zutil",
+                        "zsh/parameter",
+                        "zsh/files",
+                        "zsh/complete",
+                        "zsh/complist",
+                        "zsh/regex",
+                        "zsh/system",
+                        "zsh/stat",
+                        "zsh/net/tcp",
+                        "zsh/net/socket",
+                        "zsh/private",
+                        "zsh/zftp",
+                        "zsh/zselect",
+                        "zsh/zle",
+                        "zsh/random",
+                        "zsh/pcre",
+                        "zsh/db/gdbm",
+                        "zsh/cap",
+                        "zsh/clone",
+                        "zsh/curses",
+                        "zsh/mapfile",
+                        "zsh/nearcolor",
+                        "zsh/newuser",
+                        "zsh/mathfunc",
+                        "zsh/termcap",
+                        "zsh/terminfo",
                         "zsh/profiler",
                     ];
                     if known_modules.contains(&idx) {
@@ -2201,9 +2306,10 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // [last_status] list so `true; echo $pipestatus[1]` prints 0.
         if name == "pipestatus" || name == "PIPESTATUS" {
             let arr = with_executor(|exec| {
-                exec.arrays.get(&name).cloned().unwrap_or_else(|| {
-                    vec![exec.last_status.to_string()]
-                })
+                exec.arrays
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| vec![exec.last_status.to_string()])
             });
             if let Ok(i) = idx.parse::<i64>() {
                 let len = arr.len() as i64;
@@ -2625,8 +2731,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             while let Some(c) = chars.next() {
                                 if c == '\\' {
                                     match chars.peek() {
-                                        Some(&n) if matches!(n, '"' | '\\' | '$' | '`')
-                                            => { out.push(chars.next().unwrap()); }
+                                        Some(&n) if matches!(n, '"' | '\\' | '$' | '`') => {
+                                            out.push(chars.next().unwrap());
+                                        }
                                         _ => out.push(c),
                                     }
                                 } else {
@@ -2671,11 +2778,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // (w) — count words; in the array sense, just split
                     // on whitespace and let downstream consumers count.
                     state = match state {
-                        St::S(s) => St::A(
-                            s.split_whitespace()
-                                .map(String::from)
-                                .collect(),
-                        ),
+                        St::S(s) => St::A(s.split_whitespace().map(String::from).collect()),
                         St::A(a) => St::A(a),
                     };
                 }
@@ -2703,14 +2806,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                     // sorts after "file2".
                                     a.sort_by(|x, y| {
                                         let cmp = natural_cmp(x, y);
-                                        if descending { cmp.reverse() } else { cmp }
+                                        if descending {
+                                            cmp.reverse()
+                                        } else {
+                                            cmp
+                                        }
                                     });
                                 }
                                 Some('i') if consume => {
                                     a.sort_by(|x, y| {
                                         let xl = x.to_lowercase();
                                         let yl = y.to_lowercase();
-                                        if descending { yl.cmp(&xl) } else { xl.cmp(&yl) }
+                                        if descending {
+                                            yl.cmp(&xl)
+                                        } else {
+                                            xl.cmp(&yl)
+                                        }
                                     });
                                 }
                                 _ => {
@@ -2731,10 +2842,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     state = match state {
                         St::A(a) => {
                             let mut seen = std::collections::HashSet::new();
-                            let unique: Vec<String> = a
-                                .into_iter()
-                                .filter(|s| seen.insert(s.clone()))
-                                .collect();
+                            let unique: Vec<String> =
+                                a.into_iter().filter(|s| seen.insert(s.clone())).collect();
                             St::A(unique)
                         }
                         s => s,
@@ -2776,10 +2885,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             St::S(exec.get_variable(&indirect_name))
                         }),
                         St::A(names) => with_executor(|exec| {
-                            let resolved: Vec<String> = names
-                                .into_iter()
-                                .map(|n| exec.get_variable(&n))
-                                .collect();
+                            let resolved: Vec<String> =
+                                names.into_iter().map(|n| exec.get_variable(&n)).collect();
                             St::A(resolved)
                         }),
                     };
@@ -3022,9 +3129,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                 // qq: single-quote, escape inner ' as '\''.
                                 let mut escaped = s.replace('\'', "'\\''");
                                 if escape_glob_chars {
-                                    escaped = escaped
-                                        .replace('*', "\\*")
-                                        .replace('?', "\\?");
+                                    escaped = escaped.replace('*', "\\*").replace('?', "\\?");
                                 }
                                 format!("'{}'", escaped)
                             }
@@ -3144,7 +3249,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                 (None, None) => return Ordering::Equal,
                                 (None, _) => return Ordering::Less,
                                 (_, None) => return Ordering::Greater,
-                                (Some(ca), Some(cb)) if ca.is_ascii_digit() && cb.is_ascii_digit() => {
+                                (Some(ca), Some(cb))
+                                    if ca.is_ascii_digit() && cb.is_ascii_digit() =>
+                                {
                                     let mut na = String::new();
                                     while let Some(&c) = ai.peek() {
                                         if c.is_ascii_digit() {
@@ -3215,8 +3322,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             "association".to_string()
                         } else if exec.arrays.contains_key(&name) {
                             "array".to_string()
-                        } else if exec.variables.contains_key(&name)
-                            || std::env::var(&name).is_ok()
+                        } else if exec.variables.contains_key(&name) || std::env::var(&name).is_ok()
                         {
                             "scalar".to_string()
                         } else {
@@ -3230,9 +3336,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // executor's expand_prompt. Useful for building prompts
                     // out of stored fragments.
                     state = match state {
-                        St::S(s) => {
-                            St::S(with_executor(|exec| exec.expand_prompt_string(&s)))
-                        }
+                        St::S(s) => St::S(with_executor(|exec| exec.expand_prompt_string(&s))),
                         St::A(a) => St::A(
                             a.into_iter()
                                 .map(|s| with_executor(|exec| exec.expand_prompt_string(&s)))
@@ -3246,9 +3350,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // on the resulting word". Apply expand_string so
                     // `\$var` (literal `$var` in the value) becomes
                     // the value of $var, `\$(cmd)` runs the cmd, etc.
-                    let eval_one = |s: &str| -> String {
-                        with_executor(|exec| exec.expand_string(s))
-                    };
+                    let eval_one =
+                        |s: &str| -> String { with_executor(|exec| exec.expand_string(s)) };
                     state = match state {
                         St::S(s) => St::S(eval_one(&s)),
                         St::A(a) => St::A(a.into_iter().map(|s| eval_one(&s)).collect()),
@@ -3528,10 +3631,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
             keep
         });
         // Sort modifiers
-        if qual.contains("on") || qual.contains('o') && !qual.contains("om") && !qual.contains("oL") {
+        if qual.contains("on") || qual.contains('o') && !qual.contains("om") && !qual.contains("oL")
+        {
             matches.sort();
         }
-        if qual.contains("On") || (qual.contains('O') && !qual.contains("Om") && !qual.contains("OL")) {
+        if qual.contains("On")
+            || (qual.contains('O') && !qual.contains("Om") && !qual.contains("OL"))
+        {
             matches.sort();
             matches.reverse();
         }
@@ -3665,9 +3771,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             // Special positional names — splice the positional list.
             if name == "@" || name == "*" || name == "argv" {
-                return Value::Array(
-                    exec.positional_params.iter().map(Value::str).collect(),
-                );
+                return Value::Array(exec.positional_params.iter().map(Value::str).collect());
             }
             match exec.arrays.get(&name) {
                 Some(v) => Value::Array(v.iter().map(Value::str).collect()),
@@ -3683,12 +3787,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         && std::env::var(&name).is_err()
                     {
                         Value::Array(vec![])
-                    } else if exec
-                        .options
-                        .get("shwordsplit")
-                        .copied()
-                        .unwrap_or(false)
-                    {
+                    } else if exec.options.get("shwordsplit").copied().unwrap_or(false) {
                         // bash-compat: under setopt sh_word_split, do
                         // split scalars on IFS chars.
                         let ifs = exec
@@ -3789,10 +3888,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 let write_fd = p2c[1];
                 with_executor(|exec| {
                     exec.variables.remove(&name);
-                    exec.arrays.insert(
-                        name,
-                        vec![read_fd.to_string(), write_fd.to_string()],
-                    );
+                    exec.arrays
+                        .insert(name, vec![read_fd.to_string(), write_fd.to_string()]);
                 });
                 Value::Status(0)
             }
@@ -3848,9 +3945,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // BUILTIN_CONCAT_DISTRIBUTE distributes element-wise. Without
         // the option, arrays still join to a space-separated scalar
         // (zsh's default unquoted-array-as-scalar semantics).
-        let rc_expand = with_executor(|exec| {
-            exec.options.get("rcexpandparam").copied().unwrap_or(false)
-        });
+        let rc_expand =
+            with_executor(|exec| exec.options.get("rcexpandparam").copied().unwrap_or(false));
         if rc_expand {
             let arr_val = with_executor(|exec| {
                 sync_status(exec);
@@ -3972,11 +4068,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
             // Without this, env didn't see user-set scalars.
             let allexport = exec.options.get("allexport").copied().unwrap_or(false);
-            let already_exported = exec
-                .var_attrs
-                .get(&name)
-                .map(|a| a.export)
-                .unwrap_or(false);
+            let already_exported = exec.var_attrs.get(&name).map(|a| a.export).unwrap_or(false);
             if allexport || already_exported {
                 std::env::set_var(&name, &stored);
             }
@@ -4079,9 +4171,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
         };
         let flags = match op_byte {
             b if b == fusevm::op::redirect_op::READ => libc::O_RDONLY,
-            b if b == fusevm::op::redirect_op::WRITE
-                || b == fusevm::op::redirect_op::CLOBBER => libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
-            b if b == fusevm::op::redirect_op::APPEND => libc::O_WRONLY | libc::O_CREAT | libc::O_APPEND,
+            b if b == fusevm::op::redirect_op::WRITE || b == fusevm::op::redirect_op::CLOBBER => {
+                libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC
+            }
+            b if b == fusevm::op::redirect_op::APPEND => {
+                libc::O_WRONLY | libc::O_CREAT | libc::O_APPEND
+            }
             b if b == fusevm::op::redirect_op::READ_WRITE => libc::O_RDWR | libc::O_CREAT,
             _ => return Value::Status(1),
         };
@@ -4158,9 +4253,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             eprintln!("zshrs:1: no such option: {}", name);
             return fusevm::Value::Bool(false);
         }
-        let is_set = with_executor(|exec| {
-            exec.options.get(&canonical).copied().unwrap_or(false)
-        });
+        let is_set = with_executor(|exec| exec.options.get(&canonical).copied().unwrap_or(false));
         fusevm::Value::Bool(if invert { !is_set } else { is_set })
     });
 
@@ -4239,8 +4332,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 };
                 let s_raw = resolve(s_str);
                 let e_raw = resolve(e_str);
-                let lo = if s_raw < 0 { (len + s_raw + 1).max(1) } else { s_raw.max(1) };
-                let hi = if e_raw < 0 { (len + e_raw + 1).max(0) } else { e_raw.max(0) };
+                let lo = if s_raw < 0 {
+                    (len + s_raw + 1).max(1)
+                } else {
+                    s_raw.max(1)
+                };
+                let hi = if e_raw < 0 {
+                    (len + e_raw + 1).max(0)
+                } else {
+                    e_raw.max(0)
+                };
                 let lo_idx = (lo - 1) as usize;
                 let hi_idx = ((hi as usize).min(arr.len())).max(lo_idx);
                 let _: Vec<String> = arr.splice(lo_idx..hi_idx, values).collect();
@@ -4551,9 +4652,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // print to stderr if xtrace is on. Honors `$PS4` (default `+ `).
     vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
         let cmd_text = vm.pop().to_str();
-        let on = with_executor(|exec| {
-            exec.options.get("xtrace").copied().unwrap_or(false)
-        });
+        let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
         if on {
             let prefix = with_executor(|exec| {
                 exec.variables
@@ -4614,12 +4713,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
             exec.options.insert("unset".to_string(), true);
             let v = exec.get_variable(&name);
             match saved_nounset {
-                Some(b) => { exec.options.insert("nounset".to_string(), b); }
-                None => { exec.options.remove("nounset"); }
+                Some(b) => {
+                    exec.options.insert("nounset".to_string(), b);
+                }
+                None => {
+                    exec.options.remove("nounset");
+                }
             }
             match saved_unset {
-                Some(b) => { exec.options.insert("unset".to_string(), b); }
-                None => { exec.options.remove("unset"); }
+                Some(b) => {
+                    exec.options.insert("unset".to_string(), b);
+                }
+                None => {
+                    exec.options.remove("unset");
+                }
             }
             v
         });
@@ -4648,9 +4755,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // The default/alt operand may contain `$var` / `$(cmd)` /
         // `$((expr))` — zsh expands these before substitution. Apply
         // expand_string lazily (only when we'll actually use rhs).
-        let expand_rhs = |s: &str| -> String {
-            with_executor(|exec| exec.expand_string(s))
-        };
+        let expand_rhs = |s: &str| -> String { with_executor(|exec| exec.expand_string(s)) };
         match op {
             0 | 4 => {
                 // `:-` / `-` use default if missing
@@ -4716,9 +4821,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             let result = with_executor(|exec| slice_positionals(exec, offset, length));
             return fusevm::Value::str(result.join(" "));
         }
-        let array_slice = with_executor(|exec| {
-            exec.arrays.get(&name).cloned()
-        });
+        let array_slice = with_executor(|exec| exec.arrays.get(&name).cloned());
         if let Some(arr) = array_slice {
             let result = slice_array_zero_based(&arr, offset, length);
             return fusevm::Value::str(result.join(" "));
@@ -4989,8 +5092,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 while let Some(c) = it.next() {
                     if c == '\\' {
                         match it.peek() {
-                            Some('$') | Some('`') | Some('"') | Some('\'')
-                                | Some('\\') => {
+                            Some('$') | Some('`') | Some('"') | Some('\'') | Some('\\') => {
                                 prepped.push('\x00');
                                 prepped.push(it.next().unwrap());
                             }
@@ -5027,9 +5129,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         let is_assignment_shape = {
                             let bytes = s.as_bytes();
                             let mut i = 0;
-                            if !bytes.is_empty() && (bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
+                            if !bytes.is_empty()
+                                && (bytes[0] == b'_' || bytes[0].is_ascii_alphabetic())
+                            {
                                 i += 1;
-                                while i < bytes.len() && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric()) {
+                                while i < bytes.len()
+                                    && (bytes[i] == b'_' || bytes[i].is_ascii_alphanumeric())
+                                {
                                     i += 1;
                                 }
                                 i < bytes.len() && bytes[i] == b'='
@@ -5041,20 +5147,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         // with a `(...)` qualifier suffix even without
                         // any other glob metachar — `/etc/hosts(mh-100)`,
                         // `path(.)`, etc.
-                        let has_qual_suffix = s.ends_with(')')
-                            && s.contains('(')
-                            && !s.contains('|');
+                        let has_qual_suffix =
+                            s.ends_with(')') && s.contains('(') && !s.contains('|');
                         // extendedglob `^pat` (negation) and `pat~excl`
                         // (exclusion). Trigger expand_glob so the runtime
                         // can apply the appropriate filter. Both require
                         // `setopt extendedglob` — runtime falls through
                         // to literal if that's off.
-                        let extglob_meta = exec
-                            .options
-                            .get("extendedglob")
-                            .copied()
-                            .unwrap_or(false)
-                            && (s.starts_with('^') || s.contains('~'));
+                        let extglob_meta =
+                            exec.options.get("extendedglob").copied().unwrap_or(false)
+                                && (s.starts_with('^') || s.contains('~'));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
                             && !extract_numeric_ranges(&s).is_empty();
@@ -5167,7 +5269,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         }
                         while let Some(cc) = chars.next() {
                             re.push(cc);
-                            if cc == ']' { break; }
+                            if cc == ']' {
+                                break;
+                            }
                         }
                     }
                     '\\' => {
@@ -5342,9 +5446,7 @@ impl ZshrsHost {
 /// turning the expression into `0=42` which is invalid.
 /// Parse `name[idx]OP rhs?` where OP is `++`, `--`, `+=`, `-=`, etc.
 /// Returns (name, idx_expr, op, rhs). For `++`/`--`, rhs is empty.
-fn parse_subscript_arith_compound(
-    expr: &str,
-) -> Option<(String, String, String, String)> {
+fn parse_subscript_arith_compound(expr: &str) -> Option<(String, String, String, String)> {
     let trimmed = expr.trim();
     let bytes = trimmed.as_bytes();
     if bytes.is_empty() || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic()) {
@@ -5435,7 +5537,9 @@ fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String, String)> 
             b'[' => depth += 1,
             b']' => {
                 depth -= 1;
-                if depth == 0 { break; }
+                if depth == 0 {
+                    break;
+                }
             }
             _ => {}
         }
@@ -5489,11 +5593,19 @@ pub fn format_function_body_zsh(body: &str) -> String {
                 current.push(c);
             }
             '(' | '[' | '{' if !in_squote && !in_dquote => {
-                if c == '{' { depth_brace += 1; } else { depth_paren += 1; }
+                if c == '{' {
+                    depth_brace += 1;
+                } else {
+                    depth_paren += 1;
+                }
                 current.push(c);
             }
             ')' | ']' | '}' if !in_squote && !in_dquote => {
-                if c == '}' { depth_brace -= 1; } else { depth_paren -= 1; }
+                if c == '}' {
+                    depth_brace -= 1;
+                } else {
+                    depth_paren -= 1;
+                }
                 current.push(c);
             }
             ';' | '\n' if !in_squote && !in_dquote && depth_paren == 0 && depth_brace == 0 => {
@@ -5943,9 +6055,7 @@ impl fusevm::ShellHost for ZshrsHost {
         use fusevm::op::param_mod;
 
         let arg_word = |i: usize| -> crate::parser::ShellWord {
-            crate::parser::ShellWord::Literal(
-                args.get(i).map(|v| v.to_str()).unwrap_or_default(),
-            )
+            crate::parser::ShellWord::Literal(args.get(i).map(|v| v.to_str()).unwrap_or_default())
         };
 
         let synthetic: Option<VarModifier> = match modifier {
@@ -5958,12 +6068,8 @@ impl fusevm::ShellHost for ZshrsHost {
             param_mod::STRIP_LONG => Some(VarModifier::RemovePrefixLong(arg_word(0))),
             param_mod::RSTRIP_SHORT => Some(VarModifier::RemoveSuffix(arg_word(0))),
             param_mod::RSTRIP_LONG => Some(VarModifier::RemoveSuffixLong(arg_word(0))),
-            param_mod::SUBST_FIRST => {
-                Some(VarModifier::Replace(arg_word(0), arg_word(1)))
-            }
-            param_mod::SUBST_ALL => {
-                Some(VarModifier::ReplaceAll(arg_word(0), arg_word(1)))
-            }
+            param_mod::SUBST_FIRST => Some(VarModifier::Replace(arg_word(0), arg_word(1))),
+            param_mod::SUBST_ALL => Some(VarModifier::ReplaceAll(arg_word(0), arg_word(1))),
             param_mod::UPPER => Some(VarModifier::Upper),
             param_mod::LOWER => Some(VarModifier::Lower),
             param_mod::SLICE => {
@@ -6011,7 +6117,10 @@ impl fusevm::ShellHost for ZshrsHost {
         drop(cache);
         match re.captures(s) {
             Some(caps) => {
-                let full = caps.get(0).map(|m| m.as_str().to_string()).unwrap_or_default();
+                let full = caps
+                    .get(0)
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
                 let full_begin = caps
                     .get(0)
                     .map(|m| (s[..m.start()].chars().count() + 1).to_string())
@@ -6172,8 +6281,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // Removes any `export` writes the subshell made, and
                 // restores any vars the subshell unset. Without this
                 // `(export y=sub)` would leak `y` to the parent shell.
-                let current: HashMap<String, String> =
-                    std::env::vars().collect();
+                let current: HashMap<String, String> = std::env::vars().collect();
                 for k in current.keys() {
                     if !snap.env_vars.contains_key(k) {
                         std::env::remove_var(k);
@@ -6305,10 +6413,11 @@ impl fusevm::ShellHost for ZshrsHost {
             // Short-circuit BEFORE the function-lookup path so a missing daemon
             // doesn't fall through to "command not found"; daemon::builtins::dispatch
             // handles its own connect/spawn-on-demand and reports its own errors.
-            "zcache" | "zls" | "zid" | "zping" | "ztag" | "zuntag" | "zsend"
-            | "znotify" | "zlog" => {
-                let argv: Vec<String> =
-                    std::iter::once(name.to_string()).chain(args.into_iter()).collect();
+            "zcache" | "zls" | "zid" | "zping" | "ztag" | "zuntag" | "zsend" | "znotify"
+            | "zlog" => {
+                let argv: Vec<String> = std::iter::once(name.to_string())
+                    .chain(args.into_iter())
+                    .collect();
                 return Some(crate::daemon::builtins::dispatch(name, &argv).unwrap_or(1));
             }
             _ => {}
@@ -6343,9 +6452,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 format!("{} {}", body, quoted.join(" "))
             };
             with_executor(|exec| exec.expanding_aliases.insert(name.to_string()));
-            let status = with_executor(|exec| {
-                exec.execute_script(&combined).unwrap_or(1)
-            });
+            let status = with_executor(|exec| exec.execute_script(&combined).unwrap_or(1));
             with_executor(|exec| exec.expanding_aliases.remove(name));
             return Some(status);
         }
@@ -6392,8 +6499,7 @@ impl fusevm::ShellHost for ZshrsHost {
         let fn_name = name.to_string();
         let (saved_params, saved_local_count, saved_local_arr_count, saved_zero, saved_funcstack) =
             with_executor(|exec| {
-                let prev =
-                    std::mem::replace(&mut exec.positional_params, args.clone());
+                let prev = std::mem::replace(&mut exec.positional_params, args.clone());
                 let count = exec.local_save_stack.len();
                 let arr_count = exec.local_array_save_stack.len();
                 exec.local_scope_depth += 1;
@@ -6424,10 +6530,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 // Without this, internal builtins that ran before
                 // (like REGISTER_COMPILED_FN) leaked their last arg
                 // (the function body source!) as $_.
-                let dollar_underscore = args
-                    .last()
-                    .cloned()
-                    .unwrap_or_else(|| fn_name.clone());
+                let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
                 exec.variables
                     .insert("_".to_string(), dollar_underscore.clone());
                 exec.pending_underscore = Some(dollar_underscore);
@@ -6447,22 +6550,28 @@ impl fusevm::ShellHost for ZshrsHost {
             // pending_underscore with internal command args; clear and
             // overwrite here so the caller sees the function's call
             // form, not internal `return 42` arg.
-            let last_call_arg = args
-                .last()
-                .cloned()
-                .unwrap_or_else(|| fn_name.clone());
-            exec.variables.insert("_".to_string(), last_call_arg.clone());
+            let last_call_arg = args.last().cloned().unwrap_or_else(|| fn_name.clone());
+            exec.variables
+                .insert("_".to_string(), last_call_arg.clone());
             exec.pending_underscore = Some(last_call_arg);
             exec.positional_params = saved_params;
             exec.local_scope_depth -= 1;
             // Restore `$0` and `$funcstack` to their pre-call values.
             match saved_zero {
-                Some(v) => { exec.variables.insert("0".to_string(), v); }
-                None => { exec.variables.remove("0"); }
+                Some(v) => {
+                    exec.variables.insert("0".to_string(), v);
+                }
+                None => {
+                    exec.variables.remove("0");
+                }
             }
             match saved_funcstack {
-                Some(s) => { exec.arrays.insert("funcstack".to_string(), s); }
-                None => { exec.arrays.remove("funcstack"); }
+                Some(s) => {
+                    exec.arrays.insert("funcstack".to_string(), s);
+                }
+                None => {
+                    exec.arrays.remove("funcstack");
+                }
             }
             // Unwind any `local` declarations made during the function call.
             while exec.local_save_stack.len() > saved_local_count {
@@ -6480,9 +6589,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // Same for `local arr=(...)` array bindings — restore the
             // outer array's elements (or remove if there was none).
             while exec.local_array_save_stack.len() > saved_local_arr_count {
-                if let Some((arr_name, old_arr)) =
-                    exec.local_array_save_stack.pop()
-                {
+                if let Some((arr_name, old_arr)) = exec.local_array_save_stack.pop() {
                     match old_arr {
                         Some(items) => {
                             exec.arrays.insert(arr_name, items);
@@ -7005,7 +7112,8 @@ fn zsh_split_z(s: &str) -> Vec<String> {
                 // Combine repeated metas: `&&`, `||`, `;;`, `>>`, `<<`.
                 let mut tok = String::new();
                 tok.push(c);
-                while i + 1 < chars.len() && chars[i + 1] == c
+                while i + 1 < chars.len()
+                    && chars[i + 1] == c
                     && matches!(c, '&' | '|' | ';' | '<' | '>')
                 {
                     tok.push(c);
@@ -7163,9 +7271,7 @@ fn shell_quote_value(s: &str) -> String {
 }
 
 use crate::jobs::{continue_job, wait_for_child, wait_for_job, JobState, JobTable};
-use crate::parser::{
-    Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag,
-};
+use crate::parser::{Redirect, RedirectOp, ShellCommand, ShellWord, VarModifier, ZshParamFlag};
 use crate::zwc::ZwcFile;
 use std::collections::HashMap;
 use std::env;
@@ -7421,10 +7527,7 @@ fn expand_posix_char_classes(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '['
-            && i + 2 < chars.len()
-            && chars[i + 1] == ':'
-        {
+        if chars[i] == '[' && i + 2 < chars.len() && chars[i + 1] == ':' {
             // Find `:]` close
             let mut j = i + 2;
             while j + 1 < chars.len() && !(chars[j] == ':' && chars[j + 1] == ']') {
@@ -7576,7 +7679,10 @@ fn filter_numeric_ranges(
     original_pattern: &str,
     ranges: &[NumericRange],
 ) -> Vec<String> {
-    let pat_basename = original_pattern.rsplit('/').next().unwrap_or(original_pattern);
+    let pat_basename = original_pattern
+        .rsplit('/')
+        .next()
+        .unwrap_or(original_pattern);
     let mut regex_str = String::from("^");
     let chars: Vec<char> = pat_basename.chars().collect();
     let mut i = 0;
@@ -8201,10 +8307,7 @@ impl ShellExecutor {
                     // the user's chosen sink, but with noclobber the
                     // file is protected — discarding matches the
                     // user's intent better than printing to terminal).
-                    if let Ok(file) = std::fs::OpenOptions::new()
-                        .write(true)
-                        .open("/dev/null")
-                    {
+                    if let Ok(file) = std::fs::OpenOptions::new().write(true).open("/dev/null") {
                         let new_fd = file.into_raw_fd();
                         unsafe {
                             libc::dup2(new_fd, fd);
@@ -8439,39 +8542,37 @@ impl ShellExecutor {
             // Also strip surrounding `"` and `'` (the quoted form
             // `~"$USER"` arrives here with the quote chars intact).
             let name_owned: String;
-            let name: &str = if name_raw.contains('$')
-                || name_raw.contains('"')
-                || name_raw.contains('\'')
-            {
-                let mut out = String::new();
-                let mut chars = name_raw.chars().peekable();
-                while let Some(c) = chars.next() {
-                    if c == '$' {
-                        let mut var_name = String::new();
-                        while let Some(&pc) = chars.peek() {
-                            if pc.is_ascii_alphanumeric() || pc == '_' {
-                                var_name.push(chars.next().unwrap());
-                            } else {
-                                break;
+            let name: &str =
+                if name_raw.contains('$') || name_raw.contains('"') || name_raw.contains('\'') {
+                    let mut out = String::new();
+                    let mut chars = name_raw.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '$' {
+                            let mut var_name = String::new();
+                            while let Some(&pc) = chars.peek() {
+                                if pc.is_ascii_alphanumeric() || pc == '_' {
+                                    var_name.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
                             }
-                        }
-                        if !var_name.is_empty() {
-                            out.push_str(&self.get_variable(&var_name));
+                            if !var_name.is_empty() {
+                                out.push_str(&self.get_variable(&var_name));
+                            } else {
+                                out.push('$');
+                            }
+                        } else if c == '"' || c == '\'' {
+                            // Strip — quotes here are quoting for the
+                            // username lookup, not literal user chars.
                         } else {
-                            out.push('$');
+                            out.push(c);
                         }
-                    } else if c == '"' || c == '\'' {
-                        // Strip — quotes here are quoting for the
-                        // username lookup, not literal user chars.
-                    } else {
-                        out.push(c);
                     }
-                }
-                name_owned = out;
-                name_owned.as_str()
-            } else {
-                name_raw
-            };
+                    name_owned = out;
+                    name_owned.as_str()
+                } else {
+                    name_raw
+                };
 
             if name.is_empty() {
                 // Regular ~ expansion. Prefer the shell's variable
@@ -8852,17 +8953,13 @@ impl ShellExecutor {
             let dir = self.fpath[i].clone();
             // Try directory.zwc first
             let zwc_path = dir.with_extension("zwc");
-            if zwc_path.exists()
-                && self.load_function_from_zwc(&zwc_path, name)
-            {
+            if zwc_path.exists() && self.load_function_from_zwc(&zwc_path, name) {
                 return true;
             }
 
             // Try individual function.zwc
             let func_zwc = dir.join(format!("{}.zwc", name));
-            if func_zwc.exists()
-                && self.load_function_from_zwc(&func_zwc, name)
-            {
+            if func_zwc.exists() && self.load_function_from_zwc(&func_zwc, name) {
                 return true;
             }
 
@@ -8997,9 +9094,8 @@ impl ShellExecutor {
         // the match of the remainder. Already done in
         // `extendedglob_match` for the param-filter path; do it here
         // too so `[[ str = ^pat ]]` works via the cond `=` matcher.
-        let extendedglob_on = with_executor(|e| {
-            e.options.get("extendedglob").copied().unwrap_or(false)
-        });
+        let extendedglob_on =
+            with_executor(|e| e.options.get("extendedglob").copied().unwrap_or(false));
         if extendedglob_on {
             if let Some(rest) = pattern.strip_prefix('^') {
                 return !ShellExecutor::glob_match_static(s, rest);
@@ -9012,9 +9108,7 @@ impl ShellExecutor {
         // overwhelmingly common form); embedded `!()` inside a larger
         // pattern still falls through and is left literal — full
         // zsh-style negation needs lookahead which `regex` lacks.
-        let kshglob_on = with_executor(|e| {
-            e.options.get("kshglob").copied().unwrap_or(false)
-        });
+        let kshglob_on = with_executor(|e| e.options.get("kshglob").copied().unwrap_or(false));
         if kshglob_on {
             if let Some(body) = pattern.strip_prefix("!(").and_then(|r| r.strip_suffix(')')) {
                 // Don't recurse if body itself contains an unmatched
@@ -9078,8 +9172,8 @@ impl ShellExecutor {
                 {
                     let op = c;
                     chars.next(); // consume '('
-                    // Capture body until matching ')'. Track depth so
-                    // nested parens work.
+                                  // Capture body until matching ')'. Track depth so
+                                  // nested parens work.
                     let mut depth = 1;
                     let mut body = String::new();
                     while let Some(&pc) = chars.peek() {
@@ -9168,7 +9262,19 @@ impl ShellExecutor {
                     if let Some(next) = chars.next() {
                         if matches!(
                             next,
-                            '.' | '+' | '^' | '$' | '\\' | '{' | '}' | '*' | '?' | '(' | ')' | '|' | '[' | ']'
+                            '.' | '+'
+                                | '^'
+                                | '$'
+                                | '\\'
+                                | '{'
+                                | '}'
+                                | '*'
+                                | '?'
+                                | '('
+                                | ')'
+                                | '|'
+                                | '['
+                                | ']'
                         ) {
                             regex_pattern.push('\\');
                         }
@@ -9284,13 +9390,11 @@ impl ShellExecutor {
             std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
         let expanded = self.expand_history(&content);
         let mut parser = crate::parser::ZshParser::new(&expanded);
-        let program = parser
-            .parse()
-            .map_err(|errs| {
-                errs.first()
-                    .map(|e| format!("{}", e))
-                    .unwrap_or_else(|| "parse error".to_string())
-            })?;
+        let program = parser.parse().map_err(|errs| {
+            errs.first()
+                .map(|e| format!("{}", e))
+                .unwrap_or_else(|| "parse error".to_string())
+        })?;
 
         let compiler = crate::compile_zsh::ZshCompiler::new();
         let chunk = compiler.compile(&program);
@@ -10011,8 +10115,7 @@ impl ShellExecutor {
     /// itself; use `maybe_autoload` first if you need to load before
     /// introspecting.
     pub fn function_exists(&self, name: &str) -> bool {
-        self.functions_compiled.contains_key(name)
-            || self.autoload_pending.contains_key(name)
+        self.functions_compiled.contains_key(name) || self.autoload_pending.contains_key(name)
     }
 
     /// Canonical source text for a function. Returns from `function_source`
@@ -10033,8 +10136,7 @@ impl ShellExecutor {
 
     /// Sorted list of every known function name (union of compiled + source).
     pub fn function_names(&self) -> Vec<String> {
-        let mut set: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
+        let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for k in self.functions_compiled.keys() {
             set.insert(k.clone());
         }
@@ -10053,11 +10155,7 @@ impl ShellExecutor {
     /// This is the synchronous-side replacement for the legacy
     /// `call_function(&ShellCommand, args)`. It avoids the AST detour when
     /// the new pipeline already has a Chunk for the function.
-    pub fn dispatch_function_call(
-        &mut self,
-        name: &str,
-        args: &[String],
-    ) -> Option<i32> {
+    pub fn dispatch_function_call(&mut self, name: &str, args: &[String]) -> Option<i32> {
         // Resolve to a Chunk via the same cascade as ZshrsHost::call_function.
         // Always trigger autoload first if pending — the stub in self.functions
         // only counts as "loaded" once it has a real Chunk in functions_compiled.
@@ -10076,10 +10174,7 @@ impl ShellExecutor {
         // Save and replace positional params + local-scope save/restore,
         // mirroring the legacy `call_function(&ShellCommand, args)` and
         // ZshrsHost::call_function.
-        let saved_params = std::mem::replace(
-            &mut self.positional_params,
-            args.to_vec(),
-        );
+        let saved_params = std::mem::replace(&mut self.positional_params, args.to_vec());
         let saved_local_count = self.local_save_stack.len();
         let saved_local_arr_count = self.local_array_save_stack.len();
         self.local_scope_depth += 1;
@@ -10106,9 +10201,7 @@ impl ShellExecutor {
             }
         }
         while self.local_array_save_stack.len() > saved_local_arr_count {
-            if let Some((arr_name, old_arr)) =
-                self.local_array_save_stack.pop()
-            {
+            if let Some((arr_name, old_arr)) = self.local_array_save_stack.pop() {
                 match old_arr {
                     Some(items) => {
                         self.arrays.insert(arr_name, items);
@@ -10433,11 +10526,7 @@ impl ShellExecutor {
         // top-level `~` (not inside brackets/parens) when extendedglob
         // is on and split. Recursively expand both halves and remove
         // the RHS matches from the LHS list.
-        let extglob_on = self
-            .options
-            .get("extendedglob")
-            .copied()
-            .unwrap_or(false);
+        let extglob_on = self.options.get("extendedglob").copied().unwrap_or(false);
         if extglob_on {
             // extendedglob `^pat` (negation): match everything that
             // does NOT match `pat`. The lexer leaves `^` as a literal
@@ -10445,13 +10534,14 @@ impl ShellExecutor {
             // directory-walk-then-filter. Only applies at the start
             // of the LAST path component (zsh: `^pat` only negates
             // the basename portion).
-            let last_seg_start =
-                pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
+            let last_seg_start = pattern.rfind('/').map(|i| i + 1).unwrap_or(0);
             let last_seg = &pattern[last_seg_start..];
             if last_seg.starts_with('^') && last_seg.len() > 1 {
                 let prefix = &pattern[..last_seg_start];
                 let neg = &last_seg[1..];
-                let dir = if prefix.is_empty() { ".".to_string() } else {
+                let dir = if prefix.is_empty() {
+                    ".".to_string()
+                } else {
                     prefix.trim_end_matches('/').to_string()
                 };
                 let mut out = Vec::new();
@@ -10521,16 +10611,11 @@ impl ShellExecutor {
                 }
                 // Empty after exclusion — fall through so NOMATCH
                 // semantics fire if no nullglob.
-                let nullglob = self
-                    .options
-                    .get("nullglob")
-                    .copied()
-                    .unwrap_or(false);
+                let nullglob = self.options.get("nullglob").copied().unwrap_or(false);
                 if nullglob {
                     return Vec::new();
                 }
-                let nomatch =
-                    self.options.get("nomatch").copied().unwrap_or(true);
+                let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
                 if nomatch && Self::looks_like_glob(pattern) {
                     eprintln!("zshrs:1: no matches found: {}", pattern);
                     std::process::exit(1);
@@ -10751,9 +10836,8 @@ impl ShellExecutor {
         // `<N-M>` numeric range glob is also a trigger — match shape
         // `<` + optional digits + `-` + optional digits + `>` outside
         // any bracket expression.
-        let has_numeric_range = body.contains('<')
-            && body.contains('>')
-            && !extract_numeric_ranges(body).is_empty();
+        let has_numeric_range =
+            body.contains('<') && body.contains('>') && !extract_numeric_ranges(body).is_empty();
         body.contains('*')
             || body.contains('?')
             || has_bracket_class
@@ -10836,9 +10920,7 @@ impl ShellExecutor {
         let re = match if nocaseglob {
             regex::RegexBuilder::new(&rx).case_insensitive(true).build()
         } else {
-            regex::Regex::new(&rx).map_err(|e| {
-                regex::Error::Syntax(e.to_string())
-            })
+            regex::Regex::new(&rx).map_err(|e| regex::Error::Syntax(e.to_string()))
         } {
             Ok(r) => r,
             Err(_) => return Vec::new(),
@@ -11083,8 +11165,7 @@ impl ShellExecutor {
                         true
                     });
                 for entry in walker.filter_map(|e| e.ok()) {
-                    let is_file = entry.file_type().is_file()
-                        || entry.file_type().is_symlink();
+                    let is_file = entry.file_type().is_file() || entry.file_type().is_symlink();
                     let is_dir = entry.file_type().is_dir();
                     // Skip the subdir root itself — it was already added
                     // by the top-level loop.
@@ -11130,9 +11211,7 @@ impl ShellExecutor {
         if base == "." {
             results = results
                 .into_iter()
-                .map(|s| {
-                    s.strip_prefix("./").map(|t| t.to_string()).unwrap_or(s)
-                })
+                .map(|s| s.strip_prefix("./").map(|t| t.to_string()).unwrap_or(s))
                 .collect();
         }
 
@@ -11202,8 +11281,7 @@ impl ShellExecutor {
         // `O` (reverse-sort prefix, complementing `o`) was missing —
         // `*(Om)` was being treated as a literal pattern instead of a
         // qualifier set, leaving the trailing `)` unmatched. Added.
-        let valid_chars =
-            "./@=p*%bghirwxAIERWXsStfHedDLNnMmcaouUYHTk^-+:0123456789,[]FO";
+        let valid_chars = "./@=p*%bghirwxAIERWXsStfHedDLNnMmcaouUYHTk^-+:0123456789,[]FO";
         s.chars()
             .all(|c| valid_chars.contains(c) || c.is_whitespace())
     }
@@ -11303,10 +11381,7 @@ impl ShellExecutor {
                                         .as_ref()
                                         .map(|m| m.file_type().is_symlink())
                                         .unwrap_or(false);
-                                    let is_reg = m
-                                        .as_ref()
-                                        .map(|m| m.is_file())
-                                        .unwrap_or(false);
+                                    let is_reg = m.as_ref().map(|m| m.is_file()).unwrap_or(false);
                                     is_reg && !is_link
                                 })
                                 .unwrap_or(false);
@@ -11505,7 +11580,11 @@ impl ShellExecutor {
                                 '-' => size < target,
                                 _ => size == target,
                             };
-                            if negate { !pass } else { pass }
+                            if negate {
+                                !pass
+                            } else {
+                                pass
+                            }
                         })
                         .collect();
                     negate = false;
@@ -11677,8 +11756,10 @@ impl ShellExecutor {
                                 .and_then(|(m, _)| m.as_ref())
                                 .and_then(|m| {
                                     use std::os::unix::fs::MetadataExt;
-                                    Some(std::time::UNIX_EPOCH
-                                        + std::time::Duration::from_secs(m.ctime() as u64))
+                                    Some(
+                                        std::time::UNIX_EPOCH
+                                            + std::time::Duration::from_secs(m.ctime() as u64),
+                                    )
                                 })
                                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         });
@@ -11753,18 +11834,42 @@ impl ShellExecutor {
                     let qual_kind = c;
                     // Unit (optional, default = days)
                     let unit_secs: i64 = match chars.peek().copied() {
-                        Some('s') => { chars.next(); 1 }
-                        Some('m') => { chars.next(); 60 }
-                        Some('h') => { chars.next(); 3600 }
-                        Some('d') => { chars.next(); 86400 }
-                        Some('w') => { chars.next(); 7 * 86400 }
-                        Some('M') => { chars.next(); 30 * 86400 }
+                        Some('s') => {
+                            chars.next();
+                            1
+                        }
+                        Some('m') => {
+                            chars.next();
+                            60
+                        }
+                        Some('h') => {
+                            chars.next();
+                            3600
+                        }
+                        Some('d') => {
+                            chars.next();
+                            86400
+                        }
+                        Some('w') => {
+                            chars.next();
+                            7 * 86400
+                        }
+                        Some('M') => {
+                            chars.next();
+                            30 * 86400
+                        }
                         _ => 86400,
                     };
                     // Op (optional, default = exact)
                     let op = match chars.peek().copied() {
-                        Some('+') => { chars.next(); '+' }
-                        Some('-') => { chars.next(); '-' }
+                        Some('+') => {
+                            chars.next();
+                            '+'
+                        }
+                        Some('-') => {
+                            chars.next();
+                            '-'
+                        }
                         _ => '=',
                     };
                     // Numeric value
@@ -12174,7 +12279,6 @@ impl ShellExecutor {
         None
     }
 
-
     /// Expand string with word splitting - returns Vec for array expansions
     fn expand_string_split(&mut self, s: &str) -> Vec<String> {
         let mut results: Vec<String> = Vec::new();
@@ -12322,14 +12426,28 @@ impl ShellExecutor {
         if let Ok(idx) = expanded_index.parse::<i64>() {
             if let Some(arr) = self.arrays.get(var_name) {
                 let len = arr.len() as i64;
-                let pos = if idx > 0 { idx - 1 } else if idx < 0 { len + idx } else { return false };
+                let pos = if idx > 0 {
+                    idx - 1
+                } else if idx < 0 {
+                    len + idx
+                } else {
+                    return false;
+                };
                 return pos >= 0 && pos < len;
             }
             // Scalar string — check if char index is in range.
             let val = self.get_variable(var_name);
             let n = val.chars().count() as i64;
-            if n == 0 { return false; }
-            let pos = if idx > 0 { idx - 1 } else if idx < 0 { n + idx } else { return false };
+            if n == 0 {
+                return false;
+            }
+            let pos = if idx > 0 {
+                idx - 1
+            } else if idx < 0 {
+                n + idx
+            } else {
+                return false;
+            };
             return pos >= 0 && pos < n;
         }
         false
@@ -12354,7 +12472,9 @@ impl ShellExecutor {
                     (idx - 1) as usize
                 } else if idx < 0 {
                     let n = arr.len() as i64 + idx;
-                    if n < 0 { return String::new(); }
+                    if n < 0 {
+                        return String::new();
+                    }
                     n as usize
                 } else {
                     0
@@ -12363,13 +12483,17 @@ impl ShellExecutor {
             }
             // String subscript on scalar
             let val = self.get_variable(var_name);
-            if val.is_empty() { return String::new(); }
+            if val.is_empty() {
+                return String::new();
+            }
             let chars: Vec<char> = val.chars().collect();
             let pos = if idx > 0 {
                 (idx - 1) as usize
             } else if idx < 0 {
                 let n = chars.len() as i64 + idx;
-                if n < 0 { return String::new(); }
+                if n < 0 {
+                    return String::new();
+                }
                 n as usize
             } else {
                 0
@@ -12453,14 +12577,16 @@ impl ShellExecutor {
                     || rest.ends_with("[@]")
                     || rest.ends_with("[*]");
                 if self.in_dq_context > 0 && !has_at_flag {
-                    flags.retain(|f| !matches!(
-                        f,
-                        ZshParamFlag::Sort
-                            | ZshParamFlag::Reverse
-                            | ZshParamFlag::NumericSort
-                            | ZshParamFlag::IndexSort
-                            | ZshParamFlag::Unique
-                    ));
+                    flags.retain(|f| {
+                        !matches!(
+                            f,
+                            ZshParamFlag::Sort
+                                | ZshParamFlag::Reverse
+                                | ZshParamFlag::NumericSort
+                                | ZshParamFlag::IndexSort
+                                | ZshParamFlag::Unique
+                        )
+                    });
                 }
 
                 // Check for (M) match flag
@@ -12532,8 +12658,7 @@ impl ShellExecutor {
                 // extractor below (`#a` parsed as empty name → 0).
                 if let Some(name) = rest.strip_prefix('#') {
                     let val = self.get_variable(name);
-                    let has_word_flag = flags.iter().any(|f|
-                        matches!(f, ZshParamFlag::Words));
+                    let has_word_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::Words));
                     if has_word_flag {
                         return val.split_whitespace().count().to_string();
                     }
@@ -12560,7 +12685,11 @@ impl ShellExecutor {
                     // fall back to the all-of-rest var name path.
                     let pre = &rest[..dash_pos];
                     if !pre.is_empty()
-                        && pre.chars().next().map(|c| c == '_' || c.is_alphabetic()).unwrap_or(false)
+                        && pre
+                            .chars()
+                            .next()
+                            .map(|c| c == '_' || c.is_alphabetic())
+                            .unwrap_or(false)
                         && pre.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
                     {
                         (pre, Some(&rest[dash_pos + 1..]), true)
@@ -12629,8 +12758,11 @@ impl ShellExecutor {
             // joined string ("a b c"), and `.len()` counted bytes
             // (5 instead of 3). `argv` is zsh's named alias for the
             // positional array.
-            if rest == "@" || rest == "*"
-                || rest == "argv" || rest == "argv[@]" || rest == "argv[*]"
+            if rest == "@"
+                || rest == "*"
+                || rest == "argv"
+                || rest == "argv[@]"
+                || rest == "argv[*]"
             {
                 return self.positional_params.len().to_string();
             }
@@ -12680,7 +12812,10 @@ impl ShellExecutor {
             // identifier-then-`-`.
             let chars: Vec<char> = rest.chars().collect();
             let mut name_end = 0usize;
-            let first_ok = chars.first().map(|c| c.is_alphabetic() || *c == '_').unwrap_or(false);
+            let first_ok = chars
+                .first()
+                .map(|c| c.is_alphabetic() || *c == '_')
+                .unwrap_or(false);
             if first_ok {
                 while name_end < chars.len()
                     && (chars[name_end] == '_' || chars[name_end].is_ascii_alphanumeric())
@@ -12691,9 +12826,9 @@ impl ShellExecutor {
                     let next = chars[name_end];
                     let after = &chars[name_end..];
                     let (op_len, dash_kind) = if after.starts_with(&[':', '-']) {
-                        (2, Some(false))   // :-, fires on empty OR unset
+                        (2, Some(false)) // :-, fires on empty OR unset
                     } else if next == '-' {
-                        (1, Some(true))    // -, fires on unset only
+                        (1, Some(true)) // -, fires on unset only
                     } else {
                         (0, None)
                     };
@@ -12705,7 +12840,11 @@ impl ShellExecutor {
                             || self.arrays.contains_key(&var_name)
                             || self.assoc_arrays.contains_key(&var_name)
                             || std::env::var(&var_name).is_ok();
-                        let needs_default = if unset_only { !var_is_set } else { val.is_empty() };
+                        let needs_default = if unset_only {
+                            !var_is_set
+                        } else {
+                            val.is_empty()
+                        };
                         let final_val = if needs_default {
                             self.expand_string(&default_text)
                         } else {
@@ -12798,8 +12937,7 @@ impl ShellExecutor {
                 // logic, not the simple OOB-fallback. Without this gate,
                 // string-subscript ranges like `${a[2,3]:-default}`
                 // wrongly returned the default.
-                let is_range_or_all = index.contains(',')
-                    || index == "@" || index == "*";
+                let is_range_or_all = index.contains(',') || index == "@" || index == "*";
                 let after_bracket = &bracket_content[bracket_end + 1..];
                 if !after_bracket.is_empty() && !is_range_or_all {
                     let elem = self.lookup_array_element(var_name, index);
@@ -12835,18 +12973,14 @@ impl ShellExecutor {
                                 } else {
                                     pos(e) + 1
                                 };
-                                let result: String = chars
-                                    [start.min(end_pos)..end_pos.max(start)]
+                                let result: String = chars[start.min(end_pos)..end_pos.max(start)]
                                     .iter()
                                     .collect();
                                 return result;
                             }
                             if let Ok(n) = sub_idx.parse::<i64>() {
                                 let i = pos(n);
-                                return chars
-                                    .get(i)
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_default();
+                                return chars.get(i).map(|c| c.to_string()).unwrap_or_default();
                             }
                         }
                     }
@@ -12860,9 +12994,7 @@ impl ShellExecutor {
                     // the after-bracket suffix is a known modifier.
                     if after_bracket.starts_with(':') {
                         let modifier = &after_bracket[1..];
-                        if !modifier.is_empty()
-                            && self.is_history_modifier(modifier)
-                        {
+                        if !modifier.is_empty() && self.is_history_modifier(modifier) {
                             return self.apply_history_modifiers(&elem, modifier);
                         }
                     }
@@ -13102,7 +13234,9 @@ impl ShellExecutor {
         if let Some(at_pos) = content.find('@') {
             let prefix = &content[..at_pos];
             if !prefix.is_empty()
-                && prefix.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+                && prefix
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
             {
                 eprintln!("zshrs:1: bad substitution");
                 return String::new();
@@ -13168,13 +13302,12 @@ impl ShellExecutor {
                 // For `${arr[@]:h}` / `${arr[*]:h}` (or the `(@)`-flag
                 // form we already stripped above) iterate per-element
                 // so each path gets its own :h/:t/:r truncation.
-                let (base_name, has_at_subscript) = if var_name.ends_with("[@]")
-                    || var_name.ends_with("[*]")
-                {
-                    (&var_name[..var_name.len() - 3], true)
-                } else {
-                    (var_name, false)
-                };
+                let (base_name, has_at_subscript) =
+                    if var_name.ends_with("[@]") || var_name.ends_with("[*]") {
+                        (&var_name[..var_name.len() - 3], true)
+                    } else {
+                        (var_name, false)
+                    };
                 if has_at_subscript {
                     if let Some(arr) = self.arrays.get(base_name).cloned() {
                         return arr
@@ -13288,7 +13421,10 @@ impl ShellExecutor {
             let chars: Vec<char> = content.chars().collect();
             // A valid var name is the leading identifier-chars run.
             let mut name_end = 0usize;
-            let first_ok = chars.first().map(|c| c.is_alphabetic() || *c == '_').unwrap_or(false);
+            let first_ok = chars
+                .first()
+                .map(|c| c.is_alphabetic() || *c == '_')
+                .unwrap_or(false);
             if first_ok {
                 while name_end < chars.len()
                     && (chars[name_end] == '_' || chars[name_end].is_ascii_alphanumeric())
@@ -13304,7 +13440,11 @@ impl ShellExecutor {
                             || self.arrays.contains_key(&var_name)
                             || self.assoc_arrays.contains_key(&var_name)
                             || std::env::var(&var_name).is_ok();
-                        let val = if is_set { self.get_variable(&var_name) } else { String::new() };
+                        let val = if is_set {
+                            self.get_variable(&var_name)
+                        } else {
+                            String::new()
+                        };
                         match op {
                             '-' => {
                                 return if is_set {
@@ -13527,14 +13667,20 @@ impl ShellExecutor {
         if !content.starts_with('(') {
             if let Some(caret_pos) = content.find('^') {
                 let prefix = &content[..caret_pos];
-                if prefix.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+                if prefix
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
+                {
                     eprintln!("zshrs:1: bad substitution");
                     return String::new();
                 }
             }
             if let Some(comma_pos) = content.find(',') {
                 let prefix = &content[..comma_pos];
-                if prefix.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+                if prefix
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
+                {
                     eprintln!("zshrs:1: bad substitution");
                     return String::new();
                 }
@@ -13687,8 +13833,11 @@ impl ShellExecutor {
                         let is_first = var_name.is_empty();
                         let allowed = if is_first {
                             c.is_alphanumeric()
-                                || c == '_' || c == '@' || c == '*'
-                                || c == '#' || c == '?'
+                                || c == '_'
+                                || c == '@'
+                                || c == '*'
+                                || c == '#'
+                                || c == '?'
                         } else {
                             c.is_alphanumeric() || c == '_'
                         };
@@ -14003,10 +14152,7 @@ impl ShellExecutor {
         // is followed by a filename, not another `<`. `$(<<<"hi" cat)`
         // starts with `<<<` (here-string) and must go through the full
         // parse path, not the read-file shortcut.
-        if let Some(rest) = trimmed
-            .strip_prefix('<')
-            .filter(|s| !s.starts_with('<'))
-        {
+        if let Some(rest) = trimmed.strip_prefix('<').filter(|s| !s.starts_with('<')) {
             let filename = rest.trim();
             // Expand any leading $ / tilde in the filename so
             // `$(< $f)` and `$(< ~/x)` work.
@@ -14106,7 +14252,6 @@ impl ShellExecutor {
         }
         output
     }
-
 
     /// Get value from zsh/parameter special arrays (options, commands, functions, etc.)
     /// Returns Some(value) if this is a special array access, None otherwise
@@ -14620,18 +14765,34 @@ impl ShellExecutor {
                 let opt = |n: &str| self.options.get(n).copied().unwrap_or(false);
                 // `e` comes BEFORE `f` in zsh's letter ordering: `set -e`
                 // in -f mode produces "569Xef", not "569Xfe".
-                if opt("errexit") { letters.push('e'); }
-                if !opt("rcs") { letters.push('f'); }
-                if opt("login") { letters.push('l'); }
+                if opt("errexit") {
+                    letters.push('e');
+                }
+                if !opt("rcs") {
+                    letters.push('f');
+                }
+                if opt("login") {
+                    letters.push('l');
+                }
                 // i/m are present only when *truly* interactive; zsh's `-c`
                 // path leaves them off, so we mirror that and don't surface
                 // them just because `options.interactive` happens to be set
                 // by the executor's default-options init.
-                if opt("nounset") { letters.push('u'); }
-                if opt("xtrace") { letters.push('x'); }
-                if opt("verbose") { letters.push('v'); }
-                if opt("noexec") { letters.push('n'); }
-                if opt("hashall") { letters.push('h'); }
+                if opt("nounset") {
+                    letters.push('u');
+                }
+                if opt("xtrace") {
+                    letters.push('x');
+                }
+                if opt("verbose") {
+                    letters.push('v');
+                }
+                if opt("noexec") {
+                    letters.push('n');
+                }
+                if opt("hashall") {
+                    letters.push('h');
+                }
                 letters
             }
             "EUID" => unsafe { libc::geteuid() }.to_string(),
@@ -14647,9 +14808,7 @@ impl ShellExecutor {
             "HOST" => {
                 // libc gethostname → up to 256 bytes.
                 let mut buf = [0u8; 256];
-                let r = unsafe {
-                    libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len())
-                };
+                let r = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len()) };
                 if r == 0 {
                     let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
                     String::from_utf8_lossy(&buf[..nul]).into_owned()
@@ -14666,9 +14825,11 @@ impl ShellExecutor {
                 let mut u: libc::utsname = unsafe { std::mem::zeroed() };
                 if unsafe { libc::uname(&mut u) } == 0 {
                     let sysname = unsafe { std::ffi::CStr::from_ptr(u.sysname.as_ptr()) }
-                        .to_string_lossy().to_lowercase();
+                        .to_string_lossy()
+                        .to_lowercase();
                     let release = unsafe { std::ffi::CStr::from_ptr(u.release.as_ptr()) }
-                        .to_string_lossy().to_string();
+                        .to_string_lossy()
+                        .to_string();
                     format!("{}{}", sysname, release)
                 } else {
                     std::env::consts::OS.to_string()
@@ -14678,7 +14839,8 @@ impl ShellExecutor {
                 let mut u: libc::utsname = unsafe { std::mem::zeroed() };
                 if unsafe { libc::uname(&mut u) } == 0 {
                     let m = unsafe { std::ffi::CStr::from_ptr(u.machine.as_ptr()) }
-                        .to_string_lossy().to_string();
+                        .to_string_lossy()
+                        .to_string();
                     // zsh shortens common machines: aarch64 → arm, x86_64
                     // stays x86_64. Mirror that for the common cases.
                     if m == "aarch64" || m == "arm64" {
@@ -14694,7 +14856,8 @@ impl ShellExecutor {
                 let mut u: libc::utsname = unsafe { std::mem::zeroed() };
                 if unsafe { libc::uname(&mut u) } == 0 {
                     unsafe { std::ffi::CStr::from_ptr(u.machine.as_ptr()) }
-                        .to_string_lossy().to_string()
+                        .to_string_lossy()
+                        .to_string()
                 } else {
                     std::env::consts::ARCH.to_string()
                 }
@@ -14711,9 +14874,7 @@ impl ShellExecutor {
             }
             "HOSTNAME" => {
                 let mut buf = [0u8; 256];
-                let r = unsafe {
-                    libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len())
-                };
+                let r = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut _, buf.len()) };
                 if r == 0 {
                     let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
                     String::from_utf8_lossy(&buf[..nul]).into_owned()
@@ -14738,22 +14899,19 @@ impl ShellExecutor {
             "SECONDS" => {
                 // Seconds since shell start. We approximate via the
                 // tracked `shell_start_time` if present; otherwise 0.
-                self.variables
-                    .get("SECONDS")
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        use std::time::{SystemTime, UNIX_EPOCH};
-                        let now = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        let start = self
-                            .variables
-                            .get("__zshrs_start_secs")
-                            .and_then(|s| s.parse::<u64>().ok())
-                            .unwrap_or(now);
-                        now.saturating_sub(start).to_string()
-                    })
+                self.variables.get("SECONDS").cloned().unwrap_or_else(|| {
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let start = self
+                        .variables
+                        .get("__zshrs_start_secs")
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(now);
+                    now.saturating_sub(start).to_string()
+                })
             }
             "EPOCHSECONDS" => {
                 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14872,19 +15030,17 @@ impl ShellExecutor {
                 } else {
                     None
                 }
-                    .or_else(|| {
-                        self.arrays.get(name).map(|a| a.join(" "))
+                .or_else(|| self.arrays.get(name).map(|a| a.join(" ")))
+                .or_else(|| {
+                    self.assoc_arrays.get(name).map(|h| {
+                        if h.is_empty() {
+                            String::new()
+                        } else {
+                            h.values().cloned().collect::<Vec<_>>().join(" ")
+                        }
                     })
-                    .or_else(|| {
-                        self.assoc_arrays.get(name).map(|h| {
-                            if h.is_empty() {
-                                String::new()
-                            } else {
-                                h.values().cloned().collect::<Vec<_>>().join(" ")
-                            }
-                        })
-                    })
-                    .or_else(|| env::var(name).ok());
+                })
+                .or_else(|| env::var(name).ok());
                 match resolved {
                     Some(v) => v,
                     None => {
@@ -15012,7 +15168,11 @@ impl ShellExecutor {
                         .join(" ");
                 }
                 if let Some(arr) = self.arrays.get(name).cloned() {
-                    return arr.iter().map(|e| strip(e, &pat)).collect::<Vec<_>>().join(" ");
+                    return arr
+                        .iter()
+                        .map(|e| strip(e, &pat))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
                 strip(&val.unwrap_or_default(), &pat)
             }
@@ -15039,7 +15199,11 @@ impl ShellExecutor {
                         .join(" ");
                 }
                 if let Some(arr) = self.arrays.get(name).cloned() {
-                    return arr.iter().map(|e| strip(e, &pat)).collect::<Vec<_>>().join(" ");
+                    return arr
+                        .iter()
+                        .map(|e| strip(e, &pat))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
                 strip(&val.unwrap_or_default(), &pat)
             }
@@ -15068,7 +15232,11 @@ impl ShellExecutor {
                         .join(" ");
                 }
                 if let Some(arr) = self.arrays.get(name).cloned() {
-                    return arr.iter().map(|e| strip(e, &pat)).collect::<Vec<_>>().join(" ");
+                    return arr
+                        .iter()
+                        .map(|e| strip(e, &pat))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
                 strip(&val.unwrap_or_default(), &pat)
             }
@@ -15095,7 +15263,11 @@ impl ShellExecutor {
                         .join(" ");
                 }
                 if let Some(arr) = self.arrays.get(name).cloned() {
-                    return arr.iter().map(|e| strip(e, &pat)).collect::<Vec<_>>().join(" ");
+                    return arr
+                        .iter()
+                        .map(|e| strip(e, &pat))
+                        .collect::<Vec<_>>()
+                        .join(" ");
                 }
                 strip(&val.unwrap_or_default(), &pat)
             }
@@ -15170,8 +15342,22 @@ impl ShellExecutor {
             // we accept here so they reach apply_history_modifiers and
             // emit zsh's "unrecognized modifier" error rather than
             // silently falling through to an empty substitution.
-            'A' | 'a' | 'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q' | 'P'
-                | 's' | 'g' | 'U' | 'L' | 'V' | 'X'
+            'A' | 'a'
+                | 'h'
+                | 't'
+                | 'r'
+                | 'e'
+                | 'l'
+                | 'u'
+                | 'q'
+                | 'Q'
+                | 'P'
+                | 's'
+                | 'g'
+                | 'U'
+                | 'L'
+                | 'V'
+                | 'X'
         )
     }
 
@@ -15206,10 +15392,14 @@ impl ShellExecutor {
                             use std::path::Component::*;
                             match comp {
                                 CurDir => {}
-                                ParentDir => { parts.pop(); }
+                                ParentDir => {
+                                    parts.pop();
+                                }
                                 Normal(s) => parts.push(s.to_string_lossy().to_string()),
                                 RootDir => parts.insert(0, String::new()),
-                                Prefix(p) => parts.insert(0, p.as_os_str().to_string_lossy().to_string()),
+                                Prefix(p) => {
+                                    parts.insert(0, p.as_os_str().to_string_lossy().to_string())
+                                }
                             }
                         }
                         result = parts.join("/");
@@ -15568,9 +15758,25 @@ impl ShellExecutor {
                         c.is_whitespace()
                             || matches!(
                                 c,
-                                '\'' | '"' | '\\' | '$' | '`' | '*' | '?'
-                                    | '[' | ']' | '{' | '}' | '(' | ')'
-                                    | '|' | '&' | ';' | '<' | '>' | '#' | '~'
+                                '\'' | '"'
+                                    | '\\'
+                                    | '$'
+                                    | '`'
+                                    | '*'
+                                    | '?'
+                                    | '['
+                                    | ']'
+                                    | '{'
+                                    | '}'
+                                    | '('
+                                    | ')'
+                                    | '|'
+                                    | '&'
+                                    | ';'
+                                    | '<'
+                                    | '>'
+                                    | '#'
+                                    | '~'
                             )
                     });
                 if needs {
@@ -16007,7 +16213,10 @@ impl ShellExecutor {
                         key_str.clone()
                     };
                     let resolved = if let Some(assoc) = self.assoc_arrays.get(&name) {
-                        assoc.get(&key_resolved).cloned().unwrap_or_else(|| "0".to_string())
+                        assoc
+                            .get(&key_resolved)
+                            .cloned()
+                            .unwrap_or_else(|| "0".to_string())
                     } else if let Some(arr) = self.arrays.get(&name) {
                         // Numeric subscript — can be a literal or an
                         // expression. For simple int literals only here;
@@ -16055,11 +16264,13 @@ impl ShellExecutor {
         // current value, apply the operation, write back. MathEval
         // can't write through `a[i]` for compound forms (only the
         // bare `=` write was special-cased below), so handle here.
-        if let Some((name, idx_expr, op, rhs)) =
-            parse_subscript_arith_compound(&expr)
-        {
+        if let Some((name, idx_expr, op, rhs)) = parse_subscript_arith_compound(&expr) {
             let idx_val = self.eval_arith_expr(&idx_expr);
-            let rhs_val = if rhs.is_empty() { 1 } else { self.eval_arith_expr(&rhs) };
+            let rhs_val = if rhs.is_empty() {
+                1
+            } else {
+                self.eval_arith_expr(&rhs)
+            };
             let arr_opt = self.arrays.get(&name).cloned();
             if let Some(arr) = arr_opt {
                 let i_pos = if idx_val < 0 {
@@ -16069,8 +16280,7 @@ impl ShellExecutor {
                 };
                 if i_pos >= 0 {
                     let pos = i_pos as usize;
-                    let cur: i64 =
-                        arr.get(pos).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let cur: i64 = arr.get(pos).and_then(|s| s.parse().ok()).unwrap_or(0);
                     let new_val = match op.as_str() {
                         "++" => cur + 1,
                         "--" => cur - 1,
@@ -16109,7 +16319,11 @@ impl ShellExecutor {
                     // others return new. Pre-increment isn't covered
                     // by this parser — those route through the write-
                     // back done above.
-                    let result = if op == "++" || op == "--" { cur } else { new_val };
+                    let result = if op == "++" || op == "--" {
+                        cur
+                    } else {
+                        new_val
+                    };
                     return result.to_string();
                 }
             }
@@ -16137,7 +16351,11 @@ impl ShellExecutor {
                 map.insert(idx_val.to_string(), rhs_val.to_string());
             } else {
                 let mut arr: Vec<String> = Vec::new();
-                let i_pos = if idx_val < 0 { 0 } else { (idx_val - 1).max(0) as usize };
+                let i_pos = if idx_val < 0 {
+                    0
+                } else {
+                    (idx_val - 1).max(0) as usize
+                };
                 arr.resize(i_pos + 1, "0".to_string());
                 arr[i_pos] = rhs_val.to_string();
                 self.arrays.insert(name, arr);
@@ -16240,7 +16458,11 @@ impl ShellExecutor {
             } else {
                 // Auto-create indexed array.
                 let mut arr: Vec<String> = Vec::new();
-                let i_pos = if idx_val < 0 { 0 } else { (idx_val - 1).max(0) as usize };
+                let i_pos = if idx_val < 0 {
+                    0
+                } else {
+                    (idx_val - 1).max(0) as usize
+                };
                 arr.resize(i_pos + 1, "0".to_string());
                 arr[i_pos] = rhs_val.to_string();
                 self.arrays.insert(name, arr);
@@ -16318,7 +16540,6 @@ impl ShellExecutor {
             value == pattern
         }
     }
-
 
     // Builtins
     // Ported from zsh/Src/builtin.c
@@ -16490,7 +16711,11 @@ impl ShellExecutor {
             .get("PWD")
             .cloned()
             .or_else(|| env::var("PWD").ok())
-            .or_else(|| env::current_dir().ok().map(|p| p.to_string_lossy().to_string()))
+            .or_else(|| {
+                env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
             .unwrap_or_default();
         env::set_var("OLDPWD", &old_pwd_logical);
         self.variables
@@ -16692,7 +16917,7 @@ impl ShellExecutor {
             match arg.as_str() {
                 "-f" => function_mode = true,
                 "-v" => function_mode = false,
-                "-m" => {} // pattern-match mode (TODO)
+                "-m" => {}                      // pattern-match mode (TODO)
                 _ if arg.starts_with('-') => {} // unknown flag, ignore
                 _ => names.push(arg.clone()),
             }
@@ -16935,7 +17160,9 @@ impl ShellExecutor {
         // for instant replay. Replay parses + compiles via the new pipeline.
         for (name, source) in &self.function_source {
             if !snap.functions.contains(name) {
-                delta.functions.push((name.clone(), source.as_bytes().to_vec()));
+                delta
+                    .functions
+                    .push((name.clone(), source.as_bytes().to_vec()));
             }
         }
 
@@ -17100,7 +17327,8 @@ impl ShellExecutor {
             {
                 let chunk = crate::compile_zsh::ZshCompiler::new().compile(&program);
                 self.functions_compiled.insert(name.clone(), chunk);
-                self.function_source.insert(name.clone(), source.to_string());
+                self.function_source
+                    .insert(name.clone(), source.to_string());
             }
         }
     }
@@ -17647,8 +17875,10 @@ impl ShellExecutor {
                         }
                     }
                     if closes_at_end {
-                        let inner: Vec<String> =
-                            args[1..args.len() - 1].iter().map(|s| s.to_string()).collect();
+                        let inner: Vec<String> = args[1..args.len() - 1]
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
                         return self.builtin_test(&inner);
                     }
                 }
@@ -17657,14 +17887,18 @@ impl ShellExecutor {
                     let left: Vec<String> = args[..i].iter().map(|s| s.to_string()).collect();
                     let right: Vec<String> = args[i + 1..].iter().map(|s| s.to_string()).collect();
                     let l = self.builtin_test(&left);
-                    if l == 0 { return 0; }
+                    if l == 0 {
+                        return 0;
+                    }
                     return self.builtin_test(&right);
                 }
                 if let Some(i) = and_idx {
                     let left: Vec<String> = args[..i].iter().map(|s| s.to_string()).collect();
                     let right: Vec<String> = args[i + 1..].iter().map(|s| s.to_string()).collect();
                     let l = self.builtin_test(&left);
-                    if l != 0 { return l; }
+                    if l != 0 {
+                        return l;
+                    }
                     return self.builtin_test(&right);
                 }
                 1
@@ -17809,7 +18043,11 @@ impl ShellExecutor {
                             // `-i N` (attached digits): `-i16` sets base 16.
                             let rest: String = chars.clone().collect();
                             if !rest.is_empty()
-                                && rest.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+                                && rest
+                                    .chars()
+                                    .next()
+                                    .map(|c| c.is_ascii_digit())
+                                    .unwrap_or(false)
                             {
                                 let num: String =
                                     chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
@@ -17949,8 +18187,7 @@ impl ShellExecutor {
         if pattern_match && !var_args.is_empty() {
             let patterns = std::mem::take(&mut var_args);
             let mut matched: Vec<String> = Vec::new();
-            let mut seen: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             let names: Vec<String> = if is_function {
                 self.function_names()
             } else {
@@ -17965,9 +18202,7 @@ impl ShellExecutor {
             };
             for p in &patterns {
                 for n in &names {
-                    if ShellExecutor::glob_match_static(n, p)
-                        && seen.insert(n.clone())
-                    {
+                    if ShellExecutor::glob_match_static(n, p) && seen.insert(n.clone()) {
                         matched.push(n.clone());
                     }
                 }
@@ -17992,7 +18227,11 @@ impl ShellExecutor {
                 if is_function {
                     for name in &var_args {
                         if let Some(body) = self.function_definition_text(name) {
-                            println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
+                            println!(
+                                "{} () {{\n\t{}\n}}",
+                                name,
+                                format_function_body_zsh(body.trim())
+                            );
                         }
                     }
                 } else {
@@ -18000,13 +18239,25 @@ impl ShellExecutor {
                     for name in &var_args {
                         if let Some(arr) = self.arrays.get(name) {
                             let attrs = if print_mode { "-a " } else { "" };
-                            println!("{}{}{}=( {} )", prefix, attrs, name, arr.iter().map(|v| shell_quote_value(v)).collect::<Vec<_>>().join(" "));
+                            println!(
+                                "{}{}{}=( {} )",
+                                prefix,
+                                attrs,
+                                name,
+                                arr.iter()
+                                    .map(|v| shell_quote_value(v))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            );
                         } else if let Some(assoc) = self.assoc_arrays.get(name) {
                             let attrs = if print_mode { "-A " } else { "" };
                             let mut pairs: Vec<_> = assoc.iter().collect();
                             pairs.sort_by_key(|(k, _)| (*k).clone());
-                            let formatted: Vec<String> = pairs.iter()
-                                .map(|(k, v)| format!("[{}]={}", shell_quote_value(k), shell_quote_value(v)))
+                            let formatted: Vec<String> = pairs
+                                .iter()
+                                .map(|(k, v)| {
+                                    format!("[{}]={}", shell_quote_value(k), shell_quote_value(v))
+                                })
                                 .collect();
                             println!("{}{}{}=( {} )", prefix, attrs, name, formatted.join(" "));
                         } else if let Some(val) = self.variables.get(name) {
@@ -18025,13 +18276,20 @@ impl ShellExecutor {
         // the common idiom (`typeset -T PATH path`); subsequent updates
         // to either side get out of sync until re-tied.
         if is_tied && var_args.len() >= 2 {
-            let scalar_name = var_args[0].split('=').next().unwrap_or(&var_args[0]).to_string();
+            let scalar_name = var_args[0]
+                .split('=')
+                .next()
+                .unwrap_or(&var_args[0])
+                .to_string();
             let array_name = &var_args[1];
             // If the scalar arg has =val form, use that as the initial value.
             let scalar_val = if let Some(eq_pos) = var_args[0].find('=') {
                 var_args[0][eq_pos + 1..].to_string()
             } else {
-                self.variables.get(&scalar_name).cloned().unwrap_or_default()
+                self.variables
+                    .get(&scalar_name)
+                    .cloned()
+                    .unwrap_or_default()
             };
             let sep = var_args
                 .get(2)
@@ -18057,7 +18315,11 @@ impl ShellExecutor {
             let _ = print_mode;
             for name in self.function_names() {
                 if let Some(body) = self.function_definition_text(&name) {
-                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
+                    println!(
+                        "{} () {{\n\t{}\n}}",
+                        name,
+                        format_function_body_zsh(body.trim())
+                    );
                 }
             }
             return 0;
@@ -18068,7 +18330,11 @@ impl ShellExecutor {
             let _ = print_mode;
             for name in &var_args {
                 if let Some(body) = self.function_definition_text(name) {
-                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
+                    println!(
+                        "{} () {{\n\t{}\n}}",
+                        name,
+                        format_function_body_zsh(body.trim())
+                    );
                 }
             }
             return 0;
@@ -18111,8 +18377,12 @@ impl ShellExecutor {
                     // common `declare -F` / `typeset -F` case correct
                     // without regressing the others.
                     let var_attr = self.var_attrs.get(name);
-                    let is_var_float = var_attr.map(|a| matches!(a.kind, VarKind::Float)).unwrap_or(false);
-                    if !is_var_float { continue; }
+                    let is_var_float = var_attr
+                        .map(|a| matches!(a.kind, VarKind::Float))
+                        .unwrap_or(false);
+                    if !is_var_float {
+                        continue;
+                    }
                 }
                 if print_mode {
                     // typeset -p: output re-executable code with values
@@ -18193,8 +18463,7 @@ impl ShellExecutor {
                 // NAME=value` for exported scalars (`declare -p HOME`).
                 // For typed exports (`-x` from typeset) the form remains
                 // `typeset -x` to preserve the kind. Mirror that.
-                let is_exported = env_exported
-                    || attr.as_ref().map(|a| a.export).unwrap_or(false);
+                let is_exported = env_exported || attr.as_ref().map(|a| a.export).unwrap_or(false);
                 // zsh prints exported scalars with `export NAME=…`.
                 // Integer-typed exports fold to `export -i NAME=…`.
                 // BUT array/assoc/float typed exports stay as
@@ -18232,8 +18501,7 @@ impl ShellExecutor {
                         println!("{} {}=( {} )", prefix, name, formatted.join(" "));
                     }
                 } else if let Some(arr) = self.arrays.get(name) {
-                    let formatted: Vec<String> =
-                        arr.iter().map(|v| shell_quote_value(v)).collect();
+                    let formatted: Vec<String> = arr.iter().map(|v| shell_quote_value(v)).collect();
                     println!("{} {}=( {} )", prefix, name, formatted.join(" "));
                 } else if self.variables.contains_key(name) || env::var(name).is_ok() {
                     let val = self.get_variable(name);
@@ -18346,10 +18614,13 @@ impl ShellExecutor {
                                 if let Some(epos) = raw.rfind('e') {
                                     let (mantissa, exp) = raw.split_at(epos);
                                     let exp_body = &exp[1..];
-                                    let (sign, digits) =
-                                        if exp_body.starts_with('-') { ("-", &exp_body[1..]) }
-                                        else if exp_body.starts_with('+') { ("+", &exp_body[1..]) }
-                                        else { ("+", exp_body) };
+                                    let (sign, digits) = if exp_body.starts_with('-') {
+                                        ("-", &exp_body[1..])
+                                    } else if exp_body.starts_with('+') {
+                                        ("+", &exp_body[1..])
+                                    } else {
+                                        ("+", exp_body)
+                                    };
                                     let padded = if digits.len() < 2 {
                                         format!("0{}", digits)
                                     } else {
@@ -18708,7 +18979,11 @@ impl ShellExecutor {
                 // but tell the caller we hit EOF (status 1). We have
                 // to return AFTER the variable is set, so stash and
                 // fall through.
-                let processed = if raw_mode { cleaned } else { cleaned.replace("\\\n", "") };
+                let processed = if raw_mode {
+                    cleaned
+                } else {
+                    cleaned.replace("\\\n", "")
+                };
                 if quiet {
                     return 1;
                 }
@@ -18773,8 +19048,8 @@ impl ShellExecutor {
             // — matches zsh `read -A` behaviour. Detect default by the
             // char set rather than exact string ordering so the new
             // " \t\n\0" init value also classifies as default.
-            let is_default_ifs = !ifs.is_empty()
-                && ifs.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\0'));
+            let is_default_ifs =
+                !ifs.is_empty() && ifs.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\0'));
             let words: Vec<String> = if is_default_ifs {
                 processed.split_whitespace().map(String::from).collect()
             } else {
@@ -19547,9 +19822,7 @@ impl ShellExecutor {
                     // (SIGUSR1 + override flag) handled below.
                     if num == 0 {
                         signal_zero = true;
-                    } else if let Some((_, _, s)) =
-                        signal_map.iter().find(|(_, n, _)| *n == num)
-                    {
+                    } else if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
                         sig = *s;
                     } else {
                         eprintln!("kill: invalid signal: {}", arg);
@@ -19580,10 +19853,7 @@ impl ShellExecutor {
                 // matching `/bin/zsh -f -c 'kill -l'`.
                 let mut by_num: Vec<&(&str, i32, _)> = signal_map.iter().collect();
                 by_num.sort_by_key(|(_, n, _)| *n);
-                let names: Vec<String> = by_num
-                    .iter()
-                    .map(|(n, _, _)| (*n).to_string())
-                    .collect();
+                let names: Vec<String> = by_num.iter().map(|(n, _, _)| (*n).to_string()).collect();
                 println!("{}", names.join(" "));
             } else {
                 // Translate signal numbers to names or vice versa
@@ -19745,21 +20015,11 @@ impl ShellExecutor {
                 // Verify the PID is one of OUR children. If we never
                 // forked it, zsh emits `pid N is not a child of this
                 // shell` and exits 127.
-                let known = self
-                    .variables
-                    .get("!")
-                    .and_then(|s| s.parse::<u32>().ok())
+                let known = self.variables.get("!").and_then(|s| s.parse::<u32>().ok())
                     == Some(pid)
-                    || self
-                        .jobs
-                        .list()
-                        .iter()
-                        .any(|j| j.pid == pid as i32);
+                    || self.jobs.list().iter().any(|j| j.pid == pid as i32);
                 if !known {
-                    eprintln!(
-                        "zshrs:wait:1: pid {} is not a child of this shell",
-                        pid
-                    );
+                    eprintln!("zshrs:wait:1: pid {} is not a child of this shell", pid);
                     status = 127;
                     continue;
                 }
@@ -20117,8 +20377,8 @@ impl ShellExecutor {
             // from 1 (matches zsh's behaviour for `print -s` + `fc -l`
             // in `-c` scripts). Look up by exact ID so other DB
             // entries from prior runs don't leak in.
-            let session_only = !atty::is(atty::Stream::Stdin)
-                && !self.session_history_ids.is_empty();
+            let session_only =
+                !atty::is(atty::Stream::Stdin) && !self.session_history_ids.is_empty();
             if session_only {
                 for (i, &id) in self.session_history_ids.iter().enumerate() {
                     if let Ok(Some(entry)) = engine.get_by_number(id) {
@@ -20342,7 +20602,11 @@ impl ShellExecutor {
                     n if n == libc::SIGPIPE => "PIPE",
                     _ => "",
                 };
-                if name.is_empty() { sig_upper } else { name.to_string() }
+                if name.is_empty() {
+                    sig_upper
+                } else {
+                    name.to_string()
+                }
             } else if sig_upper.starts_with("SIG") {
                 sig_upper[3..].to_string()
             } else {
@@ -20565,9 +20829,8 @@ impl ShellExecutor {
                     // single-quoted otherwise. Match that exactly so
                     // `alias x=ls` prints `x=ls` not `x='ls'`.
                     let needs_quote = v.is_empty()
-                        || v.chars().any(|c| {
-                            c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c)
-                        });
+                        || v.chars()
+                            .any(|c| c.is_whitespace() || "$\"'`\\;|&<>(){}*?#~!".contains(c));
                     let body = if needs_quote {
                         let escaped = v.replace('\'', "'\\''");
                         format!("{}='{}'", arg, escaped)
@@ -20651,10 +20914,7 @@ impl ShellExecutor {
                 self.aliases.remove(&name).is_some()
             };
             if !removed {
-                eprintln!(
-                    "zshrs:unalias:1: no such hash table element: {}",
-                    name
-                );
+                eprintln!("zshrs:unalias:1: no such hash table element: {}", name);
                 return 1;
             }
         }
@@ -20853,14 +21113,30 @@ impl ShellExecutor {
                 // some keywords). `set -p` enables PRIVILEGED. `set -B`
                 // BRACE_CCL. zsh-specific knobs that user scripts may
                 // toggle; accept silently as toggle-options.
-                "-k" => { self.options.insert("kshtypeset".to_string(), true); }
-                "+k" => { self.options.insert("kshtypeset".to_string(), false); }
-                "-p" => { self.options.insert("privileged".to_string(), true); }
-                "+p" => { self.options.insert("privileged".to_string(), false); }
-                "-B" => { self.options.insert("braceccl".to_string(), true); }
-                "+B" => { self.options.insert("braceccl".to_string(), false); }
-                "-H" => { self.options.insert("histreduceblanks".to_string(), true); }
-                "+H" => { self.options.insert("histreduceblanks".to_string(), false); }
+                "-k" => {
+                    self.options.insert("kshtypeset".to_string(), true);
+                }
+                "+k" => {
+                    self.options.insert("kshtypeset".to_string(), false);
+                }
+                "-p" => {
+                    self.options.insert("privileged".to_string(), true);
+                }
+                "+p" => {
+                    self.options.insert("privileged".to_string(), false);
+                }
+                "-B" => {
+                    self.options.insert("braceccl".to_string(), true);
+                }
+                "+B" => {
+                    self.options.insert("braceccl".to_string(), false);
+                }
+                "-H" => {
+                    self.options.insert("histreduceblanks".to_string(), true);
+                }
+                "+H" => {
+                    self.options.insert("histreduceblanks".to_string(), false);
+                }
                 "--" => {
                     let remaining: Vec<String> = iter.cloned().collect();
                     if let Some(ref name) = array_name {
@@ -22132,7 +22408,7 @@ impl ShellExecutor {
 
         // Compile template once, execute for each item on VM — no forks
         let mut results: Vec<(i32, String)> = Vec::with_capacity(items.len());
-        
+
         for item in items {
             let cmd = template.replace("{}", item);
             // Phase 2 migration: ZshParser + ZshCompiler.
@@ -22176,7 +22452,11 @@ impl ShellExecutor {
             }
         }
 
-        if any_fail { 1 } else { 0 }
+        if any_fail {
+            1
+        } else {
+            0
+        }
     }
 
     /// pgrep 'pattern' arg1 arg2 ... — parallel grep/filter across worker pool.
@@ -22261,7 +22541,11 @@ impl ShellExecutor {
             }
         }
 
-        if any_fail { 1 } else { 0 }
+        if any_fail {
+            1
+        } else {
+            0
+        }
     }
 
     /// barrier cmd1 ::: cmd2 ::: cmd3 — run commands in parallel, wait for ALL to complete.
@@ -22835,16 +23119,39 @@ impl ShellExecutor {
         // user-shadowed reserved-word names still report the keyword
         // status (matches zsh's lookup order).
         const RESERVED_WORDS: &[&str] = &[
-            "do", "done", "esac", "then", "elif", "else", "fi", "for",
-            "case", "if", "while", "until", "select", "function",
-            "repeat", "time", "in", "foreach", "end", "coproc",
-            "nocorrect", "noglob",
+            "do",
+            "done",
+            "esac",
+            "then",
+            "elif",
+            "else",
+            "fi",
+            "for",
+            "case",
+            "if",
+            "while",
+            "until",
+            "select",
+            "function",
+            "repeat",
+            "time",
+            "in",
+            "foreach",
+            "end",
+            "coproc",
+            "nocorrect",
+            "noglob",
             // zsh treats `local` / `declare` / `typeset` / `readonly`
             // / `export` / `integer` / `float` as reserved-word
             // declarations (precommand modifiers) — `type local`
             // reports "is a reserved word", not "is a shell builtin".
-            "local", "declare", "typeset", "readonly", "export",
-            "integer", "float",
+            "local",
+            "declare",
+            "typeset",
+            "readonly",
+            "export",
+            "integer",
+            "float",
         ];
 
         let mut status = 0;
@@ -23219,10 +23526,26 @@ impl ShellExecutor {
             // Reserved word (if/then/else/etc.)
             let reserved = matches!(
                 cmd,
-                "if" | "then" | "else" | "elif" | "fi" | "for" | "while"
-                    | "until" | "do" | "done" | "case" | "esac" | "in"
-                    | "function" | "select" | "time" | "coproc"
-                    | "{" | "}" | "[[" | "]]"
+                "if" | "then"
+                    | "else"
+                    | "elif"
+                    | "fi"
+                    | "for"
+                    | "while"
+                    | "until"
+                    | "do"
+                    | "done"
+                    | "case"
+                    | "esac"
+                    | "in"
+                    | "function"
+                    | "select"
+                    | "time"
+                    | "coproc"
+                    | "{"
+                    | "}"
+                    | "[["
+                    | "]]"
             );
             if reserved {
                 if verbose {
@@ -23398,10 +23721,11 @@ impl ShellExecutor {
             "zcalc" => self.builtin_zcalc(cmd_args),
             // Daemon-managed z* builtins — thin IPC wrappers.
             // See src/daemon/builtins.rs and docs/DAEMON.md "z* builtin family".
-            "zcache" | "zls" | "zid" | "zping" | "ztag" | "zuntag" | "zsend"
-            | "znotify" | "zlog" => {
-                let argv: Vec<String> =
-                    std::iter::once(cmd.to_string()).chain(cmd_args.iter().cloned()).collect();
+            "zcache" | "zls" | "zid" | "zping" | "ztag" | "zuntag" | "zsend" | "znotify"
+            | "zlog" => {
+                let argv: Vec<String> = std::iter::once(cmd.to_string())
+                    .chain(cmd_args.iter().cloned())
+                    .collect();
                 crate::daemon::builtins::dispatch(cmd, &argv).unwrap_or(1)
             }
             _ => {
@@ -23900,9 +24224,8 @@ impl ShellExecutor {
                             // ksh-style file (`name() { body }`) — compile only
                             // the inner body so the chunk runs the function on
                             // call instead of re-registering it.
-                            let target =
-                                ShellExecutor::ksh_autoload_body(&program, &file.name)
-                                    .unwrap_or(&program);
+                            let target = ShellExecutor::ksh_autoload_body(&program, &file.name)
+                                .unwrap_or(&program);
                             let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
                             if let Ok(blob) = bincode::serialize(&chunk) {
                                 batch.push((file.name.clone(), blob));
@@ -24073,8 +24396,8 @@ impl ShellExecutor {
             //   STYLE
             //           pattern  val1 val2 ...
             //           pattern  val1 ...
-            let mut grouped: std::collections::BTreeMap<String, Vec<(String, Vec<String>)>>
-                = std::collections::BTreeMap::new();
+            let mut grouped: std::collections::BTreeMap<String, Vec<(String, Vec<String>)>> =
+                std::collections::BTreeMap::new();
             for (pattern, style, values) in self.style_table.list(None) {
                 grouped.entry(style).or_default().push((pattern, values));
             }
@@ -24722,509 +25045,516 @@ impl ShellExecutor {
         let mut entered_loop = false;
 
         'outer: loop {
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                match chars.next() {
-                    Some('n') => output.push('\n'),
-                    Some('t') => output.push('\t'),
-                    Some('r') => output.push('\r'),
-                    Some('\\') => output.push('\\'),
-                    Some('a') => output.push('\x07'),
-                    Some('b') => output.push('\x08'),
-                    Some('e') | Some('E') => output.push('\x1b'),
-                    Some('f') => output.push('\x0c'),
-                    Some('v') => output.push('\x0b'),
-                    Some('"') => output.push('"'),
-                    Some('\'') => output.push('\''),
-                    Some(d0) if ('0'..='7').contains(&d0) => {
-                        // POSIX printf: `\NNN` is 1-3 octal digits (zsh
-                        // accepts the same). The leading `0` (if any) is
-                        // part of the digit count — `\0102` consumes
-                        // `010` (octal 10 = backspace) and leaves `2` as
-                        // literal, matching `printf "\0102"` output of
-                        // `\b2`. Build the octal up to 3 total chars.
-                        let mut octal = String::new();
-                        octal.push(d0);
-                        while octal.len() < 3 {
-                            if let Some(&d) = chars.peek() {
-                                if ('0'..='7').contains(&d) {
-                                    octal.push(d);
-                                    chars.next();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    match chars.next() {
+                        Some('n') => output.push('\n'),
+                        Some('t') => output.push('\t'),
+                        Some('r') => output.push('\r'),
+                        Some('\\') => output.push('\\'),
+                        Some('a') => output.push('\x07'),
+                        Some('b') => output.push('\x08'),
+                        Some('e') | Some('E') => output.push('\x1b'),
+                        Some('f') => output.push('\x0c'),
+                        Some('v') => output.push('\x0b'),
+                        Some('"') => output.push('"'),
+                        Some('\'') => output.push('\''),
+                        Some(d0) if ('0'..='7').contains(&d0) => {
+                            // POSIX printf: `\NNN` is 1-3 octal digits (zsh
+                            // accepts the same). The leading `0` (if any) is
+                            // part of the digit count — `\0102` consumes
+                            // `010` (octal 10 = backspace) and leaves `2` as
+                            // literal, matching `printf "\0102"` output of
+                            // `\b2`. Build the octal up to 3 total chars.
+                            let mut octal = String::new();
+                            octal.push(d0);
+                            while octal.len() < 3 {
+                                if let Some(&d) = chars.peek() {
+                                    if ('0'..='7').contains(&d) {
+                                        octal.push(d);
+                                        chars.next();
+                                    } else {
+                                        break;
+                                    }
                                 } else {
                                     break;
                                 }
-                            } else {
-                                break;
                             }
-                        }
-                        if let Ok(val) = u8::from_str_radix(&octal, 8) {
-                            output.push(val as char);
-                        }
-                    }
-                    Some('x') => {
-                        let mut hex = String::new();
-                        while hex.len() < 2 {
-                            if let Some(&d) = chars.peek() {
-                                if d.is_ascii_hexdigit() {
-                                    hex.push(d);
-                                    chars.next();
-                                } else {
-                                    break;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                        if !hex.is_empty() {
-                            if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                            if let Ok(val) = u8::from_str_radix(&octal, 8) {
                                 output.push(val as char);
                             }
                         }
-                    }
-                    Some('u') => {
-                        let mut hex = String::new();
-                        while hex.len() < 4 {
-                            if let Some(&d) = chars.peek() {
-                                if d.is_ascii_hexdigit() {
-                                    hex.push(d);
-                                    chars.next();
+                        Some('x') => {
+                            let mut hex = String::new();
+                            while hex.len() < 2 {
+                                if let Some(&d) = chars.peek() {
+                                    if d.is_ascii_hexdigit() {
+                                        hex.push(d);
+                                        chars.next();
+                                    } else {
+                                        break;
+                                    }
                                 } else {
                                     break;
                                 }
-                            } else {
-                                break;
                             }
-                        }
-                        if !hex.is_empty() {
-                            if let Ok(val) = u32::from_str_radix(&hex, 16) {
-                                if let Some(c) = char::from_u32(val) {
-                                    output.push(c);
+                            if !hex.is_empty() {
+                                if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                                    output.push(val as char);
                                 }
                             }
                         }
-                    }
-                    Some('U') => {
-                        let mut hex = String::new();
-                        while hex.len() < 8 {
-                            if let Some(&d) = chars.peek() {
-                                if d.is_ascii_hexdigit() {
-                                    hex.push(d);
-                                    chars.next();
+                        Some('u') => {
+                            let mut hex = String::new();
+                            while hex.len() < 4 {
+                                if let Some(&d) = chars.peek() {
+                                    if d.is_ascii_hexdigit() {
+                                        hex.push(d);
+                                        chars.next();
+                                    } else {
+                                        break;
+                                    }
                                 } else {
                                     break;
                                 }
-                            } else {
-                                break;
                             }
-                        }
-                        if !hex.is_empty() {
-                            if let Ok(val) = u32::from_str_radix(&hex, 16) {
-                                if let Some(c) = char::from_u32(val) {
-                                    output.push(c);
+                            if !hex.is_empty() {
+                                if let Ok(val) = u32::from_str_radix(&hex, 16) {
+                                    if let Some(c) = char::from_u32(val) {
+                                        output.push(c);
+                                    }
                                 }
                             }
                         }
+                        Some('U') => {
+                            let mut hex = String::new();
+                            while hex.len() < 8 {
+                                if let Some(&d) = chars.peek() {
+                                    if d.is_ascii_hexdigit() {
+                                        hex.push(d);
+                                        chars.next();
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            if !hex.is_empty() {
+                                if let Ok(val) = u32::from_str_radix(&hex, 16) {
+                                    if let Some(c) = char::from_u32(val) {
+                                        output.push(c);
+                                    }
+                                }
+                            }
+                        }
+                        Some('c') => {
+                            print!("{}", output);
+                            return 0;
+                        }
+                        Some(other) => {
+                            output.push('\\');
+                            output.push(other);
+                        }
+                        None => output.push('\\'),
                     }
-                    Some('c') => {
-                        print!("{}", output);
-                        return 0;
-                    }
-                    Some(other) => {
-                        output.push('\\');
-                        output.push(other);
-                    }
-                    None => output.push('\\'),
-                }
-            } else if c == '%' {
-                if chars.peek() == Some(&'%') {
-                    chars.next();
-                    output.push('%');
-                    continue;
-                }
-
-                let mut flags = String::new();
-                while let Some(&f) = chars.peek() {
-                    if f == '-' || f == '+' || f == ' ' || f == '#' || f == '0' {
-                        flags.push(f);
+                } else if c == '%' {
+                    if chars.peek() == Some(&'%') {
                         chars.next();
-                    } else {
-                        break;
+                        output.push('%');
+                        continue;
                     }
-                }
 
-                let mut width = String::new();
-                if chars.peek() == Some(&'*') {
-                    chars.next();
-                    if arg_idx < format_args.len() {
-                        width = format_args[arg_idx].clone();
-                        arg_idx += 1;
-                    }
-                } else {
-                    while let Some(&d) = chars.peek() {
-                        if d.is_ascii_digit() {
-                            width.push(d);
+                    let mut flags = String::new();
+                    while let Some(&f) = chars.peek() {
+                        if f == '-' || f == '+' || f == ' ' || f == '#' || f == '0' {
+                            flags.push(f);
                             chars.next();
                         } else {
                             break;
                         }
                     }
-                }
 
-                let mut precision = String::new();
-                let mut saw_period = false;
-                if chars.peek() == Some(&'.') {
-                    chars.next();
-                    saw_period = true;
+                    let mut width = String::new();
                     if chars.peek() == Some(&'*') {
                         chars.next();
                         if arg_idx < format_args.len() {
-                            precision = format_args[arg_idx].clone();
+                            width = format_args[arg_idx].clone();
                             arg_idx += 1;
                         }
                     } else {
                         while let Some(&d) = chars.peek() {
                             if d.is_ascii_digit() {
-                                precision.push(d);
+                                width.push(d);
                                 chars.next();
                             } else {
                                 break;
                             }
                         }
                     }
-                }
 
-                let specifier = chars.next().unwrap_or('s');
-                let arg = if arg_idx < format_args.len() {
-                    let a = &format_args[arg_idx];
-                    arg_idx += 1;
-                    a.clone()
-                } else {
-                    String::new()
-                };
-
-                let width_val: usize = width.parse().unwrap_or(0);
-                let prec_val: Option<usize> = if precision.is_empty() {
-                    // `%.s` (period present, no digits) means precision
-                    // 0 — the arg is suppressed. Without this, prec_val
-                    // stayed None and `%.s "ignore"` printed `ignore`
-                    // instead of the empty string.
-                    if saw_period { Some(0) } else { None }
-                } else {
-                    precision.parse().ok()
-                };
-                let left_align = flags.contains('-');
-                let zero_pad = flags.contains('0') && !left_align;
-                let plus_sign = flags.contains('+');
-                let space_sign = flags.contains(' ') && !plus_sign;
-                let alt_form = flags.contains('#');
-
-                match specifier {
-                    's' => {
-                        let mut s = arg;
-                        if let Some(p) = prec_val {
-                            s = s.chars().take(p).collect();
+                    let mut precision = String::new();
+                    let mut saw_period = false;
+                    if chars.peek() == Some(&'.') {
+                        chars.next();
+                        saw_period = true;
+                        if chars.peek() == Some(&'*') {
+                            chars.next();
+                            if arg_idx < format_args.len() {
+                                precision = format_args[arg_idx].clone();
+                                arg_idx += 1;
+                            }
+                        } else {
+                            while let Some(&d) = chars.peek() {
+                                if d.is_ascii_digit() {
+                                    precision.push(d);
+                                    chars.next();
+                                } else {
+                                    break;
+                                }
+                            }
                         }
-                        if width_val > s.len() {
-                            if left_align {
+                    }
+
+                    let specifier = chars.next().unwrap_or('s');
+                    let arg = if arg_idx < format_args.len() {
+                        let a = &format_args[arg_idx];
+                        arg_idx += 1;
+                        a.clone()
+                    } else {
+                        String::new()
+                    };
+
+                    let width_val: usize = width.parse().unwrap_or(0);
+                    let prec_val: Option<usize> = if precision.is_empty() {
+                        // `%.s` (period present, no digits) means precision
+                        // 0 — the arg is suppressed. Without this, prec_val
+                        // stayed None and `%.s "ignore"` printed `ignore`
+                        // instead of the empty string.
+                        if saw_period {
+                            Some(0)
+                        } else {
+                            None
+                        }
+                    } else {
+                        precision.parse().ok()
+                    };
+                    let left_align = flags.contains('-');
+                    let zero_pad = flags.contains('0') && !left_align;
+                    let plus_sign = flags.contains('+');
+                    let space_sign = flags.contains(' ') && !plus_sign;
+                    let alt_form = flags.contains('#');
+
+                    match specifier {
+                        's' => {
+                            let mut s = arg;
+                            if let Some(p) = prec_val {
+                                s = s.chars().take(p).collect();
+                            }
+                            if width_val > s.len() {
+                                if left_align {
+                                    output.push_str(&s);
+                                    output.push_str(&" ".repeat(width_val - s.len()));
+                                } else {
+                                    output.push_str(&" ".repeat(width_val - s.len()));
+                                    output.push_str(&s);
+                                }
+                            } else {
                                 output.push_str(&s);
-                                output.push_str(&" ".repeat(width_val - s.len()));
-                            } else {
-                                output.push_str(&" ".repeat(width_val - s.len()));
+                            }
+                        }
+                        'b' => {
+                            let expanded = self.expand_printf_escapes(&arg);
+                            if let Some(p) = prec_val {
+                                let s: String = expanded.chars().take(p).collect();
                                 output.push_str(&s);
-                            }
-                        } else {
-                            output.push_str(&s);
-                        }
-                    }
-                    'b' => {
-                        let expanded = self.expand_printf_escapes(&arg);
-                        if let Some(p) = prec_val {
-                            let s: String = expanded.chars().take(p).collect();
-                            output.push_str(&s);
-                        } else {
-                            output.push_str(&expanded);
-                        }
-                    }
-                    'c' => {
-                        if let Some(ch) = arg.chars().next() {
-                            output.push(ch);
-                        }
-                    }
-                    'q' => {
-                        // zsh `%q` — backslash-escape shell-special
-                        // chars (matches `${(q)}` flag, NOT `(qq)`).
-                        for ch in arg.chars() {
-                            if matches!(
-                                ch,
-                                ' ' | '\t'
-                                    | '\''
-                                    | '"'
-                                    | '\\'
-                                    | '$'
-                                    | '`'
-                                    | '*'
-                                    | '?'
-                                    | '['
-                                    | ']'
-                                    | '{'
-                                    | '}'
-                                    | '('
-                                    | ')'
-                                    | '|'
-                                    | '&'
-                                    | ';'
-                                    | '<'
-                                    | '>'
-                                    | '#'
-                                    | '~'
-                            ) {
-                                output.push('\\');
-                            }
-                            output.push(ch);
-                        }
-                    }
-                    'd' | 'i' => {
-                        let val: i64 = if arg.starts_with("0x") || arg.starts_with("0X") {
-                            i64::from_str_radix(&arg[2..], 16).unwrap_or(0)
-                        } else if arg.starts_with("0") && arg.len() > 1 && !arg.contains('.') {
-                            i64::from_str_radix(&arg[1..], 8).unwrap_or(0)
-                        } else if arg.starts_with('\'') || arg.starts_with('"') {
-                            arg.chars().nth(1).map(|c| c as i64).unwrap_or(0)
-                        } else if let Ok(n) = arg.parse::<i64>() {
-                            n
-                        } else if let Ok(f) = arg.parse::<f64>() {
-                            // POSIX printf truncates floats to int for
-                            // `%d`/`%i` (matches zsh: `printf %d 3.14`
-                            // → 3). Without this, the i64-only parse
-                            // path returned 0 for any float.
-                            f as i64
-                        } else {
-                            0
-                        };
-
-                        let sign = if val < 0 {
-                            "-"
-                        } else if plus_sign {
-                            "+"
-                        } else if space_sign {
-                            " "
-                        } else {
-                            ""
-                        };
-                        let abs_val = val.abs();
-                        let num_str = abs_val.to_string();
-                        let total_len = sign.len() + num_str.len();
-
-                        if width_val > total_len {
-                            if left_align {
-                                output.push_str(sign);
-                                output.push_str(&num_str);
-                                output.push_str(&" ".repeat(width_val - total_len));
-                            } else if zero_pad {
-                                output.push_str(sign);
-                                output.push_str(&"0".repeat(width_val - total_len));
-                                output.push_str(&num_str);
                             } else {
-                                output.push_str(&" ".repeat(width_val - total_len));
-                                output.push_str(sign);
-                                output.push_str(&num_str);
+                                output.push_str(&expanded);
                             }
-                        } else {
-                            output.push_str(sign);
-                            output.push_str(&num_str);
                         }
-                    }
-                    'u' => {
-                        let val: u64 = if arg.starts_with("0x") || arg.starts_with("0X") {
-                            u64::from_str_radix(&arg[2..], 16).unwrap_or(0)
-                        } else if arg.starts_with("0") && arg.len() > 1 {
-                            u64::from_str_radix(&arg[1..], 8).unwrap_or(0)
-                        } else {
-                            arg.parse().unwrap_or(0)
-                        };
-                        let num_str = val.to_string();
-                        if width_val > num_str.len() {
-                            if left_align {
-                                output.push_str(&num_str);
-                                output.push_str(&" ".repeat(width_val - num_str.len()));
-                            } else if zero_pad {
-                                output.push_str(&"0".repeat(width_val - num_str.len()));
-                                output.push_str(&num_str);
-                            } else {
-                                output.push_str(&" ".repeat(width_val - num_str.len()));
-                                output.push_str(&num_str);
+                        'c' => {
+                            if let Some(ch) = arg.chars().next() {
+                                output.push(ch);
                             }
-                        } else {
-                            output.push_str(&num_str);
                         }
-                    }
-                    'o' => {
-                        let val: u64 = arg
-                            .parse::<i64>()
-                            .map(|n| n as u64)
-                            .or_else(|_| arg.parse::<u64>())
-                            .unwrap_or(0);
-                        let num_str = format!("{:o}", val);
-                        let prefix = if alt_form && val != 0 { "0" } else { "" };
-                        let total_len = prefix.len() + num_str.len();
-                        if width_val > total_len {
-                            if left_align {
-                                output.push_str(prefix);
-                                output.push_str(&num_str);
-                                output.push_str(&" ".repeat(width_val - total_len));
-                            } else {
-                                output.push_str(&" ".repeat(width_val - total_len));
-                                output.push_str(prefix);
-                                output.push_str(&num_str);
+                        'q' => {
+                            // zsh `%q` — backslash-escape shell-special
+                            // chars (matches `${(q)}` flag, NOT `(qq)`).
+                            for ch in arg.chars() {
+                                if matches!(
+                                    ch,
+                                    ' ' | '\t'
+                                        | '\''
+                                        | '"'
+                                        | '\\'
+                                        | '$'
+                                        | '`'
+                                        | '*'
+                                        | '?'
+                                        | '['
+                                        | ']'
+                                        | '{'
+                                        | '}'
+                                        | '('
+                                        | ')'
+                                        | '|'
+                                        | '&'
+                                        | ';'
+                                        | '<'
+                                        | '>'
+                                        | '#'
+                                        | '~'
+                                ) {
+                                    output.push('\\');
+                                }
+                                output.push(ch);
                             }
-                        } else {
-                            output.push_str(prefix);
-                            output.push_str(&num_str);
                         }
-                    }
-                    'x' => {
-                        // Parse as i64 first so negatives wrap around
-                        // (printf "%x" -1 → "ffffffffffffffff", matching
-                        // C/zsh). Direct u64 parse rejected the leading
-                        // `-` and silently used 0.
-                        let val: u64 = arg
-                            .parse::<i64>()
-                            .map(|n| n as u64)
-                            .or_else(|_| arg.parse::<u64>())
-                            .unwrap_or(0);
-                        let num_str = format!("{:x}", val);
-                        let prefix = if alt_form && val != 0 { "0x" } else { "" };
-                        let total_len = prefix.len() + num_str.len();
-                        if width_val > total_len {
-                            if left_align {
-                                output.push_str(prefix);
-                                output.push_str(&num_str);
-                                output.push_str(&" ".repeat(width_val - total_len));
+                        'd' | 'i' => {
+                            let val: i64 = if arg.starts_with("0x") || arg.starts_with("0X") {
+                                i64::from_str_radix(&arg[2..], 16).unwrap_or(0)
+                            } else if arg.starts_with("0") && arg.len() > 1 && !arg.contains('.') {
+                                i64::from_str_radix(&arg[1..], 8).unwrap_or(0)
+                            } else if arg.starts_with('\'') || arg.starts_with('"') {
+                                arg.chars().nth(1).map(|c| c as i64).unwrap_or(0)
+                            } else if let Ok(n) = arg.parse::<i64>() {
+                                n
+                            } else if let Ok(f) = arg.parse::<f64>() {
+                                // POSIX printf truncates floats to int for
+                                // `%d`/`%i` (matches zsh: `printf %d 3.14`
+                                // → 3). Without this, the i64-only parse
+                                // path returned 0 for any float.
+                                f as i64
                             } else {
-                                output.push_str(&" ".repeat(width_val - total_len));
-                                output.push_str(prefix);
-                                output.push_str(&num_str);
-                            }
-                        } else {
-                            output.push_str(prefix);
-                            output.push_str(&num_str);
-                        }
-                    }
-                    'X' => {
-                        let val: u64 = arg
-                            .parse::<i64>()
-                            .map(|n| n as u64)
-                            .or_else(|_| arg.parse::<u64>())
-                            .unwrap_or(0);
-                        let num_str = format!("{:X}", val);
-                        let prefix = if alt_form && val != 0 { "0X" } else { "" };
-                        let total_len = prefix.len() + num_str.len();
-                        if width_val > total_len {
-                            if left_align {
-                                output.push_str(prefix);
-                                output.push_str(&num_str);
-                                output.push_str(&" ".repeat(width_val - total_len));
-                            } else {
-                                output.push_str(&" ".repeat(width_val - total_len));
-                                output.push_str(prefix);
-                                output.push_str(&num_str);
-                            }
-                        } else {
-                            output.push_str(prefix);
-                            output.push_str(&num_str);
-                        }
-                    }
-                    'e' | 'E' => {
-                        let val: f64 = arg.parse().unwrap_or(0.0);
-                        let prec = prec_val.unwrap_or(6);
-                        let raw = if specifier == 'e' {
-                            format!("{:.prec$e}", val, prec = prec)
-                        } else {
-                            format!("{:.prec$E}", val, prec = prec)
-                        };
-                        // Rust emits `e3` / `E-3`; C printf / zsh emit
-                        // `e+03` / `E-03` (signed, ≥2 digits). Fix tail.
-                        let exp_marker = if specifier == 'e' { 'e' } else { 'E' };
-                        let formatted = if let Some(epos) = raw.rfind(exp_marker) {
-                            let (mantissa, exp) = raw.split_at(epos);
-                            let exp_body = &exp[1..];
-                            let (sign, digits) =
-                                if exp_body.starts_with('-') { ("-", &exp_body[1..]) }
-                                else if exp_body.starts_with('+') { ("+", &exp_body[1..]) }
-                                else { ("+", exp_body) };
-                            let padded = if digits.len() < 2 {
-                                format!("0{}", digits)
-                            } else {
-                                digits.to_string()
+                                0
                             };
-                            format!("{}{}{}{}", mantissa, exp_marker, sign, padded)
-                        } else {
-                            raw
-                        };
-                        if width_val > formatted.len() {
-                            if left_align {
-                                output.push_str(&formatted);
-                                output.push_str(&" ".repeat(width_val - formatted.len()));
+
+                            let sign = if val < 0 {
+                                "-"
+                            } else if plus_sign {
+                                "+"
+                            } else if space_sign {
+                                " "
                             } else {
-                                output.push_str(&" ".repeat(width_val - formatted.len()));
+                                ""
+                            };
+                            let abs_val = val.abs();
+                            let num_str = abs_val.to_string();
+                            let total_len = sign.len() + num_str.len();
+
+                            if width_val > total_len {
+                                if left_align {
+                                    output.push_str(sign);
+                                    output.push_str(&num_str);
+                                    output.push_str(&" ".repeat(width_val - total_len));
+                                } else if zero_pad {
+                                    output.push_str(sign);
+                                    output.push_str(&"0".repeat(width_val - total_len));
+                                    output.push_str(&num_str);
+                                } else {
+                                    output.push_str(&" ".repeat(width_val - total_len));
+                                    output.push_str(sign);
+                                    output.push_str(&num_str);
+                                }
+                            } else {
+                                output.push_str(sign);
+                                output.push_str(&num_str);
+                            }
+                        }
+                        'u' => {
+                            let val: u64 = if arg.starts_with("0x") || arg.starts_with("0X") {
+                                u64::from_str_radix(&arg[2..], 16).unwrap_or(0)
+                            } else if arg.starts_with("0") && arg.len() > 1 {
+                                u64::from_str_radix(&arg[1..], 8).unwrap_or(0)
+                            } else {
+                                arg.parse().unwrap_or(0)
+                            };
+                            let num_str = val.to_string();
+                            if width_val > num_str.len() {
+                                if left_align {
+                                    output.push_str(&num_str);
+                                    output.push_str(&" ".repeat(width_val - num_str.len()));
+                                } else if zero_pad {
+                                    output.push_str(&"0".repeat(width_val - num_str.len()));
+                                    output.push_str(&num_str);
+                                } else {
+                                    output.push_str(&" ".repeat(width_val - num_str.len()));
+                                    output.push_str(&num_str);
+                                }
+                            } else {
+                                output.push_str(&num_str);
+                            }
+                        }
+                        'o' => {
+                            let val: u64 = arg
+                                .parse::<i64>()
+                                .map(|n| n as u64)
+                                .or_else(|_| arg.parse::<u64>())
+                                .unwrap_or(0);
+                            let num_str = format!("{:o}", val);
+                            let prefix = if alt_form && val != 0 { "0" } else { "" };
+                            let total_len = prefix.len() + num_str.len();
+                            if width_val > total_len {
+                                if left_align {
+                                    output.push_str(prefix);
+                                    output.push_str(&num_str);
+                                    output.push_str(&" ".repeat(width_val - total_len));
+                                } else {
+                                    output.push_str(&" ".repeat(width_val - total_len));
+                                    output.push_str(prefix);
+                                    output.push_str(&num_str);
+                                }
+                            } else {
+                                output.push_str(prefix);
+                                output.push_str(&num_str);
+                            }
+                        }
+                        'x' => {
+                            // Parse as i64 first so negatives wrap around
+                            // (printf "%x" -1 → "ffffffffffffffff", matching
+                            // C/zsh). Direct u64 parse rejected the leading
+                            // `-` and silently used 0.
+                            let val: u64 = arg
+                                .parse::<i64>()
+                                .map(|n| n as u64)
+                                .or_else(|_| arg.parse::<u64>())
+                                .unwrap_or(0);
+                            let num_str = format!("{:x}", val);
+                            let prefix = if alt_form && val != 0 { "0x" } else { "" };
+                            let total_len = prefix.len() + num_str.len();
+                            if width_val > total_len {
+                                if left_align {
+                                    output.push_str(prefix);
+                                    output.push_str(&num_str);
+                                    output.push_str(&" ".repeat(width_val - total_len));
+                                } else {
+                                    output.push_str(&" ".repeat(width_val - total_len));
+                                    output.push_str(prefix);
+                                    output.push_str(&num_str);
+                                }
+                            } else {
+                                output.push_str(prefix);
+                                output.push_str(&num_str);
+                            }
+                        }
+                        'X' => {
+                            let val: u64 = arg
+                                .parse::<i64>()
+                                .map(|n| n as u64)
+                                .or_else(|_| arg.parse::<u64>())
+                                .unwrap_or(0);
+                            let num_str = format!("{:X}", val);
+                            let prefix = if alt_form && val != 0 { "0X" } else { "" };
+                            let total_len = prefix.len() + num_str.len();
+                            if width_val > total_len {
+                                if left_align {
+                                    output.push_str(prefix);
+                                    output.push_str(&num_str);
+                                    output.push_str(&" ".repeat(width_val - total_len));
+                                } else {
+                                    output.push_str(&" ".repeat(width_val - total_len));
+                                    output.push_str(prefix);
+                                    output.push_str(&num_str);
+                                }
+                            } else {
+                                output.push_str(prefix);
+                                output.push_str(&num_str);
+                            }
+                        }
+                        'e' | 'E' => {
+                            let val: f64 = arg.parse().unwrap_or(0.0);
+                            let prec = prec_val.unwrap_or(6);
+                            let raw = if specifier == 'e' {
+                                format!("{:.prec$e}", val, prec = prec)
+                            } else {
+                                format!("{:.prec$E}", val, prec = prec)
+                            };
+                            // Rust emits `e3` / `E-3`; C printf / zsh emit
+                            // `e+03` / `E-03` (signed, ≥2 digits). Fix tail.
+                            let exp_marker = if specifier == 'e' { 'e' } else { 'E' };
+                            let formatted = if let Some(epos) = raw.rfind(exp_marker) {
+                                let (mantissa, exp) = raw.split_at(epos);
+                                let exp_body = &exp[1..];
+                                let (sign, digits) = if exp_body.starts_with('-') {
+                                    ("-", &exp_body[1..])
+                                } else if exp_body.starts_with('+') {
+                                    ("+", &exp_body[1..])
+                                } else {
+                                    ("+", exp_body)
+                                };
+                                let padded = if digits.len() < 2 {
+                                    format!("0{}", digits)
+                                } else {
+                                    digits.to_string()
+                                };
+                                format!("{}{}{}{}", mantissa, exp_marker, sign, padded)
+                            } else {
+                                raw
+                            };
+                            if width_val > formatted.len() {
+                                if left_align {
+                                    output.push_str(&formatted);
+                                    output.push_str(&" ".repeat(width_val - formatted.len()));
+                                } else {
+                                    output.push_str(&" ".repeat(width_val - formatted.len()));
+                                    output.push_str(&formatted);
+                                }
+                            } else {
                                 output.push_str(&formatted);
                             }
-                        } else {
-                            output.push_str(&formatted);
                         }
-                    }
-                    'f' | 'F' => {
-                        let val: f64 = arg.parse().unwrap_or(0.0);
-                        let prec = prec_val.unwrap_or(6);
-                        let sign = if val < 0.0 {
-                            "-"
-                        } else if plus_sign {
-                            "+"
-                        } else if space_sign {
-                            " "
-                        } else {
-                            ""
-                        };
-                        let formatted = format!("{:.prec$}", val.abs(), prec = prec);
-                        let total = sign.len() + formatted.len();
-                        if width_val > total {
-                            if left_align {
-                                output.push_str(sign);
-                                output.push_str(&formatted);
-                                output.push_str(&" ".repeat(width_val - total));
-                            } else if zero_pad {
-                                output.push_str(sign);
-                                output.push_str(&"0".repeat(width_val - total));
-                                output.push_str(&formatted);
+                        'f' | 'F' => {
+                            let val: f64 = arg.parse().unwrap_or(0.0);
+                            let prec = prec_val.unwrap_or(6);
+                            let sign = if val < 0.0 {
+                                "-"
+                            } else if plus_sign {
+                                "+"
+                            } else if space_sign {
+                                " "
                             } else {
-                                output.push_str(&" ".repeat(width_val - total));
+                                ""
+                            };
+                            let formatted = format!("{:.prec$}", val.abs(), prec = prec);
+                            let total = sign.len() + formatted.len();
+                            if width_val > total {
+                                if left_align {
+                                    output.push_str(sign);
+                                    output.push_str(&formatted);
+                                    output.push_str(&" ".repeat(width_val - total));
+                                } else if zero_pad {
+                                    output.push_str(sign);
+                                    output.push_str(&"0".repeat(width_val - total));
+                                    output.push_str(&formatted);
+                                } else {
+                                    output.push_str(&" ".repeat(width_val - total));
+                                    output.push_str(sign);
+                                    output.push_str(&formatted);
+                                }
+                            } else {
                                 output.push_str(sign);
                                 output.push_str(&formatted);
                             }
-                        } else {
-                            output.push_str(sign);
+                        }
+                        'g' | 'G' => {
+                            let val: f64 = arg.parse().unwrap_or(0.0);
+                            let prec = prec_val.unwrap_or(6).max(1);
+                            let formatted = format_g(val, prec, specifier == 'G');
                             output.push_str(&formatted);
                         }
+                        // %a (hex float) and %v (bash-only) are rejected by
+                        // zsh as invalid directives. Match zsh.
+                        'a' | 'A' | 'v' | 'V' => {
+                            eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
+                        }
+                        _ => {
+                            eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
+                        }
                     }
-                    'g' | 'G' => {
-                        let val: f64 = arg.parse().unwrap_or(0.0);
-                        let prec = prec_val.unwrap_or(6).max(1);
-                        let formatted = format_g(val, prec, specifier == 'G');
-                        output.push_str(&formatted);
-                    }
-                    // %a (hex float) and %v (bash-only) are rejected by
-                    // zsh as invalid directives. Match zsh.
-                    'a' | 'A' | 'v' | 'V' => {
-                        eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
-                    }
-                    _ => {
-                        eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
-                    }
+                } else {
+                    output.push(c);
                 }
-            } else {
-                output.push(c);
             }
-        }
             // After one full pass: re-loop only if at least one arg was
             // consumed AND we still have args left.
             if arg_idx <= prev_arg_idx || arg_idx >= format_args.len() {
@@ -25264,22 +25594,18 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
         if a_is_digit && b_is_digit {
             // Skip leading zeros for the numeric compare, but keep them
             // for the lexical tiebreaker so "01" < "1" (zsh does this).
-            let a_zero_end = ai + a_bytes[ai..]
-                .iter()
-                .take_while(|c| **c == b'0')
-                .count();
-            let b_zero_end = bi + b_bytes[bi..]
-                .iter()
-                .take_while(|c| **c == b'0')
-                .count();
-            let a_digits_end = a_zero_end + a_bytes[a_zero_end..]
-                .iter()
-                .take_while(|c| c.is_ascii_digit())
-                .count();
-            let b_digits_end = b_zero_end + b_bytes[b_zero_end..]
-                .iter()
-                .take_while(|c| c.is_ascii_digit())
-                .count();
+            let a_zero_end = ai + a_bytes[ai..].iter().take_while(|c| **c == b'0').count();
+            let b_zero_end = bi + b_bytes[bi..].iter().take_while(|c| **c == b'0').count();
+            let a_digits_end = a_zero_end
+                + a_bytes[a_zero_end..]
+                    .iter()
+                    .take_while(|c| c.is_ascii_digit())
+                    .count();
+            let b_digits_end = b_zero_end
+                + b_bytes[b_zero_end..]
+                    .iter()
+                    .take_while(|c| c.is_ascii_digit())
+                    .count();
             let a_num = &a_bytes[a_zero_end..a_digits_end];
             let b_num = &b_bytes[b_zero_end..b_digits_end];
             // Compare by length of stripped digits first (shorter = smaller),
@@ -25345,7 +25671,11 @@ fn format_g(val: f64, prec: usize, upper: bool) -> String {
     };
     // Strip trailing zeros after the decimal (and the dot if bare).
     let formatted = strip_trailing_zeros_g(&raw);
-    if upper { formatted.to_uppercase() } else { formatted }
+    if upper {
+        formatted.to_uppercase()
+    } else {
+        formatted
+    }
 }
 
 fn strip_trailing_zeros_g(s: &str) -> String {
@@ -25924,7 +26254,9 @@ impl ShellExecutor {
         let mut explicit_F = false;
         for a in args {
             if a.starts_with('-') {
-                if a.contains('F') { explicit_F = true; }
+                if a.contains('F') {
+                    explicit_F = true;
+                }
             }
         }
         let use_exp = !explicit_F;
@@ -25941,10 +26273,13 @@ impl ShellExecutor {
                     if let Some(epos) = raw.rfind('e') {
                         let (mantissa, exp) = raw.split_at(epos);
                         let exp_body = &exp[1..];
-                        let (sign, digits) =
-                            if exp_body.starts_with('-') { ("-", &exp_body[1..]) }
-                            else if exp_body.starts_with('+') { ("+", &exp_body[1..]) }
-                            else { ("+", exp_body) };
+                        let (sign, digits) = if exp_body.starts_with('-') {
+                            ("-", &exp_body[1..])
+                        } else if exp_body.starts_with('+') {
+                            ("+", &exp_body[1..])
+                        } else {
+                            ("+", exp_body)
+                        };
                         let padded = if digits.len() < 2 {
                             format!("0{}", digits)
                         } else {
@@ -26019,7 +26354,10 @@ impl ShellExecutor {
             };
             self.variables.insert(name.to_string(), int_val.to_string());
             self.options.insert(format!("_integer_{}", name), true);
-            let mut attr = VarAttr { kind: VarKind::Integer, ..Default::default() };
+            let mut attr = VarAttr {
+                kind: VarKind::Integer,
+                ..Default::default()
+            };
             attr.readonly = readonly;
             attr.export = exported;
             self.var_attrs.insert(name.to_string(), attr);
@@ -26066,9 +26404,7 @@ impl ShellExecutor {
             let mut matched: Vec<String> = Vec::new();
             for pat in &names {
                 for fname in self.function_names() {
-                    if Self::glob_match_static(&fname, pat)
-                        && !matched.contains(&fname)
-                    {
+                    if Self::glob_match_static(&fname, pat) && !matched.contains(&fname) {
                         matched.push(fname);
                     }
                 }
@@ -26082,7 +26418,11 @@ impl ShellExecutor {
                 } else if show_trace {
                     println!("functions -t {}", name);
                 } else if let Some(body) = self.function_definition_text(name) {
-                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
+                    println!(
+                        "{} () {{\n\t{}\n}}",
+                        name,
+                        format_function_body_zsh(body.trim())
+                    );
                 }
             }
             return 0;
@@ -26093,7 +26433,11 @@ impl ShellExecutor {
                 if list_only {
                     println!("{}", name);
                 } else if let Some(body) = self.function_definition_text(&name) {
-                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
+                    println!(
+                        "{} () {{\n\t{}\n}}",
+                        name,
+                        format_function_body_zsh(body.trim())
+                    );
                 }
             }
         } else {
@@ -26105,7 +26449,11 @@ impl ShellExecutor {
                 if show_trace {
                     println!("functions -t {}", name);
                 } else if let Some(body) = self.function_definition_text(name) {
-                    println!("{} () {{\n\t{}\n}}", name, format_function_body_zsh(body.trim()));
+                    println!(
+                        "{} () {{\n\t{}\n}}",
+                        name,
+                        format_function_body_zsh(body.trim())
+                    );
                 }
             }
         }
@@ -26162,14 +26510,17 @@ impl ShellExecutor {
                 // option: -h"). Unlike echo, print does NOT accept `-`
                 // mid-flags as a literal.
                 let body = &arg[1..];
-                let known = |c: char| matches!(c,
-                    '-' // zsh accepts `-` as a no-op flag char (so
+                let known = |c: char| {
+                    matches!(
+                        c,
+                        '-' // zsh accepts `-` as a no-op flag char (so
                         // `--foo` parses as `-`/`-foo` rather than
                         // erroring on the second `-`).
                     | 'n' | 'l' | 'r' | 'R' | 'P' | 'N' | 'z'
                     | 's' | 'o' | 'O' | 'D' | 'c' | 'm' | 'a' | 'b' | 'i'
                     | 'p' | 'S' | 'x' | 'X' | 'u' | 'C' | 'v' | 'f'
-                );
+                    )
+                };
                 // zsh's `print` rejects `-e` AND `-E` (echo accepts both).
                 // Removed from the known set so they fall through to the
                 // "bad option" error path matching zsh.
@@ -26492,15 +26843,25 @@ impl ShellExecutor {
                             break;
                         }
                     }
-                    if had_p { precision = Some(p); } else { precision = Some(0); }
+                    if had_p {
+                        precision = Some(p);
+                    } else {
+                        precision = Some(0);
+                    }
                 }
 
                 let pad = |s: &str, w: usize, left: bool, zero: bool| -> String {
                     let len = s.chars().count();
-                    if len >= w { return s.to_string(); }
+                    if len >= w {
+                        return s.to_string();
+                    }
                     let fill = if zero && !left { '0' } else { ' ' };
                     let extra: String = std::iter::repeat(fill).take(w - len).collect();
-                    if left { format!("{}{}", s, extra) } else { format!("{}{}", extra, s) }
+                    if left {
+                        format!("{}{}", s, extra)
+                    } else {
+                        format!("{}{}", extra, s)
+                    }
                 };
 
                 // Conversion specifier
@@ -26524,8 +26885,11 @@ impl ShellExecutor {
                             let n: i64 = arg.parse().unwrap_or(0);
                             let mut v = n.to_string();
                             if n >= 0 {
-                                if plus_flag { v = format!("+{}", v); }
-                                else if space_flag { v = format!(" {}", v); }
+                                if plus_flag {
+                                    v = format!("+{}", v);
+                                } else if space_flag {
+                                    v = format!(" {}", v);
+                                }
                             }
                             if let Some(w) = width {
                                 v = pad(&v, w, left_align, zero_pad);
@@ -26543,7 +26907,9 @@ impl ShellExecutor {
                         'x' => {
                             let n: i64 = arg.parse().unwrap_or(0);
                             let mut v = format!("{:x}", n);
-                            if hash_flag && n != 0 { v = format!("0x{}", v); }
+                            if hash_flag && n != 0 {
+                                v = format!("0x{}", v);
+                            }
                             if let Some(w) = width {
                                 v = pad(&v, w, left_align, zero_pad);
                             }
@@ -26552,7 +26918,9 @@ impl ShellExecutor {
                         'X' => {
                             let n: i64 = arg.parse().unwrap_or(0);
                             let mut v = format!("{:X}", n);
-                            if hash_flag && n != 0 { v = format!("0X{}", v); }
+                            if hash_flag && n != 0 {
+                                v = format!("0X{}", v);
+                            }
                             if let Some(w) = width {
                                 v = pad(&v, w, left_align, zero_pad);
                             }
@@ -26561,7 +26929,9 @@ impl ShellExecutor {
                         'o' => {
                             let n: i64 = arg.parse().unwrap_or(0);
                             let mut v = format!("{:o}", n);
-                            if hash_flag && n != 0 { v = format!("0{}", v); }
+                            if hash_flag && n != 0 {
+                                v = format!("0{}", v);
+                            }
                             if let Some(w) = width {
                                 v = pad(&v, w, left_align, zero_pad);
                             }
@@ -26586,14 +26956,13 @@ impl ShellExecutor {
                                 if let Some(epos) = v.rfind('e') {
                                     let (mantissa, exp) = v.split_at(epos);
                                     let exp_body = &exp[1..]; // skip 'e'
-                                    let (sign, digits) =
-                                        if exp_body.starts_with('-') {
-                                            ("-", &exp_body[1..])
-                                        } else if exp_body.starts_with('+') {
-                                            ("+", &exp_body[1..])
-                                        } else {
-                                            ("+", exp_body)
-                                        };
+                                    let (sign, digits) = if exp_body.starts_with('-') {
+                                        ("-", &exp_body[1..])
+                                    } else if exp_body.starts_with('+') {
+                                        ("+", &exp_body[1..])
+                                    } else {
+                                        ("+", exp_body)
+                                    };
                                     let padded = if digits.len() < 2 {
                                         format!("0{}", digits)
                                     } else {
@@ -26606,8 +26975,11 @@ impl ShellExecutor {
                                 v = v.replace('e', "E");
                             }
                             if n >= 0.0 {
-                                if plus_flag { v = format!("+{}", v); }
-                                else if space_flag { v = format!(" {}", v); }
+                                if plus_flag {
+                                    v = format!("+{}", v);
+                                } else if space_flag {
+                                    v = format!(" {}", v);
+                                }
                             }
                             if let Some(w) = width {
                                 v = pad(&v, w, left_align, zero_pad);
@@ -27119,7 +27491,10 @@ impl ShellExecutor {
         ];
 
         for (flag, resource, name, unit, divisor) in limits {
-            let mut rlim = rlimit { rlim_cur: 0, rlim_max: 0 };
+            let mut rlim = rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
             unsafe {
                 if getrlimit(resource, &mut rlim) != 0 {
                     continue;
@@ -27229,7 +27604,10 @@ impl ShellExecutor {
                     let seg = seg.trim();
                     let eq = match seg.find('=') {
                         Some(i) => i,
-                        None => { ok = false; break; }
+                        None => {
+                            ok = false;
+                            break;
+                        }
                     };
                     let classes = &seg[..eq];
                     let bits_str = &seg[eq + 1..];
@@ -27239,27 +27617,43 @@ impl ShellExecutor {
                             'r' => bits |= 4,
                             'w' => bits |= 2,
                             'x' => bits |= 1,
-                            _ => { ok = false; break; }
+                            _ => {
+                                ok = false;
+                                break;
+                            }
                         }
                     }
-                    if !ok { break; }
+                    if !ok {
+                        break;
+                    }
                     for cls in classes.chars() {
                         match cls {
                             'u' => perms[0] = bits,
                             'g' => perms[1] = bits,
                             'o' => perms[2] = bits,
-                            'a' => { perms[0] = bits; perms[1] = bits; perms[2] = bits; }
-                            _ => { ok = false; break; }
+                            'a' => {
+                                perms[0] = bits;
+                                perms[1] = bits;
+                                perms[2] = bits;
+                            }
+                            _ => {
+                                ok = false;
+                                break;
+                            }
                         }
                     }
-                    if !ok { break; }
+                    if !ok {
+                        break;
+                    }
                 }
                 if !ok {
                     eprintln!("umask: invalid mask: {}", v);
                     return 1;
                 }
                 let new_mask = ((7 - perms[0]) << 6) | ((7 - perms[1]) << 3) | (7 - perms[2]);
-                unsafe { umask(new_mask as libc::mode_t); }
+                unsafe {
+                    umask(new_mask as libc::mode_t);
+                }
             } else {
                 eprintln!("umask: invalid mask: {}", v);
                 return 1;
@@ -28785,8 +29179,7 @@ impl ShellExecutor {
 
             for spec in &opt_specs {
                 let matches_eq = after_one_dash == spec.name;
-                let matches_eq_arg = after_one_dash
-                    .starts_with(&format!("{}=", spec.name));
+                let matches_eq_arg = after_one_dash.starts_with(&format!("{}=", spec.name));
                 if !matches_eq && !matches_eq_arg {
                     continue;
                 }
@@ -28811,10 +29204,15 @@ impl ShellExecutor {
 
                 if effective_spec.takes_arg {
                     let arg_value = if after_one_dash.contains('=') {
-                        Some(after_one_dash.splitn(2, '=').nth(1).unwrap_or("").to_string())
+                        Some(
+                            after_one_dash
+                                .splitn(2, '=')
+                                .nth(1)
+                                .unwrap_or("")
+                                .to_string(),
+                        )
                     } else if i + 1 < positionals.len()
-                        && (!positionals[i + 1].starts_with('-')
-                            || effective_spec.optional_arg)
+                        && (!positionals[i + 1].starts_with('-') || effective_spec.optional_arg)
                     {
                         i += 1;
                         consumed_indices.push(i);
@@ -28900,7 +29298,13 @@ impl ShellExecutor {
             let kept: Vec<String> = positionals
                 .iter()
                 .enumerate()
-                .filter_map(|(idx, v)| if consumed.contains(&idx) { None } else { Some(v.clone()) })
+                .filter_map(|(idx, v)| {
+                    if consumed.contains(&idx) {
+                        None
+                    } else {
+                        Some(v.clone())
+                    }
+                })
                 .collect();
             // Wipe all old positional bindings, then reseed.
             for k in 1..=positionals.len() {
@@ -29209,9 +29613,7 @@ impl ShellExecutor {
                         crate::zle::WidgetResult::CallFunction(func) => {
                             // Call user widget through compiled-function dispatch.
                             drop(zle);
-                            if let Some(status) =
-                                self.dispatch_function_call(&func, &[])
-                            {
+                            if let Some(status) = self.dispatch_function_call(&func, &[]) {
                                 return status;
                             }
                             return 1;
@@ -29250,8 +29652,7 @@ impl ShellExecutor {
                     // List scheduled items (zsh syntax: `sched -L`).
                     let now = SystemTime::now();
                     for cmd in &self.scheduled_commands {
-                        let remaining =
-                            cmd.run_at.duration_since(now).unwrap_or(Duration::ZERO);
+                        let remaining = cmd.run_at.duration_since(now).unwrap_or(Duration::ZERO);
                         println!("{:3}  +{:5}  {}", cmd.id, remaining.as_secs(), cmd.command);
                     }
                     return 0;
@@ -29641,7 +30042,8 @@ impl ShellExecutor {
             .filter(|c| *c != '(' && *c != ')')
             .collect();
         let candidates = self.expand_glob(&glob_pat);
-        if candidates.len() == 1 && candidates[0] == glob_pat
+        if candidates.len() == 1
+            && candidates[0] == glob_pat
             && !std::path::Path::new(&candidates[0]).exists()
         {
             eprintln!("{}: no matches found: {}", action, from_pat);
@@ -29698,8 +30100,7 @@ impl ShellExecutor {
 
         // Detect collisions: two different sources mapping to the same
         // destination. zsh errors out before any file action.
-        let mut seen: std::collections::HashMap<&str, &str> =
-            std::collections::HashMap::new();
+        let mut seen: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
         let mut collisions = false;
         for (s, d) in &renames {
             if let Some(prev) = seen.insert(d.as_str(), s.as_str()) {
@@ -29872,8 +30273,12 @@ impl ShellExecutor {
                     if idx >= bytes.len() {
                         // Unterminated — emit raw as-is.
                         result.push('%');
-                        if left_align { result.push('-'); }
-                        if had_width { result.push_str(&width.to_string()); }
+                        if left_align {
+                            result.push('-');
+                        }
+                        if had_width {
+                            result.push_str(&width.to_string());
+                        }
                         break;
                     }
                     let spec_char = bytes[idx];
@@ -29883,8 +30288,12 @@ impl ShellExecutor {
                         None => {
                             // Unknown spec — emit the raw segment back.
                             let mut raw = String::from("%");
-                            if left_align { raw.push('-'); }
-                            if had_width { raw.push_str(&width.to_string()); }
+                            if left_align {
+                                raw.push('-');
+                            }
+                            if had_width {
+                                raw.push_str(&width.to_string());
+                            }
                             raw.push(spec_char);
                             result.push_str(&raw);
                             continue;
@@ -29897,11 +30306,15 @@ impl ShellExecutor {
                         // no prefix LEFT-aligns (pads on right). This is the
                         // reverse of printf — match zsh anyway.
                         if left_align {
-                            for _ in 0..pad { result.push(' '); }
+                            for _ in 0..pad {
+                                result.push(' ');
+                            }
                             result.push_str(&replacement);
                         } else {
                             result.push_str(&replacement);
-                            for _ in 0..pad { result.push(' '); }
+                            for _ in 0..pad {
+                                result.push(' ');
+                            }
                         }
                     } else {
                         result.push_str(&replacement);
@@ -31081,7 +31494,9 @@ impl ShellExecutor {
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let ret: i32 = -1;
 
-                if ret == 0 { 0 } else {
+                if ret == 0 {
+                    0
+                } else {
                     eprintln!("zsetattr: {}: {}", args[0], std::io::Error::last_os_error());
                     1
                 }
@@ -31103,7 +31518,9 @@ impl ShellExecutor {
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let ret: i32 = -1;
 
-                if ret == 0 { 0 } else {
+                if ret == 0 {
+                    0
+                } else {
                     eprintln!("zdelattr: {}: {}", args[0], std::io::Error::last_os_error());
                     1
                 }
@@ -31136,7 +31553,11 @@ impl ShellExecutor {
                     }
                     0
                 } else {
-                    eprintln!("zlistattr: {}: {}", args[0], std::io::Error::last_os_error());
+                    eprintln!(
+                        "zlistattr: {}: {}",
+                        args[0],
+                        std::io::Error::last_os_error()
+                    );
                     1
                 }
             }
@@ -31854,7 +32275,10 @@ impl ShellExecutor {
                 bytes = args[i].parse::<usize>().ok();
             } else if arg.starts_with("-c") && arg.len() > 2 {
                 bytes = arg[2..].parse::<usize>().ok();
-            } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+            } else if arg.starts_with('-')
+                && arg.len() > 1
+                && arg[1..].chars().all(|c| c.is_ascii_digit())
+            {
                 lines = arg[1..].parse().unwrap_or(10);
             } else if !arg.starts_with('-') {
                 files.push(arg);
@@ -31952,7 +32376,10 @@ impl ShellExecutor {
                 bytes = args[i].parse::<usize>().ok();
             } else if arg.starts_with("-c") && arg.len() > 2 {
                 bytes = arg[2..].parse::<usize>().ok();
-            } else if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
+            } else if arg.starts_with('-')
+                && arg.len() > 1
+                && arg[1..].chars().all(|c| c.is_ascii_digit())
+            {
                 lines = arg[1..].parse().unwrap_or(10);
             } else if !arg.starts_with('-') || arg == "-" {
                 files.push(arg);
@@ -32174,7 +32601,9 @@ impl ShellExecutor {
             if path.exists() {
                 // Update mtime
                 let now = std::time::SystemTime::now();
-                if let Err(e) = filetime::set_file_mtime(path, filetime::FileTime::from_system_time(now)) {
+                if let Err(e) =
+                    filetime::set_file_mtime(path, filetime::FileTime::from_system_time(now))
+                {
                     eprintln!("touch: {}: {}", file, e);
                     status = 1;
                 }
@@ -32224,7 +32653,10 @@ impl ShellExecutor {
                 "-r" => reverse = true,
                 "-n" => numeric = true,
                 "-u" => unique = true,
-                "-rn" | "-nr" => { reverse = true; numeric = true; }
+                "-rn" | "-nr" => {
+                    reverse = true;
+                    numeric = true;
+                }
                 a if a.starts_with('-') => {
                     for c in a[1..].chars() {
                         match c {
@@ -32264,8 +32696,16 @@ impl ShellExecutor {
 
         if numeric {
             lines.sort_by(|a, b| {
-                let na: f64 = a.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
-                let nb: f64 = b.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                let na: f64 = a
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.0);
+                let nb: f64 = b
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.0);
                 na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
             });
         } else {
@@ -32372,7 +32812,9 @@ impl ShellExecutor {
         }
 
         fn glob_match(pattern: &str, name: &str) -> bool {
-            if pattern == "*" { return true; }
+            if pattern == "*" {
+                return true;
+            }
             if let Some(suffix) = pattern.strip_prefix('*') {
                 return name.ends_with(suffix);
             }
@@ -32478,13 +32920,17 @@ impl ShellExecutor {
                 i += 1;
                 for part in args[i].split(',') {
                     if let Ok(n) = part.parse::<usize>() {
-                        if n > 0 { fields.push(n - 1); }
+                        if n > 0 {
+                            fields.push(n - 1);
+                        }
                     }
                 }
             } else if arg.starts_with("-f") {
                 for part in arg[2..].split(',') {
                     if let Ok(n) = part.parse::<usize>() {
-                        if n > 0 { fields.push(n - 1); }
+                        if n > 0 {
+                            fields.push(n - 1);
+                        }
                     }
                 }
             } else if !arg.starts_with('-') {
@@ -32507,7 +32953,8 @@ impl ShellExecutor {
 
         for line in reader.lines().flatten() {
             let parts: Vec<&str> = line.split(delimiter).collect();
-            let selected: Vec<&str> = fields.iter()
+            let selected: Vec<&str> = fields
+                .iter()
                 .filter_map(|&idx| parts.get(idx).copied())
                 .collect();
             println!("{}", selected.join(&delimiter.to_string()));
@@ -32532,10 +32979,18 @@ impl ShellExecutor {
         let set2_raw: &str;
 
         if delete {
-            set1_raw = args.iter().find(|a| !a.starts_with('-')).map(|s| s.as_str()).unwrap_or("");
+            set1_raw = args
+                .iter()
+                .find(|a| !a.starts_with('-'))
+                .map(|s| s.as_str())
+                .unwrap_or("");
             set2_raw = "";
         } else {
-            let non_flag: Vec<&str> = args.iter().filter(|a| !a.starts_with('-')).map(|s| s.as_str()).collect();
+            let non_flag: Vec<&str> = args
+                .iter()
+                .filter(|a| !a.starts_with('-'))
+                .map(|s| s.as_str())
+                .collect();
             set1_raw = non_flag.first().copied().unwrap_or("");
             set2_raw = non_flag.get(1).copied().unwrap_or("");
         }
@@ -32588,7 +33043,11 @@ impl ShellExecutor {
 
         let in_set1 = |c: char| -> bool {
             let m = s1.contains(&c);
-            if complement { !m } else { m }
+            if complement {
+                !m
+            } else {
+                m
+            }
         };
         let output: String = if delete {
             input.chars().filter(|c| !in_set1(*c)).collect()
@@ -32597,23 +33056,29 @@ impl ShellExecutor {
             // the LAST char of set2 (or first if set2 has one). zsh
             // / coreutils tr semantics.
             let target = s2.last().copied().or_else(|| s2.first().copied());
-            input.chars().map(|c| {
-                if s1.contains(&c) {
-                    c
-                } else if let Some(t) = target {
-                    t
-                } else {
-                    c
-                }
-            }).collect()
+            input
+                .chars()
+                .map(|c| {
+                    if s1.contains(&c) {
+                        c
+                    } else if let Some(t) = target {
+                        t
+                    } else {
+                        c
+                    }
+                })
+                .collect()
         } else {
-            input.chars().map(|c| {
-                if let Some(pos) = s1.iter().position(|&x| x == c) {
-                    s2.get(pos).or(s2.last()).copied().unwrap_or(c)
-                } else {
-                    c
-                }
-            }).collect()
+            input
+                .chars()
+                .map(|c| {
+                    if let Some(pos) = s1.iter().position(|&x| x == c) {
+                        s2.get(pos).or(s2.last()).copied().unwrap_or(c)
+                    } else {
+                        c
+                    }
+                })
+                .collect()
         };
 
         print!("{}", output);
@@ -32621,7 +33086,8 @@ impl ShellExecutor {
     }
 
     fn builtin_seq(&self, args: &[String]) -> i32 {
-        let nums: Vec<i64> = args.iter()
+        let nums: Vec<i64> = args
+            .iter()
             .filter(|a| !a.starts_with('-') || a.parse::<i64>().is_ok())
             .filter_map(|a| a.parse().ok())
             .collect();
@@ -32681,7 +33147,8 @@ impl ShellExecutor {
         use std::io::{Read, Write};
 
         let append = args.iter().any(|a| a == "-a");
-        let files: Vec<&str> = args.iter()
+        let files: Vec<&str> = args
+            .iter()
             .filter(|a| !a.starts_with('-'))
             .map(|s| s.as_str())
             .collect();
@@ -32695,13 +33162,18 @@ impl ShellExecutor {
         // Write to files
         for file in files {
             let result = if append {
-                std::fs::OpenOptions::new().create(true).append(true).open(file)
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(file)
             } else {
                 std::fs::File::create(file)
             };
 
             match result {
-                Ok(mut f) => { f.write_all(&input).ok(); }
+                Ok(mut f) => {
+                    f.write_all(&input).ok();
+                }
                 Err(e) => eprintln!("tee: {}: {}", file, e),
             }
         }
@@ -32716,15 +33188,17 @@ impl ShellExecutor {
 
         let mut total_secs = 0.0f64;
         for arg in args {
-            if arg.starts_with('-') { continue; }
+            if arg.starts_with('-') {
+                continue;
+            }
             let (num, suffix) = if arg.ends_with('s') {
-                (&arg[..arg.len()-1], 1.0)
+                (&arg[..arg.len() - 1], 1.0)
             } else if arg.ends_with('m') {
-                (&arg[..arg.len()-1], 60.0)
+                (&arg[..arg.len() - 1], 60.0)
             } else if arg.ends_with('h') {
-                (&arg[..arg.len()-1], 3600.0)
+                (&arg[..arg.len() - 1], 3600.0)
             } else if arg.ends_with('d') {
-                (&arg[..arg.len()-1], 86400.0)
+                (&arg[..arg.len() - 1], 86400.0)
             } else {
                 (arg.as_str(), 1.0)
             };
@@ -32807,7 +33281,10 @@ impl ShellExecutor {
         if args.is_empty() || args.iter().any(|a| a == "-s") {
             println!("{}", sysname);
         } else if args.iter().any(|a| a == "-a") {
-            println!("{} {} {} {} {}", sysname, nodename, release, version, machine);
+            println!(
+                "{} {} {} {} {}",
+                sysname, nodename, release, version, machine
+            );
         } else if args.iter().any(|a| a == "-n") {
             println!("{}", nodename);
         } else if args.iter().any(|a| a == "-r") {
@@ -32844,9 +33321,8 @@ impl ShellExecutor {
             };
             let mut buf = [0i8; 256];
             let fmt_cstr = std::ffi::CString::new(fmt).unwrap_or_default();
-            let len = unsafe {
-                libc::strftime(buf.as_mut_ptr(), buf.len(), fmt_cstr.as_ptr(), &tm)
-            };
+            let len =
+                unsafe { libc::strftime(buf.as_mut_ptr(), buf.len(), fmt_cstr.as_ptr(), &tm) };
             if len > 0 {
                 let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
                 println!("{}", s.to_string_lossy());
@@ -32858,9 +33334,7 @@ impl ShellExecutor {
             };
             let mut buf = [0i8; 256];
             let fmt = std::ffi::CString::new("%a %b %e %H:%M:%S %Z %Y").unwrap();
-            let len = unsafe {
-                libc::strftime(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), &tm)
-            };
+            let len = unsafe { libc::strftime(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), &tm) };
             if len > 0 {
                 let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
                 println!("{}", s.to_string_lossy());
@@ -32883,14 +33357,18 @@ impl ShellExecutor {
 
         let tmpdir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
         let base = template.unwrap_or("tmp.XXXXXXXXXX");
-        
+
         let rand_suffix: String = (0..10)
             .map(|_| {
                 let idx = (std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
-                    .subsec_nanos() as usize) % 36;
-                "abcdefghijklmnopqrstuvwxyz0123456789".chars().nth(idx).unwrap()
+                    .subsec_nanos() as usize)
+                    % 36;
+                "abcdefghijklmnopqrstuvwxyz0123456789"
+                    .chars()
+                    .nth(idx)
+                    .unwrap()
             })
             .collect();
 

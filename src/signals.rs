@@ -398,12 +398,7 @@ pub fn is_forked_child() -> bool {
     let mut main = MAIN_PID.load(Ordering::Relaxed);
     if main == 0 {
         let cur = getpid().as_raw();
-        match MAIN_PID.compare_exchange(
-            0,
-            cur,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
+        match MAIN_PID.compare_exchange(0, cur, Ordering::Relaxed, Ordering::Relaxed) {
             Ok(_) => main = cur,
             Err(prev) => main = prev,
         }

@@ -762,12 +762,7 @@ pub fn zshrs_main() {
         .collect();
 
     /// Apply CLI flags and shell mode to executor
-    fn apply_cli_flags(
-        executor: &mut ShellExecutor,
-        xtrace: bool,
-        verbose: bool,
-        no_rcs: bool,
-    ) {
+    fn apply_cli_flags(executor: &mut ShellExecutor, xtrace: bool, verbose: bool, no_rcs: bool) {
         // Apply shell mode
         executor.zsh_compat = is_zsh_mode();
         if is_posix_mode() {
@@ -794,15 +789,12 @@ pub fn zshrs_main() {
 
         let mut executor = ShellExecutor::new();
         apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag);
-        // In `-c` mode zsh sets $0 to the shell name (`zsh`), not the
-        // absolute argv0 path. We mirror that — pick the basename of
-        // argv0 if it ends in `zsh*`, otherwise default to `zshrs`.
-        // Without this `echo $0` leaked the build path.
-        let zero = std::path::Path::new(&args[0])
-            .file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "zshrs".to_string());
+        // In `-c` mode zsh sets `$0` to argv[0] verbatim — when
+        // invoked as `/bin/zsh -c '...'` it's the full path; when
+        // invoked as `zsh -c '...'` it's the basename. Mirror by
+        // passing argv[0] through unchanged (was previously
+        // basename-stripped, which lost the full path zsh exposes).
+        let zero = args[0].clone();
         executor.variables.insert("0".to_string(), zero);
         let start = Instant::now();
         let result = executor.execute_script(code);
@@ -1677,7 +1669,10 @@ fn run_interactive() {
 
     // Banner goes to the log, not the user's terminal. A shell prompt should
     // appear immediately on launch — no version stripe, no "type exit" hint.
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "interactive shell start");
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "interactive shell start"
+    );
 
     loop {
         // Non-blocking: merge background compinit results if ready

@@ -97,11 +97,7 @@ fn ok(code: &str, expected_stdout: &str) {
         "expected exit 0 from `{}`, got {} with stdout:\n{}",
         code, status, stdout
     );
-    assert_eq!(
-        stdout, expected_stdout,
-        "stdout mismatch for `{}`",
-        code
-    );
+    assert_eq!(stdout, expected_stdout, "stdout mismatch for `{}`", code);
 }
 
 /// Wrap `ok` with the FORK_SERIAL mutex. Use for tests where zshrs internally
@@ -120,11 +116,7 @@ fn ok_status(code: &str, expected_stdout: &str, expected_status: i32) {
         "expected exit {} from `{}`, got {} with stdout:\n{}",
         expected_status, code, status, stdout
     );
-    assert_eq!(
-        stdout, expected_stdout,
-        "stdout mismatch for `{}`",
-        code
-    );
+    assert_eq!(stdout, expected_stdout, "stdout mismatch for `{}`", code);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -246,9 +238,8 @@ fn pipeline_terminates_on_sigpipe() {
     // 3 lines, sending SIGPIPE to producer. If pipelines weren't real (just
     // sequential execution), this would hang or recurse to stack overflow.
     let _guard = FORK_SERIAL.lock().unwrap_or_else(|p| p.into_inner());
-    let (status, stdout) = run(
-        r#"foo() { echo $1; foo $(($1 + 1)); }; foo 1 2>/dev/null | head -3"#,
-    );
+    let (status, stdout) =
+        run(r#"foo() { echo $1; foo $(($1 + 1)); }; foo 1 2>/dev/null | head -3"#);
     assert_eq!(status, 0, "head should exit 0; got {}", status);
     assert_eq!(stdout, "1\n2\n3\n");
 }
@@ -322,10 +313,7 @@ fn nested_for_loops() {
 
 #[test]
 fn case_exact_match() {
-    ok(
-        "case foo in bar) echo b;; foo) echo f;; esac",
-        "f\n",
-    );
+    ok("case foo in bar) echo b;; foo) echo f;; esac", "f\n");
 }
 
 #[test]
@@ -465,10 +453,7 @@ fn function_forward_reference() {
 fn function_modifies_global_var() {
     // local x is local; assigning x inside without `local` should be visible
     // outside (matching shell semantics).
-    ok(
-        "f() { x=set-by-f; }; f; echo $x",
-        "set-by-f\n",
-    );
+    ok("f() { x=set-by-f; }; f; echo $x", "set-by-f\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -489,15 +474,15 @@ fn cmd_subst_strips_trailing_newlines() {
 #[test]
 fn cmd_subst_multiline_preserved_inside() {
     // BSD-style wc right-pads to 8 chars (matches zsh's bundled wc).
-    ok(
-        r#"x=$(printf 'a\nb\nc'); echo "$x" | wc -l"#,
-        "       3\n",
-    );
+    ok(r#"x=$(printf 'a\nb\nc'); echo "$x" | wc -l"#, "       3\n");
 }
 
 #[test]
 fn cmd_subst_nested() {
-    ok(r#"echo "outer: $(echo inner: $(echo deepest))""#, "outer: inner: deepest\n");
+    ok(
+        r#"echo "outer: $(echo inner: $(echo deepest))""#,
+        "outer: inner: deepest\n",
+    );
 }
 
 #[test]
@@ -761,10 +746,7 @@ fn continue_skips_iteration() {
 
 #[test]
 fn return_exits_function_early() {
-    ok(
-        "f() { echo a; return 7; echo b; }; f; echo $?",
-        "a\n7\n",
-    );
+    ok("f() { echo a; return 7; echo b; }; f; echo $?", "a\n7\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -898,10 +880,7 @@ fn array_literal_negative_index_counts_from_end() {
 
 #[test]
 fn array_length_reports_element_count() {
-    ok(
-        r#"arr=(one two three four five); echo ${#arr[@]}"#,
-        "5\n",
-    );
+    ok(r#"arr=(one two three four five); echo ${#arr[@]}"#, "5\n");
 }
 
 #[test]
@@ -973,10 +952,7 @@ fn array_indexed_singletons_dont_collide_with_scalar_lookup() {
     // first element only. Guards against the bug where arrays used to
     // shadow into `executor.variables` as a scalar — BUILTIN_SET_ARRAY now
     // explicitly removes any prior scalar binding.
-    ok(
-        r#"arr=(x y z); echo "$arr"; echo ${arr[1]}"#,
-        "x y z\nx\n",
-    );
+    ok(r#"arr=(x y z); echo "$arr"; echo ${arr[1]}"#, "x y z\nx\n");
 }
 
 #[test]
@@ -1073,10 +1049,7 @@ fn zshflag_stacked_split_then_upper() {
 fn zshflag_q_single_quote_escapes_inner() {
     // (q) per zshexpn(1): backslash-escape shell-special chars (no
     // surrounding quotes). Verified against /bin/zsh.
-    ok(
-        r##"x="hi 'world'"; echo "${(q)x}""##,
-        "hi\\ \\'world\\'\n",
-    );
+    ok(r##"x="hi 'world'"; echo "${(q)x}""##, "hi\\ \\'world\\'\n");
 }
 
 #[test]
@@ -1089,19 +1062,13 @@ fn zshflag_qq_double_quote() {
 fn zshflag_qqq_ansi_c_quoting() {
     // (qqq) per zshexpn(1): double-quote always — tab stays literal
     // inside "...".
-    ok(
-        r#"s=$(printf 'a\tb'); echo "${(qqq)s}""#,
-        "\"a\tb\"\n",
-    );
+    ok(r#"s=$(printf 'a\tb'); echo "${(qqq)s}""#, "\"a\tb\"\n");
 }
 
 #[test]
 fn zshflag_g_processes_backslash_escapes() {
     // `(g)` interprets backslash escapes — `\n` becomes a real newline.
-    ok(
-        r#"s='hello\nworld'; echo "${(g)s}""#,
-        "hello\nworld\n",
-    );
+    ok(r#"s='hello\nworld'; echo "${(g)s}""#, "hello\nworld\n");
 }
 
 #[test]
@@ -1148,20 +1115,14 @@ fn zshflag_q_plus_skips_safe_values() {
 fn zshflag_q_minus_strips_trailing_newlines() {
     // `(q-)` is `(q)` + strip trailing newlines first. Since `val` has
     // no specials, the trimmed value emits unquoted.
-    ok(
-        r#"x=$(printf 'val\n\n'); echo "${(q-)x}""#,
-        "val\n",
-    );
+    ok(r#"x=$(printf 'val\n\n'); echo "${(q-)x}""#, "val\n");
 }
 
 #[test]
 fn zshflag_q_star_escapes_glob_chars() {
     // `(q*)` is `(q)` with `*`/`?` also escaped. `*.rs` has no spaces,
     // so the output is just `\*.rs` (no surrounding quotes).
-    ok(
-        r#"x="*.rs"; echo "${(q*)x}""#,
-        "\\*.rs\n",
-    );
+    ok(r#"x="*.rs"; echo "${(q*)x}""#, "\\*.rs\n");
 }
 
 #[test]
@@ -1245,7 +1206,11 @@ fn glob_qualifier_slash_filters_directories() {
     let (status, stdout) = run(&script);
     assert_eq!(status, 0);
     assert!(stdout.contains("subdir"), "missing dir: {}", stdout);
-    assert!(!stdout.contains("foo.txt"), "should not have file: {}", stdout);
+    assert!(
+        !stdout.contains("foo.txt"),
+        "should not have file: {}",
+        stdout
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -1310,10 +1275,7 @@ fn zshflag_in_quoted_context_works() {
 
 #[test]
 fn assoc_set_and_get_single_entry() {
-    ok(
-        r#"foo[key]=val; echo "${foo[key]}""#,
-        "val\n",
-    );
+    ok(r#"foo[key]=val; echo "${foo[key]}""#, "val\n");
 }
 
 #[test]
@@ -1331,10 +1293,7 @@ fn assoc_two_lookups_in_double_quoted_string() {
     // (treating `a]} ${foo[b` as the index). The fix rejects bodies
     // containing `${` or `}` so multi-group strings route to the runtime
     // string walker.
-    ok(
-        r#"foo[a]=1; foo[b]=2; echo "${foo[a]} ${foo[b]}""#,
-        "1 2\n",
-    );
+    ok(r#"foo[a]=1; foo[b]=2; echo "${foo[a]} ${foo[b]}""#, "1 2\n");
 }
 
 #[test]
@@ -1355,10 +1314,7 @@ fn assoc_append_creates_when_missing() {
 
 #[test]
 fn assoc_overwrite_replaces_value() {
-    ok(
-        r#"m[k]=first; m[k]=second; echo "${m[k]}""#,
-        "second\n",
-    );
+    ok(r#"m[k]=first; m[k]=second; echo "${m[k]}""#, "second\n");
 }
 
 #[test]
@@ -1377,7 +1333,11 @@ fn select_with_eof_stdin_exits_zero_no_body() {
         "",
     );
     assert_eq!(status, 0);
-    assert!(stdout.contains("done"), "expected 'done' in stdout: {}", stdout);
+    assert!(
+        stdout.contains("done"),
+        "expected 'done' in stdout: {}",
+        stdout
+    );
     assert!(
         !stdout.contains("got="),
         "body must not run when stdin is empty: {}",
@@ -1557,10 +1517,7 @@ fn dynamic_command_name_expands_and_dispatches() {
     // path. compile_word lowers `$cmd` to BUILTIN_GET_VAR, the resolved string
     // lands on the stack, Op::Exec routes through host.exec for actual
     // dispatch.
-    ok_serial(
-        r#"cmd=/bin/echo; $cmd hello world"#,
-        "hello world\n",
-    );
+    ok_serial(r#"cmd=/bin/echo; $cmd hello world"#, "hello world\n");
 }
 
 #[test]

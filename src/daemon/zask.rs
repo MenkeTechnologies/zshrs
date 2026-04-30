@@ -62,7 +62,10 @@ impl AskKind {
             "progress" => Ok(Self::Progress),
             other => Err(ErrPayload::new(
                 "bad_kind",
-                format!("unknown ask kind `{}` (try picker|input|dialog|menu|progress)", other),
+                format!(
+                    "unknown ask kind `{}` (try picker|input|dialog|menu|progress)",
+                    other
+                ),
             )),
         }
     }
@@ -107,7 +110,9 @@ impl AskInbox {
 
     pub fn pending(&self, shell_id: u64) -> Vec<AskRequest> {
         let g = self.queues.lock();
-        g.get(&shell_id).map(|q| q.iter().cloned().collect()).unwrap_or_default()
+        g.get(&shell_id)
+            .map(|q| q.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Pop the most-urgent request from the queue (urgency: critical > normal > low).
@@ -133,7 +138,9 @@ impl AskInbox {
 
     pub fn dismiss(&self, shell_id: u64, req_id: &str) -> bool {
         let mut g = self.queues.lock();
-        let Some(q) = g.get_mut(&shell_id) else { return false };
+        let Some(q) = g.get_mut(&shell_id) else {
+            return false;
+        };
         if let Some(idx) = q.iter().position(|r| r.request_id == req_id) {
             q.remove(idx);
             true
@@ -183,7 +190,11 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
         },
     };
 
-    if state.snapshot_sessions().iter().all(|s| s.client_id != target_shell) {
+    if state
+        .snapshot_sessions()
+        .iter()
+        .all(|s| s.client_id != target_shell)
+    {
         return Err(ErrPayload::new(
             "no_shell",
             format!("target shell_id {} not connected", target_shell),
@@ -297,7 +308,10 @@ pub async fn op_ask_response(state: &Arc<DaemonState>, args: Value) -> OpResult 
         .and_then(Value::as_str)
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `request_id`"))?;
     let value = args.get("value").cloned().unwrap_or(Value::Null);
-    let cancelled = args.get("cancelled").and_then(Value::as_bool).unwrap_or(false);
+    let cancelled = args
+        .get("cancelled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let from_shell = args.get("from_shell").and_then(Value::as_u64);
 
     // For v1 we don't track the originating shell mapping (no full request-table)

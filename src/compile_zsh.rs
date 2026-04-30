@@ -11,8 +11,8 @@
 //! `Op::Glob`, `Op::TildeExpand`, `Op::CmdSubst`, etc.).
 
 use crate::parser::{
-    ZshAssign, ZshAssignValue, ZshCommand, ZshList, ZshPipe, ZshProgram, ZshSimple,
-    ZshSublist, SublistOp,
+    SublistOp, ZshAssign, ZshAssignValue, ZshCommand, ZshList, ZshPipe, ZshProgram, ZshSimple,
+    ZshSublist,
 };
 use fusevm::op::Op;
 use fusevm::{ChunkBuilder, Value};
@@ -67,10 +67,8 @@ impl ZshCompiler {
         if self.errexit_suppress_depth > 0 {
             return;
         }
-        self.builder.emit(
-            Op::CallBuiltin(crate::exec::BUILTIN_ERREXIT_CHECK, 0),
-            0,
-        );
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_ERREXIT_CHECK, 0), 0);
         self.builder.emit(Op::Pop, 0);
     }
 
@@ -111,10 +109,8 @@ impl ZshCompiler {
             let sub_chunk = sub.builder.build();
             let sub_idx = self.builder.add_sub_chunk(sub_chunk);
             self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_RUN_BG, 1),
-                0,
-            );
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_RUN_BG, 1), 0);
             self.builder.emit(Op::SetStatus, 0);
         } else {
             self.compile_sublist(&list.sublist);
@@ -233,23 +229,27 @@ impl ZshCompiler {
                 // i64::MIN is the "no length given" sentinel — lets
                 // the runtime distinguish from explicit negative
                 // length (`${s:0:-2}` truncates from end).
-                self.builder.emit(Op::LoadInt(length.unwrap_or(i64::MIN)), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_SUBSTRING, 3),
-                    0,
-                );
+                self.builder
+                    .emit(Op::LoadInt(length.unwrap_or(i64::MIN)), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_SUBSTRING, 3), 0);
             }
-            ParamModifierKind::SubstringExpr { offset_expr, length_expr } => {
+            ParamModifierKind::SubstringExpr {
+                offset_expr,
+                length_expr,
+            } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let off_const = self.builder.add_constant(Value::str(offset_expr));
                 self.builder.emit(Op::LoadConst(off_const), 0);
-                let len_const = self.builder.add_constant(Value::str(
-                    length_expr.as_deref().unwrap_or(""),
-                ));
+                let len_const = self
+                    .builder
+                    .add_constant(Value::str(length_expr.as_deref().unwrap_or("")));
                 self.builder.emit(Op::LoadConst(len_const), 0);
                 // Sentinel so the runtime can tell `length=""` (no
                 // length given, take rest) from `length="0"` (zero).
-                let has_len_const = self.builder.add_constant(Value::Bool(length_expr.is_some()));
+                let has_len_const = self
+                    .builder
+                    .add_constant(Value::Bool(length_expr.is_some()));
                 self.builder.emit(Op::LoadConst(has_len_const), 0);
                 self.builder.emit(
                     Op::CallBuiltin(crate::exec::BUILTIN_PARAM_SUBSTRING_EXPR, 4),
@@ -261,10 +261,8 @@ impl ZshCompiler {
                 let pat_const = self.builder.add_constant(Value::str(pattern));
                 self.builder.emit(Op::LoadConst(pat_const), 0);
                 self.builder.emit(Op::LoadInt(*op as i64), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_STRIP, 3),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_STRIP, 3), 0);
             }
             ParamModifierKind::Replace { op, pattern, repl } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
@@ -273,26 +271,20 @@ impl ZshCompiler {
                 let repl_const = self.builder.add_constant(Value::str(repl));
                 self.builder.emit(Op::LoadConst(repl_const), 0);
                 self.builder.emit(Op::LoadInt(*op as i64), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_REPLACE, 4),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_REPLACE, 4), 0);
             }
             ParamModifierKind::Length => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_LENGTH, 1),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_LENGTH, 1), 0);
             }
             ParamModifierKind::FilterRemoveMatching { pattern } => {
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 let pat_const = self.builder.add_constant(Value::str(pattern));
                 self.builder.emit(Op::LoadConst(pat_const), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FILTER, 2),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_FILTER, 2), 0);
             }
         }
     }
@@ -342,10 +334,8 @@ impl ZshCompiler {
             if *merge {
                 // `|&` producer: dup stderr→stdout for this stage so the
                 // pipe's read end sees both streams.
-                sub.builder.emit(
-                    Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE),
-                    0,
-                );
+                sub.builder
+                    .emit(Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE), 0);
                 let one_const = sub.builder.add_constant(Value::str("1"));
                 // Op::Redirect pops the target from the stack — push it
                 // first. Order: target then op call.
@@ -356,10 +346,8 @@ impl ZshCompiler {
             if *merge {
                 let one_const = sub.builder.add_constant(Value::str("1"));
                 sub.builder.emit(Op::LoadConst(one_const), 0);
-                sub.builder.emit(
-                    Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE),
-                    0,
-                );
+                sub.builder
+                    .emit(Op::Redirect(2, fusevm::op::redirect_op::DUP_WRITE), 0);
             }
             sub.compile_command(stage_cmd);
             let sub_end = sub.builder.current_pos();
@@ -438,10 +426,8 @@ impl ZshCompiler {
                     let chunk = sub.builder.build();
                     let sub_idx = self.builder.add_sub_chunk(chunk);
                     self.builder.emit(Op::LoadInt(sub_idx as i64), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::exec::BUILTIN_TIME_SUBLIST, 1),
-                        0,
-                    );
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_TIME_SUBLIST, 1), 0);
                     self.builder.emit(Op::SetStatus, 0);
                 } else {
                     // Bare `time` — print zero stats and exit 0.
@@ -498,14 +484,14 @@ impl ZshCompiler {
             let opt_const = self.builder.add_constant(Value::str("noglob"));
             self.builder.emit(Op::LoadConst(opt_const), 0);
             self.builder.emit(Op::LoadInt(1), 0);
-            self.builder.emit(Op::CallBuiltin(
-                crate::exec::BUILTIN_SET_RAW_OPT, 2), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_RAW_OPT, 2), 0);
             self.builder.emit(Op::Pop, 0);
             self.compile_simple(&inner);
             self.builder.emit(Op::LoadConst(opt_const), 0);
             self.builder.emit(Op::LoadInt(0), 0);
-            self.builder.emit(Op::CallBuiltin(
-                crate::exec::BUILTIN_SET_RAW_OPT, 2), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_RAW_OPT, 2), 0);
             self.builder.emit(Op::Pop, 0);
             return;
         }
@@ -515,9 +501,8 @@ impl ZshCompiler {
         // command body — apply redirects PERMANENTLY to the shell's
         // own fds, no scope-end restoration. zsh: `exec` with only
         // redirects rewires the running shell's fds.
-        let bare_exec_redir = simple.words.len() == 1
-            && simple.words[0] == "exec"
-            && !simple.redirs.is_empty();
+        let bare_exec_redir =
+            simple.words.len() == 1 && simple.words[0] == "exec" && !simple.redirs.is_empty();
         if bare_exec_redir {
             for redir in &simple.redirs {
                 self.compile_redir(redir);
@@ -597,10 +582,8 @@ impl ZshCompiler {
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.break_patches[idx].push(j);
             } else {
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_SET_BREAK, 0),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_BREAK, 0), 0);
                 self.builder.emit(Op::Pop, 0);
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
@@ -626,10 +609,8 @@ impl ZshCompiler {
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.continue_patches[idx].push(j);
             } else {
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_SET_CONTINUE, 0),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_CONTINUE, 0), 0);
                 self.builder.emit(Op::Pop, 0);
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
@@ -737,7 +718,8 @@ impl ZshCompiler {
                 }
                 if hd.quoted {
                     // Quoted-terminator form: pass body verbatim.
-                    let idx = self.builder
+                    let idx = self
+                        .builder
                         .add_constant(Value::str(content_clean.as_str()));
                     self.builder.emit(Op::HereDoc(idx), 0);
                 } else {
@@ -752,10 +734,8 @@ impl ZshCompiler {
                     let text_const = self.builder.add_constant(Value::str(trimmed));
                     self.builder.emit(Op::LoadConst(text_const), 0);
                     self.builder.emit(Op::LoadInt(4), 0); // mode = HeredocBody
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2),
-                        0,
-                    );
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
                     self.builder.emit(Op::HereString, 0);
                 }
             }
@@ -803,10 +783,8 @@ impl ZshCompiler {
             let vid_const = self.builder.add_constant(Value::str(vid.as_str()));
             self.builder.emit(Op::LoadConst(vid_const), 0);
             self.builder.emit(Op::LoadInt(op_byte as i64), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_OPEN_NAMED_FD, 3),
-                0,
-            );
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_OPEN_NAMED_FD, 3), 0);
             self.builder.emit(Op::SetStatus, 0);
             return;
         }
@@ -828,10 +806,8 @@ impl ZshCompiler {
                     // Append: dup name+key, GET_VAR via assoc, Concat with new tail
                     self.builder.emit(Op::LoadConst(name_const), 0);
                     self.builder.emit(Op::LoadConst(key_const), 0);
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2),
-                        0,
-                    );
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
                     self.compile_word_str(s);
                     self.builder.emit(Op::Concat, 0);
                 } else {
@@ -1014,9 +990,8 @@ impl ZshCompiler {
             // zsh numeric range glob `<N-M>`: any `<…-…>` shape with
             // optional digits on either side outside a bracket-class.
             || has_numeric_range_glob(&untoked);
-        let trigger_tilde = untoked.starts_with('~')
-            || untoked.contains(":~")
-            || untoked.contains("=~");
+        let trigger_tilde =
+            untoked.starts_with('~') || untoked.contains(":~") || untoked.contains("=~");
         // Brace expansion: `{a,b,c}` and `{1..5}` need expansion. Detect
         // matched-brace forms with comma or `..` inside.
         let trigger_brace = looks_like_brace_expansion(&untoked);
@@ -1087,8 +1062,8 @@ impl ZshCompiler {
             // word). Only `*` gets the join — `@` continues to return
             // Array. Without the `*` fix, `v="$*"` captured only the
             // first positional because pop_args flattens Array.
-            let in_dq = self.dq_context_depth > 0
-                || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
+            let in_dq =
+                self.dq_context_depth > 0 || (s.starts_with('\u{9e}') && s.ends_with('\u{9e}'));
             self.builder.emit(Op::LoadConst(idx), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
@@ -1098,10 +1073,8 @@ impl ZshCompiler {
                 // join an in-stack Array without a dedicated op.)
                 self.builder.emit(Op::Pop, 0);
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_JOIN_STAR, 1),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_JOIN_STAR, 1), 0);
             }
             return;
         }
@@ -1147,17 +1120,19 @@ impl ZshCompiler {
             // Accept identifier names AND positional digit names ($#1
             // = length of $1 string). zsh: `set -- ab; echo $#1` → 2.
             let is_ident = !bare_name.is_empty()
-                && first.map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
-                && bare_name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
-            let is_positional = !bare_name.is_empty()
-                && bare_name.chars().all(|c| c.is_ascii_digit());
+                && first
+                    .map(|c| c == '_' || c.is_ascii_alphabetic())
+                    .unwrap_or(false)
+                && bare_name
+                    .chars()
+                    .all(|c| c == '_' || c.is_ascii_alphanumeric());
+            let is_positional =
+                !bare_name.is_empty() && bare_name.chars().all(|c| c.is_ascii_digit());
             if is_ident || is_positional {
                 let idx = self.builder.add_constant(Value::str(bare_name));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_PARAM_LENGTH, 1),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_LENGTH, 1), 0);
                 return;
             }
         }
@@ -1296,9 +1271,7 @@ impl ZshCompiler {
                 // DQ context: either the raw word is itself DQ-wrapped,
                 // OR we're recursing into an Expansion segment from a
                 // DQ-wrapped parent (tracked via dq_context_depth).
-                let dq_wrapped = (s.starts_with('\u{9e}')
-                    && s.ends_with('\u{9e}')
-                    && s.len() >= 2)
+                let dq_wrapped = (s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2)
                     || self.dq_context_depth > 0;
                 let flags_for_runtime = if dq_wrapped {
                     let mut f = String::from("\u{02}");
@@ -1402,10 +1375,8 @@ impl ZshCompiler {
                 let in_dq = s.starts_with('\u{9e}') || self.dq_context_depth > 0;
                 let in_assign = self.assign_context_depth > 0;
                 if !in_dq && !in_assign {
-                    self.builder.emit(
-                        Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0),
-                        0,
-                    );
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
                 }
                 return;
             }
@@ -1421,8 +1392,7 @@ impl ZshCompiler {
         // skip the segment-split (which would emit literal `~` + the
         // expansion separately, defeating tilde-expand). Fall through
         // to the bridge so expand_string sees `~$VAR` whole.
-        let starts_with_tilde_and_has_var = untoked.starts_with('~')
-            && untoked.contains('$');
+        let starts_with_tilde_and_has_var = untoked.starts_with('~') && untoked.contains('$');
         if !has_bnull && !starts_with_tilde_and_has_var {
             if let Some(segs) = split_word_segments(s) {
                 // Pick concat operator based on segment shape:
@@ -1537,7 +1507,8 @@ impl ZshCompiler {
         let mut skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
         self.compile_program(&if_node.then);
         end_jumps.push(self.builder.emit(Op::Jump(0), 0));
-        self.builder.patch_jump(skip_body, self.builder.current_pos());
+        self.builder
+            .patch_jump(skip_body, self.builder.current_pos());
 
         // elif branches — same suppression for each cond.
         for (cond, body) in &if_node.elif {
@@ -1548,7 +1519,8 @@ impl ZshCompiler {
             skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
             self.compile_program(body);
             end_jumps.push(self.builder.emit(Op::Jump(0), 0));
-            self.builder.patch_jump(skip_body, self.builder.current_pos());
+            self.builder
+                .patch_jump(skip_body, self.builder.current_pos());
         }
 
         // else
@@ -1749,12 +1721,7 @@ impl ZshCompiler {
         }
     }
 
-    fn compile_for_words(
-        &mut self,
-        var: &str,
-        words: &[String],
-        body: &crate::parser::ZshProgram,
-    ) {
+    fn compile_for_words(&mut self, var: &str, words: &[String], body: &crate::parser::ZshProgram) {
         let i_slot = self.next_slot;
         self.next_slot += 1;
         let len_slot = self.next_slot;
@@ -1865,10 +1832,8 @@ impl ZshCompiler {
             if route_through_eval(&untoked) {
                 let idx = this.builder.add_constant(Value::str(untoked.as_str()));
                 this.builder.emit(Op::LoadConst(idx), 0);
-                this.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1),
-                    0,
-                );
+                this.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
             } else {
                 this.compile_arith_str(s);
             }
@@ -1887,10 +1852,8 @@ impl ZshCompiler {
                 let untoked = crate::lexer::untokenize(cond);
                 let idx = self.builder.add_constant(Value::str(untoked.as_str()));
                 self.builder.emit(Op::LoadConst(idx), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
                 // ARITH_EVAL returns Value::Str ("0" / "1" / etc.).
                 // Convert to bool: non-zero → true.
                 let zero_const = self.builder.add_constant(Value::str("0"));
@@ -2082,8 +2045,7 @@ impl ZshCompiler {
             self.builder.emit(Op::LoadConst(name_const), 0);
             let body_const = self.builder.add_constant(Value::str(body_str.as_str()));
             self.builder.emit(Op::LoadConst(body_const), 0);
-            let source_const =
-                self.builder.add_constant(Value::str(source_text.as_str()));
+            let source_const = self.builder.add_constant(Value::str(source_text.as_str()));
             self.builder.emit(Op::LoadConst(source_const), 0);
             self.builder.emit(
                 Op::CallBuiltin(crate::exec::BUILTIN_REGISTER_COMPILED_FN, 3),
@@ -2184,10 +2146,7 @@ impl ZshCompiler {
                 // arrives as Binary("-d", "/tmp", ""). If left starts with
                 // `-` and looks like a test flag, treat it as Unary with
                 // the path as the argument.
-                if left_clean.starts_with('-')
-                    && left_clean.len() == 2
-                    && right.is_empty()
-                {
+                if left_clean.starts_with('-') && left_clean.len() == 2 && right.is_empty() {
                     // `-v` parameter-existence test must NOT glob-
                     // expand the operand: `[[ -v a[1] ]]` is "is array
                     // element a[1] set", not a `[1]` char-class glob.
@@ -2195,9 +2154,7 @@ impl ZshCompiler {
                     // let the runtime parse the subscript.
                     if left_clean == "-v" {
                         let op_clean_arg = crate::lexer::untokenize(op);
-                        let idx = self
-                            .builder
-                            .add_constant(Value::str(op_clean_arg.as_str()));
+                        let idx = self.builder.add_constant(Value::str(op_clean_arg.as_str()));
                         self.builder.emit(Op::LoadConst(idx), 0);
                     } else {
                         self.compile_word_str(op);
@@ -2212,10 +2169,7 @@ impl ZshCompiler {
                 // Routing through compile_word_str triggers expand_glob
                 // (now NOMATCH-strict). Compile RHS as a quoted literal
                 // so the pattern reaches the test runtime intact.
-                let is_pattern_op = matches!(
-                    op_clean.as_str(),
-                    "=" | "==" | "!=" | "=~"
-                );
+                let is_pattern_op = matches!(op_clean.as_str(), "=" | "==" | "!=" | "=~");
                 if op_clean == "=~" {
                     // For `=~`, the RHS is a regex that must undergo
                     // variable / cmd-subst expansion (`pat="^h.*";
@@ -2412,18 +2366,15 @@ impl ZshCompiler {
             "-le" => self.builder.emit(Op::NumLe, 0),
             "-gt" => self.builder.emit(Op::NumGt, 0),
             "-ge" => self.builder.emit(Op::NumGe, 0),
-            "-ef" => {
-                self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SAME_FILE, 2), 0)
-            }
-            "-nt" => {
-                self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_FILE_NEWER, 2), 0)
-            }
-            "-ot" => {
-                self.builder
-                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_FILE_OLDER, 2), 0)
-            }
+            "-ef" => self
+                .builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_SAME_FILE, 2), 0),
+            "-nt" => self
+                .builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_FILE_NEWER, 2), 0),
+            "-ot" => self
+                .builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_FILE_OLDER, 2), 0),
             _ => {
                 tracing::debug!(op, "compile_zsh: unknown binary test op");
                 self.builder.emit(Op::Pop, 0);
@@ -2443,7 +2394,11 @@ impl ZshCompiler {
         let untoked = crate::lexer::untokenize(expr);
         // Strip leading/trailing `(` and `)` from the lexer's wrapper —
         // `(( a[i]=v ))` arrives here with parens still attached.
-        let inner_arith_owned = untoked.trim_start_matches('(').trim_end_matches(')').trim().to_string();
+        let inner_arith_owned = untoked
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .trim()
+            .to_string();
         let inner_arith = inner_arith_owned.as_str();
         if subscripted_arith_assign_check(inner_arith)
             || subscripted_arith_compound_check(inner_arith)
@@ -2455,10 +2410,8 @@ impl ZshCompiler {
             // can't write back through arr[idx] for compound forms.
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1),
-                0,
-            );
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
             self.builder.emit(Op::Pop, 0);
             // Status is 0 (truthy assignment) per zsh — `((a[i]=42))` is
             // success unless rhs is 0.
@@ -2496,15 +2449,12 @@ impl ZshCompiler {
             // routes through `evaluate_arithmetic` → `expand_string`
             // first, so the expansion produces a numeric string before
             // arith evaluation.
-            || inner_arith.contains('$')
-            ;
+            || inner_arith.contains('$');
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
-            self.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1),
-                0,
-            );
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARITH_EVAL, 1), 0);
             // Result stays on stack as Value::Str (e.g. "3" / "0" / "1.5").
             // Compare against "0" to compute the truthiness. Don't
             // re-evaluate the expression — it's an assignment so the
@@ -2561,10 +2511,8 @@ impl ZshCompiler {
             let slot = ac.slot_for(name);
             let name_const = ac.builder.add_constant(Value::str(name.as_str()));
             ac.builder.emit(Op::LoadConst(name_const), 0);
-            ac.builder.emit(
-                Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1),
-                0,
-            );
+            ac.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
             ac.builder.emit(Op::SetSlot(slot), 0);
         }
 
@@ -2575,8 +2523,7 @@ impl ZshCompiler {
 
         // Inline ArithCompiler's emitted ops into ours, remapping const
         // indices into our local constant table.
-        let mut const_remap: std::collections::HashMap<u16, u16> =
-            std::collections::HashMap::new();
+        let mut const_remap: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
         for op in &chunk.ops {
             let remapped: Op = match op {
                 Op::LoadConst(idx) => {
@@ -2612,10 +2559,8 @@ impl ZshCompiler {
                 let name_const = self.builder.add_constant(Value::str(name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::GetSlot(slot), 0);
-                self.builder.emit(
-                    Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2),
-                    0,
-                );
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2), 0);
                 self.builder.emit(Op::Pop, 0); // discard Status(0)
             }
         }
@@ -2677,7 +2622,12 @@ fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
         // Default (the bridge path can't easily handle them either,
         // but expand_string at least won't strip too much).
         let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
-            ..raw.char_indices().rev().nth(0).map(|(i, _)| i).unwrap_or(raw.len())];
+            ..raw
+                .char_indices()
+                .rev()
+                .nth(0)
+                .map(|(i, _)| i)
+                .unwrap_or(raw.len())];
         if !inner.contains('\u{9e}') {
             return 1;
         }
@@ -2780,9 +2730,9 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
     while i < n {
         let c = chars[i];
         match c {
-            '\u{8f}' => brace_depth += 1, // INBRACE
+            '\u{8f}' => brace_depth += 1,                       // INBRACE
             '\u{90}' => brace_depth = (brace_depth - 1).max(0), // OUTBRACE
-            '\u{91}' => brack_depth += 1, // INBRACK
+            '\u{91}' => brack_depth += 1,                       // INBRACK
             '\u{92}' => brack_depth = (brack_depth - 1).max(0), // OUTBRACK
             _ => {}
         }
@@ -2962,9 +2912,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
                 }
                 if after == '_' || after.is_ascii_alphabetic() {
                     let mut j = i + 2;
-                    while j < chars.len()
-                        && (chars[j] == '_' || chars[j].is_ascii_alphanumeric())
-                    {
+                    while j < chars.len() && (chars[j] == '_' || chars[j].is_ascii_alphanumeric()) {
                         j += 1;
                     }
                     return j;
@@ -2983,9 +2931,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         // Identifier: $NAME (optionally followed by [subscript])
         Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {
             let mut j = i + 1;
-            while j < chars.len()
-                && (chars[j].is_ascii_alphanumeric() || chars[j] == '_')
-            {
+            while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
                 j += 1;
             }
             // Pull a trailing `[subscript]` into the same expansion so
@@ -3111,11 +3057,18 @@ pub(crate) enum ParamModifierKind {
     Substring { offset: i64, length: Option<i64> },
     /// Same as Substring but offset/length are arbitrary expressions
     /// (e.g. `$n`, `$((1+1))`) that need runtime arithmetic evaluation.
-    SubstringExpr { offset_expr: String, length_expr: Option<String> },
+    SubstringExpr {
+        offset_expr: String,
+        length_expr: Option<String>,
+    },
     /// `${var#pat}` (op=0), `##` (1), `%` (2), `%%` (3)
     Strip { op: u8, pattern: String },
     /// `${var/pat/repl}` (op=0), `//` (1), `/#` (2), `/%` (3)
-    Replace { op: u8, pattern: String, repl: String },
+    Replace {
+        op: u8,
+        pattern: String,
+        repl: String,
+    },
     /// `${#name}` — character length of a scalar OR element count of an
     /// indexed/assoc array. Dispatched at runtime by inspecting the var
     /// type.
@@ -3163,7 +3116,10 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             // The first colon must be the var/op split, not the start
             // of `:#` filter or `:-` default.
             let after_first_first = inner.as_bytes().get(first_colon + 1).copied();
-            if matches!(after_first_first, Some(b'-') | Some(b'+') | Some(b'=') | Some(b'?') | Some(b'#') | Some(b'/')) {
+            if matches!(
+                after_first_first,
+                Some(b'-') | Some(b'+') | Some(b'=') | Some(b'?') | Some(b'#') | Some(b'/')
+            ) {
                 return None;
             }
         } else {
@@ -3184,8 +3140,25 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         let rest = &inner[1..];
         // Identifier OR identifier with `[@]`/`[*]` suffix (zsh:
         // `${#arr[@]}` == `${#arr}` for arrays/assocs).
-        let body = rest.strip_suffix("[@]").or_else(|| rest.strip_suffix("[*]")).unwrap_or(rest);
-        if !body.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+        let body = rest
+            .strip_suffix("[@]")
+            .or_else(|| rest.strip_suffix("[*]"))
+            .unwrap_or(rest);
+        // `${#name:-default}` etc. → fall through to the bridge so the
+        // default is applied first and the length is taken on the
+        // post-default result. The bridge correctly distinguishes
+        // unset/empty (uses default → length of default text) from
+        // set arrays (default unused → array element count).
+        if body.contains(":-") || body.contains(":+") || body.contains(":=") || body.contains(":?")
+        {
+            return None;
+        }
+        if !body
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
+        {
             return None;
         }
         if !body.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
@@ -3308,20 +3281,20 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             // Literal-only fast path: integer offset (and length).
             if let (Ok(offset), len_opt) = (
                 off_str.parse::<i64>(),
-                len_str
-                    .as_deref()
-                    .map(|s| s.parse::<i64>().ok()),
+                len_str.as_deref().map(|s| s.parse::<i64>().ok()),
             ) {
                 let length: Option<i64> = match len_opt {
                     None => None,
                     Some(Some(v)) => Some(v),
-                    Some(None) => return Some(ParamModifier {
-                        name,
-                        kind: ParamModifierKind::SubstringExpr {
-                            offset_expr: offset.to_string(),
-                            length_expr: len_str,
-                        },
-                    }),
+                    Some(None) => {
+                        return Some(ParamModifier {
+                            name,
+                            kind: ParamModifierKind::SubstringExpr {
+                                offset_expr: offset.to_string(),
+                                length_expr: len_str,
+                            },
+                        })
+                    }
                 };
                 return Some(ParamModifier {
                     name,
@@ -3409,25 +3382,37 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     if let Some(b) = rest.strip_prefix("##") {
         return Some(ParamModifier {
             name,
-            kind: ParamModifierKind::Strip { op: 1, pattern: b.to_string() },
+            kind: ParamModifierKind::Strip {
+                op: 1,
+                pattern: b.to_string(),
+            },
         });
     }
     if let Some(b) = rest.strip_prefix("%%") {
         return Some(ParamModifier {
             name,
-            kind: ParamModifierKind::Strip { op: 3, pattern: b.to_string() },
+            kind: ParamModifierKind::Strip {
+                op: 3,
+                pattern: b.to_string(),
+            },
         });
     }
     if let Some(b) = rest.strip_prefix('#') {
         return Some(ParamModifier {
             name,
-            kind: ParamModifierKind::Strip { op: 0, pattern: b.to_string() },
+            kind: ParamModifierKind::Strip {
+                op: 0,
+                pattern: b.to_string(),
+            },
         });
     }
     if let Some(b) = rest.strip_prefix('%') {
         return Some(ParamModifier {
             name,
-            kind: ParamModifierKind::Strip { op: 2, pattern: b.to_string() },
+            kind: ParamModifierKind::Strip {
+                op: 2,
+                pattern: b.to_string(),
+            },
         });
     }
 
@@ -3507,7 +3492,10 @@ fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {
     // returns Value::Array for the (kv) interleave). Without this strip
     // the matcher rejected the name and the bridge path returned wrong
     // results (just values, ignoring the (k) flag).
-    if let Some(stripped) = name.strip_suffix("[@]").or_else(|| name.strip_suffix("[*]")) {
+    if let Some(stripped) = name
+        .strip_suffix("[@]")
+        .or_else(|| name.strip_suffix("[*]"))
+    {
         name = stripped;
     }
     if name.is_empty()
@@ -3699,7 +3687,9 @@ fn subscripted_arith_assign_check(expr: &str) -> bool {
             b'[' => depth += 1,
             b']' => {
                 depth -= 1;
-                if depth == 0 { break; }
+                if depth == 0 {
+                    break;
+                }
             }
             _ => {}
         }
@@ -3764,14 +3754,21 @@ fn subscripted_arith_compound_check(expr: &str) -> bool {
         return false;
     }
     let rest = &bytes[k..];
-    matches!(rest,
-        [b'+', b'+', ..] | [b'-', b'-', ..] |
-        [b'+', b'=', ..] | [b'-', b'=', ..] |
-        [b'*', b'=', ..] | [b'/', b'=', ..] |
-        [b'%', b'=', ..] | [b'&', b'=', ..] |
-        [b'|', b'=', ..] | [b'^', b'=', ..] |
-        [b'<', b'<', b'=', ..] | [b'>', b'>', b'=', ..] |
-        [b'*', b'*', b'=', ..]
+    matches!(
+        rest,
+        [b'+', b'+', ..]
+            | [b'-', b'-', ..]
+            | [b'+', b'=', ..]
+            | [b'-', b'=', ..]
+            | [b'*', b'=', ..]
+            | [b'/', b'=', ..]
+            | [b'%', b'=', ..]
+            | [b'&', b'=', ..]
+            | [b'|', b'=', ..]
+            | [b'^', b'=', ..]
+            | [b'<', b'<', b'=', ..]
+            | [b'>', b'>', b'=', ..]
+            | [b'*', b'*', b'=', ..]
     )
 }
 
@@ -3820,9 +3817,7 @@ fn escape_quoted_glob_metas(s: &str) -> String {
                 in_dquote = !in_dquote;
                 out.push(c);
             }
-            '*' | '?' | '[' | '(' | ')' | '|' | '~' | '#' | '^'
-                if in_squote || in_dquote =>
-            {
+            '*' | '?' | '[' | '(' | ')' | '|' | '~' | '#' | '^' if in_squote || in_dquote => {
                 // Backslash-escape so glob_match_static treats as
                 // literal char. The runtime glob translator already
                 // handles `\X` → escape-X. zsh's pattern matcher
@@ -3851,8 +3846,7 @@ fn braced_var_ref(s: &str) -> Option<&str> {
     }
     let first = inner.chars().next()?;
     // Special single-char params
-    if matches!(first, '#' | '?' | '!' | '_' | '$' | '-' | '@' | '*')
-        && inner.chars().count() == 1
+    if matches!(first, '#' | '?' | '!' | '_' | '$' | '-' | '@' | '*') && inner.chars().count() == 1
     {
         return Some(inner);
     }
@@ -3881,9 +3875,7 @@ fn bare_var_ref(s: &str) -> Option<&str> {
     let rest = &s[1..];
     let first = rest.chars().next()?;
     // Special single-char params: $#, $?, $!, $_, $$, $-, $0..$9
-    if matches!(first, '#' | '?' | '!' | '_' | '$' | '-')
-        && rest.chars().count() == 1
-    {
+    if matches!(first, '#' | '?' | '!' | '_' | '$' | '-') && rest.chars().count() == 1 {
         return Some(rest);
     }
     // Two-char specials: `$#@` and `$#*` are zsh shorthand for
@@ -4096,8 +4088,7 @@ fn strip_quote_markers(s: &str) -> String {
 /// Avoids dragging in a base64 crate dependency just for this one call
 /// site.
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHA: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(((bytes.len() + 2) / 3) * 4);
     let mut i = 0;
     while i + 3 <= bytes.len() {
@@ -4173,4 +4164,3 @@ fn decode_ansi_c(body: &str) -> String {
     }
     out
 }
-

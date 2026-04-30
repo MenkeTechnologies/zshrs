@@ -59,7 +59,10 @@ pub struct ErrPayload {
 
 impl ErrPayload {
     pub fn new<C: Into<String>, M: Into<String>>(code: C, msg: M) -> Self {
-        Self { code: code.into(), msg: msg.into() }
+        Self {
+            code: code.into(),
+            msg: msg.into(),
+        }
     }
 }
 
@@ -85,29 +88,69 @@ impl From<super::DaemonError> for ErrPayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Frame {
-    Hello { hello: Hello },
-    Welcome { welcome: Welcome },
-    WelcomeErr { welcome: serde_json::Value, err: ErrPayload },
-    Request { id: u64, op: String, #[serde(default)] args: serde_json::Value },
-    Response { id: u64, ok: bool, #[serde(flatten)] payload: serde_json::Value },
-    Event { event: String, #[serde(flatten)] payload: serde_json::Value },
+    Hello {
+        hello: Hello,
+    },
+    Welcome {
+        welcome: Welcome,
+    },
+    WelcomeErr {
+        welcome: serde_json::Value,
+        err: ErrPayload,
+    },
+    Request {
+        id: u64,
+        op: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
+    Response {
+        id: u64,
+        ok: bool,
+        #[serde(flatten)]
+        payload: serde_json::Value,
+    },
+    Event {
+        event: String,
+        #[serde(flatten)]
+        payload: serde_json::Value,
+    },
 }
 
 impl Frame {
-    pub fn hello(h: Hello) -> Self { Frame::Hello { hello: h } }
-    pub fn welcome(w: Welcome) -> Self { Frame::Welcome { welcome: w } }
+    pub fn hello(h: Hello) -> Self {
+        Frame::Hello { hello: h }
+    }
+    pub fn welcome(w: Welcome) -> Self {
+        Frame::Welcome { welcome: w }
+    }
     pub fn request(id: u64, op: impl Into<String>, args: serde_json::Value) -> Self {
-        Frame::Request { id, op: op.into(), args }
+        Frame::Request {
+            id,
+            op: op.into(),
+            args,
+        }
     }
     pub fn ok_response(id: u64, payload: serde_json::Value) -> Self {
-        Frame::Response { id, ok: true, payload }
+        Frame::Response {
+            id,
+            ok: true,
+            payload,
+        }
     }
     pub fn err_response(id: u64, err: ErrPayload) -> Self {
         let payload = serde_json::json!({ "err": err });
-        Frame::Response { id, ok: false, payload }
+        Frame::Response {
+            id,
+            ok: false,
+            payload,
+        }
     }
     pub fn event(name: impl Into<String>, payload: serde_json::Value) -> Self {
-        Frame::Event { event: name.into(), payload }
+        Frame::Event {
+            event: name.into(),
+            payload,
+        }
     }
 }
 
@@ -142,7 +185,10 @@ pub async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Frame
         return Err(DaemonError::other("zero-length frame"));
     }
     if len > MAX_FRAME_BYTES {
-        return Err(DaemonError::FrameTooLarge { size: len, max: MAX_FRAME_BYTES });
+        return Err(DaemonError::FrameTooLarge {
+            size: len,
+            max: MAX_FRAME_BYTES,
+        });
     }
 
     let mut buf = vec![0u8; len];
@@ -156,7 +202,10 @@ pub async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Frame
 pub async fn write_frame<W: AsyncWriteExt + Unpin>(writer: &mut W, frame: &Frame) -> Result<()> {
     let body = serde_json::to_vec(frame)?;
     if body.len() > MAX_FRAME_BYTES {
-        return Err(DaemonError::FrameTooLarge { size: body.len(), max: MAX_FRAME_BYTES });
+        return Err(DaemonError::FrameTooLarge {
+            size: body.len(),
+            max: MAX_FRAME_BYTES,
+        });
     }
     let mut header = [0u8; 4];
     BigEndian::write_u32(&mut header, body.len() as u32);
@@ -175,7 +224,10 @@ pub fn read_frame_sync<R: io::Read>(reader: &mut R) -> Result<Frame> {
         return Err(DaemonError::other("zero-length frame"));
     }
     if len > MAX_FRAME_BYTES {
-        return Err(DaemonError::FrameTooLarge { size: len, max: MAX_FRAME_BYTES });
+        return Err(DaemonError::FrameTooLarge {
+            size: len,
+            max: MAX_FRAME_BYTES,
+        });
     }
 
     let mut buf = vec![0u8; len];
@@ -189,7 +241,10 @@ pub fn read_frame_sync<R: io::Read>(reader: &mut R) -> Result<Frame> {
 pub fn write_frame_sync<W: io::Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let body = serde_json::to_vec(frame)?;
     if body.len() > MAX_FRAME_BYTES {
-        return Err(DaemonError::FrameTooLarge { size: body.len(), max: MAX_FRAME_BYTES });
+        return Err(DaemonError::FrameTooLarge {
+            size: body.len(),
+            max: MAX_FRAME_BYTES,
+        });
     }
     let mut header = [0u8; 4];
     BigEndian::write_u32(&mut header, body.len() as u32);
@@ -252,7 +307,10 @@ mod tests {
 
     #[test]
     fn roundtrip_event_sync() {
-        let frame = Frame::event("shard_updated", serde_json::json!({"shard":"foo","generation":3}));
+        let frame = Frame::event(
+            "shard_updated",
+            serde_json::json!({"shard":"foo","generation":3}),
+        );
         let mut buf = Vec::new();
         write_frame_sync(&mut buf, &frame).unwrap();
 

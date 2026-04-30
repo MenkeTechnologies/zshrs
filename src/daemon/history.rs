@@ -231,7 +231,10 @@ pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value)
     let exit_code = args.get("exit_code").and_then(Value::as_i64);
     let cwd = args.get("cwd").and_then(Value::as_str).map(str::to_string);
     let duration_ns = args.get("duration_ns").and_then(Value::as_i64);
-    let sessid = args.get("sessid").and_then(Value::as_str).map(str::to_string);
+    let sessid = args
+        .get("sessid")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let hostname = args
         .get("hostname")
         .and_then(Value::as_str)
@@ -258,7 +261,10 @@ pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value)
 }
 
 pub async fn op_history_query(state: &std::sync::Arc<DaemonState>, args: Value) -> OpResult {
-    let filter = args.get("filter").and_then(Value::as_str).map(str::to_string);
+    let filter = args
+        .get("filter")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let mode = args
         .get("mode")
         .and_then(Value::as_str)
@@ -310,7 +316,9 @@ mod tests {
     #[test]
     fn schema_at_v1_with_fts() {
         let (_tmp, _p, conn) = fresh();
-        let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
 
         // FTS5 virtual table exists.
@@ -327,7 +335,18 @@ mod tests {
     #[test]
     fn append_and_count() {
         let (_tmp, _p, conn) = fresh();
-        let id1 = append(&conn, "ls -la", 100, Some(0), Some("/tmp"), Some(2_000_000), None, None, None).unwrap();
+        let id1 = append(
+            &conn,
+            "ls -la",
+            100,
+            Some(0),
+            Some("/tmp"),
+            Some(2_000_000),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let id2 = append(
             &conn,
             "git status",
@@ -349,7 +368,18 @@ mod tests {
     fn query_recent() {
         let (_tmp, _p, conn) = fresh();
         for i in 1..=10 {
-            append(&conn, &format!("echo {}", i), i, Some(0), None, None, None, None, None).unwrap();
+            append(
+                &conn,
+                &format!("echo {}", i),
+                i,
+                Some(0),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         }
         let rows = query(&conn, None, "match", None, None, None, 5, true).unwrap();
         assert_eq!(rows.len(), 5);
@@ -362,7 +392,18 @@ mod tests {
         let (_tmp, _p, conn) = fresh();
         append(&conn, "git status", 1, None, None, None, None, None, None).unwrap();
         append(&conn, "cargo build", 2, None, None, None, None, None, None).unwrap();
-        append(&conn, "git push origin main", 3, None, None, None, None, None, None).unwrap();
+        append(
+            &conn,
+            "git push origin main",
+            3,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         append(&conn, "ls -la", 4, None, None, None, None, None, None).unwrap();
 
         let rows = query(&conn, Some("git"), "match", None, None, None, 100, true).unwrap();
@@ -374,7 +415,18 @@ mod tests {
     #[test]
     fn query_like_match() {
         let (_tmp, _p, conn) = fresh();
-        append(&conn, "echo cargo build && cargo test", 1, None, None, None, None, None, None).unwrap();
+        append(
+            &conn,
+            "echo cargo build && cargo test",
+            1,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         append(&conn, "rm /tmp/foo", 2, None, None, None, None, None, None).unwrap();
 
         let rows = query(&conn, Some("cargo"), "like", None, None, None, 100, true).unwrap();
@@ -385,7 +437,18 @@ mod tests {
     fn query_time_range() {
         let (_tmp, _p, conn) = fresh();
         for i in 1..=10 {
-            append(&conn, &format!("cmd {}", i), i * 100, None, None, None, None, None, None).unwrap();
+            append(
+                &conn,
+                &format!("cmd {}", i),
+                i * 100,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
         }
         let rows = query(&conn, None, "match", None, Some(300), Some(700), 100, false).unwrap();
         assert_eq!(rows.len(), 5);
@@ -409,7 +472,8 @@ mod tests {
         append(&conn, "git push", 2, None, None, None, None, None, None).unwrap();
 
         // Delete first row; FTS trigger should remove it from the index.
-        conn.execute("DELETE FROM history WHERE id = 1", []).unwrap();
+        conn.execute("DELETE FROM history WHERE id = 1", [])
+            .unwrap();
         let rows = query(&conn, Some("git"), "match", None, None, None, 100, true).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].line, "git push");

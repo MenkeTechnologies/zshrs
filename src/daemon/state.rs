@@ -440,7 +440,9 @@ mod tests {
         let (_, _) = state.register_session(3, None, None, None, tx3);
 
         state.add_tags(id1, &["prod".into()]).unwrap();
-        state.add_tags(id2, &["prod".into(), "canary".into()]).unwrap();
+        state
+            .add_tags(id2, &["prod".into(), "canary".into()])
+            .unwrap();
 
         let prod = state.shells_with_tag("prod");
         assert_eq!(prod.len(), 2);
@@ -459,7 +461,10 @@ mod tests {
         let (id1, _) = state.register_session(1, None, None, None, tx1);
         let (id2, _) = state.register_session(2, None, None, None, tx2);
 
-        let count = state.broadcast(Frame::event("notify", serde_json::json!({"m":"hi"})), &[id1]);
+        let count = state.broadcast(
+            Frame::event("notify", serde_json::json!({"m":"hi"})),
+            &[id1],
+        );
         assert_eq!(count, 1);
         assert!(rx1.try_recv().is_err());
         assert!(rx2.try_recv().is_ok());

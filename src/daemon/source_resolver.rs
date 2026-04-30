@@ -50,10 +50,7 @@ pub async fn op_source_resolve(state: &std::sync::Arc<DaemonState>, args: Value)
     let meta = match std::fs::metadata(p) {
         Ok(m) => m,
         Err(e) => {
-            return Err(ErrPayload::new(
-                "stat_failed",
-                format!("{}: {}", path, e),
-            ));
+            return Err(ErrPayload::new("stat_failed", format!("{}: {}", path, e)));
         }
     };
 
@@ -70,15 +67,21 @@ pub async fn op_source_resolve(state: &std::sync::Arc<DaemonState>, args: Value)
     // If client passed mtime/inode, sanity-check they match the file the daemon sees.
     // A mismatch means the file changed between client stat() and our stat() — treat
     // as "client is stale" and recompile from on-disk truth.
-    let _client_says_match = client_mtime_ns == Some(on_disk_mtime)
-        && client_inode == Some(on_disk_inode);
+    let _client_says_match =
+        client_mtime_ns == Some(on_disk_mtime) && client_inode == Some(on_disk_inode);
 
     // Look up existing compiled_files row.
     let row: Option<(i64, i64, Vec<u8>)> = state.with_catalog(|conn| {
         conn.query_row(
             "SELECT mtime, inode, hash FROM compiled_files WHERE path = ?",
             rusqlite::params![path],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Vec<u8>>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                ))
+            },
         )
         .optional()
     })?;
@@ -112,10 +115,7 @@ pub async fn op_source_resolve(state: &std::sync::Arc<DaemonState>, args: Value)
     let content = match std::fs::read(p) {
         Ok(b) => b,
         Err(e) => {
-            return Err(ErrPayload::new(
-                "read_failed",
-                format!("{}: {}", path, e),
-            ));
+            return Err(ErrPayload::new("read_failed", format!("{}: {}", path, e)));
         }
     };
     let hash = Sha256::digest(&content).to_vec();
@@ -231,6 +231,9 @@ mod tests {
 
     #[test]
     fn not_sensitive_innocent_content() {
-        assert!(!is_sensitive("/Users/wizard/.zshrc", b"alias ll='ls -la'\nbindkey ..."));
+        assert!(!is_sensitive(
+            "/Users/wizard/.zshrc",
+            b"alias ll='ls -la'\nbindkey ..."
+        ));
     }
 }

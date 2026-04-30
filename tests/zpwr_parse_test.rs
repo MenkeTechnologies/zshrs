@@ -42,15 +42,12 @@ fn parse_file(path: &Path) -> Result<(), String> {
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut parser = ZshParser::new(&content);
-                parser
-                    .parse()
-                    .map(|_| ())
-                    .map_err(|errs| {
-                        errs.into_iter()
-                            .map(|e| format!("{:?}", e))
-                            .collect::<Vec<_>>()
-                            .join("; ")
-                    })
+                parser.parse().map(|_| ()).map_err(|errs| {
+                    errs.into_iter()
+                        .map(|e| format!("{:?}", e))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
             }));
             let _ = tx.send(result);
         })

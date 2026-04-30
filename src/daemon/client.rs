@@ -59,7 +59,9 @@ impl Client {
             version: PROTOCOL_VERSION,
             client_pid: std::process::id() as i32,
             tty: tty_name(),
-            cwd: std::env::current_dir().ok().map(|p| p.display().to_string()),
+            cwd: std::env::current_dir()
+                .ok()
+                .map(|p| p.display().to_string()),
             argv0: std::env::args().next(),
         };
         ipc::write_frame_sync(&mut stream, &Frame::hello(hello))?;
@@ -73,11 +75,12 @@ impl Client {
                     err.msg, err.code
                 )));
             }
-            Frame::Response { ok: false, payload, .. } => {
-                let err: ErrPayload = serde_json::from_value(
-                    payload.get("err").cloned().unwrap_or(Value::Null),
-                )
-                .unwrap_or_else(|_| ErrPayload::new("unknown", "unparseable error"));
+            Frame::Response {
+                ok: false, payload, ..
+            } => {
+                let err: ErrPayload =
+                    serde_json::from_value(payload.get("err").cloned().unwrap_or(Value::Null))
+                        .unwrap_or_else(|_| ErrPayload::new("unknown", "unparseable error"));
                 return Err(DaemonError::other(format!(
                     "handshake failed: {} ({})",
                     err.msg, err.code
@@ -110,7 +113,11 @@ impl Client {
         loop {
             let frame = ipc::read_frame_sync(&mut self.stream)?;
             match frame {
-                Frame::Response { id: rid, ok, payload } if rid == id => {
+                Frame::Response {
+                    id: rid,
+                    ok,
+                    payload,
+                } if rid == id => {
                     if ok {
                         return Ok(payload);
                     } else {
@@ -120,10 +127,7 @@ impl Client {
                         .unwrap_or_else(|_| {
                             ErrPayload::new("unknown", "unparseable error payload")
                         });
-                        return Err(DaemonError::other(format!(
-                            "{} ({})",
-                            err.msg, err.code
-                        )));
+                        return Err(DaemonError::other(format!("{} ({})", err.msg, err.code)));
                     }
                 }
                 Frame::Event { .. } => {

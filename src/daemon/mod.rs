@@ -14,6 +14,7 @@
 pub mod builtins;
 pub mod catalog;
 pub mod client;
+pub mod export;
 pub mod firstrun;
 pub mod fsnotify;
 pub mod history;
@@ -31,9 +32,8 @@ pub mod walk;
 pub mod zask;
 pub mod zshrc_analysis;
 pub mod zsync;
-pub mod export;
 
-pub use ipc::{Event, Frame, Hello, Welcome, ProtocolVersion, PROTOCOL_VERSION};
+pub use ipc::{Event, Frame, Hello, ProtocolVersion, Welcome, PROTOCOL_VERSION};
 pub use paths::CachePaths;
 
 /// Result type used throughout the daemon.

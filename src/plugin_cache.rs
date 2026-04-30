@@ -806,7 +806,9 @@ mod version_tests {
 
         let path = "/fake/script.zsh";
         let blob = b"bincode-bytes-here".to_vec();
-        cache.store_bytecode(path, 12345, 6789, &blob).expect("store");
+        cache
+            .store_bytecode(path, 12345, 6789, &blob)
+            .expect("store");
         let got = cache.check_bytecode(path, 12345, 6789).expect("hit");
         assert_eq!(got, blob);
     }

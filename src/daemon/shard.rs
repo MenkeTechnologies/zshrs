@@ -222,10 +222,7 @@ impl MmappedShard {
 
     /// O(1) average lookup of a fq_name → bytecode bytes.
     pub fn get(&self, fq_name: &str) -> Option<&[u8]> {
-        self.shard()
-            .entries
-            .get(fq_name)
-            .map(|v| v.as_slice())
+        self.shard().entries.get(fq_name).map(|v| v.as_slice())
     }
 
     /// Iterate keys (for `${(k)_comps}` analogues — daemon-only, never exposed to
@@ -407,7 +404,9 @@ mod tests {
         let listed = list_shards(&paths).unwrap();
         assert_eq!(listed.len(), 2);
         assert!(listed.iter().all(|p| p.extension().unwrap() == "rkyv"));
-        assert!(listed.iter().all(|p| !p.to_string_lossy().contains(".tmp.")));
+        assert!(listed
+            .iter()
+            .all(|p| !p.to_string_lossy().contains(".tmp.")));
     }
 
     #[test]

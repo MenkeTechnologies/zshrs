@@ -24,18 +24,28 @@ pub fn maybe_print(paths: &CachePaths) -> bool {
     }
 
     let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(stderr, "zshrs first-run init — daemon spawning, cold cache building.");
+    let _ = writeln!(
+        stderr,
+        "zshrs first-run init — daemon spawning, cold cache building."
+    );
     let _ = writeln!(
         stderr,
         "  scope:      ~/.zshrc + transitive sources + $PATH + $FPATH + plugins"
     );
-    let _ = writeln!(stderr, "  background: shells work via source-interp until cache is warm");
+    let _ = writeln!(
+        stderr,
+        "  background: shells work via source-interp until cache is warm"
+    );
     let _ = writeln!(stderr, "  log:        {}", paths.log.display());
     let _ = writeln!(
         stderr,
         "  inspect:    zcache info | zcache jobs | zcache view <target>"
     );
-    let _ = writeln!(stderr, "  reset:      zcache clean | rm -rf {}", paths.root.display());
+    let _ = writeln!(
+        stderr,
+        "  reset:      zcache clean | rm -rf {}",
+        paths.root.display()
+    );
     let _ = stderr.flush();
     true
 }

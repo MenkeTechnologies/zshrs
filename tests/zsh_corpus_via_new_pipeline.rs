@@ -64,73 +64,168 @@ fn ok_serial(code: &str, expected: &str) {
 }
 
 // Simple commands
-#[test] fn np_echo() { ok("echo hi", "hi\n"); }
-#[test] fn np_echo_multi() { ok("echo a b c", "a b c\n"); }
-#[test] fn np_assign_then() { ok("x=42; echo $x", "42\n"); }
-#[test] fn np_assign_chain() { ok("x=1 y=2 z=3; echo $x $y $z", "1 2 3\n"); }
-#[test] fn np_squoted() { ok("echo 'a $b c'", "a $b c\n"); }
-#[test] fn np_dquoted() { ok("x=hi; echo \"v=$x\"", "v=hi\n"); }
+#[test]
+fn np_echo() {
+    ok("echo hi", "hi\n");
+}
+#[test]
+fn np_echo_multi() {
+    ok("echo a b c", "a b c\n");
+}
+#[test]
+fn np_assign_then() {
+    ok("x=42; echo $x", "42\n");
+}
+#[test]
+fn np_assign_chain() {
+    ok("x=1 y=2 z=3; echo $x $y $z", "1 2 3\n");
+}
+#[test]
+fn np_squoted() {
+    ok("echo 'a $b c'", "a $b c\n");
+}
+#[test]
+fn np_dquoted() {
+    ok("x=hi; echo \"v=$x\"", "v=hi\n");
+}
 
 // Lists
-#[test] fn np_semi() { ok("echo a; echo b", "a\nb\n"); }
-#[test] fn np_and() { ok("true && echo y", "y\n"); }
-#[test] fn np_or() { ok("false || echo y", "y\n"); }
-#[test] fn np_chain() { ok("false && echo no || echo yes", "yes\n"); }
+#[test]
+fn np_semi() {
+    ok("echo a; echo b", "a\nb\n");
+}
+#[test]
+fn np_and() {
+    ok("true && echo y", "y\n");
+}
+#[test]
+fn np_or() {
+    ok("false || echo y", "y\n");
+}
+#[test]
+fn np_chain() {
+    ok("false && echo no || echo yes", "yes\n");
+}
 
 // Control flow
-#[test] fn np_if() { ok("if true; then echo y; fi", "y\n"); }
-#[test] fn np_if_else() { ok("if false; then echo a; else echo b; fi", "b\n"); }
-#[test] fn np_while() {
-    ok("i=0; while (( i<3 )); do echo $i; (( i++ )); done", "0\n1\n2\n");
+#[test]
+fn np_if() {
+    ok("if true; then echo y; fi", "y\n");
 }
-#[test] fn np_for() { ok("for i in 1 2 3; do echo $i; done", "1\n2\n3\n"); }
-#[test] fn np_for_arith() {
+#[test]
+fn np_if_else() {
+    ok("if false; then echo a; else echo b; fi", "b\n");
+}
+#[test]
+fn np_while() {
+    ok(
+        "i=0; while (( i<3 )); do echo $i; (( i++ )); done",
+        "0\n1\n2\n",
+    );
+}
+#[test]
+fn np_for() {
+    ok("for i in 1 2 3; do echo $i; done", "1\n2\n3\n");
+}
+#[test]
+fn np_for_arith() {
     ok("for ((i=0; i<3; i++)); do echo $i; done", "0\n1\n2\n");
 }
-#[test] fn np_case() {
-    ok("case x in a) echo a ;; x) echo x ;; *) echo o ;; esac", "x\n");
+#[test]
+fn np_case() {
+    ok(
+        "case x in a) echo a ;; x) echo x ;; *) echo o ;; esac",
+        "x\n",
+    );
 }
-#[test] fn np_break() {
-    ok("for i in 1 2 3 4 5; do [[ $i = 3 ]] && break; echo $i; done", "1\n2\n");
+#[test]
+fn np_break() {
+    ok(
+        "for i in 1 2 3 4 5; do [[ $i = 3 ]] && break; echo $i; done",
+        "1\n2\n",
+    );
 }
-#[test] fn np_continue() {
-    ok("for i in 1 2 3; do [[ $i = 2 ]] && continue; echo $i; done", "1\n3\n");
+#[test]
+fn np_continue() {
+    ok(
+        "for i in 1 2 3; do [[ $i = 2 ]] && continue; echo $i; done",
+        "1\n3\n",
+    );
 }
 
 // Functions (currently TODO)
 // #[test] fn np_function() { ok("greet() { echo hi $1; }; greet world", "hi world\n"); }
 
 // Cond
-#[test] fn np_cond_eq() { ok("[[ a == a ]] && echo y", "y\n"); }
-#[test] fn np_cond_neq() { ok("[[ a != b ]] && echo y", "y\n"); }
-#[test] fn np_cond_num() { ok("[[ 1 -lt 2 ]] && echo y", "y\n"); }
-#[test] fn np_cond_file() { ok("[[ -d /tmp ]] && echo y", "y\n"); }
-#[test] fn np_cond_negate() { ok("[[ ! a == b ]] && echo y", "y\n"); }
-#[test] fn np_regex() { ok(r#"[[ abc =~ ^a ]] && echo y"#, "y\n"); }
+#[test]
+fn np_cond_eq() {
+    ok("[[ a == a ]] && echo y", "y\n");
+}
+#[test]
+fn np_cond_neq() {
+    ok("[[ a != b ]] && echo y", "y\n");
+}
+#[test]
+fn np_cond_num() {
+    ok("[[ 1 -lt 2 ]] && echo y", "y\n");
+}
+#[test]
+fn np_cond_file() {
+    ok("[[ -d /tmp ]] && echo y", "y\n");
+}
+#[test]
+fn np_cond_negate() {
+    ok("[[ ! a == b ]] && echo y", "y\n");
+}
+#[test]
+fn np_regex() {
+    ok(r#"[[ abc =~ ^a ]] && echo y"#, "y\n");
+}
 
 // Arithmetic
-#[test] fn np_arith_add() { ok("echo $((1+2))", "3\n"); }
-#[test] fn np_arith_assign() { ok("(( x = 5 )); echo $x", "5\n"); }
-#[test] fn np_arith_inc() { ok("i=5; (( i++ )); echo $i", "6\n"); }
+#[test]
+fn np_arith_add() {
+    ok("echo $((1+2))", "3\n");
+}
+#[test]
+fn np_arith_assign() {
+    ok("(( x = 5 )); echo $x", "5\n");
+}
+#[test]
+fn np_arith_inc() {
+    ok("i=5; (( i++ )); echo $i", "6\n");
+}
 
 // Pipelines
-#[test] fn np_pipe() { ok_serial("echo hello | /bin/cat", "hello\n"); }
+#[test]
+fn np_pipe() {
+    ok_serial("echo hello | /bin/cat", "hello\n");
+}
 
 // Subshells
-#[test] fn np_subshell_isolates() {
+#[test]
+fn np_subshell_isolates() {
     ok("x=outer; (x=inner; echo $x); echo $x", "inner\nouter\n");
 }
 
 // Builtins
-#[test] fn np_true_false() {
+#[test]
+fn np_true_false() {
     ok_status("true", "", 0);
     ok_status("false", "", 1);
 }
-#[test] fn np_eval() { ok("eval 'echo from-eval'", "from-eval\n"); }
-#[test] fn np_eval_var_defer() { ok("x=10; eval 'echo $x'", "10\n"); }
+#[test]
+fn np_eval() {
+    ok("eval 'echo from-eval'", "from-eval\n");
+}
+#[test]
+fn np_eval_var_defer() {
+    ok("x=10; eval 'echo $x'", "10\n");
+}
 
 // Quoting
-#[test] fn np_dollar_single() {
+#[test]
+fn np_dollar_single() {
     let (status, out) = run(r#"echo $'a\tb'"#);
     assert_eq!(status, 0);
     assert_eq!(out, "a\tb\n");
@@ -217,49 +312,83 @@ fn np_function_return_status() {
 
 // Arrays
 #[test]
-fn np_array_literal() { ok("arr=(a b c); echo ${arr[2]}", "b\n"); }
+fn np_array_literal() {
+    ok("arr=(a b c); echo ${arr[2]}", "b\n");
+}
 #[test]
-fn np_array_all() { ok("arr=(a b c); echo ${arr[@]}", "a b c\n"); }
+fn np_array_all() {
+    ok("arr=(a b c); echo ${arr[@]}", "a b c\n");
+}
 #[test]
-fn np_array_length() { ok("arr=(a b c); echo ${#arr}", "3\n"); }
+fn np_array_length() {
+    ok("arr=(a b c); echo ${#arr}", "3\n");
+}
 #[test]
-fn np_array_append() { ok("arr=(a b); arr+=(c d); echo ${arr[3]}", "c\n"); }
+fn np_array_append() {
+    ok("arr=(a b); arr+=(c d); echo ${arr[3]}", "c\n");
+}
 
 // Parameter expansion
 #[test]
-fn np_param_default() { ok("echo ${unset:-fallback}", "fallback\n"); }
+fn np_param_default() {
+    ok("echo ${unset:-fallback}", "fallback\n");
+}
 #[test]
-fn np_param_default_set() { ok("v=have; echo ${v:-x}", "have\n"); }
+fn np_param_default_set() {
+    ok("v=have; echo ${v:-x}", "have\n");
+}
 #[test]
-fn np_param_strip_prefix() { ok("p=a/b/c; echo ${p#*/}", "b/c\n"); }
+fn np_param_strip_prefix() {
+    ok("p=a/b/c; echo ${p#*/}", "b/c\n");
+}
 #[test]
-fn np_param_strip_suffix() { ok("p=a/b/c; echo ${p%/*}", "a/b\n"); }
+fn np_param_strip_suffix() {
+    ok("p=a/b/c; echo ${p%/*}", "a/b\n");
+}
 #[test]
-fn np_param_length() { ok("v=hello; echo ${#v}", "5\n"); }
+fn np_param_length() {
+    ok("v=hello; echo ${#v}", "5\n");
+}
 
 // Brace expansion
 #[test]
-fn np_brace_alt() { ok("echo {a,b,c}", "a b c\n"); }
+fn np_brace_alt() {
+    ok("echo {a,b,c}", "a b c\n");
+}
 #[test]
-fn np_brace_range() { ok("echo {1..3}", "1 2 3\n"); }
+fn np_brace_range() {
+    ok("echo {1..3}", "1 2 3\n");
+}
 
 // Command substitution
 #[test]
-fn np_dollar_paren() { ok("x=$(echo nested); echo $x", "nested\n"); }
+fn np_dollar_paren() {
+    ok("x=$(echo nested); echo $x", "nested\n");
+}
 #[test]
-fn np_backtick_sub() { ok("x=`echo nested`; echo $x", "nested\n"); }
+fn np_backtick_sub() {
+    ok("x=`echo nested`; echo $x", "nested\n");
+}
 
 // Arithmetic
 #[test]
-fn np_arith_paren() { ok("echo $((2*3+4))", "10\n"); }
+fn np_arith_paren() {
+    ok("echo $((2*3+4))", "10\n");
+}
 #[test]
-fn np_arith_compare() { ok("(( 5 > 3 )) && echo y", "y\n"); }
+fn np_arith_compare() {
+    ok("(( 5 > 3 )) && echo y", "y\n");
+}
 #[test]
-fn np_arith_ternary() { ok("echo $((5>3?1:0))", "1\n"); }
+fn np_arith_ternary() {
+    ok("echo $((5>3?1:0))", "1\n");
+}
 
 // Herestring with var
 #[test]
-fn np_herestring_var() { ok(r#"x=hi; tr a-z A-Z <<< "$x""#, "HI\n"); }
+fn np_herestring_var() {
+    ok(r#"x=hi; tr a-z A-Z <<< "$x""#, "HI\n");
+}
 
 // Globbing
 #[test]
@@ -276,49 +405,84 @@ fn np_glob_star() {
 
 // Exit / status
 #[test]
-fn np_exit_code() { ok_status("(exit 5)", "", 5); }
+fn np_exit_code() {
+    ok_status("(exit 5)", "", 5);
+}
 #[test]
-fn np_dollar_question() { ok("false; echo $?", "1\n"); }
+fn np_dollar_question() {
+    ok("false; echo $?", "1\n");
+}
 
 // Negation
 #[test]
-fn np_bang_negate() { ok("! true; echo $?", "1\n"); }
+fn np_bang_negate() {
+    ok("! true; echo $?", "1\n");
+}
 #[test]
-fn np_bang_double() { ok("! false; echo $?", "0\n"); }
+fn np_bang_double() {
+    ok("! false; echo $?", "0\n");
+}
 
 // Until loop
 #[test]
-fn np_until() { ok("i=0; until (( i>=3 )); do echo $i; (( i++ )); done", "0\n1\n2\n"); }
+fn np_until() {
+    ok(
+        "i=0; until (( i>=3 )); do echo $i; (( i++ )); done",
+        "0\n1\n2\n",
+    );
+}
 
 // Group / subshell mix
 #[test]
-fn np_brace_group() { ok("{ echo a; echo b; }", "a\nb\n"); }
+fn np_brace_group() {
+    ok("{ echo a; echo b; }", "a\nb\n");
+}
 
 // Var unset/empty
 #[test]
-fn np_unset_default() { ok("echo ${nope:-x}", "x\n"); }
+fn np_unset_default() {
+    ok("echo ${nope:-x}", "x\n");
+}
 #[test]
-fn np_empty_string_split() { ok("v=''; echo \"[$v]\"", "[]\n"); }
+fn np_empty_string_split() {
+    ok("v=''; echo \"[$v]\"", "[]\n");
+}
 
 // Pipelines + substitutions
 #[test]
-fn np_pipe_with_subst() { ok_serial("echo hello | tr a-z A-Z", "HELLO\n"); }
+fn np_pipe_with_subst() {
+    ok_serial("echo hello | tr a-z A-Z", "HELLO\n");
+}
 #[test]
-fn np_pipe_three_stages() { ok_serial("echo c b a | tr ' ' '\\n' | sort", "a\nb\nc\n"); }
+fn np_pipe_three_stages() {
+    ok_serial("echo c b a | tr ' ' '\\n' | sort", "a\nb\nc\n");
+}
 #[test]
-fn np_cmdsub_in_arg() { ok("echo got=$(echo foo)", "got=foo\n"); }
+fn np_cmdsub_in_arg() {
+    ok("echo got=$(echo foo)", "got=foo\n");
+}
 #[test]
-fn np_cmdsub_nested() { ok("echo $(echo $(echo deep))", "deep\n"); }
+fn np_cmdsub_nested() {
+    ok("echo $(echo $(echo deep))", "deep\n");
+}
 
 // Param expansion variants
 #[test]
-fn np_param_uppercase() { ok("v=hi; echo ${v:u}", "HI\n"); }
+fn np_param_uppercase() {
+    ok("v=hi; echo ${v:u}", "HI\n");
+}
 #[test]
-fn np_param_lowercase() { ok("v=HI; echo ${v:l}", "hi\n"); }
+fn np_param_lowercase() {
+    ok("v=HI; echo ${v:l}", "hi\n");
+}
 #[test]
-fn np_param_replace() { ok(r#"v=hello; echo ${v/l/L}"#, "heLlo\n"); }
+fn np_param_replace() {
+    ok(r#"v=hello; echo ${v/l/L}"#, "heLlo\n");
+}
 #[test]
-fn np_param_replace_all() { ok(r#"v=hello; echo ${v//l/L}"#, "heLLo\n"); }
+fn np_param_replace_all() {
+    ok(r#"v=hello; echo ${v//l/L}"#, "heLLo\n");
+}
 
 // Nested control flow
 #[test]
@@ -347,7 +511,9 @@ fn np_function_recursion() {
 
 // Conditional chains
 #[test]
-fn np_chain_negate() { ok("! false && echo y", "y\n"); }
+fn np_chain_negate() {
+    ok("! false && echo y", "y\n");
+}
 #[test]
 fn np_chain_long() {
     ok("true && true && true && echo done", "done\n");
@@ -355,13 +521,21 @@ fn np_chain_long() {
 
 // Test/condition forms
 #[test]
-fn np_cond_string_empty() { ok("[[ -z \"\" ]] && echo y", "y\n"); }
+fn np_cond_string_empty() {
+    ok("[[ -z \"\" ]] && echo y", "y\n");
+}
 #[test]
-fn np_cond_string_nonempty() { ok("[[ -n abc ]] && echo y", "y\n"); }
+fn np_cond_string_nonempty() {
+    ok("[[ -n abc ]] && echo y", "y\n");
+}
 #[test]
-fn np_cond_and() { ok("[[ 1 -lt 2 && 3 -gt 2 ]] && echo y", "y\n"); }
+fn np_cond_and() {
+    ok("[[ 1 -lt 2 && 3 -gt 2 ]] && echo y", "y\n");
+}
 #[test]
-fn np_cond_or() { ok("[[ 1 -gt 2 || 3 -gt 2 ]] && echo y", "y\n"); }
+fn np_cond_or() {
+    ok("[[ 1 -gt 2 || 3 -gt 2 ]] && echo y", "y\n");
+}
 
 // Read builtin + redirect
 #[test]
@@ -371,9 +545,13 @@ fn np_read_from_pipe() {
 
 // Variable scoping
 #[test]
-fn np_export_var() { ok("export V=ex; echo $V", "ex\n"); }
+fn np_export_var() {
+    ok("export V=ex; echo $V", "ex\n");
+}
 #[test]
-fn np_typeset_int() { ok("typeset -i n=10; echo $n", "10\n"); }
+fn np_typeset_int() {
+    ok("typeset -i n=10; echo $n", "10\n");
+}
 
 // Stderr / fd redirects
 #[test]
@@ -387,7 +565,9 @@ fn np_redir_to_devnull() {
 
 // Multi-assignment + quoting
 #[test]
-fn np_multi_assign() { ok("a=1 b=2; echo $a $b", "1 2\n"); }
+fn np_multi_assign() {
+    ok("a=1 b=2; echo $a $b", "1 2\n");
+}
 #[test]
 fn np_quoted_var_in_assign() {
     ok(r#"a="hi mom"; echo "$a""#, "hi mom\n");
@@ -423,10 +603,7 @@ fn np_function_calls_function() {
 // Iterate over command substitution result
 #[test]
 fn np_for_over_cmdsub() {
-    ok(
-        r#"for w in $(echo a b c); do echo $w; done"#,
-        "a\nb\nc\n",
-    );
+    ok(r#"for w in $(echo a b c); do echo $w; done"#, "a\nb\nc\n");
 }
 
 // Conditional with quoted expansion
@@ -452,15 +629,25 @@ fn np_for_with_assign() {
 
 // Native fast-path coverage for bare $NAME forms
 #[test]
-fn np_var_basic() { ok("x=hello; echo $x", "hello\n"); }
+fn np_var_basic() {
+    ok("x=hello; echo $x", "hello\n");
+}
 #[test]
-fn np_var_pos() { ok("set -- a b c; echo $1 $2 $3", "a b c\n"); }
+fn np_var_pos() {
+    ok("set -- a b c; echo $1 $2 $3", "a b c\n");
+}
 #[test]
-fn np_var_count() { ok("set -- a b c; echo $#", "3\n"); }
+fn np_var_count() {
+    ok("set -- a b c; echo $#", "3\n");
+}
 #[test]
-fn np_var_pid() { ok_status("echo $$ >/dev/null", "", 0); }
+fn np_var_pid() {
+    ok_status("echo $$ >/dev/null", "", 0);
+}
 #[test]
-fn np_var_dash_status() { ok("false; echo $?", "1\n"); }
+fn np_var_dash_status() {
+    ok("false; echo $?", "1\n");
+}
 #[test]
 fn np_var_underscore() {
     // `$_` is "last argument of previous command" or empty
@@ -469,21 +656,33 @@ fn np_var_underscore() {
 
 // Multi-word statement w/ var refs
 #[test]
-fn np_two_vars() { ok("a=1; b=2; echo $a $b", "1 2\n"); }
+fn np_two_vars() {
+    ok("a=1; b=2; echo $a $b", "1 2\n");
+}
 #[test]
-fn np_var_in_assign() { ok("a=hi; b=$a; echo $b", "hi\n"); }
+fn np_var_in_assign() {
+    ok("a=hi; b=$a; echo $b", "hi\n");
+}
 
 // Conditional with bare var
 #[test]
-fn np_cond_bare_var() { ok("x=set; [[ -n $x ]] && echo y", "y\n"); }
+fn np_cond_bare_var() {
+    ok("x=set; [[ -n $x ]] && echo y", "y\n");
+}
 
 // Concatenation
 #[test]
-fn np_concat_var_lit() { ok("v=hi; echo ${v}_world", "hi_world\n"); }
+fn np_concat_var_lit() {
+    ok("v=hi; echo ${v}_world", "hi_world\n");
+}
 #[test]
-fn np_concat_lit_var() { ok("v=hi; echo prefix_$v", "prefix_hi\n"); }
+fn np_concat_lit_var() {
+    ok("v=hi; echo prefix_$v", "prefix_hi\n");
+}
 #[test]
-fn np_concat_var_var() { ok("a=hi; b=mom; echo $a-$b", "hi-mom\n"); }
+fn np_concat_var_var() {
+    ok("a=hi; b=mom; echo $a-$b", "hi-mom\n");
+}
 
 // Escape sequences in echo
 #[test]
@@ -495,23 +694,35 @@ fn np_echo_escape_n() {
 
 // printf
 #[test]
-fn np_printf_basic() { ok("printf '%s\\n' hello", "hello\n"); }
+fn np_printf_basic() {
+    ok("printf '%s\\n' hello", "hello\n");
+}
 #[test]
-fn np_printf_int() { ok("printf 'n=%d\\n' 42", "n=42\n"); }
+fn np_printf_int() {
+    ok("printf 'n=%d\\n' 42", "n=42\n");
+}
 
 // Test command (POSIX [)
 #[test]
-fn np_test_str_eq() { ok("[ a = a ] && echo y", "y\n"); }
+fn np_test_str_eq() {
+    ok("[ a = a ] && echo y", "y\n");
+}
 #[test]
-fn np_test_int_lt() { ok("[ 1 -lt 2 ] && echo y", "y\n"); }
+fn np_test_int_lt() {
+    ok("[ 1 -lt 2 ] && echo y", "y\n");
+}
 
 // $((...)) inside string
 #[test]
-fn np_arith_in_string() { ok(r#"echo "n=$((1+2))""#, "n=3\n"); }
+fn np_arith_in_string() {
+    ok(r#"echo "n=$((1+2))""#, "n=3\n");
+}
 
 // Empty subshell
 #[test]
-fn np_empty_subshell() { ok_status("()", "", 0); }
+fn np_empty_subshell() {
+    ok_status("()", "", 0);
+}
 
 // Brace group preserving status
 #[test]

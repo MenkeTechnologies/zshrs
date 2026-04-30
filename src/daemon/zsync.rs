@@ -81,11 +81,7 @@ fn now_ns_i64() -> i64 {
 
 // ---- IPC op handlers ----
 
-pub async fn op_push_canonical(
-    state: &Arc<DaemonState>,
-    client_id: u64,
-    args: Value,
-) -> OpResult {
+pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
     ensure_schema(state)?;
 
     let subsystem = args
@@ -199,11 +195,7 @@ pub async fn op_diff_canonical(state: &Arc<DaemonState>, args: Value) -> OpResul
     }
     let only_canonical: Vec<(String, String)> = canonical_rows
         .iter()
-        .filter(|r| {
-            !overlay_entries
-                .iter()
-                .any(|(k, _)| k == &r.key)
-        })
+        .filter(|r| !overlay_entries.iter().any(|(k, _)| k == &r.key))
         .map(|r| (r.key.clone(), r.value.clone()))
         .collect();
 
@@ -224,24 +216,25 @@ pub struct CanonicalRow {
 }
 
 fn read_canonical_rows(state: &DaemonState, subsystem: &str) -> Result<Vec<CanonicalRow>> {
-    state.with_catalog(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT key, value, set_at_ns, set_by_shell FROM canonical \
+    state
+        .with_catalog(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT key, value, set_at_ns, set_by_shell FROM canonical \
              WHERE subsystem = ? ORDER BY key ASC",
-        )?;
-        let rows = stmt
-            .query_map(rusqlite::params![subsystem], |r| {
-                Ok(CanonicalRow {
-                    key: r.get(0)?,
-                    value: r.get(1)?,
-                    set_at_ns: r.get(2)?,
-                    set_by_shell: r.get(3)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok::<_, rusqlite::Error>(rows)
-    })
-    .map_err(super::DaemonError::from)
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![subsystem], |r| {
+                    Ok(CanonicalRow {
+                        key: r.get(0)?,
+                        value: r.get(1)?,
+                        set_at_ns: r.get(2)?,
+                        set_by_shell: r.get(3)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok::<_, rusqlite::Error>(rows)
+        })
+        .map_err(super::DaemonError::from)
 }
 
 /// Convert a pushed value into (key, value-as-json-string) pairs.
@@ -286,7 +279,9 @@ mod tests {
         let r = op_push_canonical(&state, 1, args).await.unwrap();
         assert_eq!(r["promoted"].as_u64(), Some(2));
 
-        let r = op_pull_canonical(&state, json!({ "subsystem": "alias" })).await.unwrap();
+        let r = op_pull_canonical(&state, json!({ "subsystem": "alias" }))
+            .await
+            .unwrap();
         let rows = r["rows"].as_array().unwrap();
         assert_eq!(rows.len(), 2);
     }

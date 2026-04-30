@@ -481,7 +481,6 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-
 /// The Zsh Parser
 pub struct ZshParser<'a> {
     lexer: ZshLexer<'a>,
@@ -785,9 +784,7 @@ impl<'a> ZshParser<'a> {
                         let name = name;
                         // Skip separators on the real lexer; safe because
                         // parse_program's next iteration would also skip them.
-                        while self.lexer.tok == LexTok::Seper
-                            || self.lexer.tok == LexTok::Newlin
-                        {
+                        while self.lexer.tok == LexTok::Seper || self.lexer.tok == LexTok::Newlin {
                             self.lexer.zshlex();
                         }
                         if self.lexer.tok == LexTok::Inbrace {
@@ -843,10 +840,7 @@ impl<'a> ZshParser<'a> {
                             lists.push(synthetic);
                         } else if !matches!(
                             self.lexer.tok,
-                            LexTok::Endinput
-                                | LexTok::Outbrace
-                                | LexTok::Seper
-                                | LexTok::Newlin
+                            LexTok::Endinput | LexTok::Outbrace | LexTok::Seper | LexTok::Newlin
                         ) {
                             // No-brace one-line body: `foo() echo hello`.
                             // Parse a single command for the body.
@@ -1007,7 +1001,12 @@ impl<'a> ZshParser<'a> {
         };
 
         self.recursion_depth -= 1;
-        Some(ZshPipe { cmd, next, lineno, merge_stderr })
+        Some(ZshPipe {
+            cmd,
+            next,
+            lineno,
+            merge_stderr,
+        })
     }
 
     /// Parse a command
@@ -1113,15 +1112,10 @@ impl<'a> ZshParser<'a> {
                     if !words.is_empty() && self.lexer.tok.is_redirop() {
                         let last = words.last().unwrap();
                         let untoked = crate::lexer::untokenize(last);
-                        if untoked.starts_with('{')
-                            && untoked.ends_with('}')
-                            && untoked.len() > 2
-                        {
+                        if untoked.starts_with('{') && untoked.ends_with('}') && untoked.len() > 2 {
                             let name = &untoked[1..untoked.len() - 1];
                             if !name.is_empty()
-                                && name
-                                    .chars()
-                                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
+                                && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
                                 && name
                                     .chars()
                                     .next()
@@ -1377,10 +1371,7 @@ impl<'a> ZshParser<'a> {
                     .map(|(i, _)| i)
                     .unwrap_or(raw.len())];
             let cleaned = crate::lexer::untokenize(inner);
-            let words: Vec<String> = cleaned
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect();
+            let words: Vec<String> = cleaned.split_whitespace().map(|s| s.to_string()).collect();
             self.lexer.zshlex();
             ForList::Words(words)
         } else if self.lexer.tok == LexTok::String {
@@ -1871,7 +1862,9 @@ impl<'a> ZshParser<'a> {
         // to a Subsh with an empty program so the status is 0 (matches
         // zsh's `()` no-op behavior).
         if self.lexer.tok != LexTok::Inbrace {
-            return Some(ZshCommand::Subsh(Box::new(ZshProgram { lists: Vec::new() })));
+            return Some(ZshCommand::Subsh(Box::new(ZshProgram {
+                lists: Vec::new(),
+            })));
         }
         self.lexer.zshlex(); // skip {
         let body = self.parse_program();
