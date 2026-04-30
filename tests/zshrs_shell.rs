@@ -6859,6 +6859,63 @@ fn test_readonly_unknown_flag_errors() {
 }
 
 #[test]
+fn test_type_underscore_unknown_not_builtin() {
+    // zsh: `type __notexist__` -> `__notexist__ not found` exit 0
+    // (zsh's type returns 0 even on miss; bash returns 1). zshrs's
+    // `is_builtin()` helper had a `_`-prefix bypass for completion
+    // functions, so any `_*` name would falsely report as a builtin.
+    // Tightened the `type` builtin-check arm to consult BUILTIN_SET
+    // directly (mirrors the `whence` fix from earlier).
+    let (_, output, _) = run_zshrs("type __notexist__");
+    assert!(output.contains("not found"), "got: {output}");
+    assert!(
+        !output.contains("shell builtin"),
+        "got: {output}"
+    );
+}
+
+#[test]
+fn test_unsetopt_unknown_option_errors() {
+    // zsh: `unsetopt nonexistentopt` -> `unsetopt:1: no such option:
+    // nonexistentopt` exit 1. zshrs blindly inserted whatever name
+    // it received into self.options, leaving stale junk and silencing
+    // typos. Mirror the `setopt` validation against ZSH_OPTIONS_SET.
+    let (status, _, stderr) = run_zshrs("unsetopt nonexistentopt");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("no such option: nonexistentopt"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_exit_too_many_args_diagnoses() {
+    // zsh: `exit 1 2 3` emits `exit:1: too many arguments` and
+    // continues (the shell's bytecode allows post-exit code in zsh).
+    // zshrs's compiler jumps unconditionally to script end after
+    // BUILTIN_EXIT, so we can't perfectly replicate "continue past
+    // failed exit" — but we DO emit the diagnostic now, which the
+    // earlier impl silently swallowed.
+    let (_, _, stderr) = run_zshrs("exit 1 2 3");
+    assert!(stderr.contains("too many arguments"), "got: {stderr}");
+}
+
+#[test]
+fn test_trap_numeric_signal_out_of_range_errors() {
+    // zsh: `trap "" 99` -> `trap:1: undefined signal: 99` exit 1
+    // (zsh accepts 1..63 inclusive; >63 is invalid). zshrs accepted
+    // any parseable integer, silently registering a never-firable
+    // trap. Now bounds the numeric sig form to (0, 63].
+    let (status, _, stderr) = run_zshrs(r#"trap "" 99"#);
+    assert_eq!(status, 1);
+    assert!(stderr.contains("undefined signal: 99"), "got: {stderr}");
+    // Sanity: real low signal still installs.
+    let (status, _, stderr) = run_zshrs(r#"trap "" 1"#);
+    assert_eq!(status, 0);
+    assert!(stderr.is_empty(), "got: {stderr}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

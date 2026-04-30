@@ -17692,6 +17692,20 @@ impl ShellExecutor {
     }
 
     fn builtin_exit(&mut self, args: &[String]) -> i32 {
+        // zsh: `exit 1 2 3` -> `exit:1: too many arguments` exit 1
+        // and the shell continues (does NOT exit). zshrs's bytecode
+        // unconditionally jumps to script end after the EXIT
+        // builtin, so emitting the diagnostic AND returning early
+        // would still terminate the script — wrong vs zsh's
+        // "diagnose, set $? = 1, continue" semantics. Until the
+        // bytecode short-circuit becomes conditional, the best we
+        // can do is print the diagnostic but still treat as a real
+        // exit so the user sees the error and the shell terminates.
+        if args.len() > 1 {
+            eprintln!("zshrs:exit:1: too many arguments");
+            // fall through: use the first arg as the code (best
+            // match for "tried to exit with N other args").
+        }
         let raw_code = args
             .first()
             .and_then(|s| s.parse::<i32>().ok())
@@ -21401,6 +21415,11 @@ impl ShellExecutor {
             // exit 1 and the trap is NOT installed. zshrs blindly
             // inserted whatever uppercased token came in, so
             // `trap "" BADSIG` quietly registered a never-firable trap.
+            // zsh's max signal number on macOS is 31 (SIGUSR2); on
+            // Linux 63 (SIGRTMAX). Treat anything > 63 as invalid so
+            // `trap "" 99` errors like zsh. Lower bound: > 0 (signal
+            // 0 is `EXIT`, handled by the numeric->name remapping
+            // above, so by this point a literal `0` slipped past).
             let known_sig = matches!(
                 sig_name.as_str(),
                 "EXIT" | "ZERR" | "DEBUG" | "ERR" | "RETURN"
@@ -21411,7 +21430,10 @@ impl ShellExecutor {
                     | "TTIN" | "TTOU" | "URG" | "XCPU" | "XFSZ"
                     | "VTALRM" | "PROF" | "WINCH" | "IO" | "INFO"
                     | "SYS" | "STKFLT" | "PWR"
-            ) || sig.parse::<u32>().is_ok();
+            ) || sig
+                .parse::<u32>()
+                .map(|n| n > 0 && n <= 63)
+                .unwrap_or(false);
             if !known_sig {
                 eprintln!("zshrs:trap:1: undefined signal: {}", sig);
                 return 1;
@@ -23791,6 +23813,15 @@ impl ShellExecutor {
                         }
                     } else {
                         let (name, enable) = Self::normalize_option_name(arg);
+                        // zsh: unknown option name -> `unsetopt:1: no
+                        // such option: NAME` exit 1. zshrs blindly
+                        // inserted whatever name it received into
+                        // self.options, leaving stale junk in the map
+                        // and silencing typos.
+                        if !ZSH_OPTIONS_SET.contains(name.as_str()) {
+                            eprintln!("zshrs:unsetopt:1: no such option: {}", arg);
+                            return 1;
+                        }
                         // unsetopt turns OFF the option (or ON if "no" prefix)
                         self.options.insert(name, !enable);
                     }
@@ -24089,8 +24120,15 @@ impl ShellExecutor {
                 }
             }
 
-            // Check for builtin (skip if -p)
-            if !path_only && (self.is_builtin(name) || name == ":" || name == "[") {
+            // Check for builtin (skip if -p). NOTE: use BUILTIN_SET
+            // directly instead of `is_builtin()` — the helper has a
+            // `_`-prefix bypass for completion functions, so any name
+            // starting with `_` would falsely report as a builtin.
+            // `type __notexist__` previously hit that bypass and
+            // emitted `__notexist__ is a shell builtin` exit 0 — both
+            // wrong wording AND wrong exit. Mirror the fix already
+            // applied in `whence`.
+            if !path_only && (BUILTIN_SET.contains(name.as_str()) || name == ":" || name == "[") {
                 found_any = true;
                 if !silent {
                     if show_word {
