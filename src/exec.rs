@@ -5530,6 +5530,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // resolves $pat).
         let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
         let repl = with_executor(|exec| exec.expand_string(&repl_raw));
+        // Inline pattern flags `(#i)` / `(#l)` / `(#I)` etc. apply
+        // to ${var//pat/repl} too, not just `[[ ... = pat ]]`.
+        // Direct port of zsh's pattern.c (compswitch) — same
+        // helper used by glob_match_static. Strip the prefix here
+        // and apply the flag(s) to the regex below.
+        let (pattern, case_insensitive_repl, _l_flag_repl, _approx_repl) =
+            parse_pattern_flags(&pattern);
         // zsh patterns in ${var/pat/repl} support `?`, `*`, `[...]`,
         // anchored `#`/`%` (handled via op codes 2/3). Compile to a
         // regex for the actual matching; falls back to plain string
@@ -5542,7 +5549,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let has_glob = pattern
             .chars()
             .any(|c| matches!(c, '?' | '*' | '[' | ']' | '('));
-        let glob_re: Option<regex::Regex> = if has_glob {
+        let glob_re: Option<regex::Regex> = if has_glob || case_insensitive_repl {
             // Convert the glob pattern to a regex string:
             //   ? → . (any single char)
             //   * → .* (any seq)
@@ -5593,7 +5600,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     _ => re.push(c),
                 }
             }
-            regex::Regex::new(&re).ok()
+            // Apply `(#i)` case-insensitive flag if it was present
+            // in the original pattern. Same `(?i)` prefix as
+            // glob_match_static uses.
+            let final_re = if case_insensitive_repl {
+                format!("(?i){}", re)
+            } else {
+                re
+            };
+            regex::Regex::new(&final_re).ok()
         } else {
             None
         };
