@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `"${(o)a[@]}"` / `"${(O)a[@]}"` / `"${(n)a[@]}"` skipped sort in DQ context
+
+- zsh subst.c: array-only flags (`o`/`O`/`n`/`i`/`u`) are stripped in DQ context UNLESS the user explicitly wrote `[@]`/`[*]` subscript. Our `parse_zsh_flag` strips `[@]`/`[*]` from `name` (the fast-path requires identifier-only), losing the splice-context information by the time the runtime DQ-strip decision runs. Encoded the at-subscript context through a new `\u{03}` sentinel in the runtime flags string so the handler can re-recognise `had_at_subscript`. Test: `test_sort_flags_with_at_subscript_in_dq`.
+
 ### `((a = cond ? T : F))` — ternary assignment dropped silently
 
 - ArithCompiler's emit path doesn't implement `?:`. Without the trigger, `((a = ... ? ... : ...))` left `a` unset (no error). Added `?` to the needs_eval check so the expr routes through MathEval (which has full ternary support). Test: `test_arith_ternary_assignment`.

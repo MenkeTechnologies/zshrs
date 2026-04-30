@@ -2868,6 +2868,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
         if dq_compile {
             flags = flags[1..].to_string();
         }
+        // `\u{03}` sentinel = the original name had `[@]`/`[*]` suffix.
+        // The compile path strips the suffix from name (fast-path
+        // requires identifier-only), but encodes the splice context
+        // through this sentinel so DQ flag-stripping still respects it.
+        let had_at_subscript = flags.starts_with('\u{03}');
+        if had_at_subscript {
+            flags = flags[1..].to_string();
+        }
         let dq_runtime = with_executor(|exec| exec.in_dq_context > 0);
         // `[@]` / `[*]` subscript on the name overrides the DQ
         // strip — explicit `[@]` marks the array as splice-
@@ -2875,8 +2883,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // still fire on the per-element list. Direct port of
         // zsh's subst.c nojoin/spbreak path. Without this,
         // `"${(o)a[@]}"` skipped the sort in DQ.
-        let has_at_subscript =
-            name.ends_with("[@]") || name.ends_with("[*]");
+        let has_at_subscript = had_at_subscript
+            || name.ends_with("[@]")
+            || name.ends_with("[*]");
         if (dq_compile || dq_runtime) && !has_at_subscript {
             // Strip array-only flags (sort/unique/index variants).
             // (M) is NOT stripped here — it still modifies `:#pat`
