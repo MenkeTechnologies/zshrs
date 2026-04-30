@@ -936,9 +936,17 @@ impl ZshCompiler {
                         }
                     }
                     let name_const = self.builder.add_constant(Value::str(base));
-                    let key_const = self.builder.add_constant(Value::str(key));
                     self.builder.emit(Op::LoadConst(name_const), 0);
-                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    // Key may contain `$var` / `$#name` — emit through
+                    // compile_word_str so the runtime expands. Without
+                    // this, `a[$n]=()` saw the literal "$n" key and
+                    // failed to parse it as an int (no removal).
+                    if key.contains('$') || key.contains('`') {
+                        self.compile_word_str(key);
+                    } else {
+                        let key_const = self.builder.add_constant(Value::str(key));
+                        self.builder.emit(Op::LoadConst(key_const), 0);
+                    }
                     let argc = (elements.len() + 2) as u8;
                     self.builder.emit(
                         Op::CallBuiltin(crate::exec::BUILTIN_SET_SUBSCRIPT_RANGE, argc),

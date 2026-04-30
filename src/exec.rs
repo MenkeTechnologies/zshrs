@@ -7283,11 +7283,12 @@ impl fusevm::ShellHost for ZshrsHost {
         // nested CallBuiltin handlers and host callbacks all see the same
         // executor.
         let fn_name = name.to_string();
-        let (saved_params, saved_local_count, saved_local_arr_count, saved_zero, saved_funcstack, saved_exit_trap) =
+        let (saved_params, saved_local_count, saved_local_arr_count, saved_local_assoc_count, saved_zero, saved_funcstack, saved_exit_trap) =
             with_executor(|exec| {
                 let prev = std::mem::replace(&mut exec.positional_params, args.clone());
                 let count = exec.local_save_stack.len();
                 let arr_count = exec.local_array_save_stack.len();
+                let assoc_count = exec.local_assoc_save_stack.len();
                 exec.local_scope_depth += 1;
                 // Save and clear EXIT trap before function body
                 // runs. Direct port of zsh's exec.c
@@ -7330,7 +7331,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 exec.variables
                     .insert("_".to_string(), dollar_underscore.clone());
                 exec.pending_underscore = Some(dollar_underscore);
-                (prev, count, arr_count, prev_zero, prev_stack, saved)
+                (prev, count, arr_count, assoc_count, prev_zero, prev_stack, saved)
             });
 
         let mut vm = fusevm::VM::new(chunk);
@@ -7416,6 +7417,20 @@ impl fusevm::ShellHost for ZshrsHost {
                         }
                         None => {
                             exec.arrays.remove(&arr_name);
+                        }
+                    }
+                }
+            }
+            // Same for `typeset -A h=(...)` assoc bindings — restore
+            // the outer assoc (or remove if there was none).
+            while exec.local_assoc_save_stack.len() > saved_local_assoc_count {
+                if let Some((assoc_name, old_assoc)) = exec.local_assoc_save_stack.pop() {
+                    match old_assoc {
+                        Some(map) => {
+                            exec.assoc_arrays.insert(assoc_name, map);
+                        }
+                        None => {
+                            exec.assoc_arrays.remove(&assoc_name);
                         }
                     }
                 }
@@ -8807,6 +8822,10 @@ pub struct ShellExecutor {
     /// `Some(prev)` means restore on exit; `None` means the name had no
     /// outer array binding and should be removed.
     pub local_array_save_stack: Vec<(String, Option<Vec<String>>)>,
+    /// Parallel stack for `local -A h=(...)` assoc save/restore. zsh
+    /// shadows the outer assoc binding; without this, `typeset -A h`
+    /// inside a function leaked into the parent.
+    pub local_assoc_save_stack: Vec<(String, Option<IndexMap<String, String>>)>,
     /// Current function scope depth for `local` tracking.
     pub local_scope_depth: usize,
     /// Last arg of the currently-running command, deferred into `$_`
@@ -9024,6 +9043,7 @@ impl ShellExecutor {
             var_attrs: std::collections::HashMap::new(),
             local_save_stack: Vec::new(),
             local_array_save_stack: Vec::new(),
+            local_assoc_save_stack: Vec::new(),
             local_scope_depth: 0,
             pending_underscore: None,
             in_dq_context: 0,
@@ -11291,6 +11311,7 @@ impl ShellExecutor {
         let saved_params = std::mem::replace(&mut self.positional_params, args.to_vec());
         let saved_local_count = self.local_save_stack.len();
         let saved_local_arr_count = self.local_array_save_stack.len();
+        let saved_local_assoc_count = self.local_assoc_save_stack.len();
         self.local_scope_depth += 1;
 
         let mut vm = fusevm::VM::new(chunk);
@@ -11322,6 +11343,18 @@ impl ShellExecutor {
                     }
                     None => {
                         self.arrays.remove(&arr_name);
+                    }
+                }
+            }
+        }
+        while self.local_assoc_save_stack.len() > saved_local_assoc_count {
+            if let Some((assoc_name, old_assoc)) = self.local_assoc_save_stack.pop() {
+                match old_assoc {
+                    Some(map) => {
+                        self.assoc_arrays.insert(assoc_name, map);
+                    }
+                    None => {
+                        self.assoc_arrays.remove(&assoc_name);
                     }
                 }
             }
@@ -20476,6 +20509,12 @@ impl ShellExecutor {
                     let old_arr = self.arrays.get(name).cloned();
                     self.local_array_save_stack
                         .push((name.to_string(), old_arr));
+                    // Assoc save — covers `local -A h=(...)`. zsh shadows
+                    // the outer assoc binding; without this, the inner
+                    // typeset -A h leaked into parent on function exit.
+                    let old_assoc = self.assoc_arrays.get(name).cloned();
+                    self.local_assoc_save_stack
+                        .push((name.to_string(), old_assoc));
                 }
             }
         }
