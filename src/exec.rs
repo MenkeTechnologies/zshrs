@@ -21232,6 +21232,7 @@ impl ShellExecutor {
         let mut show_all = false;
         let mut search_query = None;
         let mut had_explicit_negative_count = false;
+        let mut positional_count = 0usize;
 
         let mut i = 0;
         while i < args.len() {
@@ -21276,6 +21277,7 @@ impl ShellExecutor {
                 }
                 s if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) => {
                     count = s.parse().unwrap_or(20);
+                    positional_count += 1;
                 }
                 s => {
                     // Non-numeric (or empty) -> search-by-text. zsh
@@ -21299,6 +21301,17 @@ impl ShellExecutor {
         // only emit session entries (in case the script did `print
         // -s`) and abort when both session and atty are absent.
         if !atty::is(atty::Stream::Stdin) && self.session_history_ids.is_empty() {
+            // 3+ numeric positionals -> `fc:1: too many arguments`
+            // (history is `fc -l`; takes at most 2 range bounds).
+            if positional_count > 2 {
+                eprintln!("zshrs:fc:1: too many arguments");
+                return 1;
+            }
+            // 2 numeric positionals -> "no events in that range".
+            if positional_count == 2 {
+                eprintln!("zshrs:fc:1: no events in that range");
+                return 1;
+            }
             // Non-numeric positional `history XX` is a search-by-text
             // (`-m` style); zsh's no-match wording differs: `event not
             // found: XX`. Numeric / no positional uses `no such event:

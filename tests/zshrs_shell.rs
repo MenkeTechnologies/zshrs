@@ -8049,6 +8049,24 @@ fn test_fc_l_3plus_text_in_middle() {
 }
 
 #[test]
+fn test_history_d_multi_args_error_categories() {
+    // zsh: `history -d 1 2` (2 numeric) -> `no events in that
+    // range`; `history -d 1 2 3` (3+) -> `too many arguments`.
+    // zshrs treated each numeric as updating count and reported
+    // `no such event: 3` (the last value).
+    let (_, _, stderr) = run_zshrs("history -d 1 2");
+    assert!(
+        stderr.contains("no events in that range"),
+        "got: {stderr}"
+    );
+    let (_, _, stderr) = run_zshrs("history -d 1 2 3");
+    assert!(
+        stderr.contains("too many arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
