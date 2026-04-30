@@ -1725,6 +1725,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `type --help` errors `bad option: -h` exit 1 (the unknown-flag path; zsh treats the second `-` of `--help` as a no-op and reports the first non-`-` letter). zshrs's flag loop had a silent default arm that dropped unknown letters. Added an `eprintln + return 1` and a `'-' => { /* skip */ }` arm so the bad-option diagnostic reports the first letter after the leading dashes. Test: `test_type_unknown_flag_errors`.
 
+### `unalias -X x` printed bash-style "unalias: bad option" instead of zsh format
+
+- zsh: `unalias:1: bad option: -X` (typed `:1:` source-position prefix). zshrs printed `unalias: bad option: -X` (bash style with extra space, no `:1:`). Aligned the format. Test: `test_unalias_bad_option_format`.
+
+### `fc -l blah` (non-numeric event) reported "no such event: 0"
+
+- zsh: non-numeric event spec → `event not found: <text>` (distinct from numeric out-of-range `no such event: N`). zshrs's `parse::<i64>().unwrap_or(-16)` coerced `blah` to -16, then resolved to 0 and printed the numeric form. Added an explicit "single positional + non-numeric" arm BEFORE the numeric resolution that emits the text-event message. Test: `test_fc_non_numeric_event_spec`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`

@@ -6400,6 +6400,24 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_unalias_bad_option_format() {
+    // zsh: `unalias -X x` errors `unalias:1: bad option: -X`.
+    // zshrs previously emitted `unalias: bad option: -X` (extra
+    // space, no `:1:` source-position suffix). Aligned the format.
+    let (_, _, stderr) = run_zshrs("unalias -X x");
+    assert!(stderr.contains("unalias:1: bad option: -X"), "got: {stderr}");
+}
+
+#[test]
+fn test_fc_non_numeric_event_spec() {
+    // `fc -l blah` (non-numeric event spec) errors `event not
+    // found: blah` — distinct from the numeric `no such event: N`
+    // error. zshrs collapsed both to the numeric form.
+    let (_, _, stderr) = run_zshrs("fc -l blah");
+    assert!(stderr.contains("event not found: blah"), "got: {stderr}");
+}
+
+#[test]
 fn test_test_lt_gt_le_ge_non_numeric_errors() {
     // Same fix as `-eq`/`-ne` extended to `-lt`/`-le`/`-gt`/`-ge`.
     // Each comparator now returns 2 with `integer expression
