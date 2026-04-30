@@ -20632,20 +20632,123 @@ impl ShellExecutor {
                 .get("IFS")
                 .map(|s| s.as_str())
                 .unwrap_or(" \t\n");
-            let words: Vec<&str> = processed
-                .split(|c| ifs.contains(c))
-                .filter(|s| !s.is_empty())
-                .collect();
+            // Direct port of zsh's bin_read in builtin.c: when
+            // there are MORE input fields than vars, the last
+            // var gets the unsplit REMAINDER from the position
+            // after the (N-1)th separator — meaning the separator
+            // chars between fields N..end are PRESERVED. zshrs
+            // previously split into a Vec<&str> and `join(" ")`d,
+            // which collapsed all separators to spaces. Now: find
+            // the (N-1)th separator and slice the original string
+            // there.
+            //
+            // Whitespace IFS (default ` \t\n`) collapses consecutive
+            // separators; non-whitespace IFS (e.g. `:`) keeps each
+            // separator distinct. The same rule applies at the
+            // tail-split point.
+            let nvars = var_names.len();
+            // "Whitespace IFS" for read's collapsing purposes:
+            // every char in IFS is either ASCII whitespace or NUL.
+            // The default IFS in zsh is `" \t\n\0"` so the NUL
+            // must qualify too (otherwise the "default" path
+            // doesn't fire and we lose the collapse-runs +
+            // strip-boundaries semantics that zsh's bin_read
+            // applies for unset/default IFS).
+            let is_whitespace_ifs = !ifs.is_empty()
+                && ifs
+                    .chars()
+                    .all(|c| c.is_ascii_whitespace() || c == '\0');
+            // Strip leading AND trailing whitespace for default
+            // IFS (zsh's bin_read does this so trailing
+            // whitespace doesn't leak into the last var). For
+            // non-whitespace IFS, leading/trailing separators
+            // create empty fields and are preserved.
+            let processed_trimmed: String = if is_whitespace_ifs {
+                processed
+                    .trim_matches(|c: char| ifs.contains(c))
+                    .to_string()
+            } else {
+                processed.clone()
+            };
+            let processed = processed_trimmed;
+            // Find the (N-1)th separator boundary. For the last
+            // var, take from that boundary to the end (preserving
+            // any further separators verbatim).
+            let mut split_end: Option<usize> = None;
+            let mut field_count = 0;
+            let bytes = processed.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() && field_count < nvars - 1 {
+                if ifs.bytes().any(|c| c == bytes[i]) {
+                    field_count += 1;
+                    if field_count == nvars - 1 {
+                        // Skip this separator AND any consecutive
+                        // separators (whitespace IFS only).
+                        i += 1;
+                        if is_whitespace_ifs {
+                            while i < bytes.len()
+                                && ifs.bytes().any(|c| c == bytes[i])
+                            {
+                                i += 1;
+                            }
+                        }
+                        split_end = Some(i);
+                        break;
+                    }
+                    i += 1;
+                    if is_whitespace_ifs {
+                        while i < bytes.len()
+                            && ifs.bytes().any(|c| c == bytes[i])
+                        {
+                            i += 1;
+                        }
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+            let words: Vec<&str> = match split_end {
+                Some(end) => {
+                    // Pre-split fields 0..N-1 from the start up to
+                    // `end`, then take the suffix verbatim.
+                    let head = &processed[..end];
+                    let tail = &processed[end..];
+                    let mut head_words: Vec<&str> = if is_whitespace_ifs {
+                        head.split(|c: char| ifs.contains(c))
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    } else {
+                        // Non-whitespace IFS: split keeps empty
+                        // fields between consecutive separators.
+                        // Trim the trailing separator from `head`
+                        // before splitting so we don't get a stray
+                        // empty.
+                        let head_trimmed = head
+                            .strip_suffix(|c: char| ifs.contains(c))
+                            .unwrap_or(head);
+                        head_trimmed
+                            .split(|c: char| ifs.contains(c))
+                            .collect()
+                    };
+                    head_words.push(tail);
+                    head_words
+                }
+                None => {
+                    // Fewer fields than vars — split normally; the
+                    // missing vars get empty.
+                    if is_whitespace_ifs {
+                        processed
+                            .split_whitespace()
+                            .collect()
+                    } else {
+                        processed.split(|c: char| ifs.contains(c)).collect()
+                    }
+                }
+            };
 
             for (j, var) in var_names.iter().enumerate() {
                 if j < words.len() {
-                    if j == var_names.len() - 1 && words.len() > var_names.len() {
-                        let remaining = words[j..].join(" ");
-                        if !remaining.contains('\0') {
-                            env::set_var(var, &remaining);
-                        }
-                        self.variables.insert(var.clone(), remaining);
-                    } else {
+                    {
                         if !words[j].contains('\0') {
                             env::set_var(var, words[j]);
                         }

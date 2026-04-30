@@ -8488,6 +8488,35 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_read_preserves_separator_in_last_var() {
+    // Direct port of zsh's bin_read in builtin.c — when input
+    // has more fields than vars, the last var gets the unsplit
+    // remainder INCLUDING separators between fields N..end.
+    // zshrs previously split into Vec<&str> and join(" ")'d,
+    // collapsing all separators to spaces.
+    let (_, output, _) = run_zshrs(
+        r#"IFS=: read x y <<< "a:b:c"; echo "[$x][$y]""#,
+    );
+    assert_eq!(output.trim(), "[a][b:c]", "got: {output:?}");
+    let (_, output, _) = run_zshrs(
+        r#"IFS=, read x y <<< "a,,b,,c"; echo "[$x][$y]""#,
+    );
+    assert_eq!(output.trim(), "[a][,b,,c]", "got: {output:?}");
+}
+
+#[test]
+fn test_read_collapses_default_ifs() {
+    // Default IFS (whitespace + NUL) collapses consecutive
+    // separators AND strips leading/trailing whitespace from
+    // the input. The NUL byte in the default IFS made
+    // is_whitespace_ifs return false; fixed by accepting NUL
+    // as a whitespace-class char for this purpose.
+    let (_, output, _) =
+        run_zshrs(r#"read x y <<< "  a    b    c  "; echo "[$x][$y]""#);
+    assert_eq!(output.trim(), "[a][b    c]", "got: {output:?}");
+}
+
+#[test]
 fn test_dq_array_replace_join_first() {
     // Same DQ-vs-unquoted split as strip, applied to the
     // replace operator. zsh: `"${a/o/O}"` for `a=(one two three)`

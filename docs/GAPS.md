@@ -2219,6 +2219,16 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `IFS=: read x y <<< "a:b:c"` now puts `b:c` in `y` (separator preserved in remainder)
+
+Direct port of zsh's bin_read in builtin.c. When input has more fields than vars, the last var receives the unsplit REMAINDER from the position after the (N-1)th separator — meaning the separator chars between fields N..end are PRESERVED literally. zshrs previously split into a `Vec<&str>` and `join(" ")`d, collapsing all separators to spaces (so `IFS=: read x y <<< "a:b:c"` produced `y="b c"` instead of zsh's `y="b:c"`).
+
+Also fixed: the default IFS in zshrs is `" \t\n\0"` (with NUL). The new "whitespace IFS" check (`is_whitespace_ifs`) initially used `is_ascii_whitespace()` which excludes NUL, so the default-IFS path's collapse-runs + strip-boundaries semantics never fired. Added `c == '\0'` to the whitespace-class check.
+
+Implementation: scan the input for the (N-1)th separator boundary, slicing the original string at that point — head goes to the first N-1 vars (split on IFS, preserving empties for non-whitespace IFS), tail goes verbatim to the Nth var. For whitespace IFS, leading and trailing whitespace are trimmed first (so `read x y <<< "  a  b  c  "` produces `x=a y="b  c"`).
+
+Tests: `test_read_preserves_separator_in_last_var`, `test_read_collapses_default_ifs`.
+
 ### `"${a/o/O}"` array replace now joins-then-replaces in DQ; `"${a[@]/o/O}"` per-element
 
 Mirror of the array strip DQ split applied to the replace operator. zsh's pattern.c routes through getmatch (joined scalar in DQ) vs getmatcharr (per-element otherwise) for both strip and replace. zshrs's BUILTIN_PARAM_REPLACE always per-element-replaced for arrays. Fix: pass `dq_context_depth` from compiler as a 5th arg; when set AND the var is array, join via space then apply the replace once. `had_at` field on `ParamModifierKind::Replace` overrides DQ for explicit `[@]` subscript (forcing per-element). `[*]` keeps the bare-DQ semantics.
