@@ -6747,6 +6747,42 @@ fn test_wait_unrealistic_jobspec_errors() {
 }
 
 #[test]
+fn test_kill_bad_signal_uses_zsh_format() {
+    // zsh: `kill -INVALID 1` -> `kill:1: unknown signal: SIGINVALID`
+    // followed by `kill:1: type kill -l for a list of signals` exit
+    // 1. zshrs emitted the bash-style `kill: invalid signal: -INVALID`
+    // (with leading dash, no SIG prefix, no helpful hint line).
+    let (status, _, stderr) = run_zshrs("kill -INVALID 1");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("unknown signal: SIGINVALID"),
+        "got: {stderr}"
+    );
+    assert!(
+        stderr.contains("type kill -l for a list of signals"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_printf_invalid_directive_exits_nonzero() {
+    // zsh: `printf "%Z\n" 1` -> `printf:1: %Z: invalid directive`
+    // exit 1. zshrs printed the same diagnostic but returned 0,
+    // hiding the failure for $?-checking scripts. Now tracks an
+    // `had_error` flag through the format-spec walker.
+    let (status, _, stderr) = run_zshrs(r#"printf "%Z\n" 1"#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("%Z: invalid directive"),
+        "got: {stderr}"
+    );
+    // Sanity: valid formats still return 0.
+    let (status, output, _) = run_zshrs(r#"printf "%s\n" hi"#);
+    assert_eq!(status, 0);
+    assert!(output.contains("hi"));
+}
+
+#[test]
 fn test_exec_flag_only_no_command_errors() {
     // zsh: `exec -c`, `exec -l`, `exec -a foo` (any flag form
     // without a following command) -> `exec requires a command to

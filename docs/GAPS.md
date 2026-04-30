@@ -1793,6 +1793,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `exec FLAG` (any flag form without a following command) -> `exec requires a command to execute` exit 1. zshrs collapsed all "no command" cases to silent return 0, masking flag-only typos. Bare `exec` (no flags, no command) still returns 0 silently per POSIX (the env-modify form). Now errors when any of `-c`/`-l`/`-a NAME` were specified without a command. Test: `test_exec_flag_only_no_command_errors`.
 
+### `printf "%Z\n" 1` printed the diagnostic but returned 0
+
+- zsh: invalid printf directive errors `printf:1: %Z: invalid directive` exit 1 — but zshrs printed the diagnostic and still returned 0, hiding the failure for $?-checking scripts. Added a local `had_error` flag through the format-spec walker; the `_ => { … }` arm sets it on any unknown specifier (and on `%a`/`%v`/`%V` which zsh also rejects). Function now returns 1 if any error fired. Test: `test_printf_invalid_directive_exits_nonzero`.
+
+### `kill -INVALID 1` printed bash-style "kill: invalid signal: -INVALID"
+
+- zsh: `kill -INVALID 1` -> `kill:1: unknown signal: SIGINVALID` followed by `kill:1: type kill -l for a list of signals` exit 1. zshrs emitted the bash-style `kill: invalid signal: -INVALID` (with leading dash, no SIG prefix, no hint line). Replaced the `_-flag` else arm with the two-line zsh format (already used by the `-L`-as-signal arm). Test: `test_kill_bad_signal_uses_zsh_format`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
