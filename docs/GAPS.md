@@ -1801,6 +1801,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's `type -w NAME` is the "word" shorthand: prints `NAME: KIND` where KIND is one of `builtin`, `command`, `function`, `alias`, `reserved`, `none`. zshrs ignored `-w` and fell to the default descriptive output (`NAME is a shell builtin`, etc.). Added a `show_word` flag set by `-w`, plus per-kind branches that emit the `NAME: KIND` form. Test: `test_type_w_emits_name_colon_kind`.
 
+### Non-executable file invocation exited 127 silently instead of 126 with diagnostic
+
+- zsh: invoking a non-executable file (`chmod 644 file; ./file`) emits `permission denied: ./file` on stderr and exits 126 (POSIX convention for "command found but not executable"). zshrs's `execute_external` only special-cased `NotFound` (→ 127); all other IO errors fell into the generic `Err` arm which the caller converted to 127 with no diagnostic. Added a `PermissionDenied` arm that emits zsh's diagnostic and returns 126. Test: `test_exec_non_executable_file_status_126`.
+
 ## Closed (seventy-eighth-pass)
 
 ### `print -P "%S"` emitted reverse-video instead of italic

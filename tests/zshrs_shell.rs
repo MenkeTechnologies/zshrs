@@ -6360,6 +6360,26 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_exec_non_executable_file_status_126() {
+    // zsh: invoking a non-executable file (`chmod 644 file; ./file`)
+    // emits `permission denied: ./file` on stderr and exits 126
+    // (POSIX: "command found but not executable"). zshrs's
+    // `execute_external` returned `Err` for any non-NotFound IO
+    // error, which the caller converted to 127 with no diagnostic.
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    let path = std::env::temp_dir().join("zshrs_perm_test");
+    let _ = fs::remove_file(&path);
+    fs::write(&path, b"#!/bin/sh\necho hi\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    let cmd = format!(r#"{} 2>&1; echo "exit=$?""#, path.to_string_lossy());
+    let (_, output, _) = run_zshrs(&cmd);
+    assert!(output.contains("permission denied"), "got: {output:?}");
+    assert!(output.contains("exit=126"), "got: {output:?}");
+    let _ = fs::remove_file(&path);
+}
+
+#[test]
 fn test_type_w_emits_name_colon_kind() {
     // zsh's `type -w NAME` prints `NAME: KIND` (one of `builtin`,
     // `command`, `function`, `alias`, `reserved`, `none`). zshrs
