@@ -14056,10 +14056,20 @@ impl ShellExecutor {
                 if rest.starts_with("$(") && rest.ends_with(')') {
                     let cmd_text = &rest[2..rest.len() - 1];
                     let inner_str = self.run_command_substitution(cmd_text);
+                    // (P) — indirect: treat the inner result as a name
+                    // and look up THAT variable's value. zsh:
+                    // `a=hi; ${(P)$(echo a)}` → "hi" (NOT "a").
+                    let has_p_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::Parameter));
+                    let mut out = if has_p_flag {
+                        let n = inner_str.trim();
+                        self.get_variable(n)
+                    } else {
+                        inner_str.clone()
+                    };
                     // Apply flags. Same dispatch as the ${...} branch.
-                    let mut out = inner_str.clone();
                     for f in &flags {
                         match f {
+                            ZshParamFlag::Parameter => {} // already applied
                             ZshParamFlag::Upper => {
                                 out = out.to_uppercase();
                             }

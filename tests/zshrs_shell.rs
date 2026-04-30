@@ -10248,6 +10248,18 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_param_p_indirect_with_cmd_subst() {
+    // `${(P)$(...)}` — (P) indirect on cmd-subst result. Treat the
+    // captured output as a NAME and look up that variable's value.
+    // Was returning the cmd-subst output verbatim.
+    let (_, output, _) = run_zshrs(r#"a=hi; echo "${(P)$(echo a)}""#);
+    assert_eq!(output.trim(), "hi");
+    let (_, output, _) =
+        run_zshrs(r#"a=hello; echo "${(UP)$(echo a)}""#);
+    assert_eq!(output.trim(), "HELLO");
+}
+
+#[test]
 fn test_array_subscript_remove_with_var_index() {
     // `a[$n]=()` should remove the element at index $n. Compile path
     // was emitting the literal "$n" key string; runtime int-parse
