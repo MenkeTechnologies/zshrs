@@ -1046,6 +1046,16 @@ impl ZshCompiler {
             || (untoked.ends_with(')')
                 && untoked.contains('(')
                 && !untoked.contains('|'))
+            // Glob alternation `(a|b|c)` is a primary zsh feature
+            // (no extendedglob required). Direct port of zsh's
+            // pattern.c P_BRANCH `|` at the path level —
+            // `/etc/(passwd|hostname)` should glob to multiple
+            // alternatives. Detected by `(`...`|`...`)` shape;
+            // expand_glob's expand_glob_alternation helper does
+            // the actual top-level-vs-nested check.
+            || (untoked.contains('(')
+                && untoked.contains('|')
+                && untoked.contains(')'))
             // zsh numeric range glob `<N-M>`: any `<…-…>` shape with
             // optional digits on either side outside a bracket-class.
             || has_numeric_range_glob(&untoked);

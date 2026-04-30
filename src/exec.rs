@@ -590,6 +590,129 @@ fn format_alias_kv(name: &str, value: &str) -> String {
 
 /// Slice a scalar string per zsh `${str[N,M]}` semantics: 1-based,
 /// inclusive, char-aware (not byte). Negative indices count from end.
+/// Detect a glob alternation `(a|b|c)` in `pat` and expand it to
+/// the cartesian product of the alternatives substituted in place.
+/// Returns `None` if the pattern has no top-level alternation.
+/// Direct port of zsh's pattern.c P_BRANCH `|` handling at the
+/// path level — `/etc/(passwd|hostname)` produces two glob
+/// patterns: `/etc/passwd` and `/etc/hostname`.
+///
+/// "Top-level" means not inside `[...]` (character class) or
+/// `(#...)` (inline flag). Only the FIRST alternation group is
+/// expanded per call; the recursion in `expand_glob` handles
+/// nested alternations on subsequent passes.
+fn expand_glob_alternation(pat: &str) -> Option<Vec<String>> {
+    let bytes = pat.as_bytes();
+    let mut i = 0;
+    let mut bracket_depth = 0;
+    let mut group_start: Option<usize> = None;
+    let mut group_depth = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                i += 2;
+                continue;
+            }
+            b'[' => bracket_depth += 1,
+            b']' if bracket_depth > 0 => bracket_depth -= 1,
+            b'(' if bracket_depth == 0 => {
+                // Skip `(#...)` inline flag forms — those are
+                // pattern-engine flags, not alternation groups.
+                if i + 1 < bytes.len() && bytes[i + 1] == b'#' {
+                    // Find matching `)` and skip past.
+                    let mut d = 1;
+                    let mut j = i + 1;
+                    while j < bytes.len() && d > 0 {
+                        j += 1;
+                        if j < bytes.len() {
+                            match bytes[j] {
+                                b'(' => d += 1,
+                                b')' => d -= 1,
+                                _ => {}
+                            }
+                        }
+                    }
+                    i = j + 1;
+                    continue;
+                }
+                if group_start.is_none() {
+                    group_start = Some(i);
+                }
+                group_depth += 1;
+            }
+            b')' if bracket_depth == 0 && group_depth > 0 => {
+                group_depth -= 1;
+                if group_depth == 0 {
+                    // Check the body for `|` — if present, it's
+                    // an alternation. Otherwise plain group, leave
+                    // as-is and reset the search.
+                    if let Some(start) = group_start.take() {
+                        let body = &pat[start + 1..i];
+                        // Has top-level `|`?
+                        let mut bd = 0;
+                        let mut pd = 0;
+                        let mut found_bar = false;
+                        for c in body.bytes() {
+                            match c {
+                                b'[' => bd += 1,
+                                b']' if bd > 0 => bd -= 1,
+                                b'(' if bd == 0 => pd += 1,
+                                b')' if bd == 0 && pd > 0 => pd -= 1,
+                                b'|' if bd == 0 && pd == 0 => {
+                                    found_bar = true;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                        if found_bar {
+                            // Split on top-level `|`.
+                            let prefix = &pat[..start];
+                            let suffix = &pat[i + 1..];
+                            let mut alts: Vec<String> = Vec::new();
+                            let mut bd2 = 0;
+                            let mut pd2 = 0;
+                            let mut last = 0usize;
+                            let body_bytes = body.as_bytes();
+                            let mut k = 0;
+                            while k < body_bytes.len() {
+                                let bc = body_bytes[k];
+                                match bc {
+                                    b'[' => bd2 += 1,
+                                    b']' if bd2 > 0 => bd2 -= 1,
+                                    b'(' if bd2 == 0 => pd2 += 1,
+                                    b')' if bd2 == 0 && pd2 > 0 => pd2 -= 1,
+                                    b'|' if bd2 == 0 && pd2 == 0 => {
+                                        alts.push(format!(
+                                            "{}{}{}",
+                                            prefix,
+                                            &body[last..k],
+                                            suffix
+                                        ));
+                                        last = k + 1;
+                                    }
+                                    _ => {}
+                                }
+                                k += 1;
+                            }
+                            alts.push(format!(
+                                "{}{}{}",
+                                prefix,
+                                &body[last..],
+                                suffix
+                            ));
+                            return Some(alts);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Find the byte offset of the first top-level `~` in `pat` — i.e.
 /// not inside `[...]` (character class) or `(...)` (group) and not
 /// at position 0 (where it would be a literal). Returns `None` if
@@ -5541,6 +5664,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
                             && !extract_numeric_ranges(&s).is_empty();
+                        // Glob alternation `(a|b|c)` is a primary
+                        // zsh feature — `/etc/(passwd|hostname)`
+                        // should expand to file matches. Detected
+                        // by `(` ... `|` ... `)` shape; the actual
+                        // top-level-vs-nested check happens in
+                        // expand_glob_alternation.
+                        let has_alternation = s.contains('(')
+                            && s.contains('|')
+                            && s.contains(')');
                         if !noglob
                             && !is_assignment_shape
                             && (s.contains('*')
@@ -5548,7 +5680,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                 || s.contains('[')
                                 || has_qual_suffix
                                 || extglob_meta
-                                || has_numeric_range)
+                                || has_numeric_range
+                                || has_alternation)
                         {
                             exec.expand_glob(&s)
                         } else {
@@ -11254,6 +11387,53 @@ impl ShellExecutor {
 
     /// Expand glob pattern to matching files
     fn expand_glob(&self, pattern: &str) -> Vec<String> {
+        // Glob alternation `(a|b|c)` is a primary zsh feature
+        // (no extendedglob needed, unlike `~` exclusion). Direct
+        // port of zsh's pattern.c handling of P_BRANCH | inside
+        // grouping parens — at the path level, `/etc/(passwd|
+        // hostname)` matches multiple alternative paths. zshrs's
+        // glob crate (and earlier hand-rolled code) didn't expand
+        // the `(...|...)` form, so the literal parens reached the
+        // OS glob and produced no matches.
+        //
+        // Pre-expand by splitting top-level `(...|...)` groups
+        // into separate patterns and recursing — same shape as
+        // brace expansion at this layer. Skip when extendedglob
+        // is on AND the pattern is `(#flag)` (inline pattern flag,
+        // handled by the regex compiler downstream).
+        if let Some(alternatives) = expand_glob_alternation(pattern) {
+            // For each alternative, treat as a GLOB pattern: if it
+            // contains other glob chars, recurse through expand_glob
+            // (which handles `*`/`?`/`[`/qualifier suffixes); if
+            // it's a literal path, only include it if the path
+            // EXISTS — zsh's pattern.c behavior is "alternation
+            // produces matching paths, not literal alternatives".
+            // Without the exists-check, `/etc/(passwd|nonexistent)`
+            // would output both.
+            let mut out: Vec<String> = Vec::new();
+            for alt in alternatives {
+                let has_meta = alt
+                    .chars()
+                    .any(|c| matches!(c, '*' | '?' | '[' | '('));
+                if has_meta {
+                    out.extend(self.expand_glob(&alt));
+                } else if std::path::Path::new(&alt).exists() {
+                    out.push(alt);
+                }
+            }
+            let mut seen = std::collections::HashSet::new();
+            out.retain(|p| seen.insert(p.clone()));
+            // zsh sorts glob results alphabetically by default.
+            // Without sorting, the alternation order leaks
+            // through (`/etc/(passwd|group)` would output
+            // `passwd group` instead of zsh's `group passwd`).
+            out.sort();
+            if !out.is_empty() {
+                return out;
+            }
+            // No matches — fall through to NOMATCH semantics
+            // below (zsh: error if `nomatch` is on, else literal).
+        }
         // extendedglob `~` exclusion: `*.txt~b.txt` matches `*.txt`
         // and excludes paths that also match `b.txt`. Detect a
         // top-level `~` (not inside brackets/parens) when extendedglob
