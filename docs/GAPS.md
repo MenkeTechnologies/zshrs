@@ -1977,6 +1977,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `vared -p` (with no value) -> `vared:1: argument expected: -p` exit 1 — pinpoints the missing flag-value. zshrs's `if i + 1 < args.len()` guard silently dropped the flag and let the empty-var-name path emit the wrong diagnostic. Restructured `-p` and `-r` arms to error explicitly on missing value. Test: `test_vared_missing_value_after_flag_errors`.
 
+### `history -d 99` reported "no such event: 1" instead of "no such event: 99"
+
+- zsh: `history -d N` (or any numeric arg) reports the user's event ID in the no-such-event error. zshrs hardcoded `no such event: 1` regardless of the user's value. Threaded `count` through to the error path; non-default count is used as the event identifier. Test: `test_history_d_event_id_propagates`.
+
+### `zstyle -X` silently fell through instead of erroring "invalid option"
+
+- zsh: unknown zstyle flag -> `zstyle:1: invalid option: -X` exit 1. zshrs's `_ => {}` silent fallback let any unknown flag drop through to the set-style path with `pattern=-X` — silently registering junk styles. Replaced with explicit error. Test: `test_zstyle_unknown_flag_errors`.
+
+### `bindkey -Z` silently dropped into list-mode instead of erroring
+
+- zsh: unknown bindkey flag -> `bindkey:1: bad option: -Z` exit 1. zshrs's silent `_ => {}` fallback consumed any flag, falling through to list-mode (which printed the keymap silently). Replaced with explicit error. Test: `test_bindkey_unknown_flag_errors`.
+
+### `zparseopts` (no args) silently returned 0 instead of erroring
+
+- zsh: bare `zparseopts` -> `zparseopts:1: not enough arguments` exit 1. zshrs returned 0 silently. Added an early `args.is_empty()` check. Test: `test_zparseopts_no_args_errors`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
