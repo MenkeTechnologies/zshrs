@@ -6360,6 +6360,22 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_fc_l_range_two_args_no_events_in_range() {
+    // zsh: `fc -l N M` (range query) errors `no events in that
+    // range` when the history is empty — distinct from the
+    // single-arg `no such event: N`. zshrs collapsed both to the
+    // single-arg message.
+    let (_, _, stderr) = run_zshrs("fc -l 1 2");
+    assert!(
+        stderr.contains("no events in that range"),
+        "got: {stderr}"
+    );
+    // Single-arg still uses the per-event form.
+    let (_, _, stderr) = run_zshrs("fc -l 5");
+    assert!(stderr.contains("no such event: 5"), "got: {stderr}");
+}
+
+#[test]
 fn test_unalias_no_args_emits_zsh_format() {
     // zsh: bare `unalias` errors `unalias:1: not enough arguments`.
     // zshrs printed a bash-style usage line. Aligned to zsh format
