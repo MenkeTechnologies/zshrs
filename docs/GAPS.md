@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${h[(I)*]}` returned single key instead of all matches on assoc
+
+- `(I)` and `(R)` flags on assoc subscript should return ALL matching keys/values space-joined; `(i)`/`(r)` return the FIRST match. We were always returning a single match. Direct port of zsh subst.c haspats path. Test: `test_assoc_capital_i_returns_all_matching_keys`.
+
 ### zsh-special params `SECONDS`/`UID`/`HISTCMD`/etc. treated as unset for `${X-default}`
 
 - These have dynamic getters but aren't in `self.variables`, so `${SECONDS-default}` returned "default" instead of the live value. zsh treats them as always-set. Added matched whitelist (`SECONDS`, `EPOCHSECONDS`, `EPOCHREALTIME`, `RANDOM`, `LINENO`, `HISTCMD`, `PPID`, `UID`, `EUID`, `GID`, `EGID`, `SHLVL`) to all three `var_is_set` decision points (flag-aware path, no-modifier path, and `BUILTIN_PARAM_DEFAULT_FAMILY`). Also added `HISTCMD` to the dynamic getter (returns session history count). Test: `test_special_param_default_treats_as_set`.
