@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-sixth-pass)
 
+### `export 1bad=val`, `typeset 1bad=5`, `integer 1bad=5`, `readonly 1bad=5`, `declare 1bad=5`, `local 1bad=5` silently accepted bogus identifiers
+
+- zsh validates the lhs of every typeset-family assignment: leading char must be `[A-Za-z_]`, body must be `[A-Za-z0-9_]*`. Violations emit `<INVOKED>:1: not an identifier: <NAME>` (digit-leading) or `not valid in this context: <NAME>` (whitespace/special chars in `export`). zshrs accepted any string, polluting the variable table and (for `export`) the process environment with names unreachable from any standards-conforming shell. Added validation in three places: `builtin_export` (handles both `not an identifier` and `not valid in this context` wordings), `builtin_typeset_named` (covers typeset/declare/local — uses the `invoked_as` channel for the diagnostic prefix so `declare 1bad=5` says `declare:1:`), `builtin_integer`, and `builtin_readonly` (each has its own assignment loop). Subscript-form names (`a[i]=...`, `m[k]=...`) bypass the check — they route through the runtime arith eval path which validates the base name separately. Tests: `test_export_invalid_first_char_rejects`, `test_export_space_in_name_rejects`, `test_typeset_invalid_identifier_rejects`, `test_declare_invalid_identifier_uses_declare_prefix`, `test_integer_invalid_identifier_rejects`, `test_readonly_invalid_identifier_rejects`.
+
+### `$((10#))` and `$((36#))` (empty digits after base) errored "operator expected at \`'" instead of returning 0
+
+- zsh treats `N#` with an empty digit run as silently 0 (matches the rule for any empty arithmetic operand). zshrs's `from_str_radix("", base)` returned `Err`, which used to land in the out-of-range-digit error arm and emit a nonsense `at \`'` message. Fix: short-circuit to 0 when `val_str.is_empty()` BEFORE calling `from_str_radix`. The correct out-of-range error path (`2#5`, `2#22`) is preserved. Test: `test_arith_empty_base_digits_is_zero`.
+
 ### `${(s:,:)foo}` preserved empty fields (off-by-2) instead of dropping them like zsh
 
 - zsh: bare `(s:sep:)` drops empty fields after splitting, e.g. `${(s:,:)"a,,b,,c"}` -> 3 elements `[a, b, c]`. The `(@)` flag overrides to preserve empties (`${(@s:,:)…}` -> 5 elements `[a, "", b, "", c]`). zshrs's flag loop split with `s.split(sep)` and kept every field unconditionally — array counts were off, and `printf "[%s]\n" ${(s:l:)hello}` printed an extra blank `[]` between `[he]` and `[o]`. Fix: scan flags for `@` once (position-independent), drop empty fields when absent. Pure `(s::)` empty-separator (char-split) and `(s::)` over true arrays both honor the same rule. Tests: `test_s_flag_drops_empty_fields_default`, `test_at_s_flag_preserves_empty_fields`, `test_s_flag_drops_consecutive_empties_in_split`.

@@ -17322,6 +17322,41 @@ impl ShellExecutor {
                 return 1;
             }
             let key_owned = if let Some((key, value)) = arg.split_once('=') {
+                // zsh validates the lhs is a valid identifier:
+                //   `export 1bad=val` -> `export:1: not an
+                //     identifier: 1bad` exit 1 (digit-leading)
+                //   `export "BAD NAME=val"` -> `export:1: not
+                //     valid in this context: BAD NAME` exit 1
+                //     (whitespace/special chars)
+                // zshrs silently accepted both, polluting the
+                // env with bogus names. Identifier rule:
+                // [A-Za-z_][A-Za-z0-9_]*.
+                let mut chars = key.chars();
+                let first_ok = chars
+                    .next()
+                    .map(|c| c.is_ascii_alphabetic() || c == '_')
+                    .unwrap_or(false);
+                if !first_ok {
+                    if key
+                        .chars()
+                        .any(|c| !c.is_ascii_alphanumeric() && c != '_')
+                    {
+                        eprintln!(
+                            "zshrs:export:1: not valid in this context: {}",
+                            key
+                        );
+                    } else {
+                        eprintln!("zshrs:export:1: not an identifier: {}", key);
+                    }
+                    return 1;
+                }
+                if chars.any(|c| !c.is_ascii_alphanumeric() && c != '_') {
+                    eprintln!(
+                        "zshrs:export:1: not valid in this context: {}",
+                        key
+                    );
+                    return 1;
+                }
                 self.variables.insert(key.to_string(), value.to_string());
                 env::set_var(key, value);
                 key.to_string()
@@ -19356,6 +19391,32 @@ impl ShellExecutor {
             if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
                 let rest = &arg[eq_pos + 1..];
+
+                // zsh validates the lhs is a valid identifier:
+                //   `typeset 1bad=5` -> `<INVOKED>:1: not an
+                //   identifier: 1bad` exit 1.
+                // zshrs silently accepted any name. Allow names
+                // ending in subscript (`a[1]=...`, `m[k]=...`)
+                // — those route through the runtime arith eval
+                // path and are validated separately. Same for
+                // declare/local/integer/readonly which all
+                // dispatch here via builtin_typeset_named.
+                if !name.contains('[') {
+                    let mut chars = name.chars();
+                    let first_ok = chars
+                        .next()
+                        .map(|c| c.is_ascii_alphabetic() || c == '_')
+                        .unwrap_or(false);
+                    let body_ok = chars
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_');
+                    if !first_ok || !body_ok {
+                        eprintln!(
+                            "zshrs:{}:1: not an identifier: {}",
+                            invoked_as, name
+                        );
+                        return 1;
+                    }
+                }
 
                 // Read-only check before any mutation: zsh's typeset
                 // refuses to overwrite a read-only variable and emits
@@ -28143,6 +28204,23 @@ impl ShellExecutor {
             } else {
                 (arg.as_str(), None)
             };
+            // zsh: `integer 1bad=5` -> `integer:1: not an
+            // identifier: 1bad` exit 1. zshrs silently accepted.
+            // Allow subscript form (`a[i]=...`) — that's a
+            // valid extension handled elsewhere.
+            if !name.contains('[') {
+                let mut chars = name.chars();
+                let first_ok = chars
+                    .next()
+                    .map(|c| c.is_ascii_alphabetic() || c == '_')
+                    .unwrap_or(false);
+                let body_ok =
+                    chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+                if !first_ok || !body_ok {
+                    eprintln!("zshrs:integer:1: not an identifier: {}", name);
+                    return 1;
+                }
+            }
             let int_val = match raw_value {
                 Some(v) => self.eval_arith_expr(v),
                 None => 0,
@@ -31385,6 +31463,25 @@ impl ShellExecutor {
             } else if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
                 let value = &arg[eq_pos + 1..];
+                // zsh: `readonly 1bad=5` -> `readonly:1: not an
+                // identifier: 1bad` exit 1. zshrs silently accepted
+                // and polluted the variable table.
+                if !name.contains('[') {
+                    let mut chars = name.chars();
+                    let first_ok = chars
+                        .next()
+                        .map(|c| c.is_ascii_alphabetic() || c == '_')
+                        .unwrap_or(false);
+                    let body_ok =
+                        chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+                    if !first_ok || !body_ok {
+                        eprintln!(
+                            "zshrs:readonly:1: not an identifier: {}",
+                            name
+                        );
+                        return 1;
+                    }
+                }
                 self.variables.insert(name.to_string(), value.to_string());
                 self.readonly_vars.insert(name.to_string());
                 // Mark the readonly attr on var_attrs so `(t)` flag

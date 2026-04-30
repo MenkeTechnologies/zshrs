@@ -8320,6 +8320,95 @@ fn test_s_flag_drops_consecutive_empties_in_split() {
 }
 
 #[test]
+fn test_arith_empty_base_digits_is_zero() {
+    // zsh: `$((10#))` and `$((36#))` (empty digit run after
+    // `#`) silently return 0. zshrs's `from_str_radix("", b)`
+    // returned Err which fell into the operator-expected arm
+    // and emitted a nonsense `at \`'` message.
+    let (_, output, _) = run_zshrs("echo $((10#))");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+    let (_, output, _) = run_zshrs("echo $((36#))");
+    assert_eq!(output.trim(), "0", "got: {output:?}");
+}
+
+#[test]
+fn test_export_invalid_first_char_rejects() {
+    // zsh: `export 1bad=val` -> `export:1: not an identifier:
+    // 1bad` exit 1. zshrs silently exported the bogus name
+    // (env var `1bad=val` is unreachable from any shell that
+    // parses identifiers — pure pollution).
+    let (status, _, stderr) = run_zshrs(r#"export "1bad=val""#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not an identifier: 1bad"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_export_space_in_name_rejects() {
+    // zsh: `export "BAD NAME=val"` -> `export:1: not valid in
+    // this context: BAD NAME` exit 1. Distinct wording from the
+    // identifier-leading case because the name has internal
+    // whitespace/special chars rather than a bad first letter.
+    let (status, _, stderr) = run_zshrs(r#"export "BAD NAME=val""#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not valid in this context: BAD NAME"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_typeset_invalid_identifier_rejects() {
+    // zsh: `typeset 1bad=5` -> `typeset:1: not an identifier:
+    // 1bad` exit 1. Same rule for declare/local/integer/
+    // readonly which all dispatch through this path.
+    let (status, _, stderr) = run_zshrs("typeset 1bad=5");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not an identifier: 1bad"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_declare_invalid_identifier_uses_declare_prefix() {
+    // zsh prefixes the diagnostic with the invocation name so
+    // `declare 1bad=5` reads `declare:1: not an identifier:
+    // 1bad` (vs `typeset:1: ...` for the typeset entrypoint).
+    let (status, _, stderr) = run_zshrs("declare 1bad=5");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("declare:1: not an identifier: 1bad"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_integer_invalid_identifier_rejects() {
+    // `integer` has its own assignment loop separate from
+    // typeset_named; same identifier rule applies.
+    let (status, _, stderr) = run_zshrs("integer 1bad=5");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("integer:1: not an identifier: 1bad"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_readonly_invalid_identifier_rejects() {
+    // `readonly NAME=val` validates NAME like the others.
+    let (status, _, stderr) = run_zshrs("readonly 1bad=5");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("readonly:1: not an identifier: 1bad"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
