@@ -1566,6 +1566,7 @@ impl ZshCompiler {
                 // `$D/*` literal because the segment fast path
                 // skipped pathname expansion entirely.
                 let mut needs_glob = false;
+                let mut needs_brace = false;
                 for seg in &segs {
                     if let WordSegment::Literal(lit) = seg {
                         let cleaned = crate::lexer::untokenize(lit);
@@ -1577,7 +1578,13 @@ impl ZshCompiler {
                                 && cleaned.contains(')'))
                         {
                             needs_glob = true;
-                            break;
+                        }
+                        // Brace expansion: a literal segment containing
+                        // `{` or `}` participates in an enclosing brace
+                        // pattern. zsh: `{one,${a},three}` expands the
+                        // outer brace AFTER ${a} substitution.
+                        if cleaned.contains('{') || cleaned.contains('}') {
+                            needs_brace = true;
                         }
                     }
                 }
@@ -1603,6 +1610,12 @@ impl ZshCompiler {
                 }
                 if parent_is_dq {
                     self.dq_context_depth -= 1;
+                }
+                if needs_brace && !parent_is_dq {
+                    // Brace-expand the assembled scalar. Pops Value::Str,
+                    // runs expand_braces, pushes Value::Array.
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_BRACE_EXPAND, 0), 0);
                 }
                 if needs_glob && !parent_is_dq {
                     // Glob-expand the assembled scalar at runtime. The

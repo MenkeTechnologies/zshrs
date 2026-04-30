@@ -1572,6 +1572,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${h[(I)key]}` on assoc searched VALUES instead of KEYS
+
+- zsh subst.c: on associative arrays, `(i)`/`(I)` search KEYS and return the matching key (last match for `(I)`); `(r)`/`(R)` search VALUES and return the matching value. Our `assoc_subscript_flag` always searched values and used the (i)/(I) flag only to switch RETURN type. Fixed by routing `(i)`/`(I)` to key search. Test: `test_assoc_subscript_i_flag_searches_keys`.
+
+### `{one,${a},three}` — outer brace not expanded when inner had var ref
+
+- The segment-concat fast path concatenated `{one,`, `${a}`, `,three}` and pushed the joined scalar but never invoked `expand_braces`. zsh's pipeline brace-expands AFTER substitution. Compile-side detection added: when a literal segment contains `{` or `}`, emit `BUILTIN_BRACE_EXPAND` after the concat (followed by the existing `BUILTIN_GLOB_EXPAND` if glob meta also present). Test: `test_brace_expand_with_inner_var_ref`.
+
 ### `$D/*` / `$D/(a|b)` — glob expansion skipped when var ref preceded glob meta
 
 - The segment-concat fast path (Phase 1 step 4) emitted CONCAT for words mixing var refs and glob metachars but never called `expand_glob` on the assembled scalar. zsh's word-expansion pipeline always pathname-expands the post-substitution string. Added `BUILTIN_GLOB_EXPAND` (id 343) — pops a scalar pattern, runs `expand_glob`, pushes Value::Array. Compile path detects glob meta in LITERAL segments only (so `$?`/`$#`/etc. don't trigger) and emits the builtin after the final concat. Tests: `test_glob_with_var_prefix_expands_paths`, `test_glob_with_var_prefix_alternation`.

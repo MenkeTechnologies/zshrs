@@ -10248,6 +10248,37 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_brace_expand_with_inner_var_ref() {
+    // `{one,${a},three}` — outer brace must expand AFTER ${a}
+    // substitution. Without the new BUILTIN_BRACE_EXPAND emit,
+    // segment-concat produced literal `{one,hi,three}`.
+    let (_, output, _) = run_zshrs(r#"a=hi; echo {one,${a},three}"#);
+    assert_eq!(output.trim(), "one hi three");
+    let (_, output, _) =
+        run_zshrs(r#"a=hi; echo pre{1,${a},2}post"#);
+    assert_eq!(output.trim(), "pre1post prehipost pre2post");
+}
+
+#[test]
+fn test_assoc_subscript_i_flag_searches_keys() {
+    // `${h[(I)key]}` on assoc — searches KEYS (not values), returns
+    // the matching key. Was incorrectly searching values.
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h; h=(a 1 b 2 c 3); echo "${h[(I)a]}""#,
+    );
+    assert_eq!(output.trim(), "a");
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h; h=(a 1 b 2 c 3); echo "${h[(i)b]}""#,
+    );
+    assert_eq!(output.trim(), "b");
+    // (r) still searches values and returns the value.
+    let (_, output, _) = run_zshrs(
+        r#"typeset -A h; h=(a 1 b 2 c 3); echo "${h[(r)2]}""#,
+    );
+    assert_eq!(output.trim(), "2");
+}
+
+#[test]
 fn test_glob_with_var_prefix_expands_paths() {
     // `$D/*` should glob-expand after $D substitution. Was leaking
     // `*` literal because the segment-concat fast path skipped

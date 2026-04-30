@@ -257,17 +257,22 @@ fn assoc_subscript_flag(
 ) -> fusevm::Value {
     use fusevm::Value;
     let exact = flags.contains('e');
-    let return_key = flags.contains('i') || flags.contains('I');
+    // zsh subst.c: on assoc, `(i)`/`(I)` search KEYS and return the
+    // matching key; `(r)`/`(R)` search VALUES and return the matching
+    // value. `(I)`/`(R)` find the last match (reverse iteration).
+    let search_keys = flags.contains('i') || flags.contains('I');
+    let return_key = search_keys;
     let reverse = flags.contains('R') || flags.contains('I');
     let mut entries: Vec<(&String, &String)> = map.iter().collect();
     if reverse {
         entries.reverse();
     }
     for (k, v) in entries {
+        let target = if search_keys { k } else { v };
         let hit = if exact {
-            v == pat
+            target == pat
         } else {
-            ShellExecutor::glob_match_static(v, pat)
+            ShellExecutor::glob_match_static(target, pat)
         };
         if hit {
             return Value::str(if return_key { k.clone() } else { v.clone() });
