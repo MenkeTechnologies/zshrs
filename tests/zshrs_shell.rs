@@ -6400,6 +6400,28 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_command_no_args_redirection_error() {
+    // zsh: bare `command` (no args, no command name) errors
+    // `redirection with no command` exit 1 — `command` requires a
+    // command name. zshrs returned 0 silently, masking the missing
+    // CMD argument.
+    let (status, _, stderr) = run_zshrs("command");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("redirection with no command"), "got: {stderr}");
+}
+
+#[test]
+fn test_wait_missing_job_silent() {
+    // zsh: `sleep N & wait %1` works even after the bg process has
+    // already completed and been reaped — missing job spec is silent
+    // success. zshrs's "no such job" error broke the common
+    // `cmd & wait %1` idiom.
+    let (status, _, stderr) = run_zshrs("sleep 0.05 & wait %1");
+    assert_eq!(status, 0);
+    assert!(!stderr.contains("no such job"), "got: {stderr}");
+}
+
+#[test]
 fn test_fc_no_args_with_session_still_recurses() {
     // Bare `fc` (no -l, no positional) ALWAYS errors recurse-
     // endlessly in -c mode. Even when `print -s` added entries,

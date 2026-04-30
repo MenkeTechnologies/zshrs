@@ -20440,8 +20440,12 @@ impl ShellExecutor {
                         }
                     }
                 } else {
-                    eprintln!("wait: {}: no such job", arg);
-                    status = 127;
+                    // zsh: a missing job spec (already reaped or never
+                    // existed) is silent success — `sleep & wait %1`
+                    // works after the bg process completes. zshrs's
+                    // "no such job" error broke that idiom.
+                    // status stays at the prior value (0 unless a
+                    // previous arg failed).
                 }
             } else if arg.is_empty() {
                 // `wait $!` with no background job: $! is empty. zsh
@@ -24168,7 +24172,14 @@ impl ShellExecutor {
         }
 
         if positional_args.is_empty() {
-            return 0;
+            // zsh: bare `command` (no args, no command name) errors
+            // `redirection with no command` exit 1 — `command` REQUIRES
+            // a command name. zshrs returned 0 silently. Match zsh's
+            // diagnostic (the exact string is zsh's; the wording
+            // assumes the user meant `command CMD redir` and dropped
+            // CMD).
+            eprintln!("zshrs:1: redirection with no command");
+            return 1;
         }
 
         let cmd = positional_args[0];
