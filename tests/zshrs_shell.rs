@@ -6360,6 +6360,18 @@ fn test_array_slice_out_of_range_is_empty() {
 }
 
 #[test]
+fn test_arith_division_by_zero_aborts() {
+    // zsh: `echo $((1/0))` aborts the command — `echo` never runs.
+    // zshrs previously returned "0" from `evaluate_arithmetic` on
+    // error, which `echo` then printed (masking the failure). Now
+    // the arith error path in `evaluate_arithmetic` exits the shell
+    // with status 1 on `-c` mode for division-by-zero, matching zsh.
+    let (status, _, stderr) = run_zshrs("echo $((1/0))");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("division by zero"), "got: {stderr}");
+}
+
+#[test]
 fn test_cond_v_with_positional_param() {
     // `[[ -v N ]]` for an integer name N should test whether the Nth
     // positional parameter is set. zshrs's `BUILTIN_VAR_EXISTS`
