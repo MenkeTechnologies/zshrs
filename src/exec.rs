@@ -5752,7 +5752,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         // to literal if that's off.
                         let extglob_meta =
                             exec.options.get("extendedglob").copied().unwrap_or(false)
-                                && (s.starts_with('^') || s.contains('~'));
+                                && (s.starts_with('^')
+                                    || s.contains('~')
+                                    || s.contains("/^"));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
                             && !extract_numeric_ranges(&s).is_empty();
@@ -6962,6 +6964,13 @@ impl fusevm::ShellHost for ZshrsHost {
 
     fn subshell_begin(&mut self) {
         with_executor(|exec| {
+            // libc::umask returns the previous mask AND sets the new
+            // one; call with current value to read without changing.
+            let cur_umask = unsafe {
+                let m = libc::umask(0o022);
+                libc::umask(m);
+                m as u32
+            };
             exec.subshell_snapshots.push(SubshellSnapshot {
                 variables: exec.variables.clone(),
                 arrays: exec.arrays.clone(),
@@ -6969,6 +6978,7 @@ impl fusevm::ShellHost for ZshrsHost {
                 positional_params: exec.positional_params.clone(),
                 env_vars: std::env::vars().collect(),
                 cwd: std::env::current_dir().ok(),
+                umask: cur_umask,
             });
             let level = exec
                 .variables
@@ -7007,6 +7017,12 @@ impl fusevm::ShellHost for ZshrsHost {
                     // Resync $PWD env so a parent `pwd` doesn't read
                     // the cwd the subshell `cd`'d into.
                     std::env::set_var("PWD", &cwd);
+                }
+                // Restore umask. zsh's `(umask 077)` doesn't leak to
+                // parent because the subshell forks; we run in-process
+                // so we manually reset.
+                unsafe {
+                    libc::umask(snap.umask as libc::mode_t);
                 }
             }
         });
@@ -8220,6 +8236,11 @@ pub struct SubshellSnapshot {
     /// Process working directory at subshell entry. `cd` inside the
     /// subshell shouldn't leak to the parent; we restore on End.
     pub cwd: Option<std::path::PathBuf>,
+    /// File-creation mask at subshell entry. zsh forks for `(...)` so
+    /// `umask` set inside dies with the child; we run subshells in
+    /// process so we must restore the mask on End. Otherwise
+    /// `umask 022; (umask 077); umask` shows 077 in the parent.
+    pub umask: u32,
 }
 
 /// Variable attribute record for `(t)` flag introspection. Mirrors
