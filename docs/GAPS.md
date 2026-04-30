@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${(P)$(...)}` — (P) indirect on cmd-subst result returned the captured output verbatim
+
+- The cmd-subst-as-flag-operand branch (added in batch 11) didn't honor (P) — it returned the captured output as the value, not the value of THE VARIABLE NAMED BY THE OUTPUT. zsh: `a=hi; ${(P)$(echo a)}` → `hi` (NOT `a`). Detect Parameter flag, look up the captured-output string as a variable name. Test: `test_param_p_indirect_with_cmd_subst`.
+
 ### `a[$n]=()` / `a[$#a]=()` — variable subscript in element-remove ignored
 
 - The compile path for subscripted-array assign emitted the LITERAL key string. For literal indices like `a[3]=()` this worked; but `a[$n]=()` reached the runtime as the literal "$n" which failed int-parse and the removal was a no-op. Compile path now routes the key through `compile_word_str` (var/cmd-subst expansion) when it contains `$` or `` ` ``. Test: `test_array_subscript_remove_with_var_index`.
