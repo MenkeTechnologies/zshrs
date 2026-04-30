@@ -7921,6 +7921,30 @@ fn test_cd_3plus_args_too_many() {
 }
 
 #[test]
+fn test_test_3args_unary_unary_arg_too_many() {
+    // zsh: `[ -z -n a ]` (flag + flag + arg layout) -> `[:1: too
+    // many arguments` exit 2 — `-z OPERAND` is the 2-arg form;
+    // extra `a` is the surplus. zshrs's unknown-binop arm fired
+    // first and reported `unknown condition: -n` (wrong category).
+    let (status, _, stderr) = run_zshrs("[ -z -n a ]");
+    assert_eq!(status, 2);
+    assert!(
+        stderr.contains("too many arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_shift_unknown_flag_errors() {
+    // zsh: `shift -X` (unknown flag besides -p) -> `shift:1: bad
+    // option: -X` exit 1. zshrs's catch-all pushed the flag string
+    // into array_names, masking typos.
+    let (status, _, stderr) = run_zshrs("shift -X");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -X"), "got: {stderr}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
