@@ -13698,6 +13698,73 @@ impl ShellExecutor {
                     }
                 }
 
+                // History modifier chain after inner expansion:
+                // `${${a:l}:r}` lowercases then strips extension.
+                // Direct port of zsh's hist.c modifier dispatch
+                // for `${${...}:MOD}`. Without this, the outer
+                // modifier was silently dropped and the inner
+                // result returned as-is. is_history_modifier
+                // checks the FIRST char so we strip the leading
+                // `:` before testing.
+                if let Some(after_colon) = rest.strip_prefix(':') {
+                    if self.is_history_modifier(after_colon) {
+                        return self.apply_history_modifiers(&inner_result, rest);
+                    }
+                }
+
+                // `/pat/repl` substitution after inner expansion.
+                // `${${a}//l/L}` for a=hello -> heLLo. Direct port
+                // of zsh's substitution dispatch when the outer
+                // operator is `//` or `/`. Reuse the strip/replace
+                // helpers via a fast manual scan.
+                if rest.starts_with('/') {
+                    // Distinguish `//` (global) from `/` (first).
+                    let (global, body) =
+                        if let Some(b) = rest.strip_prefix("//") {
+                            (true, b)
+                        } else {
+                            (false, &rest[1..])
+                        };
+                    // Find the unescaped delimiter `/` separating
+                    // pattern and replacement.
+                    let mut pat = String::new();
+                    let mut chars = body.chars().peekable();
+                    while let Some(&c) = chars.peek() {
+                        if c == '/' {
+                            chars.next();
+                            break;
+                        }
+                        if c == '\\' {
+                            chars.next();
+                            if let Some(&nx) = chars.peek() {
+                                pat.push(nx);
+                                chars.next();
+                            }
+                            continue;
+                        }
+                        pat.push(c);
+                        chars.next();
+                    }
+                    let mut repl = String::new();
+                    while let Some(&c) = chars.peek() {
+                        if c == '\\' {
+                            chars.next();
+                            if let Some(&nx) = chars.peek() {
+                                repl.push(nx);
+                                chars.next();
+                            }
+                            continue;
+                        }
+                        repl.push(c);
+                        chars.next();
+                    }
+                    if global {
+                        return inner_result.replace(&pat, &repl);
+                    } else {
+                        return inner_result.replacen(&pat, &repl, 1);
+                    }
+                }
+
                 return inner_result;
             }
         }

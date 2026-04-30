@@ -2219,6 +2219,20 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### `${${a:l}:r}` nested expansion now applies outer modifier/replace to inner result
+
+Direct port of zsh's hist.c modifier dispatch and substitution dispatch for `${${...}:MOD}` / `${${...}/pat/repl}`. zshrs's nested-expansion handler at line 13673 only checked for `[idx]` subscript after the inner closing brace; modifier chains (`:r`, `:t`, `:h`, `:e`, `:l`, `:u`, `:s/...`) and replace operators (`/pat/repl`, `//pat/repl`) were silently dropped.
+
+Examples now matching zsh:
+- `${${a:l}:r}` for `a=Hello.World` → `hello` (lowercase then strip extension)
+- `${${(j: :)a}:r}` for `a=(file.txt other.csv)` → `file.txt other` (join then strip last extension)
+- `${${a}//l/L}` for `a=hello` → `heLLo` (global replace)
+- `${${HOME}/wizard/USER}` → `/Users/USER` (single replace in indirect)
+
+The fix also corrects an `is_history_modifier` call site issue — the helper checks the FIRST char (so `:r` returns false because `:` isn't in the recognized list); strip the leading `:` before testing.
+
+Tests: `test_nested_expansion_modifier_chain`, `test_nested_expansion_replace`.
+
 ### `local arr=( "a b" c )` quote-aware split — preserves whitespace inside quoted elements
 
 zshrs's typeset/declare/local array path naively `split_whitespace()`'d the body, breaking quoted strings: `local arr=( "x y" z )` produced 3 elements `[x, y, z]` instead of zsh's 2 elements `["x y", z]`. Direct port of zsh's lex.c word-splitting for assignment RHS via a quote-aware scanner that honors `"..."`/`'...'` boundaries (and strips the quote chars from the result).
