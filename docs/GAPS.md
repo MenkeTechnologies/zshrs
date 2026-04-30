@@ -2219,6 +2219,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-seventh-pass — C-source-driven port)
 
+### Glob qualifier `*(L+N)` size check now uses lstat for symlinks (matches zsh)
+
+Direct port of zsh's pattern.c L qualifier. zsh uses lstat-based size — for a symlink, that's the LENGTH OF THE SYMLINK STRING (e.g. 9 bytes for "empty.txt"), NOT the target's size. zshrs's prefetched metadata had both followed (`m`) and symlink (`sm`) variants; the L qualifier was reading `m.len()` which gave the target size, so a symlink to an empty file appeared empty (size 0).
+
+Fix: prefer the symlink metadata `sm` when present, fall back to `m`. Now `*(L+0)` correctly includes symlinks (their path-string length is always > 0); `*(L0)` correctly excludes them.
+
+Test: `test_glob_qualifier_size_uses_lstat_for_symlinks`.
+
 ### Glob qualifier `*(:r)` — history modifiers applied per match
 
 Direct port of zsh's pattern.c qualifier modifier handling. `*(:r)` strips the extension from each match (`a.txt` → `a`); `*(:t)` keeps only the basename; `*(:e)` returns the extension. zshrs's `filter_by_qualifiers` had no `:` arm, so modifiers fell through to the catch-all and were ignored. Fix: detect `:` in the qualifier scan, consume the rest of the qualifier list as a modifier chain, and apply via the existing `apply_history_modifiers` helper to each match.

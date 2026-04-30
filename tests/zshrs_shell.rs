@@ -8488,6 +8488,35 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_glob_qualifier_size_uses_lstat_for_symlinks() {
+    // Direct port of zsh's pattern.c L qualifier — lstat-based
+    // size check. For a symlink, that's the LENGTH OF THE
+    // SYMLINK STRING (e.g. 9 bytes for "empty.txt"), NOT the
+    // target's size. zshrs's prefetched metadata had both
+    // followed (`m`) and symlink (`sm`) variants; the L
+    // qualifier was reading `m.len()` which gave the target
+    // size, so a symlink to an empty file appeared empty.
+    let d = "/tmp/glob_qual_l_test";
+    let _ = std::fs::create_dir_all(d);
+    let _ = std::fs::write(format!("{}/empty.txt", d), "");
+    let _ = std::os::unix::fs::symlink("empty.txt", format!("{}/link_e", d));
+    // L+0: include the symlink (lstat-size > 0) but exclude
+    // the empty regular file.
+    let (_, output, _) = run_zshrs(&format!("echo {}/*(L+0)", d));
+    let parts: std::collections::HashSet<&str> =
+        output.trim().split_whitespace().collect();
+    assert!(
+        parts.contains(format!("{}/link_e", d).as_str()),
+        "expected link_e in L+0 results: {output:?}"
+    );
+    assert!(
+        !parts.contains(format!("{}/empty.txt", d).as_str()),
+        "did not expect empty.txt in L+0 results: {output:?}"
+    );
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
 fn test_glob_qualifier_history_modifier() {
     // Direct port of zsh's pattern.c qualifier modifier
     // handling — `*(:r)` strips the extension from each match,

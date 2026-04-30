@@ -12619,10 +12619,23 @@ impl ShellExecutor {
                     result = result
                         .into_iter()
                         .filter(|f| {
+                            // zsh's L qualifier uses lstat size —
+                            // for symlinks, that's the path-string
+                            // length (NOT the target's size).
+                            // Direct port: prefer the symlink
+                            // metadata `sm` when present, fall
+                            // back to the followed metadata.
                             let size = meta_cache
                                 .get(f)
-                                .and_then(|(m, _)| m.as_ref())
-                                .map(|m| m.len())
+                                .map(|(m, sm)| {
+                                    sm.as_ref()
+                                        .map(|m| m.len())
+                                        .unwrap_or_else(|| {
+                                            m.as_ref()
+                                                .map(|m| m.len())
+                                                .unwrap_or(0)
+                                        })
+                                })
                                 .unwrap_or(0);
                             let pass = match cmp {
                                 '+' => size > target,
