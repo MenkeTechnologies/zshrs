@@ -7800,6 +7800,85 @@ fn test_assoc_odd_kv_pairs_errors() {
 }
 
 #[test]
+fn test_disown_unknown_jobspec_errors() {
+    // zsh: `disown %999` for non-existent id -> `disown:1: %999: no
+    // such job` exit 1. zshrs silently dropped non-matching ids.
+    let (status, _, stderr) = run_zshrs("disown %999");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("%999: no such job"), "got: {stderr}");
+}
+
+#[test]
+fn test_disown_dash_flag_treats_as_jobspec() {
+    // zsh: `disown -l` and `disown -h` (bash-style flags zsh
+    // doesn't have) are treated as job specs and error `disown:1:
+    // job not found: -l` exit 1. zshrs's flagless impl emitted
+    // bash-style `disown: -l: no such job`.
+    let (status, _, stderr) = run_zshrs("disown -l");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("zshrs:disown:1: job not found: -l"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_zstyle_dash_only_not_enough_args() {
+    // zsh: `zstyle -` (bare dash, no recognized option letter) ->
+    // `zstyle:1: not enough arguments` exit 1. zshrs's catch-all
+    // unknown-flag fallback emitted `invalid option: -` (wrong
+    // category).
+    let (status, _, stderr) = run_zshrs("zstyle -");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("not enough arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_fc_t_missing_arg_errors() {
+    // zsh: `fc -t` (no time-format arg) -> `fc:1: argument expected:
+    // -t` exit 1. zshrs's `i+=1` without bounds-check fell through
+    // to the no-positional recurse-endlessly path.
+    let (status, _, stderr) = run_zshrs("fc -t");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("argument expected: -t"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_functions_unknown_silent() {
+    // zsh: `functions FOO` for non-existent FOO emits nothing and
+    // returns 0. zshrs erred "no such function: FOO". Match zsh.
+    let (status, output, stderr) = run_zshrs("functions foo");
+    assert_eq!(status, 0);
+    assert!(output.is_empty(), "got: {output}");
+    assert!(
+        !stderr.contains("no such function"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_kill_dashdash_end_of_options() {
+    // zsh: `kill -- 999` treats `--` as end-of-options; subsequent
+    // args are PIDs. zshrs's flag walker treated `--` as a signal
+    // name (parsed leading `-` as separator, then `-` as the name)
+    // and errored "unknown signal: SIG-".
+    let (status, _, stderr) = run_zshrs("kill -- 999 2>/dev/null");
+    // 999 doesn't exist so kill itself fails (exit 1) but the --
+    // shouldn't trigger the bogus signal error.
+    let _ = status;
+    assert!(
+        !stderr.contains("unknown signal"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

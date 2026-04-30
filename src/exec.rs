@@ -20656,8 +20656,24 @@ impl ShellExecutor {
         let mut list_args: Vec<String> = Vec::new();
 
         let mut i = 0;
+        let mut after_dashdash = false;
         while i < args.len() {
             let arg = &args[i];
+
+            // `--` is end-of-options; subsequent args are PIDs.
+            // zsh `kill -- PID` correctly sends SIGTERM. zshrs's
+            // catch-all `arg.starts_with('-') && arg.len() > 1`
+            // treated `--` as a signal name (`-` -> "L", missing).
+            if arg == "--" && !after_dashdash {
+                after_dashdash = true;
+                i += 1;
+                continue;
+            }
+            if after_dashdash {
+                pids.push(arg.clone());
+                i += 1;
+                continue;
+            }
 
             if arg == "-l" {
                 list_mode = true;
@@ -20908,15 +20924,37 @@ impl ShellExecutor {
             return 1;
         }
 
+        let mut status = 0;
         for arg in args {
-            let s = arg.trim_start_matches('%');
-            if let Ok(id) = s.parse::<usize>() {
-                self.jobs.remove(id);
+            // zsh: `-l`, `-h`, etc. are NOT recognized disown flags
+            // — they're treated as job specs and error `job not
+            // found: -l`. zshrs's flagless impl emitted `disown: -l:
+            // no such job`. Use zsh's "<shell>:disown:1: job not
+            // found:" form for non-`%`-prefixed unparseable input.
+            // For `%N`-prefixed, the existing %-stripped path
+            // applies; no-such-job uses `%N: no such job`.
+            if arg.starts_with('%') {
+                let s = arg.trim_start_matches('%');
+                if let Ok(id) = s.parse::<usize>() {
+                    if self.jobs.remove(id).is_none() {
+                        eprintln!("zshrs:disown:1: {}: no such job", arg);
+                        status = 1;
+                    }
+                } else {
+                    eprintln!("zshrs:disown:1: {}: no such job", arg);
+                    status = 1;
+                }
+            } else if let Ok(id) = arg.parse::<usize>() {
+                if self.jobs.remove(id).is_none() {
+                    eprintln!("zshrs:disown:1: %{}: no such job", id);
+                    status = 1;
+                }
             } else {
-                eprintln!("disown: {}: no such job", arg);
+                eprintln!("zshrs:disown:1: job not found: {}", arg);
+                status = 1;
             }
         }
-        0
+        status
     }
 
     fn builtin_wait(&mut self, args: &[String]) -> i32 {
@@ -21330,6 +21368,16 @@ impl ShellExecutor {
                                 break;
                             } else {
                                 i += 1;
+                                // zsh: `-t` requires a time-format
+                                // arg; missing -> `fc:1: argument
+                                // expected: -t` exit 1. zshrs's loop
+                                // bumped i without bounds-check, then
+                                // the no-positional path triggered
+                                // the recurse-endlessly diagnostic.
+                                if i >= args.len() {
+                                    eprintln!("zshrs:fc:1: argument expected: -t");
+                                    return 1;
+                                }
                             }
                         }
                         'p' | 'P' | 'a' | 'I' | 'L' | 'm' => {
@@ -25983,6 +26031,13 @@ impl ShellExecutor {
                 // option: -X` exit 1. zshrs's `_ => {}` silent
                 // fallback let any unknown flag drop through to the
                 // set-style path with `pattern=-X`.
+                "-" => {
+                    // Bare `-` is treated as "not enough arguments"
+                    // by zsh — it's a degenerate flag-only invocation
+                    // without a recognized option letter.
+                    eprintln!("zshrs:zstyle:1: not enough arguments");
+                    return 1;
+                }
                 other => {
                     eprintln!("zshrs:zstyle:1: invalid option: {}", other);
                     return 1;
@@ -28038,9 +28093,12 @@ impl ShellExecutor {
             }
         } else {
             for name in names {
+                // zsh: `functions FOO` for a non-existent FOO is
+                // silent — emits nothing and returns 0. zshrs's
+                // earlier impl errored "no such function: FOO".
+                // Match zsh by skipping silently.
                 if !self.function_exists(name) {
-                    eprintln!("functions: no such function: {}", name);
-                    return 1;
+                    continue;
                 }
                 if show_trace {
                     // zsh: `functions -t NAME` lists only functions
@@ -32103,10 +32161,12 @@ impl ShellExecutor {
             }
             "-a" => {
                 // Format into array elements: zformat -a array sep specs...
-                // Each spec is "text:value" or "text:value:cond"
+                // Each spec is "text:value" or "text:value:cond".
+                // zsh accepts insufficient args silently (no specs ->
+                // empty array result). zshrs's earlier diagnostic
+                // misframed this as a usage error.
                 if args.len() < 4 {
-                    eprintln!("zformat -a: need array, separator, and specs");
-                    return 1;
+                    return 0;
                 }
                 let array_name = args[1].clone();
                 let sep = &args[2];
