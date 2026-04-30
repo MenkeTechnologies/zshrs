@@ -10248,6 +10248,31 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_array_slice_at_preserves_splice_in_assignment() {
+    // `b=("${a[@]:1}")` — array-slice with `[@]` should preserve
+    // element boundaries when used in array-init context. Was
+    // collapsing to single joined element. Compile path now
+    // re-attaches `[@]` to the name passed to BUILTIN_PARAM_SUBSTRING
+    // (and EXPR variant); runtime returns Value::Array when force_array.
+    let (_, output, _) =
+        run_zshrs(r#"a=(1 2 3); a=("${a[@]:1}"); echo "$#a""#);
+    assert_eq!(output.trim(), "2");
+    let (_, output, _) =
+        run_zshrs(r#"a=(1 2 3); for x in "${a[@]:1}"; do echo "<$x>"; done"#);
+    assert_eq!(output.trim(), "<2>\n<3>");
+}
+
+#[test]
+fn test_array_consume_loop_terminates() {
+    // The classic shift-via-slice idiom. Was looping forever because
+    // each `a=("${a[@]:1}")` left a unchanged.
+    let (_, output, _) = run_zshrs(
+        r#"a=(1 2 3); while (($#a > 0)); do echo "${a[1]}"; a=("${a[@]:1}"); done"#,
+    );
+    assert_eq!(output.trim(), "1\n2\n3");
+}
+
+#[test]
 fn test_printf_redirect_to_file_writes_data() {
     // `printf "abc" > file` was leaking output to stdout AND leaving
     // the file empty because Rust's print! is block-buffered when

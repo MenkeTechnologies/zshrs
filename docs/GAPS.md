@@ -1572,6 +1572,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `${arr[@]:offset}` array slice collapsed splice in assignment context
+
+- `b=("${a[@]:1}")` should give `b` 2 elements (when `a` had 3); was giving 1 because BUILTIN_PARAM_SUBSTRING returned a joined scalar regardless of `[@]`. Compile path now re-attaches `[@]`/`[*]` to the name (parse_param_modifier dropped it). Runtime detects the suffix and returns `Value::Array` when `force_array`. Same fix for the EXPR variant. Without this, the canonical "shift-via-slice" idiom `while ((#a > 0)); do ...; a=("${a[@]:1}"); done` looped forever. Tests: `test_array_slice_at_preserves_splice_in_assignment`, `test_array_consume_loop_terminates`.
+
 ### `printf "abc" > file` left file empty AND leaked output to stdout
 
 - Rust's `print!` is block-buffered when stdout is a non-tty (file via dup2). The `redirect_scope` restored the original stdout fd via dup2 BEFORE the buffer flushed, so buffered data ended up on the original terminal and the file stayed empty. `echo "abc"` worked because `println!` triggered line-buffer flush. Added explicit `std::io::stdout().flush()` at the end of `builtin_printf`, `builtin_echo`, `builtin_print` so non-newline output reaches the redirect target before scope restoration. Test: `test_printf_redirect_to_file_writes_data`.
