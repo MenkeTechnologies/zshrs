@@ -14150,6 +14150,11 @@ impl ShellExecutor {
                         repl.push(c);
                         chars.next();
                     }
+                    // zsh expands $-refs in both the pattern and the
+                    // replacement. Without this, `${${a:-foo}/foo/$b}`
+                    // left `$b` literal instead of substituting.
+                    let pat = self.expand_string(&pat);
+                    let repl = self.expand_string(&repl);
                     if global {
                         return inner_result.replace(&pat, &repl);
                     } else {
