@@ -20364,7 +20364,12 @@ impl ShellExecutor {
                 {
                     sig = *s;
                 } else {
-                    eprintln!("kill: invalid signal: {}", arg);
+                    // zsh: `unknown signal: SIGFOO` followed by a hint
+                    // line `type kill -l for a list of signals`. zshrs
+                    // emitted the bash-style `kill: invalid signal:
+                    // -FOO` (with the leading dash, no SIG prefix).
+                    eprintln!("zshrs:kill:1: unknown signal: SIG{}", sig_name);
+                    eprintln!("zshrs:kill:1: type kill -l for a list of signals");
                     return 1;
                 }
             } else {
@@ -25899,6 +25904,12 @@ impl ShellExecutor {
             };
         let mut arg_idx = 0;
         let mut output = String::new();
+        // Track whether any unknown-directive error fired so we can
+        // return non-zero at the end. zsh exits 1 on the first
+        // invalid directive but still emits already-formatted output;
+        // zshrs printed the error then returned 0, masking the
+        // failure for scripts checking $?.
+        let mut had_error = false;
         // POSIX printf: re-apply the format string while args remain. The
         // outer label guards against infinite loops when the format
         // consumes no args (e.g. `printf 'literal'`) — exit on the second
@@ -26422,9 +26433,11 @@ impl ShellExecutor {
                         // zsh as invalid directives. Match zsh.
                         'a' | 'A' | 'v' | 'V' => {
                             eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
+                            had_error = true;
                         }
                         _ => {
                             eprintln!("zshrs:printf:1: %{}: invalid directive", specifier);
+                            had_error = true;
                         }
                     }
                 } else {
@@ -26447,7 +26460,11 @@ impl ShellExecutor {
         } else {
             print!("{}", output);
         }
-        0
+        if had_error {
+            1
+        } else {
+            0
+        }
     }
 
     #[allow(dead_code)]
