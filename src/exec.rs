@@ -20776,6 +20776,15 @@ impl ShellExecutor {
                     );
                     return 1;
                 }
+                // Non-numeric event spec (`fc -l blah`) is an "event
+                // not found" error rather than the numeric "no such
+                // event" form. zsh distinguishes the two: numeric
+                // out-of-range is "no such event: N"; non-numeric is
+                // "event not found: <text>".
+                if positional.len() == 1 && positional[0].parse::<i64>().is_err() {
+                    eprintln!("zsh:fc:1: event not found: {}", positional[0]);
+                    return 1;
+                }
                 // Two-positional `fc -l N M` is a RANGE query — zsh
                 // emits a different error: `no events in that range`.
                 // Single positional / no positional uses
@@ -21313,7 +21322,7 @@ impl ShellExecutor {
                         's' => is_suffix = true,
                         'm' => {} // pattern match, ignore for now
                         _ => {
-                            eprintln!("zshrs: unalias: bad option: -{}", ch);
+                            eprintln!("zshrs:unalias:1: bad option: -{}", ch);
                             return 1;
                         }
                     }
