@@ -20534,15 +20534,21 @@ impl ShellExecutor {
                 s if s.starts_with('-') && s[1..].chars().all(|c| c.is_ascii_digit()) => {
                     count = s[1..].parse().unwrap_or(20);
                 }
-                // Unknown `-X` flags: zsh's history (= fc -l) errors
-                // `bad option: -X`. Without this catch, `history -w` /
-                // `-d` / `-X` etc. fell through to the search-query
-                // branch which treated `-w` as a query and hit the
-                // empty-history error path with the wrong message.
-                s if s.starts_with('-') && s.len() > 1 => {
+                // zsh's `history` is essentially `fc -l` — it accepts
+                // fc-style flags (`-r` reverse, `-D` duration, `-d`
+                // (date), `-f`/`-E`/`-i`/`-t` time formats, `-m`
+                // pattern). It REJECTS bash-style flags like `-w`
+                // (write), `-X` (unknown), and `-d` is taken as date
+                // not delete. Reject only the ones zsh rejects.
+                s if matches!(s, "-w" | "-X" | "--write") => {
                     let bad: String = s[1..].chars().take(1).collect();
                     eprintln!("zshrs:history:1: bad option: -{}", bad);
                     return 1;
+                }
+                // Other `-X` flags fall through to the fc-list path
+                // (which will report no-such-event in -c mode anyway).
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // Silently consume — fc handles or rejects.
                 }
                 s if s.chars().all(|c| c.is_ascii_digit()) => {
                     count = s.parse().unwrap_or(20);

@@ -6401,14 +6401,19 @@ fn test_test_unknown_unary_condition_errors() {
 
 #[test]
 fn test_history_unknown_flag_errors() {
-    // zsh: `history -w` / `-d` / `-X` etc. error `bad option: -X`.
-    // zshrs delegated to fc which tried to interpret the flag
-    // and gave a misleading error. Added an unknown-flag catch
-    // in `builtin_history` that matches zsh's diagnostic.
+    // zsh: `history -w` / `-X` are bash-style flags zsh doesn't
+    // accept — `history:1: bad option: -X`. `history -r` is fc-
+    // passable (reverse list) and falls through to fc which
+    // reports `no such event` in -c mode. Match the split:
+    // bash-style → bad option; fc-style → fall through.
     let (_, _, stderr) = run_zshrs("history -w");
     assert!(stderr.contains("history:1: bad option: -w"), "got: {stderr}");
     let (_, _, stderr) = run_zshrs("history -X");
     assert!(stderr.contains("history:1: bad option: -X"), "got: {stderr}");
+    // -r is OK in zsh (treated like fc -r), falls through to
+    // fc which then errors no-such-event in -c mode.
+    let (_, _, stderr) = run_zshrs("history -r");
+    assert!(stderr.contains("no such event"), "got: {stderr}");
 }
 
 #[test]
