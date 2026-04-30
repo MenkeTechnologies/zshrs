@@ -1388,7 +1388,14 @@ impl<'a> MathEval<'a> {
 
         // Unary operators
         if self.stack.is_empty() {
-            self.error = Some("stack empty".to_string());
+            // zsh: unary op with empty stack -> `bad math
+            // expression: operand expected at end of string`.
+            // zshrs's bare `stack empty` had no match for scripts
+            // grepping zsh's canonical wording.
+            self.error = Some(
+                "bad math expression: operand expected at end of string"
+                    .to_string(),
+            );
             return;
         }
 

@@ -21051,6 +21051,7 @@ impl ShellExecutor {
         let mut count = 20usize;
         let mut show_all = false;
         let mut search_query = None;
+        let mut had_explicit_negative_count = false;
 
         let mut i = 0;
         while i < args.len() {
@@ -21072,6 +21073,7 @@ impl ShellExecutor {
                 }
                 s if s.starts_with('-') && s[1..].chars().all(|c| c.is_ascii_digit()) => {
                     count = s[1..].parse().unwrap_or(20);
+                    had_explicit_negative_count = true;
                 }
                 // zsh's `history` is essentially `fc -l` — it accepts
                 // fc-style flags (`-r` reverse, `-D` duration, `-d`
@@ -21079,7 +21081,10 @@ impl ShellExecutor {
                 // pattern). It REJECTS bash-style flags like `-w`
                 // (write), `-X` (unknown), and `-d` is taken as date
                 // not delete. Reject only the ones zsh rejects.
-                s if matches!(s, "-w" | "-X" | "--write") => {
+                s if matches!(s, "-w" | "-X" | "-S" | "--write") => {
+                    // bash-style flags zsh's history doesn't accept.
+                    // -S is bash's "save" flag (zsh's history can't
+                    // write because it's just `fc -l`).
                     let bad: String = s[1..].chars().take(1).collect();
                     eprintln!("zshrs:history:1: bad option: -{}", bad);
                     return 1;
@@ -21120,7 +21125,16 @@ impl ShellExecutor {
             if let Some(ref q) = search_query {
                 eprintln!("zshrs:fc:1: event not found: {}", q);
             } else {
-                let event_id = if count != 20 { count } else { 1 };
+                // Negative count (`history -d -1`) resolves to 0 in
+                // zsh's count-from-end semantics with empty history.
+                // Track whether we got an explicit `-N` shape.
+                let event_id = if had_explicit_negative_count {
+                    0
+                } else if count != 20 {
+                    count
+                } else {
+                    1
+                };
                 eprintln!("zshrs:fc:1: no such event: {}", event_id);
             }
             return 1;
@@ -21215,6 +21229,15 @@ impl ShellExecutor {
                                 i += 1;
                                 if i < args.len() {
                                     editor = Some(args[i].clone());
+                                } else {
+                                    // zsh: `fc -e` (no following
+                                    // editor arg) -> `fc:1: argument
+                                    // expected: -e` exit 1. zshrs
+                                    // silently let the missing arg
+                                    // slip through, falling into
+                                    // the recurse-endlessly path.
+                                    eprintln!("zshrs:fc:1: argument expected: -e");
+                                    return 1;
                                 }
                             }
                         }

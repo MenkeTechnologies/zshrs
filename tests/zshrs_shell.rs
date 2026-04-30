@@ -7441,6 +7441,51 @@ fn test_fg_bg_no_job_control_in_script() {
 }
 
 #[test]
+fn test_fc_e_missing_editor_arg_errors() {
+    // zsh: `fc -e` (no following editor arg) -> `fc:1: argument
+    // expected: -e` exit 1. zshrs let the missing arg fall through
+    // to the recurse-endlessly path.
+    let (_, _, stderr) = run_zshrs("fc -e");
+    assert!(
+        stderr.contains("argument expected: -e"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_history_d_negative_resolves_to_zero() {
+    // zsh: `history -d -N` (negative count) resolves to event 0
+    // (count-from-end with empty history). zshrs reported the
+    // absolute count value (1) instead.
+    let (_, _, stderr) = run_zshrs("history -d -1");
+    assert!(stderr.contains("no such event: 0"), "got: {stderr}");
+}
+
+#[test]
+fn test_history_S_bad_option() {
+    // zsh: `history -S` -> `history:1: bad option: -S` exit 1.
+    // bash-style "save" flag that zsh's history doesn't accept.
+    // zshrs silently consumed the flag and emitted the no-such-event
+    // pass-through.
+    let (status, _, stderr) = run_zshrs("history -S");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("bad option: -S"), "got: {stderr}");
+}
+
+#[test]
+fn test_let_unary_op_no_operand() {
+    // zsh: `let "!"` -> `1: bad math expression: operand expected
+    // at end of string`. zshrs's MathContext emitted a bare `stack
+    // empty` (no zsh-canonical prefix), missing the message that
+    // scripts grep for.
+    let (_, _, stderr) = run_zshrs(r#"let "!""#);
+    assert!(
+        stderr.contains("bad math expression: operand expected"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
