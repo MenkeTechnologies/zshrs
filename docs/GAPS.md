@@ -2201,6 +2201,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: edit-mode fc takes at most 2 positional bounds (`fc FIRST [LAST]`); 3+ -> `fc:1: too many arguments` exit 1. zshrs's edit path took args.first() and ignored the rest, falling into the prefix-search path. Added a `positional.len() > 2` precheck. Test: `test_fc_edit_too_many_args_errors`.
 
+### `fc -l 1 abc 2` (text-name in middle) reported "too many arguments" instead of "event not found: abc"
+
+- zsh: text-name miss takes precedence over count-error in the 3+arg fc-list path. zshrs only checked `positional[0]` — if the non-numeric was in the middle, "too many arguments" fired instead. Extended the scan to find the FIRST non-numeric across all positions. Test: `test_fc_l_3plus_text_in_middle`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
