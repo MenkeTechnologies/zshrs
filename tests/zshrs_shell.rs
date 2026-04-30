@@ -6400,6 +6400,22 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_print_P_L_uses_in_shell_shlvl() {
+    // zsh: `print -P "%L"` outputs the in-shell SHLVL (already
+    // incremented at startup over the parent's value). zshrs's
+    // `build_prompt_context` read `env::var("SHLVL")` which still
+    // held the parent's pre-increment value, so `%L` was off by 1.
+    // Now reads `self.variables["SHLVL"]` first.
+    let (_, output, _) = run_zshrs(r#"echo "SHLVL=$SHLVL"; print -P "L=%L""#);
+    let lines: Vec<&str> = output.lines().collect();
+    let shlvl_line = lines.iter().find(|l| l.starts_with("SHLVL=")).unwrap();
+    let l_line = lines.iter().find(|l| l.starts_with("L=")).unwrap();
+    let shlvl: i32 = shlvl_line.trim_start_matches("SHLVL=").parse().unwrap();
+    let l: i32 = l_line.trim_start_matches("L=").parse().unwrap();
+    assert_eq!(l, shlvl, "got SHLVL={shlvl}, %L={l}");
+}
+
+#[test]
 fn test_typeset_integer_float_default_zero() {
     // zsh: `typeset -i x` initializes x=0; `typeset -F y` initializes
     // y=0.0000000000 (default precision 10). zshrs left them empty.
