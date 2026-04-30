@@ -6400,6 +6400,28 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_qq_flag_empty_array_emits_quoted_pair() {
+    // zsh: `${(qq)a}` for an empty array emits `''` (one empty
+    // quoted pair) — the array is treated as `[""]` for quoting so
+    // the result still occupies a slot. zshrs returned actually
+    // empty (consumer-droppable). Added an empty-array branch in
+    // the q-flag state transition.
+    let (_, output, _) = run_zshrs(r#"a=(); print "${(qq)a}""#);
+    assert_eq!(output.trim(), "''");
+}
+
+#[test]
+fn test_array_slice_neg_start_below_neg_len_empty() {
+    // zsh: `${a[-5,-1]}` with `len=3` empties — the start index
+    // is below the array's lower bound. zshrs clamped both
+    // negatives to valid range and returned the full array.
+    let (_, output, _) = run_zshrs(r#"a=(1 2 3); print "[${a[-5,-1]}]""#);
+    assert_eq!(output.trim(), "[]");
+    let (_, output, _) = run_zshrs(r#"a=(1 2 3); print "[${a[-3,-1]}]""#);
+    assert_eq!(output.trim(), "[1 2 3]");
+}
+
+#[test]
 fn test_paren_at_flag_empty_array_preserves_brackets() {
     // `(@)NAME` is the splice equivalent of `[@]` — surrounding
     // literals must stick to first/last elements (so `[${(@)a}]`

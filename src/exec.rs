@@ -274,6 +274,14 @@ fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<String> {
     if start < 0 && end < 0 && start > end {
         return Vec::new();
     }
+    // Negative start below `-len` empties — zsh treats the slice as
+    // entirely out of range. `${a[-5,-1]}` with len=3 returns
+    // nothing because the lower bound is past the array's start.
+    // Without this check we clamped start up to 1 and returned the
+    // entire array.
+    if start < 0 && start < -len {
+        return Vec::new();
+    }
     let resolve = |i: i64| -> i64 {
         if i < 0 {
             (len + i + 1).max(1)
@@ -3185,7 +3193,19 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                     state = match state {
                         St::S(s) => St::S(quote_one(&s)),
-                        St::A(a) => St::A(a.into_iter().map(|s| quote_one(&s)).collect()),
+                        St::A(a) => {
+                            // Empty array under `(q)`/`(qq)` flag emits a
+                            // single empty quoted pair (`''`) — zsh treats
+                            // the empty array as `[""]` for quoting so the
+                            // result still occupies a slot. Without this
+                            // special case, `${(qq)a}` for an empty `a`
+                            // produced an actually-empty string.
+                            if a.is_empty() {
+                                St::A(vec![quote_one("")])
+                            } else {
+                                St::A(a.into_iter().map(|s| quote_one(&s)).collect())
+                            }
+                        }
                     };
                 }
                 'g' => {

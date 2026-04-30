@@ -1745,6 +1745,14 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - The `(@)NAME` flag form is the splice equivalent of `[@]` — each element becomes its own arg; surrounding literals should stick to first/last (so `[${(@)a}]` for an empty `a` still prints `[]`). zshrs's `is_splice_expansion` only matched `[@]`/`[*]`/slice forms, so `(@)` fell into DISTRIBUTE which drops the brackets when the array is empty. Added a `(...)` flag-block check that returns true when the flag set contains `@`. Test: `test_paren_at_flag_empty_array_preserves_brackets`.
 
+### `${(qq)a}` for empty `a` returned empty instead of `''`
+
+- zsh's `(qq)` flag on an empty array emits `''` (a single quoted empty pair) — the array is treated as `[""]` for quoting so the result still occupies a slot. zshrs returned actually empty (would be silently dropped by an unquoted consumer). Added an empty-array branch in the `q`-flag's state transition that emits `[quote_one("")]` when input array is empty. Test: `test_qq_flag_empty_array_emits_quoted_pair`.
+
+### `${a[-5,-1]}` with len=3 returned full array instead of empty
+
+- zsh: when the negative start index is below the array's lower bound (e.g. `-5` on a 3-element array), the slice empties — zsh treats the start as "past the array's start" and returns nothing. zshrs's `slice_indexed_array` clamped both negatives to valid range and returned the full array. Added an explicit `start < -len` check that short-circuits to empty. Test: `test_array_slice_neg_start_below_neg_len_empty`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`
