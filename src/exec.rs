@@ -7139,12 +7139,22 @@ impl fusevm::ShellHost for ZshrsHost {
         // nested CallBuiltin handlers and host callbacks all see the same
         // executor.
         let fn_name = name.to_string();
-        let (saved_params, saved_local_count, saved_local_arr_count, saved_zero, saved_funcstack) =
+        let (saved_params, saved_local_count, saved_local_arr_count, saved_zero, saved_funcstack, saved_exit_trap) =
             with_executor(|exec| {
                 let prev = std::mem::replace(&mut exec.positional_params, args.clone());
                 let count = exec.local_save_stack.len();
                 let arr_count = exec.local_array_save_stack.len();
                 exec.local_scope_depth += 1;
+                // Save and clear EXIT trap before function body
+                // runs. Direct port of zsh's exec.c
+                // `dotrapargs(SIGEXIT, ...)` deferred-fire pattern
+                // — an EXIT trap set INSIDE a function fires on
+                // function return (NOT shell exit), and the outer
+                // EXIT trap is preserved across the call. Without
+                // this save/restore, `foo() { trap "echo X" EXIT; }`
+                // either fired X at SHELL exit (if no outer trap)
+                // or polluted the parent's EXIT trap.
+                let saved = exec.traps.remove("EXIT");
                 // zsh's `$0` inside a function returns the function name
                 // (under the FUNCTION_ARGZERO option, default on). Save
                 // the previous `$0` and install the function name.
@@ -7176,13 +7186,37 @@ impl fusevm::ShellHost for ZshrsHost {
                 exec.variables
                     .insert("_".to_string(), dollar_underscore.clone());
                 exec.pending_underscore = Some(dollar_underscore);
-                (prev, count, arr_count, prev_zero, prev_stack)
+                (prev, count, arr_count, prev_zero, prev_stack, saved)
             });
 
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
         let _ = vm.run();
         let status = vm.last_status;
+
+        // Fire any EXIT trap set INSIDE the function body, then
+        // restore the outer EXIT trap. zsh fires the function-
+        // scope EXIT trap BEFORE control returns to the caller,
+        // so `foo() { trap "echo X" EXIT; }; foo; echo done`
+        // outputs `X` then `done`. Without this, X never fired
+        // (or fired at shell exit, polluting unrelated commands).
+        let inner_exit = with_executor(|exec| exec.traps.remove("EXIT"));
+        if let Some(action) = inner_exit {
+            // Run the trap in the current (still-inside-function)
+            // scope so it sees `$0 == fn_name` etc. Errors are
+            // swallowed — zsh's trap dispatch tolerates body
+            // failures.
+            let _ = with_executor(|exec| {
+                exec.last_status = status;
+                exec.execute_script_zsh_pipeline(&action)
+            });
+        }
+        // Restore outer EXIT trap (if any).
+        if let Some(outer) = saved_exit_trap {
+            with_executor(|exec| {
+                exec.traps.insert("EXIT".to_string(), outer);
+            });
+        }
 
         with_executor(|exec| {
             // Set `$_` to the last arg the function was called with

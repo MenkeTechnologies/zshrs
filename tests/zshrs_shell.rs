@@ -8488,6 +8488,29 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_function_scope_exit_trap_fires_on_return() {
+    // Direct port of zsh's exec.c dotrapargs(SIGEXIT, ...) —
+    // a `trap "..." EXIT` set INSIDE a function fires when the
+    // function returns, NOT when the shell exits, and it does
+    // NOT pollute the outer EXIT trap.
+    let (_, output, _) = run_zshrs(
+        r#"foo() { trap "echo X" EXIT; }; foo; echo "after foo""#,
+    );
+    assert_eq!(output.trim(), "X\nafter foo", "got: {output:?}");
+}
+
+#[test]
+fn test_function_scope_exit_trap_preserves_outer() {
+    // Outer EXIT trap survives across a function call that
+    // also sets its own EXIT trap. zsh fires INNER on function
+    // return, then OUTER at shell exit.
+    let (_, output, _) = run_zshrs(
+        r#"trap "echo OUTER" EXIT; foo() { trap "echo INNER" EXIT; }; foo; echo "between""#,
+    );
+    assert_eq!(output.trim(), "INNER\nbetween\nOUTER", "got: {output:?}");
+}
+
+#[test]
 fn test_return_no_arg_uses_last_status() {
     // zsh: `return` with no arg returns with the status of the
     // most recently executed command. `foo() { false; return; }`
