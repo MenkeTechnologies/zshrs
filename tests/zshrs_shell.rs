@@ -7110,6 +7110,81 @@ fn test_test_lt_gt_not_string_comparators() {
 }
 
 #[test]
+fn test_setopt_single_letter_silent() {
+    // zsh: `setopt -h` (and other single-letter shortcuts) are
+    // accepted silently — they're shortcuts for option names from
+    // the option-letter table. zshrs's older default arm rejected
+    // any `-`-prefixed arg as an unknown name, breaking scripts
+    // that probed `setopt -h` (no-op for hashcmds shorthand).
+    let (status, _, stderr) = run_zshrs("setopt -h");
+    assert_eq!(status, 0);
+    assert!(!stderr.contains("no such option"), "got: {stderr}");
+}
+
+#[test]
+fn test_fc_l_3plus_args_too_many() {
+    // zsh: `fc -l 1 2 3` (range needs at most 2 bounds) -> `fc:1:
+    // too many arguments` exit 1. zshrs's range path collapsed any
+    // 2+-arg case to `no events in that range`, missing the count
+    // check.
+    let (_, _, stderr) = run_zshrs("fc -l 1 2 3");
+    assert!(stderr.contains("too many arguments"), "got: {stderr}");
+}
+
+#[test]
+fn test_type_empty_name_not_found() {
+    // zsh: `type ""` -> ` not found` exit 1. zshrs's PATH walker
+    // computed `dir + "/" + ""` which `Path::exists` reports as the
+    // directory itself, falsely matching `type ""` to the first
+    // PATH entry. Skip the lookup entirely for empty names.
+    let (status, output, _) = run_zshrs(r#"type """#);
+    assert_eq!(status, 1);
+    assert!(output.contains("not found"), "got: {output}");
+    assert!(!output.contains(" is /"), "got: {output}");
+}
+
+#[test]
+fn test_ulimit_invalid_number_errors() {
+    // zsh: `ulimit -f abc` -> `ulimit:1: invalid number: abc` exit
+    // 1. zshrs's `arg.parse().ok()` silently dropped non-numeric
+    // values, leaving value unset and printing the existing limit
+    // (`unlimited`) — masking the typo.
+    let (status, _, stderr) = run_zshrs("ulimit -f abc");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("invalid number: abc"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_test_double_equals_rejected() {
+    // POSIX `[`-test only accepts `=` for equality — `==` is the
+    // `[[`-cond extension. zsh: `[ a == a ]` -> `1: = not found`
+    // exit 1 (parses as `[ a = = a ]` and tries to look up the
+    // second `=` as a command). zshrs's match arm accepted both.
+    let (status, _, stderr) = run_zshrs("[ a == a ]");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("= not found"), "got: {stderr}");
+    // Sanity: single `=` still works in `[ ]`.
+    let (status, _, _) = run_zshrs("[ a = a ]");
+    assert_eq!(status, 0);
+    // Sanity: `==` still works in `[[ ]]`.
+    let (status, _, _) = run_zshrs("[[ a == a ]]");
+    assert_eq!(status, 0);
+}
+
+#[test]
+fn test_fc_long_option_reports_first_letter() {
+    // zsh: `fc --help` skips the leading `-` and reports the FIRST
+    // recognisable letter as the bad option: `fc:1: bad option:
+    // -h`. zshrs's loop hit `-` as the first char of `--help` and
+    // reported `bad option: --` (wrong identifier).
+    let (_, _, stderr) = run_zshrs("fc --help");
+    assert!(stderr.contains("bad option: -h"), "got: {stderr}");
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

@@ -1915,6 +1915,32 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's POSIX `[`-test does NOT accept `<` or `>` as string comparators — they're redirection operators outside `[`/`]`. `[ "5" \> "3" ]` -> `1: condition expected: >` exit 2. zshrs's match arms had `[a, "<", b]` and `[a, ">", b]` doing string compares (a bashism), hiding the syntax error. Replaced both arms with the zsh diagnostic. The `[[`-cond compiler still handles them as proper string comparators where they ARE valid. Test: `test_test_lt_gt_not_string_comparators`.
 
+## Closed (eighty-third-pass)
+
+### `setopt -h` (single-letter shortcut) errored "no such option" instead of accepting silently
+
+- zsh: single-letter `-X` / `+X` flags on setopt are shortcuts for option names from the option-letter table — `setopt -h` is a no-op accepted silently (`h` maps to `hashcmds`). zshrs's default arm rejected ANY `-`-prefixed arg as an unknown option name. Added a `len() == 2 && (-|+)` short-circuit that accepts the single-letter form silently before the unknown-option check. Test: `test_setopt_single_letter_silent`.
+
+### `fc -l 1 2 3` (3+ positional args) emitted "no events in that range" instead of "too many arguments"
+
+- zsh: `fc -l N M` is a range query; 3+ positionals -> `fc:1: too many arguments` exit 1. zshrs's range path collapsed any 2+-arg case to `no events in that range`, missing the explicit count check. Added a `positional.len() > 2` arm before the existing `== 2` range arm. Test: `test_fc_l_3plus_args_too_many`.
+
+### `type ""` (empty name) reported the first PATH entry as the resolved file
+
+- zsh: `type ""` -> ` not found` exit 1. zshrs's PATH walker computed `dir + "/" + ""` which `std::path::Path::exists` reports as TRUE (the directory itself exists), falsely matching `type ""` to the first PATH entry. Skip the lookup entirely for empty names. Test: `test_type_empty_name_not_found`.
+
+### `ulimit -f abc` (non-numeric value) silently dropped the value and printed "unlimited"
+
+- zsh: `ulimit -f abc` -> `ulimit:1: invalid number: abc` exit 1. zshrs's `arg.parse().ok()` silently discarded non-numeric input, leaving `value` unset and printing the existing limit. Replaced with explicit `match arg.parse::<u64>()` that errors on miss. Test: `test_ulimit_invalid_number_errors`.
+
+### `[ a == a ]` accepted `==` (bashism), masking POSIX `[`-test error
+
+- POSIX `[`-test only accepts `=` for equality — `==` is the `[[`-cond extension. zsh: `[ a == a ]` -> `1: = not found` exit 1 (zsh's parser sees `==` and tries to look up the second `=` as a command). zshrs's match arm `[a, "=", b] | [a, "==", b]` accepted both. Split into separate arms: `[_, "==", _]` errors with the zsh diagnostic; `[a, "=", b]` continues to do string compare. The `[[`-cond compiler still handles `==` as a proper string comparator. Test: `test_test_double_equals_rejected`.
+
+### `fc --help` reported "bad option: --" instead of "bad option: -h"
+
+- zsh skips the leading `-` of long-option-style typos and reports the FIRST recognisable letter as the bad option: `fc:1: bad option: -h`. zshrs's loop hit the first char `-` of `--help` and reported `bad option: --` — wrong identifier. Added a `'-' => {}` arm that consumes the extra dash silently so the next char becomes the diagnostic target. Test: `test_fc_long_option_reports_first_letter`.
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
