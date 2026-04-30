@@ -6384,6 +6384,34 @@ fn test_q_flag_empty_returns_quoted_empty() {
 }
 
 #[test]
+fn test_test_unknown_unary_condition_errors() {
+    // zsh: `[ -i /tmp ]` (unknown unary cond) errors `unknown
+    // condition: -i` exit 2. zshrs's `builtin_test` had no explicit
+    // arm for unknown two-arg unary forms — they fell through to
+    // the AND/OR split and silently returned 1 (which a consumer
+    // would read as "false", not "syntax error"). Added a 2-arg
+    // alphabetic-flag default arm.
+    let (status, _, stderr) = run_zshrs("[ -i /tmp ]");
+    assert_eq!(status, 2);
+    assert!(stderr.contains("unknown condition: -i"), "got: {stderr}");
+    let (status, _, stderr) = run_zshrs("[ -NN /tmp ]");
+    assert_eq!(status, 2);
+    assert!(stderr.contains("unknown condition: -NN"), "got: {stderr}");
+}
+
+#[test]
+fn test_test_eq_non_numeric_errors() {
+    // `[ a -eq a ]` with non-numeric operands errors `integer
+    // expression expected: a` exit 2. zshrs previously used
+    // `unwrap_or(0)` so `a` silently coerced to 0 and `a -eq 0`
+    // was true. Added an explicit parse-or-error in the `-eq`/`-ne`
+    // arms.
+    let (status, _, stderr) = run_zshrs("[ a -eq a ]");
+    assert_eq!(status, 2);
+    assert!(stderr.contains("integer expression expected: a"), "got: {stderr}");
+}
+
+#[test]
 fn test_command_long_option_treated_as_command_name() {
     // `command --help` (and any `--xxx` long-option-style arg) is
     // treated as a command name in zsh — `command not found: --help`

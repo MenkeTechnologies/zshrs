@@ -17943,18 +17943,47 @@ impl ShellExecutor {
 
             // Numeric comparisons
             [a, "-eq", b] => {
-                let a: i64 = a.parse().unwrap_or(0);
-                let b: i64 = b.parse().unwrap_or(0);
-                if a == b {
+                // zsh: errors `integer expression expected: <arg>`
+                // exit 2 when either operand is non-numeric. zshrs
+                // previously used `unwrap_or(0)` which silently
+                // coerced "abc" to 0 (so `[ a -eq 0 ]` returned
+                // true).
+                let av = match a.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        return 2;
+                    }
+                };
+                let bv = match b.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        return 2;
+                    }
+                };
+                if av == bv {
                     0
                 } else {
                     1
                 }
             }
             [a, "-ne", b] => {
-                let a: i64 = a.parse().unwrap_or(0);
-                let b: i64 = b.parse().unwrap_or(0);
-                if a != b {
+                let av = match a.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", a);
+                        return 2;
+                    }
+                };
+                let bv = match b.parse::<i64>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!("zshrs:[:1: integer expression expected: {}", b);
+                        return 2;
+                    }
+                };
+                if av != bv {
                     0
                 } else {
                     1
@@ -18059,6 +18088,46 @@ impl ShellExecutor {
                 if args.first() == Some(&"!") {
                     let rest: Vec<String> = args[1..].iter().map(|s| s.to_string()).collect();
                     return if self.builtin_test(&rest) == 0 { 1 } else { 0 };
+                }
+                // Two-arg unknown unary `[ -X foo ]` — zsh emits
+                // `unknown condition: -X` and exits 2. Without this
+                // explicit arm, an unknown flag like `-i` fell through
+                // the AND/OR split and silently returned 1 (which a
+                // consumer would read as "false" instead of "syntax
+                // error"). Match zsh's diagnostic + exit-2.
+                if args.len() == 2
+                    && args[0].starts_with('-')
+                    && args[0].len() > 1
+                    && !matches!(args[0], "-a" | "-o")
+                {
+                    let bytes = args[0].as_bytes();
+                    if bytes[1..].iter().all(|b| b.is_ascii_alphabetic()) {
+                        eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
+                        return 2;
+                    }
+                }
+                // Three-arg `[ a -OP b ]` where -OP isn't a known
+                // numeric/string comparator: zsh errors at the OP
+                // position. Detect and emit the same kind of error
+                // (most common case is `-eq` with non-numeric args).
+                if args.len() == 3 && args[1].starts_with('-') {
+                    if matches!(args[1], "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge") {
+                        // Check both operands are numeric.
+                        if args[0].parse::<i64>().is_err() {
+                            eprintln!(
+                                "zshrs:[:1: integer expression expected: {}",
+                                args[0]
+                            );
+                            return 2;
+                        }
+                        if args[2].parse::<i64>().is_err() {
+                            eprintln!(
+                                "zshrs:[:1: integer expression expected: {}",
+                                args[2]
+                            );
+                            return 2;
+                        }
+                    }
                 }
                 // POSIX `-a` (and) / `-o` (or) connectives — split the
                 // arg list on the first top-level connective and
