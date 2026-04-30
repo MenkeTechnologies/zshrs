@@ -16761,6 +16761,17 @@ impl ShellExecutor {
                 // (e.g. `a+=y` where the value parses as a non-arith
                 // string then errors silently).
                 eprintln!("zshrs:1: {}", msg);
+                // zsh aborts the surrounding command on arith
+                // errors — `echo $((2#5))` emits the diagnostic
+                // but does NOT print `0`. Match common error
+                // shapes — "bad math expression" is the canonical
+                // give-up signal; "invalid base" is a separate
+                // diagnostic from numeric base parsing. Without
+                // this, zshrs printed the diagnostic THEN the
+                // bogus `0` value.
+                if msg.starts_with("bad math expression") || msg.starts_with("invalid base") {
+                    std::process::exit(1);
+                }
                 "0".to_string()
             }
         }
@@ -19694,10 +19705,14 @@ impl ShellExecutor {
                     self.arrays.insert(var.clone(), vec![processed]);
                 } else if var_names.len() == 1 {
                     let var = &var_names[0];
-                    env::set_var(var, &processed);
+                    if !processed.contains('\0') {
+                        env::set_var(var, &processed);
+                    }
                     self.variables.insert(var.clone(), processed);
                 } else if let Some(var) = var_names.first() {
-                    env::set_var(var, &processed);
+                    if !processed.contains('\0') {
+                        env::set_var(var, &processed);
+                    }
                     self.variables.insert(var.clone(), processed);
                 }
                 return 1;
@@ -19763,7 +19778,13 @@ impl ShellExecutor {
             self.arrays.insert(var.clone(), words);
         } else if var_names.len() == 1 {
             let var = &var_names[0];
-            env::set_var(var, &processed);
+            // Skip env::set_var on NUL-containing values to avoid
+            // panic from std::env::set_var (which rejects NUL).
+            // Reading binary input via `read -d ""` is a real
+            // use case zsh handles silently; zshrs panicked.
+            if !processed.contains('\0') {
+                env::set_var(var, &processed);
+            }
             self.variables.insert(var.clone(), processed);
         } else {
             let ifs = self
@@ -19780,10 +19801,14 @@ impl ShellExecutor {
                 if j < words.len() {
                     if j == var_names.len() - 1 && words.len() > var_names.len() {
                         let remaining = words[j..].join(" ");
-                        env::set_var(var, &remaining);
+                        if !remaining.contains('\0') {
+                            env::set_var(var, &remaining);
+                        }
                         self.variables.insert(var.clone(), remaining);
                     } else {
-                        env::set_var(var, words[j]);
+                        if !words[j].contains('\0') {
+                            env::set_var(var, words[j]);
+                        }
                         self.variables.insert(var.clone(), words[j].to_string());
                     }
                 } else {
@@ -20797,8 +20822,13 @@ impl ShellExecutor {
                     // without job-table integration in BUILTIN_RUN_BG).
                 }
             } else if arg.is_empty() {
-                // `wait $!` with no background job: $! is empty. zsh
-                // silently returns 0; bash errors. Match zsh.
+                // zsh: `wait ""` (literal empty arg) -> `wait:1: job
+                // not found: ` exit 127. zshrs silently continued,
+                // masking the bad input. NOTE: `wait $!` with no bg
+                // job started doesn't reach this arm because $!
+                // defaults to "0" (the literal pid value), not "".
+                eprintln!("zshrs:wait:1: job not found: ");
+                status = 127;
                 continue;
             } else {
                 let pid: u32 = match arg.parse() {

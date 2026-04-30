@@ -7185,6 +7185,56 @@ fn test_fc_long_option_reports_first_letter() {
 }
 
 #[test]
+fn test_arith_invalid_base_aborts_command() {
+    // zsh: `echo $((37#1))` (base out of range 2..=36) errors
+    // `invalid base (must be 2 to 36 inclusive): 37` exit 1 AND
+    // aborts the surrounding command — `echo` doesn't print
+    // anything. zshrs printed the error then continued to print
+    // the bogus `0` from the math evaluator's default.
+    let (status, output, _) = run_zshrs("echo $((37#1))");
+    assert_eq!(status, 1);
+    assert!(!output.contains("0"), "got: {output}");
+}
+
+#[test]
+fn test_arith_bad_digit_for_base_errors() {
+    // zsh: `$((2#5))` (5 is not a valid binary digit) errors
+    // `bad math expression: operator expected at \`5'` exit 1.
+    // zshrs's `i64::from_str_radix(...).unwrap_or(0)` silently
+    // produced 0, masking the typo.
+    let (status, _, stderr) = run_zshrs("echo $((2#5))");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("bad math expression: operator expected at"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_wait_empty_string_errors() {
+    // zsh: `wait ""` (literal empty arg) -> `wait:1: job not found:`
+    // exit 127. zshrs silently continued past the empty arg,
+    // returning 0 — masking the bad input.
+    let (status, _, stderr) = run_zshrs(r#"wait """#);
+    assert_eq!(status, 127);
+    assert!(stderr.contains("job not found:"), "got: {stderr}");
+}
+
+#[test]
+fn test_read_d_empty_no_panic_on_nul() {
+    // zsh: `read -d ""` reads up to NUL (binary input mode); the
+    // captured value may contain NUL bytes. zshrs called
+    // `env::set_var` unconditionally, which panics on NUL —
+    // crashing the whole shell. Guard set_var with a NUL check.
+    let (status, _output, stderr) = run_zshrs(r#"printf 'a\0b\0' | { read -d "" v; echo "[$v]"; }"#);
+    assert!(
+        !stderr.contains("panicked"),
+        "should not panic; got stderr: {stderr}"
+    );
+    assert_eq!(status, 0);
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in
