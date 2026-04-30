@@ -1572,6 +1572,22 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 ## Closed (eighty-eighth-pass)
 
+### `((i=a[2]))` set i to the joined-scalar of $a, not the second element
+
+- ArithCompiler doesn't pre-resolve `name[idx]` on the RHS — the assignment landed `a`'s value (joined "1 2 3") instead of `a[2]`. Added `inner_arith.contains('[')` to the needs_eval check so MathEval (BUILTIN_ARITH_EVAL → evaluate_arithmetic) handles it; that path runs `pre_resolve_array_subscripts` before the math eval. Test: `test_arith_assign_from_array_subscript`.
+
+### `setopt extendedglob; echo /tmp/dir/^pat` skipped negation when `^` was after `/`
+
+- trigger_glob detection only fired for `^` at the start of the word, not for `^` at the start of any path component. Same for the bridge's expand_glob trigger. Both updated to also detect `/^`. Test: `test_glob_caret_at_path_component_with_extendedglob`.
+
+### `[[ a == a && (b == b || c == c) ]]` parse-errored at the inner `(`
+
+- The lexer sets `incondpat=true` after `==`/`!=`/`=~` so the RHS pattern can include glob chars. `incondpat` was only reset on `]]` — not on `&&`/`||`/`(`/`)`/`!`, so the next `(` after `&&` was lexed as a literal glob char (gettokstr) and the whole remainder collapsed into one String token. Direct port of zsh's cond.c par_cond_3 which treats those tokens as cond-pattern terminators. Test: `test_cond_double_bracket_grouping_parens`.
+
+### Subshell umask leaked to parent
+
+- zsh forks for `(...)` so `umask 077` inside dies with the child. We run subshells in-process; without snapshot+restore, the subshell's umask leaked. Added `umask` field to `SubshellSnapshot` (read via `libc::umask(0o022); umask(saved)`), restored on subshell_end via `libc::umask`. Test: `test_subshell_umask_restored_on_exit`.
+
 ### `${h[(I)key]}` on assoc searched VALUES instead of KEYS
 
 - zsh subst.c: on associative arrays, `(i)`/`(I)` search KEYS and return the matching key (last match for `(I)`); `(r)`/`(R)` search VALUES and return the matching value. Our `assoc_subscript_flag` always searched values and used the (i)/(I) flag only to switch RETURN type. Fixed by routing `(i)`/`(I)` to key search. Test: `test_assoc_subscript_i_flag_searches_keys`.

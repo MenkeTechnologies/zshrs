@@ -10248,6 +10248,60 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_arith_assign_from_array_subscript() {
+    // `((i=a[2]))` — the RHS array subscript must be pre-resolved so
+    // the assignment lands `a[2]`'s VALUE in `i`, not the joined-scalar
+    // form of the array.
+    let (_, output, _) = run_zshrs(r#"a=(10 20 30); ((i=a[2])); echo $i"#);
+    assert_eq!(output.trim(), "20");
+    let (_, output, _) =
+        run_zshrs(r#"a=(10 20 30); ((sum=a[1]+a[2]+a[3])); echo $sum"#);
+    assert_eq!(output.trim(), "60");
+}
+
+#[test]
+fn test_glob_caret_at_path_component_with_extendedglob() {
+    // `setopt extendedglob; echo /tmp/dir/^pat` — the negation operator
+    // in any path component (not just the leading word). Trigger
+    // detection extended to recognise `/^` as a glob meta when extglob
+    // is on.
+    let dir = std::env::temp_dir().join("zshrs_glob_caret_path");
+    let _ = std::fs::create_dir_all(&dir);
+    for name in ["a", "b", "c"] {
+        std::fs::File::create(dir.join(name)).unwrap();
+    }
+    let cmd = format!(r#"setopt extendedglob; echo {}/^a"#, dir.display());
+    let (_, output, _) = run_zshrs(&cmd);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(output.contains("/b"));
+    assert!(output.contains("/c"));
+    assert!(!output.contains("/a "));
+    assert!(!output.contains("/^a"));
+}
+
+#[test]
+fn test_cond_double_bracket_grouping_parens() {
+    // `[[ a == a && (b == b || c == c) ]]` — the lexer was leaving
+    // incondpat=true after `==` and never resetting on `&&`/`||`, so
+    // the `(` after `&&` was lexed as a literal glob char and the
+    // remainder collapsed into one String.
+    let (status, output, _) =
+        run_zshrs(r#"[[ a == a && (b == b || c == c) ]] && echo y"#);
+    assert_eq!(status, 0);
+    assert_eq!(output.trim(), "y");
+}
+
+#[test]
+fn test_subshell_umask_restored_on_exit() {
+    // zsh forks for `(...)` so `umask 077` inside dies with the child.
+    // We run subshells in-process; without snapshot+restore, the
+    // subshell's umask leaks to the parent.
+    let (_, output, _) =
+        run_zshrs(r#"umask 022; (umask 077); umask"#);
+    assert_eq!(output.trim(), "022");
+}
+
+#[test]
 fn test_brace_expand_with_inner_var_ref() {
     // `{one,${a},three}` — outer brace must expand AFTER ${a}
     // substitution. Without the new BUILTIN_BRACE_EXPAND emit,

@@ -480,9 +480,24 @@ impl<'a> ZshLexer<'a> {
                     // stay in pattern mode until ]] or && or ||
                 }
             }
-            // Reset pattern context on ]] or logical operators
-            if self.tok == LexTok::Doutbrack {
-                self.incondpat = false;
+            // Reset pattern context on ]] or logical operators (&&, ||)
+            // and grouping parens. zsh par_cond_3 (cond.c) treats
+            // these as cond-pattern terminators — the next operand is
+            // a fresh primary, NOT a continuation of the prior pattern.
+            // Without resetting on Damper/Dbar/Inpar/Outpar, the `(`
+            // after `[[ a == a && (b == b ... ` was lexed as a literal
+            // glob char (incondpat=true → gettokstr) and the whole
+            // remainder collapsed into one String token.
+            match self.tok {
+                LexTok::Doutbrack
+                | LexTok::Damper
+                | LexTok::Dbar
+                | LexTok::Inpar
+                | LexTok::Outpar
+                | LexTok::Bang => {
+                    self.incondpat = false;
+                }
+                _ => {}
             }
         } else {
             self.incondpat = false;

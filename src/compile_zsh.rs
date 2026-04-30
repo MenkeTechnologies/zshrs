@@ -1037,7 +1037,10 @@ impl ZshCompiler {
             // `^` is a no-op without `setopt extendedglob`, but routing
             // through expand_glob lets the runtime decide. The unquoted
             // check ensures `"^b"` (literal) isn't treated as a glob.
+            // Also matches `/path/^pat` — `^` at the start of any path
+            // component (after `/`) is a negation in extendedglob.
             || (untoked.starts_with('^') && untoked.len() > 1)
+            || untoked.contains("/^")
             // zsh glob qualifiers: `*(.)` / `path(mh-1)` etc. The `(...)`
             // suffix triggers globbing even when the body has no other
             // glob metachar — needed for `/etc/hosts(mh-100)` style.
@@ -2683,7 +2686,12 @@ impl ZshCompiler {
             // routes through `evaluate_arithmetic` → `expand_string`
             // first, so the expansion produces a numeric string before
             // arith evaluation.
-            || inner_arith.contains('$');
+            || inner_arith.contains('$')
+            // Array subscripts on the RHS (`((i=a[2]))`,
+            // `((sum=a[1]+a[2]))`). ArithCompiler doesn't pre-resolve
+            // `name[idx]` so the LHS gets the array's joined-scalar
+            // form. MathEval's path runs pre_resolve_array_subscripts.
+            || inner_arith.contains('[');
         if needs_eval {
             let idx_const = self.builder.add_constant(Value::str(inner_arith));
             self.builder.emit(Op::LoadConst(idx_const), 0);
