@@ -10248,6 +10248,36 @@ fn test_arith_assoc_subscript_pre_inc() {
 }
 
 #[test]
+fn test_typeset_a_preserves_existing_array_at_top_scope() {
+    // `a=(1 2 3); typeset -a a` should keep the array. Was clobbering
+    // to empty because the bare-declaration path always re-inited.
+    let (_, output, _) =
+        run_zshrs(r#"a=(1 2 3); typeset -a a; echo $a"#);
+    assert_eq!(output.trim(), "1 2 3");
+}
+
+#[test]
+fn test_typeset_aU_dedupes_existing_array() {
+    // `a=(a b a c b); typeset -aU a` — adding the unique attribute to
+    // an existing array should dedupe in place.
+    let (_, output, _) =
+        run_zshrs(r#"a=(a b a c b); typeset -aU a; echo $a"#);
+    assert_eq!(output.trim(), "a b c");
+}
+
+#[test]
+fn test_nested_expansion_subscript_after_flag() {
+    // `${(U)${(s. .)s}[1]}` — split inner, take [1], uppercase.
+    // Was uppercasing the joined string and ignoring the subscript.
+    let (_, output, _) =
+        run_zshrs(r#"s="x y z"; echo "${(U)${(s. .)s}[1]}""#);
+    assert_eq!(output.trim(), "X");
+    let (_, output, _) =
+        run_zshrs(r#"s="x y z"; echo "${(U)${(s. .)s}[2]}""#);
+    assert_eq!(output.trim(), "Y");
+}
+
+#[test]
 fn test_source_passes_extra_args_as_positionals() {
     // `. file.sh hi bye` should set $1=hi, $2=bye in the sourced
     // script. Was leaving the parent's positionals (or empty) visible.

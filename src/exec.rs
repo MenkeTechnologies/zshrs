@@ -14033,8 +14033,51 @@ impl ShellExecutor {
                                 _ => {}
                             }
                         }
-                        // Strip / replace operators after the inner ${...}.
+                        // [idx] subscript after the inner ${...}. zsh
+                        // treats the inner-with-flags-applied result as
+                        // an array (when (s::) split or (j::) etc.) and
+                        // `[N]` selects the Nth element. We collapsed
+                        // to space-joined scalar; recover by splitting
+                        // back on spaces and indexing.
                         let after = &rest[end + 1..];
+                        if let Some(rest_after) = after.strip_prefix('[') {
+                            if let Some(close_b) = rest_after.find(']') {
+                                let idx_str = &rest_after[..close_b];
+                                let idx_resolved = self.expand_string(idx_str);
+                                if let Ok(idx) = idx_resolved.trim().parse::<i64>() {
+                                    let parts: Vec<&str> =
+                                        out.split_whitespace().collect();
+                                    let len = parts.len() as i64;
+                                    let pos = if idx < 0 { len + idx } else { idx - 1 };
+                                    let picked = if pos >= 0 && (pos as usize) < parts.len() {
+                                        parts[pos as usize].to_string()
+                                    } else {
+                                        String::new()
+                                    };
+                                    // Re-apply case-transform flags to
+                                    // the picked element (parser puts
+                                    // U/L/C in `flags` already; my
+                                    // earlier loop applied them to the
+                                    // joined `out` — re-apply here so
+                                    // the subscript-after-flag form
+                                    // returns the cased element).
+                                    let mut picked = picked;
+                                    for f in &flags {
+                                        match f {
+                                            ZshParamFlag::Upper => {
+                                                picked = picked.to_uppercase();
+                                            }
+                                            ZshParamFlag::Lower => {
+                                                picked = picked.to_lowercase();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    return picked;
+                                }
+                            }
+                        }
+                        // Strip / replace operators after the inner ${...}.
                         if after.starts_with("##") || after.starts_with("%%") {
                             let op = if after.starts_with("##") { 1u8 } else { 3u8 };
                             return strip_match_op(&out, op, &after[2..], false);
@@ -21198,14 +21241,35 @@ impl ShellExecutor {
                     }
                 }
             } else if is_array || is_assoc {
-                // Just declaring the variable
-                if is_assoc {
-                    self.assoc_arrays
-                        .insert(arg.clone(), IndexMap::new());
-                } else {
-                    self.arrays.insert(arg.clone(), Vec::new());
+                // Just declaring the variable. At top scope, preserve
+                // existing values so `a=(1 2 3); typeset -aU a` keeps
+                // the array — only empty-init when the variable doesn't
+                // already exist (or we're inside a function and meant
+                // to shadow). zsh's typeset.c only zeroes a new binding,
+                // it doesn't clobber an existing one at global scope.
+                let in_function = self.local_scope_depth > 0 && !is_global;
+                let exists = self.arrays.contains_key(arg.as_str())
+                    || self.assoc_arrays.contains_key(arg.as_str());
+                if in_function || !exists {
+                    if is_assoc {
+                        self.assoc_arrays
+                            .insert(arg.clone(), IndexMap::new());
+                    } else {
+                        self.arrays.insert(arg.clone(), Vec::new());
+                    }
+                    self.variables.insert(arg.clone(), String::new());
                 }
-                self.variables.insert(arg.clone(), String::new());
+                // Apply unique-dedupe immediately when -U was given on
+                // an existing array. (The same dedupe block at the end
+                // of typeset_named only fires after var_attrs is set;
+                // mirror it here for the bare-declaration path so
+                // `a=(a b a c b); typeset -aU a` produces `a b c`.)
+                if is_unique {
+                    if let Some(arr) = self.arrays.get_mut(arg.as_str()) {
+                        let mut seen = std::collections::HashSet::new();
+                        arr.retain(|e| seen.insert(e.clone()));
+                    }
+                }
             } else {
                 // `typeset NAME` (no `=value`) attaches attributes to an
                 // existing variable WITHOUT clobbering its value at the
