@@ -6400,14 +6400,14 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
-fn test_command_no_args_redirection_error() {
-    // zsh: bare `command` (no args, no command name) errors
-    // `redirection with no command` exit 1 — `command` requires a
-    // command name. zshrs returned 0 silently, masking the missing
-    // CMD argument.
-    let (status, _, stderr) = run_zshrs("command");
-    assert_eq!(status, 1);
-    assert!(stderr.contains("redirection with no command"), "got: {stderr}");
+fn test_command_no_args_silent() {
+    // zsh: bare `command` (no args, no redirection) exits 0 silently
+    // (matches bash). The "redirection with no command" error fires
+    // only when a redirection is present without a command name; that
+    // path runs in the parser, not in this builtin. Earlier zshrs
+    // unconditionally errored, breaking benign `command` no-ops.
+    let (status, _, _) = run_zshrs("command");
+    assert_eq!(status, 0);
 }
 
 #[test]
@@ -6432,6 +6432,81 @@ fn test_wait_invalid_pid_uses_zsh_format() {
         stderr.contains("zshrs:wait:1: job not found: NOT_A_PID"),
         "got: {stderr}"
     );
+}
+
+#[test]
+fn test_shift_negative_count_errors() {
+    // zsh: `shift -1` -> `zsh:shift:1: argument to shift must be
+    // non-negative` exit 1. zshrs accepted negative as an array
+    // name and silently no-op'd.
+    let (status, _, stderr) = run_zshrs("shift -1");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("argument to shift must be non-negative"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_lineno_intrinsic_readonly() {
+    // zsh: LINENO is a hard-wired read-only special; `LINENO=99`
+    // errors `read-only variable: LINENO` exit 1. zshrs let the
+    // assignment through silently.
+    let (status, _, stderr) = run_zshrs("LINENO=99");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("read-only variable: LINENO"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_set_unknown_letter_errors() {
+    // zsh: `set -Z` -> `zsh:set:1: can't change option: -Z` exit 1.
+    // zshrs silently accepted any unknown letter, masking typos.
+    let (status, _, stderr) = run_zshrs("set -Z");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("can't change option: -Z"), "got: {stderr}");
+    let (status, _, stderr) = run_zshrs("set +Z");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("can't change option: +Z"), "got: {stderr}");
+}
+
+#[test]
+fn test_set_o_unknown_option_errors() {
+    // zsh: `set -o nonexistentopt` -> `zsh:set:1: no such option:
+    // nonexistentopt` exit 1. zshrs blindly inserted the unknown
+    // name into self.options, leaving stale junk in the option map.
+    let (status, _, stderr) = run_zshrs("set -o nonexistentopt");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("no such option: nonexistentopt"),
+        "got: {stderr}"
+    );
+    let (status, _, stderr) = run_zshrs("set +o nonexistentopt");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("no such option: nonexistentopt"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_unset_no_args_errors() {
+    // zsh: bare `unset` errors `not enough arguments` exit 1. zshrs
+    // returned 0 silently — masked accidental empty `unset $maybe`.
+    let (status, _, stderr) = run_zshrs("unset");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("not enough arguments"), "got: {stderr}");
+}
+
+#[test]
+fn test_disown_no_current_job_errors() {
+    // zsh: bare `disown` with no jobs errors `no current job` exit 1.
+    // zshrs silently returned 0.
+    let (status, _, stderr) = run_zshrs("disown");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("no current job"), "got: {stderr}");
 }
 
 #[test]

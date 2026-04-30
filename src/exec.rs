@@ -4079,7 +4079,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let name = iter.next().unwrap_or_default();
         let value = iter.next().unwrap_or_default();
         let blocked = with_executor(|exec| {
-            let is_ro = exec.readonly_vars.contains(&name)
+            // zsh has a fixed set of intrinsic read-only specials that
+            // can never be assigned to from script. This is a hard
+            // wired list (params.c `ROVAR` flag) — not user-settable.
+            let is_intrinsic_ro = matches!(
+                name.as_str(),
+                "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC" | "_"
+            );
+            let is_ro = is_intrinsic_ro
+                || exec.readonly_vars.contains(&name)
                 || exec
                     .var_attrs
                     .get(&name)
@@ -17200,6 +17208,12 @@ impl ShellExecutor {
     }
 
     fn builtin_unset(&mut self, args: &[String]) -> i32 {
+        // `unset` with no args is an error in zsh: `not enough arguments`
+        // exit 1. zshrs returned 0 silently — masked typo'd unset NAMES.
+        if args.is_empty() {
+            eprintln!("zshrs:unset:1: not enough arguments");
+            return 1;
+        }
         // `unset -f NAME...` — remove functions (mirror of `unfunction`).
         // Walk the arg list once: if we see -f, mark function-mode for
         // the remaining names. zsh allows `-v` to explicitly target
@@ -19542,6 +19556,10 @@ impl ShellExecutor {
             let arg = &args[i];
             if arg == "-p" {
                 from_end = true;
+            } else if arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) && arg.len() > 1 {
+                // zsh: negative count is rejected with this exact diagnostic.
+                eprintln!("zshrs:shift:1: argument to shift must be non-negative");
+                return 1;
             } else if arg.chars().all(|c| c.is_ascii_digit()) {
                 count = arg.parse().unwrap_or(1);
             } else {
@@ -20385,12 +20403,16 @@ impl ShellExecutor {
 
     fn builtin_disown(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            // Disown current job
+            // Disown current job — but if there isn't one, zsh emits
+            // `no current job` exit 1. zshrs returned 0 silently,
+            // hiding the no-current-job condition.
             if let Some(job) = self.jobs.current() {
                 let id = job.id;
                 self.jobs.remove(id);
+                return 0;
             }
-            return 0;
+            eprintln!("zshrs:disown:1: no current job");
+            return 1;
         }
 
         for arg in args {
@@ -21596,6 +21618,10 @@ impl ShellExecutor {
                     }
                     if let Some(opt) = iter.next() {
                         let (name, enable) = Self::normalize_option_name(opt);
+                        if !ZSH_OPTIONS_SET.contains(name.as_str()) {
+                            eprintln!("zshrs:set:1: no such option: {}", opt);
+                            return 1;
+                        }
                         self.options.insert(name, enable);
                     }
                 }
@@ -21612,6 +21638,10 @@ impl ShellExecutor {
                     }
                     if let Some(opt) = iter.next() {
                         let (name, enable) = Self::normalize_option_name(opt);
+                        if !ZSH_OPTIONS_SET.contains(name.as_str()) {
+                            eprintln!("zshrs:set:1: no such option: {}", opt);
+                            return 1;
+                        }
                         self.options.insert(name, !enable);
                     }
                 }
@@ -21834,15 +21864,19 @@ impl ShellExecutor {
                                 'b' => {
                                     self.options.insert("notify".to_string(), true);
                                 }
+                                // zsh's other single-letter `set` flags
+                                // from the official option-letter table
+                                // (man zshoptions OPTION ALIASES). Accept
+                                // silently; the runtime knob isn't always
+                                // wired but the flag itself is real.
+                                'd' | 'g' | 'h' | 'k' | 'p' | 'r' | 's' | 't'
+                                | 'y' | 'A' | 'B' | 'E' | 'F' | 'G' | 'H' | 'K'
+                                | 'L' | 'N' | 'P' | 'R' | 'T' | 'U' | 'X' | 'Y' => {}
                                 _ => {
-                                    // zsh silently accepts unknown
-                                    // single-letter `set` flags (legacy
-                                    // flag-letter table includes many
-                                    // historical reserved letters).
-                                    // Don't break scripts that pass
-                                    // `set -xy` or other multi-flag
-                                    // forms with letters zshrs doesn't
-                                    // map yet.
+                                    // Unknown letter: zsh errors with
+                                    // `can't change option: -X` exit 1.
+                                    eprintln!("zshrs:set:1: can't change option: -{}", c);
+                                    return 1;
                                 }
                             }
                         }
@@ -21881,10 +21915,15 @@ impl ShellExecutor {
                                 'b' => {
                                     self.options.insert("notify".to_string(), false);
                                 }
+                                // zsh's other single-letter `set` flags
+                                // (mirror the `-` arm so `+Z` errors
+                                // identically to `-Z`).
+                                'd' | 'g' | 'h' | 'k' | 'p' | 'r' | 's' | 't'
+                                | 'y' | 'A' | 'B' | 'E' | 'F' | 'G' | 'H' | 'K'
+                                | 'L' | 'N' | 'P' | 'R' | 'T' | 'U' | 'X' | 'Y' => {}
                                 _ => {
-                                    // Match the `-` arm's silent
-                                    // acceptance — zsh tolerates
-                                    // unknown letters in `+xyz` too.
+                                    eprintln!("zshrs:set:1: can't change option: +{}", c);
+                                    return 1;
                                 }
                             }
                         }
@@ -24172,14 +24211,14 @@ impl ShellExecutor {
         }
 
         if positional_args.is_empty() {
-            // zsh: bare `command` (no args, no command name) errors
-            // `redirection with no command` exit 1 — `command` REQUIRES
-            // a command name. zshrs returned 0 silently. Match zsh's
-            // diagnostic (the exact string is zsh's; the wording
-            // assumes the user meant `command CMD redir` and dropped
-            // CMD).
-            eprintln!("zshrs:1: redirection with no command");
-            return 1;
+            // zsh: bare `command` with no args AND no redirections
+            // exits 0 silently. The "redirection with no command"
+            // error in zsh fires only when redirections were present
+            // (e.g. `command >file`) — that case is handled by the
+            // parser, not here. The builtin sees identical empty-args
+            // for both cases, so we mirror the bare-command exit 0
+            // (matches bash too).
+            return 0;
         }
 
         let cmd = positional_args[0];
