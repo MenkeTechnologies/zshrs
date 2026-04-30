@@ -7879,6 +7879,48 @@ fn test_kill_dashdash_end_of_options() {
 }
 
 #[test]
+fn test_fc_empty_string_no_recursion() {
+    // zsh: `fc ""` -> `fc:1: event not found:` exit 1 (no match,
+    // no prior-command execution). zshrs's prefix-match found the
+    // most recent entry and recursively re-executed it — `fc ""`
+    // triggered infinite recursion (it ran `fc ""` again). Added
+    // an empty-string fast path before the prefix search.
+    let (status, _, stderr) = run_zshrs(r#"echo single; fc """#);
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("event not found:"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_umask_bad_class_char() {
+    // zsh: `umask z=r` -> `umask:1: bad symbolic mode operator: z`
+    // exit 1 (treats unknown class char as the operator-position
+    // diagnostic). zshrs's `_ => ok=false` collapsed all class
+    // errors to `invalid mask: z=r`.
+    let (status, _, stderr) = run_zshrs("umask z=r");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("bad symbolic mode operator: z"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn test_cd_3plus_args_too_many() {
+    // zsh: `cd ARG1 ARG2 ARG3` -> `cd:1: too many arguments` exit
+    // 1 (cd takes at most 2 args; the substitution form OLD NEW).
+    // zshrs let extras through silently.
+    let (status, _, stderr) = run_zshrs("cd /tmp /etc /usr");
+    assert_eq!(status, 1);
+    assert!(
+        stderr.contains("too many arguments"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
 fn test_zle_l_silent_in_script() {
     // zsh: in `-c`/`-f` mode the ZLE module isn't loaded, so `zle
     // -l` outputs nothing and returns 0. zshrs preloads its built-in

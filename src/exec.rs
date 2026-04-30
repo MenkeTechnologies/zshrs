@@ -16990,6 +16990,13 @@ impl ShellExecutor {
                 return 1;
             }
         }
+        // 3+ positional args: zsh -> `cd:1: too many arguments`
+        // exit 1. The substitution form takes 2; anything more is
+        // an error.
+        if positional_args.len() > 2 {
+            eprintln!("zshrs:cd:1: too many arguments");
+            return 1;
+        }
 
         let path_arg = positional_args.first().map(|s| *s).unwrap_or("~");
 
@@ -21776,6 +21783,14 @@ impl ShellExecutor {
                         1
                     }
                 }
+            } else if arg.is_empty() {
+                // Empty positional: zsh emits `fc:1: event not
+                // found:` (no match, no prior-command execution).
+                // zshrs's prefix-match found the most recent entry
+                // and recursively re-executed it — `fc ""` triggered
+                // infinite recursion (it ran `fc ""` again).
+                eprintln!("zshrs:fc:1: event not found: ");
+                1
             } else {
                 // Try to find command by prefix
                 match engine.search_prefix(arg, 1) {
@@ -29384,6 +29399,7 @@ impl ShellExecutor {
                         eprintln!("zshrs:umask:1: bad symbolic mode permission: {}", c);
                         return 1;
                     }
+                    let mut bad_class: Option<char> = None;
                     for cls in classes.chars() {
                         match cls {
                             'u' => perms[0] = bits,
@@ -29395,10 +29411,18 @@ impl ShellExecutor {
                                 perms[2] = bits;
                             }
                             _ => {
-                                ok = false;
+                                bad_class = Some(cls);
                                 break;
                             }
                         }
+                    }
+                    if let Some(c) = bad_class {
+                        // zsh: `umask z=r` -> `umask:1: bad symbolic
+                        // mode operator: z` exit 1 (treats unknown
+                        // class char as the operator-position
+                        // diagnostic).
+                        eprintln!("zshrs:umask:1: bad symbolic mode operator: {}", c);
+                        return 1;
                     }
                     if !ok {
                         break;
