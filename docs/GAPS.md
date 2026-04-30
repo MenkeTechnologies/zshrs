@@ -1691,6 +1691,36 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh's echo treats a bare `-` (single char) as a no-op flag — silently consumed. zshrs's flag parser skipped tokens shorter than 2 chars, so the lone `-` became a positional arg. Added an explicit `if arg == "-"` skip in the flag-walk. `--` (two dashes) is still NOT a recognized flag — stays literal. Test: `test_echo_bare_dash_is_noop_flag`.
 
+## Closed (eighty-first-pass)
+
+### `shift -1` silently no-op'd instead of erroring
+
+- zsh: `shift -1` errors `argument to shift must be non-negative` exit 1. zshrs's arg parser checked `arg.chars().all(is_ascii_digit)` for the count branch (which skips `-1` because of the leading `-`), then fell through to `array_names.push("-1")`. Since there was no array named `-1`, the shift was silently no-op'd. Added an explicit negative-numeric check before the digit-only branch that emits zsh's diagnostic and returns 1. Test: `test_shift_negative_count_errors`.
+
+### `LINENO=99` silently set the variable instead of erroring
+
+- zsh has a hard-wired set of intrinsic read-only specials (`PPID`, `LINENO`, `ZSH_ARGZERO`, `argv0`, `ARGC`, `_`) that can never be assigned to from script — assignment errors `read-only variable: NAME` exit 1. zshrs's `BUILTIN_SET_VAR` handler only consulted the user-managed `readonly_vars` set + `var_attrs.readonly`, so the intrinsics passed through. Added an `is_intrinsic_ro` matches!() check at the top of the readonly gate. Test: `test_lineno_intrinsic_readonly`.
+
+### `set -Z` (and `set +Z`) silently accepted unknown letters
+
+- zsh: `set -Z` errors `can't change option: -Z` exit 1. zshrs's multi-letter flag parser had a silent `_ => {}` fallback in the per-char `match`, accepting any unknown letter as a no-op. Replaced with an explicit error arm; also extended the recognized-letter list to cover zsh's full single-letter table (a, b, B, C, d, e, f, g, h, k, m, n, p, r, s, t, u, v, x, y, A, E, F, G, H, K, L, N, P, R, T, U, X, Y) so the existing knobs aren't broken by the new strict path. Same fix mirrored to the `+` arm. Test: `test_set_unknown_letter_errors`.
+
+### `set -o nonexistentopt` silently inserted junk into the option map
+
+- zsh: `set -o badopt` errors `no such option: badopt` exit 1. zshrs called `normalize_option_name(opt)` and inserted whatever name it returned into `self.options` — including names that aren't real zsh options. This left stale junk in the option map AND silenced typos. Added a `ZSH_OPTIONS_SET.contains(name)` guard before insertion in both the `-o` and `+o` arms; on miss, emit zsh's diagnostic and return 1. Test: `test_set_o_unknown_option_errors`.
+
+### `unset` (no args) returned 0 silently
+
+- zsh: bare `unset` errors `not enough arguments` exit 1 — at least one variable name is required. zshrs returned 0 silently, masking accidental empty `unset $maybe` (where `$maybe` expanded to nothing). Added an `args.is_empty()` early-error branch before the `-f`/`-v`/`-m` flag walk. Test: `test_unset_no_args_errors`.
+
+### `disown` (no args, no current job) returned 0 silently
+
+- zsh: bare `disown` with no current job errors `no current job` exit 1. zshrs had an `if let Some(job) = self.jobs.current()` block that ran the disown when a job existed, but the `if-let` simply fell through to `return 0` when there was no job — silent success on what should be an error. Restructured to error on the `None` arm. Test: `test_disown_no_current_job_errors`.
+
+### `command` (no args) errored "redirection with no command"
+
+- A previous batch added an unconditional error for bare `command` based on a misread of zsh's docs. Verified live: `command` (no args, no redirections) exits 0 silently in both zsh and bash; the "redirection with no command" diagnostic only fires when redirections are present without a command name (a parser-level concern, not the builtin's). Reverted the builtin-level error to a silent `return 0`. Test: `test_command_no_args_silent` (replaces the wrong `test_command_no_args_redirection_error`).
+
 ## Closed (eightieth-pass)
 
 ### `fc` (no args) reported "no such event: 1" instead of recursion-aborted
