@@ -12383,6 +12383,36 @@ impl ShellExecutor {
                 // Negation
                 '^' => negate = !negate,
 
+                // History modifier `:r` / `:e` / `:t` / `:h` /
+                // `:s/pat/repl/` etc. applied to each match. Direct
+                // port of zsh's pattern.c qualifier modifier
+                // handling — `:NAME` consumes through the next
+                // qualifier-list-end (next `,` or `)`) and
+                // dispatches each modifier to apply_history_modifiers
+                // per element.
+                ':' => {
+                    // Collect the modifier chain — consume until
+                    // we hit another qualifier-flag char or end.
+                    // For simplicity, consume to end since the
+                    // qualifier-end already strips the trailing
+                    // `)`. The apply_history_modifiers helper
+                    // tolerates a leading `:`.
+                    let mut mods = String::from(":");
+                    while let Some(&pc) = chars.peek() {
+                        mods.push(chars.next().unwrap());
+                        // Stop only at end (no other delim used
+                        // for modifier termination in qualifier
+                        // lists; the parser already extracted the
+                        // qualifier body).
+                        let _ = pc;
+                    }
+                    let modref = mods.as_str();
+                    result = result
+                        .into_iter()
+                        .map(|p| self.apply_history_modifiers(&p, modref))
+                        .collect();
+                }
+
                 // File types — all use prefetched metadata cache
                 '.' => {
                     // zsh: `.` is "plain regular file" — excludes

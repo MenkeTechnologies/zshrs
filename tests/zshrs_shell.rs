@@ -8488,6 +8488,31 @@ fn test_brace_zero_step_stays_literal() {
 }
 
 #[test]
+fn test_glob_qualifier_history_modifier() {
+    // Direct port of zsh's pattern.c qualifier modifier
+    // handling — `*(:r)` strips the extension from each match,
+    // `*(:t)` keeps only the basename, `*(:e)` returns the
+    // extension. Modifiers can be chained with file-type
+    // qualifiers: `*(.:r)` = regular files, then strip ext.
+    let d = "/tmp/glob_qual_mod_test";
+    let _ = std::fs::create_dir_all(d);
+    let _ = std::fs::write(format!("{}/a.txt", d), "");
+    let _ = std::fs::write(format!("{}/b.csv", d), "");
+    let (_, output, _) = run_zshrs(&format!("echo {}/*(:r)", d));
+    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    parts.sort();
+    assert_eq!(
+        parts,
+        vec![
+            format!("{}/a", d).as_str(),
+            format!("{}/b", d).as_str(),
+        ],
+        "got: {output:?}"
+    );
+    let _ = std::fs::remove_dir_all(d);
+}
+
+#[test]
 fn test_glob_qualifier_comma_or() {
     // Direct port of zsh's pattern.c qualifier parsing — top-
     // level `,` in `(...)` is OR (alternation between qualifier
