@@ -16772,6 +16772,12 @@ impl ShellExecutor {
                 if msg.starts_with("bad math expression") || msg.starts_with("invalid base") {
                     std::process::exit(1);
                 }
+                // NOTE: NOT aborting on "division by zero" — `((1/0))`
+                // arith COMMAND continues with non-zero status (zsh
+                // sets 2). Only `$((1/0))` substitution should abort,
+                // but both share this evaluator and we lack a context
+                // signal to distinguish. Keeping continue-with-"0"
+                // for now; substitution callers see the diagnostic.
                 "0".to_string()
             }
         }
@@ -18566,7 +18572,9 @@ impl ShellExecutor {
                 }
                 // 4+ args: distinguish two zsh diagnostics. If
                 // args[1] is a known binary operator (-eq/-lt/etc.,
-                // =/!=, etc.) and there are MORE than 3 args, zsh
+                // =/!=, etc.) and there are MORE than 3 args, OR
+                // args[0] is a known UNARY flag (-z, -n, -d, -f,
+                // etc.) followed by an operand and extra junk, zsh
                 // says `[:1: too many arguments`. Otherwise it's
                 // `condition expected: <args[0]>`.
                 if args.len() >= 4 {
@@ -18576,7 +18584,17 @@ impl ShellExecutor {
                             | "=" | "!=" | "<" | ">" | "==" | "-nt"
                             | "-ot" | "-ef"
                     );
-                    if known_binop {
+                    let unary_flag_at_0 = args[0].starts_with('-')
+                        && args[0].len() == 2
+                        && matches!(
+                            args[0],
+                            "-z" | "-n" | "-d" | "-f" | "-e" | "-r"
+                                | "-w" | "-x" | "-s" | "-h" | "-L"
+                                | "-O" | "-G" | "-N" | "-S" | "-p"
+                                | "-b" | "-c" | "-g" | "-k" | "-u"
+                                | "-t" | "-v" | "-o"
+                        );
+                    if known_binop || unary_flag_at_0 {
                         eprintln!("zshrs:[:1: too many arguments");
                     } else {
                         eprintln!("zshrs:1: condition expected: {}", args[0]);
@@ -20368,6 +20386,19 @@ impl ShellExecutor {
             }
         }
 
+        // zsh: `jobs %N` for an N that doesn't exist errors
+        // `jobs:1: %N: no such job` exit 1. zshrs's filter-by-id
+        // loop silently produced no output. Validate the requested
+        // ids against the current job list before listing.
+        if !job_ids.is_empty() {
+            for &requested in &job_ids {
+                if !self.jobs.list().iter().any(|j| j.id == requested) {
+                    eprintln!("zshrs:jobs:1: %{}: no such job", requested);
+                    return 1;
+                }
+            }
+        }
+
         // List jobs (optionally filtered)
         for job in self.jobs.list() {
             // Filter by specific job IDs if provided
@@ -20414,6 +20445,17 @@ impl ShellExecutor {
     }
 
     fn builtin_fg(&mut self, args: &[String]) -> i32 {
+        // zsh in `-c` mode has no real job-control regardless of the
+        // `monitor` option. zsh `fg %N` always errors `fg:1: no job
+        // control in this shell.` in this context. zshrs's options
+        // table reports `interactive=true` and `monitor=true` even
+        // in `-c` mode, so option-based checks don't work. Use the
+        // stdin-tty status: a real interactive shell has a tty on
+        // stdin; `-c` mode does not (stdin is piped or empty).
+        if !atty::is(atty::Stream::Stdin) {
+            eprintln!("zshrs:fg:1: no job control in this shell.");
+            return 1;
+        }
         let job_id = if let Some(arg) = args.first() {
             // Parse %N or just N
             let s = arg.trim_start_matches('%');
@@ -20463,6 +20505,11 @@ impl ShellExecutor {
     }
 
     fn builtin_bg(&mut self, args: &[String]) -> i32 {
+        // Same no-job-control semantics as `fg` — see comment there.
+        if !atty::is(atty::Stream::Stdin) {
+            eprintln!("zshrs:bg:1: no job control in this shell.");
+            return 1;
+        }
         let job_id = if let Some(arg) = args.first() {
             let s = arg.trim_start_matches('%');
             match s.parse::<usize>() {
@@ -21295,11 +21342,14 @@ impl ShellExecutor {
         // since `fc` itself is the prior command in `-c`, that's
         // infinite. (Without this guard, having a `print -s` entry
         // turned bare `fc` into a list-mode pass-through.)
-        if !list_mode
-            && positional.is_empty()
-            && !atty::is(atty::Stream::Stdin)
-            && args.is_empty()
-        {
+        if !list_mode && positional.is_empty() && !atty::is(atty::Stream::Stdin) {
+            // No-positional non-list-mode `fc` (with or without
+            // edit-form flags like `-r`, `-d`, `-e`) re-executes
+            // the prior command — which IS `fc` itself in `-c`
+            // mode, hence the recurse abort. Earlier guard required
+            // `args.is_empty()`, so `fc -r` and `fc -d` slipped
+            // past and zshrs ran the previous command (often the
+            // bogus `alias =` from the surrounding test harness).
             eprintln!("zsh:fc:1: current history line would recurse endlessly, aborted");
             return 1;
         }
