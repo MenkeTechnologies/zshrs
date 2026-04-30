@@ -1789,6 +1789,10 @@ Tests: `test_param_length_at_star_returns_positional_count`, `test_param_length_
 
 - zsh: `alias =val` / `alias =` errors `bad assignment` exit 1 — the alias name is required. zshrs silently created an alias keyed under empty string which then couldn't be removed via `unalias`. Added an `eq_pos == 0` guard in `builtin_alias` that emits the diagnostic and returns 1. Test: `test_alias_empty_name_errors`.
 
+### `functions +t NAME` errored "no such function: +t"
+
+- zsh: `functions +t NAME` / `+T` clears the trace attr silently (the off-switch counterpart to `-t`/`-T`). zshrs's flag matcher had no `+`-prefix arm — `+t` fell through to the names list, then the per-name lookup emitted `no such function: +t`. Added explicit `+t` / `+T` arms (and a combined `+xyz` arm for `+lt` etc.) that silently consume the flag. Test: `test_functions_plus_t_disable_trace_silent`.
+
 ## Closed (seventy-ninth-pass)
 
 ### `printf "%04x" 42` printed `  2a` instead of `002a`

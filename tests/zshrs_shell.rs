@@ -6400,6 +6400,18 @@ fn test_test_unknown_unary_condition_errors() {
 }
 
 #[test]
+fn test_functions_plus_t_disable_trace_silent() {
+    // zsh: `functions +t NAME` / `+T NAME` clears the trace attr
+    // silently. zshrs treated `+t` as a function name and emitted
+    // `no such function: +t`. Added explicit `+t`/`+T` arms (and
+    // a combined `+xyz` arm) that consume silently.
+    let (status, output, stderr) = run_zshrs("foo() { :; }; functions +t foo");
+    assert_eq!(status, 0);
+    assert_eq!(output, "");
+    assert_eq!(stderr, "");
+}
+
+#[test]
 fn test_alias_empty_name_errors() {
     // zsh: `alias =val` / `alias =` (empty NAME) errors
     // `bad assignment` exit 1. zshrs silently inserted an alias
