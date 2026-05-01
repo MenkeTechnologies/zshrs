@@ -30751,7 +30751,15 @@ impl ShellExecutor {
     }
 
     fn print_dir_stack(&self) {
-        let current = std::env::current_dir().unwrap_or_default();
+        // Use logical $PWD (preserves symlinks the user typed) — same
+        // source `dirs` reads. Falls back to OS cwd only when $PWD is
+        // unset. Without this, pushd /tmp; dirs printed /private/tmp
+        // on macOS instead of /tmp.
+        let current = self
+            .variables
+            .get("PWD")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         let home = std::env::var("HOME").ok();
         let tilde = |p: &std::path::Path| -> String {
             let s = p.to_string_lossy().to_string();
