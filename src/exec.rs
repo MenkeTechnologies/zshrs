@@ -42136,7 +42136,13 @@ impl ShellExecutor {
                             'b' => ignore_blanks = true,
                             'd' => dictionary = true,
                             'c' => check_only = true,
-                            _ => {}
+                            // coreutils sort errors on unknown short
+                            // flags. Old `_ => {}` masked typos like
+                            // `sort -X` (treating it as a no-op).
+                            _ => {
+                                eprintln!("sort: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
                         }
                     }
                 }
