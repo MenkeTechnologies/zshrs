@@ -27904,7 +27904,7 @@ impl ShellExecutor {
         match self.run_original_command(&cmd_name, &args) {
             Ok(status) => status,
             Err(e) => {
-                eprintln!("intercept_proceed: {}", e);
+                eprintln!("zshrs:intercept_proceed:1: {}", e);
                 1
             }
         }
@@ -29187,7 +29187,7 @@ impl ShellExecutor {
                     println!("{}={}", name, path);
                 }
             } else {
-                eprintln!("zshrs: hash: {}: not found", name);
+                eprintln!("zshrs:hash:1: {}: not found", name);
                 return 1;
             }
         }
