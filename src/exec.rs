@@ -38380,33 +38380,33 @@ impl ShellExecutor {
 
     /// clone - create a subshell with forked state
     fn builtin_clone(&mut self, args: &[String]) -> i32 {
-        use std::process::Command;
-
-        // clone creates a subshell that shares the parent's state
-        // We simulate this by spawning a new zshrs process
-        let mut cmd =
-            Command::new(std::env::current_exe().unwrap_or_else(|_| PathBuf::from("zshrs")));
-
-        if !args.is_empty() {
-            // If args provided, run them in the subshell
-            cmd.arg("-c").arg(args.join(" "));
-        }
-
-        // Export current variables to child
-        for (k, v) in &self.variables {
-            cmd.env(k, v);
-        }
-
-        match cmd.spawn() {
-            Ok(mut child) => match child.wait() {
-                Ok(status) => status.code().unwrap_or(0),
-                Err(_) => 1,
-            },
-            Err(e) => {
-                eprintln!("clone: failed to spawn subshell: {}", e);
-                1
+        // Direct port of zsh/Src/Modules/clone.c:43-107: detach
+        // current shell as session leader on the named tty. The
+        // earlier Rust stub spawned `zshrs -c <args>` as a normal
+        // child process, which is NOT what zsh's clone does — clone
+        // takes over the named tty (ttyname arg), forks, sets up a
+        // new session, makes the named tty the controlling tty for
+        // the child, and continues running the SAME shell on that
+        // tty. The parent exits.
+        //
+        // src/clone.rs provides clone_shell with the full ctty
+        // acquisition sequence (TIOCNOTTY / setsid / TIOCSCTTY).
+        // We delegate to it and surface stderr via the (status,
+        // text, pid) tuple. Setting `$!` to the new pid mirrors
+        // zsh's job-control side effect.
+        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (code, msg, pid) = crate::clone::builtin_clone(&argv);
+        if !msg.is_empty() {
+            if code == 0 {
+                print!("{}", msg);
+            } else {
+                eprint!("{}", msg);
             }
         }
+        if let Some(p) = pid {
+            self.variables.insert("!".to_string(), p.to_string());
+        }
+        code
     }
 
     /// log — list users currently logged in via utmp.
