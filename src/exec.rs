@@ -29118,11 +29118,13 @@ impl ShellExecutor {
                     }
                 }
                 "builtin" => {
-                    for name in [
-                        "cd", "pwd", "echo", "export", "unset", "source", "exit", "return", "true",
-                        "false", ":", "test", "[", "local", "declare", "jobs", "fg", "bg", "kill",
-                        "disown", "wait", "alias", "unalias", "set",
-                    ] {
+                    // Use the canonical BUILTIN_SET so every wired
+                    // builtin shows up in completion (was a hardcoded
+                    // 25-entry subset that missed bindkey, fc, getopts,
+                    // shopt, typeset, etc).
+                    let mut names: Vec<&str> = BUILTIN_SET.iter().copied().collect();
+                    names.sort();
+                    for name in names {
                         if name.starts_with(&prefix) {
                             results.push(name.to_string());
                         }
