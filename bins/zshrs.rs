@@ -625,6 +625,42 @@ fn main() {
 /// Main entry point — extracted so the fat binary can call it after
 /// registering the stryke handler.
 pub fn zshrs_main() {
+    // --daemon must run BEFORE the shell's tracing setup, otherwise the
+    // shell installs a global subscriber and the daemon's log::init returns
+    // Err — that breaks the runtime EnvFilter reload handle (`zlog level`).
+    // Short-circuit early; the daemon installs its own tracing subscriber.
+    #[cfg(feature = "daemon")]
+    {
+        let early_args: Vec<String> = env::args().collect();
+        if early_args.iter().any(|a| a == "--daemon") {
+            // Personality check still applies (POSIX never spawns the daemon),
+            // but the shell-mode init we'd otherwise rely on for that check
+            // hasn't run yet. Re-derive directly from argv0 + flags.
+            let posix = early_args.iter().any(|a| a == "--posix");
+            let argv0_basename = early_args
+                .first()
+                .and_then(|p| std::path::Path::new(p).file_name())
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let zsh_compat_argv = matches!(argv0_basename.as_str(), "zsh");
+            let posix_argv =
+                matches!(argv0_basename.as_str(), "sh" | "dash" | "bash") || posix;
+            if posix_argv || zsh_compat_argv {
+                eprintln!("zshrs: --daemon is only available in zshrs mode");
+                std::process::exit(1);
+            }
+            match zsh::daemon::run() {
+                Ok(()) => return,
+                Err(zsh::daemon::DaemonError::AlreadyRunning(_)) => return,
+                Err(e) => {
+                    eprintln!("zshrs: --daemon: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+
     // Initialize logging first — everything after this can use tracing macros.
     let startup_t0 = Instant::now();
 

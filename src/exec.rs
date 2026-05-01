@@ -19585,14 +19585,18 @@ impl ShellExecutor {
             }
         }
 
-        // Handle cd old new (substitution)
+        // Handle cd old new (substitution). Direct port of
+        // src/zsh/Src/builtin.c:910-927 — `u = strstr(pwd, argv[0])`
+        // finds the FIRST occurrence; the new string replaces only
+        // that occurrence. Rust's String::replace replaces ALL,
+        // so use replacen(old, new, 1) to match zsh.
         if positional_args.len() == 2 {
             if let Ok(cwd) = env::current_dir() {
                 let cwd_str = cwd.to_string_lossy();
                 let old = positional_args[0];
                 let new = positional_args[1];
                 if cwd_str.contains(old) {
-                    let new_path = cwd_str.replace(old, new);
+                    let new_path = cwd_str.replacen(old, new, 1);
                     if !quiet {
                         println!("{}", new_path);
                     }
@@ -19600,10 +19604,9 @@ impl ShellExecutor {
                     return self.do_cd(&new_path, quiet, use_cdpath, logical);
                 }
                 // zsh: if old is not in $PWD, the substitution fails
-                // with `cd:1: string not in pwd: <old>` exit 1. zshrs
-                // silently fell through and treated args[0] as the
-                // target dir, which is the bash-style `cd /tmp /etc`
-                // semantics — wrong for zsh.
+                // with `cd:1: string not in pwd: <old>` exit 1.
+                // builtin.c:914-916 emits the same diagnostic and
+                // returns NULL (which propagates to exit 1).
                 eprintln!("zshrs:cd:1: string not in pwd: {}", old);
                 return 1;
             }
@@ -32769,88 +32772,93 @@ impl ShellExecutor {
                 unsafe {
                     umask(mask as libc::mode_t);
                 }
-            } else if v.contains('=') {
-                // Symbolic: parse each `u=rwx`, `g=rx`, `o=` segment.
-                // Start from the CURRENT umask and modify only the
-                // mentioned classes. zsh keeps unmentioned classes
-                // at their existing bits.
-                let cur = unsafe {
+            } else if v.contains('=') || v.contains('+') || v.contains('-') {
+                // Symbolic mode — direct port of
+                // src/zsh/Src/builtin.c:7533-7591 bin_umask. Three
+                // operators:
+                //   `+`: um &= ~mask;        (allow these bits)
+                //   `-`: um |= mask;         (deny these bits)
+                //   `=`: um = (um | whomask) & ~mask;  (set exact)
+                //
+                // The `whomask` defaults to 0777 (all classes) when
+                // no class char is given. zsh accepts comma-separated
+                // segments per builtin.c:7584-7587.
+                let mut um = unsafe {
                     let m = umask(0);
                     umask(m);
                     m
-                };
-                let mut perms = [
-                    7 - ((cur >> 6) & 7) as u32,
-                    7 - ((cur >> 3) & 7) as u32,
-                    7 - (cur & 7) as u32,
-                ];
-                let mut ok = true;
-                for seg in v.split(',') {
-                    let seg = seg.trim();
-                    let eq = match seg.find('=') {
-                        Some(i) => i,
-                        None => {
-                            ok = false;
-                            break;
+                } as u32;
+                let bytes = v.as_bytes();
+                let mut i = 0;
+                while i < bytes.len() {
+                    // builtin.c:7542-7551 — parse class chars (u/g/o/a).
+                    let mut whomask: u32 = 0;
+                    while i < bytes.len() {
+                        match bytes[i] {
+                            b'u' => whomask |= 0o700,
+                            b'g' => whomask |= 0o070,
+                            b'o' => whomask |= 0o007,
+                            b'a' => whomask |= 0o777,
+                            _ => break,
                         }
-                    };
-                    let classes = &seg[..eq];
-                    let bits_str = &seg[eq + 1..];
-                    let mut bits: u32 = 0;
-                    let mut bad_perm: Option<char> = None;
-                    for c in bits_str.chars() {
-                        match c {
-                            'r' => bits |= 4,
-                            'w' => bits |= 2,
-                            'x' => bits |= 1,
-                            _ => {
-                                bad_perm = Some(c);
-                                break;
-                            }
-                        }
+                        i += 1;
                     }
-                    if let Some(c) = bad_perm {
-                        // zsh: `bad symbolic mode permission: Z` exit 1
-                        // (specific diagnostic for the unknown rwx char).
-                        eprintln!("zshrs:umask:1: bad symbolic mode permission: {}", c);
+                    if whomask == 0 {
+                        whomask = 0o777;
+                    }
+                    // builtin.c:7556-7563 — operator.
+                    if i >= bytes.len() {
+                        eprintln!("zshrs:umask:1: bad umask");
                         return 1;
                     }
-                    let mut bad_class: Option<char> = None;
-                    for cls in classes.chars() {
-                        match cls {
-                            'u' => perms[0] = bits,
-                            'g' => perms[1] = bits,
-                            'o' => perms[2] = bits,
-                            'a' => {
-                                perms[0] = bits;
-                                perms[1] = bits;
-                                perms[2] = bits;
-                            }
-                            _ => {
-                                bad_class = Some(cls);
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(c) = bad_class {
-                        // zsh: `umask z=r` -> `umask:1: bad symbolic
-                        // mode operator: z` exit 1 (treats unknown
-                        // class char as the operator-position
-                        // diagnostic).
-                        eprintln!("zshrs:umask:1: bad symbolic mode operator: {}", c);
+                    let umaskop = bytes[i] as char;
+                    if umaskop != '+' && umaskop != '-' && umaskop != '=' {
+                        eprintln!(
+                            "zshrs:umask:1: bad symbolic mode operator: {}",
+                            umaskop
+                        );
                         return 1;
                     }
-                    if !ok {
+                    i += 1;
+                    // builtin.c:7565-7576 — perm bits.
+                    let mut mask: u32 = 0;
+                    while i < bytes.len() && bytes[i] != b',' {
+                        match bytes[i] {
+                            b'r' => mask |= 0o444 & whomask,
+                            b'w' => mask |= 0o222 & whomask,
+                            b'x' => mask |= 0o111 & whomask,
+                            other => {
+                                eprintln!(
+                                    "zshrs:umask:1: bad symbolic mode permission: {}",
+                                    other as char
+                                );
+                                return 1;
+                            }
+                        }
+                        i += 1;
+                    }
+                    // builtin.c:7577-7583 — apply.
+                    match umaskop {
+                        '+' => um &= !mask,
+                        '-' => um |= mask,
+                        '=' => um = (um | whomask) & !mask,
+                        _ => unreachable!(),
+                    }
+                    if i < bytes.len() && bytes[i] == b',' {
+                        i += 1;
+                    } else {
                         break;
                     }
                 }
-                if !ok {
-                    eprintln!("umask: invalid mask: {}", v);
+                if i < bytes.len() {
+                    eprintln!(
+                        "zshrs:umask:1: bad character in symbolic mode: {}",
+                        bytes[i] as char
+                    );
                     return 1;
                 }
-                let new_mask = ((7 - perms[0]) << 6) | ((7 - perms[1]) << 3) | (7 - perms[2]);
                 unsafe {
-                    umask(new_mask as libc::mode_t);
+                    umask((um & 0o777) as libc::mode_t);
                 }
             } else {
                 // Numeric parse failed AND no `=` for symbolic. zsh
