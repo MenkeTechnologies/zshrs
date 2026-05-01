@@ -201,27 +201,32 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
     let kind = AskKind::from_str(kind_s)?;
 
     let target = args.get("target").cloned().unwrap_or(Value::Null);
-    let target_shell = match target.get("shell_id").and_then(Value::as_u64) {
-        Some(id) => id,
-        None => match target.get("self").and_then(Value::as_bool) {
-            Some(true) => client_id,
-            _ => {
-                return Err(ErrPayload::new(
-                    "bad_args",
-                    "target must specify {shell_id} or {self: true}",
-                ));
-            }
-        },
+
+    // Resolve target → list of shell ids (supports shell_id, self, all, tag).
+    let target_shells: Vec<u64> = if let Some(id) = target.get("shell_id").and_then(Value::as_u64) {
+        vec![id]
+    } else if target.get("self").and_then(Value::as_bool).unwrap_or(false) {
+        vec![client_id]
+    } else if target.get("all").and_then(Value::as_bool).unwrap_or(false) {
+        state
+            .snapshot_sessions()
+            .into_iter()
+            .filter(|s| s.client_id != client_id)
+            .map(|s| s.client_id)
+            .collect()
+    } else if let Some(tag) = target.get("tag").and_then(Value::as_str) {
+        state.shells_with_tag(tag)
+    } else {
+        return Err(ErrPayload::new(
+            "bad_args",
+            "target must specify {shell_id} | {self} | {all} | {tag}",
+        ));
     };
 
-    if state
-        .snapshot_sessions()
-        .iter()
-        .all(|s| s.client_id != target_shell)
-    {
+    if target_shells.is_empty() {
         return Err(ErrPayload::new(
             "no_shell",
-            format!("target shell_id {} not connected", target_shell),
+            "no shells matched target".to_string(),
         ));
     }
 
@@ -236,37 +241,60 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
         .and_then(Value::as_u64)
         .unwrap_or(60 * 60 * 1000); // 60 min default per docs/DAEMON.md
 
-    let request_id = state.ask_inbox.next_id();
-    let req = AskRequest {
-        request_id: request_id.clone(),
-        from_shell: client_id,
-        target_shell,
-        kind: kind.clone(),
-        payload: payload.clone(),
-        urgency: urgency.clone(),
-        created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-        timeout_ms,
-    };
-    state.ask_inbox.push(req.clone());
+    let mut request_ids = Vec::new();
+    for target_shell in &target_shells {
+        // Skip targets that aren't actually connected (tag / all may stale-include).
+        if state
+            .snapshot_sessions()
+            .iter()
+            .all(|s| s.client_id != *target_shell)
+        {
+            continue;
+        }
+        let request_id = state.ask_inbox.next_id();
+        let req = AskRequest {
+            request_id: request_id.clone(),
+            from_shell: client_id,
+            target_shell: *target_shell,
+            kind: kind.clone(),
+            payload: payload.clone(),
+            urgency: urgency.clone(),
+            created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            timeout_ms,
+        };
+        state.ask_inbox.push(req.clone());
 
-    // Push ask:pending event to the target shell.
-    let pending_count = state.ask_inbox.pending_count(target_shell);
-    let evt = json!({
-        "request_id": request_id,
-        "kind": kind.as_str(),
-        "from_shell": client_id,
-        "target_shell": target_shell,
-        "urgency": urgency,
-        "pending_count": pending_count,
+        let pending_count = state.ask_inbox.pending_count(*target_shell);
+        let evt = json!({
+            "request_id": request_id,
+            "kind": kind.as_str(),
+            "from_shell": client_id,
+            "target_shell": *target_shell,
+            "urgency": urgency,
+            "pending_count": pending_count,
+        });
+        let frame = Frame::event("ask:pending", evt);
+        state.send_to(*target_shell, frame);
+        request_ids.push((request_id, *target_shell, pending_count));
+    }
+
+    let mut resp = json!({
+        "queued": request_ids.iter().map(|(rid, shell, n)| json!({
+            "request_id": rid,
+            "target_shell": shell,
+            "pending_count": n,
+        })).collect::<Vec<_>>(),
+        "queued_count": request_ids.len(),
     });
-    let frame = Frame::event("ask:pending", evt);
-    state.send_to(target_shell, frame);
-
-    Ok(json!({
-        "request_id": req.request_id,
-        "queued_at_target": target_shell,
-        "pending_count": pending_count,
-    }))
+    // Single-target convenience fields (backwards compat with the original
+    // `zask ask <shell_id>` form which expected request_id/queued_at_target/pending_count).
+    if request_ids.len() == 1 {
+        let (rid, shell, n) = &request_ids[0];
+        resp["request_id"] = json!(rid);
+        resp["queued_at_target"] = json!(shell);
+        resp["pending_count"] = json!(n);
+    }
+    Ok(resp)
 }
 
 pub async fn op_ask_pending(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
