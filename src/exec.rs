@@ -36041,11 +36041,13 @@ impl ShellExecutor {
         0
     }
 
-    /// pushln - push line to buffer
+    /// pushln - push line onto editor buffer stack.
+    /// builtin.c:106 — `pushln` is `bin_print` with default flags
+    /// `-nz` (no newline, push to buffer stack). Was a stub that
+    /// printed args to stdout instead of pushing.
     fn builtin_pushln(&mut self, args: &[String]) -> i32 {
-        for arg in args {
-            println!("{}", arg);
-        }
+        let line = args.join(" ");
+        self.buffer_stack.push(line);
         0
     }
 
