@@ -165,6 +165,30 @@ impl AskInbox {
         let mut g = self.queues.lock();
         g.remove(&shell_id);
     }
+
+    /// Drop requests whose `created_at_ns + timeout_ms` is in the past.
+    /// Returns the count removed. Called by the daemon ticker every minute so
+    /// status-line counters stay honest as time passes.
+    pub fn drop_expired(&self) -> usize {
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let mut removed = 0;
+        let mut g = self.queues.lock();
+        for q in g.values_mut() {
+            q.retain(|r| {
+                if r.timeout_ms == 0 {
+                    return true;
+                }
+                let deadline = r.created_at_ns + (r.timeout_ms as i64) * 1_000_000;
+                if deadline < now_ns {
+                    removed += 1;
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        removed
+    }
 }
 
 // ---- IPC op handlers ----
