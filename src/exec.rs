@@ -22070,6 +22070,17 @@ impl ShellExecutor {
             let mut sorted_names: Vec<_> = self.variables.keys().cloned().collect();
             sorted_names.sort();
             for name in &sorted_names {
+                // PM_HIDE: zsh suppresses hidden vars from declarative
+                // listings. They're still expandable; just not visible
+                // from `set` / bare `typeset`.
+                if self
+                    .var_attrs
+                    .get(name)
+                    .map(|a| a.hidden)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
                 let val = self.variables.get(name).cloned().unwrap_or_default();
                 let mut attrs = String::new();
                 if is_export || env::var(name).is_ok() {
@@ -22128,7 +22139,17 @@ impl ShellExecutor {
                     } else {
                         println!("{} {}={}", prefix, name, shell_quote_value(&val));
                     }
-                } else if is_hide_val {
+                } else if is_hide_val
+                    || self
+                        .var_attrs
+                        .get(name)
+                        .map(|a| a.hide_val)
+                        .unwrap_or(false)
+                {
+                    // PM_HIDEVAL: per-var hide-value flag suppresses
+                    // the value in listings (the name still prints
+                    // so `typeset -p` round-trips). The list-time -H
+                    // flag forces the same masking globally.
                     println!("{}={}", name, "*".repeat(val.len().min(8)));
                 } else {
                     println!("{}={}", name, val);
