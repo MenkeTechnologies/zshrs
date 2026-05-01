@@ -38058,7 +38058,7 @@ impl ShellExecutor {
                         'a' => compile_auto = true,
                         'U' | 'M' | 'R' | 'm' | 'z' | 'k' => {} // ignored for now
                         _ => {
-                            eprintln!("zcompile: unknown option: -{}", c);
+                            eprintln!("zshrs:zcompile:1: bad option: -{}", c);
                             return 1;
                         }
                     }
@@ -38070,7 +38070,7 @@ impl ShellExecutor {
         }
 
         if files.is_empty() {
-            eprintln!("zcompile: not enough arguments");
+            eprintln!("zshrs:zcompile:1: not enough arguments");
             return 1;
         }
 
@@ -38091,7 +38091,7 @@ impl ShellExecutor {
                             if zwc.get_function(name).is_some() {
                                 println!("{}", name);
                             } else {
-                                eprintln!("zcompile: function not found: {}", name);
+                                eprintln!("zshrs:zcompile:1: function not found: {}", name);
                                 return 1;
                             }
                         }
@@ -38104,7 +38104,7 @@ impl ShellExecutor {
                     return 0;
                 }
                 Err(e) => {
-                    eprintln!("zcompile: can't read zwc file: {}: {}", zwc_path, e);
+                    eprintln!("zshrs:zcompile:1: can't read zwc file: {}: {}", zwc_path, e);
                     return 1;
                 }
             }
@@ -38133,12 +38133,12 @@ impl ShellExecutor {
                         // Try to load autoload function source
                         if let Some(path) = self.find_function_file(name) {
                             if let Err(e) = builder.add_file(&path) {
-                                eprintln!("zcompile: can't read {}: {}", name, e);
+                                eprintln!("zshrs:zcompile:1: can't read {}: {}", name, e);
                                 return 1;
                             }
                         }
                     } else {
-                        eprintln!("zcompile: no such function: {}", name);
+                        eprintln!("zshrs:zcompile:1: no such function: {}", name);
                         return 1;
                     }
                 }
@@ -38153,7 +38153,7 @@ impl ShellExecutor {
             }
 
             if let Err(e) = builder.write(&zwc_path) {
-                eprintln!("zcompile: can't write {}: {}", zwc_path, e);
+                eprintln!("zshrs:zcompile:1: can't write {}: {}", zwc_path, e);
                 return 1;
             }
             return 0;
@@ -38180,13 +38180,13 @@ impl ShellExecutor {
                             let p = entry.path();
                             if p.is_file() && !p.extension().map_or(false, |e| e == "zwc") {
                                 if let Err(e) = builder.add_file(&p) {
-                                    eprintln!("zcompile: can't read {:?}: {}", p, e);
+                                    eprintln!("zshrs:zcompile:1: can't read {:?}: {}", p, e);
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("zcompile: can't read directory: {}", e);
+                        eprintln!("zshrs:zcompile:1: can't read directory: {}", e);
                         return 1;
                     }
                 }
@@ -38201,13 +38201,13 @@ impl ShellExecutor {
         for file in &source_files {
             let path = std::path::Path::new(file);
             if let Err(e) = builder.add_file(path) {
-                eprintln!("zcompile: can't read {}: {}", file, e);
+                eprintln!("zshrs:zcompile:1: can't read {}: {}", file, e);
                 return 1;
             }
         }
 
         if let Err(e) = builder.write(&zwc_path) {
-            eprintln!("zcompile: can't write {}: {}", zwc_path, e);
+            eprintln!("zshrs:zcompile:1: can't write {}: {}", zwc_path, e);
             return 1;
         }
 
@@ -38654,7 +38654,7 @@ impl ShellExecutor {
                 self.arrays.insert(array_name, results);
             }
             _ => {
-                eprintln!("zformat: unknown option: {}", args[0]);
+                eprintln!("zshrs:zformat:1: unknown option: {}", args[0]);
                 return 1;
             }
         }
