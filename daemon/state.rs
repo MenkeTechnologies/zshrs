@@ -266,12 +266,15 @@ impl DaemonState {
     }
 
     /// Publish an event: fan it out to every matching subscription. Returns the
-    /// number of recipients the event was queued to.
+    /// number of recipients the event was queued to. Paused subscriptions are
+    /// silently skipped (the subscription stays registered, but no delivery).
     pub fn publish(&self, origin: &Scope, topic: &str, frame: Frame) -> usize {
         let g = self.inner.lock();
         let mut count = 0;
         for sub in g.subscriptions.values() {
-            // Use the full Scope-aware match (covers shell/tag/user/* patterns).
+            if sub.paused {
+                continue;
+            }
             if !origin.matches_scope(&sub.scope_pat) {
                 continue;
             }
@@ -285,6 +288,38 @@ impl DaemonState {
             }
         }
         count
+    }
+
+    /// Pause a subscription owned by the given client. Returns true if the
+    /// subscription existed and was found owned by this client (or already paused).
+    pub fn set_subscription_paused(
+        &self,
+        client_id: u64,
+        sub_id: u64,
+        paused: bool,
+    ) -> bool {
+        let mut g = self.inner.lock();
+        match g.subscriptions.get_mut(&sub_id) {
+            Some(s) if s.client_id == client_id => {
+                s.paused = paused;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Pause every subscription owned by the given client. Returns the number
+    /// of subscriptions affected.
+    pub fn pause_all_subscriptions(&self, client_id: u64, paused: bool) -> usize {
+        let mut g = self.inner.lock();
+        let mut n = 0;
+        for s in g.subscriptions.values_mut() {
+            if s.client_id == client_id && s.paused != paused {
+                s.paused = paused;
+                n += 1;
+            }
+        }
+        n
     }
 
     /// Build a Scope from a session id (for use as event origin).

@@ -28404,20 +28404,23 @@ impl ShellExecutor {
     }
 
     fn builtin_let(&mut self, args: &[String]) -> i32 {
-        // zsh: bare `let` errors "not enough arguments" with exit 1.
-        // Mirror by emitting the diagnostic to stderr (was silent
-        // exit 1) so script consumers see the same failure mode.
-        if args.is_empty() {
-            eprintln!("zshrs:let:1: not enough arguments");
-            return 1;
-        }
-
-        let mut result = 0i64;
+        // Direct port of src/zsh/Src/builtin.c:7469-7482 bin_let.
+        //
+        // Algorithm:
+        //   val = zero_mnumber       // 0 (integer)
+        //   for each arg: val = matheval(arg)  // evaluate, last
+        //                                       // wins
+        //   if errflag: return 2     // math errors non-fatal
+        //   return val == 0 ? 1 : 0  // 1 = false, 0 = true
+        //
+        // No arg case: val stays 0, returns 1 (false). zsh does NOT
+        // emit a "not enough arguments" diagnostic for bare `let` —
+        // zshrs's previous impl invented one. POSIX/zsh treat the
+        // empty case as a valid no-op-with-status-1.
+        let mut result: i64 = 0;
         for expr in args {
             result = self.evaluate_arithmetic_expr(expr);
         }
-
-        // let returns 1 if last expression evaluates to 0, 0 otherwise
         if result == 0 {
             1
         } else {

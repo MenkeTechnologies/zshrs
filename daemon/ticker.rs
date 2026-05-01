@@ -28,8 +28,13 @@ use super::state::DaemonState;
 
 const TICK_INTERVAL: Duration = Duration::from_secs(60);
 const TMP_AGE: Duration = Duration::from_secs(60);
-const LOG_SIZE_WARN: u64 = 10 * 1024 * 1024;
+/// Default 10 MB per docs/DAEMON.md. Override via env ZSHRS_LOG_MAX_BYTES.
+const DEFAULT_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
+/// Up to N rotated copies kept per active file (.1 .. .N). Default 4 per docs.
+const DEFAULT_LOG_MAX_ROTATIONS: u32 = 4;
 const VACUUM_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Soft cap for warning when zshrs.log family exceeds it.
+const LOG_SIZE_WARN: u64 = DEFAULT_LOG_MAX_BYTES;
 
 /// Spawn the ticker as a tokio task. Returns immediately; the task lives for
 /// daemon lifetime (or until DaemonState is dropped, since it holds only a
@@ -50,7 +55,7 @@ pub fn spawn(state: Arc<DaemonState>) {
             };
 
             sweep_tmp(&state);
-            check_log_size(&state);
+            rotate_logs_if_needed(&state);
             ask_timeouts(&state);
 
             if last_vacuum.elapsed() >= VACUUM_INTERVAL {
@@ -61,6 +66,106 @@ pub fn spawn(state: Arc<DaemonState>) {
     });
 }
 
+fn log_max_bytes() -> u64 {
+    std::env::var("ZSHRS_LOG_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_LOG_MAX_BYTES)
+}
+
+fn log_max_rotations() -> u32 {
+    std::env::var("ZSHRS_LOG_MAX_ROTATIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_LOG_MAX_ROTATIONS)
+}
+
+/// Walk every `zshrs.log*` file (daily-rolled by tracing-appender) and rotate
+/// any one whose size exceeds the configured cap. Rotation is in-place: the
+/// file is copied to `<basename>.1`, the original is truncated. Existing
+/// `.1..N` files shift up; `.N+1` is removed.
+///
+/// The truncate works without the appender's open fd noticing because
+/// tracing-appender opens the file with `O_APPEND`, which positions every
+/// write at EOF — so after the file is set to 0 bytes, subsequent writes
+/// resume cleanly at offset 0 rather than leaving a sparse gap.
+fn rotate_logs_if_needed(state: &super::state::DaemonState) {
+    let cap = log_max_bytes();
+    let max_rot = log_max_rotations();
+    let dir = match std::fs::read_dir(&state.paths.root) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let mut bases: Vec<std::path::PathBuf> = Vec::new();
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        let s = name.to_string_lossy();
+        // The "active" files are those NOT matching the rolled-suffix pattern
+        // `<base>.<digits>` — those are our own rotation outputs.
+        if !s.starts_with("zshrs.log") {
+            continue;
+        }
+        let path = entry.path();
+        if is_rotation_suffix(&s) {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            if meta.len() > cap {
+                bases.push(path);
+            }
+        }
+    }
+    for base in bases {
+        if let Err(e) = rotate_one(&base, max_rot) {
+            tracing::warn!(?e, base=%base.display(), "ticker: log rotation failed");
+        } else {
+            tracing::info!(base=%base.display(), "ticker: log rotated (size cap exceeded)");
+        }
+    }
+}
+
+fn is_rotation_suffix(file_name: &str) -> bool {
+    // Matches `zshrs.log.<base>.<N>` where N is digits — ours.
+    // Daily-rolled looks like `zshrs.log.2026-05-01` — NOT digits-only at end.
+    let last_dot = match file_name.rfind('.') {
+        Some(i) => i,
+        None => return false,
+    };
+    let suffix = &file_name[last_dot + 1..];
+    !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+}
+
+fn rotate_one(base: &std::path::Path, max_rot: u32) -> std::io::Result<()> {
+    let parent = base.parent().unwrap_or(std::path::Path::new("."));
+    let base_name = match base.file_name().and_then(|n| n.to_str()) {
+        Some(s) => s.to_string(),
+        None => return Ok(()),
+    };
+    // Drop the oldest if at the cap.
+    let oldest = parent.join(format!("{}.{}", base_name, max_rot));
+    if oldest.exists() {
+        let _ = std::fs::remove_file(&oldest);
+    }
+    // Shift .N-1 → .N down to .1 → .2.
+    for n in (1..max_rot).rev() {
+        let from = parent.join(format!("{}.{}", base_name, n));
+        let to = parent.join(format!("{}.{}", base_name, n + 1));
+        if from.exists() {
+            let _ = std::fs::rename(&from, &to);
+        }
+    }
+    // Copy active → .1, then truncate active.
+    let dot1 = parent.join(format!("{}.1", base_name));
+    std::fs::copy(base, &dot1)?;
+    // O_TRUNC against the active path. tracing-appender's append mode means
+    // its existing fd will resume writing at offset 0 cleanly.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(base)?;
+    Ok(())
+}
+
 fn sweep_tmp(state: &DaemonState) {
     match super::shard::sweep_tmp_files(&state.paths, TMP_AGE) {
         Ok(0) => {}
@@ -69,35 +174,8 @@ fn sweep_tmp(state: &DaemonState) {
     }
 }
 
-fn check_log_size(state: &DaemonState) {
-    // tracing-appender writes to a date-stamped file inside paths.root.
-    // We don't know the exact name (it's regenerated on each call to
-    // `Rotation::DAILY.suffix`), so walk the directory and find the bare prefix.
-    let dir = match std::fs::read_dir(&state.paths.root) {
-        Ok(d) => d,
-        Err(_) => return,
-    };
-    let mut total_bytes: u64 = 0;
-    let mut count = 0;
-    for entry in dir.flatten() {
-        let name = entry.file_name();
-        let s = name.to_string_lossy();
-        if s.starts_with("zshrs.log") {
-            if let Ok(meta) = entry.metadata() {
-                total_bytes += meta.len();
-                count += 1;
-            }
-        }
-    }
-    if total_bytes > LOG_SIZE_WARN {
-        tracing::warn!(
-            files = count,
-            bytes = total_bytes,
-            cap = LOG_SIZE_WARN,
-            "ticker: zshrs.log family exceeds soft cap; consider `zlog clear` or rotation"
-        );
-    }
-}
+// (size monitoring is now handled inline by rotate_logs_if_needed; the warn-
+// only path was replaced with actual rotation per docs/DAEMON.md.)
 
 fn vacuum_catalog(state: &DaemonState) {
     let res: rusqlite::Result<()> = state.with_catalog(|conn| {
