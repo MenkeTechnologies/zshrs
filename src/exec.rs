@@ -16985,8 +16985,30 @@ impl ShellExecutor {
                 Some(self.function_definition_text(key).unwrap_or_default())
             }
             "functions_source" => {
-                // We don't track source locations, return empty
-                Some(String::new())
+                // ${functions_source[name]} → file path where the
+                // function was defined. zsh/Src/Modules/parameter.c
+                // exposes this as an assoc keyed by function name.
+                // For autoload functions we recover the source path
+                // via the same fpath walk that loads them; for inline
+                // functions we don't yet track the defining file, so
+                // emit empty in that case.
+                if key == "@" || key == "*" {
+                    let mut all = String::new();
+                    for fname in self.function_names() {
+                        if let Some(p) = self.find_function_file(&fname) {
+                            if !all.is_empty() {
+                                all.push(' ');
+                            }
+                            all.push_str(&p.to_string_lossy());
+                        }
+                    }
+                    return Some(all);
+                }
+                Some(
+                    self.find_function_file(key)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                )
             }
 
             // === COMMANDS (command hash table) ===
