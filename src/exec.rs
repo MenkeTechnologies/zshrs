@@ -40620,6 +40620,7 @@ impl ShellExecutor {
 
         let mut count_lines = false;
         let mut count_words = false;
+        let mut count_bytes = false;
         let mut count_chars = false;
         let mut files: Vec<&str> = Vec::new();
 
@@ -40627,13 +40628,19 @@ impl ShellExecutor {
             match arg.as_str() {
                 "-l" => count_lines = true,
                 "-w" => count_words = true,
-                "-c" | "-m" => count_chars = true,
+                // coreutils wc(1): -c counts BYTES, -m counts unicode
+                // codepoints. Was conflating them — broke wc on
+                // multi-byte input where the user expected -m to
+                // give char counts smaller than the byte count.
+                "-c" => count_bytes = true,
+                "-m" => count_chars = true,
                 a if a.starts_with('-') => {
                     for c in a[1..].chars() {
                         match c {
                             'l' => count_lines = true,
                             'w' => count_words = true,
-                            'c' | 'm' => count_chars = true,
+                            'c' => count_bytes = true,
+                            'm' => count_chars = true,
                             _ => {}
                         }
                     }
@@ -40642,10 +40649,10 @@ impl ShellExecutor {
             }
         }
 
-        if !count_lines && !count_words && !count_chars {
+        if !count_lines && !count_words && !count_bytes && !count_chars {
             count_lines = true;
             count_words = true;
-            count_chars = true;
+            count_bytes = true;
         }
 
         if files.is_empty() {
@@ -40654,6 +40661,7 @@ impl ShellExecutor {
 
         let mut total_lines = 0usize;
         let mut total_words = 0usize;
+        let mut total_bytes = 0usize;
         let mut total_chars = 0usize;
 
         for file in &files {
@@ -40671,16 +40679,19 @@ impl ShellExecutor {
 
             let mut lines = 0usize;
             let mut words = 0usize;
+            let mut bytes = 0usize;
             let mut chars = 0usize;
 
             for line in reader.lines().flatten() {
                 lines += 1;
                 words += line.split_whitespace().count();
-                chars += line.len() + 1; // +1 for newline
+                bytes += line.len() + 1; // +1 for the trailing \n
+                chars += line.chars().count() + 1; // +1 for the \n codepoint
             }
 
             total_lines += lines;
             total_words += words;
+            total_bytes += bytes;
             total_chars += chars;
 
             let mut out = String::new();
@@ -40689,6 +40700,9 @@ impl ShellExecutor {
             }
             if count_words {
                 out.push_str(&format!("{:8}", words));
+            }
+            if count_bytes {
+                out.push_str(&format!("{:8}", bytes));
             }
             if count_chars {
                 out.push_str(&format!("{:8}", chars));
@@ -40709,6 +40723,9 @@ impl ShellExecutor {
             }
             if count_words {
                 out.push_str(&format!("{:8}", total_words));
+            }
+            if count_bytes {
+                out.push_str(&format!("{:8}", total_bytes));
             }
             if count_chars {
                 out.push_str(&format!("{:8}", total_chars));
