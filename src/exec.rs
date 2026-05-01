@@ -45067,7 +45067,28 @@ impl ShellExecutor {
     /// --all uses CPU count from sysconf(_SC_NPROCESSORS_CONF);
     /// default uses _SC_NPROCESSORS_ONLN (the schedulable subset).
     fn builtin_nproc(&self, args: &[String]) -> i32 {
-        let want_all = args.iter().any(|a| a == "--all");
+        // coreutils nproc accepts --all and --ignore=N. Validate
+        // unknown flags rather than the previous silent accept.
+        let mut want_all = false;
+        let mut ignore: i64 = 0;
+        for arg in args {
+            match arg.as_str() {
+                "--all" => want_all = true,
+                s if s.starts_with("--ignore=") => {
+                    ignore = s[9..].parse().unwrap_or(0);
+                }
+                "--ignore" => {
+                    // separate-arg form not common; coreutils accepts
+                    // --ignore=N. Skip if standalone, treat as no-op.
+                }
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    eprintln!("nproc: invalid option: '{}'", s);
+                    return 1;
+                }
+                _ => {}
+            }
+        }
         let n = unsafe {
             if want_all {
                 libc::sysconf(libc::_SC_NPROCESSORS_CONF)
@@ -45075,11 +45096,9 @@ impl ShellExecutor {
                 libc::sysconf(libc::_SC_NPROCESSORS_ONLN)
             }
         };
-        if n <= 0 {
-            println!("1");
-        } else {
-            println!("{}", n);
-        }
+        let mut count = if n <= 0 { 1 } else { n as i64 };
+        count = (count - ignore).max(1);
+        println!("{}", count);
         0
     }
 
