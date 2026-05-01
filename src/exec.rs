@@ -34452,6 +34452,7 @@ impl ShellExecutor {
 
             let mut cloexec = true;
             let mut readlock = false;
+            let mut unlock = false;
             let mut timeout: Option<f64> = None;
             let mut fdvar: Option<String> = None;
             let mut file: Option<&str> = None;
@@ -34475,7 +34476,7 @@ impl ShellExecutor {
                     match c {
                         'e' => cloexec = false,
                         'r' => readlock = true,
-                        'u' => return 0,
+                        'u' => unlock = true,
                         'f' => {
                             let rest: String = chars.collect();
                             if !rest.is_empty() {
@@ -34542,6 +34543,28 @@ impl ShellExecutor {
                     return 1;
                 }
             };
+
+            // -u: unlock. system.c:674-682 — argument is an FD number;
+            // close it (which releases POSIX advisory locks held on
+            // that open description). Was return 0 stub.
+            if unlock {
+                let fd: i32 = match filepath.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        eprintln!("zsystem: flock: invalid fd: {}", filepath);
+                        return 1;
+                    }
+                };
+                let r = unsafe { libc::close(fd) };
+                if r < 0 {
+                    eprintln!(
+                        "zsystem: flock: file descriptor {} not in use for locking",
+                        fd
+                    );
+                    return 1;
+                }
+                return 0;
+            }
 
             use std::fs::OpenOptions;
             let file_handle = match OpenOptions::new()
