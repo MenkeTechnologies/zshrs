@@ -28940,8 +28940,19 @@ impl ShellExecutor {
             i += 1;
         }
 
+        // builtin.c:4247-4252 — `-r` and `-f` reject positional
+        // args ("too many arguments") because they're table-wide
+        // operations. zshrs previously: `-r foo` silently fell
+        // through to add `foo` to the hash table; `-f foo` silently
+        // ignored `foo` and rebuilt the table. Both masked typos in
+        // user scripts that meant `unhash` or plain `hash`.
+        if (rehash || fill_all) && !names.is_empty() {
+            eprintln!("zshrs:hash:1: too many arguments");
+            return 1;
+        }
+
         // -r: clear hash table
-        if rehash && !dir_mode && names.is_empty() {
+        if rehash && !dir_mode {
             self.command_hash.clear();
             return 0;
         }
