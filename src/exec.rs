@@ -40812,27 +40812,64 @@ impl ShellExecutor {
     fn builtin_head(&self, args: &[String]) -> i32 {
         use std::io::{BufRead, BufReader, Read, Write};
 
+        // -n N: keep first N lines. -n -N: keep all BUT the last N
+        // lines (coreutils extension). Negative is encoded by a
+        // 'skip_last' tail count.
         let mut lines = 10usize;
+        let mut skip_last_lines: Option<usize> = None;
         // Some(N) when -c N was given — switches to byte-count mode.
         let mut bytes: Option<usize> = None;
+        let mut skip_last_bytes: Option<usize> = None;
         // -q / -v override the default 'header iff >1 file' rule.
         let mut force_quiet = false;
         let mut force_verbose = false;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
 
+        // Parse a count that may be negative; returns (positive_count,
+        // is_skip_last).
+        let parse_count = |s: &str| -> (usize, bool) {
+            if let Some(rest) = s.strip_prefix('-') {
+                (rest.parse().unwrap_or(0), true)
+            } else if let Some(rest) = s.strip_prefix('+') {
+                (rest.parse().unwrap_or(0), false)
+            } else {
+                (s.parse().unwrap_or(0), false)
+            }
+        };
+
         while i < args.len() {
             let arg = &args[i];
             if arg == "-n" && i + 1 < args.len() {
                 i += 1;
-                lines = args[i].parse().unwrap_or(10);
+                let (n, neg) = parse_count(&args[i]);
+                if neg {
+                    skip_last_lines = Some(n);
+                } else {
+                    lines = n;
+                }
             } else if arg.starts_with("-n") {
-                lines = arg[2..].parse().unwrap_or(10);
+                let (n, neg) = parse_count(&arg[2..]);
+                if neg {
+                    skip_last_lines = Some(n);
+                } else {
+                    lines = n;
+                }
             } else if arg == "-c" && i + 1 < args.len() {
                 i += 1;
-                bytes = args[i].parse::<usize>().ok();
+                let (n, neg) = parse_count(&args[i]);
+                if neg {
+                    skip_last_bytes = Some(n);
+                } else {
+                    bytes = Some(n);
+                }
             } else if arg.starts_with("-c") && arg.len() > 2 {
-                bytes = arg[2..].parse::<usize>().ok();
+                let (n, neg) = parse_count(&arg[2..]);
+                if neg {
+                    skip_last_bytes = Some(n);
+                } else {
+                    bytes = Some(n);
+                }
             } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
                 force_quiet = true;
             } else if arg == "-v" || arg == "--verbose" {
@@ -40869,6 +40906,26 @@ impl ShellExecutor {
                     let _ = writeln!(out);
                 }
                 let _ = writeln!(out, "==> {} <==", file);
+            }
+
+            if let Some(skip) = skip_last_bytes {
+                // -c -N: read everything, drop last N bytes.
+                let mut reader: Box<dyn Read> = if *file == "-" {
+                    Box::new(std::io::stdin())
+                } else {
+                    match std::fs::File::open(file) {
+                        Ok(f) => Box::new(f),
+                        Err(e) => {
+                            eprintln!("head: {}: {}", file, pretty_io_err(&e));
+                            return 1;
+                        }
+                    }
+                };
+                let mut buf = Vec::new();
+                let _ = reader.read_to_end(&mut buf);
+                let end = buf.len().saturating_sub(skip);
+                let _ = out.write_all(&buf[..end]);
+                continue;
             }
 
             if let Some(n) = bytes {
@@ -40909,12 +40966,22 @@ impl ShellExecutor {
                 }
             };
 
-            for line in reader.lines().take(lines) {
-                match line {
-                    Ok(l) => {
-                        let _ = writeln!(out, "{}", l);
+            if let Some(skip) = skip_last_lines {
+                // -n -N: collect all lines, emit all except the last
+                // N. Direct port of coreutils head -n -N.
+                let all: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+                let end = all.len().saturating_sub(skip);
+                for line in &all[..end] {
+                    let _ = writeln!(out, "{}", line);
+                }
+            } else {
+                for line in reader.lines().take(lines) {
+                    match line {
+                        Ok(l) => {
+                            let _ = writeln!(out, "{}", l);
+                        }
+                        Err(_) => break,
                     }
-                    Err(_) => break,
                 }
             }
         }
