@@ -83,6 +83,48 @@ fn read_canonical(
     Ok(super::zsync::read_canonical_rows_inmem(state, subsystem))
 }
 
+/// Read walk-output entries (command_hash / autoload_table / completions)
+/// from catalog.entries — these are the hydrated mirror of the system rkyv
+/// shard's `cmd:*` / `fn:*` keys produced by walk.rs Pass 3+4.
+fn read_walk_entries(
+    state: &DaemonState,
+    kind: &str,
+) -> std::result::Result<Vec<(String, String)>, ErrPayload> {
+    let prefix = match kind {
+        "command" => "cmd:",
+        "autoload" | "completion" => "fn:",
+        other => {
+            return Err(ErrPayload::new(
+                "bad_kind",
+                format!("unknown walk kind `{}`", other),
+            ));
+        }
+    };
+    let rows: Vec<(String, String)> = state
+        .with_catalog(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT fq_name, source_loc FROM entries WHERE plugin_id = 'system' AND kind = ? \
+                 ORDER BY fq_name ASC",
+            )?;
+            let rows = stmt
+                .query_map(rusqlite::params![kind], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok::<_, rusqlite::Error>(rows)
+        })
+        .map_err(ErrPayload::from)?;
+    // Strip the "cmd:" / "fn:" prefix the daemon stores so the export uses
+    // bare zsh names.
+    Ok(rows
+        .into_iter()
+        .map(|(name, src)| {
+            let bare = name.strip_prefix(prefix).unwrap_or(&name).to_string();
+            (bare, src)
+        })
+        .collect())
+}
+
 /// Strip JSON quoting if the value-string came from canonical.value (which we stored
 /// as JSON). e.g., `"hello"` → `hello`. Numbers/objects stay as JSON.
 fn unjson(s: &str) -> String {
@@ -265,11 +307,51 @@ fn render_sh(
                 out.push_str(&format!("compdef {} {}\n", unjson(&r.value), r.key));
             }
         }
+        "command_hash" => {
+            // Sourced from catalog.entries WHERE kind='command' (mirror of the
+            // system rkyv shard's `cmd:*` entries built by walk.rs Pass 3).
+            let entries = read_walk_entries(state, "command")?;
+            if !additive {
+                out.push_str("hash -r\n");
+            }
+            for (name, path_str) in entries {
+                out.push_str(&format!("hash {}={}\n", name, shell_quote(&path_str)));
+            }
+        }
+        "autoload_table" => {
+            let entries = read_walk_entries(state, "autoload")?;
+            let completions = read_walk_entries(state, "completion")?;
+            if !additive {
+                out.push_str("# autoload table from $FPATH walk (Pass 3)\n");
+            }
+            // Single autoload -Uz with all names (zsh accepts batched form).
+            let mut names: Vec<String> =
+                entries.iter().map(|(n, _)| n.clone()).collect();
+            names.extend(completions.iter().map(|(n, _)| n.clone()));
+            names.sort();
+            names.dedup();
+            for chunk in names.chunks(64) {
+                out.push_str("autoload -Uz");
+                for n in chunk {
+                    out.push(' ');
+                    out.push_str(&shell_quote(n));
+                }
+                out.push('\n');
+            }
+        }
+        "functions" => {
+            // Function bodies analyzed from .zshrc are stored under subsystem
+            // "function"; emit as `function name() { body }`.
+            let func_rows = read_canonical(state, "function")?;
+            for r in &func_rows {
+                let body = unjson(&r.value);
+                out.push_str(&format!("function {} {{\n{}\n}}\n", r.key, body));
+            }
+        }
         // Binary / introspection-only targets refuse sh format.
         "shard" | "index" | "catalog" | "history" | "entry_stats" | "subscriptions" | "shells"
         | "plugins" | "compiled_files" | "daemon_state" | "_comps" | "_services" | "_patcomps"
-        | "_describe_handlers" | "command_hash" | "autoload_table" | "functions" | "theme"
-        | "zcompdump" | "script" | "sourced" => {
+        | "_describe_handlers" | "theme" | "zcompdump" | "script" | "sourced" => {
             return Err(ErrPayload::new(
                 "format_unsupported_for_target",
                 format!(
@@ -289,6 +371,23 @@ fn render_sh(
 }
 
 fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
+    // Walk-output targets render from catalog.entries.
+    let walk_kinds: Option<&[&str]> = match target {
+        "command_hash" => Some(&["command"]),
+        "autoload_table" => Some(&["autoload", "completion"]),
+        _ => None,
+    };
+    if let Some(kinds) = walk_kinds {
+        let mut all = Vec::new();
+        for k in kinds {
+            all.extend(read_walk_entries(state, k)?);
+        }
+        let payload: Vec<Value> = all
+            .into_iter()
+            .map(|(name, src)| json!({ "key": name, "value": src }))
+            .collect();
+        return Ok(serde_json::to_string_pretty(&payload).unwrap_or_default());
+    }
     let subsystem = normalize_subsystem(target)?;
     let rows = read_canonical(state, &subsystem)?;
     let payload: Vec<Value> = rows
@@ -320,6 +419,12 @@ fn render_yaml(state: &DaemonState, target: &str) -> std::result::Result<String,
 }
 
 fn render_text(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
+    // Walk-output targets render from catalog.entries (the hydrated mirror of
+    // the system rkyv shard). Normal canonical-state targets render from the
+    // in-memory rkyv-backed canonical engine.
+    if let Some(rendered) = render_walk_text(state, target)? {
+        return Ok(rendered);
+    }
     let subsystem = normalize_subsystem(target)?;
     let rows = read_canonical(state, &subsystem)?;
     let mut out = String::new();
@@ -329,6 +434,29 @@ fn render_text(state: &DaemonState, target: &str) -> std::result::Result<String,
         out.push_str(&format!("{} = {}\n", r.key, unjson(&r.value)));
     }
     Ok(out)
+}
+
+fn render_walk_text(
+    state: &DaemonState,
+    target: &str,
+) -> std::result::Result<Option<String>, ErrPayload> {
+    let kinds: &[&str] = match target {
+        "command_hash" => &["command"],
+        "autoload_table" => &["autoload", "completion"],
+        "functions" if read_canonical(state, "function")?.is_empty() => &["autoload"],
+        _ => return Ok(None),
+    };
+    let mut all = Vec::new();
+    for k in kinds {
+        all.extend(read_walk_entries(state, k)?);
+    }
+    let mut out = String::new();
+    out.push_str(&format!("# target: {}\n", target));
+    out.push_str(&format!("# {} entries\n\n", all.len()));
+    for (name, src) in all {
+        out.push_str(&format!("{} = {}\n", name, src));
+    }
+    Ok(Some(out))
 }
 
 fn yaml_quote(v: &str) -> String {
