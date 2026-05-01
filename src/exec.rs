@@ -41809,32 +41809,166 @@ impl ShellExecutor {
     }
 
     fn builtin_id(&self, args: &[String]) -> i32 {
+        // coreutils id(1) port: -u/-g/-G with -n name modifier, plus
+        // the default 'uid=N(name) gid=N(name) groups=...' form.
+        use std::ffi::CStr;
+
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
         let euid = unsafe { libc::geteuid() };
         let egid = unsafe { libc::getegid() };
 
-        if args.iter().any(|a| a == "-u") {
-            println!("{}", uid);
-        } else if args.iter().any(|a| a == "-g") {
-            println!("{}", gid);
-        } else if args.iter().any(|a| a == "-un") {
-            if let Ok(user) = std::env::var("USER") {
-                println!("{}", user);
+        // Parse flag combinations: -u, -g, -G, -un, -gn, -Gn, -nu, etc.
+        let mut want_uid = false;
+        let mut want_gid = false;
+        let mut want_groups = false;
+        let mut want_name = false;
+        for arg in args {
+            if let Some(s) = arg.strip_prefix('-') {
+                for c in s.chars() {
+                    match c {
+                        'u' => want_uid = true,
+                        'g' => want_gid = true,
+                        'G' => want_groups = true,
+                        'n' => want_name = true,
+                        'r' => {} // -r: real id (we already use real uid/gid)
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let lookup_user_name = |uid: u32| -> Option<String> {
+            unsafe {
+                let pw = libc::getpwuid(uid);
+                if pw.is_null() {
+                    return None;
+                }
+                let name = CStr::from_ptr((*pw).pw_name);
+                Some(name.to_string_lossy().into_owned())
+            }
+        };
+        let lookup_group_name = |gid: u32| -> Option<String> {
+            unsafe {
+                let gr = libc::getgrgid(gid);
+                if gr.is_null() {
+                    return None;
+                }
+                let name = CStr::from_ptr((*gr).gr_name);
+                Some(name.to_string_lossy().into_owned())
+            }
+        };
+
+        if want_uid {
+            if want_name {
+                println!(
+                    "{}",
+                    lookup_user_name(uid).unwrap_or_else(|| uid.to_string())
+                );
             } else {
                 println!("{}", uid);
             }
-        } else {
-            let user = std::env::var("USER").unwrap_or_else(|_| uid.to_string());
-            print!("uid={}({}) gid={}", uid, user, gid);
-            if euid != uid {
-                print!(" euid={}", euid);
-            }
-            if egid != gid {
-                print!(" egid={}", egid);
-            }
-            println!();
+            return 0;
         }
+        if want_gid {
+            if want_name {
+                println!(
+                    "{}",
+                    lookup_group_name(gid).unwrap_or_else(|| gid.to_string())
+                );
+            } else {
+                println!("{}", gid);
+            }
+            return 0;
+        }
+        if want_groups {
+            // getgrouplist(name, base_gid, gids[], &count). First call
+            // gets the count; second populates the array.
+            let user_name = lookup_user_name(uid).unwrap_or_default();
+            let cname = std::ffi::CString::new(user_name.as_bytes()).unwrap_or_default();
+            let mut count: libc::c_int = 32;
+            let mut gids: Vec<libc::gid_t> = vec![0; count as usize];
+            let rc = unsafe {
+                libc::getgrouplist(
+                    cname.as_ptr(),
+                    gid as _,
+                    gids.as_mut_ptr() as *mut _,
+                    &mut count,
+                )
+            };
+            if rc < 0 {
+                gids.resize(count as usize, 0);
+                unsafe {
+                    libc::getgrouplist(
+                        cname.as_ptr(),
+                        gid as _,
+                        gids.as_mut_ptr() as *mut _,
+                        &mut count,
+                    );
+                }
+            }
+            gids.truncate(count.max(0) as usize);
+            let parts: Vec<String> = gids
+                .iter()
+                .map(|g| {
+                    if want_name {
+                        lookup_group_name(*g as u32).unwrap_or_else(|| g.to_string())
+                    } else {
+                        g.to_string()
+                    }
+                })
+                .collect();
+            println!("{}", parts.join(" "));
+            return 0;
+        }
+
+        // Default form: uid=N(name) gid=N(name) groups=N(name),...
+        let user = lookup_user_name(uid).unwrap_or_else(|| uid.to_string());
+        let group = lookup_group_name(gid).unwrap_or_else(|| gid.to_string());
+        print!("uid={}({}) gid={}({})", uid, user, gid, group);
+        if euid != uid {
+            let eu = lookup_user_name(euid).unwrap_or_else(|| euid.to_string());
+            print!(" euid={}({})", euid, eu);
+        }
+        if egid != gid {
+            let eg = lookup_group_name(egid).unwrap_or_else(|| egid.to_string());
+            print!(" egid={}({})", egid, eg);
+        }
+        // Supplementary groups list
+        let cname = std::ffi::CString::new(user.as_bytes()).unwrap_or_default();
+        let mut count: libc::c_int = 32;
+        let mut gids: Vec<libc::gid_t> = vec![0; count as usize];
+        let rc = unsafe {
+            libc::getgrouplist(
+                cname.as_ptr(),
+                gid as _,
+                gids.as_mut_ptr() as *mut _,
+                &mut count,
+            )
+        };
+        if rc < 0 {
+            gids.resize(count as usize, 0);
+            unsafe {
+                libc::getgrouplist(
+                    cname.as_ptr(),
+                    gid as _,
+                    gids.as_mut_ptr() as *mut _,
+                    &mut count,
+                );
+            }
+        }
+        gids.truncate(count.max(0) as usize);
+        if !gids.is_empty() {
+            let parts: Vec<String> = gids
+                .iter()
+                .map(|g| {
+                    let name = lookup_group_name(*g as u32).unwrap_or_else(|| g.to_string());
+                    format!("{}({})", g, name)
+                })
+                .collect();
+            print!(" groups={}", parts.join(","));
+        }
+        println!();
         0
     }
 
