@@ -28179,8 +28179,12 @@ impl ShellExecutor {
 
     fn builtin_shopt(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            // List all shell options
-            for (opt, val) in &self.options {
+            // List all shell options. Sorted by name so output is
+            // deterministic across runs (was HashMap-iteration-order
+            // → flickered between runs and broke `shopt | diff`).
+            let mut sorted: Vec<(&String, &bool)> = self.options.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(b.0));
+            for (opt, val) in sorted {
                 println!("shopt {} {}", if *val { "-s" } else { "-u" }, opt);
             }
             return 0;
