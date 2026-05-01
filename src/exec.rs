@@ -40324,6 +40324,14 @@ impl ShellExecutor {
                 symlink = true;
                 continue;
             }
+            if a.starts_with('-') && a.len() > 1 {
+                // attr.c BUILTIN("zgetattr"/etc) declares only -h as
+                // valid. Unknown flags previously got pushed as
+                // positional args and led to confusing "no such file"
+                // errors.
+                eprintln!("zshrs:{}:1: bad option: {}", cmd, a);
+                return 1;
+            }
             positional.push(a.as_str());
         }
         match cmd {
