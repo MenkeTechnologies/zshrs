@@ -40858,41 +40858,127 @@ impl ShellExecutor {
     }
 
     fn builtin_basename(&self, args: &[String]) -> i32 {
+        // coreutils basename(1) port. Adds:
+        // - -a / --multiple: every operand is a path (suffix not
+        //   consumed positionally).
+        // - -s SUFFIX: implies -a, supplies suffix to strip.
+        // - -z / --zero: NUL-terminate output.
         if args.is_empty() {
             eprintln!("basename: missing operand");
             return 1;
         }
-
-        let path = &args[0];
-        let suffix = args.get(1).map(|s| s.as_str());
-
-        let mut name = std::path::Path::new(path)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.clone());
-
-        if let Some(suf) = suffix {
-            if name.ends_with(suf) && name.len() > suf.len() {
-                name.truncate(name.len() - suf.len());
+        let mut multiple = false;
+        let mut suffix: Option<String> = None;
+        let mut zero = false;
+        let mut positional: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-a" | "--multiple" => multiple = true,
+                "-s" | "--suffix" => {
+                    if let Some(s) = iter.next() {
+                        suffix = Some(s.clone());
+                        multiple = true;
+                    }
+                }
+                "-z" | "--zero" => zero = true,
+                "--" => {} // accept end-of-options
+                s if s.starts_with("-s") && s.len() > 2 => {
+                    suffix = Some(s[2..].to_string());
+                    multiple = true;
+                }
+                s if s.starts_with('-') && s.len() > 1 => {} // unknown silent
+                s => positional.push(s),
             }
         }
-
-        println!("{}", name);
+        if positional.is_empty() {
+            eprintln!("basename: missing operand");
+            return 1;
+        }
+        // Without -a / -s, the legacy 2-arg form: NAME [SUFFIX]
+        // applies the second operand as a suffix to strip from the
+        // first.
+        let term = if zero { '\0' } else { '\n' };
+        let strip_suffix = |name: &mut String, suf: &str| {
+            if name.ends_with(suf) && name.len() > suf.len() {
+                let new_len = name.len() - suf.len();
+                name.truncate(new_len);
+            }
+        };
+        let basename = |path: &str| -> String {
+            let trimmed = path.trim_end_matches('/');
+            let t = if trimmed.is_empty() { path } else { trimmed };
+            std::path::Path::new(t)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string())
+        };
+        if multiple {
+            for p in &positional {
+                let mut name = basename(p);
+                if let Some(ref s) = suffix {
+                    strip_suffix(&mut name, s);
+                }
+                print!("{}{}", name, term);
+            }
+        } else {
+            let path = positional[0];
+            let arg_suffix = positional.get(1).copied();
+            let mut name = basename(path);
+            if let Some(s) = arg_suffix {
+                strip_suffix(&mut name, s);
+            }
+            print!("{}{}", name, term);
+        }
         0
     }
 
     fn builtin_dirname(&self, args: &[String]) -> i32 {
+        // coreutils dirname(1) port. Strip flags before walking
+        // operands, support -z / --zero (NUL-terminate output
+        // instead of newline).
         if args.is_empty() {
             eprintln!("dirname: missing operand");
             return 1;
         }
-
-        for path in args {
-            let dir = std::path::Path::new(path)
+        let mut zero = false;
+        let mut paths: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-z" | "--zero" => zero = true,
+                "--" => {} // accept end-of-options
+                s if s.starts_with('-') && s.len() > 1 => {} // unknown flag, silent
+                s => paths.push(s),
+            }
+        }
+        if paths.is_empty() {
+            eprintln!("dirname: missing operand");
+            return 1;
+        }
+        let term = if zero { '\0' } else { '\n' };
+        for path in paths {
+            // POSIX dirname: trailing '/' chars on a non-root path
+            // collapse; '/foo' → '/'; 'foo' → '.'.
+            let trimmed: &str = if path.is_empty() {
+                "."
+            } else {
+                let t = path.trim_end_matches('/');
+                if t.is_empty() {
+                    "/"
+                } else {
+                    t
+                }
+            };
+            let dir = std::path::Path::new(trimmed)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| ".".to_string());
-            println!("{}", if dir.is_empty() { "." } else { &dir });
+            let out = if dir.is_empty() {
+                ".".to_string()
+            } else {
+                dir
+            };
+            print!("{}{}", out, term);
         }
         0
     }
