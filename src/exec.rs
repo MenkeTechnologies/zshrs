@@ -35674,26 +35674,42 @@ impl ShellExecutor {
     /// mkdir - create directories
     /// Port from zsh/Src/Modules/files.c bin_mkdir() lines 62-111
     fn builtin_mkdir(&self, args: &[String]) -> i32 {
+        // coreutils mkdir(1) port. -p (parents) silently succeeds
+        // when the dir exists; default fails. -v (verbose) reports
+        // each created dir. -m sets mode after creation.
         let mut mode: u32 = 0o777;
         let mut parents = false;
+        let mut verbose = false;
         let mut dirs: Vec<&str> = Vec::new();
 
         let mut i = 0;
         while i < args.len() {
             let arg = &args[i];
-            if arg == "-p" {
+            if arg == "-p" || arg == "--parents" {
                 parents = true;
+            } else if arg == "-v" || arg == "--verbose" {
+                verbose = true;
             } else if arg == "-m" && i + 1 < args.len() {
                 i += 1;
                 mode = u32::from_str_radix(&args[i], 8).unwrap_or(0o777);
-            } else if arg.starts_with("-m") {
-                mode = u32::from_str_radix(&arg[2..], 8).unwrap_or(0o777);
-            } else if !arg.starts_with('-') || arg == "-" || arg == "--" {
-                if arg == "--" {
-                    dirs.extend(args[i + 1..].iter().map(|s| s.as_str()));
-                    break;
-                }
+            } else if let Some(s) = arg.strip_prefix("-m") {
+                mode = u32::from_str_radix(s, 8).unwrap_or(0o777);
+            } else if let Some(s) = arg.strip_prefix("--mode=") {
+                mode = u32::from_str_radix(s, 8).unwrap_or(0o777);
+            } else if arg == "--" {
+                dirs.extend(args[i + 1..].iter().map(|s| s.as_str()));
+                break;
+            } else if arg == "-" || !arg.starts_with('-') {
                 dirs.push(arg);
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                // Combined short flags: -pv, -vp.
+                for c in arg[1..].chars() {
+                    match c {
+                        'p' => parents = true,
+                        'v' => verbose = true,
+                        _ => {}
+                    }
+                }
             }
             i += 1;
         }
@@ -35714,6 +35730,9 @@ impl ShellExecutor {
                 {
                     use std::os::unix::fs::PermissionsExt;
                     let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+                }
+                if verbose {
+                    println!("mkdir: created directory '{}'", dir);
                 }
             }
         }
