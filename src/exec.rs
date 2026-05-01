@@ -9477,6 +9477,12 @@ pub struct ShellExecutor {
     /// Array→(scalar, sep) reverse-tie table. Used by BUILTIN_SET_ARRAY to
     /// join the array elements with `sep` and mirror to the scalar side.
     pub tied_array_to_scalar: HashMap<String, (String, String)>,
+    /// ZLE buffer stack — port of `bufstack` (zsh/Src/builtin.c:4567,
+    /// `LinkList bufstack`). `print -z` (builtin.c:5039-5045) pushes
+    /// joined args onto it; `read -z` and `getln` (builtin.c:6769-6770)
+    /// pop the top entry as the input source. zsh treats this as a stack
+    /// shared between the buffer/zle subsystem and the read path.
+    pub buffer_stack: Vec<String>,
 }
 
 impl ShellExecutor {
@@ -9682,6 +9688,7 @@ impl ShellExecutor {
             function_source: HashMap::new(),
             tied_scalar_to_array: HashMap::new(),
             tied_array_to_scalar: HashMap::new(),
+            buffer_stack: Vec::new(),
         };
         // Mirror env-derived path arrays into the `arrays` table so
         // user-level `fpath` / `path` array reads see the inherited
@@ -22791,8 +22798,27 @@ impl ShellExecutor {
             let _ = std::io::stderr().flush();
         }
 
-        let _ = to_history;
         let _ = silent;
+
+        // `read -z`: take input from the editor buffer stack instead of
+        // the underlying fd (builtin.c:6769-6770). When the stack is
+        // empty, zsh substitutes an empty string. Pop is FIFO from the
+        // top — the C uses `getlinknode(bufstack)` which removes and
+        // returns the head; in our Vec we pop the last pushed (LIFO),
+        // matching the zpushnode/getlinknode pair semantics.
+        if to_history {
+            let buf = self.buffer_stack.pop().unwrap_or_default();
+            let line = buf.trim_end_matches('\n').to_string();
+            if use_array {
+                let words: Vec<String> = line.split_whitespace().map(|s| s.to_string()).collect();
+                let target = var_names.first().cloned().unwrap_or_else(|| "reply".to_string());
+                self.arrays.insert(target, words);
+            } else {
+                let target = var_names.first().cloned().unwrap_or_else(|| "REPLY".to_string());
+                self.variables.insert(target, line);
+            }
+            return 0;
+        }
 
         // `read -q` reads a single character (y/n) from a terminal.
         // zsh: outside a tty (`echo y | read -q`) it errors "not
@@ -32037,11 +32063,13 @@ impl ShellExecutor {
             i += 1;
         }
 
-        // `print -z` pushes to the line editor's buffer stack — in
-        // non-interactive mode there's no editor, so the args are
-        // simply discarded with exit 0 (zsh behavior). Without this
-        // the args fell through to stdout and got printed.
+        // `print -z` pushes the joined args (sep-joined per
+        // builtin.c:5042 `sepjoin(args, NULL, 0)` which uses IFS[0] = ' '
+        // by default) onto the editor buffer stack. `getln` and
+        // `read -z` pop from the same stack later.
         if push_to_stack {
+            let line = output_args.join(" ");
+            self.buffer_stack.push(line);
             return 0;
         }
         // zsh: `print -u N` writes to fd N. If fd N isn't open,
@@ -35445,21 +35473,20 @@ impl ShellExecutor {
         0
     }
 
-    /// getln - read line from buffer
+    /// getln - read line from the editor buffer stack
     fn builtin_getln(&mut self, args: &[String]) -> i32 {
+        // builtin.c:78 — `getln` is `bin_read` with default flags `"zr"`,
+        // i.e. `read -zr`. Pop the top entry from `buffer_stack`; if the
+        // stack is empty, zsh's read uses an empty string (builtin.c:6770
+        // ternary `nonempty(bufstack) ? getlinknode(bufstack) : ztrdup("")`).
         if args.is_empty() {
             eprintln!("getln: missing variable name");
             return 1;
         }
-        // Read from line buffer (simplified - just reads from stdin)
-        let mut line = String::new();
-        if std::io::stdin().read_line(&mut line).is_ok() {
-            let line = line.trim_end_matches('\n');
-            self.variables.insert(args[0].clone(), line.to_string());
-            0
-        } else {
-            1
-        }
+        let line = self.buffer_stack.pop().unwrap_or_default();
+        let line = line.trim_end_matches('\n').to_string();
+        self.variables.insert(args[0].clone(), line);
+        0
     }
 
     /// pushln - push line to buffer
