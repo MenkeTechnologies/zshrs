@@ -347,7 +347,7 @@ These features absorb the best of other shells. None ship before Phase G is done
 - Update phase status from aspirational to measured.
 
 ### N3 — Architecture doc
-- New `docs/ARCHITECTURE.md` covering: VM dispatch, ShellHost callbacks, SQLite caches, worker pool, fork-per-stage pipelines.
+- New `docs/ARCHITECTURE.md` covering: VM dispatch, ShellHost callbacks, rkyv cache + SQLite mirrors, worker pool, fork-per-stage pipelines.
 - Diagram-heavy, code-references-by-line-number for navigability.
 
 ### N4 — Plugin author guide

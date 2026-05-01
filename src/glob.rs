@@ -311,7 +311,7 @@ impl GlobMatch {
 }
 
 /// Locale-aware name comparison for glob sort. Under a Unicode locale
-/// (LANG / LC_ALL / LC_COLLATE not in the C/POSIX/<empty> set), zsh
+/// (LANG / LC_ALL / LC_COLLATE not in the C/POSIX/empty set), zsh
 /// folds case before comparing — so `Aaa bbb Ccc` sorts in declaration
 /// order rather than ASCII (uppercase < lowercase). Fallback to byte
 /// compare under C/POSIX locale to mirror `LC_ALL=C zsh` behavior.

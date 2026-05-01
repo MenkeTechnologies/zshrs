@@ -74,8 +74,8 @@ static REGEX_CACHE: LazyLock<Mutex<std::collections::HashMap<String, regex::Rege
 
 use std::cell::RefCell;
 
-/// Thread-local pointer to the current ShellExecutor.
-/// Set before VM execution, cleared after. Used by builtin handlers.
+// Thread-local pointer to the current ShellExecutor.
+// Set before VM execution, cleared after. Used by builtin handlers.
 thread_local! {
     static CURRENT_EXECUTOR: RefCell<Option<*mut ShellExecutor>> = const { RefCell::new(None) };
 }
@@ -6839,8 +6839,8 @@ fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String, String)> 
 /// and `\n`), trailing semicolons stripped, no empty lines. Matches
 /// `/bin/zsh -f -c 'f() { echo a; echo b; }; typeset -f f'` output:
 ///   f () {
-///   <TAB>echo a
-///   <TAB>echo b
+///   (tab)echo a
+///   (tab)echo b
 ///   }
 pub fn format_function_body_zsh(body: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
@@ -7121,20 +7121,20 @@ pub const BUILTIN_PARAM_STRIP: u16 = 309;
 /// op_byte: 0=first, 1=all, 2=anchor-prefix, 3=anchor-suffix.
 pub const BUILTIN_PARAM_REPLACE: u16 = 310;
 /// `${#name}` — character length of a scalar value, or element count
-/// of an indexed/assoc array. Pops [name], returns count as Value::Str.
+/// of an indexed/assoc array. Pops \[name\], returns count as Value::Str.
 pub const BUILTIN_PARAM_LENGTH: u16 = 311;
-/// `$((expr))` arithmetic substitution. Pops [expr_string], evaluates
+/// `$((expr))` arithmetic substitution. Pops \[expr_string\], evaluates
 /// via the executor's MathEval (integer-aware), returns result as
 /// Value::Str. Bypasses ArithCompiler's float-only Op::Div path so
 /// `$((10/3))` returns "3" not "3.333...".
 pub const BUILTIN_ARITH_EVAL: u16 = 312;
-/// `$(cmd)` command substitution. Pops [cmd_string], runs through
+/// `$(cmd)` command substitution. Pops \[cmd_string\], runs through
 /// `run_command_substitution` which compiles via ZshParser+ZshCompiler
 /// and captures stdout via an in-process pipe. Returns trimmed output
 /// as Value::Str. Avoids the sub-chunk word-emit quoting bug in the
 /// raw Op::CmdSubst path.
 pub const BUILTIN_CMD_SUBST_TEXT: u16 = 313;
-/// Text-based word expansion. Pops [preserved_text]: the word with
+/// Text-based word expansion. Pops \[preserved_text\]: the word with
 /// quotes preserved (DNULL→`"`, SNULL→`'`, BNULL→`\`), runs
 /// `expand_string` (variable + cmd-sub + arith) then `expand_braces`
 /// then `expand_glob`. Returns Value::str (single match) or
@@ -7216,7 +7216,7 @@ pub const BUILTIN_CONCAT_DISTRIBUTE: u16 = 318;
 /// { … }` so the finally arm can read $TRY_BLOCK_ERROR.
 pub const BUILTIN_SET_TRY_BLOCK_ERROR: u16 = 320;
 
-/// `[[ -o option ]]` — shell-option-set test. Stack: [option_name].
+/// `[[ -o option ]]` — shell-option-set test. Stack: \[option_name\].
 /// Normalizes the name (strip underscores, lowercase) and reads
 /// `exec.options`. Pushes Bool.
 pub const BUILTIN_OPTION_SET: u16 = 321;
@@ -7233,19 +7233,19 @@ pub const BUILTIN_PARAM_FILTER: u16 = 322;
 /// removes that element. Comma-key `a[i,j]=(...)` splices.
 pub const BUILTIN_SET_SUBSCRIPT_RANGE: u16 = 323;
 
-/// `[[ -X file ]]` for unknown unary test op `-X`. Stack: [op_name].
+/// `[[ -X file ]]` for unknown unary test op `-X`. Stack: \[op_name\].
 /// Emits zsh's `unknown condition: -X` diagnostic to stderr and
 /// pushes Bool(false). Without this, unknown conditions silently
 /// returned false matching neither zsh's error format nor the
 /// expected status code (zsh returns 2 for parse error).
 pub const BUILTIN_UNKNOWN_COND: u16 = 324;
 
-/// `[[ -t fd ]]` — fd-is-a-tty check. Stack: [fd_string].
+/// `[[ -t fd ]]` — fd-is-a-tty check. Stack: \[fd_string\].
 /// Routes through libc::isatty. Pushes Bool.
 pub const BUILTIN_IS_TTY: u16 = 325;
 
 /// Update `$LINENO` to track the source line of the next statement.
-/// Stack: [n] (the line number from `ZshPipe.lineno`). Direct port
+/// Stack: \[n\] (the line number from `ZshPipe.lineno`). Direct port
 /// of zsh's `lineno` global tracking (Src/input.c:330) — the
 /// compiler emits one of these per top-level pipe so `$LINENO`
 /// reflects the source position at runtime. ID 342 picked because
