@@ -38028,79 +38028,34 @@ impl ShellExecutor {
 
     /// zftp - FTP client builtin
     fn builtin_zftp(&mut self, args: &[String]) -> i32 {
+        // Dispatch through src/zftp.rs which holds the full FTP client
+        // (FtpSession with connect/login/cd/get/put/list/...). The
+        // previous impl was an inline stub that printed "would do X"
+        // without ever opening a socket. Bypass it entirely.
         if args.is_empty() {
-            println!("zftp: FTP client");
-            println!("  zftp open host [port]");
-            println!("  zftp login [user [password]]");
-            println!("  zftp cd dir");
-            println!("  zftp get file [localfile]");
-            println!("  zftp put file [remotefile]");
-            println!("  zftp ls [dir]");
-            println!("  zftp close");
-            return 0;
+            // zsh `zftp` with no args — usage banner via `zftp params`.
+            // Forward to the real impl which will return its own banner
+            // for the empty-args case.
+            let (code, msg) = crate::zftp::builtin_zftp(&[], &mut self.zftp);
+            if !msg.is_empty() {
+                if code == 0 {
+                    print!("{}", msg);
+                } else {
+                    eprint!("{}", msg);
+                }
+            }
+            return code;
         }
-
-        match args[0].as_str() {
-            "open" => {
-                if args.len() < 2 {
-                    eprintln!("zftp open: need hostname");
-                    return 1;
-                }
-                // Would connect to FTP server
-                println!("zftp: would connect to {}", args[1]);
-                0
-            }
-            "login" => {
-                // Would authenticate
-                println!("zftp: would login");
-                0
-            }
-            "cd" => {
-                if args.len() < 2 {
-                    eprintln!("zftp cd: need directory");
-                    return 1;
-                }
-                println!("zftp: would cd to {}", args[1]);
-                0
-            }
-            "get" => {
-                if args.len() < 2 {
-                    eprintln!("zftp get: need filename");
-                    return 1;
-                }
-                println!("zftp: would download {}", args[1]);
-                0
-            }
-            "put" => {
-                if args.len() < 2 {
-                    eprintln!("zftp put: need filename");
-                    return 1;
-                }
-                println!("zftp: would upload {}", args[1]);
-                0
-            }
-            "ls" => {
-                println!("zftp: would list directory");
-                0
-            }
-            "close" | "quit" => {
-                println!("zftp: would close connection");
-                0
-            }
-            "params" => {
-                // Display/set FTP parameters
-                println!("ZFTP_HOST=");
-                println!("ZFTP_PORT=21");
-                println!("ZFTP_USER=");
-                println!("ZFTP_PWD=");
-                println!("ZFTP_TYPE=A");
-                0
-            }
-            cmd => {
-                eprintln!("zftp: unknown command: {}", cmd);
-                1
+        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (code, msg) = crate::zftp::builtin_zftp(&argv, &mut self.zftp);
+        if !msg.is_empty() {
+            if code == 0 {
+                print!("{}", msg);
+            } else {
+                eprint!("{}", msg);
             }
         }
+        code
     }
 
     /// promptinit - initialize prompt theme system
