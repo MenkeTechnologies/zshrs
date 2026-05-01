@@ -25385,6 +25385,7 @@ impl ShellExecutor {
         let mut is_global = false;
         let mut is_suffix = false;
         let mut remove_all = false;
+        let mut match_glob = false;
         let mut positional_args = Vec::new();
 
         for arg in args {
@@ -25394,7 +25395,7 @@ impl ShellExecutor {
                         'a' => remove_all = true,
                         'g' => is_global = true,
                         's' => is_suffix = true,
-                        'm' => {} // pattern match, ignore for now
+                        'm' => match_glob = true,
                         _ => {
                             eprintln!("zshrs:unalias:1: bad option: -{}", ch);
                             return 1;
@@ -25423,6 +25424,37 @@ impl ShellExecutor {
         if positional_args.is_empty() {
             eprintln!("zshrs:unalias:1: not enough arguments");
             return 1;
+        }
+
+        // -m glob pattern dispatch. Direct port of
+        // src/zsh/Src/builtin.c:4396-4424 (bin_unhash with the
+        // unalias path). Each arg is treated as a glob pattern;
+        // every matching alias in the chosen hash table is removed.
+        // If NO matches across all args, return 1 per builtin.c:4421.
+        if match_glob {
+            let mut matched = false;
+            let target_keys: Vec<String> = if is_suffix {
+                self.suffix_aliases.keys().cloned().collect()
+            } else if is_global {
+                self.global_aliases.keys().cloned().collect()
+            } else {
+                self.aliases.keys().cloned().collect()
+            };
+            for pat in &positional_args {
+                for k in &target_keys {
+                    if ShellExecutor::glob_match_static(k, pat) {
+                        if is_suffix {
+                            self.suffix_aliases.remove(k);
+                        } else if is_global {
+                            self.global_aliases.remove(k);
+                        } else {
+                            self.aliases.remove(k);
+                        }
+                        matched = true;
+                    }
+                }
+            }
+            return if matched { 0 } else { 1 };
         }
 
         // zsh continues processing remaining names after a miss,
