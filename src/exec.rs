@@ -25143,6 +25143,7 @@ impl ShellExecutor {
 
         let mut is_global = false;
         let mut is_suffix = false;
+        let mut is_regular = false;
         let mut list_form = false;
         let mut pattern_match = false;
         let mut print_global = false;
@@ -25172,7 +25173,7 @@ impl ShellExecutor {
                         's' => is_suffix = true,
                         'L' => list_form = true,
                         'm' => pattern_match = true,
-                        'r' => {} // regular alias (default)
+                        'r' => is_regular = true,
                         _ => {
                             eprintln!("zshrs:alias:1: bad option: -{}", ch);
                             return 1;
@@ -25185,10 +25186,13 @@ impl ShellExecutor {
             i += 1;
         }
 
-        // zsh: `-g` and `-s` are mutually exclusive — alias is
-        // either global OR suffix, not both. `alias -gs foo=bar`
-        // -> `alias:1: illegal combination of options` exit 1.
-        if is_global && is_suffix {
+        // Direct port of src/zsh/Src/builtin.c:4462-4468 — type
+        // flags are mutually exclusive. zsh sums OPT_ISSET for r,
+        // g, s and errors when the sum > 1 ("illegal combination
+        // of options"). Previous Rust impl only caught the
+        // `-gs` case; `-gr` and `-sr` slipped through.
+        let type_opts = (is_global as u32) + (is_suffix as u32) + (is_regular as u32);
+        if type_opts > 1 {
             eprintln!("zshrs:alias:1: illegal combination of options");
             return 1;
         }
