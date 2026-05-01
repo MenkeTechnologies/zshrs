@@ -30599,7 +30599,15 @@ impl ShellExecutor {
                         's' => physical = false,
                         'L' => physical = false,
                         'P' => physical = true,
-                        _ => {}
+                        // BUILTIN("pushd", ..., "qsPL") declares the
+                        // valid pushd flags. zshrs's `_ => {}`
+                        // silently dropped unknown letters so
+                        // `pushd -X /tmp` cd'd to /tmp instead of
+                        // erroring.
+                        _ => {
+                            eprintln!("zshrs:pushd:1: bad option: -{}", ch);
+                            return 1;
+                        }
                     }
                 }
             } else if arg.starts_with('+') {
@@ -30781,7 +30789,14 @@ impl ShellExecutor {
                         's' => physical = false,
                         'L' => physical = false,
                         'P' => physical = true,
-                        _ => {}
+                        // BUILTIN("popd", ..., "q") + zsh's docs
+                        // accept LqsP for popd too. Reject anything
+                        // else; matches the bin_cd-shared option
+                        // letter table.
+                        _ => {
+                            eprintln!("zshrs:popd:1: bad option: -{}", ch);
+                            return 1;
+                        }
                     }
                 }
             } else if arg.starts_with('+') {
