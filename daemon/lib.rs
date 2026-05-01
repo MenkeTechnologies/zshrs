@@ -43,6 +43,17 @@ pub mod zshrc_analysis;
 pub mod zsync;
 pub mod zsync_builtin;
 
+// Real zsh lexer + parser (copied verbatim from zshrs's src/lexer.rs +
+// src/parser.rs + src/tokens.rs). Replaces the regex-driven static parser
+// in zshrc_analysis.rs. Per user directive: "remove all regex bullshit, use
+// the parser to build AST of ALL CONFIG FILES, walk AST and get all data
+// into rkyv". Built once at first_init across the transitive closure of
+// every reachable config file.
+pub mod zsh_tokens;
+pub mod zsh_lexer;
+pub mod zsh_parser;
+pub mod ast_walker;
+
 pub use ipc::{Event, Frame, Hello, ProtocolVersion, Welcome, PROTOCOL_VERSION};
 pub use paths::CachePaths;
 

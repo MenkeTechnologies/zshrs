@@ -26,7 +26,8 @@ use super::canonical::CanonicalEngine;
 use super::shard::{
     write_canonical_shard, CanonicalShard, ShardHeader, SHARD_FORMAT_VERSION, SHARD_MAGIC,
 };
-use super::zshrc_analysis::{analyze_one_into, CanonicalState};
+use super::ast_walker::analyze_one_into;
+use super::zshrc_analysis::CanonicalState;
 use super::Result;
 
 /// Stats from one full plugin-tree walk.
@@ -141,6 +142,29 @@ fn walk_zinit_plugins(
             let _ = analyze_one_into(&mut local, init_path);
             stats.plugins_analyzed += 1;
         }
+        // Plugin init scripts often `source ${0:A:h}/sibling.zsh` which the
+        // AST walker can't statically resolve (no $0 binding). To still
+        // capture alias / function definitions in those siblings, analyze
+        // every .zsh file at the plugin top level. Bounded to top-level
+        // (no recursion) so we don't drown in nested test fixtures.
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for ent in rd.flatten() {
+                let p = ent.path();
+                if !p.is_file() {
+                    continue;
+                }
+                let ext = p.extension().and_then(|e| e.to_str());
+                if !matches!(ext, Some("zsh") | Some("sh")) {
+                    continue;
+                }
+                if let Some(ref init_p) = init {
+                    if &p == init_p {
+                        continue; // already analyzed above
+                    }
+                }
+                let _ = analyze_one_into(&mut local, &p);
+            }
+        }
         // zinit auto-fpaths every plugin dir.
         let fpath_entry = dir.display().to_string();
         if !local.fpath_additions.iter().any(|e| e == &fpath_entry) {
@@ -243,6 +267,35 @@ fn walk_zinit_snippets(
         } else {
             stats.init_scripts_missing += 1;
         }
+        // Same trick as walk_zinit_plugins: analyze every additional .zsh /
+        // bare-name file in the snippet dir so siblings sourced via dynamic
+        // `${0:A:h}/x` get captured. Bounded to top-level.
+        if path.is_dir() {
+            if let Ok(rd) = std::fs::read_dir(&path) {
+                for ent in rd.flatten() {
+                    let p = ent.path();
+                    if !p.is_file() {
+                        continue;
+                    }
+                    let ext = p.extension().and_then(|e| e.to_str());
+                    let is_zsh = matches!(ext, Some("zsh") | Some("sh"));
+                    let is_bare = ext.is_none()
+                        && p.file_name()
+                            .and_then(|n| n.to_str())
+                            .map(|n| !n.starts_with('.') && n != "LICENSE" && n != "README")
+                            .unwrap_or(false);
+                    if !is_zsh && !is_bare {
+                        continue;
+                    }
+                    if let Some(ref init_p) = init_path {
+                        if &p == init_p {
+                            continue;
+                        }
+                    }
+                    let _ = analyze_one_into(&mut local, &p);
+                }
+            }
+        }
         if let Some(d) = fpath_dir.as_ref() {
             let entry = d.display().to_string();
             if !local.fpath_additions.iter().any(|e| e == &entry) {
@@ -307,6 +360,10 @@ fn pick_init_script(dir: &Path, dir_name: &str) -> Option<PathBuf> {
         format!("{}.zsh", bare),
         format!("{}.zsh-theme", bare),
         format!("{}.plugin.zsh", bare),
+        // zinit-snippet convention: file named identically to the dir.
+        // OMZP::git/OMZP::git, OMZP::docker/OMZP::docker, etc.
+        dir_name.to_string(),
+        bare.to_string(),
     ];
     for c in candidates {
         let p = dir.join(c);

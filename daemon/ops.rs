@@ -569,7 +569,7 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
         ));
     }
 
-    let analysis = super::zshrc_analysis::analyze_with_sources(path)
+    let analysis = super::ast_walker::analyze_with_ast(path)
         .map_err(|e| ErrPayload::new("analyze_failed", e.to_string()))?;
 
     // Seed the rkyv-backed canonical engine. SQLite is not touched here; the
