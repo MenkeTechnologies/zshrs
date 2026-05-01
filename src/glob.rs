@@ -403,8 +403,20 @@ pub struct GlobOptions {
     pub follow_links: bool,
     pub extended_glob: bool,
     pub case_glob: bool,
+    /// `**` recursion semantics. False = strict zsh: `**` requires
+    /// `/` (or `***/`) after to be recursive; bare `**foo` is a
+    /// literal star pair. True = bash globstar: bare `**` recurses
+    /// without trailing `/`. Direct mirror of GLOBSTARSHORT option
+    /// at zsh/Src/options.c:148, consulted by parse_pattern in
+    /// zshrs/Src/glob.c:715-742 parsecomplist.
     pub glob_star_short: bool,
     pub bare_glob_qual: bool,
+    /// Brace character-class expansion (`{a-z}` → `a b c … z`).
+    /// Direct mirror of zsh's BRACECCL option (zsh/Src/options.c:104,
+    /// consulted in zsh/Src/glob.c:2046 hasbraces and glob.c:2424
+    /// xpandbraces). When false, only comma lists `{a,b,c}` and
+    /// numeric/char ranges `{1..5}`/`{a..e}` expand; the `{a-z}`
+    /// dash-form is left literal.
     pub brace_ccl: bool,
 }
 
@@ -454,6 +466,23 @@ impl GlobState {
 
     /// Main entry point: expand a glob pattern
     pub fn glob(&mut self, pattern: &str) -> Vec<String> {
+        // Brace pre-expansion. In zsh, `xpandbraces` (zsh/Src/glob.c:2275)
+        // runs during substitution before glob — patterns reaching glob()
+        // are already brace-free in the production path (exec.rs handles
+        // it). For direct programmatic callers of glob_with_options, run
+        // the brace pass here so `GlobOptions.brace_ccl` is actually
+        // consulted: with brace_ccl set, `{a-mnop}` expands to a..m,n,o,p
+        // per glob.c:2424 BRACECCL block; without, only `{a,b}` lists and
+        // `{1..5}`/`{a..e}` ranges expand. Recurse on each variant and
+        // concatenate matches.
+        if has_braces(pattern, self.options.brace_ccl) {
+            let mut all = Vec::new();
+            for variant in expand_braces(pattern, self.options.brace_ccl) {
+                all.extend(self.glob(&variant));
+            }
+            return all;
+        }
+
         self.matches.clear();
         self.pathbuf.clear();
         self.pathpos = 0;
@@ -936,17 +965,50 @@ impl GlobState {
                     if follow {
                         chars.next();
                     }
-                    // Skip trailing /
-                    if chars.peek() == Some(&'/') {
+                    // Direct port of zsh/Src/glob.c:717-742 parsecomplist:
+                    // `**` is recursive ONLY when followed by `/` (or `***/`,
+                    // or when GLOBSTARSHORT is set). Without those, it should
+                    // collapse to a literal `*` + `*` pair (which the matcher
+                    // treats as a single `*` since `**` ≡ `*` for non-recursive
+                    // contexts in zsh). The glob_star_short option flips the
+                    // strict gate off so bare `**` recurses without `/`.
+                    let has_slash = chars.peek() == Some(&'/');
+                    let recursive = has_slash || follow || self.options.glob_star_short;
+                    if has_slash {
                         chars.next();
                     }
-                    if !current.is_empty() {
-                        components.push(PatternComponent::Pattern(current.clone()));
-                        current.clear();
+                    if recursive {
+                        if !current.is_empty() {
+                            components.push(PatternComponent::Pattern(current.clone()));
+                            current.clear();
+                        }
+                        components.push(PatternComponent::Recursive {
+                            follow_links: follow,
+                        });
+                        // GLOBSTARSHORT semantics — zsh/Src/glob.c:727-730
+                        // `instr += ((shortglob ? 1 : 3) + follow);` leaves
+                        // ONE `*` in place when entering the recursive path
+                        // without a `/` separator, so `**.c` ≡ `**/*.c` and
+                        // `**foo` ≡ `**/*foo`. Without this prepend, the
+                        // remaining segment was parsed literally — `**.stk`
+                        // became [Recursive, Pattern(".stk")], which only
+                        // matched files literally named `.stk`. Gate on
+                        // `!has_slash && !follow` since `**/X` and `***/X`
+                        // already consumed their separator and don't need
+                        // the glue star.
+                        if !has_slash
+                            && !follow
+                            && chars.peek().is_some()
+                            && chars.peek() != Some(&'/')
+                        {
+                            current.push('*');
+                        }
+                    } else {
+                        // Strict zsh: `**foo` (no slash, no shortglob) is
+                        // a literal pair of stars in the same path component.
+                        // Two `*` collapse to one in zsh pattern semantics.
+                        current.push('*');
                     }
-                    components.push(PatternComponent::Recursive {
-                        follow_links: follow,
-                    });
                 }
                 _ => current.push(c),
             }

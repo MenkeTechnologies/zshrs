@@ -12297,6 +12297,31 @@ impl ShellExecutor {
                             } else if has_top_dotdot {
                                 self.expand_brace_sequence(content)
                             } else {
+                                // BRACECCL char-class expansion — direct port
+                                // of zsh/Src/glob.c:2424-2470. When BRACECCL
+                                // is set and the brace contents have no top-
+                                // level `,` or `..`, expand chars and `c1-c2`
+                                // ranges into a sorted unique character list:
+                                // `{a-mnop}` → a b c ... m n o p. The option
+                                // is off by default; opt-in via `setopt
+                                // braceccl` or `set -B`.
+                                let braceccl_on = self
+                                    .options
+                                    .get("braceccl")
+                                    .copied()
+                                    .unwrap_or(false);
+                                if braceccl_on && !content.is_empty() {
+                                    let ccl = Self::expand_brace_ccl(content);
+                                    if !ccl.is_empty() {
+                                        let mut results = Vec::with_capacity(ccl.len());
+                                        for ch in ccl {
+                                            let combined =
+                                                format!("{}{}{}", prefix, ch, suffix);
+                                            results.extend(self.expand_braces(&combined));
+                                        }
+                                        return results;
+                                    }
+                                }
                                 // No top-level comma or `..` — outer braces
                                 // are NOT a brace expansion. Direct port of
                                 // zsh's brace-expand pass: `{a{1,2}b}` keeps
@@ -12345,6 +12370,55 @@ impl ShellExecutor {
 
         // No brace expansion found
         vec![s.to_string()]
+    }
+
+    /// BRACECCL char-class expansion. Direct port of
+    /// zsh/Src/glob.c:2424-2470. Walks `content` char-by-char; on
+    /// `lo-hi` (where `lo` was just inserted, `-` is the dash, `hi`
+    /// is peeked next), fill the open interval `(lo, hi)` — `lo` is
+    /// already present and `hi` will be inserted by the next
+    /// iteration. Output is sorted and deduplicated, mirroring the C
+    /// 256-byte `ccl[]` boolean array followed by ascending walk.
+    /// Empty `content` returns an empty Vec — caller falls back to
+    /// the literal-`{}` path so the token isn't dropped.
+    fn expand_brace_ccl(content: &str) -> Vec<String> {
+        let chars: Vec<char> = content.chars().collect();
+        if chars.is_empty() {
+            return Vec::new();
+        }
+        let mut set: std::collections::BTreeSet<char> =
+            std::collections::BTreeSet::new();
+        let mut lastch: Option<char> = None;
+        let mut i = 0;
+        while i < chars.len() {
+            let c1 = chars[i];
+            i += 1;
+            // c2 in the C code is `*p` after consuming c1 — peek without
+            // consuming. Range fires only when (a) c1 is the dash, (b) we
+            // already inserted a left endpoint, (c) a right endpoint
+            // exists, (d) lo <= hi.
+            let c2_peek = chars.get(i).copied();
+            if c1 == '-' {
+                if let (Some(lo), Some(hi)) = (lastch, c2_peek) {
+                    if (lo as u32) <= (hi as u32) {
+                        let mut x = lo as u32 + 1;
+                        while x < hi as u32 {
+                            if let Some(c) = char::from_u32(x) {
+                                set.insert(c);
+                            }
+                            x += 1;
+                        }
+                        // glob.c:2449 sets lastch=-1 sentinel; next iter's
+                        // `c1 = *p++` consumes hi and inserts it normally.
+                        lastch = None;
+                        continue;
+                    }
+                }
+            }
+            set.insert(c1);
+            lastch = Some(c1);
+        }
+        set.into_iter().map(|c| c.to_string()).collect()
     }
 
     /// True if the input has at least one `\{` and a matching `\}` such
