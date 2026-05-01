@@ -42975,6 +42975,28 @@ impl ShellExecutor {
         // -t / --truncate-set1: truncate set1 to set2's length.
         // Direct port of coreutils tr -t.
         let truncate1 = args.iter().any(|a| a == "-t" || a == "--truncate-set1");
+        // Validate every flag-prefixed arg matches a known flag. Old
+        // \`filter(|a| !starts_with('-'))\` consumed unknown flags
+        // silently — \`tr -X 'a' 'b'\` would translate as if -X were
+        // a no-op.
+        for a in args {
+            let s: &str = a.as_str();
+            if s.starts_with('-')
+                && s != "-d"
+                && s != "--delete"
+                && s != "-c"
+                && s != "-C"
+                && s != "--complement"
+                && s != "-s"
+                && s != "--squeeze-repeats"
+                && s != "-t"
+                && s != "--truncate-set1"
+                && s.len() > 1
+            {
+                eprintln!("tr: unrecognized option: '{}'", s);
+                return 1;
+            }
+        }
         let set1_raw: &str;
         let set2_raw: &str;
 
