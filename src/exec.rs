@@ -35912,7 +35912,7 @@ impl ShellExecutor {
                                     args[i].clone()
                                 } else {
                                     eprintln!(
-                                        "zsystem: flock: option t requires a numeric timeout"
+                                        "zshrs:zsystem:1: flock: option t requires a numeric timeout"
                                     );
                                     return 1;
                                 }
