@@ -8,13 +8,13 @@
 // For v1 foundation we only implement the session registry (used by zls/zid/ztag/zsend);
 // later iterations will fold in subscription map, fpath cache, FTS indexes, etc.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
 use parking_lot::Mutex;
 use rusqlite::Connection;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::catalog::{self, CatalogSummary};
 use super::history;
@@ -74,6 +74,10 @@ pub struct DaemonStateInner {
     pub next_client_id: u64,
     pub subscriptions: BTreeMap<u64, Subscription>,
     pub next_subscription_id: u64,
+    /// Pending zsend --wait responses, keyed by delivery_id. Sender side
+    /// holds a oneshot::Receiver waiting for a `cmd_result` IPC from the
+    /// target shell.
+    pub pending_responses: HashMap<String, oneshot::Sender<serde_json::Value>>,
 }
 
 impl DaemonStateInner {
@@ -83,6 +87,7 @@ impl DaemonStateInner {
             next_client_id: 1,
             subscriptions: BTreeMap::new(),
             next_subscription_id: 1,
+            pending_responses: HashMap::new(),
         }
     }
 }
@@ -371,6 +376,26 @@ impl DaemonState {
             }
         }
         Some(s.tags.iter().cloned().collect())
+    }
+
+    /// Register a pending zsend --wait response slot. Returns the receiver
+    /// that the caller awaits; the sender is stored under delivery_id and
+    /// fires when a `cmd_result` IPC matches.
+    pub fn register_pending(&self, delivery_id: String) -> oneshot::Receiver<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        let mut g = self.inner.lock();
+        g.pending_responses.insert(delivery_id, tx);
+        rx
+    }
+
+    /// Resolve a pending zsend --wait response. Returns true if the slot
+    /// existed (caller will be woken).
+    pub fn resolve_pending(&self, delivery_id: &str, value: serde_json::Value) -> bool {
+        let mut g = self.inner.lock();
+        match g.pending_responses.remove(delivery_id) {
+            Some(tx) => tx.send(value).is_ok(),
+            None => false,
+        }
     }
 
     pub fn shells_with_tag(&self, tag: &str) -> Vec<u64> {

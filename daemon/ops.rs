@@ -38,6 +38,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "tag" => op_tag(state, client_id, args).await,
         "untag" => op_untag(state, client_id, args).await,
         "send" => op_send(state, client_id, args).await,
+        "cmd_result" => op_cmd_result(state, args).await,
         "notify" => op_notify(state, client_id, args).await,
         "daemon" => op_daemon(state, args).await,
 
@@ -188,22 +189,88 @@ async fn op_send(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult {
         .to_string();
 
     let target = args.get("target").cloned().unwrap_or(Value::Null);
+    let wait = args.get("wait").and_then(Value::as_bool).unwrap_or(false);
+    let timeout_ms = args
+        .get("timeout_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(60_000);
 
+    let delivery_id = format!("send-{}-{}", from, chrono::Utc::now().timestamp_millis());
     let event_payload = json!({
-        "delivery_id": format!("send-{}-{}", from, chrono::Utc::now().timestamp_millis()),
+        "delivery_id": delivery_id,
         "from_shell": from,
         "command": command,
+        "wait": wait,
     });
     let frame = Frame::event(event_name(Event::CmdExecute), event_payload);
 
-    let delivered = match resolve_target(state, &target, from, frame) {
-        Ok(v) => v,
-        Err(e) => return Err(e),
-    };
+    if wait {
+        // Register pending slot BEFORE delivering so a fast responder doesn't
+        // race the receiver registration.
+        let rx = state.register_pending(delivery_id.clone());
+        let delivered = resolve_target(state, &target, from, frame)?;
+        if delivered.is_empty() {
+            // Nothing to wait on — clean up the pending slot.
+            let _ = state.resolve_pending(&delivery_id, Value::Null);
+            return Ok(json!({
+                "delivered_to": delivered,
+                "delivered_count": 0,
+                "wait": true,
+                "result": null,
+                "timed_out": false,
+            }));
+        }
+        // Block on the responder's cmd_result with timeout.
+        let result =
+            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), rx).await {
+                Ok(Ok(v)) => Some(v),
+                _ => None,
+            };
+        if result.is_none() {
+            // Drop the orphaned slot if still present.
+            let _ = state.resolve_pending(&delivery_id, Value::Null);
+        }
+        return Ok(json!({
+            "delivered_to": delivered,
+            "delivered_count": delivered.len(),
+            "wait": true,
+            "delivery_id": delivery_id,
+            "result": result,
+            "timed_out": result.is_none(),
+        }));
+    }
 
+    let delivered = resolve_target(state, &target, from, frame)?;
     Ok(json!({
         "delivered_to": delivered,
         "delivered_count": delivered.len(),
+        "delivery_id": delivery_id,
+    }))
+}
+
+/// `cmd_result` — responder side of zsend --wait. Target shell calls this
+/// after it has executed the dispatched command. Daemon resolves the
+/// pending oneshot slot keyed by delivery_id; sender (blocked in op_send)
+/// gets the result.
+async fn op_cmd_result(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let delivery_id = args
+        .get("delivery_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `delivery_id`"))?
+        .to_string();
+    let exit_code = args.get("exit_code").and_then(Value::as_i64);
+    let stdout = args.get("stdout").and_then(Value::as_str).unwrap_or("");
+    let stderr = args.get("stderr").and_then(Value::as_str).unwrap_or("");
+    let value = json!({
+        "exit_code": exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+        "ts_ns": chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+    });
+    let resolved = state.resolve_pending(&delivery_id, value);
+    Ok(json!({
+        "delivery_id": delivery_id,
+        "resolved": resolved,
     }))
 }
 
