@@ -8836,6 +8836,20 @@ pub struct VarAttr {
     /// `typeset -i N` — display integer in base N (2-36). Stored value
     /// is decimal; the `N#DIGITS` form is computed on read.
     pub int_base: Option<u32>,
+    /// `typeset -h` — hidden flag (zsh PM_HIDE). zsh hides such names
+    /// from declarative listings (`set`, default `typeset`); they still
+    /// expand normally.
+    pub hidden: bool,
+    /// `typeset -H` — hide-value flag (zsh PM_HIDEVAL). Listings show
+    /// the name (so `typeset -p` is round-trippable) but suppress the
+    /// stored value.
+    pub hide_val: bool,
+    /// `typeset -t` — trace flag (zsh PM_TRACED). Mutations should log
+    /// `+ NAME=VALUE` to stderr like `set -x` for assignments.
+    pub trace: bool,
+    /// `typeset -F N` — fixed-point float precision (digits after the
+    /// decimal point). Default in zsh is 8 when -F is set without N.
+    pub float_precision: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -9308,6 +9322,18 @@ impl VarAttr {
         }
         if self.unique {
             out.push_str("-unique");
+        }
+        // PM_HIDE / PM_HIDEVAL / PM_TRACED — surface in `${(t)var}` so
+        // user code that introspects via parameter type strings sees
+        // the new typeset attributes.
+        if self.hidden {
+            out.push_str("-hide");
+        }
+        if self.hide_val {
+            out.push_str("-hideval");
+        }
+        if self.trace {
+            out.push_str("-trace");
         }
         out
     }
@@ -21811,11 +21837,10 @@ impl ShellExecutor {
             i += 1;
         }
 
+        // -h/-H/-t/-F now flow into VarAttr (hidden / hide_val / trace /
+        // float_precision). -g (global) controls scope insertion at
+        // assignment time and isn't a stored attribute.
         let _ = is_global;
-        let _ = is_hidden;
-        let _ = is_hide_val;
-        let _ = is_trace;
-        let _ = precision;
 
         // `typeset -m PAT [PAT...]` — treat each var_arg as a glob pattern
         // and list matching variables. With no flags besides -m it acts as
@@ -22591,6 +22616,10 @@ impl ShellExecutor {
                         unique: is_unique,
                         float_exp: is_float_exp,
                         int_base: if is_integer { int_base } else { None },
+                        hidden: is_hidden,
+                        hide_val: is_hide_val,
+                        trace: is_trace,
+                        float_precision: if is_float || is_float_exp { precision } else { None },
                     };
                     self.var_attrs.insert(attr_name.clone(), attr);
                     // Apply unique-dedupe immediately if the array
