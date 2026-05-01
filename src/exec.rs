@@ -44446,11 +44446,29 @@ impl ShellExecutor {
     fn builtin_sha256sum(&self, args: &[String]) -> i32 {
         use sha2::{Digest, Sha256};
         use std::io::Read;
-        let files: Vec<&str> = args
-            .iter()
-            .filter(|a| !a.starts_with('-'))
-            .map(|s| s.as_str())
-            .collect();
+        // Validate flags: silent-drop accepted any unknown -X. coreutils
+        // sha256sum specifically supports -b/-t/--binary/--text (we
+        // accept them as no-ops since output format is identical), -
+        // (stdin), and `--`. Anything else errors.
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-" => files.push("-"),
+                "-b" | "-t" | "--binary" | "--text" => {} // accept, no-op
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
+                s if !s.starts_with('-') => files.push(s),
+                s => {
+                    eprintln!("sha256sum: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
         let targets: Vec<&str> = if files.is_empty() {
             vec!["-"]
         } else {
