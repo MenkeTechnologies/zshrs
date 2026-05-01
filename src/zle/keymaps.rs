@@ -671,9 +671,16 @@ impl Keymap {
             .any(|k| k.starts_with(&normalized) && k != &normalized)
     }
 
-    /// List all bindings
+    /// List all bindings, sorted by key sequence. zsh emits bindkey
+    /// listings in a stable order (table-walk + iterator); HashMap
+    /// iteration in Rust is randomized, so the output flickered
+    /// between runs. Sort here so consumers (bindkey -L, the
+    /// $widgets / $keymaps introspection paths) see deterministic
+    /// output.
     pub fn list_bindings(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.bindings.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+        let mut sorted: Vec<(&String, &String)> = self.bindings.iter().collect();
+        sorted.sort_by(|a, b| a.0.cmp(b.0));
+        sorted.into_iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
     /// Normalize key notation
