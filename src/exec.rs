@@ -35487,115 +35487,44 @@ impl ShellExecutor {
         }
 
         match args[0].as_str() {
-            "-f" => {
-                // Format string: zformat -f var format specs...
+            "-f" | "-F" => {
+                // zformat -f / -F — direct port of
+                // src/zsh/Src/Modules/zutil.c:967-996. -f and -F are
+                // identical except `-F` enables `presence` mode in
+                // ternary expressions per zutil.c:967-969 (case 'F':
+                // presence = 1; fall-through). Now routes through
+                // the faithful zformat_substring port in zutil.rs
+                // which handles `%(SPECTEST.true.false)` ternaries
+                // and `.MAX` width caps.
                 if args.len() < 3 {
-                    // zsh: insufficient args -> `zformat:1: not enough
-                    // arguments` exit 1. zshrs returned 1 silently.
                     eprintln!("zshrs:zformat:1: not enough arguments");
                     return 1;
                 }
+                let presence = args[0] == "-F";
                 let var_name = args[1].clone();
-                let format = &args[2];
-                let specs: HashMap<char, &str> = args[3..]
-                    .iter()
-                    .filter_map(|s| {
-                        let mut chars = s.chars();
-                        let key = chars.next()?;
-                        if chars.next() == Some(':') {
-                            Some((key, &s[2..]))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // Format syntax: `%[-][N]X` where `-` left-aligns,
-                // `N` is min width, `X` is the spec char. `%%` is literal %.
-                let mut result = String::new();
-                let bytes: Vec<char> = format.chars().collect();
-                let mut idx = 0;
-                while idx < bytes.len() {
-                    let c = bytes[idx];
-                    if c != '%' {
-                        result.push(c);
-                        idx += 1;
+                let format = args[2].clone();
+                let mut specs: HashMap<char, String> = HashMap::new();
+                // zutil.c:975-976 — defaults: `%%` is %, `%)` is ).
+                specs.insert('%', "%".to_string());
+                specs.insert(')', ")".to_string());
+                // zutil.c:979-986 — each spec arg is "X:value".
+                for s in &args[3..] {
+                    let chars: Vec<char> = s.chars().collect();
+                    if chars.len() < 2 {
                         continue;
                     }
-                    idx += 1;
-                    if idx >= bytes.len() {
-                        result.push('%');
-                        break;
+                    let key = chars[0];
+                    if chars[1] != ':' {
+                        eprintln!("zshrs:zformat:1: invalid argument: {}", s);
+                        return 1;
                     }
-                    if bytes[idx] == '%' {
-                        result.push('%');
-                        idx += 1;
-                        continue;
+                    if key == '-' || key == '.' || key.is_ascii_digit() {
+                        eprintln!("zshrs:zformat:1: invalid argument: {}", s);
+                        return 1;
                     }
-                    // Optional `-` for left align.
-                    let mut left_align = false;
-                    if bytes[idx] == '-' {
-                        left_align = true;
-                        idx += 1;
-                    }
-                    // Optional width digits.
-                    let mut width = 0usize;
-                    let mut had_width = false;
-                    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
-                        had_width = true;
-                        width = width * 10 + (bytes[idx] as u8 - b'0') as usize;
-                        idx += 1;
-                    }
-                    if idx >= bytes.len() {
-                        // Unterminated — emit raw as-is.
-                        result.push('%');
-                        if left_align {
-                            result.push('-');
-                        }
-                        if had_width {
-                            result.push_str(&width.to_string());
-                        }
-                        break;
-                    }
-                    let spec_char = bytes[idx];
-                    idx += 1;
-                    let replacement = match specs.get(&spec_char) {
-                        Some(s) => (*s).to_string(),
-                        None => {
-                            // Unknown spec — emit the raw segment back.
-                            let mut raw = String::from("%");
-                            if left_align {
-                                raw.push('-');
-                            }
-                            if had_width {
-                                raw.push_str(&width.to_string());
-                            }
-                            raw.push(spec_char);
-                            result.push_str(&raw);
-                            continue;
-                        }
-                    };
-                    if width > replacement.chars().count() {
-                        let pad = width - replacement.chars().count();
-                        // zformat semantics (observed against /bin/zsh): a
-                        // `-` prefix RIGHT-aligns the value (pads on left);
-                        // no prefix LEFT-aligns (pads on right). This is the
-                        // reverse of printf — match zsh anyway.
-                        if left_align {
-                            for _ in 0..pad {
-                                result.push(' ');
-                            }
-                            result.push_str(&replacement);
-                        } else {
-                            result.push_str(&replacement);
-                            for _ in 0..pad {
-                                result.push(' ');
-                            }
-                        }
-                    } else {
-                        result.push_str(&replacement);
-                    }
+                    specs.insert(key, s[2..].to_string());
                 }
+                let result = crate::zutil::zformat(&format, &specs, presence);
                 self.variables.insert(var_name, result);
             }
             "-a" => {
