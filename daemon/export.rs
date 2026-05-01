@@ -31,7 +31,6 @@ pub async fn op_export(state: &Arc<DaemonState>, args: Value) -> OpResult {
 }
 
 async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bool) -> OpResult {
-    super::zsync::ensure_schema(state)?;
     let target = args
         .get("target")
         .and_then(Value::as_str)
@@ -47,12 +46,79 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
+    // `--all-state` aggregator: concatenate every eval-compatible shell-state
+    // target into one body. Per docs/DAEMON.md "Default semantics include a
+    // wipe prefix so eval truly RESETS overlay back to canonical".
+    if target == "all-state" || target == "--all-state" {
+        let body = render_all_state(state, &format, additive)?;
+        return Ok(json!({
+            "target": "all-state",
+            "format": format,
+            "body": body,
+        }));
+    }
+
     let body = render(state, &target, &format, additive)?;
     Ok(json!({
         "target": target,
         "format": format,
         "body": body,
     }))
+}
+
+/// All shell-state-eval-compatible subsystems, in the dependency order that
+/// `eval $(zcache export --all-state)` expects (path before commands; fpath
+/// before autoloads; aliases last so user-mutable state wins).
+const ALL_STATE_TARGETS: &[&str] = &[
+    "setopt",     // option mask first; downstream behavior depends on this
+    "zmodload",   // modules before features that need them
+    "path",       // PATH before command_hash + functions
+    "fpath",      // FPATH before autoload_table
+    "manpath",
+    "named_dir",
+    "env",        // exported env before params
+    "params",
+    "zstyle",
+    "bindkey",
+    "compdef",
+    "command_hash",
+    "autoload_table",
+    "functions",
+    "aliases",    // alias is last so it can shadow function/builtin
+    "galiases",
+    "saliases",
+];
+
+fn render_all_state(
+    state: &DaemonState,
+    format: &str,
+    additive: bool,
+) -> std::result::Result<String, ErrPayload> {
+    if format != "sh" {
+        return Err(ErrPayload::new(
+            "format_unsupported_for_all_state",
+            format!("--all-state requires --format sh (got `{}`)", format),
+        ));
+    }
+    let mut out = String::new();
+    out.push_str("# zshrs --all-state snapshot — equivalent to `exec zshrs` minus the exec\n");
+    out.push_str(&format!(
+        "# generated: {}\n\n",
+        chrono::Utc::now().to_rfc3339()
+    ));
+    for target in ALL_STATE_TARGETS {
+        out.push_str(&format!("\n# ----- {} -----\n", target));
+        match render_sh(state, target, additive) {
+            Ok(s) if !s.is_empty() => out.push_str(&s),
+            Ok(_) => {
+                out.push_str(&format!("# (no entries for {})\n", target));
+            }
+            Err(e) => {
+                out.push_str(&format!("# skipped {}: {}\n", target, e.msg));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Render a target in the requested format. Returns the rendered string body.
@@ -371,6 +437,123 @@ fn render_sh(
 }
 
 fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
+    // Daemon-introspection targets (no canonical/walk subsystem mapping).
+    match target {
+        "shells" => {
+            let sessions = state.snapshot_sessions();
+            let payload: Vec<Value> = sessions
+                .iter()
+                .map(|s| serde_json::to_value(s).unwrap_or(Value::Null))
+                .collect();
+            return Ok(serde_json::to_string_pretty(&payload).unwrap_or_default());
+        }
+        "subscriptions" => {
+            let subs = state.list_all_subscriptions();
+            let payload: Vec<Value> = subs
+                .iter()
+                .map(|s| {
+                    json!({
+                        "id": s.id,
+                        "client_id": s.client_id,
+                        "pattern": s.pattern,
+                        "scope_pat": s.scope_pat,
+                        "topic_pat": s.topic_pat,
+                        "paused": s.paused,
+                    })
+                })
+                .collect();
+            return Ok(serde_json::to_string_pretty(&payload).unwrap_or_default());
+        }
+        "daemon_state" => {
+            let payload = json!({
+                "pid": state.pid,
+                "uptime_ms": state.uptime_ms(),
+                "started_at": state.start_wall.to_rfc3339(),
+                "session_count": state.session_count(),
+                "canonical_rows": state.canonical.total_rows(),
+                "subscription_count": state.list_all_subscriptions().len(),
+                "watched_paths": state.fs_watcher.stats().watched_path_count,
+            });
+            return Ok(serde_json::to_string_pretty(&payload).unwrap_or_default());
+        }
+        "entry_stats" => {
+            // Catalog.entry_stats is a hydrated mirror of per-entry runtime
+            // counters. Read from sqlite (since rkyv stores cumulative blob,
+            // not per-entry stats with these columns).
+            let rows: Vec<Value> = state
+                .with_catalog(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT fq_name, last_called_at, call_count, total_ns FROM entry_stats \
+                         ORDER BY call_count DESC, fq_name ASC LIMIT 10000",
+                    )?;
+                    let rows: Vec<Value> = stmt
+                        .query_map([], |r| {
+                            Ok(json!({
+                                "fq_name": r.get::<_, String>(0)?,
+                                "last_called_at": r.get::<_, Option<i64>>(1)?,
+                                "call_count": r.get::<_, i64>(2)?,
+                                "total_ns": r.get::<_, i64>(3)?,
+                            }))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok::<_, rusqlite::Error>(rows)
+                })
+                .map_err(ErrPayload::from)?;
+            return Ok(serde_json::to_string_pretty(&rows).unwrap_or_default());
+        }
+        "plugins" => {
+            let rows: Vec<Value> = state
+                .with_catalog(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT name, version, source, installed_at, enabled FROM plugins \
+                         ORDER BY name ASC",
+                    )?;
+                    let rows: Vec<Value> = stmt
+                        .query_map([], |r| {
+                            Ok(json!({
+                                "name": r.get::<_, String>(0)?,
+                                "version": r.get::<_, Option<String>>(1)?,
+                                "source": r.get::<_, Option<String>>(2)?,
+                                "installed_at": r.get::<_, Option<i64>>(3)?,
+                                "enabled": r.get::<_, Option<bool>>(4)?,
+                            }))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok::<_, rusqlite::Error>(rows)
+                })
+                .map_err(ErrPayload::from)?;
+            return Ok(serde_json::to_string_pretty(&rows).unwrap_or_default());
+        }
+        "compiled_files" => {
+            let rows: Vec<Value> = state
+                .with_catalog(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT path, kind, mtime, inode, last_used_at, use_count, bytes_in, \
+                         bytes_out, sensitive FROM compiled_files ORDER BY use_count DESC LIMIT 10000",
+                    )?;
+                    let rows: Vec<Value> = stmt
+                        .query_map([], |r| {
+                            Ok(json!({
+                                "path": r.get::<_, String>(0)?,
+                                "kind": r.get::<_, String>(1)?,
+                                "mtime": r.get::<_, i64>(2)?,
+                                "inode": r.get::<_, i64>(3)?,
+                                "last_used_at": r.get::<_, Option<i64>>(4)?,
+                                "use_count": r.get::<_, i64>(5)?,
+                                "bytes_in": r.get::<_, i64>(6)?,
+                                "bytes_out": r.get::<_, i64>(7)?,
+                                "sensitive": r.get::<_, bool>(8)?,
+                            }))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok::<_, rusqlite::Error>(rows)
+                })
+                .map_err(ErrPayload::from)?;
+            return Ok(serde_json::to_string_pretty(&rows).unwrap_or_default());
+        }
+        _ => {}
+    }
+
     // Walk-output targets render from catalog.entries.
     let walk_kinds: Option<&[&str]> = match target {
         "command_hash" => Some(&["command"]),
