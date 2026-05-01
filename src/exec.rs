@@ -10605,6 +10605,54 @@ impl ShellExecutor {
             .unwrap_or(false)
     }
 
+    /// Tab expansion — direct port of `zexpandtabs` in zsh/Src/utils.c:5973.
+    /// Writes `s` into `out` with TAB characters expanded to spaces against
+    /// a tabstop of `width`. `startpos` carries the cumulative emitted
+    /// column from previous calls (used by `print -X` which preserves
+    /// alignment across args). When `all_tabs` is false, only leading TABs
+    /// (those at the start of a line) are expanded; embedded TABs are
+    /// emitted verbatim and `startpos` is advanced by one tabstop. When
+    /// `all_tabs` is true, every TAB expands. Returns the new `startpos`.
+    fn zexpandtabs_into(s: &str, width: i32, startpos: i32, all_tabs: bool, out: &mut String) -> i32 {
+        let mut startpos = startpos;
+        let mut at_start = true;
+        for c in s.chars() {
+            if c == '\t' {
+                if all_tabs || at_start {
+                    // builtin.c:5993 — at least one space at a tab boundary
+                    // (or always, when width<=0 paranoia).
+                    if width <= 0 || startpos % width == 0 {
+                        out.push(' ');
+                        startpos += 1;
+                    }
+                    if width > 0 {
+                        while startpos % width != 0 {
+                            out.push(' ');
+                            startpos += 1;
+                        }
+                    }
+                } else {
+                    // utils.c:6011 — embedded TAB with -x: leave the TAB
+                    // alone and best-guess the column after it.
+                    let rem = startpos % width;
+                    startpos += width - rem;
+                    out.push('\t');
+                }
+                continue;
+            } else if c == '\n' || c == '\r' {
+                out.push(c);
+                startpos = 0;
+                at_start = true;
+                continue;
+            }
+            at_start = false;
+            out.push(c);
+            // utils.c:6050 — advance by display width.
+            startpos += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as i32;
+        }
+        startpos
+    }
+
     /// Static glob match — same logic as glob_match but callable without &self,
     /// needed for Rayon parallel iterators that can't capture &self.
     pub fn glob_match_static(s: &str, pattern: &str) -> bool {
@@ -31777,6 +31825,9 @@ impl ShellExecutor {
         let mut store_var: Option<String> = None;
         let mut format_string: Option<String> = None;
         let mut output_args: Vec<String> = Vec::new();
+        // -x N: expand leading tabs only; -X N: expand all tabs.
+        // (width, all-tabs) per zsh/Src/utils.c:5973 zexpandtabs.
+        let mut tab_expand: Option<(i32, bool)> = None;
 
         let mut i = 0;
         let mut accept_flags = true;
@@ -31860,7 +31911,42 @@ impl ShellExecutor {
                         'D' => named_dir_subst = true,
                         'c' => columns = 1,
                         'm' => match_pattern_flag = true,
-                        'a' | 'b' | 'i' | 'p' | 'x' | 'X' => {} // TODO
+                        'x' | 'X' => {
+                            // -x N / -X N: tab expansion via zexpandtabs
+                            // (utils.c:5973). -x: leading tabs only; -X:
+                            // all tabs. Numeric arg may be glued (`-x4`)
+                            // or separate (`-x 4`). zsh: non-positive
+                            // integer or non-integer -> `print:1:
+                            // positive integer expected after -x: <arg>`
+                            // exit 1 (builtin.c:5101-5106).
+                            let all_tabs = ch == 'X';
+                            let rest: String = chars.collect();
+                            let value_str = if !rest.is_empty() {
+                                rest
+                            } else {
+                                i += 1;
+                                if i >= args.len() {
+                                    eprintln!(
+                                        "zshrs:print:1: positive integer expected after -{}",
+                                        ch
+                                    );
+                                    return 1;
+                                }
+                                args[i].clone()
+                            };
+                            match value_str.parse::<i32>() {
+                                Ok(n) if n > 0 => tab_expand = Some((n, all_tabs)),
+                                _ => {
+                                    eprintln!(
+                                        "zshrs:print:1: positive integer expected after -{}: {}",
+                                        ch, value_str
+                                    );
+                                    return 1;
+                                }
+                            }
+                            break;
+                        }
+                        'a' | 'b' | 'i' | 'p' => {} // TODO
                         'u' => {
                             // -u n: output to fd n. zsh requires a
                             // numeric argument; non-numeric ->
@@ -32102,6 +32188,76 @@ impl ShellExecutor {
         } else {
             "\n"
         };
+
+        // -x / -X tab expansion path — direct port of builtin.c:5095-5121.
+        // zexpandtabs (utils.c:5973) carries `startpos` across args so a
+        // `\t` mid-string aligns to the next tabstop relative to total
+        // emitted width, not the arg-local offset. -x expands leading
+        // tabs only; -X expands all tabs. Per builtin.c:5111-5119, when
+        // -l is set the separator is `\n` and startpos resets to 0;
+        // when -N is set the separator is `\0` (no startpos change);
+        // otherwise a single space is emitted and startpos++.
+        if let Some((width, all_tabs)) = tab_expand {
+            let mut result = String::new();
+            let mut startpos: i32 = 0;
+            for (idx, arg) in processed.iter().enumerate() {
+                let new_pos = Self::zexpandtabs_into(arg, width, startpos, all_tabs, &mut result);
+                startpos = new_pos;
+                if idx + 1 < processed.len() {
+                    if one_per_line {
+                        result.push('\n');
+                        startpos = 0;
+                    } else if null_terminate {
+                        result.push('\0');
+                    } else {
+                        result.push(' ');
+                        startpos += 1;
+                    }
+                }
+            }
+            // Apply terminator using the same rules as the regular path
+            // (builtin.c:5130-5132): -n suppresses; -N -> '\0'; else '\n'.
+            let term = if no_newline {
+                ""
+            } else if null_terminate {
+                "\0"
+            } else {
+                "\n"
+            };
+            // -v N stores into a scalar, otherwise write to fd. Mirror
+            // the same fd routing used in the regular print output path
+            // below (1 -> stdout!, 2 -> stderr!, else libc::write).
+            let final_out = format!("{}{}", result, term);
+            if let Some(var) = store_var {
+                self.variables.insert(var, final_out);
+                return 0;
+            }
+            match fd {
+                1 => print!("{}", final_out),
+                2 => eprint!("{}", final_out),
+                n => {
+                    let bytes = final_out.as_bytes();
+                    unsafe {
+                        libc::write(
+                            n as i32,
+                            bytes.as_ptr() as *const libc::c_void,
+                            bytes.len(),
+                        );
+                    }
+                }
+            }
+            use std::io::Write as _;
+            match fd {
+                1 => {
+                    let _ = std::io::stdout().flush();
+                }
+                2 => {
+                    let _ = std::io::stderr().flush();
+                }
+                _ => {}
+            }
+            return 0;
+        }
 
         // Build output
         let output = if one_per_line {
