@@ -17103,19 +17103,37 @@ impl ShellExecutor {
             }
 
             // === USER DIRECTORIES ===
+            // ${userdirs[name]} → home directory of user `name` per
+            // zsh/Modules/parameter.c userdirs_*. With @/* expansion,
+            // walk getpwent(3) to enumerate every passwd entry's
+            // home directory.
             "userdirs" => {
-                if key == "@" || key == "*" {
-                    return Some(String::new());
-                }
-                // Get home directory for user
                 #[cfg(unix)]
                 {
-                    use std::ffi::CString;
+                    use std::ffi::{CStr, CString};
+                    if key == "@" || key == "*" {
+                        let mut homes: Vec<String> = Vec::new();
+                        unsafe {
+                            libc::setpwent();
+                            loop {
+                                let pwd = libc::getpwent();
+                                if pwd.is_null() {
+                                    break;
+                                }
+                                let dir = CStr::from_ptr((*pwd).pw_dir);
+                                homes.push(dir.to_string_lossy().to_string());
+                            }
+                            libc::endpwent();
+                        }
+                        homes.sort();
+                        homes.dedup();
+                        return Some(homes.join(" "));
+                    }
                     if let Ok(name) = CString::new(key) {
                         unsafe {
                             let pwd = libc::getpwnam(name.as_ptr());
                             if !pwd.is_null() {
-                                let dir = std::ffi::CStr::from_ptr((*pwd).pw_dir);
+                                let dir = CStr::from_ptr((*pwd).pw_dir);
                                 return Some(dir.to_string_lossy().to_string());
                             }
                         }
@@ -17125,14 +17143,31 @@ impl ShellExecutor {
             }
 
             // === USER GROUPS ===
+            // ${usergroups[name]} → GID of group `name`. With @/*
+            // expansion, walk getgrent(3) to enumerate every group's
+            // gid.
             "usergroups" => {
-                if key == "@" || key == "*" {
-                    return Some(String::new());
-                }
-                // Get GID for group name
                 #[cfg(unix)]
                 {
-                    use std::ffi::CString;
+                    use std::ffi::{CStr, CString};
+                    if key == "@" || key == "*" {
+                        let mut gids: Vec<String> = Vec::new();
+                        unsafe {
+                            libc::setgrent();
+                            loop {
+                                let grp = libc::getgrent();
+                                if grp.is_null() {
+                                    break;
+                                }
+                                let name = CStr::from_ptr((*grp).gr_name);
+                                gids.push(name.to_string_lossy().to_string());
+                            }
+                            libc::endgrent();
+                        }
+                        gids.sort();
+                        gids.dedup();
+                        return Some(gids.join(" "));
+                    }
                     if let Ok(name) = CString::new(key) {
                         unsafe {
                             let grp = libc::getgrnam(name.as_ptr());
