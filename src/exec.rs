@@ -17277,17 +17277,53 @@ impl ShellExecutor {
             }
 
             // === MODULES ===
+            // ${modules[name]} → "loaded" / "" per
+            // zsh/Src/Modules/parameter.c modules_*. zshrs tracks
+            // loaded modules via `_module_<name>` keys in
+            // self.options (see builtin_zmodload). Always-loaded
+            // built-in modules are surfaced unconditionally so
+            // compsys's `[[ ${+modules[zsh/zutil]} ]]` gating works.
             "modules" => {
-                // zshrs doesn't have loadable modules like zsh
-                // Return empty or fake "loaded" for common modules
+                const ALWAYS_LOADED: &[&str] = &[
+                    "zsh/parameter",
+                    "zsh/zutil",
+                    "zsh/complete",
+                    "zsh/complist",
+                    "zsh/zle",
+                    "zsh/main",
+                    "zsh/files",
+                ];
+                let user_loaded: Vec<String> = self
+                    .options
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        if *v {
+                            k.strip_prefix("_module_").map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
                 if key == "@" || key == "*" {
-                    return Some("zsh/parameter zsh/zutil".to_string());
+                    let mut all: Vec<String> = ALWAYS_LOADED
+                        .iter()
+                        .map(|s| s.to_string())
+                        .chain(user_loaded.iter().cloned())
+                        .collect();
+                    all.sort();
+                    all.dedup();
+                    return Some(all.join(" "));
                 }
-                match key {
-                    "zsh/parameter" | "zsh/zutil" | "zsh/complete" | "zsh/complist" => {
-                        Some("loaded".to_string())
-                    }
-                    _ => Some(String::new()),
+                if ALWAYS_LOADED.contains(&key)
+                    || self
+                        .options
+                        .get(&format!("_module_{}", key))
+                        .copied()
+                        .unwrap_or(false)
+                {
+                    Some("loaded".to_string())
+                } else {
+                    Some(String::new())
                 }
             }
 
