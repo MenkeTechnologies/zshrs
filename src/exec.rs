@@ -36702,8 +36702,18 @@ impl ShellExecutor {
                 }
                 "-d" => {
                     // bindkey -d: reset all keymaps to defaults.
-                    // zsh accepts silently; zshrs's unknown-flag
-                    // fallback rejected it.
+                    // Direct port of zle_keymap.c bin_bindkey case
+                    // 'd': delete every existing keymap and recreate
+                    // the canonical six (main/emacs/viins/vicmd/
+                    // isearch/command/menuselect) with their factory
+                    // bindings. ZleManager::new() reproduces exactly
+                    // those six, so swap the manager state.
+                    let mut zle = zle();
+                    let preserved_widgets = std::mem::take(&mut zle.user_widgets);
+                    let active = zle.active_keymap;
+                    *zle = crate::zle::ZleManager::new();
+                    zle.user_widgets = preserved_widgets;
+                    zle.active_keymap = active;
                     return 0;
                 }
                 "-N" => {
