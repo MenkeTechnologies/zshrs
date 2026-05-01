@@ -1548,6 +1548,7 @@ fn parse_zcompdump(content: &str) -> ZcompdumpParsed {
 
     while i < lines.len() {
         let line = lines[i];
+        // Block-literal form: `_comps=(\n 'k' 'v' \n)`.
         if line.starts_with("_comps=(") {
             i = parse_assoc_block(&lines, i + 1, &mut out.comps);
             continue;
@@ -1562,6 +1563,37 @@ fn parse_zcompdump(content: &str) -> ZcompdumpParsed {
         }
         if line.starts_with("_postpatcomps=(") {
             i = parse_assoc_block(&lines, i + 1, &mut out.postpatcomps);
+            continue;
+        }
+        // Single-element-assignment form: `_comps[key]=value`. Common in
+        // hand-rolled zcompdumps and what op_import_zcompdump's pre-parser
+        // historically supported.
+        if line.starts_with("_comps[") {
+            if let Some((k, v)) = parse_single_assoc_assign(line, "_comps[") {
+                out.comps.push((k, v));
+            }
+            i += 1;
+            continue;
+        }
+        if line.starts_with("_services[") {
+            if let Some((k, v)) = parse_single_assoc_assign(line, "_services[") {
+                out.services.push((k, v));
+            }
+            i += 1;
+            continue;
+        }
+        if line.starts_with("_patcomps[") {
+            if let Some((k, v)) = parse_single_assoc_assign(line, "_patcomps[") {
+                out.patcomps.push((k, v));
+            }
+            i += 1;
+            continue;
+        }
+        if line.starts_with("_postpatcomps[") {
+            if let Some((k, v)) = parse_single_assoc_assign(line, "_postpatcomps[") {
+                out.postpatcomps.push((k, v));
+            }
+            i += 1;
             continue;
         }
         if line.starts_with("bindkey ") {
@@ -1640,6 +1672,19 @@ fn split_two_singlequoted(s: &str) -> Option<(String, String)> {
     }
     let close2 = rest[1..].find('\'')?;
     let val = &rest[1..1 + close2];
+    Some((key.to_string(), val.to_string()))
+}
+
+/// Parse `_comps[key]=value` (with the prefix `_comps[` already matched).
+/// Handles bare and quoted values. Strips outer single/double quotes from
+/// both key and value.
+fn parse_single_assoc_assign(line: &str, prefix: &str) -> Option<(String, String)> {
+    let rest = line.strip_prefix(prefix)?;
+    let close = rest.find(']')?;
+    let key = rest[..close].trim_matches(|c: char| c == '\'' || c == '"');
+    let after = &rest[close + 1..];
+    let after = after.trim_start_matches('=').trim();
+    let val = after.trim_matches(|c: char| c == '\'' || c == '"');
     Some((key.to_string(), val.to_string()))
 }
 

@@ -212,12 +212,15 @@ fn zcache_export(args: &[String]) -> i32 {
     } else {
         return err_exit(
             "zcache export",
-            "usage: zcache export <target>|--all-state [--format <fmt>] [--additive] [--out <path>]",
+            "usage: zcache export <target>|--all-state [<name>] [--format <fmt>] [--additive] [--out <path>]",
         );
     };
     let mut format = "sh".to_string();
     let mut additive = false;
     let mut out_path: Option<String> = None;
+    // For `zcache export functions <name>` / `export shard <name>` /
+    // `export script <path>` — first non-flag positional after the target.
+    let mut name: Option<String> = None;
     let mut iter = args_rest.iter();
     while let Some(a) = iter.next() {
         match a.as_str() {
@@ -233,7 +236,11 @@ fn zcache_export(args: &[String]) -> i32 {
             other if other.starts_with('-') => {
                 return err_exit("zcache export", &format!("unknown flag `{}`", other));
             }
-            _ => {}
+            other => {
+                if name.is_none() {
+                    name = Some(other.to_string());
+                }
+            }
         }
     }
     // Dedicated server ops for non-canonical targets that need bespoke rendering.
@@ -253,18 +260,23 @@ fn zcache_export(args: &[String]) -> i32 {
             ("export_catalog", p)
         }
         "shard" => {
-            // Need a name. Last positional is the shard name.
-            let name = match args.iter().skip(1).find(|a| !a.starts_with("--") && a.as_str() != args.first().map(|s| s.as_str()).unwrap_or("")) {
+            let n = match name.as_ref() {
                 Some(n) => n.clone(),
                 None => return err_exit("zcache export", "shard target requires a name (zcache export shard <name>)"),
             };
-            let mut p = json!({ "name": name });
+            let mut p = json!({ "name": n });
             if let Some(o) = out_path.as_ref() {
                 p["path"] = Value::String(o.clone());
             }
             ("export_shard", p)
         }
-        _ => ("export", json!({ "target": target, "format": format, "additive": additive })),
+        _ => {
+            let mut p = json!({ "target": target, "format": format, "additive": additive });
+            if let Some(n) = name.as_ref() {
+                p["name"] = Value::String(n.clone());
+            }
+            ("export", p)
+        }
     };
 
     let mut client = match connect_or_err() {
