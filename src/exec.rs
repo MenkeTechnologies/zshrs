@@ -10104,6 +10104,8 @@ impl ShellExecutor {
             "yes" => return self.builtin_yes(&rest_vec),
             "nl" => return self.builtin_nl(&rest_vec),
             "env" => return self.builtin_env(&rest_vec),
+            "printenv" => return self.builtin_printenv(&rest_vec),
+            "tty" => return self.builtin_tty(&rest_vec),
             _ => {}
         }
 
@@ -42817,6 +42819,48 @@ impl ShellExecutor {
             return 0;
         }
         std::thread::sleep(std::time::Duration::from_secs_f64(total_secs));
+        0
+    }
+
+    /// printenv [VAR...] — print env. coreutils printenv(1).
+    /// No args: print all env vars (sorted by key for stable output).
+    /// Args: print VAR's value per arg, exit 1 if any unset.
+    fn builtin_printenv(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            let mut vars: Vec<(String, String)> = std::env::vars().collect();
+            vars.sort_by(|a, b| a.0.cmp(&b.0));
+            for (k, v) in vars {
+                println!("{}={}", k, v);
+            }
+            return 0;
+        }
+        let mut status = 0;
+        for name in args {
+            match std::env::var(name) {
+                Ok(v) => println!("{}", v),
+                Err(_) => status = 1,
+            }
+        }
+        status
+    }
+
+    /// tty — print the controlling-terminal device path. coreutils
+    /// tty(1). -s suppresses output (just sets the exit code).
+    fn builtin_tty(&self, args: &[String]) -> i32 {
+        let silent = args.iter().any(|a| a == "-s" || a == "--silent" || a == "--quiet");
+        unsafe {
+            let p = libc::ttyname(0);
+            if p.is_null() {
+                if !silent {
+                    println!("not a tty");
+                }
+                return 1;
+            }
+            if !silent {
+                let s = std::ffi::CStr::from_ptr(p);
+                println!("{}", s.to_string_lossy());
+            }
+        }
         0
     }
 
