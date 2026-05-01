@@ -35599,34 +35599,90 @@ impl ShellExecutor {
                 self.variables.insert(var_name, result);
             }
             "-a" => {
-                // Format into array elements: zformat -a array sep specs...
-                // Each spec is "text:value" or "text:value:cond".
-                // zsh accepts insufficient args silently (no specs ->
-                // empty array result). zshrs's earlier diagnostic
-                // misframed this as a usage error.
-                if args.len() < 4 {
+                // Direct port of src/zsh/Src/Modules/zutil.c:997-1085
+                // zformat -a — column-aligned array output. Form:
+                //   zformat -a array sep specs...
+                // Each spec is `LEFT:RIGHT` (a backslash escapes a
+                // following `:` in LEFT). Specs without `:` or with
+                // empty RIGHT are emitted as-is (LEFT verbatim, with
+                // backslashes processed).
+                //
+                // For specs with both halves, all LEFT parts are
+                // padded to the longest LEFT width (in chars), then
+                // `sep` is appended, then `RIGHT`. Result is one
+                // array element per spec.
+                if args.len() < 3 {
                     return 0;
                 }
                 let array_name = args[1].clone();
                 let sep = &args[2];
 
-                let mut results = Vec::new();
+                // First pass — compute max LEFT width over specs that
+                // have both halves (zutil.c:1005-1030). Backslashed
+                // colons inside LEFT are escapes, not separators.
+                let mut max_left_chars: usize = 0;
+                let mut parsed: Vec<(String, Option<String>)> = Vec::new();
                 for spec in &args[3..] {
-                    let parts: Vec<&str> = spec.splitn(3, ':').collect();
-                    if parts.len() >= 2 {
-                        let text = parts[0];
-                        let value = parts[1];
-                        let cond = parts.get(2).copied();
-
-                        // If condition exists and is empty/false, skip
-                        if let Some(c) = cond {
-                            if c.is_empty() || c == "0" {
-                                continue;
-                            }
+                    let chars: Vec<char> = spec.chars().collect();
+                    let mut left = String::with_capacity(chars.len());
+                    let mut i = 0;
+                    let mut found_colon = false;
+                    while i < chars.len() {
+                        let c = chars[i];
+                        if c == '\\' && i + 1 < chars.len() {
+                            // Backslash escape — emit the next char
+                            // verbatim, including a `:` (zutil.c:1006-1008).
+                            left.push(chars[i + 1]);
+                            i += 2;
+                            continue;
                         }
+                        if c == ':' {
+                            found_colon = true;
+                            i += 1;
+                            break;
+                        }
+                        left.push(c);
+                        i += 1;
+                    }
+                    let right: Option<String> = if found_colon {
+                        let rest: String = chars[i..].iter().collect();
+                        if rest.is_empty() {
+                            None
+                        } else {
+                            Some(rest)
+                        }
+                    } else {
+                        None
+                    };
+                    if right.is_some() {
+                        let w = left.chars().count();
+                        if w > max_left_chars {
+                            max_left_chars = w;
+                        }
+                    }
+                    parsed.push((left, right));
+                }
 
-                        if !value.is_empty() {
-                            results.push(format!("{}{}{}", text, sep, value));
+                // Second pass — format each result row (zutil.c:1044-1078).
+                let mut results = Vec::with_capacity(parsed.len());
+                for (left, right_opt) in parsed.into_iter() {
+                    match right_opt {
+                        Some(right) => {
+                            let pad = max_left_chars.saturating_sub(left.chars().count());
+                            let mut s = String::with_capacity(left.len() + pad + sep.len() + right.len());
+                            s.push_str(&left);
+                            for _ in 0..pad {
+                                s.push(' ');
+                            }
+                            s.push_str(sep);
+                            s.push_str(&right);
+                            results.push(s);
+                        }
+                        None => {
+                            // No `:` (or empty RIGHT) — emit LEFT
+                            // unchanged (with backslash escapes
+                            // already processed). Per zutil.c:1077.
+                            results.push(left);
                         }
                     }
                 }
