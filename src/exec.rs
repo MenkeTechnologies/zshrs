@@ -19996,6 +19996,7 @@ impl ShellExecutor {
         // the remaining names. zsh allows `-v` to explicitly target
         // variables (the default), and `-m` for pattern matching.
         let mut function_mode = false;
+        let mut match_glob = false;
         let mut names: Vec<String> = Vec::new();
         let mut end_of_options = false;
         for arg in args {
@@ -20007,7 +20008,7 @@ impl ShellExecutor {
                 "--" => end_of_options = true,
                 "-f" => function_mode = true,
                 "-v" => function_mode = false,
-                "-m" => {} // pattern-match mode (TODO)
+                "-m" => match_glob = true,
                 _ if arg.starts_with('-') && arg.len() > 1 => {
                     // zsh: `unset -X foo` errors `unset:1: bad
                     // option: -X` exit 1. zshrs silently swallowed
@@ -20019,12 +20020,65 @@ impl ShellExecutor {
             }
         }
         if function_mode {
+            // Direct port of src/zsh/Src/builtin.c:3826-3828 — `unset
+            // -f` is the same as bin_unhash with BIN_UNFUNCTION. The
+            // -m flag carries through and pattern-matches against the
+            // function table.
+            if match_glob {
+                let pats: Vec<String> = names.clone();
+                let keys: Vec<String> =
+                    self.functions_compiled.keys().cloned().collect();
+                let mut matched = false;
+                for pat in &pats {
+                    for k in &keys {
+                        if ShellExecutor::glob_match_static(k, pat) {
+                            self.functions_compiled.remove(k);
+                            self.function_source.remove(k);
+                            self.autoload_pending.remove(k);
+                            matched = true;
+                        }
+                    }
+                }
+                return if matched { 0 } else { 1 };
+            }
             for name in &names {
                 self.functions_compiled.remove(name);
                 self.function_source.remove(name);
                 self.autoload_pending.remove(name);
             }
             return 0;
+        }
+        // Direct port of src/zsh/Src/builtin.c:3830-3863 — `-m`
+        // matches each arg as a glob pattern against the parameter
+        // table and unsets every matching variable. Returns 1 if no
+        // matches at all.
+        if match_glob {
+            let var_names: Vec<String> = self.variables.keys().cloned().collect();
+            let arr_names: Vec<String> = self.arrays.keys().cloned().collect();
+            let assoc_names: Vec<String> = self.assoc_arrays.keys().cloned().collect();
+            let mut matched = false;
+            for pat in &names {
+                for n in &var_names {
+                    if ShellExecutor::glob_match_static(n, pat) {
+                        self.variables.remove(n);
+                        let _ = std::env::remove_var(n);
+                        matched = true;
+                    }
+                }
+                for n in &arr_names {
+                    if ShellExecutor::glob_match_static(n, pat) {
+                        self.arrays.remove(n);
+                        matched = true;
+                    }
+                }
+                for n in &assoc_names {
+                    if ShellExecutor::glob_match_static(n, pat) {
+                        self.assoc_arrays.remove(n);
+                        matched = true;
+                    }
+                }
+            }
+            return if matched { 0 } else { 1 };
         }
         for arg in &names {
             let arg = arg;
