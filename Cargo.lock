@@ -2755,4 +2755,34 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width",
  "walkdir",
+ "zshrs-daemon",
+]
+
+[[package]]
+name = "zshrs-daemon"
+version = "0.10.1"
+dependencies = [
+ "atty",
+ "byteorder",
+ "chrono",
+ "dirs",
+ "filetime",
+ "libc",
+ "memmap2",
+ "nix 0.29.0",
+ "notify",
+ "notify-debouncer-mini",
+ "parking_lot",
+ "rand 0.8.6",
+ "rkyv",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]

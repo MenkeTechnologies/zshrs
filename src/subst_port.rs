@@ -3345,32 +3345,136 @@ pub fn is_absolute_path(s: &str) -> bool {
 /// Remove trailing path components
 /// Port of remtpath() logic for :h modifier
 pub fn remtpath(s: &str, count: usize) -> String {
-    let mut result = s.to_string();
-    for _ in 0..count.max(1) {
-        if let Some(pos) = result.rfind('/') {
-            if pos == 0 {
-                result = "/".to_string();
-                break;
-            } else {
-                result = result[..pos].to_string();
+    // Direct port of src/zsh/Src/hist.c:2055-2118 `remtpath`. zsh
+    // semantics:
+    //   `:h`  (count == 0)  — remove last path component.
+    //   `:hN` (count > 0)   — keep first N components from the front.
+    //   Trailing slashes are stripped first.
+    //   Repeated separators count as one.
+    //   Empty result on a relative path becomes ".".
+    //   Leading "/" never erased; "//" (cygwin) preserved.
+    let bytes: Vec<u8> = s.bytes().collect();
+    let n = bytes.len();
+    if n == 0 {
+        return s.to_string();
+    }
+    let is_sep = |b: u8| b == b'/';
+
+    // hist.c:2058-2062 — start at last char, skip trailing separators.
+    let mut end: isize = (n as isize) - 1;
+    while end >= 0 && is_sep(bytes[end as usize]) {
+        end -= 1;
+    }
+
+    if count == 0 {
+        // hist.c:2064-2066 — skip filename (back through non-seps).
+        while end >= 0 && !is_sep(bytes[end as usize]) {
+            end -= 1;
+        }
+        if end < 0 {
+            // hist.c:2068-2074 — no separator found.
+            return if is_sep(bytes[0]) { "/".to_string() } else { ".".to_string() };
+        }
+        // hist.c:2104-2106 — collapse repeated separators.
+        while end > 0 && is_sep(bytes[(end - 1) as usize]) {
+            end -= 1;
+        }
+        // hist.c:2107-2114 — never erase root slash; preserve "//".
+        if end == 0 {
+            end += 1;
+            if (end as usize) < n
+                && is_sep(bytes[end as usize])
+                && (end + 1 >= n as isize || !is_sep(bytes[(end + 1) as usize]))
+            {
+                end += 1;
             }
-        } else {
-            result = ".".to_string();
+        }
+        return s[..end as usize].to_string();
+    }
+
+    // count > 0 — hist.c:2078-2102 — keep first `count` components.
+    // Walk forward; each separator marks a component boundary. The
+    // leading slash counts as one component.
+    let mut strp: usize = 0;
+    let mut remaining = count as isize;
+    let limit = end as usize;
+    while strp < limit {
+        if is_sep(bytes[strp]) {
+            remaining -= 1;
+            if remaining <= 0 {
+                if strp == 0 {
+                    strp += 1;
+                }
+                return s[..strp].to_string();
+            }
+            // Count consecutive separators as one.
+            while strp + 1 < bytes.len() && is_sep(bytes[strp + 1]) {
+                strp += 1;
+            }
+        }
+        strp += 1;
+    }
+    // Full string needed (hist.c:2101).
+    s.to_string()
+}
+
+/// Remove leading path components — direct port of
+/// src/zsh/Src/hist.c:2151-2186 `remlpaths`. zsh `:t`
+/// (count==1) returns the last path component; `:tN`
+/// returns the last N components.
+///
+/// C algorithm:
+///   1. Strip trailing separators.
+///   2. Walk back from the end. Each separator decrements `count`.
+///   3. When `count` reaches 0, the part AFTER that separator is
+///      the result.
+///   4. Consecutive separators count as one.
+///   5. If we walk past the start, return the whole string.
+pub fn remlpaths(s: &str, count: usize) -> String {
+    if s.is_empty() || count == 0 {
+        return s.to_string();
+    }
+    let bytes: &[u8] = s.as_bytes();
+    let mut end = bytes.len();
+    // Strip trailing separators (hist.c:2156-2161).
+    while end > 0 && bytes[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        // String was all-separators.
+        return s.to_string();
+    }
+    let mut count = count as isize;
+    let mut i: isize = (end as isize) - 1;
+    loop {
+        // Walk back over a non-separator run looking for separators.
+        while i >= 0 {
+            if bytes[i as usize] == b'/' {
+                count -= 1;
+                if count > 0 {
+                    if i > 0 {
+                        i -= 1;
+                        break; // continue outer loop, skipping consecutive seps
+                    } else {
+                        // Whole string needed.
+                        return s[..end].to_string();
+                    }
+                }
+                // count == 0 — return part after this separator.
+                return s[(i as usize + 1)..end].to_string();
+            }
+            i -= 1;
+        }
+        // Count consecutive separators as 1 (hist.c:2179-2181).
+        while i >= 0 && bytes[i as usize] == b'/' {
+            i -= 1;
+        }
+        if i <= 0 {
             break;
         }
     }
-    result
-}
-
-/// Remove leading path components
-/// Port of remlpaths() logic for :t modifier
-pub fn remlpaths(s: &str, count: usize) -> String {
-    let parts: Vec<&str> = s.split('/').collect();
-    if parts.len() <= count {
-        parts.last().unwrap_or(&"").to_string()
-    } else {
-        parts[parts.len() - count..].join("/")
-    }
+    // No (or insufficient) separators — return whole string.
+    s[..end].to_string()
 }
 
 /// Remove text (extension)
