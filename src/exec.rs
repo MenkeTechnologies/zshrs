@@ -36647,17 +36647,58 @@ impl ShellExecutor {
                     remove = true;
                 }
                 "-A" => {
-                    // Link keymaps: bindkey -A NEW EXISTING. zsh
-                    // requires both args; with fewer than 2 it
-                    // errors `bindkey:1: not enough arguments for
-                    // -A` exit 1. zshrs's stub returned 0 silently.
-                    let next = iter.next();
-                    let next2 = iter.next();
-                    if next.is_none() || next2.is_none() {
-                        eprintln!("zshrs:bindkey:1: not enough arguments for -A");
-                        return 1;
+                    // bindkey -A NEW EXISTING — link NEW to EXISTING
+                    // so reads of NEW's bindings see EXISTING's table.
+                    // Direct port of zle_keymap.c bin_bindkey case 'A':
+                    // copy EXISTING's bindings into NEW's slot. With
+                    // fewer than two args zsh errors 'not enough
+                    // arguments for -A' exit 1.
+                    let new = match iter.next() {
+                        Some(s) => s.clone(),
+                        None => {
+                            eprintln!("zshrs:bindkey:1: not enough arguments for -A");
+                            return 1;
+                        }
+                    };
+                    let existing = match iter.next() {
+                        Some(s) => s.clone(),
+                        None => {
+                            eprintln!("zshrs:bindkey:1: not enough arguments for -A");
+                            return 1;
+                        }
+                    };
+                    let map_name = |s: &str| match s {
+                        "main" => Some(KeymapName::Main),
+                        "emacs" => Some(KeymapName::Emacs),
+                        "viins" => Some(KeymapName::ViInsert),
+                        "vicmd" => Some(KeymapName::ViCommand),
+                        "isearch" => Some(KeymapName::Isearch),
+                        "command" => Some(KeymapName::Command),
+                        "menuselect" => Some(KeymapName::MenuSelect),
+                        _ => None,
+                    };
+                    let new_km = match map_name(&new) {
+                        Some(k) => k,
+                        None => {
+                            eprintln!("zshrs:bindkey:1: no such keymap: {}", new);
+                            return 1;
+                        }
+                    };
+                    let src_km = match map_name(&existing) {
+                        Some(k) => k,
+                        None => {
+                            eprintln!("zshrs:bindkey:1: no such keymap: {}", existing);
+                            return 1;
+                        }
+                    };
+                    let mut zle = zle();
+                    let snapshot = zle.keymaps.get(&src_km).cloned();
+                    if let Some(km) = snapshot {
+                        zle.keymaps.insert(new_km, km);
+                        return 0;
                     }
-                    return 0;
+                    eprintln!("zshrs:bindkey:1: no such keymap: {}", existing);
+                    return 1;
                 }
                 "-d" => {
                     // bindkey -d: reset all keymaps to defaults.
