@@ -2628,6 +2628,37 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         _ => Some(Value::str("")),
                     }
                 }
+                // `.zle.esc` and `.zle.sgr` — port of zsh/hlgroup
+                // module (src/zsh/Src/Modules/hlgroup.c:81-165).
+                // Both back into the user's `.zle.hlgroups` assoc.
+                // `.zle.esc[name]` returns the FULL escape sequence
+                // for the highlight-group; `.zle.sgr[name]` returns
+                // just the digit run (after stripping `\033[` and
+                // trailing `m`). hlgroup.c:39-78 convertattr does
+                // both modes.
+                ".zle.esc" | ".zle.sgr" => {
+                    let sgr = name == ".zle.sgr";
+                    // Look up `.zle.hlgroups[idx]` — the user's
+                    // attribute string per hlgroup.c:96-99 (var =
+                    // GROUPVAR i.e. ".zle.hlgroups").
+                    let attr = exec
+                        .assoc_arrays
+                        .get(".zle.hlgroups")
+                        .and_then(|m| m.get(idx))
+                        .cloned()
+                        .unwrap_or_default();
+                    if attr.is_empty() {
+                        // Per hlgroup.c:101-103, missing/unset entry
+                        // returns an empty string (PM_UNSET).
+                        return Some(Value::str(""));
+                    }
+                    let converted = if sgr {
+                        crate::hlgroup::attr_to_sgr(&attr)
+                    } else {
+                        crate::hlgroup::attr_to_escape(&attr)
+                    };
+                    Some(Value::str(converted))
+                }
                 _ => None,
             }
         })

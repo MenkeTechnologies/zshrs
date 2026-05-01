@@ -33,16 +33,51 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
         "zuntag" => zuntag(args),
         "zsend" => zsend(args),
         "znotify" => znotify(args),
+        "zsubscribe" => zsubscribe(args),
+        "zunsubscribe" => zunsubscribe(args),
+        "zjob" => super::zjob_builtin::zjob(args),
+        "zsync" => super::zsync_builtin::zsync(args),
+        "zask" => super::zask_builtin::zask(args),
         "zlog" => zlog(args),
         _ => return None,
     };
     Some(status)
 }
 
+/// Whether `name` is a daemon-managed z* builtin. Lets the shell short-circuit to
+/// `dispatch` without baking the list into the call site.
+pub fn is_zshrs_builtin(name: &str) -> bool {
+    ZSHRS_BUILTIN_NAMES.iter().any(|n| *n == name)
+}
+
+/// Combines the name check with `dispatch`: returns the exit status if `name` is
+/// one of ours, `None` otherwise. The shell core routes through this so adding a
+/// new z* builtin never requires changing exec.rs.
+pub fn try_dispatch(name: &str, argv: &[String]) -> Option<i32> {
+    if is_zshrs_builtin(name) {
+        dispatch(name, argv)
+    } else {
+        None
+    }
+}
+
 /// Names of every z* builtin handled here, for callers that want to expose a list
 /// (e.g. `which`, `whence`, `type`, completion).
 pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[
-    "zcache", "zls", "zid", "zping", "ztag", "zuntag", "zsend", "znotify", "zlog",
+    "zcache",
+    "zls",
+    "zid",
+    "zping",
+    "ztag",
+    "zuntag",
+    "zsend",
+    "znotify",
+    "zsubscribe",
+    "zunsubscribe",
+    "zjob",
+    "zsync",
+    "zask",
+    "zlog",
 ];
 
 /// Helper: open a client connection (spawn-on-demand) and return it. Reports the error
