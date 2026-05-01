@@ -30656,50 +30656,162 @@ impl ShellExecutor {
 
     /// disable - disable shell builtins, aliases, functions
     fn builtin_disable(&mut self, args: &[String]) -> i32 {
-        let mut disable_aliases = false;
-        let mut disable_builtins = false;
-        let mut disable_functions = false;
-        let mut names = Vec::new();
+        // Direct port of src/zsh/Src/builtin.c:517-594 bin_enable with
+        // func == BIN_DISABLE. Walks args, picks the hash table from
+        // -afmrps flags, then either lists / glob-matches / literal-
+        // names through the chosen table.
+        self.do_enable_disable(args, false)
+    }
 
-        let mut iter = args.iter();
-        while let Some(arg) = iter.next() {
+    /// enable - enable disabled shell builtins / aliases / functions.
+    /// Direct port of src/zsh/Src/builtin.c:517-594 bin_enable with
+    /// func == BIN_ENABLE. Same dispatch as disable, opposite action.
+    fn builtin_enable(&mut self, args: &[String]) -> i32 {
+        self.do_enable_disable(args, true)
+    }
+
+    /// Shared dispatch for enable/disable per builtin.c:517-594.
+    /// `enable=true` for the enable builtin (clear DISABLED flag);
+    /// `enable=false` for the disable builtin (set DISABLED flag).
+    fn do_enable_disable(&mut self, args: &[String], enable: bool) -> i32 {
+        // builtin.c:526-538 — pick the hash table from flags.
+        // -p   : enable/disable patterns (not yet implemented; falls
+        //        through to no-op, matches a pre-port stub)
+        // -f   : functions
+        // -r   : reserved words (zsh keywords) — no-op for zshrs
+        //        which doesn't have a reswd hash table
+        // -s   : suffix aliases
+        // -a   : regular aliases
+        //   default: builtins
+        let mut target: &str = "builtins";
+        let mut match_glob = false;
+        let mut names: Vec<String> = Vec::new();
+        for arg in args {
             match arg.as_str() {
-                "-a" => disable_aliases = true,
-                "-f" => disable_functions = true,
-                "-r" => disable_builtins = true,
+                "-a" => target = "aliases",
+                "-f" => target = "functions",
+                "-r" => target = "reswd",
+                "-s" => target = "suffix_aliases",
+                "-p" => target = "patterns",
+                "-m" => match_glob = true,
                 _ if arg.starts_with('-') => {}
                 _ => names.push(arg.clone()),
             }
         }
 
-        // Default to builtins if no flags
-        if !disable_aliases && !disable_functions {
-            disable_builtins = true;
+        // builtin.c:553-558 — no args: list names. Listing isn't
+        // strictly required for shell-mode use; existing zshrs callers
+        // only need the mutation path. Keep no-args as a no-op until
+        // a script needs the listing.
+        if names.is_empty() {
+            return 0;
         }
 
-        for name in names {
-            if disable_aliases {
-                self.aliases.remove(&name);
-            }
-            if disable_functions {
-                self.remove_function(&name);
-            }
-            if disable_builtins {
-                // Store disabled builtins
-                self.options.insert(format!("_disabled_{}", name), true);
-            }
-        }
-        0
-    }
+        // builtin.c:583-592 — literal-name dispatch.
+        // builtin.c:561-580 — glob (-m) dispatch.
+        let mut returnval = 0;
+        let mut matched_any = false;
+        let glob_match = |name: &str, pat: &str| -> bool {
+            ShellExecutor::glob_match_static(name, pat)
+        };
 
-    /// enable - enable disabled shell builtins
-    fn builtin_enable(&mut self, args: &[String]) -> i32 {
-        for arg in args {
-            if !arg.starts_with('-') {
-                self.options.remove(&format!("_disabled_{}", arg));
+        for arg in &names {
+            let mut hits: Vec<String> = Vec::new();
+            match target {
+                "aliases" => {
+                    if match_glob {
+                        hits = self
+                            .aliases
+                            .keys()
+                            .filter(|k| glob_match(k, arg))
+                            .cloned()
+                            .collect();
+                    } else if self.aliases.contains_key(arg) {
+                        hits.push(arg.clone());
+                    }
+                }
+                "suffix_aliases" => {
+                    if match_glob {
+                        hits = self
+                            .suffix_aliases
+                            .keys()
+                            .filter(|k| glob_match(k, arg))
+                            .cloned()
+                            .collect();
+                    } else if self.suffix_aliases.contains_key(arg) {
+                        hits.push(arg.clone());
+                    }
+                }
+                "functions" => {
+                    if match_glob {
+                        hits = self
+                            .functions_compiled
+                            .keys()
+                            .filter(|k| glob_match(k, arg))
+                            .cloned()
+                            .collect();
+                    } else if self.functions_compiled.contains_key(arg) {
+                        hits.push(arg.clone());
+                    }
+                }
+                "builtins" => {
+                    if match_glob {
+                        hits = BUILTIN_SET
+                            .iter()
+                            .filter(|k| glob_match(k, arg))
+                            .map(|s| s.to_string())
+                            .collect();
+                    } else if BUILTIN_SET.contains(arg.as_str()) {
+                        hits.push(arg.clone());
+                    }
+                }
+                _ => {
+                    // -p / -r / unsupported targets: no-op for now.
+                }
+            }
+            if hits.is_empty() {
+                if !match_glob {
+                    eprintln!(
+                        "{}: no such hash table element: {}",
+                        if enable { "enable" } else { "disable" },
+                        arg
+                    );
+                    returnval = 1;
+                }
+                continue;
+            }
+            matched_any = true;
+            for h in hits {
+                if enable {
+                    self.options.remove(&format!("_disabled_{}", h));
+                } else {
+                    // Disable. For aliases / functions zsh's hash
+                    // table just sets the DISABLED flag; for the
+                    // simpler zshrs model we remove the entry
+                    // entirely (matches the previous impl).
+                    match target {
+                        "aliases" => {
+                            self.aliases.remove(&h);
+                        }
+                        "suffix_aliases" => {
+                            self.suffix_aliases.remove(&h);
+                        }
+                        "functions" => {
+                            self.remove_function(&h);
+                        }
+                        _ => {
+                            self.options.insert(format!("_disabled_{}", h), true);
+                        }
+                    }
+                }
             }
         }
-        0
+
+        // builtin.c:577-578 — `-m` with zero matches returns 1.
+        if match_glob && !matched_any {
+            returnval = 1;
+        }
+        returnval
     }
 
     /// emulate - set up zsh emulation mode
