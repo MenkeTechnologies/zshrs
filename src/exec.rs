@@ -36670,7 +36670,11 @@ impl ShellExecutor {
                 }
                 "-v" | "--verbose" => verbose = true,
                 "-d" | "--dir" => empty_dir = true,
-                s if s.starts_with("--") => {} // unknown long form, silent
+                s if s.starts_with("--") => {
+                    // Unknown long form rejected per coreutils.
+                    eprintln!("rm: unrecognized option: '{}'", s);
+                    return 1;
+                }
                 s if s.starts_with('-') && s.len() > 1 => {
                     // Combined short flags: walk every char.
                     for c in s[1..].chars() {
@@ -36686,7 +36690,13 @@ impl ShellExecutor {
                             }
                             'v' => verbose = true,
                             'd' => empty_dir = true,
-                            _ => {}
+                            // coreutils rm errors on unknown short
+                            // flag letters (esp. inside combined forms
+                            // like \`-rfX\`).
+                            _ => {
+                                eprintln!("rm: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
                         }
                     }
                 }
