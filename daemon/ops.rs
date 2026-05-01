@@ -50,6 +50,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "history_query" => super::history::op_history_query(state, args).await,
         "subscribe" => op_subscribe(state, client_id, args).await,
         "unsubscribe" => op_unsubscribe(state, client_id, args).await,
+        "subscription_set_paused" => op_subscription_set_paused(state, client_id, args).await,
         "publish" => op_publish(state, client_id, args).await,
         "fpath_changed" => op_fpath_changed(state, args).await,
         "watcher_stats" => op_watcher_stats(state).await,
@@ -528,6 +529,29 @@ async fn op_subscribe(state: &Arc<DaemonState>, client_id: u64, args: Value) -> 
         })),
         Err(e) => Err(ErrPayload::new("bad_pattern", e)),
     }
+}
+
+async fn op_subscription_set_paused(
+    state: &Arc<DaemonState>,
+    client_id: u64,
+    args: Value,
+) -> OpResult {
+    let paused = args
+        .get("paused")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `paused` boolean"))?;
+    if args.get("all").and_then(Value::as_bool).unwrap_or(false) {
+        let n = state.pause_all_subscriptions(client_id, paused);
+        return Ok(json!({ "affected": n, "paused": paused }));
+    }
+    if let Some(id) = args.get("id").and_then(Value::as_u64) {
+        let ok = state.set_subscription_paused(client_id, id, paused);
+        return Ok(json!({ "affected": if ok { 1 } else { 0 }, "paused": paused }));
+    }
+    Err(ErrPayload::new(
+        "bad_args",
+        "specify `id` or `all: true`",
+    ))
 }
 
 async fn op_unsubscribe(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {

@@ -34,6 +34,11 @@ pub struct Subscription {
     pub pattern: String,
     pub scope_pat: String,
     pub topic_pat: String,
+    /// When true, the daemon's publish path skips this subscription. Lets users
+    /// silence noisy patterns temporarily without losing the subscription
+    /// itself. `zsubscribe --pause` / `--resume` toggle this.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 impl Subscription {
@@ -56,6 +61,7 @@ impl Subscription {
             pattern: pattern.to_string(),
             scope_pat: scope_pat.to_string(),
             topic_pat: topic_pat.to_string(),
+            paused: false,
         })
     }
 

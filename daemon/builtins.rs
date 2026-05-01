@@ -922,6 +922,10 @@ fn log_files(paths: &CachePaths) -> Vec<std::path::PathBuf> {
 fn zsubscribe(args: &[String]) -> i32 {
     let mut json_out = false;
     let mut list_only = false;
+    let mut pause = false;
+    let mut resume = false;
+    let mut sub_id: Option<u64> = None;
+    let mut all = false;
     let mut count: Option<u64> = None;
     let mut pattern: Option<String> = None;
 
@@ -930,6 +934,13 @@ fn zsubscribe(args: &[String]) -> i32 {
         match a.as_str() {
             "--json" => json_out = true,
             "--list" => list_only = true,
+            "--pause" => pause = true,
+            "--resume" => resume = true,
+            "--all" => all = true,
+            "--id" => match iter.next().and_then(|s| s.parse::<u64>().ok()) {
+                Some(n) => sub_id = Some(n),
+                None => return err_exit("zsubscribe", "--id requires an integer"),
+            },
             "--count" => match iter.next() {
                 Some(n) => match n.parse::<u64>() {
                     Ok(v) => count = Some(v),
@@ -940,6 +951,8 @@ fn zsubscribe(args: &[String]) -> i32 {
             "-h" | "--help" => {
                 println!("usage: zsubscribe [--json] [--count N] <pattern>");
                 println!("       zsubscribe --list");
+                println!("       zsubscribe --pause [--id N | --all]");
+                println!("       zsubscribe --resume [--id N | --all]");
                 println!("pattern: <scope>.<topic>  e.g. shell:42.commands  *.chpwd  tag:prod.long_cmd_complete");
                 return 0;
             }
@@ -953,6 +966,10 @@ fn zsubscribe(args: &[String]) -> i32 {
                 pattern = Some(other.to_string());
             }
         }
+    }
+
+    if pause || resume {
+        return zsubscribe_set_paused(pause, sub_id, all);
     }
 
     if list_only {
@@ -1010,6 +1027,31 @@ fn zsubscribe(args: &[String]) -> i32 {
             }
             Err(e) => return err_exit("zsubscribe", &e.to_string()),
         }
+    }
+}
+
+fn zsubscribe_set_paused(pause: bool, sub_id: Option<u64>, all: bool) -> i32 {
+    let mut payload = json!({ "paused": pause });
+    if all {
+        payload["all"] = json!(true);
+    } else if let Some(id) = sub_id {
+        payload["id"] = json!(id);
+    } else {
+        return err_exit(
+            "zsubscribe",
+            "--pause/--resume requires --id <N> or --all",
+        );
+    }
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("subscription_set_paused", payload) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zsubscribe", &e.to_string()),
     }
 }
 
