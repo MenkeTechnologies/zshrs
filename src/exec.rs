@@ -35978,17 +35978,33 @@ impl ShellExecutor {
         let mut recursive = false;
         let mut force = false;
         let mut interactive = false;
+        // -n: never overwrite. coreutils -f / -i / -n are mutually
+        // exclusive, last one wins.
+        let mut no_clobber = false;
         let mut preserve = false;
         let mut verbose = false;
         let mut files: Vec<&str> = Vec::new();
 
         for arg in args {
             match arg.as_str() {
-                "-r" | "-R" => recursive = true,
-                "-f" => force = true,
-                "-i" => interactive = true,
-                "-p" => preserve = true,
-                "-v" => verbose = true,
+                "-r" | "-R" | "--recursive" => recursive = true,
+                "-f" | "--force" => {
+                    force = true;
+                    interactive = false;
+                    no_clobber = false;
+                }
+                "-i" | "--interactive" => {
+                    interactive = true;
+                    force = false;
+                    no_clobber = false;
+                }
+                "-n" | "--no-clobber" => {
+                    no_clobber = true;
+                    force = false;
+                    interactive = false;
+                }
+                "-p" | "--preserve" => preserve = true,
+                "-v" | "--verbose" => verbose = true,
                 s if !s.starts_with('-') => files.push(s),
                 _ => {}
             }
@@ -36020,6 +36036,12 @@ impl ShellExecutor {
 
             let dest_path = std::path::Path::new(&dest);
             if dest_path.exists() && !force {
+                if no_clobber {
+                    if verbose {
+                        println!("'{}' -> '{}' (skipped, target exists)", src, dest);
+                    }
+                    continue;
+                }
                 if interactive {
                     eprint!("cp: overwrite '{}'? ", dest);
                     let mut response = String::new();
