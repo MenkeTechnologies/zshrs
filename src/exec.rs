@@ -46136,8 +46136,12 @@ impl ShellExecutor {
                 }
                 "-q" | "--quiet" => {} // accepted: don't emit errors (we still do; minimal port)
                 "-u" | "--dry-run" => {} // accepted: print name without creating
+                "--" => {} // end of options
                 a if !a.starts_with('-') => template = Some(a),
-                _ => {}
+                a => {
+                    eprintln!("mktemp: unrecognized option: '{}'", a);
+                    return 1;
+                }
             }
         }
 
