@@ -22113,7 +22113,18 @@ impl ShellExecutor {
     }
 
     fn builtin_local(&mut self, args: &[String]) -> i32 {
-        self.builtin_typeset_named(args, "typeset")
+        // builtin.c bin_typeset BIN_LOCAL path — `local` is only
+        // valid inside a function; called from top-level it errors
+        // `local:1: not in function scope` exit 1. zshrs's previous
+        // pass-through called typeset which silently created a
+        // global variable, masking what zsh would have caught at
+        // the typo level (e.g. `local x=foo` accidentally typed at
+        // a prompt would turn into a permanent global).
+        if self.local_scope_depth == 0 {
+            eprintln!("zshrs:local:1: can only be used in a function");
+            return 1;
+        }
+        self.builtin_typeset_named(args, "local")
     }
 
     fn builtin_declare(&mut self, args: &[String]) -> i32 {
