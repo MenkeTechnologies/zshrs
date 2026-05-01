@@ -377,7 +377,7 @@ pub fn get_exe_path() -> Option<PathBuf> {
 /// resolve the absolute path of the running shell binary on
 /// platforms where the kernel doesn't expose it (no /proc/self/exe,
 /// no _NSGetExecutablePath, no KERN_PROC_PATHNAME). Walks the
-/// argv[0]/cwd/$PATH heuristics that zsh uses as a fallback.
+/// argv\[0\]/cwd/$PATH heuristics that zsh uses as a fallback.
 ///
 /// Algorithm (init.c:956-1004):
 ///   1. If name starts with `-`, skip it (login-shell prefix).

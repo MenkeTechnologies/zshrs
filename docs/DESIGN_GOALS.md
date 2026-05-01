@@ -10,7 +10,7 @@ Companion docs: [`ROADMAP.md`](./ROADMAP.md) for phase-by-phase execution plan; 
 
 zshrs is the **endgame shell for its maintainer's lifetime** — the substrate that hosts the most powerful single-author CLI environment ever assembled (zpwr at 172k LOC + 506+ subcommands, zsh-more-completions at 16,806 files, custom .zshrc spanning decades). It exists because zsh's 1970-era architecture cannot be patched into handling that scale, no matter how many userspace optimization layers (zinit turbo, p10k instant prompt, zwc, zcompile, BG_NICE) are stacked on it.
 
-**zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + SQLite-indexed completions + AOP intercepts + native async/parallel ops + 23 in-process coreutils builtins. These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
+**zshrs is not "Rust zsh."** It's the first compiled Unix shell — bytecode VM + Cranelift JIT + persistent worker pool + **rkyv-mmapped** completion / autoload bytecode (the only shell cache) + read-only SQLite **mirrors** for SQL inspection (no effect on cache hit/miss or execution) + AOP intercepts + native async/parallel ops + 23 in-process coreutils builtins. These are capabilities zsh's architecture cannot have at any speed. zshrs is the substrate that finally fits the workload.
 
 ---
 
@@ -70,7 +70,7 @@ These are load-bearing numerical commitments, not aspirations.
 4. Zero synchronous external commands at startup (no git, kubectl, aws, slow PROMPT subprocess calls).
 5. Bytecode-of-`.zshrc` mmap'd from `~/.cache/zshrs/init.bc` on every startup after first compile.
 6. No DNS at startup, ever.
-7. No directory scans at startup (fpath, PATH executables — all indexed in SQLite at install time).
+7. No directory scans at startup (fpath, PATH executables — all baked into **rkyv** shards at install time; SQLite mirrors are read-side copies only).
 8. Startup is single-threaded fast path; multicore matters at runtime not init.
 9. Minimize allocations on the hot path; pre-allocated buffers where possible.
 10. **NEVER instant-prompt fakery, NEVER lazy-load deferral, NEVER eventual-feature-loading.**
@@ -287,7 +287,7 @@ These quotes are the source-of-truth framings. When this file's prose drifts, th
 
 ## [0xFF] Bottom line
 
-zshrs is the maintainer's life work, his endgame shell, his daily-use tool for the next 30+ years. It exists because zsh's architecture cannot handle his workload no matter how many optimization layers are applied. It targets capabilities zsh's architecture cannot have at any speed (bytecode VM + JIT + worker pool + SQLite indexing + AOP + native async/parallel) AND world-class performance (10-20ms cold start fully featured). It clears both legs of "world's first AND world's fastest" — that's the bar for everything in his stack.
+zshrs is the maintainer's life work, his endgame shell, his daily-use tool for the next 30+ years. It exists because zsh's architecture cannot handle his workload no matter how many optimization layers are applied. It targets capabilities zsh's architecture cannot have at any speed (bytecode VM + JIT + worker pool + rkyv bytecode cache + read-only SQLite mirrors + AOP + native async/parallel) AND world-class performance (10-20ms cold start fully featured). It clears both legs of "world's first AND world's fastest" — that's the bar for everything in his stack.
 
 If you're contributing: read this file, run the [§0x08] gauntlet on every proposal, write behavioral tests for everything, never reintroduce friendly verbiage, and treat compat with the existing world as sacred. The plan is in `ROADMAP.md`. The invariants are in `tests/`. The principles are here.
 

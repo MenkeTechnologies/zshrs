@@ -18,7 +18,7 @@
 
 > *"No fork, no problems."*
 
-The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — 190k+ lines, 267 source files, 80 core modules, 26 ZLE widgets, 48 fish-ported builtins, persistent worker pool, AOP intercept, SQLite FTS5 caching, and full zsh compatibility.
+The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — 190k+ lines, 267 source files, 80 core modules, 26 ZLE widgets, 48 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility.
 
 ### [`Docs`](https://menketechnologies.github.io/zshrs/index.html) · [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
 
@@ -33,7 +33,7 @@ The first Unix shell to compile to bytecodes and execute on a purpose-built virt
 - [\[0x04\] Concurrent Primitives](#0x04-concurrent-primitives)
 - [\[0x05\] AOP Intercept](#0x05-aop-intercept)
 - [\[0x06\] Worker Thread Pool](#0x06-worker-thread-pool)
-- [\[0x07\] SQLite Caching](#0x07-sqlite-caching)
+- [\[0x07\] RKYV cache layout](#0x07-rkyv-cache-layout)
 - [\[0x08\] Exclusive Builtins](#0x08-exclusive-builtins)
 - [\[0x09\] Shell Language Features](#0x09-shell-language-features)
 - [\[0x0A\] Compatibility](#0x0a-compatibility)
@@ -44,7 +44,7 @@ The first Unix shell to compile to bytecodes and execute on a purpose-built virt
 
 ## [0x00] OVERVIEW
 
-zshrs replaces `fork + exec` with a persistent worker thread pool, compiles every command to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes, caches compiled chunks in SQLite, and runs the completion system on FTS5 indexes. The result: shell startup, command dispatch, globbing, completion, and autoloading are all faster by orders of magnitude.
+zshrs replaces `fork + exec` with a persistent worker thread pool, compiles every command to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes, and **persists compiled chunks only in rkyv shards** under `~/.cache/zshrs/` (see [`docs/DAEMON.md`](docs/DAEMON.md)). Beside that tree, **`catalog.db` and related SQL views are read-only mirrors** for inspection (`dbview`, ad-hoc SQL): daemon-hydrated, **never authoritative for cache hit/miss or execution**. They are not a second shell cache. **`history.db`** holds history only — it is unrelated to bytecode caching. The result: shell startup, command dispatch, globbing, completion, and autoloading are all faster by orders of magnitude.
 
 ---
 
@@ -86,8 +86,8 @@ Every operation that zsh forks for runs in-process. **Zero forks for builtins.**
 | `rehash` | Serial `readdir` per PATH dir | Parallel scan across pool |
 | `compinit` | Synchronous fpath scan | Background scan + bytecode compilation |
 | History write | Synchronous `fsync` | Fire-and-forget to pool |
-| Autoload | Read file + parse every time | Bytecode deserialization from SQLite |
-| Plugin source | Parse + execute every startup | Delta replay from SQLite cache |
+| Autoload | Read file + parse every time | Bytecode mmap + zero-copy load from **rkyv** |
+| Plugin source | Parse + execute every startup | Delta replay from **rkyv** image |
 
 ### Coreutils Builtins (Anti-Fork)
 
@@ -111,10 +111,10 @@ Every command compiles to [fusevm](https://github.com/MenkeTechnologies/fusevm) 
 Interactive command  ──► ZshLexer ──► ZshParser ──► ZshCompiler ──► fusevm::Op ──► VM::run()
                          (port of    (port of      (original;
                           Src/lex.c)  Src/parse.c)  ~1.4k LOC)
-Script file (first)  ──► ZshLexer ──► ZshParser ──► ZshCompiler ──► VM::run() ──► cache in SQLite
-Script file (cached) ──► SQLite ──► deserialize Chunk ──► VM::run()
+Script file (first)  ──► ZshLexer ──► ZshParser ──► ZshCompiler ──► VM::run() ──► persist rkyv shard
+Script file (cached) ──► index.rkyv + mmap shard ──► deserialize Chunk ──► VM::run()
                          (no lex, no parse, no compile)
-Autoload function    ──► SQLite ──► deserialize Chunk ──► VM::run()
+Autoload function    ──► rkyv shard ──► deserialize Chunk ──► VM::run()
                          (microseconds)
 ```
 
@@ -128,8 +128,8 @@ The lexer and parser are direct ports from zsh's C source (`Src/lex.c`, `Src/par
 │       │                                                                 │
 │       ▼                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ SQLite bytecode cache                                           │   │
-│  │   check_bytecode(path, mtime) → Option<Vec<u8>>                 │   │
+│  │ rkyv bytecode cache (images/*.rkyv + index.rkyv)                 │   │
+│  │   lookup(path, mtime) → mmap'd fusevm::Chunk                     │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │       │                                                                 │
 │       ├─── HIT (100x faster) ────────────────────────┐                 │
@@ -138,7 +138,7 @@ The lexer and parser are direct ports from zsh's C source (`Src/lex.c`, `Src/par
 │  ZshLexer → ZshParser → ZshCompiler ────────► fusevm::Chunk            │
 │                         │                             │                 │
 │                         ▼                             │                 │
-│                  store_bytecode()                     │                 │
+│                  persist_shard()                      │                 │
 │                                                       │                 │
 │       ┌───────────────────────────────────────────────┘                │
 │       ▼                                                                 │
@@ -163,7 +163,7 @@ The lexer and parser are direct ports from zsh's C source (`Src/lex.c`, `Src/par
 
 | Tier | What | When |
 |------|------|------|
-| **SQLite cache** | Skip lex/parse/compile | Warm script runs |
+| **rkyv image hit** | Skip lex/parse/compile | Warm script runs |
 | **Block JIT** | Native x86-64 via Cranelift | Loops, conditionals |
 | **Linear JIT** | Native x86-64 via Cranelift | Straight-line arithmetic |
 | **Interpreter** | Jump table + superinstructions | Builtins, I/O, strings |
@@ -244,17 +244,24 @@ recursive_parallel = true
 
 ---
 
-## [0x07] SQLITE CACHING
+## [0x07] RKYV CACHE LAYOUT
 
-Three databases power the shell:
+Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.cache/zshrs/`:
 
-| Database | Purpose |
-|----------|---------|
-| **compsys.db** | Completions: autoloads with bytecodes, comps, services, PATH executables (FTS5) |
-| **history.db** | Frequency-ranked, timestamped, duration, exit status per command |
-| **plugins.db** | Plugin delta cache: functions, aliases, variables, hooks, zstyles, options |
+| Path | Purpose |
+|------|---------|
+| **`index.rkyv`** | Top-level index: fq_name → shard id, generation, byte offset |
+| **`images/{hash8}-*.rkyv`** | Mmap-ready shards (system, completions, plugins, scripts, `.zshrc`, …) |
 
-Browse without SQL:
+**SQLite (read-only mirrors)** — same directory, different job: daemon-maintained copies you can query with SQL or `dbview`. They are **not** the bytecode cache and are **not** read when deciding cache hit/miss or when running compiled code.
+
+| Store | Purpose |
+|-------|---------|
+| **`catalog.db`** | Joinable mirror of catalog metadata (human / tooling reads only) |
+| **`history.db`** | Command history persistence (orthogonal to bytecode caching — not a cache layer for compiled chunks) |
+| **Mirror / FTS views** | Optional SQL-side views of names and paths for `dbview` — read-only; see [`docs/DAEMON.md`](docs/DAEMON.md) |
+
+Browse mirrors without SQL:
 
 ```zsh
 dbview                        # list tables + row counts
@@ -284,7 +291,7 @@ dbview history docker         # search history
 | `intercept` | AOP before/after/around advice on any command |
 | `intercept_proceed` | Call original from around advice |
 | `doctor` | Full diagnostic: pool metrics, cache stats, bytecode coverage |
-| `dbview` | Browse SQLite caches without SQL |
+| `dbview` | Read-only browse of SQLite **mirrors** (not the rkyv cache) |
 | `profile` | In-process command profiling with nanosecond accuracy |
 
 ### Coreutils (Anti-Fork)
@@ -443,7 +450,7 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
                   │   zle/ (26)  │                             │
                   ├──────────────┴───────────────────────────┤
                   │             compsys (27 files)            │
-                  │   SQLite FTS5 · menuselect · zstyle      │
+                  │   rkyv mmap · read-only SQL mirror · zstyle │
                   ├────────���─────────────────────────────────┤
                   │           fusevm (bytecode VM)            │
                   │   129 opcodes · fused loops · JIT path   │

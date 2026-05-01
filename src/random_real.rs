@@ -7,7 +7,7 @@ use crate::random;
 /// Generate a random double in [0, 1] uniformly distributed.
 /// Direct port of `random_real` from src/zsh/Src/Modules/random_real.c
 /// lines 145-212 (Campbell's algorithm, see
-/// http://mumble.net/~campbell/2014/04/28/uniform-random-float).
+/// <http://mumble.net/~campbell/2014/04/28/uniform-random-float>).
 ///
 /// Algorithm:
 ///   1. Read 64-bit chunks until we see a non-zero one. Each
