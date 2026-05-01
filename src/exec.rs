@@ -36960,8 +36960,11 @@ impl ShellExecutor {
     /// readonly - mark variables as read-only
     fn builtin_readonly(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            // List readonly variables
-            for name in &self.readonly_vars {
+            // Sorted listing for deterministic output (was iterating
+            // a HashSet in random order).
+            let mut sorted: Vec<String> = self.readonly_vars.iter().cloned().collect();
+            sorted.sort();
+            for name in &sorted {
                 if let Some(val) = self.variables.get(name) {
                     println!("readonly {}={}", name, val);
                 }
@@ -36971,7 +36974,10 @@ impl ShellExecutor {
 
         for arg in args {
             if arg == "-p" {
-                for name in &self.readonly_vars {
+                let mut sorted: Vec<String> =
+                    self.readonly_vars.iter().cloned().collect();
+                sorted.sort();
+                for name in &sorted {
                     if let Some(val) = self.variables.get(name) {
                         println!("declare -r {}=\"{}\"", name, val);
                     }
