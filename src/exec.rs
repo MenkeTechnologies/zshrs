@@ -36518,12 +36518,14 @@ impl ShellExecutor {
             0
         }
 
+        // Per-file continue-on-error.
+        let mut chmod_status = 0;
         for file in files {
             if do_chmod(std::path::Path::new(file), mode, recursive) != 0 {
-                return 1;
+                chmod_status = 1;
             }
         }
-        0
+        chmod_status
     }
 
     /// zln/zmv/zcp - file operations (zsh/files module)
