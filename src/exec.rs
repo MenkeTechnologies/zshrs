@@ -40833,38 +40833,72 @@ impl ShellExecutor {
     }
 
     fn builtin_sort(&self, args: &[String]) -> i32 {
+        // coreutils sort(1) port — adds case-fold (-f), field
+        // selection (-k N), custom separator (-t C) on top of the
+        // existing -n / -r / -u handling.
         use std::io::{BufRead, BufReader};
 
         let mut reverse = false;
         let mut numeric = false;
         let mut unique = false;
+        let mut fold = false;
+        // -k FIELD: sort by field N (1-based, N-M range).
+        let mut key_start: Option<usize> = None;
+        let mut key_end: Option<usize> = None;
+        // -t C: field separator. Default is run-of-whitespace.
+        let mut sep: Option<char> = None;
         let mut files: Vec<&str> = Vec::new();
 
-        for arg in args {
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
             match arg.as_str() {
                 "-r" => reverse = true,
                 "-n" => numeric = true,
                 "-u" => unique = true,
-                "-rn" | "-nr" => {
-                    reverse = true;
-                    numeric = true;
+                "-f" => fold = true,
+                "-k" if i + 1 < args.len() => {
+                    i += 1;
+                    if let Some((a, b)) = args[i].split_once(',') {
+                        key_start = a.split('.').next().and_then(|s| s.parse().ok());
+                        key_end = b.split('.').next().and_then(|s| s.parse().ok());
+                    } else {
+                        key_start = args[i].split('.').next().and_then(|s| s.parse().ok());
+                    }
                 }
-                a if a.starts_with('-') => {
+                "-t" if i + 1 < args.len() => {
+                    i += 1;
+                    sep = args[i].chars().next();
+                }
+                a if a.starts_with("-k") && a.len() > 2 => {
+                    let s = &a[2..];
+                    if let Some((aa, bb)) = s.split_once(',') {
+                        key_start = aa.split('.').next().and_then(|s| s.parse().ok());
+                        key_end = bb.split('.').next().and_then(|s| s.parse().ok());
+                    } else {
+                        key_start = s.split('.').next().and_then(|s| s.parse().ok());
+                    }
+                }
+                a if a.starts_with("-t") && a.len() > 2 => {
+                    sep = a.chars().nth(2);
+                }
+                a if a.starts_with('-') && a.len() > 1 => {
                     for c in a[1..].chars() {
                         match c {
                             'r' => reverse = true,
                             'n' => numeric = true,
                             'u' => unique = true,
+                            'f' => fold = true,
                             _ => {}
                         }
                     }
                 }
                 _ => files.push(arg),
             }
+            i += 1;
         }
 
         let mut lines: Vec<String> = Vec::new();
-
         if files.is_empty() {
             let stdin = std::io::stdin();
             for line in stdin.lock().lines().flatten() {
@@ -40886,28 +40920,55 @@ impl ShellExecutor {
             }
         }
 
-        if numeric {
-            lines.sort_by(|a, b| {
-                let na: f64 = a
+        // Extract the sort key from a line per -k/-t. Returns the
+        // selected fields joined back with the separator (or just the
+        // line when -k is absent).
+        let extract_key = |line: &str| -> String {
+            let start = match key_start {
+                Some(s) if s >= 1 => s - 1,
+                _ => return line.to_string(),
+            };
+            let parts: Vec<&str> = match sep {
+                Some(c) => line.split(c).collect(),
+                None => line.split_whitespace().collect(),
+            };
+            let end = key_end
+                .map(|e| e.saturating_sub(1).min(parts.len().saturating_sub(1)))
+                .unwrap_or_else(|| parts.len().saturating_sub(1));
+            if start >= parts.len() {
+                return String::new();
+            }
+            let sep_str = sep.map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
+            parts[start..=end].join(&sep_str)
+        };
+
+        let cmp_keys = |a: &str, b: &str| -> std::cmp::Ordering {
+            let ka = extract_key(a);
+            let kb = extract_key(b);
+            if numeric {
+                let na: f64 = ka
                     .split_whitespace()
                     .next()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0.0);
-                let nb: f64 = b
+                let nb: f64 = kb
                     .split_whitespace()
                     .next()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0.0);
                 na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        } else {
-            lines.sort();
-        }
+            } else if fold {
+                ka.to_lowercase().cmp(&kb.to_lowercase())
+            } else {
+                ka.cmp(&kb)
+            }
+        };
+
+        lines.sort_by(|a, b| cmp_keys(a, b));
 
         if reverse {
             lines.reverse();
         }
-
         if unique {
             lines.dedup();
         }
