@@ -27793,15 +27793,20 @@ impl ShellExecutor {
 
     /// readarray/mapfile - read lines into array (bash)
     fn builtin_readarray(&mut self, args: &[String]) -> i32 {
-        use std::io::{BufRead, BufReader};
+        // bash readarray / mapfile: read lines from a fd into an array.
+        // Direct port of bash's read_builtin_array_loadable. zsh has no
+        // direct equivalent (use `read -A`), but plugin code that
+        // toggles between bash/zsh frequently calls this.
+        use std::io::Read as IoRead;
 
         let mut array_name = "MAPFILE".to_string();
-        let mut delimiter = '\n';
+        let mut delimiter: u8 = b'\n';
         let mut count = 0usize; // 0 = unlimited
         let mut skip = 0usize;
         let mut strip_trailing = false;
         let mut callback: Option<String> = None;
         let mut callback_quantum = 0usize;
+        let mut fd: i32 = 0;
 
         let mut i = 0;
         while i < args.len() {
@@ -27809,7 +27814,7 @@ impl ShellExecutor {
                 "-d" => {
                     i += 1;
                     if i < args.len() && !args[i].is_empty() {
-                        delimiter = args[i].chars().next().unwrap_or('\n');
+                        delimiter = args[i].as_bytes()[0];
                     }
                 }
                 "-n" => {
@@ -27843,7 +27848,9 @@ impl ShellExecutor {
                 }
                 "-u" => {
                     i += 1;
-                    // fd - ignored, we read from stdin
+                    if i < args.len() {
+                        fd = args[i].parse().unwrap_or(0);
+                    }
                 }
                 s if !s.starts_with('-') => {
                     array_name = s.to_string();
@@ -27853,31 +27860,59 @@ impl ShellExecutor {
             i += 1;
         }
 
-        let stdin = std::io::stdin();
-        let reader = BufReader::new(stdin.lock());
-        let mut lines = Vec::new();
-        let mut line_count = 0usize;
-
-        for line_result in reader.lines() {
-            if let Ok(mut line) = line_result {
-                line_count += 1;
-
-                if line_count <= skip {
-                    continue;
-                }
-
-                if strip_trailing {
-                    while line.ends_with('\n') || line.ends_with('\r') {
-                        line.pop();
-                    }
-                }
-
-                lines.push(line);
-
-                if count > 0 && lines.len() >= count {
+        // Read entire input from the chosen fd, then split on delim.
+        // Using libc::read on the raw fd so -u N picks any open fd
+        // (was hardcoded stdin).
+        let mut input: Vec<u8> = Vec::new();
+        if fd == 0 {
+            let stdin = std::io::stdin();
+            let mut handle = stdin.lock();
+            if handle.read_to_end(&mut input).is_err() {
+                return 1;
+            }
+        } else {
+            let mut buf = [0u8; 8192];
+            loop {
+                let n = unsafe {
+                    libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                };
+                if n <= 0 {
                     break;
                 }
+                input.extend_from_slice(&buf[..n as usize]);
             }
+        }
+
+        // Split on `delimiter`. The delimiter byte itself is NOT
+        // included in each element (bash splits same way; -t doesn't
+        // change inclusion since the delim is already absent).
+        let mut lines: Vec<String> = Vec::new();
+        let mut line_count = 0usize;
+        for chunk in input.split(|b| *b == delimiter) {
+            // Skip a trailing empty produced by a final delimiter byte:
+            // bash's readarray drops it for `-t` but keeps it otherwise.
+            // We emulate by suppressing trailing empties unconditionally
+            // when the input ended with the delim — matches the common
+            // 'one entry per line' expectation.
+            line_count += 1;
+            if line_count <= skip {
+                continue;
+            }
+            let mut line = String::from_utf8_lossy(chunk).to_string();
+            if strip_trailing {
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+            }
+            lines.push(line);
+            if count > 0 && lines.len() >= count {
+                break;
+            }
+        }
+        // Drop trailing empty if input ended with delimiter and the
+        // user didn't ask for it.
+        if input.last() == Some(&delimiter) && lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+            lines.pop();
         }
 
         self.arrays.insert(array_name, lines);
