@@ -10109,6 +10109,8 @@ impl ShellExecutor {
             "chgrp" => return self.builtin_chgrp(&rest_vec),
             "nproc" => return self.builtin_nproc(&rest_vec),
             "expr" => return self.builtin_expr(&rest_vec),
+            "sha256sum" => return self.builtin_sha256sum(&rest_vec),
+            "base64" => return self.builtin_base64(&rest_vec),
             _ => {}
         }
 
@@ -42911,6 +42913,190 @@ impl ShellExecutor {
             return 0;
         }
         std::thread::sleep(std::time::Duration::from_secs_f64(total_secs));
+        0
+    }
+
+    /// sha256sum [FILE...] — write SHA-256 of each file (or stdin
+    /// when no FILE / '-'). coreutils-style 'HEX  PATH' output.
+    fn builtin_sha256sum(&self, args: &[String]) -> i32 {
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        let files: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .collect();
+        let targets: Vec<&str> = if files.is_empty() {
+            vec!["-"]
+        } else {
+            files
+        };
+        let mut status = 0;
+        for f in targets {
+            let mut hasher = Sha256::new();
+            let result: std::io::Result<()> = (|| {
+                let mut buf = [0u8; 65536];
+                if f == "-" {
+                    let stdin = std::io::stdin();
+                    let mut h = stdin.lock();
+                    loop {
+                        let n = h.read(&mut buf)?;
+                        if n == 0 {
+                            break;
+                        }
+                        hasher.update(&buf[..n]);
+                    }
+                } else {
+                    let mut file = std::fs::File::open(f)?;
+                    loop {
+                        let n = file.read(&mut buf)?;
+                        if n == 0 {
+                            break;
+                        }
+                        hasher.update(&buf[..n]);
+                    }
+                }
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    let hex = format!("{:x}", hasher.finalize());
+                    if f == "-" {
+                        println!("{}  -", hex);
+                    } else {
+                        println!("{}  {}", hex, f);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("sha256sum: {}: {}", f, e);
+                    status = 1;
+                }
+            }
+        }
+        status
+    }
+
+    /// base64 [-d] [FILE] — encode/decode base64. coreutils
+    /// base64(1) without --wrap (defaults to 76-char wrap on
+    /// encode; 0 disables).
+    fn builtin_base64(&self, args: &[String]) -> i32 {
+        use std::io::Read;
+        const ALPHA: &[u8] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut decode = false;
+        let mut wrap: usize = 76;
+        let mut file: Option<&str> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-d" | "--decode" => decode = true,
+                "-w" | "--wrap" => {
+                    if let Some(s) = iter.next() {
+                        wrap = s.parse().unwrap_or(76);
+                    }
+                }
+                s if s.starts_with("--wrap=") => {
+                    wrap = s[7..].parse().unwrap_or(76);
+                }
+                "-i" | "--ignore-garbage" => {} // accepted, default behaviour
+                s if !s.starts_with('-') => file = Some(s),
+                _ => {}
+            }
+        }
+        let mut input = Vec::new();
+        match file {
+            Some(f) if f != "-" => match std::fs::File::open(f) {
+                Ok(mut h) => {
+                    let _ = h.read_to_end(&mut input);
+                }
+                Err(e) => {
+                    eprintln!("base64: {}: {}", f, e);
+                    return 1;
+                }
+            },
+            _ => {
+                let stdin = std::io::stdin();
+                let _ = stdin.lock().read_to_end(&mut input);
+            }
+        }
+        if decode {
+            // Strip whitespace then decode 4-char groups.
+            let cleaned: Vec<u8> =
+                input.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+            let mut out: Vec<u8> = Vec::with_capacity(cleaned.len() * 3 / 4);
+            let mut buf = [0u8; 4];
+            let mut have = 0usize;
+            for &c in &cleaned {
+                if c == b'=' {
+                    break;
+                }
+                let v = match c {
+                    b'A'..=b'Z' => c - b'A',
+                    b'a'..=b'z' => c - b'a' + 26,
+                    b'0'..=b'9' => c - b'0' + 52,
+                    b'+' => 62,
+                    b'/' => 63,
+                    _ => continue,
+                };
+                buf[have] = v;
+                have += 1;
+                if have == 4 {
+                    out.push((buf[0] << 2) | (buf[1] >> 4));
+                    out.push((buf[1] << 4) | (buf[2] >> 2));
+                    out.push((buf[2] << 6) | buf[3]);
+                    have = 0;
+                }
+            }
+            // Handle trailing 2/3 chars.
+            if have == 2 {
+                out.push((buf[0] << 2) | (buf[1] >> 4));
+            } else if have == 3 {
+                out.push((buf[0] << 2) | (buf[1] >> 4));
+                out.push((buf[1] << 4) | (buf[2] >> 2));
+            }
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(&out);
+        } else {
+            let mut out = String::with_capacity(input.len() * 4 / 3 + 4);
+            let mut col = 0usize;
+            let push_char = |c: u8, out: &mut String, col: &mut usize| {
+                out.push(c as char);
+                *col += 1;
+                if wrap > 0 && *col >= wrap {
+                    out.push('\n');
+                    *col = 0;
+                }
+            };
+            let mut i = 0;
+            while i + 3 <= input.len() {
+                let n = ((input[i] as u32) << 16)
+                    | ((input[i + 1] as u32) << 8)
+                    | (input[i + 2] as u32);
+                push_char(ALPHA[((n >> 18) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 12) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 6) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[(n & 0x3f) as usize], &mut out, &mut col);
+                i += 3;
+            }
+            let rem = input.len() - i;
+            if rem == 1 {
+                let n = (input[i] as u32) << 16;
+                push_char(ALPHA[((n >> 18) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 12) & 0x3f) as usize], &mut out, &mut col);
+                push_char(b'=', &mut out, &mut col);
+                push_char(b'=', &mut out, &mut col);
+            } else if rem == 2 {
+                let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8);
+                push_char(ALPHA[((n >> 18) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 12) & 0x3f) as usize], &mut out, &mut col);
+                push_char(ALPHA[((n >> 6) & 0x3f) as usize], &mut out, &mut col);
+                push_char(b'=', &mut out, &mut col);
+            }
+            if col != 0 {
+                out.push('\n');
+            }
+            print!("{}", out);
+        }
         0
     }
 
