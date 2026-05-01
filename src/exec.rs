@@ -20704,6 +20704,35 @@ impl ShellExecutor {
                 .unwrap_or_else(|_| path.clone())
         };
 
+        // Daemon source/dot interception (per docs/DAEMON.md "Source / dot
+        // interception and file registry"). Fire-and-forget IPC to populate
+        // the daemon's compiled_files registry with this file's mtime + inode.
+        // Skipped in POSIX mode (daemon never spawns there). Failure is
+        // silently swallowed — the shell continues with its existing read-+-
+        // execute fallback (the "if daemon disabled or unreachable, clients
+        // fall back to source-interp" invariant).
+        #[cfg(feature = "daemon")]
+        if !self.posix_mode {
+            if let Ok(meta) = std::fs::metadata(&abs_path) {
+                use std::os::unix::fs::MetadataExt;
+                let mtime_ns = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos() as i64)
+                    .unwrap_or(0);
+                let inode = meta.ino() as i64;
+                let payload = serde_json::json!({
+                    "path": &abs_path,
+                    "mtime_ns": mtime_ns,
+                    "inode": inode,
+                });
+                // Use call_once_no_spawn so a missing daemon never blocks the
+                // shell waiting on a spawn. If unreachable: degraded fallback.
+                let _ = crate::daemon::client::call_once_no_spawn("source_resolve", payload);
+            }
+        }
+
         // Save current $0 and set to the sourced file path
         let saved_zero = self.variables.get("0").cloned();
         self.variables.insert("0".to_string(), abs_path.clone());
@@ -25983,10 +26012,11 @@ impl ShellExecutor {
                     self.aliases.insert(name.to_string(), value.to_string());
                 }
             } else if pattern_match {
-                // -m: pattern match mode - list matching aliases
-                let pattern = arg.replace("*", ".*").replace("?", ".");
-                let re = regex::Regex::new(&format!("^{}$", pattern));
-
+                // -m: pattern match mode — list matching aliases.
+                // Direct port of zsh/Src/builtin.c:4396-4424 (bin_unhash
+                // alias path). Uses Self::glob_match_static so character
+                // classes, extendedglob negation, etc. work the same as
+                // every other glob site.
                 let alias_map: &HashMap<String, String> = if is_suffix {
                     &self.suffix_aliases
                 } else if is_global {
@@ -26003,18 +26033,17 @@ impl ShellExecutor {
                     "alias "
                 };
 
-                for (name, value) in alias_map {
-                    let matches = if let Ok(ref r) = re {
-                        r.is_match(name)
-                    } else {
-                        name.contains(arg.as_str())
-                    };
-                    if matches {
-                        let formatted = format_alias_kv(name, value);
-                        if list_form {
-                            println!("{}{}", prefix, formatted);
-                        } else {
-                            println!("{}", formatted);
+                let mut sorted: Vec<&String> = alias_map.keys().collect();
+                sorted.sort();
+                for name in sorted {
+                    if Self::glob_match_static(name, arg.as_str()) {
+                        if let Some(value) = alias_map.get(name) {
+                            let formatted = format_alias_kv(name, value);
+                            if list_form {
+                                println!("{}{}", prefix, formatted);
+                            } else {
+                                println!("{}", formatted);
+                            }
                         }
                     }
                 }
