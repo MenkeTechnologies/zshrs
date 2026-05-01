@@ -1042,6 +1042,65 @@ impl<'a> ZshParser<'a> {
         // drops via Rust ownership.
     }
 
+    // ============================================================
+    // Wordcode runtime getters (parse.c:2853-3060)
+    //
+    // These read packed wordcode out of a running Eprog at execution
+    // time. zshrs's executor walks the AST directly so these are
+    // stubs that preserve the C signatures + cite the source.
+    // ============================================================
+
+    /// Read a packed string from the wordcode stream. Direct port of
+    /// zsh/Src/parse.c:2853-2887 `ecgetstr`. C version unpacks
+    /// 4-char inline strings + indexes into the strs table for
+    /// longer ones. zshrs no-op (AST stores strings directly).
+    pub fn ecgetstr(_dup: bool) -> String {
+        // parse.c:2858-2886 — wordcode unpack logic. zshrs no-op.
+        String::new()
+    }
+
+    /// Read a packed string without consuming the wordcode pointer.
+    /// Direct port of zsh/Src/parse.c:2890-2913 `ecrawstr`. zshrs
+    /// no-op.
+    pub fn ecrawstr() -> String {
+        String::new()
+    }
+
+    /// Read a NUL-terminated string array from wordcode. Direct port
+    /// of zsh/Src/parse.c:2916-2933 `ecgetarr`. zshrs no-op.
+    pub fn ecgetarr(_num: usize, _dup: bool) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Read a linked-list of strings from wordcode. Direct port of
+    /// zsh/Src/parse.c:2936-2955 `ecgetlist`. zshrs no-op.
+    pub fn ecgetlist(_num: usize, _dup: bool) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Read a sequence of redirection wordcodes. Direct port of
+    /// zsh/Src/parse.c:2958-2991 `ecgetredirs`. zshrs no-op
+    /// (redirections live as AST ZshRedir nodes).
+    pub fn ecgetredirs() -> Vec<ZshRedir> {
+        Vec::new()
+    }
+
+    /// Copy consecutive redirection wordcodes into a new Eprog.
+    /// Direct port of zsh/Src/parse.c:3001-3060 `eccopyredirs`.
+    /// zshrs no-op.
+    pub fn eccopyredirs() -> Option<ZshProgram> {
+        None
+    }
+
+    /// Initialize the dummy Eprog used as a placeholder. Direct port
+    /// of zsh/Src/parse.c:3068-3075 `init_eprog`. zshrs no-op since
+    /// the AST has no equivalent dummy node — empty programs are
+    /// just `ZshProgram { lists: vec![] }`.
+    pub fn init_eprog() {
+        // parse.c:3071-3074 — set up dummy_eprog_code = WCB_END().
+        // zshrs no-op.
+    }
+
     /// Parse the complete input
     pub fn parse(&mut self) -> Result<ZshProgram, Vec<ParseError>> {
         self.lexer.zshlex();

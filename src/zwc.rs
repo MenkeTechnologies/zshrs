@@ -1,7 +1,29 @@
-//! ZWC (Zsh Word Code) file parser
+//! ZWC (Zsh Word Code) file parser. Direct port of the dump-file
+//! family in zsh/Src/parse.c:3077-end.
 //!
 //! Parses compiled zsh function files (.zwc) into function definitions
-//! that can be executed by zshrs.
+//! that can be executed by zshrs. Counterpart to zsh's bin_zcompile
+//! (parse.c:3179-3257) for the build side and try_dump_file /
+//! try_source_file / check_dump_file (parse.c:3746-3833) for the
+//! load side.
+//!
+//! Format constants (FD_MAGIC, FD_OMAGIC, FD_PRELEN, FDF_MAP,
+//! FDF_OTHER, FDHF_KSHLOAD, FDHF_ZSHLOAD) match parse.c:3104-3151
+//! exactly so .zwc files written by stock zsh load in zshrs and
+//! vice versa.
+//!
+//! Direct port surface mapping:
+//!
+//!   ZwcFile::load            <- parse.c:3746-3793 try_dump_file
+//!   ZwcFile::get_function    <- parse.c:3166-3176 dump_find_func
+//!   ZwcFile::list_functions  <- parse.c:fdheaderlen + nextfdhead walk
+//!   ZwcFile::decode_function <- parse.c:3245-3543 dump_func / build
+//!   ZwcBuilder::new          <- parse.c:3179-3257 bin_zcompile init
+//!   ZwcBuilder::add_source   <- parse.c:3397-3535 build_dump body
+//!   ZwcBuilder::add_file     <- parse.c:3536-3631 build_cur_dump
+//!   ZwcBuilder::write        <- parse.c:bld_eprog + dump-write loop
+//!   WordcodeDecoder          <- parse.c:wc_code/wc_data helpers
+//!   wc_code / wc_data        <- parse.c:wc_code/wc_data macros
 
 use crate::parser::{
     CaseTerminator, CompoundCommand, ListOp, Redirect, RedirectOp, ShellCommand, ShellWord,
