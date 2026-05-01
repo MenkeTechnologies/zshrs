@@ -41991,14 +41991,25 @@ impl ShellExecutor {
     }
 
     fn builtin_whoami(&self, _args: &[String]) -> i32 {
-        if let Ok(user) = std::env::var("USER") {
-            println!("{}", user);
-            0
-        } else {
-            let uid = unsafe { libc::getuid() };
-            println!("{}", uid);
-            0
+        // coreutils whoami(1) prints the EFFECTIVE user name, not
+        // \$USER. After 'sudo whoami', \$USER may still be the
+        // original (depending on sudo config) — but whoami should
+        // print the effective user. Direct port via geteuid +
+        // getpwuid.
+        use std::ffi::CStr;
+        let euid = unsafe { libc::geteuid() };
+        unsafe {
+            let pw = libc::getpwuid(euid);
+            if !pw.is_null() {
+                let name = CStr::from_ptr((*pw).pw_name);
+                println!("{}", name.to_string_lossy());
+                return 0;
+            }
         }
+        // Fallback: numeric uid (matches coreutils 'cannot find name'
+        // error case).
+        eprintln!("whoami: cannot find name for user ID {}", euid);
+        1
     }
 
     fn builtin_id(&self, args: &[String]) -> i32 {
