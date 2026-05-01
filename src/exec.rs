@@ -22930,11 +22930,24 @@ impl ShellExecutor {
             None
         };
 
+        // -t timeout: wait via poll(2) before any read attempt so we can
+        // return 1 cleanly without blocking. Zero timeout = immediate
+        // poll (data available or not).
+        if let Some(t) = timeout {
+            let ms = (t as i32).saturating_mul(1000);
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let r = unsafe { libc::poll(&mut pfd, 1, ms) };
+            if r <= 0 {
+                return 1;
+            }
+        }
+
         let input = if let Some(n) = nchars {
             let mut buf = vec![0u8; n];
-            if let Some(_t) = timeout {
-                // TODO: proper timeout
-            }
             let read_result = if let Some(ref mut f) = fd_file {
                 f.read_exact(&mut buf).map(|_| ())
             } else {
