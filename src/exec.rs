@@ -43693,8 +43693,18 @@ impl ShellExecutor {
                     break;
                 }
                 "-z" | "--zero-terminated" => zero_term = true,
+                "-" => file = Some("-"),
+                "--" => {
+                    if let Some(rest) = iter.next() {
+                        file = Some(rest.as_str());
+                    }
+                    break;
+                }
                 s if !s.starts_with('-') => file = Some(s),
-                _ => {}
+                s => {
+                    eprintln!("shuf: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
 
