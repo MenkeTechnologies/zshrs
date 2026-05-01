@@ -42402,17 +42402,66 @@ impl ShellExecutor {
         0
     }
 
-    fn builtin_hostname(&self, _args: &[String]) -> i32 {
+    fn builtin_hostname(&self, args: &[String]) -> i32 {
+        // hostname(1) — accepts:
+        // -s / --short: short hostname (everything before the first '.')
+        // -d / --domain: domain part only (everything after first '.')
+        // -f / --fqdn / --long: full hostname (default behaviour)
+        // -i / --ip-address: numeric IP for the hostname
+        // bare arg: in some platforms sets the hostname (root only); we
+        //           accept it as a query-only no-op for safety.
+        let mut short = false;
+        let mut domain_only = false;
+        let mut ip = false;
+        for arg in args {
+            match arg.as_str() {
+                "-s" | "--short" => short = true,
+                "-d" | "--domain" => domain_only = true,
+                "-f" | "--fqdn" | "--long" => {}
+                "-i" | "--ip-address" => ip = true,
+                _ => {}
+            }
+        }
+
         let mut buf = [0u8; 256];
         let result = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut i8, buf.len()) };
-        if result == 0 {
-            let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-            println!("{}", String::from_utf8_lossy(&buf[..len]));
-            0
-        } else {
+        if result != 0 {
             eprintln!("hostname: cannot get hostname");
-            1
+            return 1;
         }
+        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        let host = String::from_utf8_lossy(&buf[..len]).into_owned();
+
+        if ip {
+            // Resolve the hostname via getaddrinfo and print the
+            // first IPv4/IPv6 result. Same approach as
+            // hostname(1)'s -i.
+            use std::net::ToSocketAddrs;
+            match (host.as_str(), 0u16).to_socket_addrs() {
+                Ok(addrs) => {
+                    for a in addrs {
+                        println!("{}", a.ip());
+                        return 0;
+                    }
+                }
+                Err(_) => {}
+            }
+            // Fall through to printing the host if resolution failed.
+        }
+        if short {
+            let s = host.split('.').next().unwrap_or(&host);
+            println!("{}", s);
+        } else if domain_only {
+            let d: String = host
+                .splitn(2, '.')
+                .nth(1)
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            println!("{}", d);
+        } else {
+            println!("{}", host);
+        }
+        0
     }
 
     fn builtin_uname(&self, args: &[String]) -> i32 {
