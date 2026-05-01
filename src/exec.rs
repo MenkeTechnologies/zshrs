@@ -44348,8 +44348,18 @@ impl ShellExecutor {
                     }
                 }
                 "-i" | "--initial" => {} // accepted: only-leading-tabs
+                "-" => files.push("-"),
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
                 s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                s => {
+                    eprintln!("expand: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
         let stop_for = |col: usize| -> usize {
@@ -44431,8 +44441,18 @@ impl ShellExecutor {
                         all_runs = true;
                     }
                 }
+                "-" => files.push("-"),
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
                 s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                s => {
+                    eprintln!("unexpand: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
         let targets: Vec<&str> = if files.is_empty() {
