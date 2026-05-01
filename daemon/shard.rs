@@ -81,6 +81,11 @@ pub struct CanonicalShard {
     pub manpath: Vec<String>,
     pub plugins: Vec<(String, String)>, // (manager, name)
     pub sourced_files: Vec<String>,
+    /// Catch-all for subsystems not enumerated above (zcompdump_raw, service,
+    /// patcomp, postpatcomp, autoload_completion, …). Keyed by subsystem
+    /// name → entry map. Lets new subsystems land without a shard format
+    /// version bump; readers iterate this and fold into the in-memory state.
+    pub extras: HashMap<String, HashMap<String, String>>,
 }
 
 impl Default for CanonicalShard {
@@ -113,6 +118,7 @@ impl Default for CanonicalShard {
             manpath: Vec::new(),
             plugins: Vec::new(),
             sourced_files: Vec::new(),
+            extras: HashMap::new(),
         }
     }
 }
