@@ -43248,6 +43248,8 @@ impl ShellExecutor {
         // '1,2,3,4,5'.
         let mut sep = "\n".to_string();
         let mut nums_str: Vec<&str> = Vec::new();
+        let mut equal_width = false;
+        let mut format_str: Option<String> = None;
         let mut i = 0;
         while i < args.len() {
             let arg = &args[i];
@@ -43256,16 +43258,19 @@ impl ShellExecutor {
                 sep = args[i].clone();
             } else if let Some(s) = arg.strip_prefix("-s") {
                 sep = s.to_string();
-            } else if arg == "-w" || arg == "-f" {
-                // -w / -f require ancillary state we don't track; skip
-                // silently.
-            } else if arg.starts_with("-w") || arg.starts_with("-f") {
-                // Glued forms: same.
+            } else if arg == "-w" || arg == "--equal-width" {
+                equal_width = true;
+            } else if arg == "-f" && i + 1 < args.len() {
+                i += 1;
+                format_str = Some(args[i].clone());
+            } else if let Some(s) = arg.strip_prefix("-f") {
+                format_str = Some(s.to_string());
             } else {
                 nums_str.push(arg.as_str());
             }
             i += 1;
         }
+        let _ = format_str; // -f format string not yet wired through fmt()
 
         // Parse all-or-nothing as f64 to handle '0.5', '1e3', etc.
         let nums: Vec<f64> = nums_str
@@ -43317,6 +43322,24 @@ impl ShellExecutor {
             while v >= last - f64::EPSILON {
                 out.push(fmt(v));
                 v += inc;
+            }
+        }
+        // -w: zero-pad each line to the longest output's width.
+        // coreutils seq pads with leading zeros (or after sign) so
+        // \`seq -w 8 10\` emits \`08 09 10\`. zshrs's previous "skip
+        // silently" left them as \`8 9 10\`, breaking column-aligned
+        // output.
+        if equal_width && !out.is_empty() {
+            let width = out.iter().map(|s| s.len()).max().unwrap_or(0);
+            for s in &mut out {
+                if s.len() < width {
+                    let pad = width - s.len();
+                    if let Some(rest) = s.strip_prefix('-') {
+                        *s = format!("-{:0>pad$}{}", "", rest, pad = pad);
+                    } else {
+                        *s = format!("{:0>pad$}{}", "", s, pad = pad);
+                    }
+                }
             }
         }
         if !out.is_empty() {
