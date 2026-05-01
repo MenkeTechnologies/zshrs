@@ -25829,9 +25829,14 @@ impl ShellExecutor {
 
     fn builtin_trap(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            // List all traps
-            for (sig, action) in &self.traps {
-                println!("trap -- '{}' {}", action, sig);
+            // List all traps, sorted by signal name for stable
+            // output across runs.
+            let mut sigs: Vec<&String> = self.traps.keys().collect();
+            sigs.sort();
+            for sig in sigs {
+                if let Some(action) = self.traps.get(sig) {
+                    println!("trap -- '{}' {}", action, sig);
+                }
             }
             return 0;
         }
@@ -29523,8 +29528,12 @@ impl ShellExecutor {
     /// Define completion spec for a command
     fn builtin_complete(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            // List all completion specs
-            for (cmd, spec) in &self.completions {
+            // List all completion specs, sorted by command name so
+            // 'complete' (no args) outputs deterministically.
+            let mut cmds: Vec<&String> = self.completions.keys().collect();
+            cmds.sort();
+            for cmd in cmds {
+                let spec = self.completions.get(cmd).unwrap();
                 let mut parts = vec!["complete".to_string()];
                 for action in &spec.actions {
                     parts.push(format!("-{}", action));
