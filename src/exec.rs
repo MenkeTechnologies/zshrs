@@ -44961,18 +44961,36 @@ impl ShellExecutor {
     /// No args: print all env vars (sorted by key for stable output).
     /// Args: print VAR's value per arg, exit 1 if any unset.
     fn builtin_printenv(&self, args: &[String]) -> i32 {
-        if args.is_empty() {
+        // coreutils printenv has -0 / --null (NUL-terminate output).
+        // Old impl ignored flags silently and treated \`-0\` as a
+        // variable name lookup, which always failed since no env var
+        // is named \`-0\`.
+        let mut zero_term = false;
+        let mut names: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-0" | "--null" => zero_term = true,
+                "--" => {} // end of options
+                s if !s.starts_with('-') => names.push(s),
+                s => {
+                    eprintln!("printenv: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let term: char = if zero_term { '\0' } else { '\n' };
+        if names.is_empty() {
             let mut vars: Vec<(String, String)> = std::env::vars().collect();
             vars.sort_by(|a, b| a.0.cmp(&b.0));
             for (k, v) in vars {
-                println!("{}={}", k, v);
+                print!("{}={}{}", k, v, term);
             }
             return 0;
         }
         let mut status = 0;
-        for name in args {
+        for name in names {
             match std::env::var(name) {
-                Ok(v) => println!("{}", v),
+                Ok(v) => print!("{}{}", v, term),
                 Err(_) => status = 1,
             }
         }
