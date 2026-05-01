@@ -10101,6 +10101,9 @@ impl ShellExecutor {
             "cap" => return self.builtin_cap(&rest_vec),
             "getcap" => return self.builtin_getcap(&rest_vec),
             "setcap" => return self.builtin_setcap(&rest_vec),
+            "yes" => return self.builtin_yes(&rest_vec),
+            "nl" => return self.builtin_nl(&rest_vec),
+            "env" => return self.builtin_env(&rest_vec),
             _ => {}
         }
 
@@ -42815,6 +42818,209 @@ impl ShellExecutor {
         }
         std::thread::sleep(std::time::Duration::from_secs_f64(total_secs));
         0
+    }
+
+    /// yes [STRING] — print STRING (or 'y') forever. coreutils
+    /// yes(1). Honors SIGPIPE: when stdout is piped and the consumer
+    /// closes, the write fails and we exit 0 silently.
+    fn builtin_yes(&self, args: &[String]) -> i32 {
+        use std::io::Write;
+        let line = if args.is_empty() {
+            "y\n".to_string()
+        } else {
+            format!("{}\n", args.join(" "))
+        };
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        // Buffer ~64KB worth of repeats per write to amortize syscall.
+        let mut buf = String::with_capacity(65536);
+        while buf.len() + line.len() <= 65536 {
+            buf.push_str(&line);
+        }
+        loop {
+            if out.write_all(buf.as_bytes()).is_err() {
+                return 0; // SIGPIPE / closed consumer
+            }
+        }
+    }
+
+    /// nl [-b STYLE] [FILE...] — number lines. Direct port of
+    /// coreutils nl(1) for the most-used flag set.
+    fn builtin_nl(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        // -b a: number all lines.  -b t: number non-empty (default).
+        let mut style = 't';
+        let mut start = 1i64;
+        let mut step = 1i64;
+        let mut sep = "\t".to_string();
+        let mut width = 6usize;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-b" | "--body-numbering" => {
+                    if let Some(s) = iter.next() {
+                        style = s.chars().next().unwrap_or('t');
+                    }
+                }
+                "-i" | "--line-increment" => {
+                    if let Some(s) = iter.next() {
+                        step = s.parse().unwrap_or(1);
+                    }
+                }
+                "-v" | "--starting-line-number" => {
+                    if let Some(s) = iter.next() {
+                        start = s.parse().unwrap_or(1);
+                    }
+                }
+                "-s" | "--number-separator" => {
+                    if let Some(s) = iter.next() {
+                        sep = s.clone();
+                    }
+                }
+                "-w" | "--number-width" => {
+                    if let Some(s) = iter.next() {
+                        width = s.parse().unwrap_or(6);
+                    }
+                }
+                s if !s.starts_with('-') => files.push(s),
+                _ => {}
+            }
+        }
+        if files.is_empty() {
+            files.push("-");
+        }
+        let mut n = start;
+        for file in files {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("nl: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().flatten() {
+                let blank = line.is_empty();
+                let do_number = match style {
+                    'a' => true,
+                    't' => !blank,
+                    'n' => false,
+                    _ => !blank,
+                };
+                if do_number {
+                    println!("{:>width$}{}{}", n, sep, line, width = width);
+                    n += step;
+                } else {
+                    println!("{}{}", " ".repeat(width + sep.len()), line);
+                }
+            }
+        }
+        0
+    }
+
+    /// env [-i] [NAME=VALUE]... [COMMAND [ARG]...] — print env or
+    /// run COMMAND with modified environment. Direct port of
+    /// coreutils env(1) for the most-used invocations.
+    fn builtin_env(&mut self, args: &[String]) -> i32 {
+        let mut clear_env = false;
+        let mut unset: Vec<String> = Vec::new();
+        let mut assignments: Vec<(String, String)> = Vec::new();
+        let mut cmd_start: Option<usize> = None;
+        let mut i = 0;
+        while i < args.len() {
+            let a = &args[i];
+            if a == "-i" || a == "--ignore-environment" {
+                clear_env = true;
+                i += 1;
+                continue;
+            }
+            if a == "-u" || a == "--unset" {
+                if i + 1 < args.len() {
+                    unset.push(args[i + 1].clone());
+                    i += 2;
+                    continue;
+                }
+                eprintln!("env: -u: missing argument");
+                return 125;
+            }
+            if let Some(name) = a.strip_prefix("--unset=") {
+                unset.push(name.to_string());
+                i += 1;
+                continue;
+            }
+            if a == "--" {
+                cmd_start = Some(i + 1);
+                break;
+            }
+            if let Some(eq) = a.find('=') {
+                if !a[..eq].is_empty() && !a.starts_with('-') {
+                    assignments.push((a[..eq].to_string(), a[eq + 1..].to_string()));
+                    i += 1;
+                    continue;
+                }
+            }
+            if !a.starts_with('-') {
+                cmd_start = Some(i);
+                break;
+            }
+            // Unknown -X flag; emit error like coreutils.
+            eprintln!("env: invalid option: {}", a);
+            return 125;
+        }
+
+        let cmd_args: Vec<&str> = match cmd_start {
+            Some(s) => args[s..].iter().map(|x| x.as_str()).collect(),
+            None => Vec::new(),
+        };
+
+        // Build the env: optionally clear, drop -u names, apply
+        // assignments.
+        let env_overrides: Vec<(String, String)> = if clear_env {
+            assignments.clone()
+        } else {
+            let mut out: Vec<(String, String)> = std::env::vars()
+                .filter(|(k, _)| !unset.contains(k))
+                .collect();
+            for (k, v) in &assignments {
+                out.retain(|(ek, _)| ek != k);
+                out.push((k.clone(), v.clone()));
+            }
+            out
+        };
+
+        if cmd_args.is_empty() {
+            // Print env, sorted by key for stable output (matches
+            // GNU env's typical alphabetical layout).
+            let mut sorted = env_overrides;
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            for (k, v) in sorted {
+                println!("{}={}", k, v);
+            }
+            return 0;
+        }
+
+        // Run the command with the modified environment. Spawn via
+        // std::process::Command since we're a coreutils-style env
+        // shim, not a shell-level builtin.
+        let mut cmd = std::process::Command::new(cmd_args[0]);
+        cmd.args(&cmd_args[1..]);
+        if clear_env {
+            cmd.env_clear();
+        }
+        for u in &unset {
+            cmd.env_remove(u);
+        }
+        for (k, v) in &assignments {
+            cmd.env(k, v);
+        }
+        match cmd.status() {
+            Ok(status) => status.code().unwrap_or(127),
+            Err(_) => 127,
+        }
     }
 
     fn builtin_whoami(&self, _args: &[String]) -> i32 {
