@@ -45808,7 +45808,13 @@ impl ShellExecutor {
                         'p' => want_p = true,
                         'o' => want_o = true,
                         'a' => all = true,
-                        _ => {}
+                        // coreutils uname errors on unknown short
+                        // flags. Old \`_ => {}\` silently dropped them
+                        // and the default behavior (sysname) ran.
+                        _ => {
+                            eprintln!("uname: invalid option -- '{}'", c);
+                            return 1;
+                        }
                     }
                 }
             }
