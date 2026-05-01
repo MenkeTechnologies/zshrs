@@ -28806,12 +28806,9 @@ impl ShellExecutor {
                         .named_dirs
                         .keys()
                         .filter(|k| {
-                            names.iter().any(|pat| {
-                                let pattern = pat.replace("*", ".*").replace("?", ".");
-                                regex::Regex::new(&format!("^{}$", pattern))
-                                    .map(|r| r.is_match(k))
-                                    .unwrap_or(false)
-                            })
+                            names
+                                .iter()
+                                .any(|pat| Self::glob_match_static(k, pat.as_str()))
                         })
                         .cloned()
                         .collect();
