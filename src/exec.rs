@@ -43496,8 +43496,17 @@ impl ShellExecutor {
                     }
                 }
                 "-s" | "--serial" => serial = true,
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
                 s if !s.starts_with('-') || s == "-" => files.push(s),
-                _ => {}
+                s => {
+                    eprintln!("paste: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
         if files.is_empty() {
@@ -43578,8 +43587,18 @@ impl ShellExecutor {
                 }
                 "-s" | "--spaces" => break_at_space = true,
                 "-b" | "--bytes" => count_bytes = true,
+                "-" => files.push("-"),
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
                 s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                s => {
+                    eprintln!("fold: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
         if files.is_empty() {
