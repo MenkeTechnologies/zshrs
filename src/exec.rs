@@ -2520,7 +2520,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     ))
                 }
                 "parameters" => {
-                    if exec.assoc_arrays.contains_key(idx) {
+                    // ${parameters[name]} returns the type with all
+                    // attributes joined by `-` (zsh `paramtypes` per
+                    // VarAttr::format_zsh). Falls back to base kind
+                    // when there's no attr entry yet (e.g. inherited
+                    // env or implicit assignment).
+                    if let Some(attr) = exec.var_attrs.get(idx) {
+                        Some(Value::str(attr.format_zsh()))
+                    } else if exec.assoc_arrays.contains_key(idx) {
                         Some(Value::str("association"))
                     } else if exec.arrays.contains_key(idx) {
                         Some(Value::str("array"))
