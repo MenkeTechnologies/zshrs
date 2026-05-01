@@ -479,7 +479,7 @@ fn zcache_import(args: &[String]) -> i32 {
     };
     let op = match target {
         "zcompdump" => "import_zcompdump",
-        "zwc" => return err_exit("zcache import", "zwc import not yet wired (v1 reads .zwc opportunistically only on user `source` of the .zwc path)"),
+        "zwc" => "import_zwc",
         other => return err_exit("zcache import", &format!("unknown target `{}` (try zcompdump|zwc)", other)),
     };
     let path = match args.get(1) {

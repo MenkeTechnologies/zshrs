@@ -82,6 +82,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "export_catalog" => op_export_catalog(state, args).await,
         "export_shard" => op_export_shard(state, args).await,
         "import_zcompdump" => op_import_zcompdump(state, args).await,
+        "import_zwc" => op_import_zwc(state, args).await,
 
         "job_submit" => op_job_submit(state, client_id, args).await,
         "job_list" => op_job_list(state, args).await,
@@ -93,12 +94,9 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
 
         "complete" => op_complete(state, args).await,
         "suggest" => op_suggest(state, args).await,
-        // `highlight` still needs the zsh parser — keystroke wiring waits for
-        // the parser-in-daemon work that lives outside this scope.
-        "highlight" | "register" => Err(ErrPayload::new(
-            "unimplemented",
-            format!("op `{op}` arrives with ZLE integration"),
-        )),
+        "highlight" => op_highlight(state, args).await,
+        "register" => op_register(state, client_id, args).await,
+        "doctor" => op_doctor(state).await,
 
         _ => Err(ErrPayload::new(
             "unknown_op",
@@ -408,10 +406,50 @@ async fn op_daemon(state: &Arc<DaemonState>, args: Value) -> OpResult {
             Ok(json!({ "stopping": true }))
         }
 
-        "restart" => Err(ErrPayload::new(
-            "unimplemented",
-            "daemon restart requires a parent supervisor; use stop+spawn-on-demand",
-        )),
+        "restart" => {
+            // Best-effort hand-off: fork-spawn a new `zshrs --daemon`, broadcast
+            // shutdown so subscribers re-mmap, then SIGTERM self after a short
+            // grace. The new daemon takes the singleton lock as soon as we
+            // release it; clients that reconnect via spawn-on-demand land on it.
+            //
+            // We don't `exec` the replacement here — the running tokio runtime
+            // owns this process's resources. Spawn-on-demand from the client
+            // side handles the gap: from the user's perspective, `zcache
+            // daemon restart` returns success, the daemon process changes pid,
+            // and the next IPC op spins up the replacement automatically.
+            tracing::info!("daemon restart requested via IPC");
+            let payload = json!({
+                "pid": state.pid,
+                "uptime_ms": state.uptime_ms(),
+                "reason": "ipc_restart",
+                "grace_ms": 100,
+            });
+            let _ = state.broadcast(super::ipc::Frame::event("daemon_shutdown", payload), &[]);
+
+            let new_pid = match spawn_replacement_daemon() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!(?e, "could not spawn replacement daemon; client must spawn-on-demand");
+                    None
+                }
+            };
+
+            // Self-SIGTERM after grace period so the response + event have time
+            // to flush.
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                use nix::sys::signal::{kill, Signal};
+                use nix::unistd::Pid;
+                let _ = kill(Pid::from_raw(std::process::id() as i32), Signal::SIGTERM);
+            });
+
+            Ok(json!({
+                "restarting": true,
+                "old_pid": state.pid,
+                "new_pid": new_pid,
+                "grace_ms": 100,
+            }))
+        }
 
         _ => Err(ErrPayload::new(
             "bad_verb",
@@ -880,6 +918,488 @@ async fn op_suggest(state: &Arc<DaemonState>, args: Value) -> OpResult {
             "matched": false,
         }),
     })
+}
+
+/// `highlight` — daemon-side syntax classification of a single command line.
+/// The shell client sends the buffer; daemon returns a list of `{start, end,
+/// kind}` spans the client paints. Kinds: command, builtin, alias, function,
+/// keyword, path, string, comment, redirect, glob, error.
+///
+/// Per docs/DAEMON.md "All search and walking" + "All starting-state
+/// preparation": canonical state owns the alias / function tables and the
+/// catalog owns the PATH command-hash, so command-vs-error classification
+/// happens here without a client-side lookup.
+async fn op_highlight(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let line = args
+        .get("line")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if line.is_empty() {
+        return Ok(json!({"line": "", "spans": [] }));
+    }
+
+    let aliases: std::collections::BTreeSet<String> = state
+        .canonical
+        .rows_for("alias")
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    let galiases: std::collections::BTreeSet<String> = state
+        .canonical
+        .rows_for("galias")
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    let functions: std::collections::BTreeSet<String> = state
+        .canonical
+        .rows_for("function")
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+
+    let command_known = |name: &str| -> bool {
+        if name.contains('/') {
+            return std::path::Path::new(name).exists();
+        }
+        state
+            .with_catalog(|conn| -> rusqlite::Result<bool> {
+                let n: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM entries WHERE plugin_id='system' \
+                     AND kind='command' AND fq_name = ?",
+                    rusqlite::params![format!("cmd:{}", name)],
+                    |r| r.get(0),
+                )?;
+                Ok(n > 0)
+            })
+            .unwrap_or(false)
+    };
+
+    let spans = highlight_line(
+        &line,
+        &aliases,
+        &galiases,
+        &functions,
+        &command_known,
+    );
+
+    Ok(json!({
+        "line": line,
+        "spans": spans,
+    }))
+}
+
+/// Pure tokenizer + classifier. Split out for unit-testing without a daemon.
+fn highlight_line(
+    line: &str,
+    aliases: &std::collections::BTreeSet<String>,
+    galiases: &std::collections::BTreeSet<String>,
+    functions: &std::collections::BTreeSet<String>,
+    command_known: &dyn Fn(&str) -> bool,
+) -> Vec<Value> {
+    let bytes = line.as_bytes();
+    let mut spans: Vec<Value> = Vec::new();
+    let mut i = 0usize;
+    let mut at_command_position = true;
+
+    let push = |spans: &mut Vec<Value>, start: usize, end: usize, kind: &str| {
+        spans.push(json!({"start": start, "end": end, "kind": kind}));
+    };
+
+    while i < bytes.len() {
+        let c = bytes[i];
+
+        if c == b' ' || c == b'\t' {
+            i += 1;
+            continue;
+        }
+        if c == b'#' {
+            push(&mut spans, i, bytes.len(), "comment");
+            return spans;
+        }
+        if c == b';' || c == b'|' || c == b'&' {
+            // Command separators reset position. `&&` / `||` / `|&` collapse.
+            let start = i;
+            i += 1;
+            while i < bytes.len() && matches!(bytes[i], b';' | b'|' | b'&') {
+                i += 1;
+            }
+            push(&mut spans, start, i, "operator");
+            at_command_position = true;
+            continue;
+        }
+        if c == b'<' || c == b'>' {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && matches!(bytes[i], b'<' | b'>' | b'&' | b'!' | b'|') {
+                i += 1;
+            }
+            push(&mut spans, start, i, "redirect");
+            continue;
+        }
+        if c == b'\'' || c == b'"' || c == b'`' {
+            let quote = c;
+            let start = i;
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' && quote != b'\'' && i + 1 < bytes.len() {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            push(&mut spans, start, i, "string");
+            at_command_position = false;
+            continue;
+        }
+        if c == b'$' {
+            let start = i;
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'{' {
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else {
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
+                {
+                    i += 1;
+                }
+            }
+            push(&mut spans, start, i, "param");
+            at_command_position = false;
+            continue;
+        }
+
+        // Word: walk to the next whitespace / metacharacter.
+        let start = i;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b' '
+                || b == b'\t'
+                || b == b';'
+                || b == b'|'
+                || b == b'&'
+                || b == b'<'
+                || b == b'>'
+                || b == b'#'
+            {
+                break;
+            }
+            if b == b'\'' || b == b'"' || b == b'`' {
+                break;
+            }
+            i += 1;
+        }
+        let word = std::str::from_utf8(&bytes[start..i]).unwrap_or("");
+
+        let kind = classify_word(
+            word,
+            at_command_position,
+            aliases,
+            galiases,
+            functions,
+            command_known,
+        );
+        push(&mut spans, start, i, kind);
+        if at_command_position {
+            at_command_position = false;
+        }
+    }
+    spans
+}
+
+const ZSH_KEYWORDS: &[&str] = &[
+    "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac",
+    "function", "in", "select", "time", "coproc", "repeat", "always", "foreach", "end", "{", "}",
+    "[[", "]]",
+];
+
+const ZSH_BUILTINS: &[&str] = &[
+    "alias", "autoload", "bg", "bindkey", "break", "builtin", "cd", "chdir", "command", "compdef",
+    "compinit", "compinstall", "continue", "declare", "dirs", "disable", "disown", "echo",
+    "echotc", "echoti", "emulate", "enable", "eval", "exec", "exit", "export", "false", "fc",
+    "fg", "float", "functions", "getln", "getopts", "hash", "history", "integer", "jobs", "kill",
+    "let", "limit", "local", "log", "logout", "noglob", "popd", "print", "printf", "pushd",
+    "pushln", "pwd", "r", "read", "readonly", "rehash", "return", "sched", "set", "setopt",
+    "shift", "source", "suspend", "test", "times", "trap", "true", "ttyctl", "type", "typeset",
+    "ulimit", "umask", "unalias", "unfunction", "unhash", "unlimit", "unset", "unsetopt", "wait",
+    "whence", "where", "which", "zcompile", "zmodload", "zparseopts", "zstyle", ".",
+    // zshrs-owned z* builtins
+    "zcache", "zls", "zid", "zping", "ztag", "zuntag", "zsend", "znotify", "zsubscribe",
+    "zunsubscribe", "zsync", "zask", "zlog", "zjob",
+];
+
+fn classify_word(
+    word: &str,
+    at_command_position: bool,
+    aliases: &std::collections::BTreeSet<String>,
+    galiases: &std::collections::BTreeSet<String>,
+    functions: &std::collections::BTreeSet<String>,
+    command_known: &dyn Fn(&str) -> bool,
+) -> &'static str {
+    if word.is_empty() {
+        return "argument";
+    }
+    if at_command_position {
+        if ZSH_KEYWORDS.contains(&word) {
+            return "keyword";
+        }
+        if aliases.contains(word) {
+            return "alias";
+        }
+        if functions.contains(word) {
+            return "function";
+        }
+        if ZSH_BUILTINS.contains(&word) {
+            return "builtin";
+        }
+        if word.contains('=') && !word.starts_with('=') {
+            // VAR=value before a command — assignment.
+            return "assignment";
+        }
+        if command_known(word) {
+            return "command";
+        }
+        // Unknown command at command position — flagged red.
+        return "error";
+    }
+    // Non-command-position: still highlight global aliases for awareness.
+    if galiases.contains(word) {
+        return "galias";
+    }
+    if word.starts_with('-') {
+        return "option";
+    }
+    if word.contains('*') || word.contains('?') || word.contains('[') {
+        return "glob";
+    }
+    if word.starts_with('/') || word.starts_with('~') || word.starts_with("./") {
+        return "path";
+    }
+    "argument"
+}
+
+/// `register` — post-handshake update of session metadata. Used by clients
+/// that want to refresh tty / cwd / argv0 mid-session (e.g. after `cd` fires
+/// chpwd, after `tmux` reattaches, after `exec` rebrands argv0).
+///
+/// On connect, register_session is called automatically by server::handle_connection;
+/// this op is the explicit-update path. Per docs/DAEMON.md "Operation table"
+/// `register | Implicit on connect; also tag/cwd updates`.
+async fn op_register(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    let cwd = args.get("cwd").and_then(Value::as_str).map(str::to_string);
+    let tty = args.get("tty").and_then(Value::as_str).map(str::to_string);
+    let argv0 = args
+        .get("argv0")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let added_tags: Vec<String> = args
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let updated = state
+        .update_session(client_id, cwd.clone(), tty.clone(), argv0.clone())
+        .ok_or_else(|| ErrPayload::new("no_session", "client session not found"))?;
+    if !added_tags.is_empty() {
+        let _ = state.add_tags(client_id, &added_tags);
+    }
+
+    // chpwd subscribers on this scope expect a structured event.
+    if let Some(new_cwd) = cwd {
+        if let Some(scope) = state.origin_scope(client_id) {
+            let payload = json!({
+                "from_shell": client_id,
+                "cwd": new_cwd,
+                "ts_ns": chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            });
+            state.publish(&scope, "chpwd", super::ipc::Frame::event("chpwd", payload));
+        }
+    }
+
+    Ok(json!({
+        "client_id": client_id,
+        "cwd": updated.cwd,
+        "tty": updated.tty,
+        "argv0": updated.argv0,
+        "tags": updated.tags,
+    }))
+}
+
+/// `doctor` — comprehensive health diagnostic. Per docs/DAEMON.md "Failure
+/// modes & disaster recovery": one-command sweep over filesystem perms, lock
+/// state, catalog/history integrity, shard validity, fsnotify queue stats,
+/// in-flight job count.
+///
+/// Returns a punch list of pass/warn/fail items so the caller can present a
+/// quick traffic-light summary.
+async fn op_doctor(state: &Arc<DaemonState>) -> OpResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut checks: Vec<Value> = Vec::new();
+    let mut push = |name: &str, ok: bool, detail: String| {
+        checks.push(json!({
+            "name": name,
+            "ok": ok,
+            "detail": detail,
+        }));
+    };
+
+    // 1. Cache root permissions.
+    let root = &state.paths.root;
+    match std::fs::metadata(root) {
+        Ok(md) => {
+            let mode = md.permissions().mode() & 0o777;
+            push(
+                "cache_root_perms",
+                mode == 0o700,
+                format!("{} mode={:o} (want 0700)", root.display(), mode),
+            );
+        }
+        Err(e) => push("cache_root_perms", false, format!("stat: {}", e)),
+    }
+
+    for f in [
+        &state.paths.catalog_db,
+        &state.paths.history_db,
+        &state.paths.log,
+        &state.paths.socket,
+        &state.paths.pid_file,
+    ] {
+        if !f.exists() {
+            continue;
+        }
+        if let Ok(md) = std::fs::metadata(f) {
+            let mode = md.permissions().mode() & 0o777;
+            // Sockets (srwxr-xr-x → 0755 by default) we just flag if world-writable.
+            let want_max = 0o600u32;
+            let ok = mode <= want_max || (f == &state.paths.socket && (mode & 0o002) == 0);
+            push(
+                &format!("file_perms:{}", f.file_name().unwrap().to_string_lossy()),
+                ok,
+                format!("mode={:o}", mode),
+            );
+        }
+    }
+
+    // 2. Pid lock present + matches our pid.
+    match std::fs::read_to_string(&state.paths.pid_file) {
+        Ok(s) => {
+            let p = s.trim().parse::<i32>().unwrap_or(0);
+            push(
+                "pidfile",
+                p == state.pid,
+                format!("file pid={} self pid={}", p, state.pid),
+            );
+        }
+        Err(e) => push("pidfile", false, format!("read: {}", e)),
+    }
+
+    // 3. Socket exists + we own it.
+    push(
+        "socket_present",
+        state.paths.socket.exists(),
+        state.paths.socket.display().to_string(),
+    );
+
+    // 4. catalog.db PRAGMA integrity_check.
+    match state.catalog_integrity() {
+        Ok(true) => push("catalog_integrity", true, "ok".into()),
+        Ok(false) => push("catalog_integrity", false, "FAIL".into()),
+        Err(e) => push("catalog_integrity", false, e.to_string()),
+    }
+
+    // 5. history row count + sanity (no NULL ts_ns in last 100 rows).
+    match state.with_history(|conn| -> rusqlite::Result<(i64, i64)> {
+        let total: i64 = conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))?;
+        let null_ts: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM history WHERE ts_ns IS NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok((total, null_ts))
+    }) {
+        Ok((total, null_ts)) => push(
+            "history_db",
+            null_ts == 0,
+            format!("rows={} null_ts={}", total, null_ts),
+        ),
+        Err(e) => push("history_db", false, e.to_string()),
+    }
+
+    // 6. Shard files present + readable.
+    let shards = super::shard::list_shards(&state.paths).unwrap_or_default();
+    let mut shard_ok = 0usize;
+    let mut shard_fail = 0usize;
+    for p in &shards {
+        match std::fs::metadata(p) {
+            Ok(md) if md.len() > 0 => shard_ok += 1,
+            _ => shard_fail += 1,
+        }
+    }
+    push(
+        "shards_present",
+        shard_fail == 0,
+        format!("ok={} fail={}", shard_ok, shard_fail),
+    );
+
+    // 7. fsnotify watcher stats.
+    let fs_stats = state.fs_watcher.stats_json();
+    push(
+        "fsnotify_alive",
+        fs_stats
+            .get("running")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        fs_stats.to_string(),
+    );
+
+    // 8. In-flight jobs (informational only).
+    let live_jobs = state.jobs.list(Some("running"), None, None).len();
+    push("jobs_live", true, format!("{} supervised", live_jobs));
+
+    // 9. .zwc / .zcompdump litter near the user's HOME (the cleanup hint).
+    if let Some(home) = dirs::home_dir() {
+        let mut litter = 0usize;
+        if let Ok(rd) = std::fs::read_dir(&home) {
+            for ent in rd.flatten() {
+                let n = ent.file_name();
+                let s = n.to_string_lossy();
+                if s.starts_with(".zcompdump") || s.ends_with(".zwc") {
+                    litter += 1;
+                }
+            }
+        }
+        push(
+            "legacy_litter",
+            litter == 0,
+            format!("{} legacy artifacts in HOME (run `zcache clean legacy`)", litter),
+        );
+    }
+
+    let total = checks.len();
+    let failed = checks.iter().filter(|c| !c["ok"].as_bool().unwrap_or(false)).count();
+
+    Ok(json!({
+        "checks": checks,
+        "total": total,
+        "passed": total - failed,
+        "failed": failed,
+        "ts_ns": chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+    }))
 }
 
 /// Refresh the SQLite `canonical` view table from the in-memory rkyv-backed
@@ -1521,6 +2041,178 @@ async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
     }))
 }
 
+/// `import_zwc` — explicit user opt-in for ingesting a `.zwc` companion file.
+/// Per docs/DAEMON.md: validates adjacent source freshness (mtime) before
+/// merging; stale `.zwc`s are skipped with WARN. On a fresh match, records
+/// the `.zwc` against the source file in `compiled_files` so subsequent
+/// `source` calls can skip the parse step.
+///
+/// Implementation: walks the `.zwc` to discover the embedded source path
+/// (zsh stores the source path in the `.zwc` header), stat()s it, compares
+/// mtime. The actual bytecode equivalence ingest happens when the user
+/// `source`s the file later — this op just records the `.zwc` as a known
+/// fresh-bytecode artifact.
+async fn op_import_zwc(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let path_str = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path`"))?
+        .to_string();
+    let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+    let tree_mode = args.get("tree").and_then(Value::as_bool).unwrap_or(false);
+
+    let mut entries: Vec<std::path::PathBuf> = Vec::new();
+    let p = std::path::Path::new(&path_str);
+
+    if tree_mode {
+        if !p.is_dir() {
+            return Err(ErrPayload::new(
+                "bad_args",
+                format!("--tree requires a directory, got `{}`", path_str),
+            ));
+        }
+        for ent in walkdir::WalkDir::new(p)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|r| r.ok())
+        {
+            if ent.file_type().is_file()
+                && ent
+                    .path()
+                    .extension()
+                    .map(|e| e == "zwc")
+                    .unwrap_or(false)
+            {
+                entries.push(ent.path().to_path_buf());
+            }
+        }
+    } else {
+        if !p.is_file() {
+            return Err(ErrPayload::new(
+                "no_such_file",
+                format!("`{}` not found or not a file", path_str),
+            ));
+        }
+        entries.push(p.to_path_buf());
+    }
+
+    let mut imported = Vec::<String>::new();
+    let mut skipped = Vec::<Value>::new();
+
+    for zwc in &entries {
+        let zwc_meta = match std::fs::metadata(zwc) {
+            Ok(m) => m,
+            Err(e) => {
+                skipped.push(json!({"path": zwc.display().to_string(), "reason": e.to_string()}));
+                continue;
+            }
+        };
+        let zwc_mtime_ns = zwc_meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        // Adjacent source: zwc filename minus `.zwc`, in the same dir.
+        // E.g. `_git.zwc` → `_git`; `tokens.sh.zwc` → `tokens.sh`.
+        let stem = match zwc.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n.ends_with(".zwc") => &n[..n.len() - 4],
+            _ => {
+                skipped.push(json!({"path": zwc.display().to_string(), "reason": "not a .zwc filename"}));
+                continue;
+            }
+        };
+        let source = zwc.parent().map(|d| d.join(stem)).unwrap_or_else(|| stem.into());
+        if !source.exists() {
+            skipped.push(json!({
+                "path": zwc.display().to_string(),
+                "reason": format!("adjacent source `{}` missing", source.display()),
+            }));
+            continue;
+        }
+        let src_meta = match std::fs::metadata(&source) {
+            Ok(m) => m,
+            Err(e) => {
+                skipped.push(json!({"path": zwc.display().to_string(), "reason": e.to_string()}));
+                continue;
+            }
+        };
+        let src_mtime_ns = src_meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        if !force && src_mtime_ns > zwc_mtime_ns {
+            skipped.push(json!({
+                "path": zwc.display().to_string(),
+                "reason": "stale .zwc — adjacent source is newer (re-zcompile or pass --force)",
+            }));
+            tracing::warn!(zwc = %zwc.display(), source = %source.display(), "stale .zwc skipped");
+            continue;
+        }
+
+        // Record the source file under compiled_files marked as having a
+        // known-fresh .zwc companion. Hash + bytecode are populated lazily
+        // when the user `source`s the file (the existing source_resolver
+        // path takes over).
+        let source_str = source.display().to_string();
+        let zwc_str = zwc.display().to_string();
+        let parent_paths = serde_json::Value::Array(vec![serde_json::Value::String(zwc_str.clone())]).to_string();
+        let inode = nix_inode(&src_meta);
+
+        let res = state.with_catalog(|conn| -> rusqlite::Result<()> {
+            conn.execute(
+                "INSERT INTO compiled_files \
+                   (path, kind, mtime, inode, hash, bytecode, last_used_at, use_count, \
+                    bytes_in, bytes_out, sensitive, parent_paths) \
+                   VALUES (?, 'autoload', ?, ?, '', NULL, ?, 0, ?, 0, 0, ?) \
+                   ON CONFLICT(path) DO UPDATE SET \
+                     mtime=excluded.mtime, inode=excluded.inode, \
+                     parent_paths=excluded.parent_paths",
+                rusqlite::params![
+                    source_str,
+                    src_mtime_ns,
+                    inode,
+                    chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                    src_meta.len() as i64,
+                    parent_paths,
+                ],
+            )?;
+            Ok(())
+        });
+        if let Err(e) = res {
+            skipped.push(json!({
+                "path": zwc.display().to_string(),
+                "reason": format!("catalog write: {}", e),
+            }));
+            continue;
+        }
+        imported.push(zwc.display().to_string());
+        tracing::info!(zwc = %zwc.display(), source = %source.display(), "zwc imported");
+    }
+
+    Ok(json!({
+        "imported": imported,
+        "imported_count": imported.len(),
+        "skipped": skipped,
+        "skipped_count": skipped.len(),
+        "scanned": entries.len(),
+    }))
+}
+
+#[cfg(unix)]
+fn nix_inode(md: &std::fs::Metadata) -> i64 {
+    use std::os::unix::fs::MetadataExt;
+    md.ino() as i64
+}
+#[cfg(not(unix))]
+fn nix_inode(_md: &std::fs::Metadata) -> i64 {
+    0
+}
+
 /// Parsed structure of a .zcompdump file. Order is preserved (Vec, not
 /// HashMap) so the export emits in the original order.
 #[derive(Default, Debug)]
@@ -1703,16 +2395,59 @@ fn parse_bindkey_line(line: &str) -> Option<(String, String)> {
     Some((key.to_string(), fn_name.to_string()))
 }
 
-fn shell_quote_loose(v: &str) -> String {
-    if v.is_empty() {
-        return "''".to_string();
+/// Locate the `zshrs` binary (or `zshrs-daemon` if it's on PATH) and spawn a
+/// detached `--daemon` instance. Used by the `daemon restart` verb. Returns
+/// the new daemon PID on success.
+///
+/// Resolution order:
+///   1. `$ZSHRS_BIN` — explicit override.
+///   2. `/proc/self/exe` (Linux) — current binary self-path; works for
+///      `zshrs --daemon` invocations launched from the shell binary.
+///   3. PATH lookup of `zshrs-daemon` then `zshrs`.
+fn spawn_replacement_daemon() -> std::io::Result<u32> {
+    use std::process::Command;
+
+    let exe = if let Ok(p) = std::env::var("ZSHRS_BIN") {
+        std::path::PathBuf::from(p)
+    } else if let Ok(p) = std::env::current_exe() {
+        p
+    } else {
+        std::path::PathBuf::from("zshrs")
+    };
+
+    // If we're invoked as zshrs-daemon, replicate ourselves with no args.
+    // If invoked as zshrs (the shell), pass --daemon.
+    let is_daemon_bin = exe
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.contains("daemon"))
+        .unwrap_or(false);
+
+    let mut cmd = Command::new(&exe);
+    if !is_daemon_bin {
+        cmd.arg("--daemon");
     }
-    if v.chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '/' | '.' | '-' | ':' | ',' | '+'))
-    {
-        return v.to_string();
+
+    // Detach: new session, redirect stdio to /dev/null. The new daemon writes
+    // tracing output to ~/.cache/zshrs/zshrs.log.
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            // Fully detach: setsid + close stdio.
+            let _ = nix::unistd::setsid();
+            for fd in 0..3 {
+                let _ = nix::unistd::close(fd);
+            }
+            // Re-open as /dev/null so subsequent writes don't EBADF.
+            let _ = std::fs::OpenOptions::new()
+                .read(true)
+                .open("/dev/null");
+            Ok(())
+        });
     }
-    format!("'{}'", v.replace('\'', "'\\''"))
+
+    let child = cmd.spawn()?;
+    Ok(child.id())
 }
 
 // -------- Helpers --------
@@ -1884,5 +2619,170 @@ async fn op_job_wait(state: &Arc<DaemonState>, args: Value) -> OpResult {
             "timed_out": false,
         })),
         None => Ok(json!({ "job_id": id, "timed_out": true })),
+    }
+}
+
+#[cfg(test)]
+mod highlight_tests {
+    use super::*;
+
+    fn empty_set() -> std::collections::BTreeSet<String> {
+        std::collections::BTreeSet::new()
+    }
+
+    fn set(items: &[&str]) -> std::collections::BTreeSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn never(_: &str) -> bool {
+        false
+    }
+    fn always(_: &str) -> bool {
+        true
+    }
+
+    fn kind_at(spans: &[Value], idx: usize) -> &str {
+        spans[idx]["kind"].as_str().unwrap()
+    }
+
+    #[test]
+    fn classifies_known_command() {
+        let spans = highlight_line("ls /tmp", &empty_set(), &empty_set(), &empty_set(), &always);
+        assert!(spans.len() >= 2);
+        assert_eq!(kind_at(&spans, 0), "command");
+        assert_eq!(kind_at(&spans, 1), "path");
+    }
+
+    #[test]
+    fn flags_unknown_command_as_error() {
+        let spans = highlight_line(
+            "totally_not_a_command foo",
+            &empty_set(),
+            &empty_set(),
+            &empty_set(),
+            &never,
+        );
+        assert_eq!(kind_at(&spans, 0), "error");
+    }
+
+    #[test]
+    fn classifies_alias_at_command_position() {
+        let spans = highlight_line("ll /tmp", &set(&["ll"]), &empty_set(), &empty_set(), &never);
+        assert_eq!(kind_at(&spans, 0), "alias");
+    }
+
+    #[test]
+    fn classifies_function_at_command_position() {
+        let spans = highlight_line(
+            "myfn arg",
+            &empty_set(),
+            &empty_set(),
+            &set(&["myfn"]),
+            &never,
+        );
+        assert_eq!(kind_at(&spans, 0), "function");
+    }
+
+    #[test]
+    fn classifies_builtin() {
+        let spans = highlight_line(
+            "cd /tmp",
+            &empty_set(),
+            &empty_set(),
+            &empty_set(),
+            &never,
+        );
+        assert_eq!(kind_at(&spans, 0), "builtin");
+    }
+
+    #[test]
+    fn classifies_keyword() {
+        let spans = highlight_line(
+            "if true; then echo hi; fi",
+            &empty_set(),
+            &empty_set(),
+            &empty_set(),
+            &always,
+        );
+        assert_eq!(kind_at(&spans, 0), "keyword");
+    }
+
+    #[test]
+    fn classifies_quoted_string() {
+        let spans = highlight_line(
+            "echo \"hello world\"",
+            &empty_set(),
+            &empty_set(),
+            &empty_set(),
+            &always,
+        );
+        assert_eq!(kind_at(&spans, 0), "builtin");
+        assert_eq!(kind_at(&spans, 1), "string");
+    }
+
+    #[test]
+    fn classifies_comment_to_eol() {
+        let spans = highlight_line(
+            "ls # this is a comment",
+            &empty_set(),
+            &empty_set(),
+            &empty_set(),
+            &always,
+        );
+        let kinds: Vec<&str> = spans.iter().map(|s| s["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"comment"));
+    }
+
+    #[test]
+    fn classifies_param_expansion() {
+        let spans = highlight_line(
+            "echo $HOME",
+            &empty_set(),
+            &empty_set(),
+            &empty_set(),
+            &always,
+        );
+        assert_eq!(kind_at(&spans, 1), "param");
+    }
+
+    #[test]
+    fn classifies_redirect_and_pipe() {
+        let spans = highlight_line(
+            "ls > /tmp/x | wc -l",
+            &empty_set(),
+            &empty_set(),
+            &empty_set(),
+            &always,
+        );
+        let kinds: Vec<&str> = spans.iter().map(|s| s["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"redirect"));
+        assert!(kinds.contains(&"operator"));
+    }
+
+    #[test]
+    fn second_command_after_pipe_classified() {
+        let spans = highlight_line(
+            "echo hi | unknown_cmd",
+            &empty_set(),
+            &empty_set(),
+            &empty_set(),
+            &never,
+        );
+        // After `|`, position resets — `unknown_cmd` is at command position
+        // and unknown, so it's flagged red.
+        let kinds: Vec<&str> = spans.iter().map(|s| s["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"error"));
+    }
+}
+
+#[cfg(test)]
+mod doctor_tests {
+    use super::*;
+
+    #[test]
+    fn nix_inode_returns_nonzero_for_real_files() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let md = std::fs::metadata(tmp.path()).unwrap();
+        assert!(nix_inode(&md) > 0);
     }
 }

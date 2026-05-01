@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent, Debouncer};
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
@@ -156,6 +156,18 @@ impl FsWatcher {
     pub fn stats(&self) -> WatcherStats {
         let g = self.inner.lock();
         g.stats.clone()
+    }
+
+    /// JSON snapshot used by `zcache doctor` — includes a `running` flag
+    /// derived from whether the debouncer was successfully installed.
+    pub fn stats_json(&self) -> serde_json::Value {
+        let g = self.inner.lock();
+        serde_json::json!({
+            "running": g.debouncer.is_some(),
+            "events_received": g.stats.events_received,
+            "events_routed": g.stats.events_routed,
+            "watched_path_count": g.stats.watched_path_count,
+        })
     }
 
     pub fn registered_paths(&self) -> Vec<WatchedPath> {
