@@ -10107,6 +10107,8 @@ impl ShellExecutor {
             "printenv" => return self.builtin_printenv(&rest_vec),
             "tty" => return self.builtin_tty(&rest_vec),
             "chgrp" => return self.builtin_chgrp(&rest_vec),
+            "nproc" => return self.builtin_nproc(&rest_vec),
+            "expr" => return self.builtin_expr(&rest_vec),
             _ => {}
         }
 
@@ -42909,6 +42911,176 @@ impl ShellExecutor {
             return 0;
         }
         std::thread::sleep(std::time::Duration::from_secs_f64(total_secs));
+        0
+    }
+
+    /// nproc — print number of online CPUs. coreutils nproc(1).
+    /// --all uses CPU count from sysconf(_SC_NPROCESSORS_CONF);
+    /// default uses _SC_NPROCESSORS_ONLN (the schedulable subset).
+    fn builtin_nproc(&self, args: &[String]) -> i32 {
+        let want_all = args.iter().any(|a| a == "--all");
+        let n = unsafe {
+            if want_all {
+                libc::sysconf(libc::_SC_NPROCESSORS_CONF)
+            } else {
+                libc::sysconf(libc::_SC_NPROCESSORS_ONLN)
+            }
+        };
+        if n <= 0 {
+            println!("1");
+        } else {
+            println!("{}", n);
+        }
+        0
+    }
+
+    /// expr ARG... — evaluate expression. POSIX expr(1).
+    /// Subset port: integer arithmetic (+ - * / %), string match
+    /// ': REGEX', length STRING, substr STRING POS LEN, index
+    /// STRING CHARS. Recognizes the closing arg list directly
+    /// (single-pass shunting-yard would be heavier than needed
+    /// for the common scripts).
+    fn builtin_expr(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("expr: missing operand");
+            return 2;
+        }
+        // Strip optional leading '--'.
+        let mut argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if argv[0] == "--" {
+            argv.remove(0);
+        }
+        // Single-arg shortcuts.
+        if argv.len() == 1 {
+            println!("{}", argv[0]);
+            return if argv[0].is_empty() || argv[0] == "0" {
+                1
+            } else {
+                0
+            };
+        }
+        // 'length STRING' / 'substr STR POS LEN' / 'index STR CHARS'.
+        match argv[0] {
+            "length" if argv.len() == 2 => {
+                let n = argv[1].chars().count();
+                println!("{}", n);
+                return if n == 0 { 1 } else { 0 };
+            }
+            "substr" if argv.len() == 4 => {
+                let pos: i64 = argv[2].parse().unwrap_or(1);
+                let len: i64 = argv[3].parse().unwrap_or(0);
+                let s = argv[1];
+                let start = (pos - 1).max(0) as usize;
+                let end = (start + len.max(0) as usize).min(s.chars().count());
+                if start >= s.chars().count() || len <= 0 {
+                    println!();
+                    return 1;
+                }
+                let out: String = s.chars().skip(start).take(end - start).collect();
+                println!("{}", out);
+                return if out.is_empty() { 1 } else { 0 };
+            }
+            "index" if argv.len() == 3 => {
+                let s = argv[1];
+                let chars = argv[2];
+                for (i, c) in s.char_indices() {
+                    if chars.contains(c) {
+                        // 1-based; coreutils returns char index, not byte.
+                        let n = s[..i].chars().count() + 1;
+                        println!("{}", n);
+                        return 0;
+                    }
+                }
+                println!("0");
+                return 1;
+            }
+            _ => {}
+        }
+        // Three-arg infix ops: STR OP STR. Numeric for + - * / %,
+        // string for = != < > <= >=, ':' for prefix match.
+        if argv.len() == 3 {
+            let a = argv[0];
+            let op = argv[1];
+            let b = argv[2];
+            let try_int = |s: &str| -> Option<i64> { s.parse().ok() };
+            let result: String = match op {
+                "+" | "-" | "*" | "/" | "%" => {
+                    let ai = try_int(a).unwrap_or(0);
+                    let bi = try_int(b).unwrap_or(0);
+                    let v = match op {
+                        "+" => ai + bi,
+                        "-" => ai - bi,
+                        "*" => ai * bi,
+                        "/" => {
+                            if bi == 0 {
+                                eprintln!("expr: division by zero");
+                                return 2;
+                            }
+                            ai / bi
+                        }
+                        "%" => {
+                            if bi == 0 {
+                                eprintln!("expr: division by zero");
+                                return 2;
+                            }
+                            ai % bi
+                        }
+                        _ => 0,
+                    };
+                    v.to_string()
+                }
+                "=" | "==" => (a == b).to_string(),
+                "!=" => (a != b).to_string(),
+                "<" => match (try_int(a), try_int(b)) {
+                    (Some(x), Some(y)) => (x < y).to_string(),
+                    _ => (a < b).to_string(),
+                },
+                ">" => match (try_int(a), try_int(b)) {
+                    (Some(x), Some(y)) => (x > y).to_string(),
+                    _ => (a > b).to_string(),
+                },
+                "<=" => match (try_int(a), try_int(b)) {
+                    (Some(x), Some(y)) => (x <= y).to_string(),
+                    _ => (a <= b).to_string(),
+                },
+                ">=" => match (try_int(a), try_int(b)) {
+                    (Some(x), Some(y)) => (x >= y).to_string(),
+                    _ => (a >= b).to_string(),
+                },
+                ":" => {
+                    // Anchored regex match; if pattern has a capture
+                    // group, output the capture; else the match length.
+                    let re = match regex::Regex::new(&format!("^{}", b)) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            eprintln!("expr: invalid regex: {}", b);
+                            return 2;
+                        }
+                    };
+                    if let Some(c) = re.captures(a) {
+                        if let Some(g1) = c.get(1) {
+                            g1.as_str().to_string()
+                        } else {
+                            c.get(0).map(|m| m.range().len()).unwrap_or(0).to_string()
+                        }
+                    } else {
+                        "0".to_string()
+                    }
+                }
+                _ => {
+                    eprintln!("expr: unknown operator: {}", op);
+                    return 2;
+                }
+            };
+            println!("{}", result);
+            return if result.is_empty() || result == "0" || result == "false" {
+                1
+            } else {
+                0
+            };
+        }
+        // Fallback: just print joined.
+        println!("{}", argv.join(" "));
         0
     }
 
