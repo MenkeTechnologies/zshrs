@@ -2270,9 +2270,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 while ap_idx < ct {
                     let w = &words[ap_idx];
                     let n = ap_idx + 1;
-                    let cell = format!("{}) {}", n, w);
-                    let cell_chars = cell.chars().count();
-                    let _ = write!(std::io::stderr(), "{}", cell);
+                    let _ = write!(std::io::stderr(), "{}) {}", n, w);
                     let mut t2 = w.chars().count() + 2;
                     let mut t3 = n;
                     while t3 > 0 {
@@ -2284,7 +2282,6 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         let _ = write!(std::io::stderr(), " ");
                         t2 += 1;
                     }
-                    let _ = cell_chars;
                     ap_idx += colsz;
                 }
                 let _ = writeln!(std::io::stderr());
@@ -22802,7 +22799,40 @@ impl ShellExecutor {
             let _ = std::io::stderr().flush();
         }
 
-        let _ = silent;
+        // `read -s`: disable terminal echo while reading (passwords, etc).
+        // Direct port of builtin.c:6519-6531. Uses an RAII guard so all
+        // early returns from this function restore the original termios.
+        struct EchoGuard {
+            fd: i32,
+            saved: Option<libc::termios>,
+        }
+        impl Drop for EchoGuard {
+            fn drop(&mut self) {
+                if let Some(t) = self.saved {
+                    unsafe {
+                        libc::tcsetattr(self.fd, libc::TCSANOW, &t);
+                    }
+                }
+            }
+        }
+        let _echo_guard = if silent && unsafe { libc::isatty(fd) } != 0 {
+            let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(fd, &mut ti) } == 0 {
+                let saved = ti;
+                ti.c_lflag &= !libc::ECHO;
+                unsafe {
+                    libc::tcsetattr(fd, libc::TCSANOW, &ti);
+                }
+                Some(EchoGuard {
+                    fd,
+                    saved: Some(saved),
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // `read -z`: take input from the editor buffer stack instead of
         // the underlying fd (builtin.c:6769-6770). When the stack is
