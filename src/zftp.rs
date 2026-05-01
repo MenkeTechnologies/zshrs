@@ -559,7 +559,12 @@ impl Zftp {
     }
 
     pub fn session_names(&self) -> Vec<&str> {
-        self.sessions.keys().map(|s| s.as_str()).collect()
+        // Sorted so `zftp session` listing is deterministic across
+        // runs. Matches zsh's table-walk order for the underlying
+        // sessions hash.
+        let mut names: Vec<&str> = self.sessions.keys().map(|s| s.as_str()).collect();
+        names.sort();
+        names
     }
 }
 
