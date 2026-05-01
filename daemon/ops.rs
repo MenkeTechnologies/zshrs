@@ -1289,43 +1289,111 @@ async fn op_export_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
                 .unwrap_or_else(|| std::path::PathBuf::from(".zcompdump"))
         });
 
-    // Synthesize a minimal .zcompdump-compatible body from the rkyv-backed
-    // canonical engine. SQLite is no longer authoritative — engine reads are
-    // in-memory and zero-cost compared to a SQL query.
-    let rows: Vec<(String, String)> = state
+    // Round-trip path: if a previous `zcache import zcompdump` stored the raw
+    // body under canonical[zcompdump_raw][body], emit it byte-identically.
+    // This is the spec'd "byte-compatible with what compinit would have
+    // produced" guarantee for legacy tooling that introspects the file.
+    let raw = state
         .canonical
-        .rows_for("compdef")
-        .into_iter()
-        .map(|r| (r.key, r.value))
-        .collect();
-
-    let mut body = String::from(
-        "#files: 1 version: 5.9\n# Synthesized by zshrs daemon — see docs/DAEMON.md\n\n",
-    );
-    body.push_str("typeset -gA _comps\n");
-    for (cmd, handler) in &rows {
-        // Stored value is JSON-encoded ("foo"); strip the JSON quoting.
-        let h = if handler.starts_with('"') && handler.ends_with('"') && handler.len() >= 2 {
-            serde_json::from_str::<serde_json::Value>(handler)
-                .ok()
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
-                .unwrap_or_else(|| handler.clone())
-        } else {
-            handler.clone()
-        };
-        body.push_str(&format!(
-            "_comps[{}]={}\n",
-            shell_quote_loose(cmd),
-            shell_quote_loose(&h)
-        ));
-    }
+        .row("zcompdump_raw", "body")
+        .map(|r| r.value);
+    let body = if let Some(raw_json) = raw {
+        match serde_json::from_str::<serde_json::Value>(&raw_json) {
+            Ok(serde_json::Value::String(s)) => s,
+            _ => synthesize_zcompdump(state),
+        }
+    } else {
+        synthesize_zcompdump(state)
+    };
+    let bytes_written = body.len();
     std::fs::write(&out_path, body)?;
     super::paths::ensure_file_600(&out_path)?;
 
     Ok(json!({
         "path": out_path.display().to_string(),
-        "entries": rows.len(),
+        "bytes": bytes_written,
+        "round_tripped": raw_present_check(state),
     }))
+}
+
+fn raw_present_check(state: &Arc<DaemonState>) -> bool {
+    state.canonical.row("zcompdump_raw", "body").is_some()
+}
+
+/// Synthesize a minimal .zcompdump body from the canonical compdef rows.
+/// Used when no raw body has been imported. Format is the same shape zsh
+/// emits (`_comps=(\n 'k' 'v' \n)\n`) so legacy tooling parses it cleanly.
+fn synthesize_zcompdump(state: &Arc<DaemonState>) -> String {
+    let mut out = String::new();
+    let zsh_version = std::env::var("ZSH_VERSION").unwrap_or_else(|_| "5.9".to_string());
+    let comps: Vec<(String, String)> = state
+        .canonical
+        .rows_for("compdef")
+        .into_iter()
+        .map(|r| (r.key, unjson_string(&r.value)))
+        .collect();
+    let services: Vec<(String, String)> = state
+        .canonical
+        .rows_for("service")
+        .into_iter()
+        .map(|r| (r.key, unjson_string(&r.value)))
+        .collect();
+    let patcomps: Vec<(String, String)> = state
+        .canonical
+        .rows_for("patcomp")
+        .into_iter()
+        .map(|r| (r.key, unjson_string(&r.value)))
+        .collect();
+    let postpatcomps: Vec<(String, String)> = state
+        .canonical
+        .rows_for("postpatcomp")
+        .into_iter()
+        .map(|r| (r.key, unjson_string(&r.value)))
+        .collect();
+    let autoloads: Vec<String> = state
+        .canonical
+        .rows_for("autoload_completion")
+        .into_iter()
+        .map(|r| r.key)
+        .collect();
+    out.push_str(&format!(
+        "#files: {}\tversion: {}\n\n",
+        comps.len(),
+        zsh_version
+    ));
+    push_assoc(&mut out, "_comps", &comps);
+    push_assoc(&mut out, "_services", &services);
+    push_assoc(&mut out, "_patcomps", &patcomps);
+    push_assoc(&mut out, "_postpatcomps", &postpatcomps);
+    if !autoloads.is_empty() {
+        out.push_str("\nautoload -Uz ");
+        for (i, fn_name) in autoloads.iter().enumerate() {
+            if i > 0 && i % 5 == 0 {
+                out.push_str("\\\n            ");
+            } else if i > 0 {
+                out.push(' ');
+            }
+            out.push_str(fn_name);
+        }
+        out.push('\n');
+    }
+    out.push_str("\ntypeset -gUa _comp_assocs\n_comp_assocs=( '' )\n");
+    out
+}
+
+fn push_assoc(out: &mut String, name: &str, rows: &[(String, String)]) {
+    out.push_str(&format!("{}=(\n", name));
+    for (k, v) in rows {
+        out.push_str(&format!("'{}' '{}'\n", k, v));
+    }
+    out.push_str(")\n\n");
+}
+
+fn unjson_string(s: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(s)
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| s.to_string())
 }
 
 async fn op_export_catalog(state: &Arc<DaemonState>, args: Value) -> OpResult {
@@ -1383,33 +1451,56 @@ async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
     let content = std::fs::read_to_string(&path)
         .map_err(|e| ErrPayload::new("read_failed", format!("{}: {}", path, e)))?;
 
-    // Match `_comps[CMD]=HANDLER` lines (handles both quoted and bare values).
-    // Writes go through the rkyv-backed canonical engine — SQLite is never
-    // touched on the import path. (The legacy hydrate-view op refreshes
-    // sqlite from rkyv on demand for inspection consumers.)
+    // Full-fidelity zcompdump parse: header, _comps / _services / _patcomps /
+    // _postpatcomps assoc-array sections, bindkey lines, autoload list,
+    // _comp_assocs trailer. Stored in canonical as structured rows for
+    // queryability, AND the raw body is kept verbatim under
+    // `zcompdump_raw[body]` so `zcache export zcompdump` round-trips
+    // byte-identically.
+    //
+    // Per docs/DAEMON.md "For legacy tooling that introspects .zcompdump
+    // directly (some plugin patterns, backup scripts, p10k cache-staleness
+    // probes, parallel zsh sessions sharing the cache), the daemon can
+    // synthesize a valid .zcompdump file on demand from its canonical state.
+    // The synthesized file is byte-compatible with what compinit would have
+    // produced".
+    let parsed = parse_zcompdump(&content);
+
+    // Store raw body for round-trip identity.
+    let raw_json = serde_json::Value::String(content.clone()).to_string();
+    state.canonical.upsert("zcompdump_raw", "body", &raw_json, None);
+    if let Some(h) = parsed.header.as_ref() {
+        let h_json = serde_json::Value::String(h.clone()).to_string();
+        state.canonical.upsert("zcompdump_raw", "header", &h_json, None);
+    }
+
+    // Structured imports — useful for `zcache view compdef` etc.
     let mut imported = 0usize;
-    for line in content.lines() {
-        let line = line.trim();
-        if !line.starts_with("_comps[") {
-            continue;
-        }
-        let close = line.find(']');
-        let eq = line.find('=');
-        let (Some(c), Some(e)) = (close, eq) else {
-            continue;
-        };
-        if e <= c {
-            continue;
-        }
-        let key = &line[7..c];
-        let key = key.trim_matches(|ch| ch == '\'' || ch == '"');
-        let val = &line[e + 1..];
-        let val = val.trim().trim_matches(|ch| ch == '\'' || ch == '"');
-        // Store as JSON-quoted string so unjson() in render_sh emits the bare
-        // handler name — matches what `zsync up compdef` produces.
-        let json_val = serde_json::Value::String(val.to_string()).to_string();
-        state.canonical.upsert("compdef", key, &json_val, None);
+    for (k, v) in &parsed.comps {
+        let val = serde_json::Value::String(v.clone()).to_string();
+        state.canonical.upsert("compdef", k, &val, None);
         imported += 1;
+    }
+    for (k, v) in &parsed.services {
+        let val = serde_json::Value::String(v.clone()).to_string();
+        state.canonical.upsert("service", k, &val, None);
+    }
+    for (k, v) in &parsed.patcomps {
+        let val = serde_json::Value::String(v.clone()).to_string();
+        state.canonical.upsert("patcomp", k, &val, None);
+    }
+    for (k, v) in &parsed.postpatcomps {
+        let val = serde_json::Value::String(v.clone()).to_string();
+        state.canonical.upsert("postpatcomp", k, &val, None);
+    }
+    for (k, v) in &parsed.bindkeys {
+        let val = serde_json::Value::String(v.clone()).to_string();
+        state.canonical.upsert("bindkey", k, &val, None);
+    }
+    for fn_name in &parsed.autoload_funcs {
+        state
+            .canonical
+            .upsert("autoload_completion", fn_name, "\"loaded\"", None);
     }
 
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
@@ -1420,7 +1511,151 @@ async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
     Ok(json!({
         "imported": imported,
         "from": path,
+        "comps": parsed.comps.len(),
+        "services": parsed.services.len(),
+        "patcomps": parsed.patcomps.len(),
+        "postpatcomps": parsed.postpatcomps.len(),
+        "autoload_funcs": parsed.autoload_funcs.len(),
+        "raw_bytes": content.len(),
+        "header": parsed.header,
     }))
+}
+
+/// Parsed structure of a .zcompdump file. Order is preserved (Vec, not
+/// HashMap) so the export emits in the original order.
+#[derive(Default, Debug)]
+struct ZcompdumpParsed {
+    header: Option<String>,
+    comps: Vec<(String, String)>,
+    services: Vec<(String, String)>,
+    patcomps: Vec<(String, String)>,
+    postpatcomps: Vec<(String, String)>,
+    bindkeys: Vec<(String, String)>,
+    autoload_funcs: Vec<String>,
+}
+
+fn parse_zcompdump(content: &str) -> ZcompdumpParsed {
+    let mut out = ZcompdumpParsed::default();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0usize;
+
+    // Header line: `#files: N\tversion: V`
+    if let Some(first) = lines.first() {
+        if first.starts_with("#files:") {
+            out.header = Some(first.to_string());
+        }
+    }
+
+    while i < lines.len() {
+        let line = lines[i];
+        if line.starts_with("_comps=(") {
+            i = parse_assoc_block(&lines, i + 1, &mut out.comps);
+            continue;
+        }
+        if line.starts_with("_services=(") {
+            i = parse_assoc_block(&lines, i + 1, &mut out.services);
+            continue;
+        }
+        if line.starts_with("_patcomps=(") {
+            i = parse_assoc_block(&lines, i + 1, &mut out.patcomps);
+            continue;
+        }
+        if line.starts_with("_postpatcomps=(") {
+            i = parse_assoc_block(&lines, i + 1, &mut out.postpatcomps);
+            continue;
+        }
+        if line.starts_with("bindkey ") {
+            // `bindkey '^[/' _history-complete-older`
+            if let Some((key, fn_name)) = parse_bindkey_line(line) {
+                out.bindkeys.push((key, fn_name));
+            }
+            i += 1;
+            continue;
+        }
+        if line.starts_with("autoload -Uz ") || line.starts_with("autoload -Uz +X ") {
+            // Multi-line continuation: `autoload -Uz fn1 fn2 \` then
+            // `            fn3 fn4 \`. Collect until a non-`\`-terminated line.
+            let mut buf = String::new();
+            let mut j = i;
+            loop {
+                let l = lines[j];
+                let trimmed_end = l.trim_end();
+                let (body, more) = if trimmed_end.ends_with('\\') {
+                    (&trimmed_end[..trimmed_end.len() - 1], true)
+                } else {
+                    (trimmed_end, false)
+                };
+                buf.push_str(body);
+                buf.push(' ');
+                j += 1;
+                if !more || j >= lines.len() {
+                    break;
+                }
+            }
+            // Strip leading "autoload -Uz" or "autoload -Uz +X"
+            let body = buf
+                .trim_start_matches("autoload -Uz +X")
+                .trim_start_matches("autoload -Uz")
+                .trim();
+            for tok in body.split_whitespace() {
+                out.autoload_funcs.push(tok.to_string());
+            }
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Parse an assoc-array block: starts after the `_X=(` opener, terminated
+/// by `)`. Each row is `'key' 'value'`. Returns the index AFTER the `)`.
+fn parse_assoc_block(lines: &[&str], start: usize, out: &mut Vec<(String, String)>) -> usize {
+    let mut i = start;
+    while i < lines.len() {
+        let line = lines[i].trim();
+        if line == ")" {
+            return i + 1;
+        }
+        // `'key' 'value'`. Both quoted with single quotes.
+        if let Some((k, v)) = split_two_singlequoted(line) {
+            out.push((k, v));
+        }
+        i += 1;
+    }
+    i
+}
+
+fn split_two_singlequoted(s: &str) -> Option<(String, String)> {
+    // Find first '...' then second '...'
+    let s = s.trim();
+    if !s.starts_with('\'') {
+        return None;
+    }
+    let close1 = s[1..].find('\'')?;
+    let key = &s[1..1 + close1];
+    let rest = &s[1 + close1 + 1..].trim_start();
+    if !rest.starts_with('\'') {
+        return None;
+    }
+    let close2 = rest[1..].find('\'')?;
+    let val = &rest[1..1 + close2];
+    Some((key.to_string(), val.to_string()))
+}
+
+fn parse_bindkey_line(line: &str) -> Option<(String, String)> {
+    // `bindkey '<KEY>' <fn>`
+    let rest = line.trim_start_matches("bindkey").trim();
+    if !rest.starts_with('\'') {
+        return None;
+    }
+    let close = rest[1..].find('\'')?;
+    let key = &rest[1..1 + close];
+    let fn_name = rest[close + 2..].trim();
+    if fn_name.is_empty() {
+        return None;
+    }
+    Some((key.to_string(), fn_name.to_string()))
 }
 
 fn shell_quote_loose(v: &str) -> String {

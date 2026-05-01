@@ -162,6 +162,14 @@ impl CanonicalEngine {
         for (pat, rest) in &shard.zstyle {
             push(rows, "zstyle", pat, json_string(rest));
         }
+        // Re-ingest catch-all subsystems exactly as stored. Values came in
+        // as JSON-encoded already, so pass through verbatim — `unjson` in
+        // export.rs strips the quoting on emit.
+        for (sub, kv) in &shard.extras {
+            for (k, v) in kv {
+                push(rows, sub, k, v.clone());
+            }
+        }
     }
 
     /// Upsert one row. JSON-encode the value before storing if it isn't
@@ -309,7 +317,19 @@ impl CanonicalEngine {
                     "zstyle" => {
                         shard.zstyle.push((k.clone(), plain));
                     }
-                    _ => {} // unknown subsystem — silently skipped
+                    other => {
+                        // Catch-all: store under shard.extras so the
+                        // subsystem survives daemon restart even if it
+                        // isn't one of the known top-level fields.
+                        // Preserves zcompdump_raw / service / patcomp /
+                        // postpatcomp / autoload_completion across
+                        // restarts.
+                        shard
+                            .extras
+                            .entry(other.to_string())
+                            .or_default()
+                            .insert(k.clone(), row.value.clone());
+                    }
                 }
             }
         }

@@ -58,6 +58,13 @@ const VALID_SUBSYSTEMS: &[&str] = &[
     "bindkey",
     "setopt",
     "zmodload",
+    // .zcompdump-derived structured subsystems.
+    "service",
+    "patcomp",
+    "postpatcomp",
+    "autoload_completion",
+    // Raw zcompdump body (preserved byte-for-byte for round-trip).
+    "zcompdump_raw",
 ];
 
 fn validate_subsystem(s: &str) -> std::result::Result<(), ErrPayload> {
