@@ -38,6 +38,7 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
         "zjob" => super::zjob_builtin::zjob(args),
         "zsync" => super::zsync_builtin::zsync(args),
         "zask" => super::zask_builtin::zask(args),
+        "zhistory" => super::zhistory_builtin::zhistory(args),
         "zlog" => zlog(args),
         _ => return None,
     };
@@ -77,6 +78,7 @@ pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[
     "zjob",
     "zsync",
     "zask",
+    "zhistory",
     "zlog",
 ];
 
