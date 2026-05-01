@@ -38976,7 +38976,7 @@ impl ShellExecutor {
     /// echotc - output termcap value
     fn builtin_echotc(&self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("echotc: not enough arguments");
+            eprintln!("zshrs:echotc:1: not enough arguments");
             return 1;
         }
 
@@ -39066,7 +39066,7 @@ impl ShellExecutor {
         // port of zsh/Src/Modules/terminfo.c bin_echoti's
         // tparm-style path with the canonical mapping below.
         if args.is_empty() {
-            eprintln!("echoti: not enough arguments");
+            eprintln!("zshrs:echoti:1: not enough arguments");
             return 1;
         }
         let cap = args[0].as_str();
