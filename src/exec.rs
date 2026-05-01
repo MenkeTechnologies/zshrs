@@ -36441,12 +36441,14 @@ impl ShellExecutor {
             0
         }
 
+        // Per-file continue-on-error per coreutils chown.
+        let mut ch_status = 0;
         for file in files {
             if do_chown(std::path::Path::new(file), uid, gid, recursive, symlink) != 0 {
-                return 1;
+                ch_status = 1;
             }
         }
-        0
+        ch_status
     }
 
     #[cfg(not(unix))]
