@@ -178,6 +178,10 @@ pub struct ZleManager {
     pub keymaps: HashMap<KeymapName, Keymap>,
     /// User-defined widgets
     user_widgets: HashMap<String, String>,
+    /// Currently-active keymap — written by `bindkey -A NAME main`
+    /// and `zle -K NAME`. Distinct from per-line vi-mode state on
+    /// ZleState. Default Emacs to match zsh's startup state.
+    pub active_keymap: KeymapName,
 }
 
 impl Default for ZleManager {
@@ -191,6 +195,7 @@ impl ZleManager {
         let mut mgr = ZleManager {
             keymaps: HashMap::new(),
             user_widgets: HashMap::new(),
+            active_keymap: KeymapName::Emacs,
         };
 
         mgr.keymaps
@@ -238,6 +243,29 @@ impl ZleManager {
             return true;
         }
         false
+    }
+
+    /// Select the active keymap by name (zle -K NAME). Direct port of
+    /// zle_main.c bin_zle case 'K'. Returns true iff the named keymap
+    /// exists; canonical zsh names: main / emacs / viins / vicmd /
+    /// isearch / command / menuselect (case-sensitive). Unknown name
+    /// leaves the active keymap unchanged.
+    pub fn select_keymap(&mut self, name: &str) -> bool {
+        let target = match name {
+            "main" => KeymapName::Main,
+            "emacs" => KeymapName::Emacs,
+            "viins" => KeymapName::ViInsert,
+            "vicmd" => KeymapName::ViCommand,
+            "isearch" => KeymapName::Isearch,
+            "command" => KeymapName::Command,
+            "menuselect" => KeymapName::MenuSelect,
+            _ => return false,
+        };
+        if !self.keymaps.contains_key(&target) {
+            return false;
+        }
+        self.active_keymap = target;
+        true
     }
 
     /// Get a widget by name (returns the function name if user-defined)
