@@ -20907,44 +20907,50 @@ impl ShellExecutor {
         use crate::plugin_cache::{AliasKind, PluginDelta};
         let mut delta = PluginDelta::default();
 
+        // Walk every HashMap in sorted-key order so the resulting
+        // PluginDelta serializes byte-identically across runs of an
+        // identical state. Without sorting, rkyv-encoded delta blobs
+        // differ run-to-run, defeating cache reuse and tripping
+        // diff-based snapshot tests.
+
         // New functions — serialize canonical source text (UTF-8 bytes)
         // for instant replay. Replay parses + compiles via the new pipeline.
-        for (name, source) in &self.function_source {
+        let mut fn_keys: Vec<&String> = self.function_source.keys().collect();
+        fn_keys.sort();
+        for name in fn_keys {
             if !snap.functions.contains(name) {
+                let source = self.function_source.get(name).unwrap();
                 delta
                     .functions
                     .push((name.clone(), source.as_bytes().to_vec()));
             }
         }
 
-        // New aliases
-        for (name, value) in &self.aliases {
-            if !snap.aliases.contains(name) {
-                delta
-                    .aliases
-                    .push((name.clone(), value.clone(), AliasKind::Regular));
-            }
-        }
-        for (name, value) in &self.global_aliases {
-            if !snap.global_aliases.contains(name) {
-                delta
-                    .aliases
-                    .push((name.clone(), value.clone(), AliasKind::Global));
-            }
-        }
-        for (name, value) in &self.suffix_aliases {
-            if !snap.suffix_aliases.contains(name) {
-                delta
-                    .aliases
-                    .push((name.clone(), value.clone(), AliasKind::Suffix));
-            }
-        }
+        let push_alias =
+            |delta: &mut PluginDelta, map: &HashMap<String, String>, snap_set: &std::collections::HashSet<String>, kind: AliasKind| {
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                for name in keys {
+                    if !snap_set.contains(name) {
+                        let value = map.get(name).unwrap();
+                        delta
+                            .aliases
+                            .push((name.clone(), value.clone(), kind));
+                    }
+                }
+            };
+        push_alias(&mut delta, &self.aliases, &snap.aliases, AliasKind::Regular);
+        push_alias(&mut delta, &self.global_aliases, &snap.global_aliases, AliasKind::Global);
+        push_alias(&mut delta, &self.suffix_aliases, &snap.suffix_aliases, AliasKind::Suffix);
 
         // New/changed variables
-        for (name, value) in &self.variables {
+        let mut var_keys: Vec<&String> = self.variables.keys().collect();
+        var_keys.sort();
+        for name in var_keys {
             if name == "0" {
                 continue;
             } // skip $0 (we set it ourselves)
+            let value = self.variables.get(name).unwrap();
             match snap.variables.get(name) {
                 Some(old) if old == value => {} // unchanged
                 _ => {
@@ -20959,8 +20965,11 @@ impl ShellExecutor {
         }
 
         // New arrays
-        for (name, values) in &self.arrays {
+        let mut arr_keys: Vec<&String> = self.arrays.keys().collect();
+        arr_keys.sort();
+        for name in arr_keys {
             if !snap.arrays.contains(name) {
+                let values = self.arrays.get(name).unwrap();
                 delta.arrays.push((name.clone(), values.clone()));
             }
         }
@@ -20973,7 +20982,10 @@ impl ShellExecutor {
         }
 
         // Changed options
-        for (name, value) in &self.options {
+        let mut opt_keys: Vec<&String> = self.options.keys().collect();
+        opt_keys.sort();
+        for name in opt_keys {
+            let value = self.options.get(name).unwrap();
             match snap.options.get(name) {
                 Some(old) if old == value => {}
                 _ => delta.options_changed.push((name.clone(), *value)),
@@ -20981,7 +20993,10 @@ impl ShellExecutor {
         }
 
         // New hooks
-        for (hook, funcs) in &self.hook_functions {
+        let mut hook_keys: Vec<&String> = self.hook_functions.keys().collect();
+        hook_keys.sort();
+        for hook in hook_keys {
+            let funcs = self.hook_functions.get(hook).unwrap();
             let old_funcs = snap.hooks.get(hook);
             for f in funcs {
                 let is_new = old_funcs.map_or(true, |old| !old.contains(f));
@@ -20992,8 +21007,11 @@ impl ShellExecutor {
         }
 
         // New autoloads
-        for (name, flags) in &self.autoload_pending {
+        let mut autoload_keys: Vec<&String> = self.autoload_pending.keys().collect();
+        autoload_keys.sort();
+        for name in autoload_keys {
             if !snap.autoloads.contains(name) {
+                let flags = self.autoload_pending.get(name).unwrap();
                 delta.autoloads.push((name.clone(), format!("{:?}", flags)));
             }
         }
