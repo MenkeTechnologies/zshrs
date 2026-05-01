@@ -26031,37 +26031,30 @@ impl ShellExecutor {
             return 1;
         }
 
-        // If +g/+s/+r used, list those types
+        // If +g/+s/+r used, list those types. Sorted for
+        // deterministic output (was HashMap-iteration random).
+        let print_sorted = |map: &HashMap<String, String>, prefix: &str, list_form: bool| {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for name in keys {
+                let value = map.get(name).unwrap();
+                let s = format_alias_kv(name, value);
+                if list_form {
+                    println!("{}{}", prefix, s);
+                } else {
+                    println!("{}", s);
+                }
+            }
+        };
         if print_global || print_suffix || print_regular {
             if print_regular {
-                for (name, value) in &self.aliases {
-                    let s = format_alias_kv(name, value);
-                    if list_form {
-                        println!("alias {}", s);
-                    } else {
-                        println!("{}", s);
-                    }
-                }
+                print_sorted(&self.aliases, "alias ", list_form);
             }
             if print_global {
-                for (name, value) in &self.global_aliases {
-                    let s = format_alias_kv(name, value);
-                    if list_form {
-                        println!("alias -g {}", s);
-                    } else {
-                        println!("{}", s);
-                    }
-                }
+                print_sorted(&self.global_aliases, "alias -g ", list_form);
             }
             if print_suffix {
-                for (name, value) in &self.suffix_aliases {
-                    let s = format_alias_kv(name, value);
-                    if list_form {
-                        println!("alias -s {}", s);
-                    } else {
-                        println!("{}", s);
-                    }
-                }
+                print_sorted(&self.suffix_aliases, "alias -s ", list_form);
             }
             return 0;
         }
