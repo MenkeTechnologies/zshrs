@@ -38436,11 +38436,13 @@ impl ShellExecutor {
         use std::process::{Command, Stdio};
 
         if args.is_empty() {
-            // List all ptys
+            // List all ptys, sorted by name for deterministic output.
             if self.zptys.is_empty() {
                 return 0;
             }
-            for (name, state) in &self.zptys {
+            let mut entries: Vec<(&String, _)> = self.zptys.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, state) in entries {
                 println!("{}: {} (pid {})", name, state.cmd, state.pid);
             }
             return 0;
@@ -38618,11 +38620,14 @@ impl ShellExecutor {
         use std::os::unix::net::{UnixListener, UnixStream};
 
         if args.is_empty() {
-            // List open sockets
+            // List open sockets, sorted by fd so the output is
+            // deterministic across runs.
             if self.unix_sockets.is_empty() {
                 return 0;
             }
-            for (fd, state) in &self.unix_sockets {
+            let mut entries: Vec<(&i32, _)> = self.unix_sockets.iter().collect();
+            entries.sort_by_key(|(fd, _)| **fd);
+            for (fd, state) in entries {
                 let path = state
                     .path
                     .as_ref()
