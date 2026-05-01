@@ -10126,6 +10126,7 @@ impl ShellExecutor {
             "link" => return self.builtin_link(&rest_vec),
             "unlink" => return self.builtin_unlink(&rest_vec),
             "dircolors" => return self.builtin_dircolors(&rest_vec),
+            "groups" => return self.builtin_groups(&rest_vec),
             _ => {}
         }
 
@@ -43818,6 +43819,136 @@ impl ShellExecutor {
             print!("{}{}", item, term);
         }
         0
+    }
+
+    /// groups [USER...] — print group memberships. Coreutils
+    /// groups(1) / POSIX. With no args, prints groups for the
+    /// effective user; with args, prints "USER : group1 group2 ..."
+    /// per user.
+    fn builtin_groups(&self, args: &[String]) -> i32 {
+        use std::ffi::CStr;
+        // Validate flags.
+        let mut users: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    eprintln!("groups: unrecognized option: '{}'", s);
+                    return 1;
+                }
+                s => users.push(s),
+            }
+        }
+        let print_groups_for = |uid_or_name: Option<&str>| -> i32 {
+            let (user_name, _user_uid, group_id): (String, u32, u32) = match uid_or_name {
+                Some(name) => {
+                    // Look up by name first, then numeric id.
+                    let cn = match std::ffi::CString::new(name) {
+                        Ok(c) => c,
+                        Err(_) => return 1,
+                    };
+                    unsafe {
+                        let pw = libc::getpwnam(cn.as_ptr());
+                        if pw.is_null() {
+                            // Try numeric.
+                            if let Ok(uid) = name.parse::<u32>() {
+                                let pw2 = libc::getpwuid(uid);
+                                if pw2.is_null() {
+                                    eprintln!("groups: '{}': no such user", name);
+                                    return 1;
+                                }
+                                let n = CStr::from_ptr((*pw2).pw_name);
+                                (
+                                    n.to_string_lossy().into_owned(),
+                                    (*pw2).pw_uid,
+                                    (*pw2).pw_gid,
+                                )
+                            } else {
+                                eprintln!("groups: '{}': no such user", name);
+                                return 1;
+                            }
+                        } else {
+                            let n = CStr::from_ptr((*pw).pw_name);
+                            (
+                                n.to_string_lossy().into_owned(),
+                                (*pw).pw_uid,
+                                (*pw).pw_gid,
+                            )
+                        }
+                    }
+                }
+                None => {
+                    let euid = unsafe { libc::geteuid() };
+                    unsafe {
+                        let pw = libc::getpwuid(euid);
+                        if pw.is_null() {
+                            (String::new(), euid, 0)
+                        } else {
+                            let n = CStr::from_ptr((*pw).pw_name);
+                            (
+                                n.to_string_lossy().into_owned(),
+                                (*pw).pw_uid,
+                                (*pw).pw_gid,
+                            )
+                        }
+                    }
+                }
+            };
+            // getgrouplist requires a buffer; start with 32 slots.
+            let mut group_ids: Vec<libc::gid_t> = vec![0; 64];
+            let mut ngroups: i32 = group_ids.len() as i32;
+            let cn = std::ffi::CString::new(user_name.clone()).unwrap_or_default();
+            let r = unsafe {
+                libc::getgrouplist(
+                    cn.as_ptr(),
+                    group_id as i32,
+                    group_ids.as_mut_ptr() as *mut _,
+                    &mut ngroups,
+                )
+            };
+            if r < 0 {
+                // Buffer too small — grow and retry.
+                group_ids.resize(ngroups as usize, 0);
+                unsafe {
+                    libc::getgrouplist(
+                        cn.as_ptr(),
+                        group_id as i32,
+                        group_ids.as_mut_ptr() as *mut _,
+                        &mut ngroups,
+                    );
+                }
+            }
+            group_ids.truncate(ngroups as usize);
+            let names: Vec<String> = group_ids
+                .iter()
+                .filter_map(|&g| unsafe {
+                    let gr = libc::getgrgid(g as u32);
+                    if gr.is_null() {
+                        Some(g.to_string())
+                    } else {
+                        let n = CStr::from_ptr((*gr).gr_name);
+                        Some(n.to_string_lossy().into_owned())
+                    }
+                })
+                .collect();
+            if uid_or_name.is_some() {
+                println!("{} : {}", user_name, names.join(" "));
+            } else {
+                println!("{}", names.join(" "));
+            }
+            0
+        };
+        if users.is_empty() {
+            print_groups_for(None)
+        } else {
+            let mut status = 0;
+            for u in users {
+                if print_groups_for(Some(u)) != 0 {
+                    status = 1;
+                }
+            }
+            status
+        }
     }
 
     /// dircolors [-bcp] [FILE] — emit shell commands to set
