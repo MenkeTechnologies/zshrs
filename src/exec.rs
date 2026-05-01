@@ -23082,20 +23082,28 @@ impl ShellExecutor {
                 }
             }
         } else {
-            // Shift specified arrays
+            // Direct port of src/zsh/Src/builtin.c:5614-5636 — walk
+            // all named arrays, error on under-length but CONTINUE
+            // to the next array (`ret++; continue;`). Previous Rust
+            // impl returned on first error, hiding the rest. The
+            // final return value is non-zero iff at least one array
+            // had count > length.
+            let mut ret = 0;
             for name in &array_names {
-                // zsh: `shift N arr` errors `shift count must be <=
-                // $#` if N exceeds the array length. zshrs silently
-                // shifted as much as it could, masking the count
-                // error.
                 if let Some(arr) = self.arrays.get(name) {
                     if count > arr.len() {
                         eprintln!("zshrs:shift:1: shift count must be <= $#");
-                        return 1;
+                        ret = 1;
                     }
                 }
             }
             for name in array_names {
+                if let Some(arr) = self.arrays.get(&name) {
+                    if count > arr.len() {
+                        // Already reported above; skip mutation.
+                        continue;
+                    }
+                }
                 if let Some(arr) = self.arrays.get_mut(&name) {
                     if from_end {
                         for _ in 0..count {
@@ -23112,6 +23120,7 @@ impl ShellExecutor {
                     }
                 }
             }
+            return ret;
         }
 
         0
