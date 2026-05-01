@@ -37257,7 +37257,7 @@ impl ShellExecutor {
                 0
             }
             Err(e) => {
-                eprintln!("coproc: {}", e);
+                eprintln!("zshrs:coproc:1: {}", e);
                 1
             }
         }
@@ -37960,7 +37960,7 @@ impl ShellExecutor {
                     while let Some(name) = iter.next() {
                         had_arg = true;
                         if !zle.delete_widget(name) {
-                            eprintln!("zle: no such widget: {}", name);
+                            eprintln!("zshrs:zle:1: no such widget: {}", name);
                             returnval = 1;
                         }
                     }
@@ -37976,20 +37976,20 @@ impl ShellExecutor {
                     let old = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zle: -A requires source widget");
+                            eprintln!("zshrs:zle:1: -A requires source widget");
                             return 1;
                         }
                     };
                     let new = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zle: -A requires destination widget");
+                            eprintln!("zshrs:zle:1: -A requires destination widget");
                             return 1;
                         }
                     };
                     let mut zle = zle();
                     if !zle.alias_widget(&new, &old) {
-                        eprintln!("zle: no such widget: {}", old);
+                        eprintln!("zshrs:zle:1: no such widget: {}", old);
                         return 1;
                     }
                     return 0;
@@ -38008,13 +38008,13 @@ impl ShellExecutor {
                     let name = match iter.next() {
                         Some(s) => s.clone(),
                         None => {
-                            eprintln!("zle: -K requires keymap name");
+                            eprintln!("zshrs:zle:1: -K requires keymap name");
                             return 1;
                         }
                     };
                     let mut zle = zle();
                     if !zle.select_keymap(&name) {
-                        eprintln!("zle: no such keymap: {}", name);
+                        eprintln!("zshrs:zle:1: no such keymap: {}", name);
                         return 1;
                     }
                     return 0;
@@ -38062,7 +38062,7 @@ impl ShellExecutor {
                     match zle.execute_widget(widget_name, None) {
                         crate::zle::WidgetResult::Ok => return 0,
                         crate::zle::WidgetResult::Error(e) => {
-                            eprintln!("zle: {}", e);
+                            eprintln!("zshrs:zle:1: {}", e);
                             return 1;
                         }
                         crate::zle::WidgetResult::CallFunction(func) => {
