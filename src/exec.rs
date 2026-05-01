@@ -17083,14 +17083,21 @@ impl ShellExecutor {
             }
 
             // === PARAMETERS ===
+            // ${parameters[name]} → full attribute string per
+            // VarAttr::format_zsh (e.g. 'integer-readonly-export').
+            // @/* enumerates every parameter name, sorted+deduped.
             "parameters" => {
                 if key == "@" || key == "*" {
-                    let mut names: Vec<String> = self.variables.keys().cloned().collect();
+                    let mut names: std::collections::BTreeSet<String> =
+                        self.variables.keys().cloned().collect();
                     names.extend(self.arrays.keys().cloned());
                     names.extend(self.assoc_arrays.keys().cloned());
-                    return Some(names.join(" "));
+                    let v: Vec<String> = names.into_iter().collect();
+                    return Some(v.join(" "));
                 }
-                // Return type of parameter
+                if let Some(attr) = self.var_attrs.get(key) {
+                    return Some(attr.format_zsh());
+                }
                 if self.assoc_arrays.contains_key(key) {
                     Some("association".to_string())
                 } else if self.arrays.contains_key(key) {
