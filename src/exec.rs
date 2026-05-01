@@ -10128,6 +10128,7 @@ impl ShellExecutor {
             "dircolors" => return self.builtin_dircolors(&rest_vec),
             "groups" => return self.builtin_groups(&rest_vec),
             "arch" => return self.builtin_arch(&rest_vec),
+            "nice" => return self.builtin_nice(&rest_vec),
             _ => {}
         }
 
@@ -42693,7 +42694,7 @@ impl ShellExecutor {
             } else if path.exists() {
                 println!("{}", path.display());
             } else {
-                eprintln!("find: '{}': No such file or directory", p);
+                eprintln!("find: '{}': No such file or directory", p); // coreutils-style
             }
         }
         0
@@ -44063,6 +44064,74 @@ impl ShellExecutor {
             }
             status
         }
+    }
+
+    /// nice [-n N] [-N N] [COMMAND...] — adjust niceness of the
+    /// shell process (when no COMMAND given) or report current
+    /// niceness. Coreutils nice(1) / POSIX nice(1). Without args,
+    /// print the current niceness (like \`nice\` with no args). With
+    /// just -n N, set the niceness for the SHELL ITSELF — not for
+    /// a subsequently-exec'd command. Setting niceness for a child
+    /// command requires fork-exec which the in-process model
+    /// can't do without breaking subsequent commands; for that case
+    /// callers should use /usr/bin/nice via PATH (zshrs's command
+    /// dispatch will fall through to the external).
+    fn builtin_nice(&self, args: &[String]) -> i32 {
+        let mut adjust: Option<i32> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-n" | "--adjustment" => {
+                    if let Some(s) = iter.next() {
+                        match s.parse::<i32>() {
+                            Ok(n) => adjust = Some(n),
+                            Err(_) => {
+                                eprintln!("nice: '{}': invalid adjustment", s);
+                                return 1;
+                            }
+                        }
+                    } else {
+                        eprintln!("nice: option requires an argument: -n");
+                        return 1;
+                    }
+                }
+                s if s.starts_with("-n") && s.len() > 2 => match s[2..].parse::<i32>() {
+                    Ok(n) => adjust = Some(n),
+                    Err(_) => {
+                        eprintln!("nice: '{}': invalid adjustment", &s[2..]);
+                        return 1;
+                    }
+                },
+                "--" => break,
+                s if !s.starts_with('-') => {
+                    // Bare COMMAND given. We can't fork-exec from
+                    // the in-process model. Tell the user to use
+                    // the external /usr/bin/nice for that case.
+                    eprintln!("nice: command-launching mode unavailable in-process; use /usr/bin/nice");
+                    return 1;
+                }
+                s => {
+                    eprintln!("nice: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        let _ = iter;
+        if let Some(adj) = adjust {
+            // Apply to the shell process itself.
+            let cur = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+            let target = (cur + adj).clamp(-20, 19);
+            if unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, target) } != 0 {
+                let err = std::io::Error::last_os_error();
+                eprintln!("nice: cannot set niceness: {}", err);
+                return 1;
+            }
+            return 0;
+        }
+        // No -n: print current niceness.
+        let cur = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+        println!("{}", cur);
+        0
     }
 
     /// arch — print machine architecture name. Coreutils arch(1)
