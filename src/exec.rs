@@ -10113,6 +10113,7 @@ impl ShellExecutor {
             "base64" => return self.builtin_base64(&rest_vec),
             "tac" => return self.builtin_tac(&rest_vec),
             "expand" => return self.builtin_expand(&rest_vec),
+            "unexpand" => return self.builtin_unexpand(&rest_vec),
             _ => {}
         }
 
@@ -43075,6 +43076,101 @@ impl ShellExecutor {
                     } else {
                         out.push(c);
                         col += 1;
+                    }
+                }
+                println!("{}", out);
+            }
+        }
+        0
+    }
+
+    /// unexpand [-a] [-t TAB] [FILE...] — convert spaces to tabs.
+    /// coreutils unexpand(1).  Default tabstop 8; -a converts every
+    /// run of spaces (not just leading); without -a only leading
+    /// runs collapse.
+    fn builtin_unexpand(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let mut tabstop: usize = 8;
+        let mut all_runs = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-a" | "--all" => all_runs = true,
+                "-t" | "--tabs" => {
+                    if let Some(s) = iter.next() {
+                        if let Ok(n) = s.parse() {
+                            tabstop = n;
+                            all_runs = true;
+                        }
+                    }
+                }
+                s if s.starts_with("-t") && s.len() > 2 => {
+                    if let Ok(n) = s[2..].parse() {
+                        tabstop = n;
+                        all_runs = true;
+                    }
+                }
+                s if !s.starts_with('-') => files.push(s),
+                _ => {}
+            }
+        }
+        let targets: Vec<&str> = if files.is_empty() {
+            vec!["-"]
+        } else {
+            files
+        };
+        for file in targets {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("unexpand: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().flatten() {
+                let mut out = String::with_capacity(line.len());
+                let mut col = 0usize;
+                let chars: Vec<char> = line.chars().collect();
+                let mut i = 0;
+                let mut leading = true;
+                while i < chars.len() {
+                    if chars[i] == ' ' && (all_runs || leading) {
+                        // Count run of spaces.
+                        let start_col = col;
+                        let mut j = i;
+                        while j < chars.len() && chars[j] == ' ' {
+                            j += 1;
+                            col += 1;
+                        }
+                        // Compress as many tabs as possible.
+                        let mut cur = start_col;
+                        let next_stop = |c: usize| (c / tabstop + 1) * tabstop;
+                        while cur + (next_stop(cur) - cur) <= col {
+                            let s = next_stop(cur);
+                            out.push('\t');
+                            cur = s;
+                        }
+                        // Pad remainder with spaces.
+                        for _ in cur..col {
+                            out.push(' ');
+                        }
+                        i = j;
+                    } else {
+                        out.push(chars[i]);
+                        if chars[i] != ' ' && chars[i] != '\t' {
+                            leading = false;
+                        }
+                        if chars[i] == '\t' {
+                            col = (col / tabstop + 1) * tabstop;
+                        } else {
+                            col += 1;
+                        }
+                        i += 1;
                     }
                 }
                 println!("{}", out);
