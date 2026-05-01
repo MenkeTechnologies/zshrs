@@ -440,21 +440,46 @@ fn dismiss(args: &[String]) -> i32 {
 }
 
 fn response(args: &[String]) -> i32 {
-    if args.len() < 2 {
-        return err_exit("response: usage <request_id> <data>");
+    let mut id: Option<String> = None;
+    let mut value_words: Vec<String> = Vec::new();
+    let mut cancelled = false;
+    let mut from_shell: Option<u64> = None;
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--cancelled" => cancelled = true,
+            "--from-shell" => match iter.next().and_then(|s| s.parse::<u64>().ok()) {
+                Some(n) => from_shell = Some(n),
+                None => return err_exit("response: --from-shell requires an integer"),
+            },
+            other => {
+                if id.is_none() {
+                    id = Some(other.to_string());
+                } else {
+                    value_words.push(other.to_string());
+                }
+            }
+        }
     }
-    let id = args[0].clone();
-    let raw = args[1..].join(" ");
-    // Try to parse the data as JSON; fall back to a plain string.
-    let data: Value = serde_json::from_str(&raw).unwrap_or(Value::String(raw));
+    let id = match id {
+        Some(s) => s,
+        None => return err_exit("response: usage <request_id> [<data>] [--cancelled] [--from-shell N]"),
+    };
+    let raw = value_words.join(" ");
+    let data: Value = if raw.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_str(&raw).unwrap_or(Value::String(raw))
+    };
+    let mut payload = json!({ "request_id": id, "value": data, "cancelled": cancelled });
+    if let Some(s) = from_shell {
+        payload["from_shell"] = json!(s);
+    }
     let mut client = match connect() {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    match client.call(
-        "ask_response",
-        json!({ "request_id": id, "response": data }),
-    ) {
+    match client.call("ask_response", payload) {
         Ok(v) => {
             print_pretty(&v);
             0
