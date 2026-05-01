@@ -41112,42 +41112,99 @@ impl ShellExecutor {
     }
 
     fn builtin_cut(&self, args: &[String]) -> i32 {
+        // coreutils cut(1) port: parses -d / -f / -c / -b ranges
+        // including N-M, N-, -M shorthand and comma-lists.
         use std::io::{BufRead, BufReader};
 
+        #[derive(Copy, Clone)]
+        enum Mode {
+            Field,
+            Char,
+            Byte,
+        }
         let mut delimiter = '\t';
-        let mut fields: Vec<usize> = Vec::new();
+        let mut mode = Mode::Field;
+        // Each entry is (start, end) inclusive, 0-based. end == usize::MAX
+        // means "to end of line".
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let mut suppress_no_delim = false;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
+
+        // Parse a coreutils-style cut spec: 'N', 'N-M', 'N-', '-M',
+        // separated by ','.
+        let parse_spec = |spec: &str, out: &mut Vec<(usize, usize)>| {
+            for part in spec.split(',') {
+                if part.is_empty() {
+                    continue;
+                }
+                if let Some((a, b)) = part.split_once('-') {
+                    let start = if a.is_empty() {
+                        0
+                    } else {
+                        match a.parse::<usize>() {
+                            Ok(n) if n > 0 => n - 1,
+                            _ => continue,
+                        }
+                    };
+                    let end = if b.is_empty() {
+                        usize::MAX
+                    } else {
+                        match b.parse::<usize>() {
+                            Ok(n) if n > 0 => n - 1,
+                            _ => continue,
+                        }
+                    };
+                    if start <= end {
+                        out.push((start, end));
+                    }
+                } else if let Ok(n) = part.parse::<usize>() {
+                    if n > 0 {
+                        out.push((n - 1, n - 1));
+                    }
+                }
+            }
+        };
 
         while i < args.len() {
             let arg = &args[i];
             if arg == "-d" && i + 1 < args.len() {
                 i += 1;
                 delimiter = args[i].chars().next().unwrap_or('\t');
-            } else if arg.starts_with("-d") {
-                delimiter = arg[2..].chars().next().unwrap_or('\t');
+            } else if let Some(s) = arg.strip_prefix("-d") {
+                delimiter = s.chars().next().unwrap_or('\t');
             } else if arg == "-f" && i + 1 < args.len() {
                 i += 1;
-                for part in args[i].split(',') {
-                    if let Ok(n) = part.parse::<usize>() {
-                        if n > 0 {
-                            fields.push(n - 1);
-                        }
-                    }
-                }
-            } else if arg.starts_with("-f") {
-                for part in arg[2..].split(',') {
-                    if let Ok(n) = part.parse::<usize>() {
-                        if n > 0 {
-                            fields.push(n - 1);
-                        }
-                    }
-                }
+                mode = Mode::Field;
+                parse_spec(&args[i], &mut ranges);
+            } else if let Some(s) = arg.strip_prefix("-f") {
+                mode = Mode::Field;
+                parse_spec(s, &mut ranges);
+            } else if arg == "-c" && i + 1 < args.len() {
+                i += 1;
+                mode = Mode::Char;
+                parse_spec(&args[i], &mut ranges);
+            } else if let Some(s) = arg.strip_prefix("-c") {
+                mode = Mode::Char;
+                parse_spec(s, &mut ranges);
+            } else if arg == "-b" && i + 1 < args.len() {
+                i += 1;
+                mode = Mode::Byte;
+                parse_spec(&args[i], &mut ranges);
+            } else if let Some(s) = arg.strip_prefix("-b") {
+                mode = Mode::Byte;
+                parse_spec(s, &mut ranges);
+            } else if arg == "-s" {
+                suppress_no_delim = true;
             } else if !arg.starts_with('-') {
                 files.push(arg);
             }
             i += 1;
         }
+
+        let in_range = |idx: usize| -> bool {
+            ranges.iter().any(|(s, e)| idx >= *s && idx <= *e)
+        };
 
         let reader: Box<dyn BufRead> = if files.is_empty() || files[0] == "-" {
             Box::new(BufReader::new(std::io::stdin()))
@@ -41162,12 +41219,39 @@ impl ShellExecutor {
         };
 
         for line in reader.lines().flatten() {
-            let parts: Vec<&str> = line.split(delimiter).collect();
-            let selected: Vec<&str> = fields
-                .iter()
-                .filter_map(|&idx| parts.get(idx).copied())
-                .collect();
-            println!("{}", selected.join(&delimiter.to_string()));
+            match mode {
+                Mode::Field => {
+                    if !line.contains(delimiter) {
+                        if !suppress_no_delim {
+                            println!("{}", line);
+                        }
+                        continue;
+                    }
+                    let parts: Vec<&str> = line.split(delimiter).collect();
+                    let selected: Vec<&str> = parts
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, p)| if in_range(idx) { Some(*p) } else { None })
+                        .collect();
+                    println!("{}", selected.join(&delimiter.to_string()));
+                }
+                Mode::Char => {
+                    let chars: String = line
+                        .chars()
+                        .enumerate()
+                        .filter_map(|(idx, c)| if in_range(idx) { Some(c) } else { None })
+                        .collect();
+                    println!("{}", chars);
+                }
+                Mode::Byte => {
+                    let bytes: Vec<u8> = line
+                        .bytes()
+                        .enumerate()
+                        .filter_map(|(idx, b)| if in_range(idx) { Some(b) } else { None })
+                        .collect();
+                    println!("{}", String::from_utf8_lossy(&bytes));
+                }
+            }
         }
         0
     }
