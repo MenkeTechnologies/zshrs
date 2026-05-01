@@ -5553,6 +5553,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // print to stderr if xtrace is on. Honors `$PS4` (default `+ `).
     vm.register_builtin(BUILTIN_XTRACE_LINE, |vm, _argc| {
         let cmd_text = vm.pop().to_str();
+        // Sync exec.last_status with the live vm.last_status BEFORE
+        // the next command runs. Direct port of the zsh exec.c
+        // contract — `$?` reads the exit status of the *most recent*
+        // command, including across function boundaries. zshrs's
+        // function-entry path reads exec.last_status to seed the
+        // child VM's `$?`, but exec.last_status was only updated at
+        // top-level script boundaries, leaking 0 into every nested
+        // CallFunction. XTRACE_LINE is emitted by the compiler
+        // BEFORE every simple command (right after the previous
+        // command's SetStatus), so it's the natural sync point.
+        let live = vm.last_status;
+        with_executor(|exec| {
+            exec.last_status = live;
+        });
         let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
         if on {
             let prefix = with_executor(|exec| {
@@ -7746,6 +7760,14 @@ impl fusevm::ShellHost for ZshrsHost {
 
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
+        // Seed the function-body VM with the parent's `$?` so a
+        // function that reads `$?` BEFORE running any command sees
+        // the caller's last status. Direct port of zsh's exec.c
+        // `execfuncdef`/`doshfunc` semantics — function entry does
+        // NOT reset `$?`. Without this, `false; foo() { echo $?; }; foo`
+        // printed 0 instead of 1 because the fresh VM defaulted
+        // last_status to 0.
+        vm.last_status = with_executor(|exec| exec.last_status);
         let _ = vm.run();
         let status = vm.last_status;
 
