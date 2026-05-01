@@ -130,6 +130,8 @@ fn zcache(args: &[String]) -> i32 {
         "view" => zcache_view(rest),
         "export" => zcache_export(rest),
         "import" => zcache_import(rest),
+        "hydrate-view" => zcache_hydrate_view(),
+        "watch" => zcache_watch(rest),
         "log" => super::builtins::zlog(args), // alias for `zlog ...`
         other => err_exit("zcache", &format!("unknown verb `{}`", other)),
     }
@@ -240,6 +242,46 @@ fn zcache_export(args: &[String]) -> i32 {
             }
         }
         Err(e) => err_exit("zcache export", &e.to_string()),
+    }
+}
+
+// `zcache watch <dir>...` — register one or more directories with the
+// daemon's fsnotify watcher. Used for new fpath / source-root paths that the
+// daemon hasn't already discovered. Maps to the `fpath_changed` IPC op.
+fn zcache_watch(args: &[String]) -> i32 {
+    if args.is_empty() {
+        return err_exit("zcache watch", "usage: zcache watch <dir>...");
+    }
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    let payload = json!({ "paths": args });
+    match client.call("fpath_changed", payload) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zcache watch", &e.to_string()),
+    }
+}
+
+// `zcache hydrate-view` — refresh the SQLite `canonical` view table from the
+// rkyv-backed in-memory state. SQLite is the inspection mirror only; this op
+// repopulates it on demand for `sqlite3 catalog.db` / `zcache view --format sql`
+// consumers. Hot lookups never hit SQLite (per docs/DAEMON.md "Daemon = sole
+// writer").
+fn zcache_hydrate_view() -> i32 {
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("canonical_hydrate_view", json!({})) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zcache hydrate-view", &e.to_string()),
     }
 }
 
