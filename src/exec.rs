@@ -45668,12 +45668,24 @@ impl ShellExecutor {
         }
     }
 
-    fn builtin_whoami(&self, _args: &[String]) -> i32 {
+    fn builtin_whoami(&self, args: &[String]) -> i32 {
         // coreutils whoami(1) prints the EFFECTIVE user name, not
         // \$USER. After 'sudo whoami', \$USER may still be the
         // original (depending on sudo config) — but whoami should
         // print the effective user. Direct port via geteuid +
         // getpwuid.
+        // whoami takes no operands. Reject unknown flags (was
+        // silently ignored via the unused _args arg).
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
+                eprintln!("whoami: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            if !arg.starts_with('-') {
+                eprintln!("whoami: extra operand '{}'", arg);
+                return 1;
+            }
+        }
         use std::ffi::CStr;
         let euid = unsafe { libc::geteuid() };
         unsafe {
