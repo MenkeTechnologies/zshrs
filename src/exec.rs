@@ -34678,8 +34678,6 @@ impl ShellExecutor {
             }
         }
 
-        let _ = preserve; // unused for now
-
         if files.len() < 2 {
             eprintln!("cp: missing file operand");
             return 1;
@@ -34731,6 +34729,38 @@ impl ShellExecutor {
             if let Err(e) = result {
                 eprintln!("cp: cannot copy '{}' to '{}': {}", src, dest, e);
                 return 1;
+            }
+
+            // -p: preserve mode, ownership, atime/mtime — coreutils
+            // cp(1) `-p` semantics. std::fs::copy already replicates
+            // mode bits, but timestamps and uid/gid require explicit
+            // chown(2) + utimensat(2) syscalls.
+            if preserve {
+                use std::os::unix::fs::MetadataExt;
+                if let Ok(meta) = std::fs::metadata(src) {
+                    let dest_c = std::ffi::CString::new(dest.as_bytes()).ok();
+                    if let Some(c) = dest_c {
+                        unsafe {
+                            // chown(dest, uid, gid) — fails silently if
+                            // not root (matches coreutils behaviour).
+                            libc::chown(c.as_ptr(), meta.uid(), meta.gid());
+                        }
+                        // utimensat(AT_FDCWD, dest, [atime, mtime], 0)
+                        let times = [
+                            libc::timespec {
+                                tv_sec: meta.atime() as libc::time_t,
+                                tv_nsec: meta.atime_nsec() as i64,
+                            },
+                            libc::timespec {
+                                tv_sec: meta.mtime() as libc::time_t,
+                                tv_nsec: meta.mtime_nsec() as i64,
+                            },
+                        ];
+                        unsafe {
+                            libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), 0);
+                        }
+                    }
+                }
             }
 
             if verbose {
