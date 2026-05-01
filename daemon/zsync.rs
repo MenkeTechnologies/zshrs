@@ -82,8 +82,6 @@ fn now_ns_i64() -> i64 {
 // ---- IPC op handlers ----
 
 pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
-    ensure_schema(state)?;
-
     let subsystem = args
         .get("subsystem")
         .and_then(Value::as_str)
@@ -95,41 +93,28 @@ pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: V
         .get("value")
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `value`"))?;
 
-    // value can be:
-    //   - object {key: scalar, key: scalar, ...}: insert each as a row
-    //   - array of strings: each row gets key = stringified index, value = string
-    //   - string: store as single row keyed by ""
     let entries = serialize_pushed_value(value)?;
     if entries.is_empty() {
         return Err(ErrPayload::new("bad_value", "empty `value`"));
     }
 
-    let now = now_ns_i64();
-    state.with_catalog(|conn| {
-        let tx = conn.unchecked_transaction()?;
-        for (key, json_val) in &entries {
-            tx.execute(
-                "INSERT INTO canonical (subsystem, key, value, set_at_ns, set_by_shell) \
-                 VALUES (?, ?, ?, ?, ?) \
-                 ON CONFLICT(subsystem, key) DO UPDATE SET \
-                     value = excluded.value, \
-                     set_at_ns = excluded.set_at_ns, \
-                     set_by_shell = excluded.set_by_shell",
-                rusqlite::params![subsystem, key, json_val, now, client_id as i64],
-            )?;
-        }
-        tx.commit()?;
-        Ok::<_, rusqlite::Error>(())
-    })?;
+    // Mutate in-memory rkyv-backed canonical state. SQLite is not touched
+    // here — `zcache hydrate-view` (or implicit calls) refresh it lazily.
+    for (key, json_val) in &entries {
+        state
+            .canonical
+            .upsert(&subsystem, key, json_val, Some(client_id));
+    }
 
-    // Bump generation: count rows for this subsystem.
-    let count: i64 = state.with_catalog(|conn| {
-        conn.query_row(
-            "SELECT COUNT(*) FROM canonical WHERE subsystem = ?",
-            rusqlite::params![subsystem],
-            |r| r.get(0),
-        )
-    })?;
+    // Persist to rkyv shard atomically (single write per push, all subsystems
+    // serialized into the user-overlay promotion shard).
+    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+    if let Err(e) = state.canonical.persist(generation) {
+        tracing::warn!(?e, "canonical: persist to rkyv failed");
+    }
+
+    let count = state.canonical.rows_for(&subsystem).len() as i64;
+    let now = now_ns_i64();
 
     // Emit canonical_changed event to every subscriber.
     let event_payload = json!({
@@ -149,7 +134,6 @@ pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: V
 }
 
 pub async fn op_pull_canonical(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    ensure_schema(state)?;
     let subsystem = args
         .get("subsystem")
         .and_then(Value::as_str)
@@ -157,15 +141,19 @@ pub async fn op_pull_canonical(state: &Arc<DaemonState>, args: Value) -> OpResul
         .to_string();
     validate_subsystem(&subsystem)?;
 
-    let rows = read_canonical_rows(state, &subsystem)?;
+    let rows = state.canonical.rows_for(&subsystem);
     Ok(json!({
         "subsystem": subsystem,
-        "rows": rows,
+        "rows": rows.iter().map(|r| json!({
+            "key": r.key,
+            "value": r.value,
+            "set_at_ns": r.set_at_ns,
+            "set_by_shell": r.set_by_shell,
+        })).collect::<Vec<_>>(),
     }))
 }
 
 pub async fn op_diff_canonical(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    ensure_schema(state)?;
     let subsystem = args
         .get("subsystem")
         .and_then(Value::as_str)
@@ -176,7 +164,7 @@ pub async fn op_diff_canonical(state: &Arc<DaemonState>, args: Value) -> OpResul
     let overlay = args.get("overlay").cloned().unwrap_or(Value::Null);
     let overlay_entries = serialize_pushed_value(&overlay).unwrap_or_default();
 
-    let canonical_rows = read_canonical_rows(state, &subsystem)?;
+    let canonical_rows = state.canonical.rows_for(&subsystem);
     let canonical_map: std::collections::HashMap<&str, &str> = canonical_rows
         .iter()
         .map(|r| (r.key.as_str(), r.value.as_str()))
@@ -207,6 +195,9 @@ pub async fn op_diff_canonical(state: &Arc<DaemonState>, args: Value) -> OpResul
     }))
 }
 
+/// Legacy SQL row shape kept for callers in export.rs (which still has its
+/// own struct of the same name). Reads always resolve from the rkyv-backed
+/// in-memory state via `state.canonical.rows_for(...)`.
 #[derive(serde::Serialize, Debug)]
 pub struct CanonicalRow {
     pub key: String,
@@ -215,26 +206,20 @@ pub struct CanonicalRow {
     pub set_by_shell: Option<i64>,
 }
 
-fn read_canonical_rows(state: &DaemonState, subsystem: &str) -> Result<Vec<CanonicalRow>> {
+/// Compatibility shim: returns the in-memory state in the legacy row shape so
+/// existing readers (export.rs's render_*) don't have to change.
+pub fn read_canonical_rows_inmem(state: &DaemonState, subsystem: &str) -> Vec<CanonicalRow> {
     state
-        .with_catalog(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT key, value, set_at_ns, set_by_shell FROM canonical \
-             WHERE subsystem = ? ORDER BY key ASC",
-            )?;
-            let rows = stmt
-                .query_map(rusqlite::params![subsystem], |r| {
-                    Ok(CanonicalRow {
-                        key: r.get(0)?,
-                        value: r.get(1)?,
-                        set_at_ns: r.get(2)?,
-                        set_by_shell: r.get(3)?,
-                    })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok::<_, rusqlite::Error>(rows)
+        .canonical
+        .rows_for(subsystem)
+        .into_iter()
+        .map(|r| CanonicalRow {
+            key: r.key,
+            value: r.value,
+            set_at_ns: r.set_at_ns,
+            set_by_shell: r.set_by_shell,
         })
-        .map_err(super::DaemonError::from)
+        .collect()
 }
 
 /// Convert a pushed value into (key, value-as-json-string) pairs.

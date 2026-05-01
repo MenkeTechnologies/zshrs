@@ -56,7 +56,10 @@ pub struct Shard {
 /// is the rkyv-backed source of truth for path/fpath/aliases/functions/etc.
 /// SQLite catalog.db's `canonical` table is a hydrated mirror used only for
 /// `zcache view` queries (`zcache hydrate-view` refreshes it from rkyv).
-#[derive(Archive, Deserialize, Serialize, Clone, Debug, Default)]
+/// Bare ShardHeader::default-equivalent for CanonicalShard's Default impl —
+/// we can't `#[derive(Default)]` on the rkyv-archived form, so the plain
+/// `Default` impl below builds the header inline.
+#[derive(Archive, Deserialize, Serialize, Clone, Debug)]
 #[archive(check_bytes)]
 pub struct CanonicalShard {
     pub header: ShardHeader,
@@ -78,6 +81,40 @@ pub struct CanonicalShard {
     pub manpath: Vec<String>,
     pub plugins: Vec<(String, String)>, // (manager, name)
     pub sourced_files: Vec<String>,
+}
+
+impl Default for CanonicalShard {
+    fn default() -> Self {
+        Self {
+            header: ShardHeader {
+                magic: SHARD_MAGIC,
+                format_version: SHARD_FORMAT_VERSION,
+                generation: 0,
+                built_at_ns: 0,
+                slug: String::new(),
+                source_root: String::new(),
+                entry_count: 0,
+            },
+            aliases: HashMap::new(),
+            global_aliases: HashMap::new(),
+            suffix_aliases: HashMap::new(),
+            functions: HashMap::new(),
+            setopts: Vec::new(),
+            unsetopts: Vec::new(),
+            bindkeys: HashMap::new(),
+            named_dirs: HashMap::new(),
+            compdef: HashMap::new(),
+            zstyle: Vec::new(),
+            zmodload: Vec::new(),
+            env_exports: HashMap::new(),
+            params: HashMap::new(),
+            path: Vec::new(),
+            fpath: Vec::new(),
+            manpath: Vec::new(),
+            plugins: Vec::new(),
+            sourced_files: Vec::new(),
+        }
+    }
 }
 
 impl Shard {
