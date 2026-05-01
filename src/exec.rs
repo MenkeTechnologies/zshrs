@@ -36508,8 +36508,13 @@ impl ShellExecutor {
                 }
                 "-p" | "--preserve" => preserve = true,
                 "-v" | "--verbose" => verbose = true,
-                s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                "--" => {} // end of options
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                s => {
+                    // coreutils cp rejects unknown flags.
+                    eprintln!("cp: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
 
