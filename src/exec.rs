@@ -32104,7 +32104,16 @@ impl ShellExecutor {
                 "-s" => target = "suffix_aliases",
                 "-p" => target = "patterns",
                 "-m" => match_glob = true,
-                _ if arg.starts_with('-') => {}
+                // BUILTIN("enable", ..., "afmprs") — six valid letters.
+                // zshrs's catch-all `_ if starts_with('-') => {}`
+                // silently consumed unknown flags, so `enable -X foo`
+                // would enable the `foo` builtin while ignoring -X.
+                _ if arg.starts_with('-') => {
+                    let bad: String = arg[1..].chars().take(1).collect();
+                    let bn = if enable { "enable" } else { "disable" };
+                    eprintln!("zshrs:{}:1: bad option: -{}", bn, bad);
+                    return 1;
+                }
                 _ => names.push(arg.clone()),
             }
         }
