@@ -20572,10 +20572,16 @@ impl ShellExecutor {
             // fall through: use the first arg as the code (best
             // match for "tried to exit with N other args").
         }
-        let raw_code = args
-            .first()
-            .and_then(|s| s.parse::<i32>().ok())
-            .unwrap_or(self.last_status);
+        // Direct port of src/zsh/Src/builtin.c:5815-5818 — exit's
+        // arg is a math expression, not just a literal integer.
+        // zsh: `exit 1+2` exits with 3; `exit \$((rc))` evaluates
+        // the var. Previous Rust impl's `parse::<i32>` only
+        // handled literal integers and silently fell back to
+        // last_status on any expression.
+        let raw_code = match args.first() {
+            Some(s) if !s.is_empty() => self.eval_arith_expr(s) as i32,
+            _ => self.last_status,
+        };
         // POSIX/zsh: exit status is masked to 8 bits — `exit 256`
         // becomes 0, `exit 257` becomes 1. Without this, zshrs
         // reported the raw value (256 etc.) which couldn't be matched
