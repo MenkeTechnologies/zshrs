@@ -37848,69 +37848,60 @@ impl ShellExecutor {
         0
     }
 
-    /// sysseek - seek on file descriptor (zsh/system module)
+    /// sysseek - seek on file descriptor (zsh/system module). Direct
+    /// port of zsh/Src/Modules/system.c:433 bin_sysseek. Return values
+    /// (system.c:425-428): 0 = success, 1 = bad params, 2 = lseek error.
     fn builtin_sysseek(&mut self, args: &[String]) -> i32 {
-        use std::io::{Seek, SeekFrom};
-
-        let mut fd = -1i32;
-        let mut offset = 0i64;
-        let mut whence = SeekFrom::Start(0);
+        let mut fd: i32 = 0;
+        let mut whence: i32 = libc::SEEK_SET;
+        let mut pos_arg: Option<String> = None;
 
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
-                "-u" => {
+                "-u" if i + 1 < args.len() => {
                     i += 1;
-                    if i < args.len() {
-                        fd = args[i].parse().unwrap_or(-1);
+                    match args[i].parse::<i32>() {
+                        Ok(n) if n >= 0 => fd = n,
+                        _ => {
+                            eprintln!("zshrs:sysseek:1: integer expected: {}", args[i]);
+                            return 1;
+                        }
                     }
                 }
-                "-w" => {
+                "-w" if i + 1 < args.len() => {
                     i += 1;
-                    if i < args.len() {
-                        whence = match args[i].as_str() {
-                            "start" | "set" | "0" => SeekFrom::Start(offset as u64),
-                            "current" | "cur" | "1" => SeekFrom::Current(offset),
-                            "end" | "2" => SeekFrom::End(offset),
-                            _ => SeekFrom::Start(offset as u64),
-                        };
-                    }
+                    let w = args[i].to_lowercase();
+                    whence = match w.as_str() {
+                        "current" | "cur" | "1" => libc::SEEK_CUR,
+                        "end" | "2" => libc::SEEK_END,
+                        "start" | "set" | "0" => libc::SEEK_SET,
+                        _ => {
+                            eprintln!("zshrs:sysseek:1: unknown argument to -w: {}", args[i]);
+                            return 1;
+                        }
+                    };
                 }
-                s if !s.starts_with('-') => {
-                    offset = s.parse().unwrap_or(0);
-                }
+                s if !s.starts_with('-') => pos_arg = Some(s.to_string()),
                 _ => {}
             }
             i += 1;
         }
 
-        if fd < 0 {
-            eprintln!("sysseek: need fd (-u)");
-            return 1;
-        }
-
-        // Update whence with actual offset
-        whence = match whence {
-            SeekFrom::Start(_) => SeekFrom::Start(offset as u64),
-            SeekFrom::Current(_) => SeekFrom::Current(offset),
-            SeekFrom::End(_) => SeekFrom::End(offset),
+        let pos: i64 = match pos_arg.as_deref().and_then(|s| s.parse().ok()) {
+            Some(n) => n,
+            None => {
+                eprintln!("zshrs:sysseek:1: position required");
+                return 1;
+            }
         };
 
-        if let Some(file) = self.open_fds.get_mut(&fd) {
-            match file.seek(whence) {
-                Ok(pos) => {
-                    self.variables.insert("REPLY".to_string(), pos.to_string());
-                    0
-                }
-                Err(e) => {
-                    eprintln!("sysseek: {}", e);
-                    1
-                }
-            }
-        } else {
-            eprintln!("sysseek: bad fd: {}", fd);
-            1
+        // system.c:461-462 — lseek(fd, pos, w); return 2 on -1.
+        let new = unsafe { libc::lseek(fd, pos, whence) };
+        if new == -1 {
+            return 2;
         }
+        0
     }
 
     /// private - declare private variables (zsh/param/private module)
