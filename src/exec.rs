@@ -46064,6 +46064,23 @@ impl ShellExecutor {
                     }
                     .to_string(),
                 );
+            } else if arg == "-d" || arg == "--date" {
+                // -d STRING / --date=STRING — date-string parsing
+                // not yet implemented. Consume the next arg so it
+                // doesn't slip through to the unknown-flag path.
+                if iter.next().is_none() {
+                    eprintln!("zshrs:date:1: argument expected: -d");
+                    return 1;
+                }
+            } else if arg.starts_with("--date=") {
+                // ignore — parser not yet impl
+            } else if arg == "--" {
+                // end of options
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                // coreutils date errors on unknown flags. Old impl
+                // silently dropped them and produced default output.
+                eprintln!("zshrs:date:1: unrecognized option: '{}'", arg);
+                return 1;
             }
         }
 
