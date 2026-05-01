@@ -344,13 +344,26 @@ pub fn builtin_echotc(args: &[&str], tc: &Termcap) -> (i32, String) {
             return (0, s);
         }
 
+        // Count required args by walking the format string and
+        // detecting `%X` directives where X is `d`/`2`/`3`/`.`/`+`.
+        // Direct port of src/zsh/Src/Modules/termcap.c:115-120.
+        // The previous Rust impl counted all `%` chars and
+        // divided by 2 — wrong because `%d` is a single arg-
+        // consuming directive, not two.
         let mut required_args = 0;
-        for c in s.chars() {
-            if c == '%' {
-                required_args += 1;
+        let chars: Vec<char> = s.chars().collect();
+        let mut k = 0;
+        while k < chars.len() {
+            if chars[k] == '%' && k + 1 < chars.len() {
+                let nx = chars[k + 1];
+                if nx == 'd' || nx == '2' || nx == '3' || nx == '.' || nx == '+' {
+                    required_args += 1;
+                }
+                k += 2;
+            } else {
+                k += 1;
             }
         }
-        required_args /= 2;
 
         if args.len() - 1 != required_args {
             if args.len() - 1 < required_args {
