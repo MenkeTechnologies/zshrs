@@ -32908,6 +32908,13 @@ impl ShellExecutor {
         let mut prompt_expand = false;
         let mut fd: i32 = 1; // stdout
         let mut columns = 0usize;
+        // `-c` (lowercase): auto-fit columns to terminal width based
+        // on $COLUMNS / max item width. `-C N` (uppercase) overrides
+        // with an explicit count. zshrs previously mapped `-c` to
+        // columns=1, which printed one item per line — equivalent to
+        // `-l`. Per zsh man print(1), `-c` means "print arguments in
+        // columns" with auto-fit, not "1 column".
+        let mut auto_columns = false;
         let mut null_terminate = false;
         let mut push_to_stack = false;
         let mut add_to_history = false;
@@ -33010,7 +33017,7 @@ impl ShellExecutor {
                         'o' => sort_asc = true,
                         'O' => sort_desc = true,
                         'D' => named_dir_subst = true,
-                        'c' => columns = 1,
+                        'c' => auto_columns = true,
                         'm' => match_pattern_flag = true,
                         'x' | 'X' => {
                             // -x N / -X N: tab expansion via zexpandtabs
@@ -33159,7 +33166,7 @@ impl ShellExecutor {
             return 1;
         }
         let any_redirect_sink = push_to_stack || add_to_history;
-        let any_columns = columns != 0;
+        let any_columns = columns != 0 || auto_columns;
         if any_redirect_sink && any_columns {
             eprintln!("zshrs:print:1: -c or -C not allowed with -s, -S, or -z");
             return 1;
@@ -33421,6 +33428,28 @@ impl ShellExecutor {
             return 0;
         }
 
+        // Resolve `-c` (auto-fit columns) AFTER all items are built
+        // because we need the max item width to choose a count.
+        // Algorithm matches zsh's `print -c`:
+        //   width = $COLUMNS env (fall back to 80)
+        //   max_item = max(chars().count() of each processed item)
+        //   per_col = max_item + 2  (zsh separates with 2 spaces)
+        //   cols = max(1, width / per_col)
+        // If -C N was also given, the explicit N wins.
+        let mut columns = columns;
+        if auto_columns && columns == 0 && !processed.is_empty() {
+            let term_width: usize = std::env::var("COLUMNS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(80);
+            let max_item = processed
+                .iter()
+                .map(|s| s.chars().count())
+                .max()
+                .unwrap_or(0);
+            let per_col = max_item.saturating_add(2).max(1);
+            columns = (term_width / per_col).max(1);
+        }
         // Build output
         let output = if one_per_line {
             processed.join("\n")
