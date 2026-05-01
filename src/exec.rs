@@ -36292,11 +36292,47 @@ impl ShellExecutor {
                     return 0;
                 }
                 "-D" => {
-                    // Delete widget - stub
-                    return 0;
+                    // zle -D widget...: delete one or more user
+                    // widgets. zsh: missing target -> exit 1 silently;
+                    // unknown widget -> 'no such widget: NAME' exit 1.
+                    let mut returnval = 0;
+                    let mut had_arg = false;
+                    let mut zle = zle();
+                    while let Some(name) = iter.next() {
+                        had_arg = true;
+                        if !zle.delete_widget(name) {
+                            eprintln!("zle: no such widget: {}", name);
+                            returnval = 1;
+                        }
+                    }
+                    if !had_arg {
+                        return 1;
+                    }
+                    return returnval;
                 }
                 "-A" => {
-                    // Define widget alias - stub
+                    // zle -A old new: alias `new` to dispatch as `old`.
+                    // zsh: needs exactly two args; unknown source ->
+                    // 'no such widget: OLD' exit 1.
+                    let old = match iter.next() {
+                        Some(s) => s.clone(),
+                        None => {
+                            eprintln!("zle: -A requires source widget");
+                            return 1;
+                        }
+                    };
+                    let new = match iter.next() {
+                        Some(s) => s.clone(),
+                        None => {
+                            eprintln!("zle: -A requires destination widget");
+                            return 1;
+                        }
+                    };
+                    let mut zle = zle();
+                    if !zle.alias_widget(&new, &old) {
+                        eprintln!("zle: no such widget: {}", old);
+                        return 1;
+                    }
                     return 0;
                 }
                 "-R" => {
