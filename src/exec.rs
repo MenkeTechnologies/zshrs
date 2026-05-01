@@ -16990,11 +16990,38 @@ impl ShellExecutor {
             }
 
             // === COMMANDS (command hash table) ===
+            // ${commands[name]} → full path (or empty), per
+            // zsh/Modules/parameter.c. The @/* expansion enumerates
+            // every command on PATH (deduplicated, first-wins).
             "commands" => {
                 if key == "@" || key == "*" {
-                    return Some(String::new()); // Would need to enumerate PATH
+                    let path_var = env::var("PATH").unwrap_or_default();
+                    let mut seen: std::collections::HashSet<String> =
+                        std::collections::HashSet::new();
+                    let mut names: Vec<String> = Vec::new();
+                    // Hashed entries first (rehash population).
+                    for k in self.command_hash.keys() {
+                        if seen.insert(k.clone()) {
+                            names.push(k.clone());
+                        }
+                    }
+                    for dir in path_var.split(':') {
+                        if dir.is_empty() {
+                            continue;
+                        }
+                        if let Ok(entries) = std::fs::read_dir(dir) {
+                            for entry in entries.flatten() {
+                                if let Ok(name) = entry.file_name().into_string() {
+                                    if seen.insert(name.clone()) {
+                                        names.push(name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    names.sort();
+                    return Some(names.join(" "));
                 }
-                // Look up command in PATH
                 if let Some(path) = self.find_in_path(key) {
                     Some(path)
                 } else {
