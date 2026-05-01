@@ -139,6 +139,7 @@ fn zcache(args: &[String]) -> i32 {
         "export" => zcache_export(rest),
         "import" => zcache_import(rest),
         "first-init" => zcache_first_init(rest),
+        "plugin-discover" => zcache_plugin_discover(),
         "hydrate-view" => zcache_hydrate_view(),
         "watch" => zcache_watch(rest),
         "log" => super::builtins::zlog(args), // alias for `zlog ...`
@@ -414,6 +415,26 @@ fn zcmd_result(args: &[String]) -> i32 {
             0
         }
         Err(e) => err_exit("zcmd-result", &e.to_string()),
+    }
+}
+
+// `zcache plugin-discover` — walks ~/.zinit/plugins + ~/.zinit/snippets, runs
+// the analyze pass on each plugin's init script, writes a per-plugin rkyv
+// shard, folds union state into the canonical engine. Per docs/DAEMON.md
+// "Plugin discovery happens at the same time as .zshrc analysis".
+fn zcache_plugin_discover() -> i32 {
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    // Discovery walks dozens of plugins; bump read timeout above the 5s default.
+    let _ = client.set_read_timeout(Some(std::time::Duration::from_secs(120)));
+    match client.call("plugin_discover", json!({})) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zcache plugin-discover", &e.to_string()),
     }
 }
 

@@ -45,6 +45,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "rebuild" => op_rebuild(state, args).await,
         "zshrc_analyze" => op_zshrc_analyze(state, args).await,
         "first_init" => op_first_init(state, args).await,
+        "plugin_discover" => op_plugin_discover(state, args).await,
         "canonical_hydrate_view" => op_canonical_hydrate_view(state).await,
         "clean" => op_clean(state, args).await,
         "verify" => op_verify(state).await,
@@ -637,6 +638,23 @@ fn json_string(s: &str) -> String {
     serde_json::Value::String(s.to_string()).to_string()
 }
 
+/// `plugin_discover` — walks ~/.zinit/plugins + ~/.zinit/snippets, picks the
+/// init script of each, runs analyze on it, captures per-plugin state into
+/// a per-plugin rkyv shard, folds the union into the canonical engine.
+/// Per docs/DAEMON.md "Plugin discovery happens at the same time as `.zshrc`
+/// analysis: daemon walks the user's `.zshrc`, sees zinit/OMZ/source calls,
+/// descends into each referenced plugin, parses + bytecode-compiles
+/// per-plugin shards (`{hash8}-plugin-{name}.rkyv`), captures every state
+/// contribution".
+async fn op_plugin_discover(state: &Arc<DaemonState>, _args: Value) -> OpResult {
+    let (stats, records) = super::plugin_walk::run_full_discovery(&state.paths, &state.canonical)
+        .map_err(|e| ErrPayload::new("plugin_walk_failed", e.to_string()))?;
+    Ok(json!({
+        "stats": stats,
+        "plugins": records,
+    }))
+}
+
 /// `first_init` — single-shot multi-pass walk lifecycle. Per docs/DAEMON.md
 /// "Walk lifecycle — first init" Pass 1-4:
 ///   Pass 1+2: analyze_with_sources(.zshrc + transitive) → canonical state
@@ -663,13 +681,22 @@ async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let (image_path, hydrated, walk_stats) = super::walk::run_full_rebuild(state, generation)
         .map_err(|e| ErrPayload::new("rebuild_failed", e.to_string()))?;
 
+    // ------ Pass 5: plugin tree discovery ------
+    let (plugin_stats, plugin_records) =
+        super::plugin_walk::run_full_discovery(&state.paths, &state.canonical)
+            .map_err(|e| ErrPayload::new("plugin_walk_failed", e.to_string()))?;
+
     Ok(json!({
-        "passes": ["analyze", "walk", "hydrate"],
+        "passes": ["analyze", "walk", "hydrate", "plugin_walk"],
         "analysis": analysis_resp,
         "walk": {
             "image_path": image_path.display().to_string(),
             "entries_hydrated": hydrated,
             "stats": walk_stats,
+        },
+        "plugins": {
+            "stats": plugin_stats,
+            "count": plugin_records.len(),
         },
         "generation": generation,
     }))
