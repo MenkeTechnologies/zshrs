@@ -35197,6 +35197,9 @@ impl ShellExecutor {
             let mut readlock = false;
             let mut unlock = false;
             let mut timeout: Option<f64> = None;
+            // Default retry interval per zsh/Src/Modules/system.c:550
+            // (timeout_interval = 1e6 µs = 1 s).
+            let mut interval_us: u64 = 1_000_000;
             let mut fdvar: Option<String> = None;
             let mut file: Option<&str> = None;
 
@@ -35260,11 +35263,41 @@ impl ShellExecutor {
                             break;
                         }
                         'i' => {
+                            // Direct port of zsh/Src/Modules/system.c:621-648:
+                            // -i SECONDS sets the retry-poll interval used
+                            // when the lock is held by another. Float arg
+                            // converted to whole microseconds, validated
+                            // against [1, 0.999*LONG_MAX].
                             let rest: String = chars.collect();
-                            if rest.is_empty() {
+                            let val = if !rest.is_empty() {
+                                rest
+                            } else {
                                 i += 1;
                                 if i >= args.len() {
-                                    eprintln!("zsystem: flock: option i requires a numeric retry interval");
+                                    eprintln!(
+                                        "zsystem: flock: option i requires a numeric retry interval"
+                                    );
+                                    return 1;
+                                }
+                                args[i].clone()
+                            };
+                            match val.parse::<f64>() {
+                                Ok(n) if n > 0.0 => {
+                                    let us = (n * 1e6).ceil();
+                                    if us < 1.0 || us > (i64::MAX as f64 * 0.999) {
+                                        eprintln!(
+                                            "zsystem: flock: invalid interval value: '{}'",
+                                            val
+                                        );
+                                        return 1;
+                                    }
+                                    interval_us = us as u64;
+                                }
+                                _ => {
+                                    eprintln!(
+                                        "zsystem: flock: invalid interval value: '{}'",
+                                        val
+                                    );
                                     return 1;
                                 }
                             }
@@ -35385,7 +35418,10 @@ impl ShellExecutor {
                     if start.elapsed() >= td {
                         return 2;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    // Retry interval honors -i (default 1 000 000 µs).
+                    // Was a hardcoded 100 ms which over-polled tight
+                    // loops and ignored user-tuned wait values.
+                    std::thread::sleep(std::time::Duration::from_micros(interval_us));
                 } else {
                     eprintln!(
                         "zsystem: flock: {}: {}",
