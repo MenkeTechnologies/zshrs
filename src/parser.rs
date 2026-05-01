@@ -918,7 +918,24 @@ impl<'a> ZshParser<'a> {
         ZshProgram { lists }
     }
 
-    /// Parse a list (sublist with optional & or ;)
+    /// Parse a list (sublist with optional & or ;).
+    ///
+    /// Direct port of zsh/Src/parse.c:771-804 `par_list` (and the
+    /// par_list1 wrapper at parse.c:807-817).
+    ///
+    /// **Structural divergence**: zsh's parse.c emits flat wordcode
+    /// into the `ecbuf` u32 array via `ecadd(0)` (placeholder),
+    /// `set_list_code(p, code, complexity)`, `wc_bdata(Z_END)`. zshrs
+    /// builds an AST node `ZshList { sublist, flags }` instead. The
+    /// async/sync/disown discrimination at parse.c:785-790 maps to
+    /// zshrs's `ListFlags { async_, disown }` field — Z_SYNC is the
+    /// default (no flags), Z_ASYNC = `&` = `async_=true`, Z_DISOWN +
+    /// Z_ASYNC = `&!`/`&|` = both true. Same semantics, different
+    /// representation. This divergence is repository-wide: every
+    /// `par_*` function emits wordcode in C, every `parse_*` builds
+    /// AST in Rust. The compile_zsh module then traverses the AST to
+    /// emit fusevm bytecode, which serves the same role as zsh's
+    /// wordcode but with a different opcode set and execution model.
     fn parse_list(&mut self) -> Option<ZshList> {
         let sublist = self.parse_sublist()?;
 
@@ -947,7 +964,16 @@ impl<'a> ZshParser<'a> {
         Some(ZshList { sublist, flags })
     }
 
-    /// Parse a sublist (pipelines connected by && or ||)
+    /// Parse a sublist (pipelines connected by && or ||).
+    ///
+    /// Direct port of zsh/Src/parse.c:825-867 `par_sublist` and
+    /// par_sublist2 at parse.c:869-892. par_sublist handles the
+    /// && / || conjunction and emits WC_SUBLIST opcodes; par_sublist2
+    /// handles the leading `!` negation and `coproc` keyword.
+    ///
+    /// AST mapping: ZshSublist { pipe, conj_chain }, where `conj_chain`
+    /// is a Vec<(ConjOp, ZshSublist)> for chained && / ||. C uses
+    /// flat wordcode with WC_SUBLIST_AND / WC_SUBLIST_OR markers.
     fn parse_sublist(&mut self) -> Option<ZshSublist> {
         self.recursion_depth += 1;
         if self.check_recursion() {
@@ -995,6 +1021,9 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse a pipeline
+    /// Parse a pipeline (cmds joined by `|` / `|&`). Direct port of
+    /// zsh/Src/parse.c:894-956 `par_pline`. AST: ZshPipe { cmds: Vec<ZshCommand> }.
+    /// C emits WC_PIPE wordcodes per command; same flow.
     fn parse_pipe(&mut self) -> Option<ZshPipe> {
         self.recursion_depth += 1;
         if self.check_recursion() {
@@ -1034,6 +1063,10 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse a command
+    /// Parse a command — dispatches by leading token (FOR / CASE /
+    /// IF / WHILE / UNTIL / REPEAT / FUNC / DINBRACK / DINPAR /
+    /// INPAR subshell / INBRACE current-shell / TIME / NOCORRECT,
+    /// else simple). Direct port of zsh/Src/parse.c:958-1085 `par_cmd`.
     fn parse_cmd(&mut self) -> Option<ZshCommand> {
         // Parse leading redirections
         let mut redirs = Vec::new();
@@ -1091,6 +1124,13 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse a simple command
+    /// Parse a simple command (assignments + words + redirections).
+    /// Direct port of zsh/Src/parse.c:1836-2228 `par_simple` —
+    /// the largest single function in parse.c. Handles ENVSTRING/
+    /// ENVARRAY assignments at command head, intermixed redirs,
+    /// typeset-style multi-assignment commands, and the trailing
+    /// inout-par `()` that converts a simple command into an inline
+    /// function definition.
     fn parse_simple(&mut self, mut redirs: Vec<ZshRedir>) -> Option<ZshCommand> {
         let mut assigns = Vec::new();
         let mut words = Vec::new();
@@ -1273,6 +1313,11 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse a redirection
+    /// Parse a redirection (>file, <file, >>file, <<HEREDOC, etc.).
+    /// Direct port of zsh/Src/parse.c:2229-2346 `par_redir`. Returns
+    /// a ZshRedir node carrying the operator type, fd, target word
+    /// (or here-doc body / pipe-redir command), and any `{var}` style
+    /// fd-binding parameter.
     fn parse_redir(&mut self) -> Option<ZshRedir> {
         let rtype = match self.lexer.tok {
             LexTok::Outang => RedirType::Write,
@@ -1348,6 +1393,11 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse for/foreach loop
+    /// Parse `for NAME in WORDS; do BODY; done` (foreach style) AND
+    /// `for ((init; cond; incr)) do BODY done` (c-style). Direct port
+    /// of zsh/Src/parse.c:1087-1207 `par_for`. parse_for_cstyle is the
+    /// inner branch for the `((...))` arithmetic-header variant
+    /// (parse.c:1100-1140 inside par_for).
     fn parse_for(&mut self) -> Option<ZshCommand> {
         let is_foreach = self.lexer.tok == LexTok::Foreach;
         self.lexer.zshlex();
@@ -1531,6 +1581,10 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse case statement
+    /// Parse `case WORD in PATTERN) BODY ;; ... esac`. Direct port
+    /// of zsh/Src/parse.c:1209-1409 `par_case`. Each case arm is a
+    /// (pattern_list, body, terminator) tuple where terminator is
+    /// `;;` (default), `;&` (fallthrough), or `;|` (continue testing).
     fn parse_case(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip 'case'
 
@@ -1711,6 +1765,10 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse if statement
+    /// Parse `if COND; then BODY; [elif COND; then BODY;]* [else BODY;] fi`.
+    /// Direct port of zsh/Src/parse.c:1411-1519 `par_if`. The C source
+    /// emits WC_IF wordcodes per arm; zshrs builds an AST chain of
+    /// (cond, then_body) tuples plus an optional else_body.
     fn parse_if(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip 'if'
 
@@ -1822,6 +1880,9 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse while/until loop
+    /// Parse `while COND; do BODY; done` and `until COND; do BODY; done`.
+    /// Direct port of zsh/Src/parse.c:1521-1563 `par_while`. The
+    /// `until` variant is the same loop with the condition negated.
     fn parse_while(&mut self, until: bool) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip while/until
 
@@ -1838,6 +1899,10 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse repeat loop
+    /// Parse `repeat N; do BODY; done`. Direct port of
+    /// zsh/Src/parse.c:1565-1617 `par_repeat`. The C source supports
+    /// the SHORTLOOPS short-form `repeat N CMD` (no do/done) — zshrs's
+    /// parser doesn't yet special-case that variant.
     fn parse_repeat(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip 'repeat'
 
@@ -1895,6 +1960,9 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse (...) subshell
+    /// Parse a subshell `( ... )`. Direct port of zsh/Src/parse.c:1619-1670
+    /// `par_subsh`. Body parses as a normal list; the subshell wrapper
+    /// fork-isolates execution in the executor.
     fn parse_subsh(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip (
         let prog = self.parse_program();
@@ -1986,6 +2054,11 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse function definition
+    /// Parse `function NAME { BODY }` or `NAME () { BODY }`. Direct
+    /// port of zsh/Src/parse.c:1672-1785 `par_funcdef`. zsh handles
+    /// the multiple keyword shapes (function FOO, FOO (), function FOO ()),
+    /// the optional `[fname1 fname2 ...]` for multi-name function defs,
+    /// and the `function FOO () { ... }` traditional/POSIX hybrid form.
     fn parse_funcdef(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip 'function'
 
@@ -2164,6 +2237,12 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse [[ ... ]] conditional
+    /// Parse `[[ EXPR ]]` conditional expression. Direct port of
+    /// zsh/Src/parse.c:2409-2731 `par_cond` (and helpers par_cond_1,
+    /// par_cond_2, par_cond_double, par_cond_triple, par_cond_multi
+    /// at parse.c:2434-2731). Expression operators: `||` `&&` `!`
+    /// + unary tests (-f, -d, -n, -z, etc.) + binary tests (=, !=,
+    /// <, >, ==, =~, -eq, -ne, -lt, -le, -gt, -ge, -nt, -ot, -ef).
     fn parse_cond(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip [[
         // Empty cond `[[ ]]` is a parse error in zsh — emit the
