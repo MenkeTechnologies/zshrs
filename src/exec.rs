@@ -40660,6 +40660,9 @@ impl ShellExecutor {
         let mut lines = 10usize;
         // Some(N) when -c N was given — switches to byte-count mode.
         let mut bytes: Option<usize> = None;
+        // -q / -v override the default 'header iff >1 file' rule.
+        let mut force_quiet = false;
+        let mut force_verbose = false;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
 
@@ -40675,6 +40678,10 @@ impl ShellExecutor {
                 bytes = args[i].parse::<usize>().ok();
             } else if arg.starts_with("-c") && arg.len() > 2 {
                 bytes = arg[2..].parse::<usize>().ok();
+            } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
+                force_quiet = true;
+            } else if arg == "-v" || arg == "--verbose" {
+                force_verbose = true;
             } else if arg.starts_with('-')
                 && arg.len() > 1
                 && arg[1..].chars().all(|c| c.is_ascii_digit())
@@ -40690,7 +40697,14 @@ impl ShellExecutor {
             files.push("-");
         }
 
-        let show_headers = files.len() > 1;
+        // coreutils: header on iff >1 file. -q forces off, -v forces on.
+        let show_headers = if force_quiet {
+            false
+        } else if force_verbose {
+            true
+        } else {
+            files.len() > 1
+        };
         let stdout = std::io::stdout();
         let mut out = stdout.lock();
 
@@ -40761,6 +40775,8 @@ impl ShellExecutor {
         // Was missing entirely; `tail -c 4` parsed `4` as a filename
         // and emitted "tail: 4: No such file or directory".
         let mut bytes: Option<usize> = None;
+        let mut force_quiet = false;
+        let mut force_verbose = false;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
 
@@ -40776,6 +40792,10 @@ impl ShellExecutor {
                 bytes = args[i].parse::<usize>().ok();
             } else if arg.starts_with("-c") && arg.len() > 2 {
                 bytes = arg[2..].parse::<usize>().ok();
+            } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
+                force_quiet = true;
+            } else if arg == "-v" || arg == "--verbose" {
+                force_verbose = true;
             } else if arg.starts_with('-')
                 && arg.len() > 1
                 && arg[1..].chars().all(|c| c.is_ascii_digit())
@@ -40791,7 +40811,14 @@ impl ShellExecutor {
             files.push("-");
         }
 
-        let show_headers = files.len() > 1;
+        // coreutils: header on iff >1 file. -q forces off, -v forces on.
+        let show_headers = if force_quiet {
+            false
+        } else if force_verbose {
+            true
+        } else {
+            files.len() > 1
+        };
 
         for (idx, file) in files.iter().enumerate() {
             if show_headers {
