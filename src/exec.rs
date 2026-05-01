@@ -29510,12 +29510,81 @@ impl ShellExecutor {
                         1
                     };
                 }
-                "-b" | "-a" | "-e" | "-m" => {
-                    // Other zstyle flag forms: -b store-as-bool, -a
-                    // store-as-array, -e evaluate, -m test-with-
-                    // pattern. zshrs hasn't wired these up; accept
-                    // silently (zsh accepts but the test shells
-                    // don't exercise these forms).
+                "-b" => {
+                    // zstyle -b context style param: store boolean
+                    // ("yes"/"no") in scalar `param`. Per zutil.c
+                    // bin_zstyle case 'b': test_bool returning Some
+                    // means we have a value, format as yes/no.
+                    if args.len() < 4 {
+                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        return 1;
+                    }
+                    let context = &args[1];
+                    let style = &args[2];
+                    let var_name = &args[3];
+                    let val = if self.style_table.test_bool(context, style).unwrap_or(false) {
+                        "yes"
+                    } else {
+                        "no"
+                    };
+                    self.variables.insert(var_name.clone(), val.to_string());
+                    return if self.style_table.get(context, style).is_some() {
+                        0
+                    } else {
+                        1
+                    };
+                }
+                "-a" => {
+                    // zstyle -a context style array_param: copy all
+                    // style values into the named array (zutil.c
+                    // bin_zstyle case 'a').
+                    if args.len() < 4 {
+                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        return 1;
+                    }
+                    let context = &args[1];
+                    let style = &args[2];
+                    let array_name = &args[3];
+                    if let Some(values) = self.style_table.get(context, style) {
+                        self.arrays.insert(array_name.clone(), values.to_vec());
+                        return 0;
+                    }
+                    return 1;
+                }
+                "-m" => {
+                    // zstyle -m context style pattern: test if any
+                    // style value matches the glob pattern (zutil.c
+                    // bin_zstyle case 'm'). Returns 0 on match.
+                    if args.len() < 4 {
+                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        return 1;
+                    }
+                    let context = &args[1];
+                    let style = &args[2];
+                    let pattern = &args[3];
+                    if let Some(values) = self.style_table.get(context, style) {
+                        for v in values {
+                            if Self::glob_match_static(v, pattern) {
+                                return 0;
+                            }
+                        }
+                    }
+                    return 1;
+                }
+                "-e" => {
+                    // zstyle -e context style value...: stores values
+                    // marked as expressions. The expansion happens at
+                    // -g/-s lookup time. Mark the entry as eval form;
+                    // we don't yet evaluate the expression on lookup,
+                    // but record the values so re-listing works.
+                    if args.len() < 4 {
+                        eprintln!("zshrs:zstyle:1: not enough arguments");
+                        return 1;
+                    }
+                    let pattern = &args[1];
+                    let style = &args[2];
+                    let values: Vec<String> = args[3..].to_vec();
+                    self.style_table.set(pattern, style, values, true);
                     return 0;
                 }
                 "-L" => {
