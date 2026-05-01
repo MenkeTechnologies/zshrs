@@ -10536,20 +10536,18 @@ impl ShellExecutor {
         (normalized, true)
     }
 
-    /// Check if option name matches a pattern (for -m flag)
+    /// Check if option name matches a pattern for setopt -m. zsh
+    /// normalizes both pattern and option name by lowercasing and
+    /// stripping `-` / `_` (so `NO_GLOB`, `noGlob`, `no-glob` all
+    /// map to the same key), then runs the pattern through the
+    /// glob matcher. Direct port of options.c match_option pattern
+    /// path with the same case-insensitive normalization.
     fn option_matches_pattern(opt: &str, pattern: &str) -> bool {
         let pat = pattern.to_lowercase().replace(['-', '_'], "");
-        let opt_lower = opt.to_lowercase();
-
-        if pat.contains('*') || pat.contains('?') || pat.contains('[') {
-            let regex_pat = pat.replace('.', "\\.").replace('*', ".*").replace('?', ".");
-            let full_pattern = format!("^{}$", regex_pat);
-            cached_regex(&full_pattern)
-                .map(|re| re.is_match(&opt_lower))
-                .unwrap_or(false)
-        } else {
-            opt_lower == pat
-        }
+        let opt_lower = opt.to_lowercase().replace(['-', '_'], "");
+        // Use the canonical glob matcher so character classes,
+        // extendedglob, etc. behave the same as everywhere else.
+        Self::glob_match_static(&opt_lower, &pat)
     }
 
     /// Try to load a function from ZWC files in fpath. Returns true iff the
