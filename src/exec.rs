@@ -25248,7 +25248,7 @@ mod tests {
 impl ShellExecutor {
     fn builtin_history(&self, args: &[String]) -> i32 {
         let Some(ref engine) = self.history else {
-            eprintln!("history: history engine not available");
+            eprintln!("zshrs:history:1: history engine not available");
             return 1;
         };
 
@@ -25388,7 +25388,7 @@ impl ShellExecutor {
                 0
             }
             Err(e) => {
-                eprintln!("history: {}", e);
+                eprintln!("zshrs:history:1: {}", e);
                 1
             }
         }
@@ -25401,7 +25401,7 @@ impl ShellExecutor {
     /// -p/-P (push/pop history stack), -I (skip old), -L (local), -s (substitute)
     fn builtin_fc(&mut self, args: &[String]) -> i32 {
         let Some(ref engine) = self.history else {
-            eprintln!("fc: history engine not available");
+            eprintln!("zshrs:fc:1: history engine not available");
             return 1;
         };
 
@@ -25595,7 +25595,7 @@ impl ShellExecutor {
                         }
                     }
                     Err(e) => {
-                        eprintln!("fc: cannot write {}: {}", path.display(), e);
+                        eprintln!("zshrs:fc:1: cannot write {}: {}", path.display(), e);
                         return 1;
                     }
                 }
@@ -25826,7 +25826,7 @@ impl ShellExecutor {
                     0
                 }
                 Err(e) => {
-                    eprintln!("fc: {}", e);
+                    eprintln!("zshrs:fc:1: {}", e);
                     1
                 }
             }
@@ -25842,11 +25842,11 @@ impl ShellExecutor {
                     self.execute_script(&cmd).unwrap_or(1)
                 }
                 Ok(None) => {
-                    eprintln!("fc: no command to re-execute");
+                    eprintln!("zshrs:fc:1: no command to re-execute");
                     1
                 }
                 Err(e) => {
-                    eprintln!("fc: {}", e);
+                    eprintln!("zshrs:fc:1: {}", e);
                     1
                 }
             }
@@ -25858,11 +25858,11 @@ impl ShellExecutor {
                     self.execute_script(&entry.command).unwrap_or(1)
                 }
                 Ok(None) => {
-                    eprintln!("fc: no command to re-execute");
+                    eprintln!("zshrs:fc:1: no command to re-execute");
                     1
                 }
                 Err(e) => {
-                    eprintln!("fc: {}", e);
+                    eprintln!("zshrs:fc:1: {}", e);
                     1
                 }
             }
@@ -25900,11 +25900,11 @@ impl ShellExecutor {
                         self.execute_script(&entry.command).unwrap_or(1)
                     }
                     Ok(None) => {
-                        eprintln!("fc: event not found");
+                        eprintln!("zshrs:fc:1: event not found");
                         1
                     }
                     Err(e) => {
-                        eprintln!("fc: {}", e);
+                        eprintln!("zshrs:fc:1: {}", e);
                         1
                     }
                 }
@@ -25924,11 +25924,11 @@ impl ShellExecutor {
                         self.execute_script(&entries[0].command).unwrap_or(1)
                     }
                     Ok(_) => {
-                        eprintln!("fc: event not found: {}", arg);
+                        eprintln!("zshrs:fc:1: event not found: {}", arg);
                         1
                     }
                     Err(e) => {
-                        eprintln!("fc: {}", e);
+                        eprintln!("zshrs:fc:1: {}", e);
                         1
                     }
                 }
@@ -25941,11 +25941,11 @@ impl ShellExecutor {
                     self.execute_script(&entry.command).unwrap_or(1)
                 }
                 Ok(None) => {
-                    eprintln!("fc: no command to re-execute");
+                    eprintln!("zshrs:fc:1: no command to re-execute");
                     1
                 }
                 Err(e) => {
-                    eprintln!("fc: {}", e);
+                    eprintln!("zshrs:fc:1: {}", e);
                     1
                 }
             }
@@ -37546,7 +37546,7 @@ impl ShellExecutor {
         // stack is empty, zsh's read uses an empty string (builtin.c:6770
         // ternary `nonempty(bufstack) ? getlinknode(bufstack) : ztrdup("")`).
         if args.is_empty() {
-            eprintln!("getln: missing variable name");
+            eprintln!("zshrs:getln:1: missing variable name");
             return 1;
         }
         let line = self.buffer_stack.pop().unwrap_or_default();
