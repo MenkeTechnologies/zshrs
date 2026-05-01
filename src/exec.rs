@@ -41151,6 +41151,8 @@ impl ShellExecutor {
         let mut count_words = false;
         let mut count_bytes = false;
         let mut count_chars = false;
+        // -L / --max-line-length: width of the longest input line.
+        let mut count_max = false;
         let mut files: Vec<&str> = Vec::new();
 
         for arg in args {
@@ -41163,6 +41165,7 @@ impl ShellExecutor {
                 // give char counts smaller than the byte count.
                 "-c" => count_bytes = true,
                 "-m" => count_chars = true,
+                "-L" | "--max-line-length" => count_max = true,
                 a if a.starts_with('-') => {
                     for c in a[1..].chars() {
                         match c {
@@ -41170,6 +41173,7 @@ impl ShellExecutor {
                             'w' => count_words = true,
                             'c' => count_bytes = true,
                             'm' => count_chars = true,
+                            'L' => count_max = true,
                             _ => {}
                         }
                     }
@@ -41178,7 +41182,7 @@ impl ShellExecutor {
             }
         }
 
-        if !count_lines && !count_words && !count_bytes && !count_chars {
+        if !count_lines && !count_words && !count_bytes && !count_chars && !count_max {
             count_lines = true;
             count_words = true;
             count_bytes = true;
@@ -41192,6 +41196,7 @@ impl ShellExecutor {
         let mut total_words = 0usize;
         let mut total_bytes = 0usize;
         let mut total_chars = 0usize;
+        let mut total_max = 0usize;
 
         for file in &files {
             let reader: Box<dyn BufRead> = if *file == "-" {
@@ -41210,18 +41215,26 @@ impl ShellExecutor {
             let mut words = 0usize;
             let mut bytes = 0usize;
             let mut chars = 0usize;
+            let mut max_line: usize = 0;
 
             for line in reader.lines().flatten() {
                 lines += 1;
                 words += line.split_whitespace().count();
                 bytes += line.len() + 1; // +1 for the trailing \n
                 chars += line.chars().count() + 1; // +1 for the \n codepoint
+                let w = line.chars().count();
+                if w > max_line {
+                    max_line = w;
+                }
             }
 
             total_lines += lines;
             total_words += words;
             total_bytes += bytes;
             total_chars += chars;
+            if max_line > total_max {
+                total_max = max_line;
+            }
 
             let mut out = String::new();
             if count_lines {
@@ -41235,6 +41248,9 @@ impl ShellExecutor {
             }
             if count_chars {
                 out.push_str(&format!("{:8}", chars));
+            }
+            if count_max {
+                out.push_str(&format!("{:8}", max_line));
             }
             if *file != "-" {
                 out.push_str(&format!(" {}", file));
@@ -41258,6 +41274,9 @@ impl ShellExecutor {
             }
             if count_chars {
                 out.push_str(&format!("{:8}", total_chars));
+            }
+            if count_max {
+                out.push_str(&format!("{:8}", total_max));
             }
             out.push_str(" total");
             println!("{}", out.trim_start());
