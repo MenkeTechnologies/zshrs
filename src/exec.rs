@@ -33823,19 +33823,29 @@ impl ShellExecutor {
         self.builtin_fc(&fc_args)
     }
 
-    /// ttyctl - control terminal settings
-    fn builtin_ttyctl(&self, args: &[String]) -> i32 {
+    /// ttyctl - control terminal settings. Direct port of
+    /// zsh/Src/builtin.c:7454-7463 bin_ttyctl. -f freezes the tty
+    /// state (zshrs won't restore tty after each command); -u unfreezes;
+    /// no flags prints the current state. The freeze flag is stashed in
+    /// `self.options["tty_frozen"]` so other builtins (sched, ZLE) can
+    /// see it.
+    fn builtin_ttyctl(&mut self, args: &[String]) -> i32 {
+        let mut got_f = false;
+        let mut got_u = false;
         for arg in args {
             match arg.as_str() {
-                "-f" => {
-                    // Freeze terminal settings
-                    // In a full implementation, this would save terminal state
-                }
-                "-u" => {
-                    // Unfreeze terminal settings
-                }
+                "-f" => got_f = true,
+                "-u" => got_u = true,
                 _ => {}
             }
+        }
+        if got_f {
+            self.options.insert("tty_frozen".to_string(), true);
+        } else if got_u {
+            self.options.insert("tty_frozen".to_string(), false);
+        } else {
+            let frozen = self.options.get("tty_frozen").copied().unwrap_or(false);
+            println!("tty is {}frozen", if frozen { "" } else { "not " });
         }
         0
     }
