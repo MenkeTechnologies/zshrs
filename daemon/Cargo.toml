@@ -1,0 +1,41 @@
+[package]
+name = "zshrs-daemon"
+version = "0.10.1"
+edition = "2021"
+description = "Singleton daemon for zshrs — owns fsnotify, rkyv shard images, catalog/history SQLite, IPC, pub/sub, and cross-shell coordination"
+license = "MIT"
+authors = ["MenkeTechnologies"]
+repository = "https://github.com/MenkeTechnologies/zshrs"
+keywords = ["shell", "zsh", "daemon", "ipc", "rkyv"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "zshrs_daemon"
+path = "lib.rs"
+
+[dependencies]
+atty = "0.2"
+byteorder = "1"
+chrono = "0.4"
+dirs = "5"
+libc = "0.2"
+memmap2 = "0.9"
+nix = { version = "0.29", features = ["signal", "process", "term", "fs"] }
+notify = "6"
+notify-debouncer-mini = "0.4"
+parking_lot = "0.12"
+rand = "0.8"
+rkyv = { version = "0.7", features = ["validation", "archive_le", "size_32"] }
+rusqlite = "0.32"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "io-util", "signal", "time", "sync", "macros"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+
+[dev-dependencies]
+tempfile = "3"
+filetime = "0.2.27"

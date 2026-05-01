@@ -3477,25 +3477,27 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'C' => {
-                    // Capitalize first letter of each word; rest lowercase.
-                    let cap = |s: &str| -> String {
-                        s.split_whitespace()
-                            .map(|w| {
-                                let mut chars = w.chars();
-                                match chars.next() {
-                                    Some(first) => {
-                                        first.to_uppercase().collect::<String>()
-                                            + &chars.as_str().to_lowercase()
-                                    }
-                                    None => String::new(),
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    };
+                    // `(C)` — capitalize. Direct port of
+                    // src/zsh/Src/hist.c:2239-2256 CASMOD_CAPS via
+                    // crate::subst::casemodify. Treats any non-
+                    // alphanumeric (including punctuation, control
+                    // chars, NOT just whitespace) as a word boundary
+                    // and lowercases mid-word uppercase letters.
                     state = match state {
-                        St::S(s) => St::S(cap(&s)),
-                        St::A(a) => St::A(a.into_iter().map(|s| cap(&s)).collect()),
+                        St::S(s) => St::S(crate::subst::casemodify(
+                            &s,
+                            crate::subst::CaseMod::Caps,
+                        )),
+                        St::A(a) => St::A(
+                            a.into_iter()
+                                .map(|s| {
+                                    crate::subst::casemodify(
+                                        &s,
+                                        crate::subst::CaseMod::Caps,
+                                    )
+                                })
+                                .collect(),
+                        ),
                     };
                 }
                 'V' => {
@@ -14796,20 +14798,10 @@ impl ShellExecutor {
                                     out = out.to_lowercase();
                                 }
                                 ZshParamFlag::Capitalize => {
-                                    out = out
-                                        .split_whitespace()
-                                        .map(|word| {
-                                            let mut c = word.chars();
-                                            match c.next() {
-                                                None => String::new(),
-                                                Some(f) => {
-                                                    f.to_uppercase().collect::<String>()
-                                                        + c.as_str()
-                                                }
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(" ");
+                                    out = crate::subst::casemodify(
+                                        &out,
+                                        crate::subst::CaseMod::Caps,
+                                    );
                                 }
                                 ZshParamFlag::Split(sep) => {
                                     // Split scalar on sep, return space-joined
@@ -17996,8 +17988,28 @@ impl ShellExecutor {
                         result = String::new();
                     }
                 }
-                'l' => result = result.to_lowercase(),
-                'u' => result = result.to_uppercase(),
+                'l' => {
+                    // `:l` lowercase. Direct port of
+                    // src/zsh/Src/hist.c:931-933 — calls casemodify
+                    // with CASMOD_LOWER. Use the faithful
+                    // casemodify port instead of plain to_lowercase
+                    // for Unicode-correct multibyte handling.
+                    result = crate::subst::casemodify(&result, crate::subst::CaseMod::Lower);
+                }
+                'u' => {
+                    // `:u` uppercase. Port of src/zsh/Src/hist.c:934-936.
+                    result = crate::subst::casemodify(&result, crate::subst::CaseMod::Upper);
+                }
+                'C' => {
+                    // `:C` capitalize. zsh-only modifier per
+                    // hist.c (see CASMOD_CAPS dispatch via
+                    // casemodify). The history-modifier loop's
+                    // legacy path didn't recognize `:C` — only the
+                    // `(C)` parameter flag did. Same semantics:
+                    // word-aware capitalization with mid-word
+                    // lowercase enforcement.
+                    result = crate::subst::casemodify(&result, crate::subst::CaseMod::Caps);
+                }
                 'q' => {
                     // zsh `:q` uses backslash quoting, not single-quote
                     // wrapping. Each shell-meta char gets a `\` prefix.
@@ -18009,6 +18021,16 @@ impl ShellExecutor {
                         out.push(ch);
                     }
                     result = out;
+                }
+                'x' => {
+                    // `:x` quote with word breaks. Direct port of
+                    // src/zsh/Src/hist.c:2527-2556 quotebreak —
+                    // wraps the value in single quotes, escapes
+                    // internal `'` as `'\''`, AND closes-then-reopens
+                    // SQ around each whitespace char (so `hello world`
+                    // becomes `'hello' 'world'`). Already ported as a
+                    // standalone helper in hist.rs.
+                    result = crate::hist::quotebreak(&result);
                 }
                 'Q' => {
                     // Same shell-quote-remove as the other :Q path
@@ -18417,17 +18439,14 @@ impl ShellExecutor {
             ZshParamFlag::At => val.to_string(),
             ZshParamFlag::Lower => val.to_lowercase(),
             ZshParamFlag::Upper => val.to_uppercase(),
-            ZshParamFlag::Capitalize => val
-                .split_whitespace()
-                .map(|word| {
-                    let mut c = word.chars();
-                    match c.next() {
-                        None => String::new(),
-                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" "),
+            ZshParamFlag::Capitalize => {
+                // Route through the faithful casemodify port — direct
+                // port of src/zsh/Src/hist.c:2194-2370 CASMOD_CAPS.
+                // The naive split_whitespace+title-case approach
+                // collapsed multi-space runs and missed mid-word
+                // lowercasing of non-leading uppercases.
+                crate::subst::casemodify(val, crate::subst::CaseMod::Caps)
+            }
             ZshParamFlag::Join(sep) => {
                 if let Some(arr) = self.arrays.get(name) {
                     arr.join(sep)

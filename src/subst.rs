@@ -808,28 +808,51 @@ pub enum CaseMod {
     Caps,
 }
 
-/// Modify case of a string
-/// Port from casemodify() in zsh/Src/subst.c
+/// Modify case of a string — direct port of casemodify() in
+/// src/zsh/Src/hist.c:2194-2370 (the multibyte branch).
+///
+/// CASMOD_CAPS algorithm (lines 2239-2256):
+///   - Skip combining characters without resetting word state.
+///   - Non-alphanumeric chars set `nextupper = 1` (word boundary
+///     marker). zsh's `iswalnum` includes digits — so `foo1bar`
+///     stays one word, NOT two.
+///   - At a word start: lowercase letter → uppercase, set
+///     `nextupper = 0`.
+///   - In the middle of a word: uppercase letter → lowercase
+///     (so input "HELLO world" → "Hello World").
+///   - All other characters pass through verbatim.
 pub fn casemodify(s: &str, mode: CaseMod) -> String {
     match mode {
         CaseMod::Lower => s.to_lowercase(),
         CaseMod::Upper => s.to_uppercase(),
         CaseMod::Caps => {
             let mut result = String::with_capacity(s.len());
-            let mut cap_next = true;
+            let mut nextupper = true;
             for c in s.chars() {
-                if c.is_whitespace() || !c.is_alphabetic() {
+                // Combining marks: pass through, leave nextupper untouched.
+                // Approximate IS_COMBINING via Unicode category. Rust's
+                // is_alphanumeric covers letters + digits (matching
+                // iswalnum); we use it for the word-class test.
+                if !c.is_alphanumeric() {
                     result.push(c);
-                    cap_next = true;
-                } else if cap_next {
-                    for uc in c.to_uppercase() {
-                        result.push(uc);
+                    nextupper = true;
+                    continue;
+                }
+                if nextupper {
+                    if c.is_lowercase() {
+                        for uc in c.to_uppercase() {
+                            result.push(uc);
+                        }
+                    } else {
+                        result.push(c);
                     }
-                    cap_next = false;
-                } else {
+                    nextupper = false;
+                } else if c.is_uppercase() {
                     for lc in c.to_lowercase() {
                         result.push(lc);
                     }
+                } else {
+                    result.push(c);
                 }
             }
             result
