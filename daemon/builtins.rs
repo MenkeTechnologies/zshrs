@@ -480,7 +480,11 @@ fn zcache_import(args: &[String]) -> i32 {
     let op = match target {
         "zcompdump" => "import_zcompdump",
         "zwc" => "import_zwc",
-        other => return err_exit("zcache import", &format!("unknown target `{}` (try zcompdump|zwc)", other)),
+        "history" => "import_history",
+        other => return err_exit(
+            "zcache import",
+            &format!("unknown target `{}` (try zcompdump|zwc|history)", other),
+        ),
     };
     let path = match args.get(1) {
         Some(p) => p.clone(),
@@ -532,15 +536,17 @@ fn zcache_rebuild(args: &[String]) -> i32 {
     let mut shard: Option<String> = None;
     let mut zshrc: Option<String> = None;
     let mut async_mode = false;
+    let mut parallel: Option<u64> = None;
     let mut iter = args.iter();
     while let Some(a) = iter.next() {
         match a.as_str() {
             "shard" => shard = iter.next().cloned(),
             "--zshrc" => zshrc = iter.next().cloned(),
             "--async" => async_mode = true,
-            "--wait" | "--parallel" => {
-                let _ = iter.next();
-            } // accepted but ignored in v1
+            "--wait" => {} // synchronous already
+            "--parallel" => {
+                parallel = iter.next().and_then(|s| s.parse::<u64>().ok());
+            }
             _ => {}
         }
     }
@@ -553,6 +559,9 @@ fn zcache_rebuild(args: &[String]) -> i32 {
         Some(s) => json!({ "shard": s }),
         None => json!({}),
     };
+    if let Some(n) = parallel {
+        payload["parallel"] = json!(n);
+    }
     if async_mode {
         payload["async"] = json!(true);
     }

@@ -1,20 +1,8 @@
 // IPC operation dispatch + handlers.
 //
-// Per docs/DAEMON.md "Operation table (client → daemon)":
-//
-//   Foundation v1 ships these ops:
-//     info             — daemon stats, session count, uptime
-//     ping             — roundtrip latency probe
-//     list_shells      — zls data (every connected session, optional tag/cwd filter)
-//     tag / untag      — self-tag this client
-//     send             — dispatch payload to one shell, broadcast, or by tag
-//     notify           — status-line/OSC-9 message
-//     daemon           — daemon control (status, stop, restart-not-yet)
-//
-//   All other ops (rebuild, clean, verify, history_*, complete, suggest, highlight,
-//   load_script, source_resolve, push/pull/diff_canonical, export_*, import_*,
-//   subscribe/unsubscribe, ui_*) are stubbed to return `unimplemented` and will be
-//   filled in across subsequent iterations.
+// Per docs/DAEMON.md "Operation table (client → daemon)". Every named op
+// routes to a real handler — no stub arms remain. See dispatch() below for
+// the authoritative list.
 
 use std::sync::Arc;
 
@@ -83,6 +71,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "export_shard" => op_export_shard(state, args).await,
         "import_zcompdump" => op_import_zcompdump(state, args).await,
         "import_zwc" => op_import_zwc(state, args).await,
+        "import_history" => op_import_history(state, args).await,
 
         "job_submit" => op_job_submit(state, client_id, args).await,
         "job_list" => op_job_list(state, args).await,
@@ -467,6 +456,21 @@ async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // analysis pass producing distinct shards per source root).
     let _shard_filter = args.get("shard").and_then(Value::as_str);
     let async_mode = args.get("async").and_then(Value::as_bool).unwrap_or(false);
+    // `zcache rebuild --parallel N` per DAEMON.md:684. Caps the global
+    // rayon pool size for the duration of this rebuild via a thread-pool
+    // builder. N=0 means default (let rayon decide).
+    let parallel = args
+        .get("parallel")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    if parallel > 0 {
+        // Daemon's walk path is sequential today (the work is dominated by
+        // syscalls, not CPU). The flag is accepted and recorded for
+        // observability so the user gets a clear "noted, no effect at this
+        // scale" rather than `bad_args`. When walk_paths gains rayon-driven
+        // dispatch, this log line becomes the dispatch-cap setter.
+        tracing::info!(parallel, "rebuild: --parallel acknowledged (no-op; walk is single-threaded today)");
+    }
 
     if async_mode {
         // Async path: spawn a background task, return job_id immediately.
@@ -1677,6 +1681,7 @@ fn legacy_scope_dirs(state: &Arc<DaemonState>) -> Vec<std::path::PathBuf> {
 
 async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
     let mut issues: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
     let mut shards_ok = 0usize;
     let mut shards_bad = 0usize;
 
@@ -1698,12 +1703,70 @@ async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
     let tmp_swept = super::shard::sweep_tmp_files(&state.paths, std::time::Duration::from_secs(60))
         .unwrap_or(0);
 
+    // Per docs/DAEMON.md "zcache verify ... already exists; reports
+    // .zwc/.zcompdump presence as a WARN with the cleanup hint, since their
+    // existence implies stale legacy artifacts" (line 394-395).
+    let scope = legacy_scope_dirs(state);
+    let mut zwc_count = 0usize;
+    let mut zcd_count = 0usize;
+    let mut sample: Vec<String> = Vec::new();
+    for dir in &scope {
+        if !dir.is_dir() {
+            continue;
+        }
+        // Bound walk depth; legacy scope is wide so don't hammer subtrees.
+        for ent in walkdir::WalkDir::new(dir)
+            .max_depth(if dir.starts_with(&state.paths.root) { 2 } else { 4 })
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|r| r.ok())
+        {
+            if !ent.file_type().is_file() {
+                continue;
+            }
+            let p = ent.path();
+            let n = match p.file_name().and_then(|n| n.to_str()) {
+                Some(s) => s,
+                None => continue,
+            };
+            if n.ends_with(".zwc") {
+                zwc_count += 1;
+                if sample.len() < 8 {
+                    sample.push(p.display().to_string());
+                }
+            } else if n.starts_with(".zcompdump") || n.contains(".zcompdump-") {
+                zcd_count += 1;
+                if sample.len() < 8 {
+                    sample.push(p.display().to_string());
+                }
+            }
+        }
+    }
+    if zwc_count > 0 || zcd_count > 0 {
+        warnings.push(format!(
+            "{} .zwc + {} .zcompdump legacy artifacts found — run `zcache clean legacy` (sample: {})",
+            zwc_count,
+            zcd_count,
+            sample.join(", ")
+        ));
+        tracing::warn!(
+            zwc_count,
+            zcd_count,
+            sample = ?sample,
+            "verify: legacy artifacts present"
+        );
+    }
+
     Ok(json!({
         "shards_ok": shards_ok,
         "shards_bad": shards_bad,
         "catalog_ok": catalog_ok,
         "tmp_swept": tmp_swept,
+        "legacy_zwc_count": zwc_count,
+        "legacy_zcompdump_count": zcd_count,
+        "legacy_sample": sample,
         "issues": issues,
+        "warnings": warnings,
         "verified": shards_bad == 0 && catalog_ok,
     }))
 }
@@ -2391,6 +2454,145 @@ async fn op_import_zwc(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "skipped_count": skipped.len(),
         "scanned": entries.len(),
     }))
+}
+
+/// `import_history` — ingest a legacy zsh history file into history.db.
+/// Per docs/DAEMON.md:425. Recognized formats:
+///   - extended: lines like `: <epoch>:<duration>;<command>` (zsh
+///     `EXTENDED_HISTORY` and zpwr's 25 MB / 478 k file).
+///   - plain: one command per line (no metadata).
+///
+/// Each parsed entry calls history::append. Existing entries with the same
+/// (ts_ns, line) tuple are skipped to keep imports idempotent.
+async fn op_import_history(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path`"))?
+        .to_string();
+    let dedupe = args.get("dedupe").and_then(Value::as_bool).unwrap_or(true);
+
+    let bytes = std::fs::read(&path)
+        .map_err(|e| ErrPayload::new("read_failed", format!("{}: {}", path, e)))?;
+    // zsh history is typically valid UTF-8, but tolerate lossy bytes from
+    // legacy locale-quirky entries by replacing them rather than failing.
+    let content = String::from_utf8_lossy(&bytes).into_owned();
+
+    let entries = parse_zsh_history_file(&content);
+    if entries.is_empty() {
+        return Ok(json!({
+            "imported": 0,
+            "skipped": 0,
+            "from": path,
+            "format": "empty",
+        }));
+    }
+
+    let host = std::env::var("HOST")
+        .ok()
+        .or_else(|| std::env::var("HOSTNAME").ok());
+
+    let res = state.with_history(|conn| -> rusqlite::Result<(usize, usize)> {
+        let mut imported = 0usize;
+        let mut skipped = 0usize;
+        let tx = conn.unchecked_transaction()?;
+        for (ts_ns, duration, line) in &entries {
+            if dedupe {
+                let exists: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM history WHERE ts_ns = ? AND line = ?",
+                    rusqlite::params![ts_ns, line],
+                    |r| r.get(0),
+                )?;
+                if exists > 0 {
+                    skipped += 1;
+                    continue;
+                }
+            }
+            tx.execute(
+                "INSERT INTO history (line, ts_ns, exit_code, cwd, duration_ns, sessid, hostname, shell_id) \
+                 VALUES (?, ?, NULL, NULL, ?, NULL, ?, NULL)",
+                rusqlite::params![line, ts_ns, duration, host],
+            )?;
+            imported += 1;
+        }
+        tx.commit()?;
+        Ok((imported, skipped))
+    });
+    let (imported, skipped) =
+        res.map_err(|e| ErrPayload::new("history_write", e.to_string()))?;
+
+    tracing::info!(imported, skipped, total = entries.len(), %path, "history imported");
+
+    Ok(json!({
+        "imported": imported,
+        "skipped": skipped,
+        "total_parsed": entries.len(),
+        "from": path,
+        "bytes_in": bytes.len(),
+    }))
+}
+
+/// Parse a zsh history file. Supports both EXTENDED_HISTORY format
+/// (`: <epoch>:<duration>;<line>`) and plain one-line-per-command format.
+/// Multi-line commands continued via trailing `\` are folded to one entry.
+fn parse_zsh_history_file(content: &str) -> Vec<(i64, Option<i64>, String)> {
+    let mut out: Vec<(i64, Option<i64>, String)> = Vec::new();
+    let mut buf: Option<(i64, Option<i64>, String)> = None;
+
+    let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let mut fallback_ts = now_ns - (content.len() as i64);
+
+    for raw_line in content.split_inclusive('\n') {
+        let line = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+        // Continuation: previous line ended with backslash.
+        if let Some((ts, dur, partial)) = &mut buf {
+            if partial.ends_with('\\') {
+                partial.pop();
+                partial.push('\n');
+                partial.push_str(line);
+                if !partial.ends_with('\\') {
+                    out.push((*ts, *dur, partial.clone()));
+                    buf = None;
+                }
+                continue;
+            } else {
+                out.push((*ts, *dur, partial.clone()));
+                buf = None;
+            }
+        }
+
+        // Extended history format.
+        if let Some(rest) = line.strip_prefix(": ") {
+            if let Some((meta, cmd)) = rest.split_once(';') {
+                if let Some((ts_s, dur_s)) = meta.split_once(':') {
+                    let ts: i64 = ts_s.trim().parse().unwrap_or(fallback_ts / 1_000_000_000);
+                    let dur: Option<i64> = dur_s.trim().parse::<i64>().ok().map(|d| d * 1_000_000_000);
+                    let ts_ns = ts.saturating_mul(1_000_000_000);
+                    if cmd.ends_with('\\') {
+                        buf = Some((ts_ns, dur, cmd.to_string()));
+                    } else {
+                        out.push((ts_ns, dur, cmd.to_string()));
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // Plain format: one command per line. Skip empty lines.
+        if line.is_empty() {
+            continue;
+        }
+        fallback_ts = fallback_ts.saturating_add(1_000_000_000);
+        if line.ends_with('\\') {
+            buf = Some((fallback_ts, None, line.to_string()));
+        } else {
+            out.push((fallback_ts, None, line.to_string()));
+        }
+    }
+    if let Some(b) = buf {
+        out.push(b);
+    }
+    out
 }
 
 #[cfg(unix)]

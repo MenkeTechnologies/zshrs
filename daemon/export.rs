@@ -486,14 +486,48 @@ fn render(
         "native" => render_native(state, target),
         "disasm" => render_disasm(state, target),
         "zcompdump" => render_zcompdump_format(state, target),
+        "zsh-histfile" => render_zsh_histfile(state, target),
         other => Err(ErrPayload::new(
             "bad_format",
             format!(
-                "format `{}` not supported (try sh|json|yaml|text|csv|sql|native|disasm|zcompdump)",
+                "format `{}` not supported (try sh|json|yaml|text|csv|sql|native|disasm|zcompdump|zsh-histfile)",
                 other
             ),
         )),
     }
+}
+
+/// Render history.db rows in zsh's EXTENDED_HISTORY format
+/// (`: <epoch>:<duration>;<command>`). Per docs/DAEMON.md:425
+/// "Backwards-export to legacy zsh format available via
+/// `zcache export history --format zsh-histfile` for round-trip."
+fn render_zsh_histfile(
+    state: &DaemonState,
+    target: &str,
+) -> std::result::Result<String, ErrPayload> {
+    if target != "history" {
+        return Err(ErrPayload::new(
+            "bad_format",
+            format!(
+                "zsh-histfile only valid for target `history`, got `{}`",
+                target
+            ),
+        ));
+    }
+    let rows = state
+        .with_history(|conn| -> rusqlite::Result<Vec<super::history::HistoryRow>> {
+            super::history::query(conn, None, "fts", None, None, None, 1_000_000, false)
+        })
+        .map_err(|e| ErrPayload::new("history_query", e.to_string()))?;
+    let mut out = String::new();
+    for r in &rows {
+        let secs = r.ts_ns / 1_000_000_000;
+        let dur_secs = r.duration_ns.unwrap_or(0) / 1_000_000_000;
+        // Replace embedded newlines with `\` continuation per zsh hist format.
+        let line_escaped = r.line.replace('\n', "\\\n");
+        out.push_str(&format!(": {}:{};{}\n", secs, dur_secs, line_escaped));
+    }
+    Ok(out)
 }
 
 fn read_canonical(
