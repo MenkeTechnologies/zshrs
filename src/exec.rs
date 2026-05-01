@@ -17612,6 +17612,71 @@ impl ShellExecutor {
                 }
             }
 
+            // === SIGNAL NAMES ===
+            // $signals: array indexed by signal number (1-based) where
+            // each slot holds the bare signal name. Direct port of
+            // zsh/Modules/parameter.c signals_*. zshrs uses libc signal
+            // constants so the mapping matches the host platform
+            // (macOS USR1=30, Linux USR1=10).
+            "signals" => {
+                let map: &[(i32, &str)] = &[
+                    (libc::SIGHUP, "HUP"),
+                    (libc::SIGINT, "INT"),
+                    (libc::SIGQUIT, "QUIT"),
+                    (libc::SIGILL, "ILL"),
+                    (libc::SIGTRAP, "TRAP"),
+                    (libc::SIGABRT, "ABRT"),
+                    #[cfg(target_os = "macos")]
+                    (libc::SIGEMT, "EMT"),
+                    (libc::SIGFPE, "FPE"),
+                    (libc::SIGKILL, "KILL"),
+                    (libc::SIGBUS, "BUS"),
+                    (libc::SIGSEGV, "SEGV"),
+                    (libc::SIGSYS, "SYS"),
+                    (libc::SIGPIPE, "PIPE"),
+                    (libc::SIGALRM, "ALRM"),
+                    (libc::SIGTERM, "TERM"),
+                    (libc::SIGURG, "URG"),
+                    (libc::SIGSTOP, "STOP"),
+                    (libc::SIGTSTP, "TSTP"),
+                    (libc::SIGCONT, "CONT"),
+                    (libc::SIGCHLD, "CHLD"),
+                    (libc::SIGTTIN, "TTIN"),
+                    (libc::SIGTTOU, "TTOU"),
+                    (libc::SIGIO, "IO"),
+                    (libc::SIGXCPU, "XCPU"),
+                    (libc::SIGXFSZ, "XFSZ"),
+                    (libc::SIGVTALRM, "VTALRM"),
+                    (libc::SIGPROF, "PROF"),
+                    (libc::SIGWINCH, "WINCH"),
+                    #[cfg(target_os = "macos")]
+                    (libc::SIGINFO, "INFO"),
+                    (libc::SIGUSR1, "USR1"),
+                    (libc::SIGUSR2, "USR2"),
+                ];
+                if key == "@" || key == "*" {
+                    // Return one entry per signal in numeric order (1..N).
+                    let max = map.iter().map(|(n, _)| *n).max().unwrap_or(0) as usize;
+                    let mut slots: Vec<String> = vec![String::new(); max];
+                    for (n, name) in map {
+                        if (*n as usize) >= 1 && (*n as usize) <= max {
+                            slots[*n as usize - 1] = (*name).to_string();
+                        }
+                    }
+                    return Some(slots.join(" "));
+                }
+                // Numeric subscript -> name; name -> empty (zsh's
+                // $signals is keyed by number).
+                if let Ok(n) = key.parse::<i32>() {
+                    for (sig_num, name) in map {
+                        if *sig_num == n {
+                            return Some((*name).to_string());
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+
             // Not a special array
             _ => None,
         }
