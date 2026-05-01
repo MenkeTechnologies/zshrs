@@ -317,7 +317,16 @@ async fn op_daemon(state: &Arc<DaemonState>, args: Value) -> OpResult {
 
         "stop" => {
             tracing::info!("daemon stop requested via IPC");
-            // Schedule a self-SIGTERM after the response goes out.
+            // Broadcast daemon_shutdown to subscribers so anything depending on
+            // the daemon can drop their subscription / reconnect cleanly.
+            let payload = json!({
+                "pid": state.pid,
+                "uptime_ms": state.uptime_ms(),
+                "reason": "ipc_stop",
+                "grace_ms": 50,
+            });
+            let _ = state.broadcast(super::ipc::Frame::event("daemon_shutdown", payload), &[]);
+            // Schedule a self-SIGTERM after the response + event go out.
             tokio::spawn(async {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 use nix::sys::signal::{kill, Signal};
@@ -348,11 +357,24 @@ async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // analysis pass producing distinct shards per source root).
     let _shard_filter = args.get("shard").and_then(Value::as_str);
 
+    let start = std::time::Instant::now();
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
     let (image_path, hydrated, stats) = match super::walk::run_full_rebuild(state, generation) {
         Ok(v) => v,
         Err(e) => return Err(ErrPayload::new("rebuild_failed", e.to_string())),
     };
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    // Broadcast rebuild_complete event so subscribers tracking shard updates
+    // can re-mmap. Per docs/DAEMON.md async event types.
+    let event = json!({
+        "shard": "system",
+        "generation": generation,
+        "duration_ms": duration_ms,
+        "entries_hydrated": hydrated,
+        "image_path": image_path.display().to_string(),
+    });
+    let _ = state.broadcast(super::ipc::Frame::event("rebuild_complete", event), &[]);
 
     Ok(json!({
         "rebuilt": ["system"],
@@ -360,6 +382,7 @@ async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "generation": generation,
         "entries_hydrated": hydrated,
         "walk_stats": stats,
+        "duration_ms": duration_ms,
     }))
 }
 
