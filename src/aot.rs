@@ -1,5 +1,7 @@
-//! Ahead-of-time build: bake a shell script into a copy of the running `zshrs`
-//! binary as a compressed trailer, producing a self-contained executable.
+//! Ahead-of-time build: bake one or more shell scripts into a copy of the
+//! running `zshrs` binary as a compressed trailer, producing a self-contained
+//! executable. At startup, zshrs detects the trailer and runs every embedded
+//! script IN INPUT ORDER as a single concatenated zsh program.
 //!
 //! Layout (little-endian, appended to the end of a copy of the `zshrs` binary):
 //!
@@ -13,7 +15,8 @@
 //!   [8 bytes magic  b"ZSHRSAOT"]
 //! ```
 //!
-//! Payload v1 (single script, before zstd compression):
+//! Payload v1 (single script, BACKWARD-COMPAT decoder only — new builds
+//! always emit v2 even for one input):
 //!
 //! ```text
 //!   [u32 script_name_len]
@@ -21,10 +24,23 @@
 //!   [source bytes utf8]
 //! ```
 //!
-//! Direct port of `strykelang/strykelang/aot.rs` adapted for zsh source.
-//! Same trailer-on-binary trick; ELF (Linux) and Mach-O (macOS) loaders ignore
-//! bytes past the program-header-listed segments, so appending leaves the
-//! original `zshrs` fully runnable.
+//! Payload v2 (ordered file list — current `zbuild` output):
+//!
+//! ```text
+//!   [u32 file_count]
+//!   for each file (file_count times, in input order):
+//!     [u32 name_len][name utf8]
+//!     [u32 source_len][source utf8]
+//! ```
+//!
+//! Files run sequentially in iteration order. zsh has no "project" concept;
+//! ordering matches `--in` argv order. Globals/functions defined by file N
+//! are visible to file N+1 (single ShellExecutor across all files).
+//!
+//! ELF (Linux) and Mach-O (macOS) loaders ignore bytes past the program-
+//! header-listed segments, so appending leaves the original `zshrs` fully
+//! runnable. macOS resulting binary is unsigned; signed-build distributors
+//! must re-codesign.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -32,29 +48,79 @@ use std::path::{Path, PathBuf};
 
 /// 8-byte trailer magic.
 pub const AOT_MAGIC: &[u8; 8] = b"ZSHRSAOT";
-/// Trailer format version 1: single script.
+/// Trailer format version 1: single script (legacy decode-only).
 pub const AOT_VERSION_V1: u32 = 1;
+/// Trailer format version 2: ordered file list (current build output).
+pub const AOT_VERSION_V2: u32 = 2;
 /// Fixed trailer length: `8 (cl) + 8 (ul) + 4 (ver) + 4 (rsv) + 8 (magic)`.
 pub const TRAILER_LEN: u64 = 32;
 
 #[derive(Debug, Clone)]
-pub struct EmbeddedScript {
+pub struct EmbeddedFile {
     /// `__FILE__` / error-reporting name (e.g. `hello.zsh`).
     pub name: String,
     /// UTF-8 zsh source.
     pub source: String,
 }
 
-fn encode_payload_v1(name: &str, source: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + name.len() + source.len());
-    let name_len = u32::try_from(name.len()).expect("script name length fits in u32");
-    out.extend_from_slice(&name_len.to_le_bytes());
-    out.extend_from_slice(name.as_bytes());
-    out.extend_from_slice(source.as_bytes());
+/// One or more embedded files, in build-order. v1 binaries decode to a
+/// 1-element vec; v2 to N elements preserving input order.
+#[derive(Debug, Clone)]
+pub struct EmbeddedFiles(pub Vec<EmbeddedFile>);
+
+fn encode_payload_v2(files: &[EmbeddedFile]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64 + files.iter().map(|f| f.name.len() + f.source.len() + 8).sum::<usize>());
+    let count = u32::try_from(files.len()).expect("file count fits in u32");
+    out.extend_from_slice(&count.to_le_bytes());
+    for f in files {
+        let name_len = u32::try_from(f.name.len()).expect("name length fits in u32");
+        let src_len = u32::try_from(f.source.len()).expect("source length fits in u32");
+        out.extend_from_slice(&name_len.to_le_bytes());
+        out.extend_from_slice(f.name.as_bytes());
+        out.extend_from_slice(&src_len.to_le_bytes());
+        out.extend_from_slice(f.source.as_bytes());
+    }
     out
 }
 
-fn decode_payload_v1(bytes: &[u8]) -> Option<EmbeddedScript> {
+fn decode_payload_v2(bytes: &[u8]) -> Option<EmbeddedFiles> {
+    let mut pos = 0usize;
+    if bytes.len() < 4 {
+        return None;
+    }
+    let count = u32::from_le_bytes(bytes[pos..pos + 4].try_into().ok()?) as usize;
+    pos += 4;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        if pos + 4 > bytes.len() {
+            return None;
+        }
+        let name_len = u32::from_le_bytes(bytes[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+        if pos + name_len > bytes.len() {
+            return None;
+        }
+        let name = std::str::from_utf8(&bytes[pos..pos + name_len]).ok()?.to_string();
+        pos += name_len;
+        if pos + 4 > bytes.len() {
+            return None;
+        }
+        let src_len = u32::from_le_bytes(bytes[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+        if pos + src_len > bytes.len() {
+            return None;
+        }
+        let source = std::str::from_utf8(&bytes[pos..pos + src_len]).ok()?.to_string();
+        pos += src_len;
+        out.push(EmbeddedFile { name, source });
+    }
+    Some(EmbeddedFiles(out))
+}
+
+/// v1 decoder kept for backward compat: one-script payload promoted into a
+/// single-element EmbeddedFiles. Old binaries built with the previous zbuild
+/// still load.
+fn decode_payload_v1(bytes: &[u8]) -> Option<EmbeddedFiles> {
     if bytes.len() < 4 {
         return None;
     }
@@ -62,13 +128,9 @@ fn decode_payload_v1(bytes: &[u8]) -> Option<EmbeddedScript> {
     if 4 + name_len > bytes.len() {
         return None;
     }
-    let name = std::str::from_utf8(&bytes[4..4 + name_len])
-        .ok()?
-        .to_string();
-    let source = std::str::from_utf8(&bytes[4 + name_len..])
-        .ok()?
-        .to_string();
-    Some(EmbeddedScript { name, source })
+    let name = std::str::from_utf8(&bytes[4..4 + name_len]).ok()?.to_string();
+    let source = std::str::from_utf8(&bytes[4 + name_len..]).ok()?.to_string();
+    Some(EmbeddedFiles(vec![EmbeddedFile { name, source }]))
 }
 
 fn build_trailer(compressed_len: u64, uncompressed_len: u64, version: u32) -> [u8; 32] {
@@ -81,26 +143,26 @@ fn build_trailer(compressed_len: u64, uncompressed_len: u64, version: u32) -> [u
     trailer
 }
 
-/// Append a compressed v1 script payload to an existing file.
-pub fn append_embedded_script(out_path: &Path, name: &str, source: &str) -> io::Result<()> {
-    let payload = encode_payload_v1(name, source);
+/// Append a compressed v2 ordered-file payload to an existing file.
+pub fn append_embedded_files(out_path: &Path, files: &[EmbeddedFile]) -> io::Result<()> {
+    let payload = encode_payload_v2(files);
     let compressed = zstd::stream::encode_all(&payload[..], 3)?;
     let mut f = OpenOptions::new().append(true).open(out_path)?;
     f.write_all(&compressed)?;
     let trailer = build_trailer(
         compressed.len() as u64,
         payload.len() as u64,
-        AOT_VERSION_V1,
+        AOT_VERSION_V2,
     );
     f.write_all(&trailer)?;
     f.sync_all()?;
     Ok(())
 }
 
-/// Fast probe: read the last 32 bytes of `exe` and return the embedded script
-/// if present. Called at zshrs startup (before arg parsing) so an exe with a
-/// trailer runs the embedded script directly instead of the REPL.
-pub fn try_load_embedded_script(exe: &Path) -> Option<EmbeddedScript> {
+/// Fast probe: read the last 32 bytes of `exe` and return embedded files
+/// in build-order if present. Decodes both v1 (legacy single-script) and
+/// v2 (current ordered list). Called at zshrs startup before arg parsing.
+pub fn try_load_embedded(exe: &Path) -> Option<EmbeddedFiles> {
     let mut f = File::open(exe).ok()?;
     let size = f.metadata().ok()?.len();
     if size < TRAILER_LEN {
@@ -128,6 +190,7 @@ pub fn try_load_embedded_script(exe: &Path) -> Option<EmbeddedScript> {
     }
     match version {
         AOT_VERSION_V1 => decode_payload_v1(&payload),
+        AOT_VERSION_V2 => decode_payload_v2(&payload),
         _ => None,
     }
 }
@@ -182,16 +245,26 @@ fn copy_exe_without_trailer(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// `zbuild --in SCRIPT --out OUT`: bake SCRIPT into a copy of the running
-/// zshrs binary, producing a self-contained AOT executable.
-pub fn build(script_path: &Path, out_path: &Path) -> Result<PathBuf, String> {
-    let source = fs::read_to_string(script_path)
-        .map_err(|e| format!("zbuild: cannot read {}: {}", script_path.display(), e))?;
-    let script_name = script_path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("script.zsh")
-        .to_string();
+/// `zbuild --in A --in B --out OUT`: bake A and B into a copy of the
+/// running zshrs binary in input order, producing a self-contained AOT
+/// executable. At runtime, all embedded files run sequentially under one
+/// ShellExecutor — globals + functions from earlier files are visible
+/// to later ones.
+pub fn build(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf, String> {
+    if script_paths.is_empty() {
+        return Err("zbuild: at least one --in PATH required".to_string());
+    }
+    let mut files: Vec<EmbeddedFile> = Vec::with_capacity(script_paths.len());
+    for p in script_paths {
+        let source = fs::read_to_string(p)
+            .map_err(|e| format!("zbuild: cannot read {}: {}", p.display(), e))?;
+        let name = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("script.zsh")
+            .to_string();
+        files.push(EmbeddedFile { name, source });
+    }
     let exe = std::env::current_exe()
         .map_err(|e| format!("zbuild: locating current executable: {}", e))?;
     copy_exe_without_trailer(&exe, out_path).map_err(|e| {
@@ -202,7 +275,7 @@ pub fn build(script_path: &Path, out_path: &Path) -> Result<PathBuf, String> {
             e
         )
     })?;
-    append_embedded_script(out_path, &script_name, &source)
+    append_embedded_files(out_path, &files)
         .map_err(|e| format!("zbuild: write trailer: {}", e))?;
     set_executable(out_path);
     Ok(out_path.to_path_buf())
