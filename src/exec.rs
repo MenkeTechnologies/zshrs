@@ -36154,8 +36154,12 @@ impl ShellExecutor {
                 "-p" => parents = true,
                 "--" => {} // end of options (rest collected in fall-through)
                 s if s.starts_with('-') && s.len() > 1 => {
-                    // Unknown flag — accept silently per zsh's
-                    // permissive style.
+                    // coreutils rmdir errors on unknown flags. Old
+                    // permissive silent-accept made `rmdir -Z foo`
+                    // attempt to remove `foo` while losing the -Z
+                    // signal. Per coreutils convention.
+                    eprintln!("rmdir: unrecognized option: '{}'", s);
+                    return 1;
                 }
                 s => dirs.push(s),
             }
