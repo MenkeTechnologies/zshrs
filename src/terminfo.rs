@@ -308,6 +308,7 @@ pub static STR_NAMES: &[&str] = &[
 
 /// Execute echoti builtin
 pub fn builtin_echoti(args: &[&str]) -> (i32, String) {
+    // Direct port of src/zsh/Src/Modules/terminfo.c:64-127 bin_echoti.
     if args.is_empty() {
         return (1, "echoti: capability name required\n".to_string());
     }
@@ -319,24 +320,152 @@ pub fn builtin_echoti(args: &[&str]) -> (i32, String) {
         return (1, "echoti: terminal not initialized\n".to_string());
     }
 
+    // Numeric cap (terminfo.c:78-81).
     if let Some(n) = ti.get_num(cap_name) {
         return (0, format!("{}\n", n));
     }
 
+    // Boolean flag cap (terminfo.c:83-92).
     if let Some(b) = ti.get_flag(cap_name) {
         return (0, format!("{}\n", if b { "yes" } else { "no" }));
     }
 
-    if let Some(s) = ti.get_str(cap_name) {
-        if args.len() == 1 {
-            return (0, s);
+    // String cap (terminfo.c:94-100).
+    let cap_str = match ti.get_str(cap_name) {
+        Some(s) => s,
+        None => {
+            return (
+                1,
+                format!("echoti: no such terminfo capability: {}\n", cap_name),
+            );
+        }
+    };
+
+    // Cap arg count at 9 (terminfo.c:101-105).
+    if args.len() - 1 > 9 {
+        return (1, "echoti: too many arguments\n".to_string());
+    }
+
+    // Strcap list — these caps take a STRING for arg[1] (the rest
+    // are ints). Direct port of terminfo.c:69 + 107-117.
+    let strcap = matches!(cap_name, "pfkey" | "pfloc" | "pfx" | "pln" | "pfxl");
+
+    // Build args. zsh's tparm signature in C is `tparm(t, p0..p8)`
+    // — 9 long params. With strcap=1, the first arg is a `(long)
+    // cast` of the char* ptr, semantically "first arg as string".
+    // Rust port: maintain a list of String-or-int and substitute.
+    enum TParmArg<'a> {
+        Int(i64),
+        Str(&'a str),
+    }
+    let mut params: Vec<TParmArg> = Vec::with_capacity(args.len() - 1);
+    for (i, arg) in args[1..].iter().enumerate() {
+        // C: `if (strarg && arg > 0) pars[arg] = (long) argv[arg];`
+        // — strcap captures the SECOND positional (i==1) as string,
+        // not the first. Wait — re-reading: `arg > 0` means index
+        // > 0. `i==0` is parsed as int. Subsequent args parsed as
+        // strings when strarg is true.
+        if strcap && i > 0 {
+            params.push(TParmArg::Str(arg));
+        } else {
+            params.push(TParmArg::Int(arg.parse().unwrap_or(0)));
         }
     }
 
-    (
-        1,
-        format!("echoti: no such terminfo capability: {}\n", cap_name),
-    )
+    if params.is_empty() {
+        // No args — emit cap_str verbatim (terminfo.c:120-121).
+        return (0, cap_str);
+    }
+
+    // Tparm-style substitution. zsh links real terminfo's tparm,
+    // which handles %p1..%p9, %d, %{N}, %s, etc. We provide a
+    // minimal substitution that handles the common cases:
+    //   %p1..%p9    push positional onto a stack
+    //   %d          pop and emit as decimal
+    //   %s          pop and emit as string
+    //   %i          increment first two params (1-based row/col)
+    //   %{N}        push literal int
+    //   %%          literal %
+    let mut out = String::with_capacity(cap_str.len());
+    let chars: Vec<char> = cap_str.chars().collect();
+    let mut k = 0;
+    let mut stack: Vec<TParmArg> = Vec::new();
+    let mut params = params;
+    let mut incremented = false;
+    while k < chars.len() {
+        if chars[k] != '%' || k + 1 >= chars.len() {
+            out.push(chars[k]);
+            k += 1;
+            continue;
+        }
+        k += 1;
+        match chars[k] {
+            '%' => {
+                out.push('%');
+                k += 1;
+            }
+            'p' if k + 1 < chars.len() && chars[k + 1].is_ascii_digit() => {
+                let n = chars[k + 1].to_digit(10).unwrap() as usize;
+                if n >= 1 && n <= params.len() {
+                    let v = match &params[n - 1] {
+                        TParmArg::Int(i) => TParmArg::Int(*i),
+                        TParmArg::Str(s) => TParmArg::Str(*s),
+                    };
+                    stack.push(v);
+                }
+                k += 2;
+            }
+            'd' => {
+                if let Some(TParmArg::Int(i)) = stack.pop() {
+                    out.push_str(&i.to_string());
+                }
+                k += 1;
+            }
+            's' => {
+                if let Some(arg) = stack.pop() {
+                    match arg {
+                        TParmArg::Str(s) => out.push_str(s),
+                        TParmArg::Int(i) => out.push_str(&i.to_string()),
+                    }
+                }
+                k += 1;
+            }
+            'i' => {
+                // Increment first two args by 1 (terminfo's `%i`
+                // turns 0-based into 1-based for cup etc.).
+                if !incremented {
+                    incremented = true;
+                    for arg in params.iter_mut().take(2) {
+                        if let TParmArg::Int(ref mut v) = arg {
+                            *v += 1;
+                        }
+                    }
+                }
+                k += 1;
+            }
+            '{' => {
+                k += 1;
+                let mut num = String::new();
+                while k < chars.len() && chars[k] != '}' {
+                    num.push(chars[k]);
+                    k += 1;
+                }
+                if k < chars.len() {
+                    k += 1;
+                }
+                stack.push(TParmArg::Int(num.parse().unwrap_or(0)));
+            }
+            _ => {
+                // Unknown escape — emit literally (matches tparm
+                // behavior of leaving unrecognised %X intact).
+                out.push('%');
+                out.push(chars[k]);
+                k += 1;
+            }
+        }
+    }
+
+    (0, out)
 }
 
 #[cfg(test)]
