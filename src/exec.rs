@@ -41773,7 +41773,13 @@ impl ShellExecutor {
                     suffix = Some(s[2..].to_string());
                     multiple = true;
                 }
-                s if s.starts_with('-') && s.len() > 1 => {} // unknown silent
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // coreutils basename rejects unknown flags. Old
+                    // silent-ignore made `basename -Z foo` succeed
+                    // returning `foo` while losing the -Z signal.
+                    eprintln!("basename: unrecognized option: '{}'", s);
+                    return 1;
+                }
                 s => positional.push(s),
             }
         }
