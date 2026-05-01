@@ -36101,6 +36101,9 @@ impl ShellExecutor {
         let target_path = std::path::Path::new(target);
         let is_dir = target_path.is_dir();
 
+        // Per-file continue-on-error per coreutils (was return 1 on
+        // first failure, leaving the rest unprocessed).
+        let mut cp_status = 0;
         for src in files {
             let src_path = std::path::Path::new(src);
             let dest = if is_dir {
@@ -36140,6 +36143,7 @@ impl ShellExecutor {
                     Self::copy_dir_recursive(src_path, dest_path)
                 } else {
                     eprintln!("cp: -r not specified; omitting directory '{}'", src);
+                    cp_status = 1;
                     continue;
                 }
             } else {
@@ -36148,7 +36152,8 @@ impl ShellExecutor {
 
             if let Err(e) = result {
                 eprintln!("cp: cannot copy '{}' to '{}': {}", src, dest, e);
-                return 1;
+                cp_status = 1;
+                continue;
             }
 
             // -p: preserve mode, ownership, atime/mtime — coreutils
@@ -36187,7 +36192,7 @@ impl ShellExecutor {
                 println!("'{}' -> '{}'", src, dest);
             }
         }
-        0
+        cp_status
     }
 
     fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
