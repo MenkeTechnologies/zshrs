@@ -40364,16 +40364,67 @@ impl ShellExecutor {
     // ═══════════════════════════════════════════════════════════════════════
 
     fn builtin_cat(&self, args: &[String]) -> i32 {
-        use std::io::{self, Read, Write};
+        // coreutils cat(1) port: adds -E (show $ at line end),
+        // -T (show TAB as ^I), -A (= -vET), -b (number nonempty),
+        // -s (squeeze blank lines), -v (show non-printing as ^X).
+        use std::io::{self, BufRead, BufReader, Read, Write};
 
-        let mut show_line_numbers = false;
+        let mut number_all = false;
+        let mut number_nonempty = false;
+        let mut show_ends = false;
+        let mut show_tabs = false;
+        let mut show_nonprint = false;
+        let mut squeeze_blank = false;
         let mut files: Vec<&str> = Vec::new();
 
         for arg in args {
             match arg.as_str() {
-                "-n" => show_line_numbers = true,
+                "-n" => number_all = true,
+                "-b" => number_nonempty = true,
+                "-E" => show_ends = true,
+                "-T" => show_tabs = true,
+                "-v" => show_nonprint = true,
+                "-A" => {
+                    show_ends = true;
+                    show_tabs = true;
+                    show_nonprint = true;
+                }
+                "-e" => {
+                    show_ends = true;
+                    show_nonprint = true;
+                }
+                "-t" => {
+                    show_tabs = true;
+                    show_nonprint = true;
+                }
+                "-s" => squeeze_blank = true,
                 "-" => files.push("-"),
-                a if a.starts_with('-') => {} // ignore other flags for now
+                a if a.starts_with('-') && a.len() > 1 => {
+                    for c in a[1..].chars() {
+                        match c {
+                            'n' => number_all = true,
+                            'b' => number_nonempty = true,
+                            'E' => show_ends = true,
+                            'T' => show_tabs = true,
+                            'v' => show_nonprint = true,
+                            's' => squeeze_blank = true,
+                            'A' => {
+                                show_ends = true;
+                                show_tabs = true;
+                                show_nonprint = true;
+                            }
+                            'e' => {
+                                show_ends = true;
+                                show_nonprint = true;
+                            }
+                            't' => {
+                                show_tabs = true;
+                                show_nonprint = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 _ => files.push(arg),
             }
         }
@@ -40382,41 +40433,111 @@ impl ShellExecutor {
             files.push("-");
         }
 
+        // Decorate one chunk per cat semantics. Returns the
+        // transformed string with -T / -v / -E applied.
+        let decorate = |s: &str| -> String {
+            if !show_tabs && !show_nonprint && !show_ends {
+                return s.to_string();
+            }
+            let mut out = String::with_capacity(s.len());
+            for c in s.chars() {
+                if c == '\t' {
+                    if show_tabs {
+                        out.push_str("^I");
+                    } else {
+                        out.push('\t');
+                    }
+                    continue;
+                }
+                if c == '\n' {
+                    out.push(c);
+                    continue;
+                }
+                if show_nonprint && (c.is_control() || (c as u32) >= 0x80) {
+                    let code = c as u32;
+                    if code < 0x20 {
+                        out.push('^');
+                        out.push((b'@' + code as u8) as char);
+                    } else if code == 0x7f {
+                        out.push_str("^?");
+                    } else if code < 0x80 {
+                        out.push(c);
+                    } else {
+                        // M- prefix for high-bit chars.
+                        out.push_str("M-");
+                        let lo = code & 0x7f;
+                        if lo < 0x20 {
+                            out.push('^');
+                            out.push((b'@' + lo as u8) as char);
+                        } else {
+                            out.push(char::from_u32(lo).unwrap_or('?'));
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        };
+
         let mut stdout = io::stdout().lock();
         let mut line_num = 1usize;
+        let mut prev_blank = false;
+        let any_decoration = number_all
+            || number_nonempty
+            || show_ends
+            || show_tabs
+            || show_nonprint
+            || squeeze_blank;
 
         for file in files {
             let result: io::Result<()> = (|| {
-                if file == "-" {
-                    let stdin = io::stdin();
-                    let mut handle = stdin.lock();
-                    if show_line_numbers {
-                        let mut buf = String::new();
-                        handle.read_to_string(&mut buf)?;
-                        for line in buf.lines() {
-                            writeln!(stdout, "{:6}\t{}", line_num, line)?;
-                            line_num += 1;
-                        }
-                    } else {
+                if !any_decoration {
+                    // Fast path: copy bytes through.
+                    if file == "-" {
+                        let stdin = io::stdin();
+                        let mut handle = stdin.lock();
                         io::copy(&mut handle, &mut stdout)?;
-                    }
-                } else {
-                    let mut f = match std::fs::File::open(file) {
-                        Ok(f) => f,
-                        Err(e) => {
-                            eprintln!("cat: {}: {}", file, pretty_io_err(&e));
-                            return Err(e);
-                        }
-                    };
-                    if show_line_numbers {
-                        let mut buf = String::new();
-                        f.read_to_string(&mut buf)?;
-                        for line in buf.lines() {
-                            writeln!(stdout, "{:6}\t{}", line_num, line)?;
-                            line_num += 1;
-                        }
                     } else {
+                        let mut f = std::fs::File::open(file).map_err(|e| {
+                            eprintln!("cat: {}: {}", file, pretty_io_err(&e));
+                            e
+                        })?;
                         io::copy(&mut f, &mut stdout)?;
+                    }
+                    return Ok(());
+                }
+
+                let reader: Box<dyn BufRead> = if file == "-" {
+                    Box::new(BufReader::new(io::stdin()))
+                } else {
+                    let f = std::fs::File::open(file).map_err(|e| {
+                        eprintln!("cat: {}: {}", file, pretty_io_err(&e));
+                        e
+                    })?;
+                    Box::new(BufReader::new(f))
+                };
+
+                for line in reader.lines() {
+                    let line = match line {
+                        Ok(l) => l,
+                        Err(_) => break,
+                    };
+                    let is_blank = line.is_empty();
+                    if squeeze_blank && is_blank && prev_blank {
+                        continue;
+                    }
+                    prev_blank = is_blank;
+
+                    let decorated = decorate(&line);
+                    let suffix = if show_ends { "$" } else { "" };
+                    if number_all || (number_nonempty && !is_blank) {
+                        writeln!(stdout, "{:6}\t{}{}", line_num, decorated, suffix)?;
+                        line_num += 1;
+                    } else if number_nonempty && is_blank {
+                        writeln!(stdout, "{}{}", decorated, suffix)?;
+                    } else {
+                        writeln!(stdout, "{}{}", decorated, suffix)?;
                     }
                 }
                 Ok(())
