@@ -26152,6 +26152,14 @@ impl ShellExecutor {
             return 0;
         }
 
+        // builtin.c:4521-4540 — bin_alias's literal-arg loop sets
+        // `returnval = 1` on unknown alias name but CONTINUES to the
+        // next arg. zshrs's `return 1` short-circuited so a subsequent
+        // valid arg never displayed:
+        //   alias bogus realalias  → zshrs only checked `bogus`,
+        //   exit 1, never tried `realalias`.
+        // Track the failure flag and exit at the end.
+        let mut returnval = 0;
         for arg in &positional_args {
             if let Some(eq_pos) = arg.find('=') {
                 // Define alias: name=value. zsh: empty NAME (`=val`
@@ -26245,12 +26253,15 @@ impl ShellExecutor {
                     }
                 } else {
                     // zsh exits 1 silently when querying an
-                    // unknown alias (no diagnostic).
-                    return 1;
+                    // unknown alias (no diagnostic). Per the C-source
+                    // loop at builtin.c:4536-4537, this sets a return
+                    // flag but does NOT abort the loop — subsequent
+                    // valid arg names should still display.
+                    returnval = 1;
                 }
             }
         }
-        0
+        returnval
     }
 
     fn builtin_unalias(&mut self, args: &[String]) -> i32 {
