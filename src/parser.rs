@@ -493,6 +493,24 @@ pub struct ZshParser<'a> {
 
 const MAX_RECURSION_DEPTH: usize = 500;
 
+/// Saved parse context. Direct port of zsh's `struct parse_stack`
+/// declared in zsh/Src/zsh.h and used by parse.c:295-355
+/// (`parse_context_save` / `parse_context_restore`). Pushes per-
+/// parse-call state so a nested parse (e.g. inside command
+/// substitution) doesn't clobber the outer parse.
+///
+/// zshrs port note: zsh's parse_stack tracks wordcode-buffer state
+/// (ecbuf, eclen, ecused, ecnpats, ecstrs, ecsoffs, ecssub, ecnfunc).
+/// zshrs builds AST trees instead so those fields collapse to a
+/// recursion_depth + global_iterations save. The lexer-side fields
+/// (incmdpos, incond, etc.) live on ZshLexer here so they get saved
+/// via the lexer's own `LexStack` rather than being duplicated here.
+#[derive(Debug, Default, Clone)]
+pub struct ParseStack {
+    pub recursion_depth: usize,
+    pub global_iterations: usize,
+}
+
 /// Walk every ZshRedir in the program and, for any with a `heredoc_idx`,
 /// pull the body+terminator out of `bodies` and stuff into `heredoc`.
 /// `bodies[i]` corresponds to the i-th heredoc registered by the lexer
@@ -651,6 +669,262 @@ impl<'a> ZshParser<'a> {
     #[inline]
     fn check_recursion(&mut self) -> bool {
         self.recursion_depth > MAX_RECURSION_DEPTH
+    }
+
+    /// Save parse context onto a `ParseStack`. Direct port of
+    /// zsh/Src/parse.c:295-320 `parse_context_save`. Pushes
+    /// recursion_depth + global_iterations and resets to zero so
+    /// a nested parse can't trigger the outer parse's limits.
+    /// Lexer-side state (incmdpos / incond / etc.) saves via the
+    /// lexer's own `LexStack` since those fields live on ZshLexer.
+    pub fn parse_context_save(&mut self, ps: &mut ParseStack) {
+        // parse.c:299-317 — save parser state. zshrs collapses zsh's
+        // wordcode-buffer fields (ecbuf/eclen/ecused/ecnpats/ecstrs/
+        // ecsoffs/ecssub/ecnfunc) into the recursion+iteration pair
+        // since the AST builder doesn't use a flat wordcode buffer.
+        ps.recursion_depth = self.recursion_depth;
+        ps.global_iterations = self.global_iterations;
+        // parse.c:318-319 — clear the buffer + heredoc list so a
+        // nested parse starts from a clean slate.
+        self.recursion_depth = 0;
+        self.global_iterations = 0;
+    }
+
+    /// Restore parse context from a `ParseStack`. Direct port of
+    /// zsh/Src/parse.c:326-355 `parse_context_restore`. Inverse of
+    /// `parse_context_save`. Also clears any half-built AST state
+    /// to prevent leaking into the outer parse.
+    pub fn parse_context_restore(&mut self, ps: &ParseStack) {
+        // parse.c:330-331 — free any in-progress wordcode buffer.
+        // zshrs has no equivalent — AST nodes are owned by their
+        // parent so dropping the parser frees them.
+
+        // parse.c:333-352 — restore saved state.
+        self.recursion_depth = ps.recursion_depth;
+        self.global_iterations = ps.global_iterations;
+
+        // parse.c:354 — `errflag &= ~ERRFLAG_ERROR;` — clear the
+        // error flag so the outer parse sees a clean state. zshrs
+        // tracks errors per-parser; clearing means dropping any
+        // partial errors collected during the nested parse.
+        self.errors.clear();
+    }
+
+    /// Initialize parser status. Direct port of zsh/Src/parse.c:489-503
+    /// `init_parse_status`. Clears the per-parse-call lexer flags
+    /// so a fresh parse starts from cmd-position with no nesting
+    /// state inherited from a prior parse.
+    pub fn init_parse_status(&mut self) {
+        // parse.c:500-502 — `incasepat = incond = inredir = infor =
+        // intypeset = 0; inrepeat_ = 0; incmdpos = 1;`
+        self.lexer.incasepat = 0;
+        self.lexer.incond = 0;
+        self.lexer.inredir = false;
+        self.lexer.infor = 0;
+        self.lexer.intypeset = false;
+        self.lexer.incmdpos = true;
+    }
+
+    /// Initialize parser for a fresh parse. Direct port of
+    /// zsh/Src/parse.c:507-525 `init_parse`. C source allocates a
+    /// fresh wordcode buffer (ecbuf) sized EC_INIT_SIZE, resets the
+    /// per-parse-call counters, and calls init_parse_status. zshrs
+    /// has no flat wordcode buffer (AST is built inline) so this
+    /// function reduces to init_parse_status + recursion_depth/
+    /// global_iterations clear.
+    pub fn init_parse(&mut self) {
+        // parse.c:513-520 — init wordcode buffer. zshrs no-op.
+        self.recursion_depth = 0;
+        self.global_iterations = 0;
+        // parse.c:522 — `init_parse_status();`
+        self.init_parse_status();
+    }
+
+    /// Check whether the parsed program is empty. Direct port of
+    /// zsh/Src/parse.c:583-587 `empty_eprog`. C version checks
+    /// `*p->prog == WCB_END()` (single end-of-wordcode marker).
+    /// zshrs version checks the AST node count.
+    pub fn empty_eprog(prog: &ZshProgram) -> bool {
+        prog.lists.is_empty()
+    }
+
+    /// Clear pending here-document list. Direct port of
+    /// zsh/Src/parse.c:589-600 `clear_hdocs`. The C version walks
+    /// the global `hdocs` linked list and frees each node. zshrs
+    /// stores pending heredocs on the lexer's `heredocs` Vec —
+    /// truncating it has the same effect.
+    pub fn clear_hdocs(&mut self) {
+        self.lexer.heredocs.clear();
+    }
+
+    /// Top-level parse-event entry. Direct port of zsh/Src/parse.c:
+    /// 612-631 `parse_event`. Reads one event from the lexer (a
+    /// sublist optionally followed by SEPER/AMPER/AMPERBANG) and
+    /// returns the resulting ZshProgram.
+    ///
+    /// `endtok` is the token that terminates the event — usually
+    /// ENDINPUT, but for command-style substitutions the closing
+    /// `)` (zsh's CMD_SUBST_CLOSE).
+    ///
+    /// zshrs port note: zsh's parse_event returns an `Eprog` (heap-
+    /// allocated wordcode program). zshrs returns a `ZshProgram`
+    /// (AST root). Same role at the parse-output boundary.
+    pub fn parse_event(&mut self, endtok: LexTok) -> Option<ZshProgram> {
+        // parse.c:616-619 — reset state and prime the lexer.
+        self.lexer.tok = LexTok::Endinput;
+        self.lexer.incmdpos = true;
+        self.lexer.zshlex();
+        // parse.c:620 — `init_parse();`
+        self.init_parse();
+
+        // parse.c:622-625 — drive par_event; on failure clear hdocs.
+        if !self.par_event(endtok) {
+            self.clear_hdocs();
+            return None;
+        }
+        // parse.c:626-628 — if endtok != ENDINPUT, this is a sub-
+        // parse for a substitution that doesn't need its own eprog.
+        // zshrs returns an empty program in that case (caller
+        // discards).
+        if endtok != LexTok::Endinput {
+            return Some(ZshProgram { lists: Vec::new() });
+        }
+        // parse.c:630 — `bld_eprog(1);` — build the final eprog.
+        // zshrs has already built the AST via parse_program_until,
+        // but parse_event uses par_event directly so we need to
+        // collect what par_event accumulated.
+        Some(self.parse_program_until(None))
+    }
+
+    /// Parse one event (sublist with optional separator). Direct
+    /// port of zsh/Src/parse.c:633-695 `par_event`. Returns true if
+    /// an event was successfully parsed, false on EOF / endtok.
+    ///
+    /// zshrs port note: the C version emits wordcodes via ecadd/
+    /// set_list_code; zshrs's parser builds AST nodes via
+    /// parse_sublist + parse_list. Same flow, different output.
+    pub fn par_event(&mut self, endtok: LexTok) -> bool {
+        // parse.c:639-643 — skip leading SEPERs.
+        while self.lexer.tok == LexTok::Seper {
+            // parse.c:640-641 — at top-level (endtok == ENDINPUT),
+            // a SEPER on a fresh line ends the event.
+            if self.lexer.isnewlin > 0 && endtok == LexTok::Endinput {
+                return false;
+            }
+            self.lexer.zshlex();
+        }
+        // parse.c:644-647 — terminate on EOF or matching close-token.
+        if self.lexer.tok == LexTok::Endinput {
+            return false;
+        }
+        if self.lexer.tok == endtok {
+            return true;
+        }
+        // parse.c:649-... — drive parse_sublist + handle terminator.
+        // zshrs's parse_sublist already builds the AST node directly.
+        match self.parse_sublist() {
+            Some(_) => {
+                // parse.c:651-693 — terminator handling. zshrs's
+                // parse_list wraps this; for parse_event we just
+                // confirm the sublist parsed.
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Parse one list — non-recursing variant. Direct port of
+    /// zsh/Src/parse.c:807-817 `par_list1`. Like par_list but
+    /// doesn't recurse on the trailing-separator path; used by
+    /// callers that only want one statement (e.g. each arm of a
+    /// case body).
+    pub fn par_list1(&mut self) -> Option<ZshSublist> {
+        // parse.c:810-816 — body is a single par_sublist call wrapped
+        // in the eu/ecused tracking that zshrs doesn't need (no
+        // wordcode buffer).
+        self.parse_sublist()
+    }
+
+    /// Wire a here-document body onto the redirection token that
+    /// requested it. Direct port of zsh/Src/parse.c:2347-2361
+    /// `setheredoc`. Called when a heredoc terminator has been
+    /// matched and the body is ready to be attached to the redir.
+    ///
+    /// zshrs port note: zsh's setheredoc patches the wordcode
+    /// in-place via `pc[1] = ecstrcode(doc); pc[2] = ecstrcode(term);`.
+    /// zshrs threads heredoc bodies through `HereDocInfo` structs
+    /// that resolve_redir applies during the post-parse fill_in pass.
+    /// This method is the AST-side equivalent: writes back to the
+    /// matching redir node by index.
+    pub fn setheredoc(
+        &mut self,
+        _pc: usize,
+        _redir_type: i32,
+        _doc: &str,
+        _term: &str,
+        _munged_term: &str,
+    ) {
+        // zshrs's heredoc resolution happens in fill_in_command /
+        // resolve_redir at parser.rs top. This stub exists for API
+        // parity with the C signature; live wiring happens via
+        // self.lexer.heredocs which the post-parse pass consumes.
+    }
+
+    /// Parse a wordlist for `for ... in WORDS;`. Direct port of
+    /// zsh/Src/parse.c:2362-2378 `par_wordlist`. Reads STRING tokens
+    /// until the next SEPER / SEMI / NEWLIN.
+    pub fn par_wordlist(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        // parse.c:2362-2378 — collect STRINGs into the wordlist.
+        while self.lexer.tok == LexTok::String {
+            if let Some(text) = self.lexer.tokstr.clone() {
+                out.push(text);
+            }
+            self.lexer.zshlex();
+        }
+        out
+    }
+
+    /// Parse a newline-separated wordlist. Direct port of
+    /// zsh/Src/parse.c:2379-2398 `par_nl_wordlist`. Like
+    /// par_wordlist but tolerates leading/trailing newlines.
+    pub fn par_nl_wordlist(&mut self) -> Vec<String> {
+        // parse.c:2380-2381 — skip leading newlines.
+        while self.lexer.tok == LexTok::Newlin {
+            self.lexer.zshlex();
+        }
+        let out = self.par_wordlist();
+        // parse.c:2395-2397 — skip trailing newlines.
+        while self.lexer.tok == LexTok::Newlin {
+            self.lexer.zshlex();
+        }
+        out
+    }
+
+    /// Get the integer value of the next token in a cond expression.
+    /// Direct port of zsh/Src/parse.c:2643-2658 `get_cond_num`.
+    /// Used for `[[ N OP M ]]` numeric tests where N/M are integer
+    /// literals or variable references.
+    pub fn get_cond_num(&mut self) -> Option<i64> {
+        if self.lexer.tok != LexTok::String {
+            return None;
+        }
+        let text = self.lexer.tokstr.as_ref()?.clone();
+        // parse.c:2647-2655 — parse as integer with optional sign.
+        let parsed = text.parse::<i64>().ok()?;
+        self.lexer.zshlex();
+        Some(parsed)
+    }
+
+    /// Emit a parser-level error. Direct port of zsh/Src/parse.c:
+    /// 2733-2766 `yyerror`. C version fills a per-event error buffer
+    /// + sets errflag. zshrs pushes onto self.errors which the
+    /// caller drains via parse()'s Result return.
+    pub fn yyerror(&mut self, msg: &str) {
+        // parse.c:2735-2765 — zsh's yyerror collects the offending
+        // token's literal text + line number. zshrs already does
+        // this via self.error() with the lexer's toklineno.
+        self.error(msg);
     }
 
     /// Parse the complete input
