@@ -35967,6 +35967,9 @@ impl ShellExecutor {
         let target_path = std::path::Path::new(target);
         let is_dir = target_path.is_dir();
 
+        // Per-file continue-on-error per coreutils (was return 1 on
+        // first failure, leaving the rest unprocessed).
+        let mut mv_status = 0;
         for src in files {
             let dest = if is_dir {
                 format!(
@@ -36002,7 +36005,8 @@ impl ShellExecutor {
                     }
                 } else {
                     eprintln!("mv: cannot overwrite '{}': File exists", dest);
-                    return 1;
+                    mv_status = 1;
+                    continue;
                 }
             }
 
@@ -36038,12 +36042,14 @@ impl ShellExecutor {
                                 "mv: cannot move '{}' to '{}': {}",
                                 src, dest, ce
                             );
-                            return 1;
+                            mv_status = 1;
+                            continue;
                         }
                     }
                 } else {
                     eprintln!("mv: cannot move '{}' to '{}': {}", src, dest, e);
-                    return 1;
+                    mv_status = 1;
+                    continue;
                 }
             }
 
@@ -36051,7 +36057,7 @@ impl ShellExecutor {
                 println!("'{}' -> '{}'", src, dest);
             }
         }
-        0
+        mv_status
     }
 
     /// cp - copy files
