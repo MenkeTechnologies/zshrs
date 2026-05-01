@@ -35811,10 +35811,17 @@ impl ShellExecutor {
 
         // Duration::from_secs_f64 panics on negative / NaN / +inf.
         // zsh's sleep just returns 0 for non-positive durations.
+        // Also clamp the upper bound: secs >= u64::MAX as f64 (~1.8e19)
+        // also panics; cap at i64::MAX seconds (≈292 years) to be safe.
         if !secs.is_finite() || secs <= 0.0 {
             return 0;
         }
-        std::thread::sleep(std::time::Duration::from_secs_f64(secs));
+        let capped = if secs > i64::MAX as f64 {
+            i64::MAX as f64
+        } else {
+            secs
+        };
+        std::thread::sleep(std::time::Duration::from_secs_f64(capped));
         0
     }
 
@@ -43616,11 +43623,17 @@ impl ShellExecutor {
 
         // Duration::from_secs_f64 panics on negative / NaN / +inf.
         // coreutils sleep treats negative as an error; here we
-        // tolerate non-positive total as a no-op exit 0.
+        // tolerate non-positive total as a no-op exit 0. Also cap
+        // upper bound (Duration panics near u64::MAX seconds).
         if !total_secs.is_finite() || total_secs <= 0.0 {
             return 0;
         }
-        std::thread::sleep(std::time::Duration::from_secs_f64(total_secs));
+        let capped = if total_secs > i64::MAX as f64 {
+            i64::MAX as f64
+        } else {
+            total_secs
+        };
+        std::thread::sleep(std::time::Duration::from_secs_f64(capped));
         0
     }
 
