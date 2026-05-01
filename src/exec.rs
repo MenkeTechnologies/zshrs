@@ -20854,7 +20854,7 @@ impl ShellExecutor {
                 Ok(content) => match self.execute_script(&content) {
                     Ok(status) => status,
                     Err(e) => {
-                        eprintln!("source: {}: {}", path, e);
+                        eprintln!("zshrs:source:1: {}: {}", path, e);
                         1
                     }
                 },
@@ -24543,7 +24543,7 @@ impl ShellExecutor {
             match s.parse::<usize>() {
                 Ok(id) => Some(id),
                 Err(_) => {
-                    eprintln!("fg: {}: no such job", arg);
+                    eprintln!("zshrs:fg:1: {}: no such job", arg);
                     return 1;
                 }
             }
@@ -24558,7 +24558,7 @@ impl ShellExecutor {
         };
 
         let Some(job) = self.jobs.get(id) else {
-            eprintln!("fg: %{}: no such job", id);
+            eprintln!("zshrs:fg:1: %{}: no such job", id);
             return 1;
         };
 
@@ -24568,7 +24568,7 @@ impl ShellExecutor {
 
         // Continue the job
         if let Err(e) = continue_job(pid) {
-            eprintln!("fg: {}", e);
+            eprintln!("zshrs:fg:1: {}", e);
             return 1;
         }
 
@@ -24579,7 +24579,7 @@ impl ShellExecutor {
                 status
             }
             Err(e) => {
-                eprintln!("fg: {}", e);
+                eprintln!("zshrs:fg:1: {}", e);
                 1
             }
         }
@@ -24596,7 +24596,7 @@ impl ShellExecutor {
             match s.parse::<usize>() {
                 Ok(id) => Some(id),
                 Err(_) => {
-                    eprintln!("bg: {}: no such job", arg);
+                    eprintln!("zshrs:bg:1: {}: no such job", arg);
                     return 1;
                 }
             }
@@ -24610,7 +24610,7 @@ impl ShellExecutor {
         };
 
         let Some(job) = self.jobs.get_mut(id) else {
-            eprintln!("bg: %{}: no such job", id);
+            eprintln!("zshrs:bg:1: %{}: no such job", id);
             return 1;
         };
 
@@ -24618,7 +24618,7 @@ impl ShellExecutor {
         let cmd = job.command.clone();
 
         if let Err(e) = continue_job(pid) {
-            eprintln!("bg: {}", e);
+            eprintln!("zshrs:bg:1: {}", e);
             return 1;
         }
 
@@ -24752,7 +24752,7 @@ impl ShellExecutor {
                 // -s signal_name (or numeric signal-by-name)
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("kill: -s requires an argument");
+                    eprintln!("zshrs:kill:1: -s requires an argument");
                     return 1;
                 }
                 // zsh: empty signal name -> `kill:1: -: signal name
@@ -24771,7 +24771,7 @@ impl ShellExecutor {
                     if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
                         sig = *s;
                     } else {
-                        eprintln!("kill: invalid signal: {}", args[i]);
+                        eprintln!("zshrs:kill:1: invalid signal: {}", args[i]);
                         return 1;
                     }
                 } else {
@@ -24782,7 +24782,7 @@ impl ShellExecutor {
                     {
                         sig = *s;
                     } else {
-                        eprintln!("kill: invalid signal: {}", args[i]);
+                        eprintln!("zshrs:kill:1: invalid signal: {}", args[i]);
                         return 1;
                     }
                 }
@@ -24790,7 +24790,7 @@ impl ShellExecutor {
                 // -n signal_number
                 i += 1;
                 if i >= args.len() {
-                    eprintln!("kill: -n requires an argument");
+                    eprintln!("zshrs:kill:1: -n requires an argument");
                     return 1;
                 }
                 let num: i32 = match args[i].parse() {
@@ -24823,7 +24823,7 @@ impl ShellExecutor {
                     } else if let Some((_, _, s)) = signal_map.iter().find(|(_, n, _)| *n == num) {
                         sig = *s;
                     } else {
-                        eprintln!("kill: invalid signal: {}", arg);
+                        eprintln!("zshrs:kill:1: invalid signal: {}", arg);
                         return 1;
                     }
                 } else if let Some((_, _, s)) =
@@ -24921,7 +24921,7 @@ impl ShellExecutor {
                 };
                 if let Some(job) = self.jobs.get(id) {
                     if let Err(e) = send_signal(job.pid, sig) {
-                        eprintln!("kill: {}", e);
+                        eprintln!("zshrs:kill:1: {}", e);
                         status = 1;
                     }
                 } else {
