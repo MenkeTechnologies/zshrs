@@ -30601,7 +30601,7 @@ impl ShellExecutor {
         let current = match std::env::current_dir() {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("pushd: {}", e);
+                eprintln!("zshrs:pushd:1: {}", e);
                 return 1;
             }
         };
@@ -30623,13 +30623,13 @@ impl ShellExecutor {
                     let home = match std::env::var("HOME") {
                         Ok(h) => PathBuf::from(h),
                         Err(_) => {
-                            eprintln!("pushd: HOME not set");
+                            eprintln!("zshrs:pushd:1: HOME not set");
                             return 1;
                         }
                     };
                     self.dir_stack.push(current.clone());
                     if let Err(e) = std::env::set_current_dir(&home) {
-                        eprintln!("pushd: {}: {}", home.display(), e);
+                        eprintln!("zshrs:pushd:1: {}: {}", home.display(), e);
                         self.dir_stack.pop();
                         return 1;
                     }
@@ -30638,7 +30638,7 @@ impl ShellExecutor {
                     }
                     return 0;
                 }
-                eprintln!("pushd: no other directory");
+                eprintln!("zshrs:pushd:1: no other directory");
                 return 1;
             }
             let target = self.dir_stack.pop().unwrap();
@@ -30651,7 +30651,7 @@ impl ShellExecutor {
             };
 
             if let Err(e) = std::env::set_current_dir(&resolved) {
-                eprintln!("pushd: {}: {}", target.display(), e);
+                eprintln!("zshrs:pushd:1: {}: {}", target.display(), e);
                 self.dir_stack.pop();
                 self.dir_stack.push(target);
                 return 1;
@@ -30669,7 +30669,7 @@ impl ShellExecutor {
             if let Ok(n) = arg[1..].parse::<usize>() {
                 let total = self.dir_stack.len() + 1;
                 if n >= total {
-                    eprintln!("pushd: {}: directory stack index out of range", arg);
+                    eprintln!("zshrs:pushd:1: {}: directory stack index out of range", arg);
                     return 1;
                 }
                 // Rotate stack
@@ -30688,7 +30688,7 @@ impl ShellExecutor {
                 };
 
                 if let Err(e) = std::env::set_current_dir(&resolved) {
-                    eprintln!("pushd: {}: {}", target.display(), e);
+                    eprintln!("zshrs:pushd:1: {}: {}", target.display(), e);
                     return 1;
                 }
                 if !quiet {
@@ -30708,7 +30708,7 @@ impl ShellExecutor {
 
         self.dir_stack.push(current.clone());
         if let Err(e) = std::env::set_current_dir(&resolved) {
-            eprintln!("pushd: {}: {}", arg, e);
+            eprintln!("zshrs:pushd:1: {}: {}", arg, e);
             self.dir_stack.pop();
             return 1;
         }
@@ -30779,7 +30779,7 @@ impl ShellExecutor {
         }
 
         if self.dir_stack.is_empty() {
-            eprintln!("popd: directory stack empty");
+            eprintln!("zshrs:popd:1: directory stack empty");
             return 1;
         }
 
@@ -30789,7 +30789,7 @@ impl ShellExecutor {
                 if let Ok(n) = arg[1..].parse::<usize>() {
                     let total = self.dir_stack.len() + 1;
                     if n >= total {
-                        eprintln!("popd: {}: directory stack index out of range", arg);
+                        eprintln!("zshrs:popd:1: {}: directory stack index out of range", arg);
                         return 1;
                     }
                     let remove_pos = if arg.starts_with('+') {
@@ -30806,7 +30806,7 @@ impl ShellExecutor {
                             target.clone()
                         };
                         if let Err(e) = std::env::set_current_dir(&resolved) {
-                            eprintln!("popd: {}: {}", target.display(), e);
+                            eprintln!("zshrs:popd:1: {}: {}", target.display(), e);
                             return 1;
                         }
                     } else {
@@ -30827,7 +30827,7 @@ impl ShellExecutor {
             target.clone()
         };
         if let Err(e) = std::env::set_current_dir(&resolved) {
-            eprintln!("popd: {}: {}", target.display(), e);
+            eprintln!("zshrs:popd:1: {}: {}", target.display(), e);
             self.dir_stack.push(target);
             return 1;
         }
