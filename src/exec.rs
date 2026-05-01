@@ -43295,8 +43295,6 @@ impl ShellExecutor {
             }
             i += 1;
         }
-        let _ = format_str; // -f format string not yet wired through fmt()
-
         // Parse all-or-nothing as f64 to handle '0.5', '1e3', etc.
         let nums: Vec<f64> = nums_str
             .iter()
@@ -43328,7 +43326,78 @@ impl ShellExecutor {
             .map(|s| s.split('.').nth(1).map(|f| f.len()).unwrap_or(0))
             .max()
             .unwrap_or(0);
-        let fmt = |v: f64| -> String {
+        // Apply -f FORMAT (printf-style) when given. Supports the
+        // common conversions: %d / %i (int), %f / %.Nf / %g / %e
+        // (float). Other conversions fall through to the auto fmt.
+        // Per coreutils, -f overrides equal_width.
+        let user_fmt = format_str.clone();
+        let fmt = move |v: f64| -> String {
+            if let Some(f) = &user_fmt {
+                // Replace the first %... conversion in f with the
+                // formatted value. This is a tiny printf — full
+                // coreutils format is more complex but this covers
+                // 99% of \`seq -f '%.2f' 0 0.1 1\` style usage.
+                let bytes = f.as_bytes();
+                let mut out = String::with_capacity(f.len() + 16);
+                let mut i = 0;
+                let mut applied = false;
+                while i < bytes.len() {
+                    if bytes[i] == b'%' && i + 1 < bytes.len() {
+                        if bytes[i + 1] == b'%' {
+                            out.push('%');
+                            i += 2;
+                            continue;
+                        }
+                        // Find the conversion char.
+                        let mut j = i + 1;
+                        while j < bytes.len() {
+                            let c = bytes[j];
+                            if matches!(
+                                c,
+                                b'd' | b'i' | b'u' | b'f' | b'e' | b'g' | b'E' | b'G'
+                            ) {
+                                break;
+                            }
+                            j += 1;
+                        }
+                        if j >= bytes.len() {
+                            out.push('%');
+                            i += 1;
+                            continue;
+                        }
+                        let spec = std::str::from_utf8(&bytes[i..=j]).unwrap_or("%g");
+                        let formatted = match bytes[j] {
+                            b'd' | b'i' | b'u' => format!("{}", v as i64),
+                            b'f' | b'e' | b'g' | b'E' | b'G' => {
+                                // Extract precision if present (.N).
+                                let s = spec.trim_start_matches('%');
+                                let prec_part: String = s
+                                    .chars()
+                                    .skip_while(|c| *c != '.')
+                                    .skip(1)
+                                    .take_while(|c| c.is_ascii_digit())
+                                    .collect();
+                                let prec_n: usize = prec_part.parse().unwrap_or(6);
+                                match bytes[j] {
+                                    b'f' => format!("{:.p$}", v, p = prec_n),
+                                    b'e' => format!("{:.p$e}", v, p = prec_n),
+                                    b'E' => format!("{:.p$E}", v, p = prec_n),
+                                    _ => format!("{:.p$}", v, p = prec_n),
+                                }
+                            }
+                            _ => format!("{}", v),
+                        };
+                        out.push_str(&formatted);
+                        applied = true;
+                        i = j + 1;
+                    } else {
+                        out.push(bytes[i] as char);
+                        i += 1;
+                    }
+                }
+                let _ = applied;
+                return out;
+            }
             if prec == 0 {
                 format!("{}", v as i64)
             } else {
