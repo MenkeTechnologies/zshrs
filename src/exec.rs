@@ -35047,7 +35047,16 @@ impl ShellExecutor {
                 "-f" => target = Target::Functions,
                 "-d" => target = Target::NamedDirs,
                 "-m" => pattern_mode = true,
-                s if s.starts_with('-') => {}
+                // BUILTIN("unhash", ..., "adfms") — the option parser
+                // rejects anything else. zshrs's `s if starts_with('-')
+                // => {}` arm consumed unknown flags silently, so
+                // `unhash -X foo` would unhash foo from cmdnamtab
+                // (the default target) regardless of -X.
+                s if s.starts_with('-') => {
+                    let bad: String = s[1..].chars().take(1).collect();
+                    eprintln!("zshrs:unhash:1: bad option: -{}", bad);
+                    return 1;
+                }
                 _ => names.push(arg),
             }
         }
