@@ -36625,154 +36625,278 @@ impl ShellExecutor {
         self.builtin_local(args)
     }
 
-    /// zgetattr/zsetattr/zdelattr/zlistattr - extended attributes (zsh/attr module)
-    /// Direct syscalls — no fork to xattr/getfattr
-    fn builtin_zattr(&self, cmd: &str, args: &[String]) -> i32 {
+    /// zgetattr/zsetattr/zdelattr/zlistattr - extended attributes
+    /// (zsh/attr module). Direct port of src/zsh/Src/Modules/attr.c
+    /// bin_getattr/bin_setattr/bin_delattr/bin_listattr.
+    /// Direct syscalls — no fork to xattr/getfattr.
+    fn builtin_zattr(&mut self, cmd: &str, args: &[String]) -> i32 {
+        // Parse `-h` (operate on symlink itself, not target). Direct
+        // port of attr.c bin_* OPT_ISSET(ops,'h') logic — when -h is
+        // present, use l*xattr variants on Linux / XATTR_NOFOLLOW
+        // flag on macOS. On Linux the symlink-aware syscalls have
+        // distinct names; on macOS the same syscall takes
+        // XATTR_NOFOLLOW (0x0001) in its `options` argument.
+        let mut symlink = false;
+        let mut positional: Vec<&str> = Vec::with_capacity(args.len());
+        let mut iter = args.iter();
+        while let Some(a) = iter.next() {
+            if a == "--" {
+                positional.extend(iter.by_ref().map(|s| s.as_str()));
+                break;
+            }
+            if a == "-h" {
+                symlink = true;
+                continue;
+            }
+            positional.push(a.as_str());
+        }
         match cmd {
             "zgetattr" => {
-                if args.len() < 2 {
+                // attr.c:98-130 bin_getattr — usage: zgetattr [-h] file attr [param]
+                if positional.len() < 2 {
                     eprintln!("zgetattr: need file and attribute name");
                     return 1;
                 }
-                let path = std::ffi::CString::new(args[0].as_str()).unwrap_or_default();
-                let name = std::ffi::CString::new(args[1].as_str()).unwrap_or_default();
-                let mut buf = vec![0u8; 4096];
-
+                let file = positional[0];
+                let attr = positional[1];
+                let param = positional.get(2).copied();
+                let path = std::ffi::CString::new(file).unwrap_or_default();
+                let name = std::ffi::CString::new(attr).unwrap_or_default();
+                // First call with size=0 to get length (attr.c:107).
                 #[cfg(target_os = "macos")]
-                let len = unsafe {
+                let val_len = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 }; // XATTR_NOFOLLOW
                     libc::getxattr(
                         path.as_ptr(),
                         name.as_ptr(),
-                        buf.as_mut_ptr() as *mut libc::c_void,
-                        buf.len(),
+                        std::ptr::null_mut(),
                         0,
                         0,
+                        opts,
                     )
                 };
-
                 #[cfg(target_os = "linux")]
-                let len = unsafe {
+                let val_len = unsafe {
+                    if symlink {
+                        libc::lgetxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0)
+                    } else {
+                        libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0)
+                    }
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let val_len: isize = -1;
+                if val_len == 0 {
+                    // attr.c:108-112 — empty xattr; unset param if given.
+                    if let Some(p) = param {
+                        self.variables.remove(p);
+                        self.arrays.remove(p);
+                    }
+                    return 0;
+                }
+                if val_len < 0 {
+                    eprintln!("zgetattr: {}: {}", file, std::io::Error::last_os_error());
+                    return 1;
+                }
+                let mut buf = vec![0u8; val_len as usize];
+                #[cfg(target_os = "macos")]
+                let attr_len = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 };
                     libc::getxattr(
                         path.as_ptr(),
                         name.as_ptr(),
                         buf.as_mut_ptr() as *mut libc::c_void,
                         buf.len(),
+                        0,
+                        opts,
                     )
                 };
-
+                #[cfg(target_os = "linux")]
+                let attr_len = unsafe {
+                    if symlink {
+                        libc::lgetxattr(
+                            path.as_ptr(),
+                            name.as_ptr(),
+                            buf.as_mut_ptr() as *mut libc::c_void,
+                            buf.len(),
+                        )
+                    } else {
+                        libc::getxattr(
+                            path.as_ptr(),
+                            name.as_ptr(),
+                            buf.as_mut_ptr() as *mut libc::c_void,
+                            buf.len(),
+                        )
+                    }
+                };
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-                let len: isize = -1;
-
-                if len >= 0 {
-                    buf.truncate(len as usize);
-                    println!("{}", String::from_utf8_lossy(&buf));
-                    0
-                } else {
-                    eprintln!("zgetattr: {}: {}", args[0], std::io::Error::last_os_error());
-                    1
+                let attr_len: isize = -1;
+                if attr_len < 0 || attr_len > val_len {
+                    eprintln!("zgetattr: {}: {}", file, std::io::Error::last_os_error());
+                    return if attr_len < 0 || attr_len > val_len { 2 } else { 1 };
                 }
+                buf.truncate(attr_len as usize);
+                let val = String::from_utf8_lossy(&buf).to_string();
+                if let Some(p) = param {
+                    self.variables.insert(p.to_string(), val);
+                } else {
+                    println!("{}", val);
+                }
+                0
             }
             "zsetattr" => {
-                if args.len() < 3 {
+                // attr.c:133-147 bin_setattr — usage: zsetattr [-h] file attr value
+                if positional.len() < 3 {
                     eprintln!("zsetattr: need file, attribute name, and value");
                     return 1;
                 }
-                let path = std::ffi::CString::new(args[0].as_str()).unwrap_or_default();
-                let name = std::ffi::CString::new(args[1].as_str()).unwrap_or_default();
-                let value = args[2].as_bytes();
-
+                let file = positional[0];
+                let attr = positional[1];
+                let value = positional[2].as_bytes();
+                let path = std::ffi::CString::new(file).unwrap_or_default();
+                let name = std::ffi::CString::new(attr).unwrap_or_default();
                 #[cfg(target_os = "macos")]
                 let ret = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 };
                     libc::setxattr(
                         path.as_ptr(),
                         name.as_ptr(),
                         value.as_ptr() as *const libc::c_void,
                         value.len(),
                         0,
-                        0,
+                        opts,
                     )
                 };
-
                 #[cfg(target_os = "linux")]
                 let ret = unsafe {
-                    libc::setxattr(
-                        path.as_ptr(),
-                        name.as_ptr(),
-                        value.as_ptr() as *const libc::c_void,
-                        value.len(),
-                        0,
-                    )
+                    if symlink {
+                        libc::lsetxattr(
+                            path.as_ptr(),
+                            name.as_ptr(),
+                            value.as_ptr() as *const libc::c_void,
+                            value.len(),
+                            0,
+                        )
+                    } else {
+                        libc::setxattr(
+                            path.as_ptr(),
+                            name.as_ptr(),
+                            value.as_ptr() as *const libc::c_void,
+                            value.len(),
+                            0,
+                        )
+                    }
                 };
-
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let ret: i32 = -1;
-
                 if ret == 0 {
                     0
                 } else {
-                    eprintln!("zsetattr: {}: {}", args[0], std::io::Error::last_os_error());
+                    eprintln!("zsetattr: {}: {}", file, std::io::Error::last_os_error());
                     1
                 }
             }
             "zdelattr" => {
-                if args.len() < 2 {
+                // attr.c:150-166 bin_delattr — usage: zdelattr [-h] file attr...
+                // (multiple attrs may be passed).
+                if positional.len() < 2 {
                     eprintln!("zdelattr: need file and attribute name");
                     return 1;
                 }
-                let path = std::ffi::CString::new(args[0].as_str()).unwrap_or_default();
-                let name = std::ffi::CString::new(args[1].as_str()).unwrap_or_default();
-
-                #[cfg(target_os = "macos")]
-                let ret = unsafe { libc::removexattr(path.as_ptr(), name.as_ptr(), 0) };
-
-                #[cfg(target_os = "linux")]
-                let ret = unsafe { libc::removexattr(path.as_ptr(), name.as_ptr()) };
-
-                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-                let ret: i32 = -1;
-
-                if ret == 0 {
-                    0
-                } else {
-                    eprintln!("zdelattr: {}: {}", args[0], std::io::Error::last_os_error());
-                    1
+                let file = positional[0];
+                let path = std::ffi::CString::new(file).unwrap_or_default();
+                for attr in &positional[1..] {
+                    let name = std::ffi::CString::new(*attr).unwrap_or_default();
+                    #[cfg(target_os = "macos")]
+                    let ret = unsafe {
+                        let opts = if symlink { 0x0001 } else { 0 };
+                        libc::removexattr(path.as_ptr(), name.as_ptr(), opts)
+                    };
+                    #[cfg(target_os = "linux")]
+                    let ret = unsafe {
+                        if symlink {
+                            libc::lremovexattr(path.as_ptr(), name.as_ptr())
+                        } else {
+                            libc::removexattr(path.as_ptr(), name.as_ptr())
+                        }
+                    };
+                    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                    let ret: i32 = -1;
+                    if ret != 0 {
+                        eprintln!("zdelattr: {}: {}", file, std::io::Error::last_os_error());
+                        return 1;
+                    }
                 }
+                0
             }
             "zlistattr" => {
-                if args.is_empty() {
+                // attr.c:169-215 bin_listattr — usage: zlistattr [-h] file [param]
+                if positional.is_empty() {
                     eprintln!("zlistattr: need file");
                     return 1;
                 }
-                let path = std::ffi::CString::new(args[0].as_str()).unwrap_or_default();
-                let mut buf = vec![0u8; 4096];
-
+                let file = positional[0];
+                let param = positional.get(1).copied();
+                let path = std::ffi::CString::new(file).unwrap_or_default();
                 #[cfg(target_os = "macos")]
-                let len = unsafe {
-                    libc::listxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len(), 0)
+                let val_len = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 };
+                    libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0, opts)
                 };
-
                 #[cfg(target_os = "linux")]
-                let len = unsafe {
-                    libc::listxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len())
-                };
-
-                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-                let len: isize = -1;
-
-                if len >= 0 {
-                    buf.truncate(len as usize);
-                    for name in buf.split(|&b| b == 0).filter(|s| !s.is_empty()) {
-                        println!("{}", String::from_utf8_lossy(name));
+                let val_len = unsafe {
+                    if symlink {
+                        libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0)
+                    } else {
+                        libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0)
                     }
-                    0
-                } else {
-                    eprintln!(
-                        "zlistattr: {}: {}",
-                        args[0],
-                        std::io::Error::last_os_error()
-                    );
-                    1
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let val_len: isize = -1;
+                if val_len == 0 {
+                    if let Some(p) = param {
+                        self.variables.remove(p);
+                        self.arrays.remove(p);
+                    }
+                    return 0;
                 }
+                if val_len < 0 {
+                    eprintln!("zlistattr: {}: {}", file, std::io::Error::last_os_error());
+                    return 1;
+                }
+                let mut buf = vec![0u8; val_len as usize];
+                #[cfg(target_os = "macos")]
+                let list_len = unsafe {
+                    let opts = if symlink { 0x0001 } else { 0 };
+                    libc::listxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len(), opts)
+                };
+                #[cfg(target_os = "linux")]
+                let list_len = unsafe {
+                    if symlink {
+                        libc::llistxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len())
+                    } else {
+                        libc::listxattr(path.as_ptr(), buf.as_mut_ptr() as *mut i8, buf.len())
+                    }
+                };
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                let list_len: isize = -1;
+                if list_len < 0 || list_len > val_len {
+                    eprintln!("zlistattr: {}: {}", file, std::io::Error::last_os_error());
+                    return if list_len < 0 || list_len > val_len { 2 } else { 1 };
+                }
+                buf.truncate(list_len as usize);
+                let names: Vec<String> = buf
+                    .split(|&b| b == 0)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| String::from_utf8_lossy(s).into_owned())
+                    .collect();
+                if let Some(p) = param {
+                    self.arrays.insert(p.to_string(), names);
+                } else {
+                    for n in &names {
+                        println!("{}", n);
+                    }
+                }
+                0
             }
             _ => 1,
         }

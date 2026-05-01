@@ -101,6 +101,48 @@ impl Client {
         })
     }
 
+    /// Set the read timeout on the underlying socket. Pass `None` to block indefinitely
+    /// (used by streaming consumers like `zsubscribe` and `zjob output --follow`).
+    pub fn set_read_timeout(&mut self, dur: Option<Duration>) -> Result<()> {
+        self.stream.set_read_timeout(dur)?;
+        Ok(())
+    }
+
+    /// Read the next frame off the socket (response or async event). Returns
+    /// `DaemonError::Timeout(_)` on read-timeout (distinguishable from EOF, which
+    /// surfaces as a `std::io::ErrorKind::UnexpectedEof`). Used by streaming subscribers.
+    pub fn next_frame(&mut self) -> Result<Frame> {
+        match ipc::read_frame_sync(&mut self.stream) {
+            Ok(f) => Ok(f),
+            Err(DaemonError::Io(e))
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                Err(DaemonError::Timeout(Duration::ZERO))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Mint a request id without sending a frame. Useful when callers want to
+    /// correlate a response that they will read via `next_frame()` directly
+    /// (the streaming consumers do their own demux).
+    pub fn alloc_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    /// Write a request frame on the wire and return its id. Pair with `next_frame`
+    /// when the caller wants to interleave events and the response.
+    pub fn send_request(&mut self, op: &str, args: Value) -> Result<u64> {
+        let id = self.alloc_id();
+        ipc::write_frame_sync(&mut self.stream, &Frame::request(id, op, args))?;
+        Ok(id)
+    }
+
     /// Send a request and block until the matching response arrives.
     /// Async events received in between are dropped (this client is for one-shot calls
     /// from sync builtins).
