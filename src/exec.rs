@@ -39048,7 +39048,7 @@ impl ShellExecutor {
                 );
             }
             cap => {
-                eprintln!("echotc: unknown capability: {}", cap);
+                eprintln!("zshrs:echotc:1: unknown capability: {}", cap);
                 return 1;
             }
         }
@@ -39684,7 +39684,7 @@ impl ShellExecutor {
                 self.variables
                     .insert(name.to_string(), shell_quote_value(&val));
             } else {
-                eprintln!("compquote: unknown parameter: {}", name);
+                eprintln!("zshrs:compquote:1: unknown parameter: {}", name);
                 returnval = 1;
             }
         }
@@ -39755,7 +39755,7 @@ impl ShellExecutor {
     /// Direct port of zsh/Src/Modules/cap.c bin_getcap.
     fn builtin_getcap(&self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("getcap: not enough arguments");
+            eprintln!("zshrs:getcap:1: not enough arguments");
             return 1;
         }
         let mut returnval = 0;
@@ -39763,7 +39763,7 @@ impl ShellExecutor {
             match crate::cap::get_file_caps(path) {
                 Ok(s) => println!("{}: {}", path, s),
                 Err(e) => {
-                    eprintln!("getcap: {}: {}", path, e);
+                    eprintln!("zshrs:getcap:1: {}: {}", path, e);
                     returnval = 1;
                 }
             }
@@ -39775,7 +39775,7 @@ impl ShellExecutor {
     /// file. Direct port of zsh/Src/Modules/cap.c bin_setcap.
     fn builtin_setcap(&self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("setcap: usage: setcap CAPS FILE...");
+            eprintln!("zshrs:setcap:1: usage: setcap CAPS FILE...");
             return 1;
         }
         let caps = &args[0];
@@ -39784,7 +39784,7 @@ impl ShellExecutor {
             match crate::cap::set_file_caps(caps, path) {
                 Ok(()) => {}
                 Err(e) => {
-                    eprintln!("setcap: {}: {}", path, e);
+                    eprintln!("zshrs:setcap:1: {}: {}", path, e);
                     returnval = 1;
                 }
             }
