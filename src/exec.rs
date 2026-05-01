@@ -41867,24 +41867,41 @@ impl ShellExecutor {
     }
 
     fn builtin_rev(&self, args: &[String]) -> i32 {
+        // util-linux rev(1) port. Accepts multiple files; reverses
+        // each line by chars (codepoint-correct, not bytes). One
+        // bad file emits an error and continues with the rest;
+        // returns 1 if any file failed.
         use std::io::{BufRead, BufReader};
 
-        let reader: Box<dyn BufRead> = if args.is_empty() || args[0] == "-" {
-            Box::new(BufReader::new(std::io::stdin()))
+        let files: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-') || *a == "-")
+            .map(|s| s.as_str())
+            .collect();
+        let targets: Vec<&str> = if files.is_empty() {
+            vec!["-"]
         } else {
-            match std::fs::File::open(&args[0]) {
-                Ok(f) => Box::new(BufReader::new(f)),
-                Err(e) => {
-                    eprintln!("rev: {}: {}", args[0], e);
-                    return 1;
-                }
-            }
+            files
         };
-
-        for line in reader.lines().flatten() {
-            println!("{}", line.chars().rev().collect::<String>());
+        let mut status = 0;
+        for file in targets {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("rev: {}: {}", file, e);
+                        status = 1;
+                        continue;
+                    }
+                }
+            };
+            for line in reader.lines().flatten() {
+                println!("{}", line.chars().rev().collect::<String>());
+            }
         }
-        0
+        status
     }
 
     fn builtin_tee(&self, args: &[String]) -> i32 {
