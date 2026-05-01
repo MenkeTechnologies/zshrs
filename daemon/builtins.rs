@@ -508,18 +508,27 @@ fn zid(_args: &[String]) -> i32 {
 // -------- zping --------
 
 fn zping(args: &[String]) -> i32 {
-    let echo = args.get(1).cloned();
+    let mut all = false;
+    let mut echo: Option<String> = None;
+    for a in args.iter().skip(1) {
+        match a.as_str() {
+            "--all" => all = true,
+            other if other.starts_with('-') => {
+                return err_exit("zping", &format!("unknown flag `{}`", other));
+            }
+            other => echo = Some(other.to_string()),
+        }
+    }
     let mut client = match connect_or_err() {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    let payload = if let Some(s) = echo {
-        json!({ "echo": s })
-    } else {
-        json!({})
+    let payload = match echo {
+        Some(s) => json!({ "echo": s }),
+        None => json!({}),
     };
     let start = std::time::Instant::now();
-    match client.call("ping", payload) {
+    let pong = match client.call("ping", payload) {
         Ok(v) => {
             let rtt = start.elapsed();
             let uptime = v
@@ -527,10 +536,36 @@ fn zping(args: &[String]) -> i32 {
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
             println!("pong from daemon (uptime {} ms, rtt {:?})", uptime, rtt);
-            0
+            v
         }
-        Err(e) => err_exit("zping", &e.to_string()),
+        Err(e) => return err_exit("zping", &e.to_string()),
+    };
+    let _ = pong; // already printed
+
+    if all {
+        // --all: enumerate every connected shell and report it. The shells
+        // aren't independently pingable in v1 (clients are pure consumers,
+        // the daemon is the sole responder); reporting connectivity from
+        // the daemon's session table is the meaningful equivalent.
+        match client.call("list_shells", json!({})) {
+            Ok(v) => {
+                let arr = v.get("shells").and_then(Value::as_array);
+                let count = arr.map(|a| a.len()).unwrap_or(0);
+                println!("registered shells: {}", count);
+                if let Some(arr) = arr {
+                    for s in arr {
+                        let id = s.get("client_id").and_then(Value::as_u64).unwrap_or(0);
+                        let pid = s.get("pid").and_then(Value::as_i64).unwrap_or(0);
+                        let tty = s.get("tty").and_then(Value::as_str).unwrap_or("-");
+                        let uptime = s.get("uptime_secs").and_then(Value::as_u64).unwrap_or(0);
+                        println!("  shell:{:<3} pid={:<6} tty={:<14} uptime={}s", id, pid, tty, uptime);
+                    }
+                }
+            }
+            Err(e) => return err_exit("zping --all", &e.to_string()),
+        }
     }
+    0
 }
 
 // -------- ztag / zuntag --------
@@ -636,11 +671,12 @@ fn znotify(args: &[String]) -> i32 {
 ///   <name> <shell_id> <text...>
 ///   <name> --all <text...>
 ///   <name> --tag <name> <text...>
+///   <name> --user <user> <text...>
 fn parse_send_args(args: &[String], cmd: &str) -> Result<(Value, String), i32> {
     let mut iter = args.iter().skip(1);
     let first = match iter.next() {
         Some(s) => s.clone(),
-        None => return Err(err_exit(cmd, "usage: --all|--tag <n>|<shell_id> <text...>")),
+        None => return Err(err_exit(cmd, "usage: --all|--tag <n>|--user <u>|<shell_id> <text...>")),
     };
 
     let (target, rest_first): (Value, Option<String>) = if first == "--all" {
@@ -651,13 +687,18 @@ fn parse_send_args(args: &[String], cmd: &str) -> Result<(Value, String), i32> {
             .ok_or_else(|| err_exit(cmd, "--tag requires a name"))?
             .clone();
         (json!({ "tag": name }), None)
+    } else if first == "--user" {
+        let name = iter
+            .next()
+            .ok_or_else(|| err_exit(cmd, "--user requires a username"))?
+            .clone();
+        (json!({ "user": name }), None)
     } else if let Ok(id) = first.parse::<u64>() {
         (json!({ "shell_id": id }), None)
     } else {
-        // Treat as a literal text token; require at least one more arg as the target type.
         return Err(err_exit(
             cmd,
-            "first argument must be --all, --tag <n>, or <shell_id>",
+            "first argument must be --all, --tag <n>, --user <u>, or <shell_id>",
         ));
     };
 

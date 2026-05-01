@@ -255,6 +255,50 @@ pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value)
         )
     })?;
 
+    // Long-running command notice: if the command's duration exceeds the
+    // configured threshold (default 30s, ZSHRS_LONG_CMD_THRESHOLD seconds),
+    // publish a long_cmd_complete (or long_cmd_failed / long_cmd_signaled)
+    // event to all of the user's other connected shells. Per docs/DAEMON.md.
+    if std::env::var("ZSHRS_LONG_CMD_NOTICES")
+        .ok()
+        .map(|v| v != "0")
+        .unwrap_or(true)
+    {
+        let threshold_secs: u64 = std::env::var("ZSHRS_LONG_CMD_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let threshold_ns: i64 = (threshold_secs as i64) * 1_000_000_000;
+        if let Some(dur) = duration_ns {
+            if dur >= threshold_ns {
+                let from_shell = shell_id.unwrap_or(0) as u64;
+                let event_kind = if exit_code.map(|c| c < 0).unwrap_or(false) {
+                    // Per zsh convention exit_code can be negative when the cmd died via signal
+                    // (some shells encode -SIG; ours stores 128+sig in exit_code). We treat
+                    // any negative as signaled.
+                    "long_cmd_signaled"
+                } else if exit_code.map(|c| c != 0).unwrap_or(false) {
+                    "long_cmd_failed"
+                } else {
+                    "long_cmd_complete"
+                };
+                let payload = json!({
+                    "event": event_kind,
+                    "from_shell": from_shell,
+                    "command": line,
+                    "exit_code": exit_code,
+                    "duration_ns": dur,
+                    "cwd": cwd,
+                    "ts_ns": ts_ns,
+                });
+                let frame = super::ipc::Frame::event(event_kind, payload);
+                // Broadcast to every other shell (the originator already knows
+                // the command finished — it just got control back).
+                state.broadcast(frame, &[from_shell]);
+            }
+        }
+    }
+
     // Payload key is `history_id` (not `id`) to avoid collision with the Frame::Response
     // envelope's `id` field (untagged-enum dispatch breaks on duplicate keys).
     Ok(json!({ "history_id": id }))

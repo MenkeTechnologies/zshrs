@@ -37,6 +37,9 @@ impl Client {
         match connect_existing(paths) {
             Ok(stream) => Self::handshake(stream),
             Err(_) => {
+                // First-run notice (one-time, stderr): the only exception to the
+                // no-banner rule. Per docs/DAEMON.md "First-run user notification".
+                let _ = super::firstrun::maybe_print(paths);
                 spawn_daemon(paths)?;
                 let stream = wait_for_socket(paths, SPAWN_GRACE * 4)?;
                 Self::handshake(stream)

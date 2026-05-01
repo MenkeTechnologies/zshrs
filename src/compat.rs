@@ -87,22 +87,69 @@ pub fn difftime(t2: i64, t1: i64) -> f64 {
     (t2 - t1) as f64
 }
 
-/// Get system's maximum open file descriptors
+/// Get system's maximum open file descriptors. Direct port of
+/// src/zsh/Src/compat.c:300-328 zopenmax.
+///
+/// Algorithm:
+///   1. sysconf(_SC_OPEN_MAX). If <1, fallback to OPEN_MAX (256).
+///   2. If sysconf returns absurdly high (e.g. "unlimited" via
+///      ulimit), cap at ZSH_INITIAL_OPEN_MAX (1024) and walk fds
+///      from OPEN_MAX upward to find the highest open one. Report
+///      max(OPEN_MAX, highest_open_fd) — anything above that
+///      causes inefficiency elsewhere in zsh per compat.c:307-313.
+///
+/// The previous Rust impl capped at 1MB which is way too high
+/// for closem() loops; matched zsh's actual cap.
 pub fn zopenmax() -> i64 {
+    // ZSH_INITIAL_OPEN_MAX from zsh.h — 1024.
+    const ZSH_INITIAL_OPEN_MAX: i64 = 1024;
+    // OPEN_MAX fallback from sysconf failure — POSIX guarantees 20
+    // for _POSIX_OPEN_MAX; zsh uses 256 historically.
+    const OPEN_MAX: i64 = 256;
+
     #[cfg(unix)]
     {
-        // Try to get from system
         unsafe {
-            let max = libc::sysconf(libc::_SC_OPEN_MAX);
-            if max > 0 {
-                // Cap at a reasonable value
-                return max.min(1024 * 1024);
+            let mut openmax = libc::sysconf(libc::_SC_OPEN_MAX);
+            if openmax < 1 {
+                openmax = OPEN_MAX;
+            } else if openmax > OPEN_MAX {
+                // compat.c:314-324 — walk fds to find highest open.
+                if openmax > ZSH_INITIAL_OPEN_MAX {
+                    openmax = ZSH_INITIAL_OPEN_MAX;
+                }
+                let mut j = OPEN_MAX;
+                let mut i = j;
+                while i < openmax {
+                    let r = libc::fcntl(i as i32, libc::F_GETFL, 0);
+                    if r < 0 {
+                        // errno across platforms: macOS uses
+                        // __error(), Linux/BSD use __errno_location().
+                        // std::io::Error::last_os_error() abstracts
+                        // both via the same OS error code.
+                        let e = std::io::Error::last_os_error()
+                            .raw_os_error()
+                            .unwrap_or(0);
+                        if e == libc::EBADF || e == libc::EINTR {
+                            if e != libc::EINTR {
+                                i += 1;
+                            }
+                            continue;
+                        }
+                    }
+                    j = i;
+                    i += 1;
+                }
+                openmax = j;
             }
+            return openmax;
         }
     }
 
-    // Fallback
-    1024
+    #[cfg(not(unix))]
+    {
+        OPEN_MAX
+    }
 }
 
 /// Get the current working directory
