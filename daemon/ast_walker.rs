@@ -313,7 +313,9 @@ fn walk_simple(s: &ZshSimple, state: &mut CanonicalState, _src_path: &Path) {
                     continue;
                 }
                 if let Some((k, v)) = a.split_once('=') {
-                    state.params.insert(k.to_string(), strip_quotes(v).to_string());
+                    state
+                        .params
+                        .insert(k.to_string(), strip_quotes(v).to_string());
                 }
             }
             for a in &s.assigns {
@@ -328,7 +330,9 @@ fn walk_simple(s: &ZshSimple, state: &mut CanonicalState, _src_path: &Path) {
                 } else if !raw.contains('$') && !raw.contains('`') {
                     state.sourced_files.push(raw.to_string());
                 } else {
-                    state.non_deterministic_lines.push(format!("source {}", target));
+                    state
+                        .non_deterministic_lines
+                        .push(format!("source {}", target));
                 }
             }
         }
@@ -440,7 +444,11 @@ fn capture_compdef(args: &[&str], state: &mut CanonicalState) {
     // `compdef _git git` — first non-flag word is the handler, second is
     // the command(s). Multiple commands on one line are comma-or-space
     // separated.
-    let positional: Vec<&str> = args.iter().filter(|a| !a.starts_with('-')).copied().collect();
+    let positional: Vec<&str> = args
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .copied()
+        .collect();
     if positional.len() < 2 {
         return;
     }
@@ -449,9 +457,7 @@ fn capture_compdef(args: &[&str], state: &mut CanonicalState) {
         for c in cmd.split(&[',', ' '][..]) {
             let c = c.trim();
             if !c.is_empty() {
-                state
-                    .compdef
-                    .insert(c.to_string(), handler.to_string());
+                state.compdef.insert(c.to_string(), handler.to_string());
             }
         }
     }
@@ -460,7 +466,11 @@ fn capture_compdef(args: &[&str], state: &mut CanonicalState) {
 fn capture_zstyle(args: &[&str], state: &mut CanonicalState) {
     // `zstyle ':completion:*' menu select` → key=':completion:*', rest=
     // 'menu select'.
-    let positional: Vec<&str> = args.iter().filter(|a| !a.starts_with('-')).copied().collect();
+    let positional: Vec<&str> = args
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .copied()
+        .collect();
     if positional.len() < 2 {
         return;
     }

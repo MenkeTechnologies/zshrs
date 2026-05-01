@@ -199,7 +199,7 @@ pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>)
 
     // Defaults based on tty
     if atty::is(atty::Stream::Stdin) {
-        if !cmd.is_some() {
+        if cmd.is_none() {
             opts.interactive = true;
         }
         opts.use_zle = true;
@@ -394,7 +394,11 @@ pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<PathBuf> {
 
     // Fallback to the argv[0]/cwd/$PATH walk (init.c:956-1004).
     let name = name?;
-    let name = if name.starts_with('-') { &name[1..] } else { name };
+    let name = if name.starts_with('-') {
+        &name[1..]
+    } else {
+        name
+    };
     if name.is_empty() {
         return None;
     }

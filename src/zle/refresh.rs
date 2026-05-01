@@ -233,7 +233,7 @@ impl Zle {
         let buffer_start = scroll_offset.saturating_sub(prompt_width);
         let visible_buffer = skip_chars(&buffer, buffer_start);
         let truncated = truncate_to_width(
-            &visible_buffer,
+            visible_buffer,
             effective_cols.saturating_sub(prompt_width.saturating_sub(scroll_offset)),
         );
         let _ = write!(handle, "{}", truncated);

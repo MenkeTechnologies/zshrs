@@ -173,7 +173,7 @@ pub fn param_expand(
                 }
                 Some(&'?') => {
                     chars.next();
-                    result.push_str("0"); // Last exit status
+                    result.push('0'); // Last exit status
                 }
                 Some(&'$') => {
                     chars.next();
@@ -181,7 +181,7 @@ pub fn param_expand(
                 }
                 Some(&'#') => {
                     chars.next();
-                    result.push_str("0"); // Number of positional params
+                    result.push('0'); // Number of positional params
                 }
                 Some(&'*') | Some(&'@') => {
                     chars.next();
@@ -1086,9 +1086,7 @@ pub fn equalsubstr(cmd: &str) -> Option<String> {
 
 /// File substitution - tilde and equals (from subst.c filesubstr lines 736-807)
 pub fn filesubstr(name: &str, assign: bool) -> Option<String> {
-    if name.starts_with('~') {
-        let rest = &name[1..];
-
+    if let Some(rest) = name.strip_prefix('~') {
         // ~ alone
         if rest.is_empty() || rest.starts_with('/') {
             let home = std::env::var("HOME").unwrap_or_default();
@@ -1132,7 +1130,7 @@ pub fn filesubstr(name: &str, assign: bool) -> Option<String> {
 /// Subst eval char - evaluate numeric expression to character (from subst.c substevalchar lines 1489-1520)
 pub fn substevalchar(expr: &str) -> Option<char> {
     let value: i64 = expr.parse().ok()?;
-    if value < 0 || value > 0x10FFFF {
+    if !(0..=0x10FFFF).contains(&value) {
         return None;
     }
     char::from_u32(value as u32)

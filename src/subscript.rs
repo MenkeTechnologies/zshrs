@@ -320,10 +320,8 @@ fn find_subscript_end(s: &str) -> Option<usize> {
             ']' if depth > 0 => depth -= 1,
             ']' if depth == 0 && paren_depth == 0 => return Some(i),
             '(' => paren_depth += 1,
-            ')' => {
-                if paren_depth > 0 {
-                    paren_depth -= 1;
-                }
+            ')' if paren_depth > 0 => {
+                paren_depth -= 1;
             }
             ',' if depth == 0 && paren_depth == 0 => return Some(i),
             _ => {}
@@ -443,16 +441,12 @@ fn find_comma_position(s: &str, is_hash: bool) -> Option<usize> {
     for (i, c) in s.char_indices() {
         match c {
             '[' => depth += 1,
-            ']' => {
-                if depth > 0 {
-                    depth -= 1;
-                }
+            ']' if depth > 0 => {
+                depth -= 1;
             }
             '(' => paren_depth += 1,
-            ')' => {
-                if paren_depth > 0 {
-                    paren_depth -= 1;
-                }
+            ')' if paren_depth > 0 => {
+                paren_depth -= 1;
             }
             ',' if depth == 0 && paren_depth == 0 && !is_hash => {
                 return Some(i);

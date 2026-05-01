@@ -129,7 +129,11 @@ fn format_zsh_float(f: f64) -> String {
         return "NaN".to_string();
     }
     if f.is_infinite() {
-        return if f > 0.0 { "Inf".to_string() } else { "-Inf".to_string() };
+        return if f > 0.0 {
+            "Inf".to_string()
+        } else {
+            "-Inf".to_string()
+        };
     }
     // Negative zero: zsh preserves the sign in the trailing-dot
     // form (`-0.`). C's `%g` would print `-0` first; the
@@ -564,7 +568,7 @@ impl<'a> MathEval<'a> {
                         let mut is_octal = true;
                         while let Some(c) = self.peek() {
                             if c.is_ascii_digit() || c == '_' {
-                                if c >= '8' && c <= '9' {
+                                if ('8'..='9').contains(&c) {
                                     is_octal = false;
                                 }
                                 self.advance();
@@ -695,8 +699,10 @@ impl<'a> MathEval<'a> {
                 } else {
                     None
                 };
-                let Some(d) = digit_val else { break; };
-                if d >= base as u32 {
+                let Some(d) = digit_val else {
+                    break;
+                };
+                if d >= base {
                     break;
                 }
                 val = val.saturating_mul(base_i64).saturating_add(d as i64);
@@ -746,7 +752,6 @@ impl<'a> MathEval<'a> {
             self.tok_start = pre_pos;
 
             match c {
-
                 '+' => {
                     if self.peek() == Some('+') {
                         self.advance();
@@ -1201,10 +1206,8 @@ impl<'a> MathEval<'a> {
                 // string`. Matching it here means `let "1+"` and
                 // `$((5+))` produce the same diagnostic shape that
                 // scripts grep for.
-                self.error = Some(
-                    "bad math expression: operand expected at end of string"
-                        .to_string(),
-                );
+                self.error =
+                    Some("bad math expression: operand expected at end of string".to_string());
                 return;
             }
 
@@ -1408,10 +1411,7 @@ impl<'a> MathEval<'a> {
             // expression: operand expected at end of string`.
             // zshrs's bare `stack empty` had no match for scripts
             // grepping zsh's canonical wording.
-            self.error = Some(
-                "bad math expression: operand expected at end of string"
-                    .to_string(),
-            );
+            self.error = Some("bad math expression: operand expected at end of string".to_string());
             return;
         }
 
@@ -1547,15 +1547,11 @@ impl<'a> MathEval<'a> {
 
         let tst = !val.is_zero();
         match tk {
-            MathTok::DAnd | MathTok::DAndEq => {
-                if !tst {
-                    self.noeval += 1;
-                }
+            MathTok::DAnd | MathTok::DAndEq if !tst => {
+                self.noeval += 1;
             }
-            MathTok::DOr | MathTok::DOrEq => {
-                if tst {
-                    self.noeval += 1;
-                }
+            MathTok::DOr | MathTok::DOrEq if tst => {
+                self.noeval += 1;
             }
             _ => {}
         }
@@ -1578,11 +1574,13 @@ impl<'a> MathEval<'a> {
         //      silently accepting bogus input.
         //   2. Update `self.unary` for the next iteration.
         let tp = OP_TYPE[self.mtok as usize];
-        let is_op_token = (tp
-            & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO | OP_OP))
-            != 0;
+        let is_op_token = (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO | OP_OP)) != 0;
         let errmsg = if is_op_token {
-            if self.unary { 1 } else { 0 }
+            if self.unary {
+                1
+            } else {
+                0
+            }
         } else if !self.unary {
             2
         } else {
@@ -1598,9 +1596,7 @@ impl<'a> MathEval<'a> {
             // the first visible char.
             let bytes = self.input.as_bytes();
             let mut start = self.tok_start;
-            while start < bytes.len()
-                && matches!(bytes[start], b' ' | b'\t' | b'\n')
-            {
+            while start < bytes.len() && matches!(bytes[start], b' ' | b'\t' | b'\n') {
                 start += 1;
             }
             // zsh truncates after 10 chars and appends `...` if
@@ -1720,9 +1716,7 @@ impl<'a> MathEval<'a> {
                             // missing (input ran out at end of
                             // string after `?`).
                             if self.stack.len() > stack_before {
-                                self.error = Some(
-                                    "bad math expression: ':' expected".to_string(),
-                                );
+                                self.error = Some("bad math expression: ':' expected".to_string());
                             } else {
                                 self.error = Some(
                                     "bad math expression: operand expected at end of string"
@@ -1757,12 +1751,9 @@ impl<'a> MathEval<'a> {
                     // collapsed every operand-missing case into "at
                     // end of string" which lost the operator
                     // location for orphan-at-start expressions.
-                    let is_binary = (tp
-                        & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO))
-                        != 0;
+                    let is_binary = (tp & (OP_A2 | OP_A2IR | OP_A2IO | OP_E2 | OP_E2IO)) != 0;
                     if self.stack.is_empty() && is_binary {
-                        let remaining =
-                            &self.input[self.tok_start..];
+                        let remaining = &self.input[self.tok_start..];
                         self.error = Some(format!(
                             "bad math expression: operand expected at `{}'",
                             remaining
@@ -1811,27 +1802,29 @@ impl<'a> MathEval<'a> {
                 .filter_map(|s| {
                     let mut eval = MathEval::new(s.trim());
                     eval.variables = self.variables.clone();
-                    match eval.evaluate() {
-                        Ok(n) => Some(n),
-                        Err(_) => None,
-                    }
+                    eval.evaluate().ok()
                 })
                 .collect()
         };
         let args: Vec<f64> = arg_nums.iter().map(|n| n.to_float()).collect();
-        let all_int = !arg_nums.is_empty()
-            && arg_nums.iter().all(|n| matches!(n, MathNum::Integer(_)));
+        let all_int =
+            !arg_nums.is_empty() && arg_nums.iter().all(|n| matches!(n, MathNum::Integer(_)));
 
         // Functions that preserve int-ness: when all args are int,
         // return MathNum::Integer instead of Float to avoid the
         // trailing "." in the string output ("5." instead of "5").
-        let int_preserving = matches!(name, "abs" | "min" | "max" | "int" | "floor" | "ceil" | "trunc");
+        let int_preserving = matches!(
+            name,
+            "abs" | "min" | "max" | "int" | "floor" | "ceil" | "trunc"
+        );
         if all_int && int_preserving {
             let i = match name {
-                "abs" => arg_nums.get(0).map(|n| n.to_int().abs()).unwrap_or(0),
+                "abs" => arg_nums.first().map(|n| n.to_int().abs()).unwrap_or(0),
                 "min" => arg_nums.iter().map(|n| n.to_int()).min().unwrap_or(0),
                 "max" => arg_nums.iter().map(|n| n.to_int()).max().unwrap_or(0),
-                "int" | "floor" | "ceil" | "trunc" => arg_nums.get(0).map(|n| n.to_int()).unwrap_or(0),
+                "int" | "floor" | "ceil" | "trunc" => {
+                    arg_nums.first().map(|n| n.to_int()).unwrap_or(0)
+                }
                 _ => 0,
             };
             return MathNum::Integer(i);
@@ -1839,44 +1832,44 @@ impl<'a> MathEval<'a> {
 
         // Built-in math functions
         let result = match name {
-            "abs" => args.get(0).map(|x| x.abs()).unwrap_or(0.0),
-            "acos" => args.get(0).map(|x| x.acos()).unwrap_or(0.0),
-            "asin" => args.get(0).map(|x| x.asin()).unwrap_or(0.0),
-            "atan" => args.get(0).map(|x| x.atan()).unwrap_or(0.0),
+            "abs" => args.first().map(|x| x.abs()).unwrap_or(0.0),
+            "acos" => args.first().map(|x| x.acos()).unwrap_or(0.0),
+            "asin" => args.first().map(|x| x.asin()).unwrap_or(0.0),
+            "atan" => args.first().map(|x| x.atan()).unwrap_or(0.0),
             "atan2" => {
-                let y = args.get(0).copied().unwrap_or(0.0);
+                let y = args.first().copied().unwrap_or(0.0);
                 let x = args.get(1).copied().unwrap_or(1.0);
                 y.atan2(x)
             }
-            "ceil" => args.get(0).map(|x| x.ceil()).unwrap_or(0.0),
-            "cos" => args.get(0).map(|x| x.cos()).unwrap_or(1.0),
-            "cosh" => args.get(0).map(|x| x.cosh()).unwrap_or(1.0),
-            "exp" => args.get(0).map(|x| x.exp()).unwrap_or(1.0),
-            "floor" => args.get(0).map(|x| x.floor()).unwrap_or(0.0),
+            "ceil" => args.first().map(|x| x.ceil()).unwrap_or(0.0),
+            "cos" => args.first().map(|x| x.cos()).unwrap_or(1.0),
+            "cosh" => args.first().map(|x| x.cosh()).unwrap_or(1.0),
+            "exp" => args.first().map(|x| x.exp()).unwrap_or(1.0),
+            "floor" => args.first().map(|x| x.floor()).unwrap_or(0.0),
             "hypot" => {
-                let x = args.get(0).copied().unwrap_or(0.0);
+                let x = args.first().copied().unwrap_or(0.0);
                 let y = args.get(1).copied().unwrap_or(0.0);
                 x.hypot(y)
             }
-            "int" => args.get(0).map(|x| x.trunc()).unwrap_or(0.0),
-            "log" => args.get(0).map(|x| x.ln()).unwrap_or(0.0),
-            "log10" => args.get(0).map(|x| x.log10()).unwrap_or(0.0),
-            "log2" => args.get(0).map(|x| x.log2()).unwrap_or(0.0),
+            "int" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+            "log" => args.first().map(|x| x.ln()).unwrap_or(0.0),
+            "log10" => args.first().map(|x| x.log10()).unwrap_or(0.0),
+            "log2" => args.first().map(|x| x.log2()).unwrap_or(0.0),
             "max" => args.iter().copied().fold(f64::NEG_INFINITY, f64::max),
             "min" => args.iter().copied().fold(f64::INFINITY, f64::min),
             "pow" => {
-                let base = args.get(0).copied().unwrap_or(0.0);
+                let base = args.first().copied().unwrap_or(0.0);
                 let exp = args.get(1).copied().unwrap_or(1.0);
                 base.powf(exp)
             }
             "rand" => rand::random::<f64>(),
-            "round" => args.get(0).map(|x| x.round()).unwrap_or(0.0),
-            "sin" => args.get(0).map(|x| x.sin()).unwrap_or(0.0),
-            "sinh" => args.get(0).map(|x| x.sinh()).unwrap_or(0.0),
-            "sqrt" => args.get(0).map(|x| x.sqrt()).unwrap_or(0.0),
-            "tan" => args.get(0).map(|x| x.tan()).unwrap_or(0.0),
-            "tanh" => args.get(0).map(|x| x.tanh()).unwrap_or(0.0),
-            "trunc" => args.get(0).map(|x| x.trunc()).unwrap_or(0.0),
+            "round" => args.first().map(|x| x.round()).unwrap_or(0.0),
+            "sin" => args.first().map(|x| x.sin()).unwrap_or(0.0),
+            "sinh" => args.first().map(|x| x.sinh()).unwrap_or(0.0),
+            "sqrt" => args.first().map(|x| x.sqrt()).unwrap_or(0.0),
+            "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
+            "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
+            "trunc" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
             _ => {
                 self.error = Some(format!("unknown function: {}", name));
                 0.0

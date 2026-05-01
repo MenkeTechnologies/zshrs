@@ -527,9 +527,18 @@ impl GlobState {
         // per-glob `gf_markdirs` / `gf_listtypes` flags which the qualifier
         // parser at glob.c:1557-1566 sets.
         let mark_dirs = self.options.mark_dirs
-            || self.qualifiers.as_ref().map(|q| q.mark_dirs).unwrap_or(false);
+            || self
+                .qualifiers
+                .as_ref()
+                .map(|q| q.mark_dirs)
+                .unwrap_or(false);
         let list_types = self.options.list_types
-            || self.qualifiers.as_ref().map(|q| q.list_types).unwrap_or(false);
+            || self
+                .qualifiers
+                .as_ref()
+                .map(|q| q.list_types)
+                .unwrap_or(false);
+        let colon_mods = self.qualifiers.as_ref().and_then(|q| q.colon_mods.clone());
         let mut results: Vec<String> = self
             .matches
             .iter()
@@ -542,6 +551,13 @@ impl GlobState {
                             s.push(ch);
                         }
                     }
+                }
+                // Apply colon modifiers AFTER mark/list-type appendage —
+                // zsh applies them last in glob.c:432 modify() per emitted
+                // node, so `(M:t)` would mark THEN tail (effectively just
+                // tail since the slash is gone). Faithful order.
+                if let Some(ref m) = colon_mods {
+                    s = apply_colon_modifiers(&s, m);
                 }
                 s
             })
@@ -1530,11 +1546,11 @@ pub fn file_type_char(mode: u32) -> char {
 fn scale_size(bytes: u64, unit: SizeUnit) -> u64 {
     match unit {
         SizeUnit::Bytes => bytes,
-        SizeUnit::PosixBlocks => (bytes + 511) / 512,
-        SizeUnit::Kilobytes => (bytes + 1023) / 1024,
-        SizeUnit::Megabytes => (bytes + 1048575) / 1048576,
-        SizeUnit::Gigabytes => (bytes + 1073741823) / 1073741824,
-        SizeUnit::Terabytes => (bytes + 1099511627775) / 1099511627776,
+        SizeUnit::PosixBlocks => bytes.div_ceil(512),
+        SizeUnit::Kilobytes => bytes.div_ceil(1024),
+        SizeUnit::Megabytes => bytes.div_ceil(1048576),
+        SizeUnit::Gigabytes => bytes.div_ceil(1073741824),
+        SizeUnit::Terabytes => bytes.div_ceil(1099511627776),
     }
 }
 
@@ -1581,12 +1597,10 @@ pub fn has_braces(s: &str, brace_ccl: bool) -> bool {
                 }
                 depth += 1;
             }
-            '}' => {
-                if depth > 0 {
-                    depth -= 1;
-                    if depth == 0 && (has_comma || has_dotdot) {
-                        return true;
-                    }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 && (has_comma || has_dotdot) {
+                    return true;
                 }
             }
             ',' if depth == 1 => has_comma = true,
@@ -1669,7 +1683,7 @@ fn expand_single_brace(s: &str, brace_ccl: bool) -> Option<Vec<String>> {
                     }
 
                     // brace_ccl expansion
-                    if brace_ccl && content.len() > 0 {
+                    if brace_ccl && !content.is_empty() {
                         return expand_ccl(&prefix, &content, &suffix);
                     }
 
@@ -1677,10 +1691,8 @@ fn expand_single_brace(s: &str, brace_ccl: bool) -> Option<Vec<String>> {
                 }
             }
             ',' if depth == 1 => comma_positions.push(i - start - 1),
-            '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' => {
-                if dotdot_pos.is_none() {
-                    dotdot_pos = Some(i - start - 1);
-                }
+            '.' if depth == 1 && i + 1 < len && chars[i + 1] == '.' && dotdot_pos.is_none() => {
+                dotdot_pos = Some(i - start - 1);
             }
             _ => {}
         }
@@ -1702,7 +1714,7 @@ fn expand_range(
     let (right, incr) = if let Some(pos) = content[right_start..].find("..") {
         let r = &content[right_start..right_start + pos];
         let i: i64 = content[right_start + pos + 2..].parse().unwrap_or(1);
-        (r, i.abs() as u64)
+        (r, i.unsigned_abs())
     } else {
         (&content[right_start..], 1u64)
     };
@@ -1805,6 +1817,439 @@ fn expand_ccl(prefix: &str, content: &str, suffix: &str) -> Option<Vec<String>> 
         .collect();
     results.sort();
     Some(results)
+}
+
+// ============================================================================
+// Colon modifiers — `:t :h :r :e :s/X/Y/` applied to glob results.
+// Direct port of zsh/Src/subst.c:4531 `modify()` driver plus the
+// rem* helpers in hist.c:2056-2186 (`remtpath`, `remlpaths`,
+// `remtext`, `rembutext`). Used by `(...)` qualifier suffixes —
+// `*.toml(:t)` returns basenames, `*.toml(:r)` strips extension,
+// `*.toml(:s/.toml/.zzz/)` runs a one-shot substitution.
+// ============================================================================
+
+/// `:h` — head/dirname. Direct port of zsh/Src/hist.c:2056 `remtpath`
+/// with `count=1`. Trailing `/` ignored, then drop the last path
+/// component. Edge cases mirror the C: empty result with leading `/`
+/// becomes `/`; otherwise `.`.
+fn modifier_head(s: &str) -> String {
+    if s.is_empty() {
+        return ".".to_string();
+    }
+    let bytes = s.as_bytes();
+    let mut end = bytes.len();
+    // Strip trailing slashes — `foo/:h` is `.`, matching zsh.
+    while end > 0 && bytes[end - 1] == b'/' {
+        end -= 1;
+    }
+    // Skip the filename component.
+    while end > 0 && bytes[end - 1] != b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return if bytes.first() == Some(&b'/') {
+            "/".to_string()
+        } else {
+            ".".to_string()
+        };
+    }
+    // Collapse repeated slashes — never erase the root slash.
+    while end > 1 && bytes[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return "/".to_string();
+    }
+    s[..end].to_string()
+}
+
+/// `:t` — tail/basename. Direct port of zsh/Src/hist.c:2152 `remlpaths`
+/// with `count=1`. Returns the substring after the last `/`. Trailing
+/// slashes are trimmed first so `foo/bar/:t` is `bar`, not empty.
+fn modifier_tail(s: &str) -> String {
+    if s.is_empty() {
+        return String::new();
+    }
+    let bytes = s.as_bytes();
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        // Pure `/` or `///` etc.
+        return String::new();
+    }
+    let trimmed = &s[..end];
+    match trimmed.rfind('/') {
+        Some(i) => trimmed[i + 1..].to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
+/// `:r` — root, strip last extension from the basename. Direct port of
+/// zsh/Src/hist.c:2122 `remtext`. Walks from end, stops at first `/`
+/// or `.`; truncates at `.` when found in the basename.
+fn modifier_root(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 {
+        let c = bytes[i - 1];
+        if c == b'/' {
+            return s.to_string();
+        }
+        if c == b'.' {
+            return s[..i - 1].to_string();
+        }
+        i -= 1;
+    }
+    s.to_string()
+}
+
+/// `:e` — extension only. Direct port of zsh/Src/hist.c:2136 `rembutext`.
+/// Walks from end; on first `.` returns the substring after the dot;
+/// on `/` returns empty. `foo.tar.gz` → `gz`; `foo` → ``;
+/// `.bashrc` → `bashrc`.
+fn modifier_ext(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut i = bytes.len();
+    while i > 0 {
+        let c = bytes[i - 1];
+        if c == b'/' {
+            return String::new();
+        }
+        if c == b'.' {
+            return s[i..].to_string();
+        }
+        i -= 1;
+    }
+    String::new()
+}
+
+/// Apply a `:s/PAT/REPL/` (or `:gs/PAT/REPL/` for global) substitution.
+/// Direct port of the s/S branch of zsh/Src/subst.c:4579-4710 — first
+/// char after `s` is the delimiter (any single char), pattern runs to
+/// the second occurrence, replacement to the third (or string end).
+/// Backslash-escapes the delimiter inside the body. Returns the
+/// substituted string and the number of bytes consumed from `mods`.
+fn apply_modifier_subst(input: &str, mods_after_s: &str, global: bool) -> (String, usize) {
+    let chars: Vec<char> = mods_after_s.chars().collect();
+    if chars.is_empty() {
+        return (input.to_string(), 0);
+    }
+    let delim = chars[0];
+    let mut pat = String::new();
+    let mut repl = String::new();
+    let mut filling_repl = false;
+    let mut i = 1;
+    while i < chars.len() {
+        let ch = chars[i];
+        if ch == '\\' && i + 1 < chars.len() {
+            let next = chars[i + 1];
+            if next == delim || next == '\\' {
+                if filling_repl {
+                    repl.push(next);
+                } else {
+                    pat.push(next);
+                }
+                i += 2;
+                continue;
+            }
+        }
+        if ch == delim {
+            if !filling_repl {
+                filling_repl = true;
+                i += 1;
+                continue;
+            } else {
+                i += 1; // consume trailing delimiter
+                break;
+            }
+        }
+        if filling_repl {
+            repl.push(ch);
+        } else {
+            pat.push(ch);
+        }
+        i += 1;
+    }
+    // Consumed bytes counted in chars; convert back to byte length so
+    // the driver can advance its iterator correctly.
+    let consumed_bytes: usize = chars[..i].iter().map(|c| c.len_utf8()).sum();
+    let out = if pat.is_empty() {
+        input.to_string()
+    } else if global {
+        input.replace(&pat, &repl)
+    } else {
+        input.replacen(&pat, &repl, 1)
+    };
+    (out, consumed_bytes)
+}
+
+/// `:a` — make absolute lexically, no symlink resolution. Direct port
+/// of zsh/Src/subst.c chabspath: prepend `$PWD` if relative, then
+/// collapse `.` and `..` components without touching the filesystem.
+fn modifier_abs(s: &str) -> String {
+    let base = if s.starts_with('/') {
+        std::path::PathBuf::from(s)
+    } else {
+        std::env::current_dir().unwrap_or_default().join(s)
+    };
+    let mut out = std::path::PathBuf::new();
+    for c in base.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out.to_string_lossy().to_string()
+}
+
+/// `:A` / `:P` — physical/canonical absolute path. Direct port of
+/// zsh/Src/subst.c chrealpath / xsymlink (subst.c:4736,4787) — resolve
+/// symlinks where possible. Falls back to `:a` lexical normalization
+/// when the path doesn't exist on disk.
+fn modifier_realpath(s: &str) -> String {
+    let base = if s.starts_with('/') {
+        std::path::PathBuf::from(s)
+    } else {
+        std::env::current_dir().unwrap_or_default().join(s)
+    };
+    match std::fs::canonicalize(&base) {
+        Ok(p) => p.to_string_lossy().to_string(),
+        Err(_) => modifier_abs(s),
+    }
+}
+
+/// `:c` — resolve command in `$PATH`. Direct port of zsh/Src/subst.c
+/// equalsubstr (subst.c:4739-4744). If the input contains a `/` it's
+/// already a path and is returned unchanged. Otherwise scan `$PATH`
+/// for an executable file with that basename and return the full
+/// path. Returns the input unchanged on miss.
+fn modifier_command(s: &str) -> String {
+    if s.is_empty() || s.contains('/') {
+        return s.to_string();
+    }
+    let path = match std::env::var("PATH") {
+        Ok(p) => p,
+        Err(_) => return s.to_string(),
+    };
+    for dir in path.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        let candidate = std::path::Path::new(dir).join(s);
+        if let Ok(meta) = std::fs::metadata(&candidate) {
+            if meta.is_file() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if meta.permissions().mode() & 0o111 != 0 {
+                        return candidate.to_string_lossy().to_string();
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    return candidate.to_string_lossy().to_string();
+                }
+            }
+        }
+    }
+    s.to_string()
+}
+
+/// `:l` — lowercase. Direct port of zsh/Src/subst.c:4847 `casemodify(*str,
+/// CASMOD_LOWER)`. Unicode-aware via Rust's `to_lowercase()`.
+fn modifier_lower(s: &str) -> String {
+    s.to_lowercase()
+}
+
+/// `:u` — uppercase. Direct port of zsh/Src/subst.c:4850 `casemodify(*str,
+/// CASMOD_UPPER)`. Unicode-aware via Rust's `to_uppercase()`.
+fn modifier_upper(s: &str) -> String {
+    s.to_uppercase()
+}
+
+/// `:q` — backslash-quote shell metacharacters. Direct port of
+/// zsh/Src/subst.c:4860 `quotestring(*str, QT_BACKSLASH)` — escape
+/// every char that would otherwise be parsed as syntax (whitespace,
+/// quotes, redirects, glob metas, history bangs, `$`, backtick, etc.).
+/// The output is safe to paste back as a literal shell argument.
+fn modifier_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        if matches!(
+            c,
+            ' ' | '\t'
+                | '\n'
+                | '\''
+                | '"'
+                | '\\'
+                | ';'
+                | '&'
+                | '|'
+                | '<'
+                | '>'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | '*'
+                | '?'
+                | '~'
+                | '!'
+                | '#'
+                | '$'
+                | '^'
+                | '`'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `:Q` — strip shell quoting. Direct port of zsh/Src/subst.c:4863
+/// `parse_subst_string` + `untokenize`. Handles backslash-escapes,
+/// single-quoted runs (literal until next `'`), and double-quoted runs
+/// (only `\\ \" \$ \` \\n` are special). Unmatched quotes consume to
+/// end-of-string per zsh's permissive parse.
+fn modifier_unquote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            '\'' => {
+                for qc in chars.by_ref() {
+                    if qc == '\'' {
+                        break;
+                    }
+                    out.push(qc);
+                }
+            }
+            '"' => {
+                while let Some(qc) = chars.next() {
+                    if qc == '"' {
+                        break;
+                    }
+                    if qc == '\\' {
+                        if let Some(&peek) = chars.peek() {
+                            if matches!(peek, '"' | '\\' | '$' | '`' | '\n') {
+                                out.push(chars.next().unwrap());
+                                continue;
+                            }
+                        }
+                    }
+                    out.push(qc);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Apply a chained colon-modifier string (`:t`, `:r:s/x/y/`, `:gs/X/Y/:t`)
+/// to a path. Direct port of zsh/Src/subst.c:4531 `modify()` for the
+/// full modifier set used by glob qualifiers and parameter expansion:
+/// `:h :t :r :e :a :A :c :l :u :q :Q :P :s/X/Y/ :S/X/Y/ :gs/X/Y/`.
+/// Unknown modifiers stop the chain rather than mangle the path.
+pub fn apply_colon_modifiers(input: &str, mods: &str) -> String {
+    let mut s = input.to_string();
+    let bytes = mods.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b':' {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= bytes.len() {
+            break;
+        }
+        let mut global = false;
+        if bytes[i] == b'g' {
+            global = true;
+            i += 1;
+            if i >= bytes.len() {
+                break;
+            }
+        }
+        match bytes[i] {
+            b'h' => {
+                s = modifier_head(&s);
+                i += 1;
+            }
+            b't' => {
+                s = modifier_tail(&s);
+                i += 1;
+            }
+            b'r' => {
+                s = modifier_root(&s);
+                i += 1;
+            }
+            b'e' => {
+                s = modifier_ext(&s);
+                i += 1;
+            }
+            b'a' => {
+                s = modifier_abs(&s);
+                i += 1;
+            }
+            // `:A` and `:P` both resolve symlinks per zsh manpage; the
+            // C code's xsymlink path collapses to canonicalize() in
+            // Rust. Subtle differences (xsymlink's intermediate-symlink
+            // policy) would only show up on broken-symlink chains —
+            // worth revisiting if a script depends on the divergence.
+            b'A' | b'P' => {
+                s = modifier_realpath(&s);
+                i += 1;
+            }
+            b'c' => {
+                s = modifier_command(&s);
+                i += 1;
+            }
+            b'l' => {
+                s = modifier_lower(&s);
+                i += 1;
+            }
+            b'u' => {
+                s = modifier_upper(&s);
+                i += 1;
+            }
+            b'q' => {
+                s = modifier_quote(&s);
+                i += 1;
+            }
+            b'Q' => {
+                s = modifier_unquote(&s);
+                i += 1;
+            }
+            // `:s` and `:S` go through the same substitution branch in
+            // C (subst.c:4764-4770); `:S` flips `hsubpatopt` for
+            // case-sensitive HIST_SUBST_PATTERN behavior. Our `replace`
+            // is already case-sensitive, so they're functionally
+            // identical here until pattern-mode is wired.
+            b's' | b'S' => {
+                i += 1;
+                let (out, consumed) = apply_modifier_subst(&s, &mods[i..], global);
+                s = out;
+                i += consumed;
+            }
+            _ => break,
+        }
+    }
+    s
 }
 
 // ============================================================================
@@ -2158,7 +2603,7 @@ pub mod qualifiers {
 // ============================================================================
 
 /// Match flags for getmatch
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct MatchFlags {
     /// Match at start
     pub anchored_start: bool,
@@ -2168,17 +2613,6 @@ pub struct MatchFlags {
     pub shortest: bool,
     /// Subexpression matching
     pub subexpr: bool,
-}
-
-impl Default for MatchFlags {
-    fn default() -> Self {
-        MatchFlags {
-            anchored_start: false,
-            anchored_end: false,
-            shortest: false,
-            subexpr: false,
-        }
-    }
 }
 
 /// Internal match data

@@ -348,7 +348,8 @@ fn zformat_recurse(
         }
         // Optional `.MAX` or just `.` after (zutil.c:841-845).
         let mut max: Option<i64> = None;
-        if *idx < bytes.len() && (bytes[*idx] == '.' || testit)
+        if *idx < bytes.len()
+            && (bytes[*idx] == '.' || testit)
             && *idx + 1 < bytes.len()
             && bytes[*idx + 1].is_ascii_digit()
         {
@@ -612,8 +613,7 @@ pub fn zparseopts(
             } else {
                 entry.push(String::new());
             }
-        } else if opt_str.starts_with('-') {
-            let long_name = &opt_str[1..];
+        } else if let Some(long_name) = opt_str.strip_prefix('-') {
             if let Some((name, value)) = long_name.split_once('=') {
                 if let Some(desc) = long_opts.get(name) {
                     let key = format!("-{}", desc.name);

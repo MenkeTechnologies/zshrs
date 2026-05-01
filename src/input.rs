@@ -31,7 +31,7 @@ pub mod flags {
 }
 
 /// An entry on the input stack
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct InputStackEntry {
     /// The input buffer
     buf: String,
@@ -41,17 +41,6 @@ struct InputStackEntry {
     flags: u32,
     /// Associated alias name (if any)
     alias: Option<String>,
-}
-
-impl Default for InputStackEntry {
-    fn default() -> Self {
-        InputStackEntry {
-            buf: String::new(),
-            pos: 0,
-            flags: 0,
-            alias: None,
-        }
-    }
 }
 
 /// Input buffer state
@@ -412,13 +401,13 @@ pub const META: char = '\u{83}';
 /// Check if a character needs meta encoding
 fn is_meta(c: char) -> bool {
     let b = c as u32;
-    b < 32 || (b >= 0x83 && b <= 0x9b)
+    b < 32 || (0x83..=0x9b).contains(&b)
 }
 
 /// Check if a character is an internal token
 fn is_tok(c: char) -> bool {
     let b = c as u32;
-    b >= 0x83 && b <= 0x9b
+    (0x83..=0x9b).contains(&b)
 }
 
 /// Encode a meta character

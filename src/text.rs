@@ -272,9 +272,8 @@ impl TextFormatter {
 
             // Handle trailing operator for last command
             if i == list.len() - 1 {
-                match op {
-                    ListOp::Amp => self.add_str(" &"),
-                    _ => {}
+                if op == &ListOp::Amp {
+                    self.add_str(" &")
                 }
             }
         }

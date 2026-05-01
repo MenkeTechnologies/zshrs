@@ -68,8 +68,12 @@ pub fn zjob(args: &[String]) -> i32 {
         ),
         "wait" => wait_for(rest),
         "" | "-h" | "--help" => {
-            println!("usage: zjob submit <cmd> [<args>...] [--cwd DIR] [--tag T...] [--env K=V...]");
-            println!("       zjob list   [--state running|exited|killed|failed] [--tag T] [--limit N]");
+            println!(
+                "usage: zjob submit <cmd> [<args>...] [--cwd DIR] [--tag T...] [--env K=V...]"
+            );
+            println!(
+                "       zjob list   [--state running|exited|killed|failed] [--tag T] [--limit N]"
+            );
             println!("       zjob status <id>");
             println!("       zjob output <id> [--follow] [--stderr] [--lines N]");
             println!("       zjob kill   <id> [--signal NAME]              # immediate signal, configurable");
@@ -98,7 +102,9 @@ fn cancel(args: &[String]) -> i32 {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    if let Err(e) = client.set_read_timeout(Some(std::time::Duration::from_millis(grace_ms + 5_000))) {
+    if let Err(e) =
+        client.set_read_timeout(Some(std::time::Duration::from_millis(grace_ms + 5_000)))
+    {
         return err_exit(&format!("cancel: {}", e));
     }
     match client.call("job_cancel", payload) {
@@ -251,10 +257,7 @@ fn print_jobs_table(v: &Value) {
             .and_then(Value::as_i64)
             .map(|c| c.to_string())
             .unwrap_or_else(|| "-".to_string());
-        let started = j
-            .get("started_at")
-            .and_then(Value::as_str)
-            .unwrap_or("-");
+        let started = j.get("started_at").and_then(Value::as_str).unwrap_or("-");
         let tags = j
             .get("tags")
             .and_then(Value::as_array)
@@ -403,9 +406,7 @@ fn output(args: &[String]) -> i32 {
                 }
             }
             Ok(_) => continue,
-            Err(DaemonError::Io(e))
-                if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) =>
-            {
+            Err(DaemonError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) => {
                 return 0;
             }
             Err(e) => return err_exit(&format!("output --follow: {}", e)),

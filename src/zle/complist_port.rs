@@ -111,7 +111,7 @@ pub fn calclist(
 
     let item_width = max_len + 2; // padding
     let columns = (term_width / item_width.max(1)).max(1);
-    let rows = (matches.len() + columns - 1) / columns;
+    let rows = matches.len().div_ceil(columns);
 
     let mut col_widths = vec![item_width; columns];
     // Adjust last column
@@ -246,7 +246,7 @@ mod tests {
         let layout = calclist(&matches, 80, &descs);
         assert!(layout.columns >= 1);
         assert!(layout.rows >= 1);
-        assert_eq!(layout.columns * layout.rows >= matches.len(), true);
+        assert!(layout.columns * layout.rows >= matches.len());
     }
 
     #[test]

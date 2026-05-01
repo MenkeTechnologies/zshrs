@@ -38,8 +38,8 @@ pub mod zask_builtin;
 pub mod zcomplete_builtin;
 pub mod zhistory_builtin;
 pub mod zjob_builtin;
-pub mod zsource_builtin;
 pub mod zshrc_analysis;
+pub mod zsource_builtin;
 pub mod zsync;
 pub mod zsync_builtin;
 
@@ -49,10 +49,10 @@ pub mod zsync_builtin;
 // the parser to build AST of ALL CONFIG FILES, walk AST and get all data
 // into rkyv". Built once at first_init across the transitive closure of
 // every reachable config file.
-pub mod zsh_tokens;
+pub mod ast_walker;
 pub mod zsh_lexer;
 pub mod zsh_parser;
-pub mod ast_walker;
+pub mod zsh_tokens;
 
 pub use ipc::{Event, Frame, Hello, ProtocolVersion, Welcome, PROTOCOL_VERSION};
 pub use paths::CachePaths;

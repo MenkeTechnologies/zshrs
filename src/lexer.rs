@@ -437,9 +437,7 @@ impl<'a> ZshLexer<'a> {
 
         // lex.c:1914-1933 — regular alias lookup.
         if let Some(alias) = resolver.lookup_alias(lextext) {
-            if !alias.in_use
-                && (alias.global || (self.incmdpos && self.tok == LexTok::String))
-            {
+            if !alias.in_use && (alias.global || (self.incmdpos && self.tok == LexTok::String)) {
                 // lex.c:1918-1927 — if the next char isn't blank,
                 // insert a space so the alias body can't accidentally
                 // join the following word.
@@ -957,12 +955,11 @@ impl<'a> ZshLexer<'a> {
             | LexTok::Func => {
                 self.incmdpos = true;
             }
-            LexTok::Bar => {
+            LexTok::Bar
                 // In case patterns, | is a pattern separator - don't change incmdpos
-                if self.incasepat <= 0 {
+                if self.incasepat <= 0 => {
                     self.incmdpos = true;
                 }
-            }
             LexTok::String
             | LexTok::Typeset
             | LexTok::Envarray
@@ -1531,21 +1528,21 @@ impl<'a> ZshLexer<'a> {
                 // Process substitution <(...)
                 self.hungetc('(');
                 self.lexstop = false;
-                return self.gettokstr('<', false);
+                self.gettokstr('<', false)
             }
-            Some('>') => return LexTok::Inoutang,
+            Some('>') => LexTok::Inoutang,
             Some('<') => {
                 let e = self.hgetc();
                 match e {
                     Some('(') => {
                         self.hungetc('(');
                         self.hungetc('<');
-                        return LexTok::Inang;
+                        LexTok::Inang
                     }
-                    Some('<') => return LexTok::Trinang,
+                    Some('<') => LexTok::Trinang,
                     Some('-') => {
                         self.heredoc_pending = 2; // <<- expects terminator next
-                        return LexTok::Dinangdash;
+                        LexTok::Dinangdash
                     }
                     _ => {
                         if let Some(e) = e {
@@ -1553,17 +1550,17 @@ impl<'a> ZshLexer<'a> {
                         }
                         self.lexstop = false;
                         self.heredoc_pending = 1; // << expects terminator next
-                        return LexTok::Dinang;
+                        LexTok::Dinang
                     }
                 }
             }
-            Some('&') => return LexTok::Inangamp,
+            Some('&') => LexTok::Inangamp,
             _ => {
                 if let Some(d) = d {
                     self.hungetc(d);
                 }
                 self.lexstop = false;
-                return LexTok::Inang;
+                LexTok::Inang
             }
         }
     }
@@ -1576,50 +1573,50 @@ impl<'a> ZshLexer<'a> {
                 // Process substitution >(...)
                 self.hungetc('(');
                 self.lexstop = false;
-                return self.gettokstr('>', false);
+                self.gettokstr('>', false)
             }
             Some('&') => {
                 let e = self.hgetc();
                 match e {
-                    Some('!') | Some('|') => return LexTok::Outangampbang,
+                    Some('!') | Some('|') => LexTok::Outangampbang,
                     _ => {
                         if let Some(e) = e {
                             self.hungetc(e);
                         }
                         self.lexstop = false;
-                        return LexTok::Outangamp;
+                        LexTok::Outangamp
                     }
                 }
             }
-            Some('!') | Some('|') => return LexTok::Outangbang,
+            Some('!') | Some('|') => LexTok::Outangbang,
             Some('>') => {
                 let e = self.hgetc();
                 match e {
                     Some('&') => {
                         let f = self.hgetc();
                         match f {
-                            Some('!') | Some('|') => return LexTok::Doutangampbang,
+                            Some('!') | Some('|') => LexTok::Doutangampbang,
                             _ => {
                                 if let Some(f) = f {
                                     self.hungetc(f);
                                 }
                                 self.lexstop = false;
-                                return LexTok::Doutangamp;
+                                LexTok::Doutangamp
                             }
                         }
                     }
-                    Some('!') | Some('|') => return LexTok::Doutangbang,
+                    Some('!') | Some('|') => LexTok::Doutangbang,
                     Some('(') => {
                         self.hungetc('(');
                         self.hungetc('>');
-                        return LexTok::Outang;
+                        LexTok::Outang
                     }
                     _ => {
                         if let Some(e) = e {
                             self.hungetc(e);
                         }
                         self.lexstop = false;
-                        return LexTok::Doutang;
+                        LexTok::Doutang
                     }
                 }
             }
@@ -1628,7 +1625,7 @@ impl<'a> ZshLexer<'a> {
                     self.hungetc(d);
                 }
                 self.lexstop = false;
-                return LexTok::Outang;
+                LexTok::Outang
             }
         }
     }
@@ -2006,24 +2003,16 @@ impl<'a> ZshLexer<'a> {
                     self.add(char_tokens::QUEST);
                 }
 
-                ',' => {
-                    if bct > in_brace_param {
-                        self.add(char_tokens::COMMA);
-                    } else {
-                        self.add(c);
-                    }
+                ',' if bct > in_brace_param => {
+                    self.add(char_tokens::COMMA);
                 }
 
                 '-' => {
                     self.add(char_tokens::DASH);
                 }
 
-                '!' => {
-                    if brct > 0 {
-                        self.add(char_tokens::BANG);
-                    } else {
-                        self.add(c);
-                    }
+                '!' if brct > 0 => {
+                    self.add(char_tokens::BANG);
                 }
 
                 // Terminators
@@ -2560,23 +2549,19 @@ impl<'a> ZshLexer<'a> {
                         }
                     }
                 }
-                '#' => {
-                    if start {
-                        self.add(c);
-                        // Skip comment to end of line
-                        loop {
-                            let ch = self.hgetc();
-                            match ch {
-                                Some('\n') => {
-                                    self.add('\n');
-                                    break;
-                                }
-                                Some(ch) => self.add(ch),
-                                None => break,
+                '#' if start => {
+                    self.add(c);
+                    // Skip comment to end of line
+                    loop {
+                        let ch = self.hgetc();
+                        match ch {
+                            Some('\n') => {
+                                self.add('\n');
+                                break;
                             }
+                            Some(ch) => self.add(ch),
+                            None => break,
                         }
-                    } else {
-                        self.add(c);
                     }
                 }
                 _ => {
@@ -3032,7 +3017,7 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
     for c in s.chars() {
         let cu = c as u32;
-        if cu >= 0x83 && cu <= 0x9f {
+        if (0x83..=0x9f).contains(&cu) {
             match c {
                 c if c == char_tokens::POUND => result.push('#'),
                 c if c == char_tokens::STRING => result.push('$'),
@@ -3090,7 +3075,7 @@ pub fn untokenize(s: &str) -> String {
         // or downstream consumption. The original `< 32` test was wrong —
         // none of zsh's tokens land in that range.
         let cu = c as u32;
-        if cu >= 0x83 && cu <= 0x9f {
+        if (0x83..=0x9f).contains(&cu) {
             // Convert token back to original character
             match c {
                 c if c == char_tokens::POUND => result.push('#'),

@@ -177,6 +177,7 @@ impl LinkList {
 }
 
 /// Global state for substitution (mirrors zsh global variables)
+#[derive(Default)]
 pub struct SubstState {
     pub errflag: bool,
     pub opts: SubstOptions,
@@ -194,18 +195,6 @@ pub struct SubstOptions {
     pub glob_subst: bool,
     pub ksh_typeset: bool,
     pub exec_opt: bool,
-}
-
-impl Default for SubstState {
-    fn default() -> Self {
-        SubstState {
-            errflag: false,
-            opts: SubstOptions::default(),
-            variables: std::collections::HashMap::new(),
-            arrays: std::collections::HashMap::new(),
-            assoc_arrays: std::collections::HashMap::new(),
-        }
-    }
 }
 
 /// Null string constant (from subst.c line 36)
@@ -457,7 +446,7 @@ fn getkeystring(s: &str) -> String {
                     let mut val = 0u32;
                     for _ in 0..3 {
                         if let Some(&c) = chars.peek() {
-                            if c >= '0' && c <= '7' {
+                            if ('0'..='7').contains(&c) {
                                 val = val * 8 + (c as u32 - '0' as u32);
                                 chars.next();
                             } else {
@@ -1430,10 +1419,7 @@ fn apply_param_flags(value: &[String], flags: &ParamFlags, _state: &SubstState) 
     // Uniqueness
     if flags.unique {
         let mut seen = std::collections::HashSet::new();
-        result = result
-            .into_iter()
-            .filter(|s| seen.insert(s.clone()))
-            .collect();
+        result.retain(|s| seen.insert(s.clone()));
     }
 
     // Sorting
@@ -1445,7 +1431,7 @@ fn apply_param_flags(value: &[String], flags: &ParamFlags, _state: &SubstState) 
                 na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
             });
         } else if flags.sort_case_insensitive {
-            result.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            result.sort_by_key(|a| a.to_lowercase());
         } else {
             result.sort();
         }
@@ -1591,7 +1577,7 @@ fn apply_operator(
         Some(":") => {
             // Substring: ${var:offset} or ${var:offset:length}
             let parts: Vec<&str> = operand.split(':').collect();
-            let offset: i64 = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let offset: i64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             let length: Option<i64> = parts.get(1).and_then(|s| s.parse().ok());
 
             value
@@ -1647,7 +1633,7 @@ fn apply_operator(
         Some("/") => {
             // Replace first match
             let parts: Vec<&str> = operand.splitn(2, '/').collect();
-            let pattern = parts.get(0).unwrap_or(&"");
+            let pattern = parts.first().unwrap_or(&"");
             let replacement = parts.get(1).unwrap_or(&"");
             value
                 .iter()
@@ -1657,7 +1643,7 @@ fn apply_operator(
         Some("//") => {
             // Replace all matches
             let parts: Vec<&str> = operand.splitn(2, '/').collect();
-            let pattern = parts.get(0).unwrap_or(&"");
+            let pattern = parts.first().unwrap_or(&"");
             let replacement = parts.get(1).unwrap_or(&"");
             value
                 .iter()
@@ -1710,12 +1696,11 @@ fn remove_prefix(s: &str, pattern: &str, greedy: bool) -> String {
         return String::new();
     }
 
-    if pattern.ends_with('*') {
-        let prefix = &pattern[..pattern.len() - 1];
+    if let Some(prefix) = pattern.strip_suffix('*') {
         if s.starts_with(prefix) {
             if greedy {
                 // Find longest match
-                for i in (prefix.len()..=s.len()).rev() {
+                if let Some(i) = (prefix.len()..=s.len()).rev().next() {
                     return s[i..].to_string();
                 }
             } else {
@@ -1735,11 +1720,10 @@ fn remove_suffix(s: &str, pattern: &str, greedy: bool) -> String {
         return String::new();
     }
 
-    if pattern.starts_with('*') {
-        let suffix = &pattern[1..];
+    if let Some(suffix) = pattern.strip_prefix('*') {
         if s.ends_with(suffix) {
             if greedy {
-                for i in 0..=s.len().saturating_sub(suffix.len()) {
+                if let Some(i) = (0..=s.len().saturating_sub(suffix.len())).next() {
                     return s[..i].to_string();
                 }
             } else {
@@ -1845,8 +1829,7 @@ fn remnulargs(s: &str) -> String {
 
 fn filesub(s: &str, _flags: u32, _state: &mut SubstState) -> String {
     // Tilde expansion
-    if s.starts_with('~') {
-        let rest = &s[1..];
+    if let Some(rest) = s.strip_prefix('~') {
         let (user, suffix) = match rest.find('/') {
             Some(pos) => (&rest[..pos], &rest[pos..]),
             None => (rest, ""),
@@ -2447,7 +2430,7 @@ pub fn sort_array(arr: &mut Vec<String>, opts: &SortOptions) {
             na.partial_cmp(&nb).unwrap_or(std::cmp::Ordering::Equal)
         });
     } else if opts.case_insensitive {
-        arr.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+        arr.sort_by_key(|a| a.to_lowercase());
     } else {
         arr.sort();
     }
@@ -2474,7 +2457,7 @@ pub fn wordcount(s: &str, sep: Option<&str>, count_empty: bool) -> usize {
 /// Join array with separator
 /// Port of sepjoin() logic
 pub fn sepjoin(arr: &[String], sep: Option<&str>, use_ifs_first: bool) -> String {
-    let separator = sep.unwrap_or_else(|| if use_ifs_first { " " } else { "" });
+    let separator = sep.unwrap_or(if use_ifs_first { " " } else { "" });
     arr.join(separator)
 }
 
@@ -2713,7 +2696,7 @@ pub fn nicedupstring(s: &str) -> String {
 
 /// Untokenize a string (remove internal tokens)
 pub fn untokenize(s: &str) -> String {
-    s.chars().map(|c| token_to_char(c)).collect()
+    s.chars().map(token_to_char).collect()
 }
 
 /// Tokenize a string for globbing
@@ -2786,7 +2769,7 @@ pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) {
             }
 
             // Perform globbing
-            let expanded = zglob(&data, flags & prefork_flags::NO_UNTOK != 0, state);
+            let expanded = zglob(data, flags & prefork_flags::NO_UNTOK != 0, state);
 
             if expanded.is_empty() {
                 // No matches - either error or keep original
@@ -2967,7 +2950,7 @@ fn parse_index(s: &str, array_len: usize) -> usize {
 /// Check if character is an internal token
 pub fn itok(c: char) -> bool {
     let code = c as u32;
-    code >= 0x80 && code <= 0x9F
+    (0x80..=0x9F).contains(&code)
 }
 
 /// Map tokens to their printable equivalents
@@ -3373,7 +3356,11 @@ pub fn remtpath(s: &str, count: usize) -> String {
         }
         if end < 0 {
             // hist.c:2068-2074 — no separator found.
-            return if is_sep(bytes[0]) { "/".to_string() } else { ".".to_string() };
+            return if is_sep(bytes[0]) {
+                "/".to_string()
+            } else {
+                ".".to_string()
+            };
         }
         // hist.c:2104-2106 — collapse repeated separators.
         while end > 0 && is_sep(bytes[(end - 1) as usize]) {
@@ -3963,7 +3950,7 @@ mod tests {
             &mut 0,
             &mut state,
         );
-        assert!(nodes.len() >= 1);
+        assert!(!nodes.is_empty());
     }
 
     #[test]
@@ -4331,11 +4318,7 @@ pub fn substevalchar(s: &str) -> Option<String> {
         return None;
     }
 
-    if let Some(c) = char::from_u32(val as u32) {
-        Some(c.to_string())
-    } else {
-        None
-    }
+    char::from_u32(val as u32).map(|c| c.to_string())
 }
 
 /// Check for colon subscript in parameter expansion
@@ -4577,7 +4560,7 @@ pub fn get_oldpwd(state: &SubstState) -> String {
         .variables
         .get("OLDPWD")
         .cloned()
-        .unwrap_or_else(|| get_pwd())
+        .unwrap_or_else(get_pwd)
 }
 
 /// Get home directory
@@ -4640,7 +4623,7 @@ pub fn promptexpand(s: &str, _state: &SubstState) -> String {
                 Some('n') => result.push_str(&std::env::var("USER").unwrap_or_default()),
                 Some('m') => {
                     if let Ok(hostname) = std::env::var("HOSTNAME") {
-                        result.push_str(&hostname.split('.').next().unwrap_or(&hostname));
+                        result.push_str(hostname.split('.').next().unwrap_or(&hostname));
                     }
                 }
                 Some('M') => result.push_str(&std::env::var("HOSTNAME").unwrap_or_default()),
@@ -4917,7 +4900,7 @@ pub fn filesub_full(s: &str, assign: u32, state: &SubstState) -> String {
 
     // Handle typeset context
     if assign & prefork_flags::TYPESET != 0 {
-        if let Some(eq_pos) = result[1..].find(|c| c == EQUALS || c == '=') {
+        if let Some(eq_pos) = result[1..].find([EQUALS, '=']) {
             let eq_pos = eq_pos + 1;
             let after_eq = &result[eq_pos + 1..];
             let first_after = after_eq.chars().next();

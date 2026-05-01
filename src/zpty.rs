@@ -114,7 +114,7 @@ pub fn open_pty() -> io::Result<(RawFd, RawFd)> {
         let slave_name = libc::ptsname(master_fd);
         if slave_name.is_null() {
             libc::close(master_fd);
-            return Err(io::Error::new(io::ErrorKind::Other, "ptsname failed"));
+            return Err(io::Error::other("ptsname failed"));
         }
 
         let slave_fd = libc::open(slave_name, libc::O_RDWR | libc::O_NOCTTY);
@@ -329,7 +329,7 @@ pub fn builtin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) ->
         }
 
         for name in args {
-            if let Some(cmd) = cmds.remove(*name) {
+            if let Some(cmd) = cmds.remove(name) {
                 let _ = pty_kill(cmd.pid, libc::SIGTERM);
                 let _ = pty_close(cmd.master_fd);
             } else {

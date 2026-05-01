@@ -248,12 +248,11 @@ impl JobTable {
 
     /// Get a job by ID
     pub fn get(&self, id: usize) -> Option<&JobInfo> {
-        for job in self.jobs.iter().flatten() {
-            if job.id == id {
-                return Some(job);
-            }
-        }
-        None
+        self.jobs
+            .iter()
+            .flatten()
+            .find(|&job| job.id == id)
+            .map(|v| v as _)
     }
 
     /// Get a mutable job by ID

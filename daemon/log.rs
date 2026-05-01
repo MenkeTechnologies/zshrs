@@ -20,8 +20,7 @@ use super::{paths::CachePaths, Result};
 
 /// Type-erased reload closure — boxed so the deeply-generic
 /// `reload::Handle<EnvFilter, Layered<…>>` type doesn't leak through this API.
-type ReloadFn =
-    Box<dyn Fn(&str) -> std::result::Result<(), String> + Send + Sync + 'static>;
+type ReloadFn = Box<dyn Fn(&str) -> std::result::Result<(), String> + Send + Sync + 'static>;
 
 /// Set during `init` only when `try_init` actually installs the global
 /// subscriber. Consumed by `set_runtime_level` (the `log_level` IPC op).

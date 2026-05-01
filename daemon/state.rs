@@ -124,7 +124,10 @@ impl DaemonState {
         // Eagerly load persisted canonical state from rkyv shard on disk —
         // missing shard = empty state (cold cache, first-run path).
         if let Err(e) = canonical.load_from_disk() {
-            tracing::warn!(?e, "canonical: load_from_disk failed (continuing with empty state)");
+            tracing::warn!(
+                ?e,
+                "canonical: load_from_disk failed (continuing with empty state)"
+            );
         }
         let state = Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
@@ -311,12 +314,7 @@ impl DaemonState {
 
     /// Pause a subscription owned by the given client. Returns true if the
     /// subscription existed and was found owned by this client (or already paused).
-    pub fn set_subscription_paused(
-        &self,
-        client_id: u64,
-        sub_id: u64,
-        paused: bool,
-    ) -> bool {
+    pub fn set_subscription_paused(&self, client_id: u64, sub_id: u64, paused: bool) -> bool {
         let mut g = self.inner.lock();
         match g.subscriptions.get_mut(&sub_id) {
             Some(s) if s.client_id == client_id => {
@@ -374,7 +372,11 @@ impl DaemonState {
     pub fn persist_canonical(&self, generation: u64) -> Result<std::path::PathBuf> {
         let path = self.canonical.persist(generation)?;
         if let Err(e) = self.canonical.hydrate_sqlite_view(self) {
-            tracing::warn!(?e, generation, "canonical: hydrate_sqlite_view failed (rkyv is authoritative)");
+            tracing::warn!(
+                ?e,
+                generation,
+                "canonical: hydrate_sqlite_view failed (rkyv is authoritative)"
+            );
         }
         Ok(path)
     }

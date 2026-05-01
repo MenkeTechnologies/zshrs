@@ -33,7 +33,7 @@ pub struct ResInfo {
 #[cfg(unix)]
 pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
-        res: RLIMIT_CPU as i32,
+        res: RLIMIT_CPU,
         name: "cputime",
         limit_type: LimitType::Time,
         unit: 1,
@@ -41,7 +41,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "cpu time (seconds)",
     },
     ResInfo {
-        res: RLIMIT_FSIZE as i32,
+        res: RLIMIT_FSIZE,
         name: "filesize",
         limit_type: LimitType::Memory,
         unit: 512,
@@ -49,7 +49,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "file size (blocks)",
     },
     ResInfo {
-        res: RLIMIT_DATA as i32,
+        res: RLIMIT_DATA,
         name: "datasize",
         limit_type: LimitType::Memory,
         unit: 1024,
@@ -57,7 +57,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "data seg size (kbytes)",
     },
     ResInfo {
-        res: RLIMIT_STACK as i32,
+        res: RLIMIT_STACK,
         name: "stacksize",
         limit_type: LimitType::Memory,
         unit: 1024,
@@ -65,7 +65,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "stack size (kbytes)",
     },
     ResInfo {
-        res: RLIMIT_CORE as i32,
+        res: RLIMIT_CORE,
         name: "coredumpsize",
         limit_type: LimitType::Memory,
         unit: 512,
@@ -73,7 +73,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "core file size (blocks)",
     },
     ResInfo {
-        res: RLIMIT_NOFILE as i32,
+        res: RLIMIT_NOFILE,
         name: "descriptors",
         limit_type: LimitType::Number,
         unit: 1,
@@ -81,7 +81,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "file descriptors",
     },
     ResInfo {
-        res: RLIMIT_AS as i32,
+        res: RLIMIT_AS,
         name: "addressspace",
         limit_type: LimitType::Memory,
         unit: 1024,
@@ -103,7 +103,7 @@ pub enum LimitValue {
 impl LimitValue {
     #[cfg(unix)]
     pub fn from_rlim(val: u64) -> Self {
-        if val == RLIM_INFINITY as u64 {
+        if val == RLIM_INFINITY {
             LimitValue::Unlimited
         } else {
             LimitValue::Value(val)
@@ -113,7 +113,7 @@ impl LimitValue {
     #[cfg(unix)]
     pub fn to_rlim(&self) -> u64 {
         match self {
-            LimitValue::Unlimited => RLIM_INFINITY as u64,
+            LimitValue::Unlimited => RLIM_INFINITY,
             LimitValue::Value(v) => *v,
         }
     }
@@ -511,7 +511,7 @@ pub fn builtin_ulimit(
     soft: bool,
 ) -> (i32, String) {
     let mut output = String::new();
-    let show_all = args.iter().any(|a| *a == "-a");
+    let show_all = args.contains(&"-a");
 
     if show_all || args.is_empty() {
         let use_hard = hard && !soft;
@@ -527,7 +527,7 @@ pub fn builtin_ulimit(
     }
 
     let mut i = 0;
-    let mut res = RLIMIT_FSIZE as i32;
+    let mut res = RLIMIT_FSIZE;
     let mut use_hard = hard && !soft;
 
     while i < args.len() {
@@ -716,7 +716,7 @@ mod tests {
     fn test_get_limits() {
         let limits = ResourceLimits::new();
 
-        let result = limits.get(RLIMIT_NOFILE as i32);
+        let result = limits.get(RLIMIT_NOFILE);
         assert!(result.is_ok());
 
         let (soft, hard) = result.unwrap();

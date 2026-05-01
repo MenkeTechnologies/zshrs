@@ -69,7 +69,12 @@ pub struct EmbeddedFile {
 pub struct EmbeddedFiles(pub Vec<EmbeddedFile>);
 
 fn encode_payload_v2(files: &[EmbeddedFile]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(64 + files.iter().map(|f| f.name.len() + f.source.len() + 8).sum::<usize>());
+    let mut out = Vec::with_capacity(
+        64 + files
+            .iter()
+            .map(|f| f.name.len() + f.source.len() + 8)
+            .sum::<usize>(),
+    );
     let count = u32::try_from(files.len()).expect("file count fits in u32");
     out.extend_from_slice(&count.to_le_bytes());
     for f in files {
@@ -100,7 +105,9 @@ fn decode_payload_v2(bytes: &[u8]) -> Option<EmbeddedFiles> {
         if pos + name_len > bytes.len() {
             return None;
         }
-        let name = std::str::from_utf8(&bytes[pos..pos + name_len]).ok()?.to_string();
+        let name = std::str::from_utf8(&bytes[pos..pos + name_len])
+            .ok()?
+            .to_string();
         pos += name_len;
         if pos + 4 > bytes.len() {
             return None;
@@ -110,7 +117,9 @@ fn decode_payload_v2(bytes: &[u8]) -> Option<EmbeddedFiles> {
         if pos + src_len > bytes.len() {
             return None;
         }
-        let source = std::str::from_utf8(&bytes[pos..pos + src_len]).ok()?.to_string();
+        let source = std::str::from_utf8(&bytes[pos..pos + src_len])
+            .ok()?
+            .to_string();
         pos += src_len;
         out.push(EmbeddedFile { name, source });
     }
@@ -128,8 +137,12 @@ fn decode_payload_v1(bytes: &[u8]) -> Option<EmbeddedFiles> {
     if 4 + name_len > bytes.len() {
         return None;
     }
-    let name = std::str::from_utf8(&bytes[4..4 + name_len]).ok()?.to_string();
-    let source = std::str::from_utf8(&bytes[4 + name_len..]).ok()?.to_string();
+    let name = std::str::from_utf8(&bytes[4..4 + name_len])
+        .ok()?
+        .to_string();
+    let source = std::str::from_utf8(&bytes[4 + name_len..])
+        .ok()?
+        .to_string();
     Some(EmbeddedFiles(vec![EmbeddedFile { name, source }]))
 }
 
@@ -275,8 +288,7 @@ pub fn build(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf, Strin
             e
         )
     })?;
-    append_embedded_files(out_path, &files)
-        .map_err(|e| format!("zbuild: write trailer: {}", e))?;
+    append_embedded_files(out_path, &files).map_err(|e| format!("zbuild: write trailer: {}", e))?;
     set_executable(out_path);
     Ok(out_path.to_path_buf())
 }

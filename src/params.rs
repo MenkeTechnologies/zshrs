@@ -129,20 +129,15 @@ pub mod print_flags {
 // Parameter value types
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum ParamValue {
     Scalar(String),
     Integer(i64),
     Float(f64),
     Array(Vec<String>),
     Assoc(HashMap<String, String>),
+    #[default]
     Unset,
-}
-
-impl Default for ParamValue {
-    fn default() -> Self {
-        ParamValue::Unset
-    }
 }
 
 impl ParamValue {
@@ -1939,10 +1934,8 @@ impl ParamTable {
                 self.histchars[1] = bytes.get(1).copied().unwrap_or(b'^');
                 self.histchars[2] = bytes.get(2).copied().unwrap_or(b'#');
             }
-            "0" => {
-                if !self.posix_argzero {
-                    self.argzero = value.as_string();
-                }
+            "0" if !self.posix_argzero => {
+                self.argzero = value.as_string();
             }
             "OPTARG" => {
                 self.optarg = value.as_string();
@@ -2579,14 +2572,13 @@ impl ParamTable {
         }
 
         if let Some(existing) = self.params.get(name) {
-            if existing.level == self.local_level {
-                if !existing.is_unset() && !existing.is_special() {
-                    // Already exists and set at this level
-                    if let Some(p) = self.params.get_mut(name) {
-                        p.flags &= !flags::UNSET;
-                    }
-                    return false;
+            if existing.level == self.local_level && !existing.is_unset() && !existing.is_special()
+            {
+                // Already exists and set at this level
+                if let Some(p) = self.params.get_mut(name) {
+                    p.flags &= !flags::UNSET;
                 }
+                return false;
             }
         }
 
@@ -3049,7 +3041,7 @@ impl ParamTable {
             .params
             .iter()
             .filter(|(_, p)| !p.is_unset())
-            .filter(|(name, _)| pattern.map_or(true, |p| glob_match(p, name)))
+            .filter(|(name, _)| pattern.is_none_or(|p| glob_match(p, name)))
             .map(|(name, _)| name.clone())
             .collect();
         names.sort();
@@ -3378,7 +3370,7 @@ pub fn isident(s: &str) -> bool {
     // Handle namespace prefix (e.g. "ns.var")
     if chars.peek() == Some(&'.') {
         chars.next();
-        if chars.peek().map_or(true, |c| c.is_ascii_digit()) {
+        if chars.peek().is_none_or(|c| c.is_ascii_digit()) {
             return false;
         }
     }
@@ -3709,8 +3701,7 @@ pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
     }
 
     // Find the digits portion
-    let (prefix, digits) = if s.starts_with('-') {
-        let rest = &s[1..];
+    let (prefix, digits) = if let Some(rest) = s.strip_prefix('-') {
         let digit_start = rest
             .find(|c: char| c.is_ascii_digit() || c.is_ascii_uppercase())
             .unwrap_or(0);
@@ -3814,9 +3805,8 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
     }
 
     // Add underscores to fractional part
-    if frac_exp.starts_with('.') {
+    if let Some(frac) = frac_exp.strip_prefix('.') {
         result.push('.');
-        let frac = &frac_exp[1..];
         let (frac_digits, exp) = if let Some(e_pos) = frac.find('e') {
             (&frac[..e_pos], &frac[e_pos..])
         } else {
@@ -3869,10 +3859,10 @@ pub fn parse_subscription_flags(s: &str) -> (SubscriptFlags, &str) {
         return (flags, s);
     }
 
-    let mut chars = s[1..].char_indices();
+    let chars = s[1..].char_indices();
     let mut end_pos = 0;
 
-    while let Some((pos, c)) = chars.next() {
+    for (pos, c) in chars {
         match c {
             ')' => {
                 end_pos = pos + 2; // +1 for '(' offset, +1 for ')'

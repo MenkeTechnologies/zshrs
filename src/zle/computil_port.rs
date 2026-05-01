@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn test_cd_sort() {
         let mut set = cd_init(
-            &vec!["c:third".into(), "a:first".into(), "b:second".into()],
+            &["c:third".into(), "a:first".into(), "b:second".into()],
             "",
             "",
         );

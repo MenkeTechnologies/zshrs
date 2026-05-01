@@ -264,4 +264,3 @@ pub fn call_once_no_spawn(op: &str, args: Value) -> Result<Value> {
     let mut client = Client::connect_existing(&paths)?;
     client.call(op, args)
 }
-

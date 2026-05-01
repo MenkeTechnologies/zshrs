@@ -14,7 +14,7 @@ pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
     } else if is_user {
         format!("user:{}", name)
     } else {
-        format!("builtin")
+        "builtin".to_string()
     }
 }
 

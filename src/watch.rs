@@ -324,7 +324,7 @@ pub fn format_watch(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
                         if chars.peek() == Some(&'{') {
                             chars.next();
                             let mut custom_fmt = String::new();
-                            while let Some(fc) = chars.next() {
+                            for fc in chars.by_ref() {
                                 if fc == '}' {
                                     break;
                                 }
@@ -398,10 +398,8 @@ fn format_conditional(
             continue;
         }
 
-        if c == '%' {
-            if chars.peek() == Some(&'(') {
-                depth += 1;
-            }
+        if c == '%' && chars.peek() == Some(&'(') {
+            depth += 1;
         }
 
         if in_true {
@@ -464,7 +462,7 @@ fn matches_watch_pattern(pattern: &str, entry: &UtmpEntry) -> bool {
     let mut matched = true;
 
     if !rest.starts_with('@') && !rest.starts_with('%') {
-        let end = rest.find(|c| c == '@' || c == '%').unwrap_or(rest.len());
+        let end = rest.find(['@', '%']).unwrap_or(rest.len());
         let user_pat = &rest[..end];
         if !watch_match(user_pat, &entry.user) {
             matched = false;
@@ -521,20 +519,20 @@ pub fn do_watch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, b
         .collect();
 
     for (key, entry) in &new_active {
-        if !old_active.contains_key(key) {
-            if check_watch_entry(entry, &state.watch_list, current_user) {
-                events.push((*entry).clone());
-                events.last_mut().unwrap();
-            }
+        if !old_active.contains_key(key)
+            && check_watch_entry(entry, &state.watch_list, current_user)
+        {
+            events.push((*entry).clone());
+            events.last_mut().unwrap();
         }
     }
 
     for (key, entry) in &old_active {
-        if !new_active.contains_key(key) {
-            if check_watch_entry(entry, &state.watch_list, current_user) {
-                let logged_out = (*entry).clone();
-                events.push(logged_out);
-            }
+        if !new_active.contains_key(key)
+            && check_watch_entry(entry, &state.watch_list, current_user)
+        {
+            let logged_out = (*entry).clone();
+            events.push(logged_out);
         }
     }
 

@@ -66,7 +66,9 @@ pub fn zsync(args: &[String]) -> i32 {
             println!("       zsync up --all                        # promote every subsystem");
             println!("       zsync pull <subsystem>");
             println!("       zsync diff <subsystem> --overlay '<{{\"k\":\"v\",...}}>'");
-            println!("       zsync watch <subsystem>...            # stream canonical_changed events");
+            println!(
+                "       zsync watch <subsystem>...            # stream canonical_changed events"
+            );
             0
         }
         other => err_exit(&format!("unknown verb `{}`", other)),
@@ -121,7 +123,10 @@ fn watch(args: &[String]) -> i32 {
                     .and_then(Value::as_str)
                     .unwrap_or("?");
                 if args.iter().any(|s| s == subsys) {
-                    let count = payload.get("row_count").and_then(Value::as_u64).unwrap_or(0);
+                    let count = payload
+                        .get("row_count")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
                     let by = payload
                         .get("set_by_shell")
                         .and_then(Value::as_u64)
@@ -134,9 +139,7 @@ fn watch(args: &[String]) -> i32 {
                 }
             }
             Ok(_) => continue,
-            Err(DaemonError::Io(e))
-                if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) =>
-            {
+            Err(DaemonError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) => {
                 eprintln!("zsync watch: daemon closed connection");
                 return 0;
             }

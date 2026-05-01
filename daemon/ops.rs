@@ -426,7 +426,10 @@ async fn op_daemon(state: &Arc<DaemonState>, args: Value) -> OpResult {
             let new_pid = match spawn_replacement_daemon() {
                 Ok(p) => Some(p),
                 Err(e) => {
-                    tracing::warn!(?e, "could not spawn replacement daemon; client must spawn-on-demand");
+                    tracing::warn!(
+                        ?e,
+                        "could not spawn replacement daemon; client must spawn-on-demand"
+                    );
                     None
                 }
             };
@@ -467,17 +470,17 @@ async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // `zcache rebuild --parallel N` per DAEMON.md:684. Caps the global
     // rayon pool size for the duration of this rebuild via a thread-pool
     // builder. N=0 means default (let rayon decide).
-    let parallel = args
-        .get("parallel")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
+    let parallel = args.get("parallel").and_then(Value::as_u64).unwrap_or(0) as usize;
     if parallel > 0 {
         // Daemon's walk path is sequential today (the work is dominated by
         // syscalls, not CPU). The flag is accepted and recorded for
         // observability so the user gets a clear "noted, no effect at this
         // scale" rather than `bad_args`. When walk_paths gains rayon-driven
         // dispatch, this log line becomes the dispatch-cap setter.
-        tracing::info!(parallel, "rebuild: --parallel acknowledged (no-op; walk is single-threaded today)");
+        tracing::info!(
+            parallel,
+            "rebuild: --parallel acknowledged (no-op; walk is single-threaded today)"
+        );
     }
 
     if async_mode {
@@ -508,8 +511,8 @@ async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
                         "shard": "system",
                         "error": e.to_string(),
                     });
-                    let _ = bg_state
-                        .broadcast(super::ipc::Frame::event("rebuild_failed", event), &[]);
+                    let _ =
+                        bg_state.broadcast(super::ipc::Frame::event("rebuild_failed", event), &[]);
                 }
             }
         });
@@ -667,8 +670,12 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // "Determinism boundary" (line 278). Clients fetch this on boot via
     // op_replay_log and execute it locally — preserves correctness for
     // .zshrc fragments that depend on $$ / $RANDOM / $(date) / etc.
-    let replay_path = write_replay_log(state, &path.display().to_string(), &analysis.non_deterministic_lines)
-        .unwrap_or_default();
+    let replay_path = write_replay_log(
+        state,
+        &path.display().to_string(),
+        &analysis.non_deterministic_lines,
+    )
+    .unwrap_or_default();
 
     let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
     let event = serde_json::json!({
@@ -725,7 +732,10 @@ fn write_replay_log(
         .and_then(|s| s.to_str())
         .map(|s| s.replace('.', "_"))
         .unwrap_or_else(|| "anon".to_string());
-    let dest = state.paths.replay_dir.join(format!("{}-{}.zsh", hash8, stem));
+    let dest = state
+        .paths
+        .replay_dir
+        .join(format!("{}-{}.zsh", hash8, stem));
     let tmp = dest.with_extension("zsh.tmp");
 
     let mut body = String::new();
@@ -782,7 +792,10 @@ async fn op_plugin_discover(state: &Arc<DaemonState>, _args: Value) -> OpResult 
     // Refresh SQLite hydration after plugin discoveries roll into canonical
     // — keeps the inspection mirror fresh for `zcache view function <name>`.
     if let Err(e) = state.canonical.hydrate_sqlite_view(state) {
-        tracing::warn!(?e, "hydrate after plugin_discover failed (rkyv authoritative)");
+        tracing::warn!(
+            ?e,
+            "hydrate after plugin_discover failed (rkyv authoritative)"
+        );
     }
     Ok(json!({
         "stats": stats,
@@ -805,10 +818,7 @@ async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
 
     // ------ Pass 1+2: .zshrc analysis ------
     let analysis_resp = if let Some(path) = args.get("zshrc").and_then(Value::as_str) {
-        Some(
-            op_zshrc_analyze(state, json!({ "path": path }))
-                .await?,
-        )
+        Some(op_zshrc_analyze(state, json!({ "path": path })).await?)
     } else {
         None
     };
@@ -900,10 +910,7 @@ async fn op_cmd_started(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .unwrap_or("")
         .to_string();
     let from_shell = args.get("shell_id").and_then(Value::as_u64).unwrap_or(0);
-    let cwd = args
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let cwd = args.get("cwd").and_then(Value::as_str).map(str::to_string);
     let payload = json!({
         "from_shell": from_shell,
         "command": line,
@@ -1013,26 +1020,14 @@ async fn op_suggest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let cwd = args
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let cwd = args.get("cwd").and_then(Value::as_str).map(str::to_string);
 
     // Try cwd-scoped first (frecency wins for "in this dir, recently"),
     // then fall back to global prefix match.
     let row_opt = if let Some(c) = &cwd {
         state
             .with_history(|conn| {
-                super::history::query(
-                    conn,
-                    Some(&prefix),
-                    "prefix",
-                    Some(c),
-                    None,
-                    None,
-                    1,
-                    true,
-                )
+                super::history::query(conn, Some(&prefix), "prefix", Some(c), None, None, 1, true)
             })
             .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?
             .into_iter()
@@ -1123,13 +1118,7 @@ async fn op_highlight(state: &Arc<DaemonState>, args: Value) -> OpResult {
             .unwrap_or(false)
     };
 
-    let spans = highlight_line(
-        &line,
-        &aliases,
-        &galiases,
-        &functions,
-        &command_known,
-    );
+    let spans = highlight_line(&line, &aliases, &galiases, &functions, &command_known);
 
     Ok(json!({
         "line": line,
@@ -1215,9 +1204,7 @@ fn highlight_line(
                     i += 1;
                 }
             } else {
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_')
-                {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
                     i += 1;
                 }
             }
@@ -1271,18 +1258,106 @@ const ZSH_KEYWORDS: &[&str] = &[
 ];
 
 const ZSH_BUILTINS: &[&str] = &[
-    "alias", "autoload", "bg", "bindkey", "break", "builtin", "cd", "chdir", "command", "compdef",
-    "compinit", "compinstall", "continue", "declare", "dirs", "disable", "disown", "echo",
-    "echotc", "echoti", "emulate", "enable", "eval", "exec", "exit", "export", "false", "fc",
-    "fg", "float", "functions", "getln", "getopts", "hash", "history", "integer", "jobs", "kill",
-    "let", "limit", "local", "log", "logout", "noglob", "popd", "print", "printf", "pushd",
-    "pushln", "pwd", "r", "read", "readonly", "rehash", "return", "sched", "set", "setopt",
-    "shift", "source", "suspend", "test", "times", "trap", "true", "ttyctl", "type", "typeset",
-    "ulimit", "umask", "unalias", "unfunction", "unhash", "unlimit", "unset", "unsetopt", "wait",
-    "whence", "where", "which", "zcompile", "zmodload", "zparseopts", "zstyle", ".",
+    "alias",
+    "autoload",
+    "bg",
+    "bindkey",
+    "break",
+    "builtin",
+    "cd",
+    "chdir",
+    "command",
+    "compdef",
+    "compinit",
+    "compinstall",
+    "continue",
+    "declare",
+    "dirs",
+    "disable",
+    "disown",
+    "echo",
+    "echotc",
+    "echoti",
+    "emulate",
+    "enable",
+    "eval",
+    "exec",
+    "exit",
+    "export",
+    "false",
+    "fc",
+    "fg",
+    "float",
+    "functions",
+    "getln",
+    "getopts",
+    "hash",
+    "history",
+    "integer",
+    "jobs",
+    "kill",
+    "let",
+    "limit",
+    "local",
+    "log",
+    "logout",
+    "noglob",
+    "popd",
+    "print",
+    "printf",
+    "pushd",
+    "pushln",
+    "pwd",
+    "r",
+    "read",
+    "readonly",
+    "rehash",
+    "return",
+    "sched",
+    "set",
+    "setopt",
+    "shift",
+    "source",
+    "suspend",
+    "test",
+    "times",
+    "trap",
+    "true",
+    "ttyctl",
+    "type",
+    "typeset",
+    "ulimit",
+    "umask",
+    "unalias",
+    "unfunction",
+    "unhash",
+    "unlimit",
+    "unset",
+    "unsetopt",
+    "wait",
+    "whence",
+    "where",
+    "which",
+    "zcompile",
+    "zmodload",
+    "zparseopts",
+    "zstyle",
+    ".",
     // zshrs-owned z* builtins
-    "zcache", "zls", "zid", "zping", "ztag", "zuntag", "zsend", "znotify", "zsubscribe",
-    "zunsubscribe", "zsync", "zask", "zlog", "zjob",
+    "zcache",
+    "zls",
+    "zid",
+    "zping",
+    "ztag",
+    "zuntag",
+    "zsend",
+    "znotify",
+    "zsubscribe",
+    "zunsubscribe",
+    "zsync",
+    "zask",
+    "zlog",
+    "zjob",
 ];
 
 fn classify_word(
@@ -1534,12 +1609,18 @@ async fn op_doctor(state: &Arc<DaemonState>) -> OpResult {
         push(
             "legacy_litter",
             litter == 0,
-            format!("{} legacy artifacts in HOME (run `zcache clean legacy`)", litter),
+            format!(
+                "{} legacy artifacts in HOME (run `zcache clean legacy`)",
+                litter
+            ),
         );
     }
 
     let total = checks.len();
-    let failed = checks.iter().filter(|c| !c["ok"].as_bool().unwrap_or(false)).count();
+    let failed = checks
+        .iter()
+        .filter(|c| !c["ok"].as_bool().unwrap_or(false))
+        .count();
 
     Ok(json!({
         "checks": checks,
@@ -1571,12 +1652,15 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .and_then(Value::as_str)
         .unwrap_or("all")
         .to_string();
-    let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
-    let no_stats = args.get("no_stats").and_then(Value::as_bool).unwrap_or(false);
-    let shard_name = args
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let dry_run = args
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let no_stats = args
+        .get("no_stats")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let shard_name = args.get("name").and_then(Value::as_str).map(str::to_string);
 
     let mut removed: Vec<String> = Vec::new();
     let mut would_remove: Vec<String> = Vec::new();
@@ -1612,10 +1696,7 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
                 .ok_or_else(|| ErrPayload::new("bad_args", "missing `name` for shard target"))?;
             let target_match = format!("-{}.rkyv", name);
             for shard in super::shard::list_shards(paths).unwrap_or_default() {
-                let fname = shard
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
+                let fname = shard.file_name().and_then(|s| s.to_str()).unwrap_or("");
                 if fname.contains(&target_match) || fname == format!("{}.rkyv", name) {
                     record(shard);
                 }
@@ -1860,7 +1941,11 @@ async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
         }
         // Bound walk depth; legacy scope is wide so don't hammer subtrees.
         for ent in walkdir::WalkDir::new(dir)
-            .max_depth(if dir.starts_with(&state.paths.root) { 2 } else { 4 })
+            .max_depth(if dir.starts_with(&state.paths.root) {
+                2
+            } else {
+                4
+            })
             .follow_links(false)
             .into_iter()
             .filter_map(|r| r.ok())
@@ -1965,8 +2050,7 @@ async fn op_log_level(args: Value) -> OpResult {
         .get("directive")
         .and_then(Value::as_str)
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `directive`"))?;
-    super::log::set_runtime_level(directive)
-        .map_err(|e| ErrPayload::new("reload_failed", e))?;
+    super::log::set_runtime_level(directive).map_err(|e| ErrPayload::new("reload_failed", e))?;
     Ok(json!({ "directive": directive }))
 }
 
@@ -2049,10 +2133,7 @@ async fn op_subscription_set_paused(
         let ok = state.set_subscription_paused(client_id, id, paused);
         return Ok(json!({ "affected": if ok { 1 } else { 0 }, "paused": paused }));
     }
-    Err(ErrPayload::new(
-        "bad_args",
-        "specify `id` or `all: true`",
-    ))
+    Err(ErrPayload::new("bad_args", "specify `id` or `all: true`"))
 }
 
 async fn op_unsubscribe(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
@@ -2385,10 +2466,14 @@ async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
 
     // Store raw body for round-trip identity.
     let raw_json = serde_json::Value::String(content.clone()).to_string();
-    state.canonical.upsert("zcompdump_raw", "body", &raw_json, None);
+    state
+        .canonical
+        .upsert("zcompdump_raw", "body", &raw_json, None);
     if let Some(h) = parsed.header.as_ref() {
         let h_json = serde_json::Value::String(h.clone()).to_string();
-        state.canonical.upsert("zcompdump_raw", "header", &h_json, None);
+        state
+            .canonical
+            .upsert("zcompdump_raw", "header", &h_json, None);
     }
 
     // Structured imports — useful for `zcache view compdef` etc.
@@ -2474,11 +2559,7 @@ async fn op_import_zwc(state: &Arc<DaemonState>, args: Value) -> OpResult {
             .filter_map(|r| r.ok())
         {
             if ent.file_type().is_file()
-                && ent
-                    .path()
-                    .extension()
-                    .map(|e| e == "zwc")
-                    .unwrap_or(false)
+                && ent.path().extension().map(|e| e == "zwc").unwrap_or(false)
             {
                 entries.push(ent.path().to_path_buf());
             }
@@ -2516,11 +2597,16 @@ async fn op_import_zwc(state: &Arc<DaemonState>, args: Value) -> OpResult {
         let stem = match zwc.file_name().and_then(|n| n.to_str()) {
             Some(n) if n.ends_with(".zwc") => &n[..n.len() - 4],
             _ => {
-                skipped.push(json!({"path": zwc.display().to_string(), "reason": "not a .zwc filename"}));
+                skipped.push(
+                    json!({"path": zwc.display().to_string(), "reason": "not a .zwc filename"}),
+                );
                 continue;
             }
         };
-        let source = zwc.parent().map(|d| d.join(stem)).unwrap_or_else(|| stem.into());
+        let source = zwc
+            .parent()
+            .map(|d| d.join(stem))
+            .unwrap_or_else(|| stem.into());
         if !source.exists() {
             skipped.push(json!({
                 "path": zwc.display().to_string(),
@@ -2557,7 +2643,8 @@ async fn op_import_zwc(state: &Arc<DaemonState>, args: Value) -> OpResult {
         // path takes over).
         let source_str = source.display().to_string();
         let zwc_str = zwc.display().to_string();
-        let parent_paths = serde_json::Value::Array(vec![serde_json::Value::String(zwc_str.clone())]).to_string();
+        let parent_paths =
+            serde_json::Value::Array(vec![serde_json::Value::String(zwc_str.clone())]).to_string();
         let inode = nix_inode(&src_meta);
 
         let res = state.with_catalog(|conn| -> rusqlite::Result<()> {
@@ -2662,8 +2749,7 @@ async fn op_import_history(state: &Arc<DaemonState>, args: Value) -> OpResult {
         tx.commit()?;
         Ok((imported, skipped))
     });
-    let (imported, skipped) =
-        res.map_err(|e| ErrPayload::new("history_write", e.to_string()))?;
+    let (imported, skipped) = res.map_err(|e| ErrPayload::new("history_write", e.to_string()))?;
 
     tracing::info!(imported, skipped, total = entries.len(), %path, "history imported");
 
@@ -2717,9 +2803,12 @@ async fn op_config_set(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // compat for future knobs).
     match key.as_str() {
         "long_cmd_threshold" | "log_max_bytes" | "log_max_rotations" => {
-            value
-                .parse::<u64>()
-                .map_err(|e| ErrPayload::new("bad_value", format!("`{}` requires a non-negative integer: {}", key, e)))?;
+            value.parse::<u64>().map_err(|e| {
+                ErrPayload::new(
+                    "bad_value",
+                    format!("`{}` requires a non-negative integer: {}", key, e),
+                )
+            })?;
         }
         _ => {}
     }
@@ -2810,7 +2899,10 @@ async fn op_replay_log(state: &Arc<DaemonState>, args: Value) -> OpResult {
 
     let body = std::fs::read_to_string(&path)
         .map_err(|e| ErrPayload::new("read_failed", format!("{}: {}", path.display(), e)))?;
-    let line_count = body.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).count();
+    let line_count = body
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .count();
     Ok(json!({
         "found": true,
         "path": path.display().to_string(),
@@ -3011,9 +3103,7 @@ async fn op_export_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
     if !include_sensitive {
         let sensitive_paths: Vec<String> = state
             .with_catalog(|conn| -> rusqlite::Result<Vec<String>> {
-                let mut stmt = conn.prepare(
-                    "SELECT path FROM compiled_files WHERE sensitive=1",
-                )?;
+                let mut stmt = conn.prepare("SELECT path FROM compiled_files WHERE sensitive=1")?;
                 let rows = stmt
                     .query_map([], |r| r.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -3026,10 +3116,7 @@ async fn op_export_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
             .collect();
         if !sensitive_hashes.is_empty() {
             entries.retain(|p| {
-                let fname = p
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
+                let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
                 !sensitive_hashes.iter().any(|h| fname.starts_with(h))
             });
         }
@@ -3100,8 +3187,7 @@ async fn op_import_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let bytes = std::fs::read(src)
         .map_err(|e| ErrPayload::new("read_failed", format!("{}: {}", path, e)))?;
 
-    let entries = parse_ustar(&bytes)
-        .map_err(|e| ErrPayload::new("bad_archive", e))?;
+    let entries = parse_ustar(&bytes).map_err(|e| ErrPayload::new("bad_archive", e))?;
     if entries.is_empty() {
         return Err(ErrPayload::new("bad_archive", "no entries in archive"));
     }
@@ -3160,11 +3246,7 @@ async fn op_import_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
 
 /// Append one ustar-format entry to `writer`. Plain POSIX tar — no extensions,
 /// no GNU tar magic, no compression. Matches what `tar -xf` will read.
-fn write_ustar_entry(
-    writer: &mut std::fs::File,
-    name: &str,
-    data: &[u8],
-) -> std::io::Result<()> {
+fn write_ustar_entry(writer: &mut std::fs::File, name: &str, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let name_bytes = name.as_bytes();
     if name_bytes.len() > 100 {
@@ -3229,10 +3311,7 @@ fn parse_ustar(bytes: &[u8]) -> std::result::Result<Vec<(String, Vec<u8>)>, Stri
             return Err(format!("bad ustar magic at offset {}", pos));
         }
         // Name (up to 100 bytes, NUL-terminated).
-        let name_end = header[..100]
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(100);
+        let name_end = header[..100].iter().position(|&b| b == 0).unwrap_or(100);
         let name = std::str::from_utf8(&header[..name_end])
             .map_err(|e| format!("bad name encoding at offset {}: {}", pos, e))?
             .to_string();
@@ -3293,7 +3372,8 @@ fn parse_zsh_history_file(content: &str) -> Vec<(i64, Option<i64>, String)> {
             if let Some((meta, cmd)) = rest.split_once(';') {
                 if let Some((ts_s, dur_s)) = meta.split_once(':') {
                     let ts: i64 = ts_s.trim().parse().unwrap_or(fallback_ts / 1_000_000_000);
-                    let dur: Option<i64> = dur_s.trim().parse::<i64>().ok().map(|d| d * 1_000_000_000);
+                    let dur: Option<i64> =
+                        dur_s.trim().parse::<i64>().ok().map(|d| d * 1_000_000_000);
                     let ts_ns = ts.saturating_mul(1_000_000_000);
                     if cmd.ends_with('\\') {
                         buf = Some((ts_ns, dur, cmd.to_string()));
@@ -3558,9 +3638,7 @@ fn spawn_replacement_daemon() -> std::io::Result<u32> {
                 let _ = nix::unistd::close(fd);
             }
             // Re-open as /dev/null so subsequent writes don't EBADF.
-            let _ = std::fs::OpenOptions::new()
-                .read(true)
-                .open("/dev/null");
+            let _ = std::fs::OpenOptions::new().read(true).open("/dev/null");
             Ok(())
         });
     }
@@ -3620,14 +3698,15 @@ async fn op_job_submit(state: &Arc<DaemonState>, client_id: u64, args: Value) ->
     if command.is_empty() {
         return Err(ErrPayload::new("bad_args", "`command` is empty"));
     }
-    let cwd = args
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(str::to_string);
+    let cwd = args.get("cwd").and_then(Value::as_str).map(str::to_string);
     let tags: Vec<String> = args
         .get("tags")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
     let env: std::collections::HashMap<String, String> = args
         .get("env")
@@ -3673,10 +3752,7 @@ async fn op_job_output(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .get("id")
         .and_then(Value::as_u64)
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
-    let stderr = args
-        .get("stderr")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let stderr = args.get("stderr").and_then(Value::as_bool).unwrap_or(false);
     let lines = args.get("lines").and_then(Value::as_u64);
     let content = state
         .jobs
@@ -3804,13 +3880,7 @@ mod highlight_tests {
 
     #[test]
     fn classifies_builtin() {
-        let spans = highlight_line(
-            "cd /tmp",
-            &empty_set(),
-            &empty_set(),
-            &empty_set(),
-            &never,
-        );
+        let spans = highlight_line("cd /tmp", &empty_set(), &empty_set(), &empty_set(), &never);
         assert_eq!(kind_at(&spans, 0), "builtin");
     }
 

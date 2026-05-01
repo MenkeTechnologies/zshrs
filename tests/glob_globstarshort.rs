@@ -38,7 +38,14 @@ fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
     let non_stk_d1 = root.join("sub/b.txt");
     let literal_dotstk = root.join(".stk");
 
-    for f in [&depth0, &depth1, &depth2, &non_stk_d0, &non_stk_d1, &literal_dotstk] {
+    for f in [
+        &depth0,
+        &depth1,
+        &depth2,
+        &non_stk_d0,
+        &non_stk_d1,
+        &literal_dotstk,
+    ] {
         if let Some(parent) = f.parent() {
             fs::create_dir_all(parent).unwrap();
         }
@@ -50,15 +57,17 @@ fn globstarshort_double_star_dot_stk_matches_at_any_depth() {
     got.sort();
 
     let normalize = |p: &Path| p.canonicalize().unwrap().to_string_lossy().to_string();
-    let mut want = vec![
-        normalize(&depth0),
-        normalize(&depth1),
-        normalize(&depth2),
-    ];
+    let mut want = vec![normalize(&depth0), normalize(&depth1), normalize(&depth2)];
     want.sort();
     let got_normalized: Vec<String> = got
         .iter()
-        .map(|s| Path::new(s).canonicalize().unwrap().to_string_lossy().to_string())
+        .map(|s| {
+            Path::new(s)
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
         .collect();
 
     assert_eq!(
@@ -91,11 +100,7 @@ fn globstarshort_double_star_dot_rs_finds_project_sources() {
         "expected `**.rs` to find .rs files under src/, got empty"
     );
     for path in &got {
-        assert!(
-            path.ends_with(".rs"),
-            "non-.rs result leaked: {}",
-            path
-        );
+        assert!(path.ends_with(".rs"), "non-.rs result leaked: {}", path);
         assert!(
             Path::new(path).is_file(),
             "result is not a regular file: {}",

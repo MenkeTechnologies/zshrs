@@ -207,30 +207,29 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
     // — the caller named a specific target and expects to know if it failed.
     // For tag/all, an empty match is silently accepted (those scopes can
     // legitimately resolve to zero recipients).
-    let (target_shells, strict): (Vec<u64>, bool) = if let Some(id) =
-        target.get("shell_id").and_then(Value::as_u64)
-    {
-        (vec![id], true)
-    } else if target.get("self").and_then(Value::as_bool).unwrap_or(false) {
-        (vec![client_id], true)
-    } else if target.get("all").and_then(Value::as_bool).unwrap_or(false) {
-        (
-            state
-                .snapshot_sessions()
-                .into_iter()
-                .filter(|s| s.client_id != client_id)
-                .map(|s| s.client_id)
-                .collect(),
-            false,
-        )
-    } else if let Some(tag) = target.get("tag").and_then(Value::as_str) {
-        (state.shells_with_tag(tag), false)
-    } else {
-        return Err(ErrPayload::new(
-            "bad_args",
-            "target must specify {shell_id} | {self} | {all} | {tag}",
-        ));
-    };
+    let (target_shells, strict): (Vec<u64>, bool) =
+        if let Some(id) = target.get("shell_id").and_then(Value::as_u64) {
+            (vec![id], true)
+        } else if target.get("self").and_then(Value::as_bool).unwrap_or(false) {
+            (vec![client_id], true)
+        } else if target.get("all").and_then(Value::as_bool).unwrap_or(false) {
+            (
+                state
+                    .snapshot_sessions()
+                    .into_iter()
+                    .filter(|s| s.client_id != client_id)
+                    .map(|s| s.client_id)
+                    .collect(),
+                false,
+            )
+        } else if let Some(tag) = target.get("tag").and_then(Value::as_str) {
+            (state.shells_with_tag(tag), false)
+        } else {
+            return Err(ErrPayload::new(
+                "bad_args",
+                "target must specify {shell_id} | {self} | {all} | {tag}",
+            ));
+        };
 
     // Strict-mode (explicit shell_id / self): require the named shell to be
     // connected. Lax-mode (tag / all): allow zero matches and return

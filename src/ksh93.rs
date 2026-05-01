@@ -107,10 +107,8 @@ impl Ksh93Params {
         if let Some(m) = full {
             self.match_arr.push(m.to_string());
         }
-        for cap in captures {
-            if let Some(c) = cap {
-                self.match_arr.push(c.clone());
-            }
+        for c in captures.iter().flatten() {
+            self.match_arr.push(c.clone());
         }
     }
 
