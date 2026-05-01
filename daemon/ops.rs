@@ -898,13 +898,17 @@ async fn op_job_list(state: &Arc<DaemonState>, args: Value) -> OpResult {
     Ok(json!({ "jobs": jobs, "count": jobs.len() }))
 }
 
+// Note on payload key naming: Frame::Response is `{ id, ok, ...payload }` with
+// payload flattened. Any payload field named "id" would clobber the response
+// id at JSON serialize time, so all job_* responses use "job_id" instead.
+
 async fn op_job_status(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let id = args
         .get("id")
         .and_then(Value::as_u64)
         .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
     match state.jobs.status(id) {
-        Some(s) => Ok(serde_json::to_value(s).unwrap_or(Value::Null)),
+        Some(s) => Ok(json!({ "job": s })),
         None => Err(ErrPayload::new("no_job", format!("job {} not found", id))),
     }
 }
@@ -923,7 +927,7 @@ async fn op_job_output(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .jobs
         .output(id, stderr, lines)
         .map_err(|e| ErrPayload::new("output_failed", e.to_string()))?;
-    Ok(json!({ "id": id, "stderr": stderr, "content": content }))
+    Ok(json!({ "job_id": id, "stderr": stderr, "content": content }))
 }
 
 async fn op_job_kill(state: &Arc<DaemonState>, args: Value) -> OpResult {
@@ -936,7 +940,7 @@ async fn op_job_kill(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .jobs
         .kill(id, signal)
         .map_err(|e| ErrPayload::new("kill_failed", e.to_string()))?;
-    Ok(json!({ "id": id, "killed": killed }))
+    Ok(json!({ "job_id": id, "killed": killed }))
 }
 
 async fn op_job_wait(state: &Arc<DaemonState>, args: Value) -> OpResult {
@@ -952,11 +956,11 @@ async fn op_job_wait(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let timeout = timeout_ms.map(std::time::Duration::from_millis);
     match super::jobs::wait_with_timeout(rx, timeout).await {
         Some(state_) => Ok(json!({
-            "id": id,
+            "job_id": id,
             "state": state_.label(),
             "exit_code": state_.exit_code(),
             "timed_out": false,
         })),
-        None => Ok(json!({ "id": id, "timed_out": true })),
+        None => Ok(json!({ "job_id": id, "timed_out": true })),
     }
 }
