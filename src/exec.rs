@@ -30588,7 +30588,7 @@ impl ShellExecutor {
                 0
             }
             Err(e) => {
-                eprintln!("zgdbmpath: {}", e);
+                eprintln!("zshrs:zgdbmpath:1: {}", e);
                 1
             }
         }
@@ -35414,7 +35414,7 @@ impl ShellExecutor {
         }
 
         if files.is_empty() {
-            eprintln!("zstat: no files specified");
+            eprintln!("zshrs:zstat:1: no files specified");
             return 1;
         }
 
@@ -35428,7 +35428,7 @@ impl ShellExecutor {
             let meta = match meta {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("zstat: {}: {}", file, e);
+                    eprintln!("zshrs:zstat:1: {}: {}", file, e);
                     return 1;
                 }
             };
@@ -35750,14 +35750,14 @@ impl ShellExecutor {
         // negative-or-non-finite -> no-op exit 0; valid duration
         // sleeps via nanosleep.
         if args.is_empty() {
-            eprintln!("zsleep: missing argument");
+            eprintln!("zshrs:zsleep:1: missing argument");
             return 1;
         }
 
         let secs: f64 = match args[0].parse() {
             Ok(s) => s,
             Err(_) => {
-                eprintln!("zsleep: invalid number: {}", args[0]);
+                eprintln!("zshrs:zsleep:1: invalid number: {}", args[0]);
                 return 1;
             }
         };
@@ -35775,14 +35775,14 @@ impl ShellExecutor {
     /// Ported from zsh/Src/Modules/system.c bin_zsystem() lines 805-816
     fn builtin_zsystem(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("zsystem: subcommand expected");
+            eprintln!("zshrs:zsystem:1: subcommand expected");
             return 1;
         }
         match args[0].as_str() {
             "flock" => self.builtin_zsystem_flock(&args[1..]),
             "supports" => self.builtin_zsystem_supports(&args[1..]),
             _ => {
-                eprintln!("zsystem: unknown subcommand: {}", args[0]);
+                eprintln!("zshrs:zsystem:1: unknown subcommand: {}", args[0]);
                 1
             }
         }
@@ -35791,11 +35791,11 @@ impl ShellExecutor {
     /// zsystem supports - ported from system.c bin_zsystem_supports() lines 780-801
     fn builtin_zsystem_supports(&self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("zsystem: supports: not enough arguments");
+            eprintln!("zshrs:zsystem:1: supports: not enough arguments");
             return 255;
         }
         if args.len() > 1 {
-            eprintln!("zsystem: supports: too many arguments");
+            eprintln!("zshrs:zsystem:1: supports: too many arguments");
             return 255;
         }
         match args[0].as_str() {
@@ -35849,7 +35849,7 @@ impl ShellExecutor {
                                 if i < args.len() {
                                     fdvar = Some(args[i].clone());
                                 } else {
-                                    eprintln!("zsystem: flock: option f requires a variable name");
+                                    eprintln!("zshrs:zsystem:1: flock: option f requires a variable name");
                                     return 1;
                                 }
                             }
@@ -35873,7 +35873,7 @@ impl ShellExecutor {
                             match val.parse::<f64>() {
                                 Ok(t) => timeout = Some(t),
                                 Err(_) => {
-                                    eprintln!("zsystem: flock: invalid timeout value: '{}'", val);
+                                    eprintln!("zshrs:zsystem:1: flock: invalid timeout value: '{}'", val);
                                     return 1;
                                 }
                             }
@@ -35921,7 +35921,7 @@ impl ShellExecutor {
                             break;
                         }
                         _ => {
-                            eprintln!("zsystem: flock: unknown option: -{}", c);
+                            eprintln!("zshrs:zsystem:1: flock: unknown option: -{}", c);
                             return 1;
                         }
                     }
@@ -35932,7 +35932,7 @@ impl ShellExecutor {
             let filepath = match file {
                 Some(f) => f,
                 None => {
-                    eprintln!("zsystem: flock: not enough arguments");
+                    eprintln!("zshrs:zsystem:1: flock: not enough arguments");
                     return 1;
                 }
             };
@@ -35944,7 +35944,7 @@ impl ShellExecutor {
                 let fd: i32 = match filepath.parse() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("zsystem: flock: invalid fd: {}", filepath);
+                        eprintln!("zshrs:zsystem:1: flock: invalid fd: {}", filepath);
                         return 1;
                     }
                 };
@@ -35969,7 +35969,7 @@ impl ShellExecutor {
             {
                 Ok(f) => f,
                 Err(e) => {
-                    eprintln!("zsystem: flock: {}: {}", filepath, e);
+                    eprintln!("zshrs:zsystem:1: flock: {}: {}", filepath, e);
                     return 1;
                 }
             };
@@ -36051,7 +36051,7 @@ impl ShellExecutor {
         }
         #[cfg(not(unix))]
         {
-            eprintln!("zsystem: flock: not supported on this platform");
+            eprintln!("zshrs:zsystem:1: flock: not supported on this platform");
             1
         }
     }
@@ -38983,7 +38983,7 @@ impl ShellExecutor {
                     // Delete pty
                     i += 1;
                     if i >= args.len() {
-                        eprintln!("zpty: -d requires pty name");
+                        eprintln!("zshrs:zpty:1: -d requires pty name");
                         return 1;
                     }
                     let name = &args[i];
@@ -38993,7 +38993,7 @@ impl ShellExecutor {
                         }
                         return 0;
                     } else {
-                        eprintln!("zpty: no such pty: {}", name);
+                        eprintln!("zshrs:zpty:1: no such pty: {}", name);
                         return 1;
                     }
                 }
@@ -39001,7 +39001,7 @@ impl ShellExecutor {
                     // Write to pty: zpty -w name string...
                     i += 1;
                     if i >= args.len() {
-                        eprintln!("zpty: -w requires pty name");
+                        eprintln!("zshrs:zpty:1: -w requires pty name");
                         return 1;
                     }
                     let name = args[i].clone();
@@ -39015,10 +39015,10 @@ impl ShellExecutor {
                                 return 0;
                             }
                         }
-                        eprintln!("zpty: write failed");
+                        eprintln!("zshrs:zpty:1: write failed");
                         return 1;
                     } else {
-                        eprintln!("zpty: no such pty: {}", name);
+                        eprintln!("zshrs:zpty:1: no such pty: {}", name);
                         return 1;
                     }
                 }
@@ -39026,7 +39026,7 @@ impl ShellExecutor {
                     // Read from pty: zpty -r name [param]
                     i += 1;
                     if i >= args.len() {
-                        eprintln!("zpty: -r requires pty name");
+                        eprintln!("zshrs:zpty:1: -r requires pty name");
                         return 1;
                     }
                     let name = args[i].clone();
@@ -39051,7 +39051,7 @@ impl ShellExecutor {
                         }
                         return 1;
                     } else {
-                        eprintln!("zpty: no such pty: {}", name);
+                        eprintln!("zshrs:zpty:1: no such pty: {}", name);
                         return 1;
                     }
                 }
@@ -39083,7 +39083,7 @@ impl ShellExecutor {
                     // Create new pty: zpty name command [args...]
                     i += 1;
                     if i >= args.len() {
-                        eprintln!("zpty: command required");
+                        eprintln!("zshrs:zpty:1: command required");
                         return 1;
                     }
                     let cmd_str = args[i..].join(" ");
@@ -39114,7 +39114,7 @@ impl ShellExecutor {
                             return 0;
                         }
                         Err(e) => {
-                            eprintln!("zpty: failed to start: {}", e);
+                            eprintln!("zshrs:zpty:1: failed to start: {}", e);
                             return 1;
                         }
                     }
