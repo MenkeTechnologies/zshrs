@@ -25171,14 +25171,14 @@ impl ShellExecutor {
             // Check if we're a login shell (parent is init/PID 1)
             let ppid = getppid();
             if !force && ppid == nix::unistd::Pid::from_raw(1) {
-                eprintln!("suspend: cannot suspend a login shell");
+                eprintln!("zshrs:suspend:1: cannot suspend a login shell");
                 return 1;
             }
 
             // Send SIGTSTP to ourselves
             let pid = nix::unistd::getpid();
             if let Err(e) = kill(pid, Signal::SIGTSTP) {
-                eprintln!("suspend: {}", e);
+                eprintln!("zshrs:suspend:1: {}", e);
                 return 1;
             }
             0
@@ -25186,7 +25186,7 @@ impl ShellExecutor {
 
         #[cfg(not(unix))]
         {
-            eprintln!("suspend: not supported on this platform");
+            eprintln!("zshrs:suspend:1: not supported on this platform");
             1
         }
     }
@@ -27268,7 +27268,7 @@ impl ShellExecutor {
         match table {
             "autoloads" => {
                 let Some(ref cache) = self.compsys_cache else {
-                    eprintln!("dbview: no compsys cache");
+                    eprintln!("zshrs:dbview:1: no compsys cache");
                     return 1;
                 };
 
@@ -27307,7 +27307,7 @@ impl ShellExecutor {
                             }
                         }
                         _ => {
-                            eprintln!("dbview: autoload '{}' not found", name);
+                            eprintln!("zshrs:dbview:1: autoload '{}' not found", name);
                             return 1;
                         }
                     }
@@ -27352,7 +27352,7 @@ impl ShellExecutor {
                         }
                     }
                     Err(e) => {
-                        eprintln!("dbview: query failed: {}", e);
+                        eprintln!("zshrs:dbview:1: query failed: {}", e);
                         return 1;
                     }
                 }
@@ -27360,7 +27360,7 @@ impl ShellExecutor {
 
             "comps" => {
                 let Some(ref cache) = self.compsys_cache else {
-                    eprintln!("dbview: no compsys cache");
+                    eprintln!("zshrs:dbview:1: no compsys cache");
                     return 1;
                 };
                 if count_only {
@@ -27386,7 +27386,7 @@ impl ShellExecutor {
                         }
                     }
                     Err(e) => {
-                        eprintln!("dbview: {}", e);
+                        eprintln!("zshrs:dbview:1: {}", e);
                         return 1;
                     }
                 }
@@ -27394,7 +27394,7 @@ impl ShellExecutor {
 
             "executables" => {
                 let Some(ref cache) = self.compsys_cache else {
-                    eprintln!("dbview: no compsys cache");
+                    eprintln!("zshrs:dbview:1: no compsys cache");
                     return 1;
                 };
                 if count_only {
@@ -27420,7 +27420,7 @@ impl ShellExecutor {
                         }
                     }
                     Err(e) => {
-                        eprintln!("dbview: {}", e);
+                        eprintln!("zshrs:dbview:1: {}", e);
                         return 1;
                     }
                 }
@@ -27428,7 +27428,7 @@ impl ShellExecutor {
 
             "history" => {
                 let Some(ref engine) = self.history else {
-                    eprintln!("dbview: no history engine");
+                    eprintln!("zshrs:dbview:1: no history engine");
                     return 1;
                 };
                 if count_only {
@@ -27460,7 +27460,7 @@ impl ShellExecutor {
 
             "plugins" => {
                 let Some(ref cache) = self.plugin_cache else {
-                    eprintln!("dbview: no plugin cache");
+                    eprintln!("zshrs:dbview:1: no plugin cache");
                     return 1;
                 };
                 let (plugins, functions) = cache.stats();
@@ -27468,7 +27468,7 @@ impl ShellExecutor {
             }
 
             _ => {
-                eprintln!("dbview: unknown table '{}'. Available: autoloads, comps, executables, history, plugins", table);
+                eprintln!("zshrs:dbview:1: unknown table '{}'. Available: autoloads, comps, executables, history, plugins", table);
                 return 1;
             }
         }
@@ -27526,14 +27526,14 @@ impl ShellExecutor {
         let code = if args[0] == "-s" {
             // profile -s 'script string'
             if args.len() < 2 {
-                eprintln!("profile: -s requires a script string");
+                eprintln!("zshrs:profile:1: -s requires a script string");
                 return 1;
             }
             args[1..].join(" ")
         } else if args[0] == "-f" {
             // profile -f func_name [args...]
             if args.len() < 2 {
-                eprintln!("profile: -f requires a function name");
+                eprintln!("zshrs:profile:1: -f requires a function name");
                 return 1;
             }
             args[1..].join(" ")
@@ -27553,7 +27553,7 @@ impl ShellExecutor {
         let status = match result {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("profile: {}", e);
+                eprintln!("zshrs:profile:1: {}", e);
                 1
             }
         };
@@ -27806,7 +27806,7 @@ impl ShellExecutor {
                         println!("removed intercept {}", id);
                         0
                     } else {
-                        eprintln!("intercept: no intercept with ID {}", id);
+                        eprintln!("zshrs:intercept:1: no intercept with ID {}", id);
                         1
                     }
                 } else {
@@ -27917,7 +27917,7 @@ impl ShellExecutor {
     ///   result=$(await $id)
     fn builtin_async(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("async: requires a command string");
+            eprintln!("zshrs:async:1: requires a command string");
             return 1;
         }
 
@@ -27962,14 +27962,14 @@ impl ShellExecutor {
     ///   echo $?      # exit status of the async command
     fn builtin_await(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("await: requires a job ID");
+            eprintln!("zshrs:await:1: requires a job ID");
             return 1;
         }
 
         let id: u32 = match args[0].parse() {
             Ok(n) => n,
             Err(_) => {
-                eprintln!("await: invalid job ID '{}'", args[0]);
+                eprintln!("zshrs:await:1: invalid job ID '{}'", args[0]);
                 return 1;
             }
         };
@@ -27977,7 +27977,7 @@ impl ShellExecutor {
         let rx = match self.async_jobs.remove(&id) {
             Some(rx) => rx,
             None => {
-                eprintln!("await: no async job with ID {}", id);
+                eprintln!("zshrs:await:1: no async job with ID {}", id);
                 return 1;
             }
         };
@@ -27992,7 +27992,7 @@ impl ShellExecutor {
                 status
             }
             Err(_) => {
-                eprintln!("await: job {} died without result", id);
+                eprintln!("zshrs:await:1: job {} died without result", id);
                 1
             }
         }
@@ -28008,7 +28008,7 @@ impl ShellExecutor {
     ///   ls *.rs | pmap 'wc -l {}'
     fn builtin_pmap(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("pmap: requires 'command {{}}' followed by arguments");
+            eprintln!("zshrs:pmap:1: requires 'command {{}}' followed by arguments");
             return 1;
         }
 
@@ -28045,7 +28045,7 @@ impl ShellExecutor {
                         .first()
                         .map(|e| format!("{}", e))
                         .unwrap_or_else(|| "parse error".to_string());
-                    eprintln!("pmap: parse error: {}", msg);
+                    eprintln!("zshrs:pmap:1: parse error: {}", msg);
                     results.push((1, String::new()));
                 }
             }
@@ -28076,7 +28076,7 @@ impl ShellExecutor {
     ///   pgrep 'grep -q TODO {}' *.rs
     fn builtin_pgrep(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("pgrep: requires 'test_command {{}}' followed by arguments");
+            eprintln!("zshrs:pgrep:1: requires 'test_command {{}}' followed by arguments");
             return 1;
         }
 
@@ -28116,7 +28116,7 @@ impl ShellExecutor {
     ///   peach 'rsync -a {} remote:{}' dir1 dir2 dir3
     fn builtin_peach(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("peach: requires 'command {{}}' followed by arguments");
+            eprintln!("zshrs:peach:1: requires 'command {{}}' followed by arguments");
             return 1;
         }
 
@@ -28165,7 +28165,7 @@ impl ShellExecutor {
     ///   barrier 'npm test' ::: 'cargo test' ::: 'pytest'
     fn builtin_barrier(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("barrier: requires commands separated by :::");
+            eprintln!("zshrs:barrier:1: requires commands separated by :::");
             return 1;
         }
 
