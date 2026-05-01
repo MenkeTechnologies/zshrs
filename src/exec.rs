@@ -43440,10 +43440,20 @@ impl ShellExecutor {
         }
 
         let mut total_secs = 0.0f64;
+        let mut had_operand = false;
         for arg in args {
-            if arg.starts_with('-') {
-                continue;
+            if arg.starts_with('-') && arg.len() > 1 {
+                // coreutils sleep accepts no flags besides --help and
+                // --version. Anything else is an error. Old impl
+                // silently skipped flag args, so \`sleep -X 5\` slept
+                // 5 seconds while losing -X.
+                if arg == "--" {
+                    continue; // end-of-options
+                }
+                eprintln!("zshrs:sleep:1: unrecognized option: '{}'", arg);
+                return 1;
             }
+            had_operand = true;
             let (num, suffix) = if arg.ends_with('s') {
                 (&arg[..arg.len() - 1], 1.0)
             } else if arg.ends_with('m') {
@@ -43457,8 +43467,13 @@ impl ShellExecutor {
             };
             if let Ok(n) = num.parse::<f64>() {
                 total_secs += n * suffix;
+            } else {
+                // coreutils sleep errors on non-numeric operand.
+                eprintln!("zshrs:sleep:1: invalid time interval: '{}'", arg);
+                return 1;
             }
         }
+        let _ = had_operand;
 
         // Duration::from_secs_f64 panics on negative / NaN / +inf.
         // coreutils sleep treats negative as an error; here we
