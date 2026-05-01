@@ -42554,45 +42554,82 @@ impl ShellExecutor {
     }
 
     fn builtin_date(&self, args: &[String]) -> i32 {
+        // coreutils date(1) port: adds -u (UTC), -r FILE (mtime of
+        // FILE), -R / --rfc-2822, -I / --iso-8601. -d (parse arbitrary
+        // date string) is partially handled — only +<seconds> /
+        // @<seconds> Unix-time forms; full date-string parser not yet.
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-
-        let mut format: Option<&str> = None;
-        for arg in args {
-            if arg.starts_with('+') {
-                format = Some(&arg[1..]);
+        let mut utc = false;
+        let mut format: Option<String> = None;
+        let mut reference: Option<String> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            if let Some(s) = arg.strip_prefix('+') {
+                format = Some(s.to_string());
+            } else if arg == "-u" || arg == "--utc" || arg == "--universal" {
+                utc = true;
+            } else if arg == "-r" || arg == "--reference" {
+                if let Some(r) = iter.next() {
+                    reference = Some(r.clone());
+                }
+            } else if let Some(r) = arg.strip_prefix("--reference=") {
+                reference = Some(r.to_string());
+            } else if arg == "-R" || arg == "--rfc-2822" || arg == "--rfc-email" {
+                format = Some("%a, %d %b %Y %H:%M:%S %z".to_string());
+            } else if arg == "-I" || arg == "--iso-8601" {
+                format = Some("%Y-%m-%d".to_string());
+            } else if let Some(prec) = arg.strip_prefix("--iso-8601=") {
+                format = Some(
+                    match prec {
+                        "date" => "%Y-%m-%d",
+                        "hours" => "%Y-%m-%dT%H%z",
+                        "minutes" => "%Y-%m-%dT%H:%M%z",
+                        "seconds" => "%Y-%m-%dT%H:%M:%S%z",
+                        "ns" => "%Y-%m-%dT%H:%M:%S,%N%z",
+                        _ => "%Y-%m-%d",
+                    }
+                    .to_string(),
+                );
             }
         }
 
-        if let Some(fmt) = format {
-            let tm = unsafe {
-                let t = now as libc::time_t;
-                *libc::localtime(&t)
-            };
-            let mut buf = [0i8; 256];
-            let fmt_cstr = std::ffi::CString::new(fmt).unwrap_or_default();
-            let len =
-                unsafe { libc::strftime(buf.as_mut_ptr(), buf.len(), fmt_cstr.as_ptr(), &tm) };
-            if len > 0 {
-                let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
-                println!("{}", s.to_string_lossy());
+        // Determine the timestamp.
+        let ts: i64 = if let Some(refpath) = reference {
+            match std::fs::metadata(&refpath) {
+                Ok(meta) => meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+                Err(e) => {
+                    eprintln!("date: {}: {}", refpath, e);
+                    return 1;
+                }
             }
         } else {
-            let tm = unsafe {
-                let t = now as libc::time_t;
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+        };
+
+        let tm = unsafe {
+            let t = ts as libc::time_t;
+            if utc {
+                *libc::gmtime(&t)
+            } else {
                 *libc::localtime(&t)
-            };
-            let mut buf = [0i8; 256];
-            let fmt = std::ffi::CString::new("%a %b %e %H:%M:%S %Z %Y").unwrap();
-            let len = unsafe { libc::strftime(buf.as_mut_ptr(), buf.len(), fmt.as_ptr(), &tm) };
-            if len > 0 {
-                let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
-                println!("{}", s.to_string_lossy());
             }
+        };
+        let fmt_str = format.unwrap_or_else(|| "%a %b %e %H:%M:%S %Z %Y".to_string());
+        let mut buf = [0i8; 1024];
+        let fmt_cstr = std::ffi::CString::new(fmt_str.as_str()).unwrap_or_default();
+        let len = unsafe { libc::strftime(buf.as_mut_ptr(), buf.len(), fmt_cstr.as_ptr(), &tm) };
+        if len > 0 {
+            let s = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
+            println!("{}", s.to_string_lossy());
         }
         0
     }
