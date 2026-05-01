@@ -7666,16 +7666,16 @@ impl fusevm::ShellHost for ZshrsHost {
             "zcalc" => {
                 return Some(with_executor(|exec| exec.builtin_zcalc(&args)));
             }
-            // Daemon-managed z* builtins — thin IPC wrappers (see src/daemon/builtins.rs).
-            // Short-circuit BEFORE the function-lookup path so a missing daemon
-            // doesn't fall through to "command not found"; daemon::builtins::dispatch
-            // handles its own connect/spawn-on-demand and reports its own errors.
-            "zcache" | "zls" | "zid" | "zping" | "ztag" | "zuntag" | "zsend" | "znotify"
-            | "zlog" => {
+            // Daemon-managed z* builtins — thin IPC wrappers. Short-circuit BEFORE
+            // the function-lookup path so a missing daemon doesn't fall through to
+            // "command not found". The name list is owned by the daemon crate
+            // (zshrs_daemon::builtins::ZSHRS_BUILTIN_NAMES); routing through
+            // try_dispatch keeps this site zero-touch as new z* builtins land.
+            n if crate::daemon::builtins::is_zshrs_builtin(n) => {
                 let argv: Vec<String> = std::iter::once(name.to_string())
                     .chain(args.into_iter())
                     .collect();
-                return Some(crate::daemon::builtins::dispatch(name, &argv).unwrap_or(1));
+                return Some(crate::daemon::builtins::try_dispatch(n, &argv).unwrap_or(1));
             }
             _ => {}
         }
@@ -8315,19 +8315,9 @@ static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         ":",
         "compgen",
         "complete",
-        // Daemon-managed z* builtins (see src/daemon/builtins.rs).
-        // No clash with zsh-owned z* namespace (verified by zshrs_builtin_names_no_zsh_clash test).
-        "zcache",
-        "zls",
-        "zid",
-        "zping",
-        "ztag",
-        "zuntag",
-        "zsend",
-        "znotify",
-        "zlog",
     ]
     .into_iter()
+    .chain(crate::daemon::builtins::ZSHRS_BUILTIN_NAMES.iter().copied())
     .collect()
 });
 
@@ -28379,14 +28369,14 @@ impl ShellExecutor {
             "zcp" => self.builtin_zmv(cmd_args, "cp"),
             "zln" => self.builtin_zmv(cmd_args, "ln"),
             "zcalc" => self.builtin_zcalc(cmd_args),
-            // Daemon-managed z* builtins — thin IPC wrappers.
-            // See src/daemon/builtins.rs and docs/DAEMON.md "z* builtin family".
-            "zcache" | "zls" | "zid" | "zping" | "ztag" | "zuntag" | "zsend" | "znotify"
-            | "zlog" => {
+            // Daemon-managed z* builtins — thin IPC wrappers. Name list is
+            // owned by the daemon crate; routing via try_dispatch keeps this
+            // site zero-touch as new z* builtins land.
+            n if crate::daemon::builtins::is_zshrs_builtin(n) => {
                 let argv: Vec<String> = std::iter::once(cmd.to_string())
                     .chain(cmd_args.iter().cloned())
                     .collect();
-                crate::daemon::builtins::dispatch(cmd, &argv).unwrap_or(1)
+                crate::daemon::builtins::try_dispatch(n, &argv).unwrap_or(1)
             }
             _ => {
                 eprintln!("zshrs:1: no such builtin: {}", cmd);
