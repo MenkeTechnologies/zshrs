@@ -40987,7 +40987,10 @@ impl ShellExecutor {
                     let name_match = match name_pat {
                         Some(pat) => {
                             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                            glob_match(pat, name)
+                            // Use the canonical glob matcher so `[Cc]ode*`,
+                            // `?ar`, `{a,b}*` etc. work. Was a local 4-rule
+                            // matcher that only handled '*PAT' / 'PAT*'.
+                            ShellExecutor::glob_match_static(name, pat)
                         }
                         None => true,
                     };
@@ -41001,19 +41004,6 @@ impl ShellExecutor {
                     }
                 }
             }
-        }
-
-        fn glob_match(pattern: &str, name: &str) -> bool {
-            if pattern == "*" {
-                return true;
-            }
-            if let Some(suffix) = pattern.strip_prefix('*') {
-                return name.ends_with(suffix);
-            }
-            if let Some(prefix) = pattern.strip_suffix('*') {
-                return name.starts_with(prefix);
-            }
-            pattern == name
         }
 
         for p in paths {
