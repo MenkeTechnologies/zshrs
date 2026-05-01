@@ -42260,59 +42260,137 @@ impl ShellExecutor {
             return 1;
         }
 
-        let delete = args.iter().any(|a| a == "-d");
-        // -c / -C: complement the FIRST set. `tr -d -c "0-9"` keeps
-        // only digits (delete chars NOT in the set). Without this,
-        // -c was silently ignored and the set was used as-is.
-        let complement = args.iter().any(|a| a == "-c" || a == "-C");
-        // -s: squeeze runs of chars in the LAST set down to one.
-        // After translate/delete, replace 2+ consecutive chars from
-        // set with a single char. coreutils tr(1).
-        let squeeze = args.iter().any(|a| a == "-s");
+        let delete = args.iter().any(|a| a == "-d" || a == "--delete");
+        let complement = args
+            .iter()
+            .any(|a| a == "-c" || a == "-C" || a == "--complement");
+        let squeeze = args.iter().any(|a| a == "-s" || a == "--squeeze-repeats");
+        // -t / --truncate-set1: truncate set1 to set2's length.
+        // Direct port of coreutils tr -t.
+        let truncate1 = args.iter().any(|a| a == "-t" || a == "--truncate-set1");
         let set1_raw: &str;
         let set2_raw: &str;
 
+        let non_flag: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .collect();
         if delete {
-            set1_raw = args
-                .iter()
-                .find(|a| !a.starts_with('-'))
-                .map(|s| s.as_str())
-                .unwrap_or("");
+            set1_raw = non_flag.first().copied().unwrap_or("");
             set2_raw = "";
         } else {
-            let non_flag: Vec<&str> = args
-                .iter()
-                .filter(|a| !a.starts_with('-'))
-                .map(|s| s.as_str())
-                .collect();
             set1_raw = non_flag.first().copied().unwrap_or("");
             set2_raw = non_flag.get(1).copied().unwrap_or("");
         }
 
         // Expand ranges like `a-z` into the full character list.
-        // Also handle escape sequences \n \t \r \\ \0.
+        // Handles escapes (\n \t \r \\ \0 \xNN \NNN) AND POSIX
+        // character classes (`[:upper:]`, `[:lower:]`, `[:digit:]`,
+        // `[:alpha:]`, `[:alnum:]`, `[:punct:]`, `[:space:]`,
+        // `[:blank:]`, `[:cntrl:]`, `[:graph:]`, `[:print:]`,
+        // `[:xdigit:]`).
         fn expand_set(s: &str) -> Vec<char> {
             let mut out = Vec::new();
-            let chars: Vec<char> = s.chars().collect();
+            let bytes: Vec<char> = s.chars().collect();
             let mut i = 0;
-            while i < chars.len() {
-                let c = chars[i];
-                let resolved = if c == '\\' && i + 1 < chars.len() {
-                    let next = chars[i + 1];
+            while i < bytes.len() {
+                // [:CLASS:] character classes.
+                if bytes[i] == '['
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1] == ':'
+                {
+                    if let Some(end) = bytes[i + 2..]
+                        .iter()
+                        .position(|&c| c == ':')
+                        .map(|p| i + 2 + p)
+                    {
+                        if end + 1 < bytes.len() && bytes[end + 1] == ']' {
+                            let class: String = bytes[i + 2..end].iter().collect();
+                            for c in 0u32..128 {
+                                if let Some(ch) = char::from_u32(c) {
+                                    let m = match class.as_str() {
+                                        "upper" => ch.is_ascii_uppercase(),
+                                        "lower" => ch.is_ascii_lowercase(),
+                                        "digit" => ch.is_ascii_digit(),
+                                        "alpha" => ch.is_ascii_alphabetic(),
+                                        "alnum" => ch.is_ascii_alphanumeric(),
+                                        "punct" => ch.is_ascii_punctuation(),
+                                        "space" => ch.is_ascii_whitespace(),
+                                        "blank" => ch == ' ' || ch == '\t',
+                                        "cntrl" => ch.is_ascii_control(),
+                                        "graph" => ch.is_ascii_graphic(),
+                                        "print" => {
+                                            ch.is_ascii_graphic() || ch == ' '
+                                        }
+                                        "xdigit" => ch.is_ascii_hexdigit(),
+                                        _ => false,
+                                    };
+                                    if m {
+                                        out.push(ch);
+                                    }
+                                }
+                            }
+                            i = end + 2;
+                            continue;
+                        }
+                    }
+                }
+                let c = bytes[i];
+                let resolved = if c == '\\' && i + 1 < bytes.len() {
+                    let next = bytes[i + 1];
                     i += 1;
                     match next {
                         'n' => '\n',
                         't' => '\t',
                         'r' => '\r',
+                        'a' => '\x07',
+                        'b' => '\x08',
+                        'f' => '\x0c',
+                        'v' => '\x0b',
                         '\\' => '\\',
-                        '0' => '\0',
+                        // \xNN hex escape
+                        'x' => {
+                            let mut hex = String::new();
+                            let mut j = i + 1;
+                            while j < bytes.len() && hex.len() < 2 {
+                                if bytes[j].is_ascii_hexdigit() {
+                                    hex.push(bytes[j]);
+                                    j += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            i = j - 1;
+                            u32::from_str_radix(&hex, 16)
+                                .ok()
+                                .and_then(char::from_u32)
+                                .unwrap_or('x')
+                        }
+                        // \NNN octal (1-3 digits)
+                        d if d.is_digit(8) => {
+                            let mut oct = String::from(d);
+                            let mut j = i + 1;
+                            while j < bytes.len()
+                                && oct.len() < 3
+                                && bytes[j].is_digit(8)
+                            {
+                                oct.push(bytes[j]);
+                                j += 1;
+                            }
+                            i = j - 1;
+                            u32::from_str_radix(&oct, 8)
+                                .ok()
+                                .and_then(char::from_u32)
+                                .unwrap_or('\0')
+                        }
                         other => other,
                     }
                 } else {
                     c
                 };
-                if i + 2 < chars.len() && chars[i + 1] == '-' {
-                    let end = chars[i + 2];
+                if i + 2 < bytes.len() && bytes[i + 1] == '-' {
+                    let end = bytes[i + 2];
                     if (resolved as u32) <= (end as u32) {
                         for cc in (resolved as u32)..=(end as u32) {
                             if let Some(c) = char::from_u32(cc) {
@@ -42329,8 +42407,12 @@ impl ShellExecutor {
             out
         }
 
-        let s1 = expand_set(set1_raw);
+        let mut s1 = expand_set(set1_raw);
         let s2 = expand_set(set2_raw);
+        // -t / --truncate-set1: shrink set1 to set2's length.
+        if truncate1 && s1.len() > s2.len() {
+            s1.truncate(s2.len());
+        }
 
         let mut input = String::new();
         std::io::stdin().read_to_string(&mut input).ok();
