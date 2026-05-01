@@ -580,7 +580,7 @@ fn resolve_redir(r: &mut ZshRedir, bodies: &[HereDocInfo]) {
 /// name and (when the body was already inlined into the same Simple,
 /// e.g. `foo() echo hi`) the rest of the words as the body's argv.
 /// Returns None for non-funcdef shapes.
-fn simple_name_with_inoutpar(list: &ZshList) -> Option<(String, Vec<String>)> {
+fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>)> {
     if list.flags.async_ || list.sublist.next.is_some() {
         return None;
     }
@@ -595,17 +595,38 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(String, Vec<String>)> {
     if simple.words.is_empty() || !simple.assigns.is_empty() {
         return None;
     }
-    let w = &simple.words[0];
     let suffix = "\u{88}\u{8a}"; // INPAR + OUTPAR
-    if !w.ends_with(suffix) {
-        return None;
+    // Find the FIRST word ending in `()`. zsh accepts the
+    // multi-name shorthand `fna fnb fnc() { body }` (parse.c:
+    // par_funcdef wordlist) — words[0..i-1] are extra names,
+    // words[i] is `lastname()`. Words after are the body argv
+    // (one-line shorthand, `name() cmd args`).
+    let par_idx = simple.words.iter().position(|w| w.ends_with(suffix))?;
+    let mut names: Vec<String> = Vec::with_capacity(par_idx + 1);
+    for w in &simple.words[..par_idx] {
+        // Earlier names must be bare identifiers, NOT contain
+        // tokens that imply they're not function names (no `()`,
+        // no quotes, no expansions). zsh's lexer enforces this
+        // at the wordlist level; we approximate by requiring the
+        // word be an identifier-shaped token after untokenize.
+        let bare = crate::lexer::untokenize(w);
+        let valid = !bare.is_empty()
+            && bare
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '$');
+        if !valid {
+            return None;
+        }
+        names.push(bare);
     }
-    let bare = &w[..w.len() - suffix.len()];
+    let last = &simple.words[par_idx];
+    let bare = &last[..last.len() - suffix.len()];
     if bare.is_empty() {
         return None;
     }
-    let rest = simple.words[1..].to_vec();
-    Some((crate::lexer::untokenize(bare), rest))
+    names.push(crate::lexer::untokenize(bare));
+    let rest = simple.words[par_idx + 1..].to_vec();
+    Some((names, rest))
 }
 
 impl<'a> ZshParser<'a> {
@@ -732,7 +753,7 @@ impl<'a> ZshParser<'a> {
                     // separators are skipped. For `name() cmd args` the
                     // body has already been swallowed into the same
                     // Simple's words tail — synthesize directly from there.
-                    if let Some((name, body_argv)) = detected {
+                    if let Some((names, body_argv)) = detected {
                         if !body_argv.is_empty() {
                             // One-line body already in the Simple. Build
                             // a Simple from body_argv as the function body.
@@ -756,7 +777,7 @@ impl<'a> ZshParser<'a> {
                                 flags: ListFlags::default(),
                             };
                             let funcdef = ZshCommand::FuncDef(ZshFuncDef {
-                                names: vec![name],
+                                names,
                                 body: Box::new(ZshProgram {
                                     lists: vec![body_list],
                                 }),
@@ -780,8 +801,11 @@ impl<'a> ZshParser<'a> {
                             lists.push(synthetic);
                             continue;
                         }
-                        // Else: words.len() == 1, brace body follows.
-                        let name = name;
+                        // Else: words.len() == 1 (only the trailing `name()`
+                        // word), brace body follows. `names` may carry
+                        // multiple identifiers from the `fna fnb fnc()`
+                        // shorthand — all share the same brace body per
+                        // src/zsh/Src/parse.c:1666 par_funcdef wordlist.
                         // Skip separators on the real lexer; safe because
                         // parse_program's next iteration would also skip them.
                         while self.lexer.tok == LexTok::Seper || self.lexer.tok == LexTok::Newlin {
@@ -818,7 +842,7 @@ impl<'a> ZshParser<'a> {
                             // Replace the Simple list with a FuncDef list.
                             lists.pop();
                             let funcdef = ZshCommand::FuncDef(ZshFuncDef {
-                                names: vec![name],
+                                names,
                                 body: Box::new(body),
                                 tracing: false,
                                 auto_call_args: None,
@@ -861,7 +885,7 @@ impl<'a> ZshParser<'a> {
                                 };
                                 lists.pop();
                                 let funcdef = ZshCommand::FuncDef(ZshFuncDef {
-                                    names: vec![name],
+                                    names: names.clone(),
                                     body: Box::new(ZshProgram {
                                         lists: vec![body_list],
                                     }),
