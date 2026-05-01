@@ -33602,49 +33602,131 @@ impl ShellExecutor {
     }
 
     /// strftime - format date/time (zsh/datetime module)
-    fn builtin_strftime(&self, args: &[String]) -> i32 {
-        let mut format = "%c".to_string();
-        let mut timestamp: Option<i64> = None;
-        let mut to_var = false;
-        let mut var_name = String::new();
+    fn builtin_strftime(&mut self, args: &[String]) -> i32 {
+        // Direct port of src/zsh/Src/Modules/datetime.c:99-184
+        // output_strftime. Form: strftime [-n] [-r] [-q] [-s SCALAR]
+        // FORMAT [time [nanoseconds]].
+        let mut to_var: Option<String> = None;
+        let mut reverse = false;
+        let mut quiet = false;
+        let mut no_newline = false;
+        let mut positional: Vec<&str> = Vec::new();
 
-        let mut iter = args.iter();
+        let mut iter = args.iter().peekable();
         while let Some(arg) = iter.next() {
             match arg.as_str() {
                 "-s" => {
-                    to_var = true;
+                    // datetime.c:106-112 — -s NAME stores result in
+                    // scalar; NAME must be a valid identifier.
                     if let Some(name) = iter.next() {
-                        var_name = name.clone();
+                        let valid = !name.is_empty()
+                            && name
+                                .chars()
+                                .next()
+                                .map(|c| c == '_' || c.is_ascii_alphabetic())
+                                .unwrap_or(false)
+                            && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+                        if !valid {
+                            eprintln!("zshrs:strftime:1: not an identifier: {}", name);
+                            return 1;
+                        }
+                        to_var = Some(name.clone());
+                    } else {
+                        eprintln!("zshrs:strftime:1: argument expected: -s");
+                        return 1;
                     }
                 }
-                "-r" => {
-                    // Reference time from a variable
-                    if let Some(ts_str) = iter.next() {
-                        timestamp = ts_str.parse().ok();
-                    }
+                "-r" => reverse = true,
+                "-q" => quiet = true,
+                "-n" => no_newline = true,
+                s if !s.starts_with('-') => positional.push(s),
+                _ => {
+                    eprintln!("zshrs:strftime:1: bad option: {}", arg);
+                    return 1;
                 }
-                s if !s.starts_with('-') => {
-                    if format == "%c" {
-                        format = s.to_string();
-                    } else if timestamp.is_none() {
-                        timestamp = s.parse().ok();
-                    }
-                }
-                _ => {}
             }
         }
 
-        let ts = timestamp.unwrap_or_else(|| chrono::Local::now().timestamp());
+        if positional.is_empty() {
+            eprintln!("zshrs:strftime:1: not enough arguments");
+            return 1;
+        }
+
+        // Reverse-parse mode (datetime.c:113-119). Reuses the
+        // existing strptime port. Requires both format and string.
+        if reverse {
+            if positional.len() < 2 {
+                if !quiet {
+                    eprintln!("zshrs:strftime:1: timestring expected");
+                }
+                return 1;
+            }
+            return match crate::datetime::strptime(positional[0], positional[1]) {
+                Ok(t) => {
+                    if let Some(name) = to_var {
+                        self.variables.insert(name, t.to_string());
+                    } else {
+                        if no_newline {
+                            print!("{}", t);
+                        } else {
+                            println!("{}", t);
+                        }
+                    }
+                    0
+                }
+                Err(_) => {
+                    if !quiet {
+                        eprintln!("zshrs:strftime:1: format not matched");
+                    }
+                    1
+                }
+            };
+        }
+
+        let format = positional[0];
+        // datetime.c:121-156 — argv[1] is timestamp (seconds), argv[2]
+        // is optional nanoseconds. Both must be valid decimal.
+        let ts: i64 = match positional.get(1) {
+            None => chrono::Local::now().timestamp(),
+            Some(s) => match s.parse::<i64>() {
+                Ok(n) => n,
+                Err(_) => {
+                    eprintln!("zshrs:strftime:1: {}: invalid decimal number", s);
+                    return 1;
+                }
+            },
+        };
+        let nanos: i64 = match positional.get(2) {
+            None => 0,
+            Some(s) => match s.parse::<i64>() {
+                Ok(n) if (0..=999_999_999).contains(&n) => n,
+                Ok(n) => {
+                    eprintln!(
+                        "zshrs:strftime:1: {}: invalid nanosecond value",
+                        n
+                    );
+                    return 1;
+                }
+                Err(_) => {
+                    eprintln!("zshrs:strftime:1: {}: invalid decimal number", s);
+                    return 1;
+                }
+            },
+        };
+        let _ = nanos; // chrono's format() doesn't expose %N nanoseconds.
 
         let result = chrono::DateTime::from_timestamp(ts, 0)
             .map(|dt: chrono::DateTime<chrono::Utc>| {
-                dt.with_timezone(&chrono::Local).format(&format).to_string()
+                dt.with_timezone(&chrono::Local).format(format).to_string()
             })
-            .unwrap_or_else(|| "invalid timestamp".to_string());
+            .unwrap_or_else(|| String::new());
 
-        if to_var && !var_name.is_empty() {
-            // Would need mutable self
-            println!("{}={}", var_name, result);
+        // datetime.c:174-180 — store in scalar OR write to stdout
+        // with optional newline suppression via -n.
+        if let Some(name) = to_var {
+            self.variables.insert(name, result);
+        } else if no_newline {
+            print!("{}", result);
         } else {
             println!("{}", result);
         }

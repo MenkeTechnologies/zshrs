@@ -51,6 +51,35 @@ pub struct Shard {
     pub entries: HashMap<String, Vec<u8>>,
 }
 
+/// Per-source-root canonical-state shard. Holds the deterministic state
+/// captured by the .zshrc analysis pass (or a `zsync up` promotion) — this
+/// is the rkyv-backed source of truth for path/fpath/aliases/functions/etc.
+/// SQLite catalog.db's `canonical` table is a hydrated mirror used only for
+/// `zcache view` queries (`zcache hydrate-view` refreshes it from rkyv).
+#[derive(Archive, Deserialize, Serialize, Clone, Debug, Default)]
+#[archive(check_bytes)]
+pub struct CanonicalShard {
+    pub header: ShardHeader,
+    pub aliases: HashMap<String, String>,
+    pub global_aliases: HashMap<String, String>,
+    pub suffix_aliases: HashMap<String, String>,
+    pub functions: HashMap<String, String>,
+    pub setopts: Vec<String>,
+    pub unsetopts: Vec<String>,
+    pub bindkeys: HashMap<String, String>,
+    pub named_dirs: HashMap<String, String>,
+    pub compdef: HashMap<String, String>,
+    pub zstyle: Vec<(String, String)>,
+    pub zmodload: Vec<String>,
+    pub env_exports: HashMap<String, String>,
+    pub params: HashMap<String, String>,
+    pub path: Vec<String>,
+    pub fpath: Vec<String>,
+    pub manpath: Vec<String>,
+    pub plugins: Vec<(String, String)>, // (manager, name)
+    pub sourced_files: Vec<String>,
+}
+
 impl Shard {
     pub fn new(slug: impl Into<String>, source_root: impl Into<String>, generation: u64) -> Self {
         Self {
@@ -107,6 +136,55 @@ pub fn shard_lock_path(paths: &CachePaths, source_root: &str, slug: &str) -> Pat
     paths
         .images
         .join(format!("{}-{}.rkyv.lock", hash8(source_root), slug))
+}
+
+/// Atomic-rename writer for the canonical-state shard. Same crash-safety
+/// guarantees as `write_shard` (tmp + fsync + rename).
+pub fn write_canonical_shard(
+    paths: &CachePaths,
+    shard: &CanonicalShard,
+) -> Result<PathBuf> {
+    let final_path = shard_path(paths, &shard.header.source_root, &shard.header.slug);
+    let pid = std::process::id();
+    let nanos = now_ns();
+    let tmp_path = paths.images.join(format!(
+        "{}.tmp.{}.{}",
+        shard_filename(&shard.header.source_root, &shard.header.slug),
+        pid,
+        nanos
+    ));
+
+    let bytes = rkyv::to_bytes::<_, 4096>(shard)
+        .map_err(|e| DaemonError::other(format!("rkyv canonical serialize: {e}")))?;
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp_path)?;
+        f.write_all(&bytes)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp_path, &final_path)?;
+    super::paths::ensure_file_600(&final_path)?;
+    tracing::info!(
+        slug = %shard.header.slug,
+        generation = shard.header.generation,
+        bytes = bytes.len(),
+        path = %final_path.display(),
+        "canonical shard written"
+    );
+    Ok(final_path)
+}
+
+/// Read a canonical-state shard back from disk. Decodes the archived form into
+/// an owned `CanonicalShard` — daemon keeps that owned copy in memory; clients
+/// that need raw mmap access go through `MmappedShard` instead.
+pub fn read_canonical_shard(path: &Path) -> Result<CanonicalShard> {
+    let bytes = std::fs::read(path)?;
+    let archived = rkyv::check_archived_root::<CanonicalShard>(&bytes)
+        .map_err(|e| DaemonError::other(format!("canonical shard validation: {e}")))?;
+    let owned: CanonicalShard = archived
+        .deserialize(&mut rkyv::Infallible)
+        .map_err(|e| DaemonError::other(format!("canonical shard deserialize: {e}")))?;
+    Ok(owned)
 }
 
 /// Serialize a shard and atomic-rename it into place.
