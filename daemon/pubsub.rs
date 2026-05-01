@@ -72,27 +72,46 @@ pub struct Scope {
     pub shell_id: u64,
     pub tags: BTreeSet<String>,
     pub user: Option<String>,
+    /// Set when the event originates from a daemon-managed job rather than a
+    /// shell session. Subscribers can target jobs via `job:N.stdout` etc.
+    pub job_id: Option<u64>,
 }
 
 impl Scope {
-    /// Canonical "shell:N" string for default match against shell scope. Tag/user/*
-    /// scopes are matched separately because a single event has one shell origin
-    /// but can fan out to multiple tag scopes.
+    /// Build a Scope tied to a specific job (used by `Supervisor::publish`).
+    /// shell_id stays 0 as a sentinel — jobs aren't shells, but the canonical
+    /// form is `job:N` not `shell:0`.
+    pub fn for_job(id: u64) -> Self {
+        Self {
+            shell_id: 0,
+            tags: BTreeSet::new(),
+            user: None,
+            job_id: Some(id),
+        }
+    }
+
+    /// Canonical scope string — `job:N` if this event originated in a job,
+    /// otherwise `shell:N`. Used by the cheap-path matcher in
+    /// `Subscription::matches`.
     pub fn canonical(&self) -> String {
-        format!("shell:{}", self.shell_id)
+        match self.job_id {
+            Some(id) => format!("job:{}", id),
+            None => format!("shell:{}", self.shell_id),
+        }
     }
 
     /// Check if a subscription's scope_pat matches this event's origin. Walks all
-    /// possible expressions for the origin: shell:N, tag:X (one per tag), user:U, *.
+    /// possible expressions for the origin: shell:N, job:N, tag:X (one per tag),
+    /// user:U, *.
     pub fn matches_scope(&self, scope_pat: &str) -> bool {
-        if glob_match(scope_pat, "*") {
-            // pathological: scope_pat `**` matches against literal "*"; not what we want.
-            // We instead want: pattern == "*" → match every scope.
-        }
         if scope_pat == "*" {
             return true;
         }
-        if glob_match(scope_pat, &format!("shell:{}", self.shell_id)) {
+        if let Some(id) = self.job_id {
+            if glob_match(scope_pat, &format!("job:{}", id)) {
+                return true;
+            }
+        } else if glob_match(scope_pat, &format!("shell:{}", self.shell_id)) {
             return true;
         }
         for t in &self.tags {
@@ -144,6 +163,7 @@ mod tests {
             shell_id,
             tags: tags.iter().map(|t| t.to_string()).collect(),
             user: None,
+            job_id: None,
         }
     }
 

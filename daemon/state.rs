@@ -94,6 +94,7 @@ pub struct DaemonState {
     history_db: Mutex<Connection>,
     pub fs_watcher: Arc<super::fsnotify::FsWatcher>,
     pub ask_inbox: Arc<super::zask::AskInbox>,
+    pub jobs: Arc<super::jobs::Supervisor>,
     pub paths: CachePaths,
     pub started_at: Instant,
     pub start_wall: chrono::DateTime<chrono::Utc>,
@@ -106,17 +107,24 @@ impl DaemonState {
         let history_db = history::open(&paths)?;
         let fs_watcher = Arc::new(super::fsnotify::FsWatcher::new());
         let ask_inbox = super::zask::AskInbox::new();
-        Ok(Arc::new(Self {
+        let jobs = super::jobs::Supervisor::new(paths.clone());
+        let state = Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
             catalog: Mutex::new(catalog),
             history_db: Mutex::new(history_db),
             fs_watcher,
             ask_inbox,
+            jobs: jobs.clone(),
             paths,
             started_at: Instant::now(),
             start_wall: chrono::Utc::now(),
             pid: std::process::id() as i32,
-        }))
+        });
+        // Bind the supervisor to a weak ref of state so its async tasks can
+        // publish events / persist to catalog without keeping state alive.
+        jobs.bind_state(&state);
+        let _ = jobs.ensure_schema(&state);
+        Ok(state)
     }
 
     /// Run a closure with mutable access to the history connection.
@@ -287,6 +295,7 @@ impl DaemonState {
             shell_id: s.client_id,
             tags: s.tags.clone(),
             user: None,
+            job_id: None,
         })
     }
 

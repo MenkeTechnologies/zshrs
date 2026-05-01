@@ -463,16 +463,9 @@ impl Supervisor {
             "data": data,
         });
         let frame = Frame::event("job", payload);
-        // Build a synthetic Scope for the broadcaster; jobs aren't shells but
-        // the pubsub engine routes by canonical scope strings, so we need a
-        // scope object. Use shell_id = 0 as a reserved sentinel for job scope.
-        let job_scope = super::pubsub::Scope {
-            shell_id: 0,
-            tags: std::iter::once(format!("job:{}", id)).collect(),
-            user: None,
-        };
-        // Fan out via state.publish (matches pattern) — subscribers using
-        // `tag:job:{id}.{stdout,stderr,complete}` get the event.
+        let job_scope = super::pubsub::Scope::for_job(id);
+        // Subscribers using `job:{id}.stdout` / `.stderr` / `.complete`
+        // (or `job:*.complete`) match via Scope::matches_scope.
         let _ = state.publish(&job_scope, topic_kind, frame);
     }
 

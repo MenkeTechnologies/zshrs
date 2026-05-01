@@ -73,6 +73,13 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "export_shard" => op_export_shard(state, args).await,
         "import_zcompdump" => op_import_zcompdump(state, args).await,
 
+        "job_submit" => op_job_submit(state, client_id, args).await,
+        "job_list" => op_job_list(state, args).await,
+        "job_status" => op_job_status(state, args).await,
+        "job_output" => op_job_output(state, args).await,
+        "job_kill" => op_job_kill(state, args).await,
+        "job_wait" => op_job_wait(state, args).await,
+
         // Stubs — ZLE-integrated keystroke-rate ops; arrive with the ZLE wiring cycle.
         "complete" | "suggest" | "highlight" | "register" => Err(ErrPayload::new(
             "unimplemented",
@@ -842,5 +849,114 @@ fn event_name(ev: Event) -> &'static str {
         Event::LongCmdStarted => "long_cmd_started",
         Event::LongCmdFailed => "long_cmd_failed",
         Event::LongCmdSignaled => "long_cmd_signaled",
+    }
+}
+
+// -------- job_* ops (zjob supervisor) --------
+
+async fn op_job_submit(state: &Arc<DaemonState>, client_id: u64, args: Value) -> OpResult {
+    let command: Vec<String> = args
+        .get("command")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `command` array"))?
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    if command.is_empty() {
+        return Err(ErrPayload::new("bad_args", "`command` is empty"));
+    }
+    let cwd = args
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let tags: Vec<String> = args
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let env: std::collections::HashMap<String, String> = args
+        .get("env")
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    match state.jobs.submit(client_id, command, cwd, tags, env) {
+        Ok(id) => Ok(json!({ "job_id": id })),
+        Err(e) => Err(ErrPayload::new("submit_failed", e.to_string())),
+    }
+}
+
+async fn op_job_list(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let state_filter = args.get("state").and_then(Value::as_str);
+    let tag_filter = args.get("tag").and_then(Value::as_str);
+    let limit = args.get("limit").and_then(Value::as_u64);
+    let jobs = state.jobs.list(state_filter, tag_filter, limit);
+    Ok(json!({ "jobs": jobs, "count": jobs.len() }))
+}
+
+async fn op_job_status(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let id = args
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
+    match state.jobs.status(id) {
+        Some(s) => Ok(serde_json::to_value(s).unwrap_or(Value::Null)),
+        None => Err(ErrPayload::new("no_job", format!("job {} not found", id))),
+    }
+}
+
+async fn op_job_output(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let id = args
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
+    let stderr = args
+        .get("stderr")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let lines = args.get("lines").and_then(Value::as_u64);
+    let content = state
+        .jobs
+        .output(id, stderr, lines)
+        .map_err(|e| ErrPayload::new("output_failed", e.to_string()))?;
+    Ok(json!({ "id": id, "stderr": stderr, "content": content }))
+}
+
+async fn op_job_kill(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let id = args
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
+    let signal = args.get("signal").and_then(Value::as_str);
+    let killed = state
+        .jobs
+        .kill(id, signal)
+        .map_err(|e| ErrPayload::new("kill_failed", e.to_string()))?;
+    Ok(json!({ "id": id, "killed": killed }))
+}
+
+async fn op_job_wait(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let id = args
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
+    let timeout_ms = args.get("timeout_ms").and_then(Value::as_u64);
+    let rx = state
+        .jobs
+        .wait_handle(id)
+        .map_err(|e| ErrPayload::new("no_job", e.to_string()))?;
+    let timeout = timeout_ms.map(std::time::Duration::from_millis);
+    match super::jobs::wait_with_timeout(rx, timeout).await {
+        Some(state_) => Ok(json!({
+            "id": id,
+            "state": state_.label(),
+            "exit_code": state_.exit_code(),
+            "timed_out": false,
+        })),
+        None => Ok(json!({ "id": id, "timed_out": true })),
     }
 }
