@@ -10122,6 +10122,7 @@ impl ShellExecutor {
             "factor" => return self.builtin_factor(&rest_vec),
             "tsort" => return self.builtin_tsort(&rest_vec),
             "sum" => return self.builtin_sum(&rest_vec),
+            "mkfifo" => return self.builtin_mkfifo(&rest_vec),
             _ => {}
         }
 
@@ -43509,6 +43510,69 @@ impl ShellExecutor {
             print!("{}{}", item, term);
         }
         0
+    }
+
+    /// mkfifo [-m MODE] FILE... — create named pipes (FIFOs).
+    /// Coreutils mkfifo(1) / POSIX. -m sets the mode (default 0666
+    /// minus umask). Each FIFO is created independently; failures
+    /// are reported per-file and the others continue.
+    fn builtin_mkfifo(&self, args: &[String]) -> i32 {
+        use std::ffi::CString;
+        let mut mode: libc::mode_t = 0o666;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-m" | "--mode" => {
+                    if let Some(m) = iter.next() {
+                        match libc::mode_t::from_str_radix(m, 8) {
+                            Ok(v) => mode = v,
+                            Err(_) => {
+                                eprintln!("mkfifo: invalid mode: '{}'", m);
+                                return 1;
+                            }
+                        }
+                    } else {
+                        eprintln!("mkfifo: option requires an argument -- '-m'");
+                        return 1;
+                    }
+                }
+                s if s.starts_with("--mode=") => match libc::mode_t::from_str_radix(&s[7..], 8) {
+                    Ok(v) => mode = v,
+                    Err(_) => {
+                        eprintln!("mkfifo: invalid mode: '{}'", &s[7..]);
+                        return 1;
+                    }
+                },
+                s if !s.starts_with('-') => files.push(s),
+                "-" => files.push("-"),
+                _ => {
+                    eprintln!("mkfifo: unrecognized option: '{}'", arg);
+                    return 1;
+                }
+            }
+        }
+        if files.is_empty() {
+            eprintln!("mkfifo: missing operand");
+            return 1;
+        }
+        let mut status = 0;
+        for f in files {
+            let cpath = match CString::new(f) {
+                Ok(c) => c,
+                Err(_) => {
+                    eprintln!("mkfifo: cannot create fifo '{}': invalid path", f);
+                    status = 1;
+                    continue;
+                }
+            };
+            if unsafe { libc::mkfifo(cpath.as_ptr(), mode) } != 0 {
+                let err = std::io::Error::last_os_error();
+                eprintln!("mkfifo: cannot create fifo '{}': {}", f, err);
+                status = 1;
+            }
+        }
+        status
     }
 
     /// tsort [FILE] — topological sort. Coreutils tsort(1) / POSIX.
