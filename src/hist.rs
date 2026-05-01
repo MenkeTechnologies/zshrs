@@ -725,16 +725,67 @@ pub fn quotebreak(s: &str) -> String {
 
 /// Perform history substitution (from hist.c subst lines 2336-2391)
 pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String {
+    // Direct port of src/zsh/Src/hist.c:2336-2391 subst.
+    // - Empty pattern means "use whole string as the pattern"
+    //   (hist.c:2341-2342). Behaves as a no-replace in this Rust
+    //   port since getmatch on the whole-string would just return
+    //   the same string.
+    // - Leading `#` (or `Pound` token) anchors at the start of the
+    //   string per hist.c:2349-2353 (SUB_START flag).
+    // - Leading `%` anchors at the end per hist.c:2354-2358
+    //   (SUB_END flag).
+    // - Otherwise unanchored substring match.
+    // - In the replacement, `&` expands to the full match (via
+    //   convamps); `\&` is a literal `&`.
     if in_pattern.is_empty() {
         return s.to_string();
     }
 
-    let out_expanded = convamps(out_pattern, in_pattern);
+    // Strip anchor prefixes per hist.c:2349-2358.
+    let mut anchor_start = false;
+    let mut anchor_end = false;
+    let mut pat = in_pattern;
+    if let Some(rest) = pat.strip_prefix('#') {
+        anchor_start = true;
+        pat = rest;
+    }
+    if let Some(rest) = pat.strip_prefix('%') {
+        anchor_end = true;
+        pat = rest;
+    }
+    if pat.is_empty() {
+        return s.to_string();
+    }
+
+    // Substitute `&` in replacement with the matched pattern
+    // (the actual C uses convamps with the unanchored `pat`).
+    let out_expanded = convamps(out_pattern, pat);
+
+    if anchor_start && anchor_end {
+        // Both anchors — match only if WHOLE string equals pat.
+        if s == pat {
+            return out_expanded;
+        }
+        return s.to_string();
+    }
+    if anchor_start {
+        if s.starts_with(pat) {
+            return format!("{}{}", out_expanded, &s[pat.len()..]);
+        }
+        return s.to_string();
+    }
+    if anchor_end {
+        if s.ends_with(pat) {
+            let prefix_len = s.len() - pat.len();
+            return format!("{}{}", &s[..prefix_len], out_expanded);
+        }
+        return s.to_string();
+    }
 
     if global {
-        s.replace(in_pattern, &out_expanded)
+        s.replace(pat, &out_expanded)
     } else {
-        s.replacen(in_pattern, &out_expanded, 1)
+        s.replacen(pat, &out_expanded, 1)
     }
 }
 
