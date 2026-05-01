@@ -10123,6 +10123,8 @@ impl ShellExecutor {
             "tsort" => return self.builtin_tsort(&rest_vec),
             "sum" => return self.builtin_sum(&rest_vec),
             "mkfifo" => return self.builtin_mkfifo(&rest_vec),
+            "link" => return self.builtin_link(&rest_vec),
+            "unlink" => return self.builtin_unlink(&rest_vec),
             _ => {}
         }
 
@@ -43508,6 +43510,49 @@ impl ShellExecutor {
         let term = if zero_term { '\0' } else { '\n' };
         for item in items {
             print!("{}{}", item, term);
+        }
+        0
+    }
+
+    /// link FILE1 FILE2 — call link(2) directly to create a hard
+    /// link from FILE1 to FILE2. POSIX link(1) / coreutils link(1).
+    /// Unlike `ln`, link takes EXACTLY two args and rejects flags
+    /// (POSIX requirement).
+    fn builtin_link(&self, args: &[String]) -> i32 {
+        if args.len() != 2 {
+            eprintln!("link: missing operand");
+            return 1;
+        }
+        for a in args {
+            if a.starts_with('-') && a.len() > 1 {
+                // POSIX link(1) accepts no options.
+                eprintln!("link: unrecognized option: '{}'", a);
+                return 1;
+            }
+        }
+        if let Err(e) = std::fs::hard_link(&args[0], &args[1]) {
+            eprintln!("link: cannot link '{}' to '{}': {}", args[0], args[1], e);
+            return 1;
+        }
+        0
+    }
+
+    /// unlink FILE — call unlink(2) directly to remove a single
+    /// file. POSIX unlink(1) / coreutils unlink(1). Strict: takes
+    /// exactly ONE arg, no flags, no recursion. Cannot remove
+    /// directories (errors if FILE is a directory).
+    fn builtin_unlink(&self, args: &[String]) -> i32 {
+        if args.len() != 1 {
+            eprintln!("unlink: missing operand");
+            return 1;
+        }
+        if args[0].starts_with('-') && args[0].len() > 1 {
+            eprintln!("unlink: unrecognized option: '{}'", args[0]);
+            return 1;
+        }
+        if let Err(e) = std::fs::remove_file(&args[0]) {
+            eprintln!("unlink: cannot unlink '{}': {}", args[0], e);
+            return 1;
         }
         0
     }
