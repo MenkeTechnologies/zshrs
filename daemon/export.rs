@@ -224,9 +224,17 @@ fn render(
         "json" => render_json(state, target),
         "yaml" => render_yaml(state, target),
         "text" => render_text(state, target),
+        "csv" => render_csv(state, target),
+        "sql" => render_sql(state, target),
+        "native" => render_native(state, target),
+        "disasm" => render_disasm(state, target),
+        "zcompdump" => render_zcompdump_format(state, target),
         other => Err(ErrPayload::new(
             "bad_format",
-            format!("format `{}` not supported (try sh|json|yaml|text)", other),
+            format!(
+                "format `{}` not supported (try sh|json|yaml|text|csv|sql|native|disasm|zcompdump)",
+                other
+            ),
         )),
     }
 }
@@ -881,6 +889,458 @@ fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String,
         .map(|r| json!({ "key": r.key, "value": serde_json::from_str::<Value>(&r.value).unwrap_or(Value::String(r.value.clone())) }))
         .collect();
     Ok(serde_json::to_string_pretty(&payload).unwrap_or_default())
+}
+
+/// CSV renderer — tabular for history / entry_stats / shells / plugins (per
+/// docs/DAEMON.md format table). Falls back to a generic "key,value" CSV
+/// for canonical-state targets so it works for everything.
+fn render_csv(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
+    fn esc(s: &str) -> String {
+        // RFC 4180-ish — wrap in quotes if comma/quote/newline; double-quote
+        // embedded `"`.
+        if s.contains(',') || s.contains('"') || s.contains('\n') {
+            format!("\"{}\"", s.replace('"', "\"\""))
+        } else {
+            s.to_string()
+        }
+    }
+    match target {
+        "history" => {
+            let rows = state
+                .with_history(|conn| {
+                    super::history::query(conn, None, "match", None, None, None, 100_000, true)
+                })
+                .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?;
+            let mut out = String::from("id,line,ts_ns,exit_code,cwd,duration_ns,sessid,hostname,shell_id\n");
+            for r in rows {
+                out.push_str(&format!(
+                    "{},{},{},{},{},{},{},{},{}\n",
+                    r.id,
+                    esc(&r.line),
+                    r.ts_ns,
+                    r.exit_code.map(|c| c.to_string()).unwrap_or_default(),
+                    r.cwd.as_deref().map(esc).unwrap_or_default(),
+                    r.duration_ns.map(|d| d.to_string()).unwrap_or_default(),
+                    r.sessid.as_deref().map(esc).unwrap_or_default(),
+                    r.hostname.as_deref().map(esc).unwrap_or_default(),
+                    r.shell_id.map(|s| s.to_string()).unwrap_or_default(),
+                ));
+            }
+            Ok(out)
+        }
+        "entry_stats" => {
+            let rows: Vec<(String, Option<i64>, i64, i64)> = state
+                .with_catalog(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT fq_name, last_called_at, call_count, total_ns FROM entry_stats \
+                         ORDER BY call_count DESC, fq_name ASC",
+                    )?;
+                    let rows = stmt
+                        .query_map([], |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, Option<i64>>(1)?,
+                                r.get::<_, i64>(2)?,
+                                r.get::<_, i64>(3)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok::<_, rusqlite::Error>(rows)
+                })
+                .map_err(ErrPayload::from)?;
+            let mut out = String::from("fq_name,last_called_at,call_count,total_ns\n");
+            for (fq, last, count, total) in rows {
+                out.push_str(&format!(
+                    "{},{},{},{}\n",
+                    esc(&fq),
+                    last.map(|l| l.to_string()).unwrap_or_default(),
+                    count,
+                    total
+                ));
+            }
+            Ok(out)
+        }
+        "shells" => {
+            let mut out = String::from("client_id,session_id,pid,tty,cwd,argv0,tags,login_time,uptime_secs\n");
+            for s in state.snapshot_sessions() {
+                out.push_str(&format!(
+                    "{},{},{},{},{},{},{},{},{}\n",
+                    s.client_id,
+                    esc(&s.session_id),
+                    s.pid,
+                    s.tty.as_deref().map(esc).unwrap_or_default(),
+                    s.cwd.as_deref().map(esc).unwrap_or_default(),
+                    s.argv0.as_deref().map(esc).unwrap_or_default(),
+                    esc(&s.tags.join("|")),
+                    esc(&s.login_time),
+                    s.uptime_secs,
+                ));
+            }
+            Ok(out)
+        }
+        "plugins" => {
+            let rows: Vec<(String, Option<String>, Option<String>, Option<i64>, Option<bool>)> =
+                state
+                    .with_catalog(|conn| {
+                        let mut stmt = conn.prepare(
+                            "SELECT name, version, source, installed_at, enabled FROM plugins \
+                             ORDER BY name",
+                        )?;
+                        let rows = stmt
+                            .query_map([], |r| {
+                                Ok((
+                                    r.get::<_, String>(0)?,
+                                    r.get::<_, Option<String>>(1)?,
+                                    r.get::<_, Option<String>>(2)?,
+                                    r.get::<_, Option<i64>>(3)?,
+                                    r.get::<_, Option<bool>>(4)?,
+                                ))
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
+                        Ok::<_, rusqlite::Error>(rows)
+                    })
+                    .map_err(ErrPayload::from)?;
+            let mut out = String::from("name,version,source,installed_at,enabled\n");
+            for (n, v, s, t, e) in rows {
+                out.push_str(&format!(
+                    "{},{},{},{},{}\n",
+                    esc(&n),
+                    v.as_deref().map(esc).unwrap_or_default(),
+                    s.as_deref().map(esc).unwrap_or_default(),
+                    t.map(|t| t.to_string()).unwrap_or_default(),
+                    e.map(|b| b.to_string()).unwrap_or_default(),
+                ));
+            }
+            Ok(out)
+        }
+        // Generic CSV for any canonical-state target.
+        _ => {
+            let subsystem = normalize_subsystem(target)?;
+            let rows = read_canonical(state, &subsystem)?;
+            let mut out = String::from("key,value\n");
+            for r in rows {
+                out.push_str(&format!("{},{}\n", esc(&r.key), esc(&unjson(&r.value))));
+            }
+            Ok(out)
+        }
+    }
+}
+
+/// SQL renderer — INSERT statements suitable for replaying into a fresh
+/// catalog.db / history.db. Spec'd for catalog/entries/entry_stats/plugins/
+/// history.
+fn render_sql(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
+    fn sql_esc(s: &str) -> String {
+        format!("'{}'", s.replace('\'', "''"))
+    }
+    match target {
+        "entries" => {
+            let rows: Vec<(String, String, String, String, i64, String)> = state
+                .with_catalog(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT fq_name, plugin_id, kind, image_path, byte_offset, source_loc FROM entries",
+                    )?;
+                    let rows = stmt
+                        .query_map([], |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, String>(1)?,
+                                r.get::<_, String>(2)?,
+                                r.get::<_, String>(3)?,
+                                r.get::<_, i64>(4)?,
+                                r.get::<_, String>(5).unwrap_or_default(),
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok::<_, rusqlite::Error>(rows)
+                })
+                .map_err(ErrPayload::from)?;
+            let mut out = String::new();
+            for (fq, pid, kind, ipath, off, src) in rows {
+                out.push_str(&format!(
+                    "INSERT INTO entries(fq_name,plugin_id,kind,image_path,byte_offset,source_loc) VALUES ({},{},{},{},{},{});\n",
+                    sql_esc(&fq), sql_esc(&pid), sql_esc(&kind), sql_esc(&ipath), off, sql_esc(&src)
+                ));
+            }
+            Ok(out)
+        }
+        "entry_stats" => {
+            let rows: Vec<(String, Option<i64>, i64, i64)> = state
+                .with_catalog(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT fq_name, last_called_at, call_count, total_ns FROM entry_stats",
+                    )?;
+                    let rows = stmt
+                        .query_map([], |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, Option<i64>>(1)?,
+                                r.get::<_, i64>(2)?,
+                                r.get::<_, i64>(3)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok::<_, rusqlite::Error>(rows)
+                })
+                .map_err(ErrPayload::from)?;
+            let mut out = String::new();
+            for (fq, last, count, total) in rows {
+                out.push_str(&format!(
+                    "INSERT INTO entry_stats(fq_name,last_called_at,call_count,total_ns) VALUES ({},{},{},{});\n",
+                    sql_esc(&fq),
+                    last.map(|l| l.to_string()).unwrap_or_else(|| "NULL".into()),
+                    count,
+                    total
+                ));
+            }
+            Ok(out)
+        }
+        "plugins" => {
+            let rows: Vec<(String, Option<String>, Option<String>, Option<i64>, Option<bool>)> =
+                state
+                    .with_catalog(|conn| {
+                        let mut stmt = conn.prepare(
+                            "SELECT name, version, source, installed_at, enabled FROM plugins",
+                        )?;
+                        let rows = stmt
+                            .query_map([], |r| {
+                                Ok((
+                                    r.get::<_, String>(0)?,
+                                    r.get::<_, Option<String>>(1)?,
+                                    r.get::<_, Option<String>>(2)?,
+                                    r.get::<_, Option<i64>>(3)?,
+                                    r.get::<_, Option<bool>>(4)?,
+                                ))
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
+                        Ok::<_, rusqlite::Error>(rows)
+                    })
+                    .map_err(ErrPayload::from)?;
+            let mut out = String::new();
+            for (n, v, s, t, e) in rows {
+                out.push_str(&format!(
+                    "INSERT INTO plugins(name,version,source,installed_at,enabled) VALUES ({},{},{},{},{});\n",
+                    sql_esc(&n),
+                    v.as_deref().map(sql_esc).unwrap_or_else(|| "NULL".into()),
+                    s.as_deref().map(sql_esc).unwrap_or_else(|| "NULL".into()),
+                    t.map(|t| t.to_string()).unwrap_or_else(|| "NULL".into()),
+                    e.map(|b| if b { "1".to_string() } else { "0".to_string() })
+                        .unwrap_or_else(|| "NULL".to_string()),
+                ));
+            }
+            Ok(out)
+        }
+        "history" => {
+            let rows = state
+                .with_history(|conn| {
+                    super::history::query(conn, None, "match", None, None, None, 100_000, true)
+                })
+                .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?;
+            let mut out = String::new();
+            for r in rows {
+                out.push_str(&format!(
+                    "INSERT INTO history(line,ts_ns,exit_code,cwd,duration_ns,sessid,hostname,shell_id) VALUES ({},{},{},{},{},{},{},{});\n",
+                    sql_esc(&r.line),
+                    r.ts_ns,
+                    r.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "NULL".into()),
+                    r.cwd.as_deref().map(sql_esc).unwrap_or_else(|| "NULL".into()),
+                    r.duration_ns.map(|d| d.to_string()).unwrap_or_else(|| "NULL".into()),
+                    r.sessid.as_deref().map(sql_esc).unwrap_or_else(|| "NULL".into()),
+                    r.hostname.as_deref().map(sql_esc).unwrap_or_else(|| "NULL".into()),
+                    r.shell_id.map(|s| s.to_string()).unwrap_or_else(|| "NULL".into()),
+                ));
+            }
+            Ok(out)
+        }
+        "catalog" => {
+            // Compose all catalog tables together — entries + entry_stats + plugins.
+            let mut out = String::new();
+            out.push_str(&render_sql(state, "entries")?);
+            out.push_str(&render_sql(state, "entry_stats")?);
+            out.push_str(&render_sql(state, "plugins")?);
+            Ok(out)
+        }
+        other => Err(ErrPayload::new(
+            "format_unsupported_for_target",
+            format!(
+                "sql format not supported for `{}` (try catalog|entries|entry_stats|plugins|history)",
+                other
+            ),
+        )),
+    }
+}
+
+/// Native rkyv-binary renderer — returns a base64-encoded payload of the
+/// underlying shard bytes. Default for binary-only targets (shard, index,
+/// catalog) per docs/DAEMON.md format table. For shell-state targets,
+/// returns the canonical-state shard as the binary representation.
+fn render_native(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
+    let path = match target {
+        "shard" | "index" | "catalog" => {
+            return Err(ErrPayload::new(
+                "format_unsupported_for_target",
+                format!(
+                    "native format on `{}` requires the dedicated op (export_shard / export_catalog) — use `zcache export {}` (default routes there)",
+                    target, target
+                ),
+            ));
+        }
+        _ => {
+            // Default: serve the master canonical-state shard, which carries
+            // every shell-state subsystem.
+            super::shard::shard_path(&state.paths, "user-overlay", "promotions")
+        }
+    };
+    if !path.exists() {
+        return Err(ErrPayload::new(
+            "no_shard",
+            format!("shard `{}` not built yet", path.display()),
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| ErrPayload::from(e))?;
+    // Emit base64 — this format is meant for programmatic consumers (e.g.
+    // `curl … | base64 -d > shard.rkyv`). Not meant for terminal viewing.
+    Ok(base64_encode(&bytes))
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHA: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] } else { 0 };
+        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
+        out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
+        out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(ALPHA[((n >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHA[(n & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+/// Disassembled-bytecode renderer for function/script/shard targets.
+/// Bytecode emitter waits for the parser-in-daemon work; emit a
+/// stable stub now so callers can wire a `--format disasm` flag without
+/// it breaking.
+fn render_disasm(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
+    match target {
+        "function" | "functions" => {
+            let rows = read_canonical(state, "function")?;
+            let mut out = String::new();
+            for r in &rows {
+                let body = unjson(&r.value);
+                out.push_str(&format!(
+                    "; --- function: {} ---\n; (bytecode disassembly not yet wired; v1 \
+                     stores source bytes — emitter arrives with the parser-in-daemon work)\n; source:\n",
+                    r.key
+                ));
+                for line in body.lines() {
+                    out.push_str(&format!(";   {}\n", line));
+                }
+                out.push('\n');
+            }
+            Ok(out)
+        }
+        "script" | "sourced" | "shard" => Ok(format!(
+            "; --- {} disasm ---\n; (bytecode disassembly not yet wired; v1 stores source bytes\n; — emitter arrives with the parser-in-daemon work)\n",
+            target
+        )),
+        other => Err(ErrPayload::new(
+            "format_unsupported_for_target",
+            format!(
+                "disasm format on `{}` not applicable (try function|functions|script|sourced|shard)",
+                other
+            ),
+        )),
+    }
+}
+
+/// `--format zcompdump` — combined assoc-array dump in compinit's wire form.
+/// Valid for compdef / _comps / _services / _patcomps / _describe_handlers
+/// (any of those target names emits the FULL combined dump, not just one
+/// section). Mirrors the round-trip path of the `zcompdump` target.
+fn render_zcompdump_format(
+    state: &DaemonState,
+    target: &str,
+) -> std::result::Result<String, ErrPayload> {
+    let valid = matches!(
+        target,
+        "compdef"
+            | "_comps"
+            | "_services"
+            | "_patcomps"
+            | "_postpatcomps"
+            | "_describe_handlers"
+            | "zcompdump"
+    );
+    if !valid {
+        return Err(ErrPayload::new(
+            "format_unsupported_for_target",
+            format!(
+                "zcompdump format only valid for compdef / _comps / _services / _patcomps / _postpatcomps / _describe_handlers / zcompdump (got `{}`)",
+                target
+            ),
+        ));
+    }
+    // Round-trip path (preferred): if a raw .zcompdump body was imported,
+    // emit it verbatim. Otherwise synthesize.
+    let raw = state
+        .canonical
+        .row("zcompdump_raw", "body")
+        .and_then(|r| serde_json::from_str::<serde_json::Value>(&r.value).ok())
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+    if let Some(s) = raw {
+        return Ok(s);
+    }
+    // Fall back to the structured synthesizer (lives next to op_export_zcompdump
+    // in ops.rs — duplicate the format here so this renderer is self-contained).
+    let mut out = String::new();
+    let zsh_version = std::env::var("ZSH_VERSION").unwrap_or_else(|_| "5.9".to_string());
+    let comps = read_canonical(state, "compdef")?;
+    let services = read_canonical(state, "service")?;
+    let patcomps = read_canonical(state, "patcomp")?;
+    let postpatcomps = read_canonical(state, "postpatcomp")?;
+    let autoloads = read_canonical(state, "autoload_completion")?;
+    out.push_str(&format!(
+        "#files: {}\tversion: {}\n\n",
+        comps.len(),
+        zsh_version
+    ));
+    let push_assoc = |out: &mut String, name: &str, rows: &[CanonicalRow]| {
+        out.push_str(&format!("{}=(\n", name));
+        for r in rows {
+            out.push_str(&format!("'{}' '{}'\n", r.key, unjson(&r.value)));
+        }
+        out.push_str(")\n\n");
+    };
+    push_assoc(&mut out, "_comps", &comps);
+    push_assoc(&mut out, "_services", &services);
+    push_assoc(&mut out, "_patcomps", &patcomps);
+    push_assoc(&mut out, "_postpatcomps", &postpatcomps);
+    if !autoloads.is_empty() {
+        out.push_str("\nautoload -Uz ");
+        for (i, r) in autoloads.iter().enumerate() {
+            if i > 0 && i % 5 == 0 {
+                out.push_str("\\\n            ");
+            } else if i > 0 {
+                out.push(' ');
+            }
+            out.push_str(&r.key);
+        }
+        out.push('\n');
+    }
+    out.push_str("\ntypeset -gUa _comp_assocs\n_comp_assocs=( '' )\n");
+    Ok(out)
 }
 
 fn render_yaml(state: &DaemonState, target: &str) -> std::result::Result<String, ErrPayload> {
