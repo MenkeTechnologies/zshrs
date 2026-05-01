@@ -119,7 +119,7 @@ fn analyze_recursive(
     Ok(())
 }
 
-fn analyze_one_into(state: &mut CanonicalState, path: &Path) -> std::io::Result<()> {
+pub fn analyze_one_into(state: &mut CanonicalState, path: &Path) -> std::io::Result<()> {
     let content = std::fs::read_to_string(path)?;
     state.stats.files_analyzed += 1;
 

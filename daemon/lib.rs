@@ -25,6 +25,7 @@ pub mod log;
 pub mod ops;
 pub mod paths;
 pub mod pidlock;
+pub mod plugin_walk;
 pub mod pubsub;
 pub mod server;
 pub mod shard;
