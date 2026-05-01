@@ -524,6 +524,49 @@ fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String,
                 .map_err(ErrPayload::from)?;
             return Ok(serde_json::to_string_pretty(&rows).unwrap_or_default());
         }
+        "script" | "sourced" => {
+            // compiled_files rows for kind='script' or kind='source' — the
+            // ingested file registry from zsource / load_script.
+            let kinds: &[&str] = if target == "script" {
+                &["script", "zshrc"]
+            } else {
+                &["source", "zshrc", "plugin_init", "autoload"]
+            };
+            let placeholders = kinds
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                "SELECT path, kind, mtime, inode, last_used_at, use_count, bytes_in, sensitive \
+                 FROM compiled_files WHERE kind IN ({}) ORDER BY use_count DESC LIMIT 10000",
+                placeholders
+            );
+            let rows: Vec<Value> = state
+                .with_catalog(|conn| {
+                    let mut stmt = conn.prepare(&sql)?;
+                    let params: Vec<&dyn rusqlite::ToSql> =
+                        kinds.iter().map(|k| k as &dyn rusqlite::ToSql).collect();
+                    let rows: Vec<Value> = stmt
+                        .query_map(&params[..], |r| {
+                            Ok(json!({
+                                "path": r.get::<_, String>(0)?,
+                                "kind": r.get::<_, String>(1)?,
+                                "mtime": r.get::<_, i64>(2)?,
+                                "inode": r.get::<_, i64>(3)?,
+                                "last_used_at": r.get::<_, Option<i64>>(4)?,
+                                "use_count": r.get::<_, i64>(5)?,
+                                "bytes_in": r.get::<_, i64>(6)?,
+                                "sensitive": r.get::<_, bool>(7)?,
+                            }))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok::<_, rusqlite::Error>(rows)
+                })
+                .map_err(ErrPayload::from)?;
+            return Ok(serde_json::to_string_pretty(&rows).unwrap_or_default());
+        }
         "compiled_files" => {
             let rows: Vec<Value> = state
                 .with_catalog(|conn| {
