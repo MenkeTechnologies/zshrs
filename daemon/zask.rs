@@ -203,19 +203,28 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
     let target = args.get("target").cloned().unwrap_or(Value::Null);
 
     // Resolve target → list of shell ids (supports shell_id, self, all, tag).
-    let target_shells: Vec<u64> = if let Some(id) = target.get("shell_id").and_then(Value::as_u64) {
-        vec![id]
+    // For an explicit shell_id, we eagerly refuse if the shell isn't connected
+    // — the caller named a specific target and expects to know if it failed.
+    // For tag/all, an empty match is silently accepted (those scopes can
+    // legitimately resolve to zero recipients).
+    let (target_shells, strict): (Vec<u64>, bool) = if let Some(id) =
+        target.get("shell_id").and_then(Value::as_u64)
+    {
+        (vec![id], true)
     } else if target.get("self").and_then(Value::as_bool).unwrap_or(false) {
-        vec![client_id]
+        (vec![client_id], true)
     } else if target.get("all").and_then(Value::as_bool).unwrap_or(false) {
-        state
-            .snapshot_sessions()
-            .into_iter()
-            .filter(|s| s.client_id != client_id)
-            .map(|s| s.client_id)
-            .collect()
+        (
+            state
+                .snapshot_sessions()
+                .into_iter()
+                .filter(|s| s.client_id != client_id)
+                .map(|s| s.client_id)
+                .collect(),
+            false,
+        )
     } else if let Some(tag) = target.get("tag").and_then(Value::as_str) {
-        state.shells_with_tag(tag)
+        (state.shells_with_tag(tag), false)
     } else {
         return Err(ErrPayload::new(
             "bad_args",
@@ -223,11 +232,22 @@ pub async fn op_ask_ask(state: &Arc<DaemonState>, client_id: u64, args: Value) -
         ));
     };
 
-    if target_shells.is_empty() {
-        return Err(ErrPayload::new(
-            "no_shell",
-            "no shells matched target".to_string(),
-        ));
+    // Strict-mode (explicit shell_id / self): require the named shell to be
+    // connected. Lax-mode (tag / all): allow zero matches and return
+    // queued: [] so callers can distinguish "no recipients" from a hard error.
+    if strict {
+        for sid in &target_shells {
+            if state
+                .snapshot_sessions()
+                .iter()
+                .all(|s| s.client_id != *sid)
+            {
+                return Err(ErrPayload::new(
+                    "no_shell",
+                    format!("target shell_id {} not connected", sid),
+                ));
+            }
+        }
     }
 
     let urgency = args

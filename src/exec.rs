@@ -20605,10 +20605,15 @@ impl ShellExecutor {
     }
 
     fn builtin_return(&mut self, args: &[String]) -> i32 {
-        let status = args
-            .first()
-            .and_then(|s| s.parse::<i32>().ok())
-            .unwrap_or(self.last_status);
+        // Direct port of src/zsh/Src/builtin.c:5815-5818 — argv[0] is
+        // a math expression (mathevali), not just a literal integer.
+        // zsh: `return 1+2` returns 3; `return -5` returns -5.
+        // zshrs's `parse::<i32>` handled the literal-integer cases but
+        // failed on arith. Route through eval_arith_expr.
+        let status = match args.first() {
+            Some(s) if !s.is_empty() => self.eval_arith_expr(s) as i32,
+            _ => self.last_status,
+        };
         self.returning = Some(status);
         status
     }
