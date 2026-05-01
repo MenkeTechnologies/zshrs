@@ -423,16 +423,13 @@ impl<'a> PatCompiler<'a> {
 
         // Check for repetition suffix
         if self.extended_glob {
-            match self.peek() {
-                Some('#') => {
+            if let Some('#') = self.peek() {
+                self.advance();
+                if self.peek() == Some('#') {
                     self.advance();
-                    if self.peek() == Some('#') {
-                        self.advance();
-                        return Ok(Some(PatNode::TwoHash(Box::new(node))));
-                    }
-                    return Ok(Some(PatNode::OneHash(Box::new(node))));
+                    return Ok(Some(PatNode::TwoHash(Box::new(node))));
                 }
-                _ => {}
+                return Ok(Some(PatNode::OneHash(Box::new(node))));
             }
         }
 

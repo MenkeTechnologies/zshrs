@@ -49,7 +49,7 @@ pub mod char_tokens {
     #[inline]
     pub fn is_token(c: char) -> bool {
         let b = c as u32;
-        b >= 0x84 && b <= 0xa2
+        (0x84..=0xa2).contains(&b)
     }
 
     /// Convert token back to its original character

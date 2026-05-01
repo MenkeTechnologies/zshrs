@@ -385,6 +385,12 @@ pub struct ZwcBuilder {
     functions: Vec<(String, Vec<u8>)>, // (name, source code)
 }
 
+impl Default for ZwcBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZwcBuilder {
     pub fn new() -> Self {
         Self {
@@ -439,7 +445,7 @@ impl ZwcBuilder {
         let mut header_words = FD_PRELEN;
         for (name, _) in &self.functions {
             // 6 words for fdhead struct + name (padded)
-            header_words += 6 + (name.len() + 1 + 3) / 4;
+            header_words += 6 + (name.len() + 1).div_ceil(4);
         }
 
         // Write header length
@@ -451,14 +457,14 @@ impl ZwcBuilder {
 
         // Write function headers
         for (name, source) in &self.functions {
-            let source_words = (source.len() + 3) / 4;
+            let source_words = source.len().div_ceil(4);
 
             // fdhead: start, len, npats, strs, hlen, flags
             file.write_all(&(data_offset as u32).to_ne_bytes())?; // start
             file.write_all(&(source.len() as u32).to_ne_bytes())?; // len (in bytes)
             file.write_all(&0u32.to_ne_bytes())?; // npats
             file.write_all(&0u32.to_ne_bytes())?; // strs offset
-            let hlen = 6 + (name.len() + 1 + 3) / 4;
+            let hlen = 6 + (name.len() + 1).div_ceil(4);
             file.write_all(&(hlen as u32).to_ne_bytes())?; // hlen
             file.write_all(&0u32.to_ne_bytes())?; // flags
 

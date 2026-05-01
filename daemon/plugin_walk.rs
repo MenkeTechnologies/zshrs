@@ -22,11 +22,11 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::ast_walker::analyze_one_into;
 use super::canonical::CanonicalEngine;
 use super::shard::{
     write_canonical_shard, CanonicalShard, ShardHeader, SHARD_FORMAT_VERSION, SHARD_MAGIC,
 };
-use super::ast_walker::analyze_one_into;
 use super::zshrc_analysis::CanonicalState;
 use super::Result;
 
@@ -222,7 +222,11 @@ fn walk_zinit_plugins(
             setopt: local.setopts.len() + local.unsetopts.len(),
             env: local.env_exports.len(),
             fpath_added: true,
-            shard_path: Some(per_plugin_shard_path(paths, "zinit-plugin", &plugin_name).display().to_string()),
+            shard_path: Some(
+                per_plugin_shard_path(paths, "zinit-plugin", &plugin_name)
+                    .display()
+                    .to_string(),
+            ),
         });
     }
     Ok(())
@@ -321,7 +325,11 @@ fn walk_zinit_snippets(
             setopt: local.setopts.len() + local.unsetopts.len(),
             env: local.env_exports.len(),
             fpath_added: fpath_dir.is_some(),
-            shard_path: Some(per_plugin_shard_path(paths, "zinit-snippet", &name).display().to_string()),
+            shard_path: Some(
+                per_plugin_shard_path(paths, "zinit-snippet", &name)
+                    .display()
+                    .to_string(),
+            ),
         });
     }
     Ok(())
@@ -377,7 +385,10 @@ fn pick_init_script(dir: &Path, dir_name: &str) -> Option<PathBuf> {
         .filter(|p| {
             p.is_file()
                 && p.extension().and_then(|e| e.to_str()) == Some("zsh")
-                && !p.file_name().and_then(|n| n.to_str()).map_or(false, |s| s.ends_with(".plugin.zsh"))
+                && !p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map_or(false, |s| s.ends_with(".plugin.zsh"))
         })
         .collect();
     if zsh_files.len() == 1 {
@@ -438,9 +449,8 @@ fn merge_into_canonical(canon: &CanonicalEngine, local: &CanonicalState) {
 }
 
 fn accumulate_stats(stats: &mut PluginWalkStats, local: &CanonicalState) {
-    stats.aliases_total += local.aliases.len()
-        + local.global_aliases.len()
-        + local.suffix_aliases.len();
+    stats.aliases_total +=
+        local.aliases.len() + local.global_aliases.len() + local.suffix_aliases.len();
     stats.functions_total += local.functions.len();
     stats.compdef_total += local.compdef.len();
     stats.bindkeys_total += local.bindkeys.len();
@@ -539,7 +549,11 @@ fn sanitize_name(name: &str) -> String {
 fn short_hash(s: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(s.as_bytes());
-    digest.iter().take(4).map(|b| format!("{:02x}", b)).collect()
+    digest
+        .iter()
+        .take(4)
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 #[allow(dead_code)]

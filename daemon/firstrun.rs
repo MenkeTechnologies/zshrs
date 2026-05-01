@@ -80,7 +80,13 @@ fn compute_first_run_estimate() -> FirstRunEstimate {
         dirs.extend(p.split(':').map(std::path::PathBuf::from));
     }
     if let Some(home) = dirs::home_dir() {
-        for sub in &[".zshrc", ".zpwr", ".oh-my-zsh", ".zinit/plugins", ".zinit/snippets"] {
+        for sub in &[
+            ".zshrc",
+            ".zpwr",
+            ".oh-my-zsh",
+            ".zinit/plugins",
+            ".zinit/snippets",
+        ] {
             let p = home.join(sub);
             if p.exists() {
                 dirs.push(p);
@@ -121,5 +127,9 @@ fn compute_first_run_estimate() -> FirstRunEstimate {
     // Rough rate: 30k LOC/sec on a modern SSD daemon walk. Floor at 5s.
     let duration_s = ((loc / 30_000) as u64).max(5);
 
-    FirstRunEstimate { files, loc_human, duration_s }
+    FirstRunEstimate {
+        files,
+        loc_human,
+        duration_s,
+    }
 }

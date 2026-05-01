@@ -143,15 +143,15 @@ pub fn zselect(options: &ZselectOptions) -> Result<SelectResult, String> {
         if pfd.revents != 0 {
             if pfd.revents & libc::POLLIN != 0 && read_fds.contains(&pfd.fd) {
                 ready_fds.push((pfd.fd, SelectMode::Read));
-                fd_modes.entry(pfd.fd).or_insert_with(String::new).push('r');
+                fd_modes.entry(pfd.fd).or_default().push('r');
             }
             if pfd.revents & libc::POLLOUT != 0 && write_fds.contains(&pfd.fd) {
                 ready_fds.push((pfd.fd, SelectMode::Write));
-                fd_modes.entry(pfd.fd).or_insert_with(String::new).push('w');
+                fd_modes.entry(pfd.fd).or_default().push('w');
             }
             if (pfd.revents & (libc::POLLERR | libc::POLLPRI) != 0) && error_fds.contains(&pfd.fd) {
                 ready_fds.push((pfd.fd, SelectMode::Error));
-                fd_modes.entry(pfd.fd).or_insert_with(String::new).push('e');
+                fd_modes.entry(pfd.fd).or_default().push('e');
             }
         }
     }

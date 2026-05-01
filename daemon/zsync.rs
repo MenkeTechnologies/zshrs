@@ -267,7 +267,11 @@ pub fn apply_delta_walk(
             let tx = conn.unchecked_transaction()?;
             for d in removed_dirs {
                 let prefix = format!("{}/", d.trim_end_matches('/'));
-                let kind = if subsystem == "fpath" { "autoload" } else { "command" };
+                let kind = if subsystem == "fpath" {
+                    "autoload"
+                } else {
+                    "command"
+                };
                 tx.execute(
                     "DELETE FROM entries WHERE plugin_id='system' AND kind = ? \
                      AND (source_loc = ? OR source_loc LIKE ?)",
@@ -312,7 +316,10 @@ fn validate_push_payload(
         if !seen_keys.insert(k.as_str()) {
             return Err(ErrPayload::new(
                 "duplicate_key",
-                format!("duplicate key `{}` in push for subsystem `{}`", k, subsystem),
+                format!(
+                    "duplicate key `{}` in push for subsystem `{}`",
+                    k, subsystem
+                ),
             ));
         }
     }
@@ -335,7 +342,7 @@ fn validate_push_payload(
             }
             // PATH must have existing dirs to be useful — fpath/manpath
             // tolerate not-yet-existing entries because they often point
-                // at install-on-demand paths.
+            // at install-on-demand paths.
             if subsystem == "path" {
                 let p = std::path::Path::new(&dir);
                 if !p.is_dir() {

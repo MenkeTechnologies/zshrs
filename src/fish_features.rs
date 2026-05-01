@@ -465,7 +465,7 @@ pub fn expand_abbreviation(line: &str, cursor: usize) -> Option<(String, usize)>
     let is_command_position = before_cursor[..word_start].trim().is_empty()
         || before_cursor[..word_start]
             .trim()
-            .ends_with(|c| c == '|' || c == ';' || c == '&');
+            .ends_with(['|', ';', '&']);
 
     with_abbrs(|set| {
         set.find_match(word, is_command_position).map(|abbr| {

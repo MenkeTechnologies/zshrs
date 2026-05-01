@@ -172,10 +172,7 @@ fn zcache_config(args: &[String]) -> i32 {
         },
         other => err_exit(
             "zcache config",
-            &format!(
-                "unknown verb `{}` (try get|set|list)",
-                other
-            ),
+            &format!("unknown verb `{}` (try get|set|list)", other),
         ),
     }
 }
@@ -185,7 +182,12 @@ fn zcache_config(args: &[String]) -> i32 {
 fn zcache_view(args: &[String]) -> i32 {
     let target = match args.first() {
         Some(t) => t.clone(),
-        None => return err_exit("zcache view", "usage: zcache view <target> [--format <fmt>]"),
+        None => {
+            return err_exit(
+                "zcache view",
+                "usage: zcache view <target> [--format <fmt>]",
+            )
+        }
     };
     let mut format = "text".to_string();
     let mut filter: Option<String> = None;
@@ -323,7 +325,10 @@ fn zcache_export(args: &[String]) -> i32 {
                 Some(o) => o.clone(),
                 None => return err_exit("zcache export", "--all requires --out <path>"),
             };
-            ("export_all", json!({ "out": out, "include_sensitive": include_sensitive }))
+            (
+                "export_all",
+                json!({ "out": out, "include_sensitive": include_sensitive }),
+            )
         }
         "zcompdump" => {
             let mut p = json!({});
@@ -342,7 +347,12 @@ fn zcache_export(args: &[String]) -> i32 {
         "shard" => {
             let n = match name.as_ref() {
                 Some(n) => n.clone(),
-                None => return err_exit("zcache export", "shard target requires a name (zcache export shard <name>)"),
+                None => {
+                    return err_exit(
+                        "zcache export",
+                        "shard target requires a name (zcache export shard <name>)",
+                    )
+                }
             };
             let mut p = json!({ "name": n });
             if let Some(o) = out_path.as_ref() {
@@ -570,10 +580,15 @@ fn zcache_import(args: &[String]) -> i32 {
         "catalog" => "import_catalog",
         "shard" => "import_shard",
         "--all" => "import_all",
-        other => return err_exit(
-            "zcache import",
-            &format!("unknown target `{}` (try zcompdump|zwc|history|catalog|shard|--all)", other),
-        ),
+        other => {
+            return err_exit(
+                "zcache import",
+                &format!(
+                    "unknown target `{}` (try zcompdump|zwc|history|catalog|shard|--all)",
+                    other
+                ),
+            )
+        }
     };
 
     // Per-target arg parsing.
@@ -951,7 +966,10 @@ fn zping(args: &[String]) -> i32 {
                         let pid = s.get("pid").and_then(Value::as_i64).unwrap_or(0);
                         let tty = s.get("tty").and_then(Value::as_str).unwrap_or("-");
                         let uptime = s.get("uptime_secs").and_then(Value::as_u64).unwrap_or(0);
-                        println!("  shell:{:<3} pid={:<6} tty={:<14} uptime={}s", id, pid, tty, uptime);
+                        println!(
+                            "  shell:{:<3} pid={:<6} tty={:<14} uptime={}s",
+                            id, pid, tty, uptime
+                        );
                     }
                 }
             }
@@ -1050,9 +1068,7 @@ fn zsend(args: &[String]) -> i32 {
         // Server holds the request open up to timeout_ms; bump client
         // socket read timeout above that so the client doesn't give up
         // first.
-        let _ = client.set_read_timeout(Some(std::time::Duration::from_millis(
-            timeout_ms + 5_000,
-        )));
+        let _ = client.set_read_timeout(Some(std::time::Duration::from_millis(timeout_ms + 5_000)));
     }
     match client.call("send", payload) {
         Ok(v) => {
@@ -1129,7 +1145,12 @@ fn parse_send_args(args: &[String], cmd: &str) -> Result<(Value, String), i32> {
     let mut iter = args.iter().skip(1);
     let first = match iter.next() {
         Some(s) => s.clone(),
-        None => return Err(err_exit(cmd, "usage: --all|--tag <n>|--user <u>|<shell_id> <text...>")),
+        None => {
+            return Err(err_exit(
+                cmd,
+                "usage: --all|--tag <n>|--user <u>|<shell_id> <text...>",
+            ))
+        }
     };
 
     let (target, rest_first): (Value, Option<String>) = if first == "--all" {
@@ -1174,10 +1195,12 @@ fn parse_send_args(args: &[String], cmd: &str) -> Result<(Value, String), i32> {
 fn zlog_level(args: &[String]) -> i32 {
     let directive = match args.first() {
         Some(d) => d.clone(),
-        None => return err_exit(
-            "zlog level",
-            "usage: zlog level <directive>  (e.g. info | debug | info,fsnotify=trace)",
-        ),
+        None => {
+            return err_exit(
+                "zlog level",
+                "usage: zlog level <directive>  (e.g. info | debug | info,fsnotify=trace)",
+            )
+        }
     };
     let mut client = match connect_or_err() {
         Ok(c) => c,
@@ -1477,7 +1500,10 @@ fn zsubscribe(args: &[String]) -> i32 {
     };
 
     let sub_id = match client.call("subscribe", json!({ "pattern": pattern })) {
-        Ok(v) => v.get("subscription_id").and_then(Value::as_u64).unwrap_or(0),
+        Ok(v) => v
+            .get("subscription_id")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         Err(e) => return err_exit("zsubscribe", &e.to_string()),
     };
 
@@ -1515,9 +1541,7 @@ fn zsubscribe(args: &[String]) -> i32 {
                 }
             }
             Ok(_) => continue,
-            Err(DaemonError::Io(e))
-                if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) =>
-            {
+            Err(DaemonError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) => {
                 eprintln!("zsubscribe: daemon closed connection");
                 return 0;
             }
@@ -1533,10 +1557,7 @@ fn zsubscribe_set_paused(pause: bool, sub_id: Option<u64>, all: bool) -> i32 {
     } else if let Some(id) = sub_id {
         payload["id"] = json!(id);
     } else {
-        return err_exit(
-            "zsubscribe",
-            "--pause/--resume requires --id <N> or --all",
-        );
+        return err_exit("zsubscribe", "--pause/--resume requires --id <N> or --all");
     }
     let mut client = match connect_or_err() {
         Ok(c) => c,
@@ -1616,7 +1637,10 @@ impl FilterPredicate {
         } else if let Some(i) = s.find('=') {
             (&s[..i], FilterOp::Eq, &s[i + 1..])
         } else {
-            return Err(format!("no operator in `{}` (try `key=value` or `key>N`)", expr));
+            return Err(format!(
+                "no operator in `{}` (try `key=value` or `key>N`)",
+                expr
+            ));
         };
         let key = key_raw.trim();
         let val = val_raw.trim();
@@ -1635,13 +1659,12 @@ impl FilterPredicate {
         let needle = if let Ok(n) = val.parse::<f64>() {
             FilterValue::Number(n)
         } else {
-            FilterValue::Text(val.trim_matches(|c: char| c == '"' || c == '\'').to_string())
+            FilterValue::Text(
+                val.trim_matches(|c: char| c == '"' || c == '\'')
+                    .to_string(),
+            )
         };
-        Ok(Self {
-            path,
-            op,
-            needle,
-        })
+        Ok(Self { path, op, needle })
     }
 
     fn matches(&self, payload: &Value) -> bool {

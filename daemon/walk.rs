@@ -37,7 +37,7 @@ pub struct WalkResult {
     /// + "Daemon parsed it once, serialized into rkyv, and clients mmap
     /// the rkyv shard."
     pub autoload_bodies: HashMap<String, String>,
-    pub completion_files: Vec<String>,         // _foo files in fpath
+    pub completion_files: Vec<String>, // _foo files in fpath
     pub fpath: Vec<String>,
     pub path: Vec<String>,
     pub stats: WalkStats,
@@ -132,9 +132,7 @@ pub fn walk_paths(path_dirs: &[String], fpath_dirs: &[String]) -> WalkResult {
                         if let Ok(meta) = entry.metadata() {
                             if meta.is_file() && meta.len() <= AUTOLOAD_BODY_CAP {
                                 if let Ok(body) = std::fs::read_to_string(&p) {
-                                    result
-                                        .autoload_bodies
-                                        .insert(name.to_string(), body);
+                                    result.autoload_bodies.insert(name.to_string(), body);
                                     result.stats.autoload_bodies_read += 1;
                                 } else {
                                     result.stats.autoload_bodies_failed += 1;
@@ -347,7 +345,10 @@ pub fn run_full_rebuild(
     // index.rkyv update LAST. Rebuild_index walks every shard in images/
     // and writes the top-level index atomically.
     if let Err(e) = shard::rebuild_index(&state.paths) {
-        tracing::warn!(?e, "rebuild_index after run_full_rebuild failed (non-fatal)");
+        tracing::warn!(
+            ?e,
+            "rebuild_index after run_full_rebuild failed (non-fatal)"
+        );
     }
 
     Ok((image_path, hydrated, stats))

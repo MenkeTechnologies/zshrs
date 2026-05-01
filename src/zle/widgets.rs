@@ -769,9 +769,7 @@ pub fn delete_to_char(state: &mut ZleState, target: char, count: i32, zap: bool)
             }
         }
     } else {
-        if dest > 0 {
-            dest -= 1;
-        }
+        dest = dest.saturating_sub(1);
         let mut remaining = -count;
         while remaining > 0 && dest > 0 {
             while dest > 0 && chars[dest] != target {
@@ -789,9 +787,7 @@ pub fn delete_to_char(state: &mut ZleState, target: char, count: i32, zap: bool)
                     state.cursor = dest + adjust;
                     return WidgetResult::Ok;
                 }
-                if dest > 0 {
-                    dest -= 1;
-                }
+                dest = dest.saturating_sub(1);
             }
         }
     }

@@ -644,8 +644,7 @@ pub fn zshrs_main() {
                 .map(|s| s.to_string())
                 .unwrap_or_default();
             let zsh_compat_argv = matches!(argv0_basename.as_str(), "zsh");
-            let posix_argv =
-                matches!(argv0_basename.as_str(), "sh" | "dash" | "bash") || posix;
+            let posix_argv = matches!(argv0_basename.as_str(), "sh" | "dash" | "bash") || posix;
             if posix_argv || zsh_compat_argv {
                 eprintln!("zshrs: --daemon is only available in zshrs mode");
                 std::process::exit(1);
@@ -905,8 +904,7 @@ pub fn zshrs_main() {
         // separator-stripped). zshrs's runtime nomatch check at
         // expand_glob looks up "nomatch" directly.
         for (raw, set_val) in opts {
-            let canonical =
-                raw.to_lowercase().replace('_', "").replace('-', "");
+            let canonical = raw.to_lowercase().replace('_', "").replace('-', "");
             executor.options.insert(canonical, *set_val);
         }
     }
@@ -916,7 +914,13 @@ pub fn zshrs_main() {
         let code = &args[2];
 
         let mut executor = ShellExecutor::new();
-        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag, &option_settings);
+        apply_cli_flags(
+            &mut executor,
+            enable_xtrace,
+            enable_verbose,
+            no_rcs_flag,
+            &option_settings,
+        );
         // In `-c` mode zsh sets `$0` to argv[0] verbatim — when
         // invoked as `/bin/zsh -c '...'` it's the full path; when
         // invoked as `zsh -c '...'` it's the basename. Mirror by
@@ -927,8 +931,7 @@ pub fn zshrs_main() {
 
         // Long-cmd-started watchdog (-c path mirrors the interactive loop).
         #[cfg(feature = "daemon")]
-        let completed_c =
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let completed_c = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         #[cfg(feature = "daemon")]
         {
             let line_owned = code.clone();
@@ -1001,7 +1004,13 @@ pub fn zshrs_main() {
     // Handle script file argument
     if args.len() >= 2 && !args[1].starts_with('-') {
         let mut executor = ShellExecutor::new();
-        apply_cli_flags(&mut executor, enable_xtrace, enable_verbose, no_rcs_flag, &option_settings);
+        apply_cli_flags(
+            &mut executor,
+            enable_xtrace,
+            enable_verbose,
+            no_rcs_flag,
+            &option_settings,
+        );
         if let Err(e) = executor.execute_script_file(&args[1]) {
             eprintln!("zshrs: {}: {}", args[1], e);
             std::process::exit(1);

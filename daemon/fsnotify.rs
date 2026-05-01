@@ -277,42 +277,66 @@ impl FsWatcher {
         // Replace per-subsystem rows so removed declarations actually disappear.
         canon.replace_subsystem(
             "alias",
-            analysis.aliases.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            analysis
+                .aliases
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
             None,
         );
         canon.replace_subsystem(
             "galias",
-            analysis.global_aliases.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            analysis
+                .global_aliases
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
             None,
         );
         canon.replace_subsystem(
             "salias",
-            analysis.suffix_aliases.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            analysis
+                .suffix_aliases
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
             None,
         );
         canon.replace_subsystem(
             "named_dir",
-            analysis.named_dirs.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            analysis
+                .named_dirs
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
             None,
         );
         canon.replace_subsystem(
             "compdef",
-            analysis.compdef.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            analysis
+                .compdef
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
             None,
         );
         canon.replace_subsystem(
             "bindkey",
-            analysis.bindkeys.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            analysis
+                .bindkeys
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
             None,
         );
         canon.replace_subsystem(
             "env",
-            analysis.env_exports.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            analysis
+                .env_exports
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
             None,
         );
         canon.replace_subsystem(
             "params",
-            analysis.params.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            analysis
+                .params
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
             None,
         );
         canon.replace_subsystem(

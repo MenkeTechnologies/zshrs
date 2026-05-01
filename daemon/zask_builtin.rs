@@ -89,11 +89,10 @@ fn ask_with_target(args: &[String]) -> i32 {
         Some(s) => s.clone(),
         None => return err_exit("--target requires a value (shell:N|tag:T|*)"),
     };
-    let target = parse_target(&target_raw)
-        .unwrap_or_else(|e| {
-            eprintln!("zshrs: zask: {}", e);
-            json!({})
-        });
+    let target = parse_target(&target_raw).unwrap_or_else(|e| {
+        eprintln!("zshrs: zask: {}", e);
+        json!({})
+    });
     if target.as_object().map_or(true, |m| m.is_empty()) {
         return 1;
     }
@@ -117,32 +116,26 @@ fn ask_with_target(args: &[String]) -> i32 {
                     return err_exit("--urgency requires a value");
                 }
             }
-            "--timeout" => {
-                match args.get(i + 1).and_then(|s| s.parse::<u64>().ok()) {
-                    Some(secs) => {
-                        timeout_ms = Some(secs * 1000);
-                        i += 2;
-                    }
-                    None => return err_exit("--timeout requires integer seconds"),
+            "--timeout" => match args.get(i + 1).and_then(|s| s.parse::<u64>().ok()) {
+                Some(secs) => {
+                    timeout_ms = Some(secs * 1000);
+                    i += 2;
                 }
-            }
-            "--timeout-ms" => {
-                match args.get(i + 1).and_then(|s| s.parse::<u64>().ok()) {
-                    Some(ms) => {
-                        timeout_ms = Some(ms);
-                        i += 2;
-                    }
-                    None => return err_exit("--timeout-ms requires an integer"),
+                None => return err_exit("--timeout requires integer seconds"),
+            },
+            "--timeout-ms" => match args.get(i + 1).and_then(|s| s.parse::<u64>().ok()) {
+                Some(ms) => {
+                    timeout_ms = Some(ms);
+                    i += 2;
                 }
-            }
+                None => return err_exit("--timeout-ms requires an integer"),
+            },
             // Generic --foo value passthrough into payload (e.g. --items, --prompt, --message,
             // --options, --title). --multi / --secret / --no-timeout become bool flags.
             other if other.starts_with("--") => {
                 let key = other.trim_start_matches("--").to_string();
                 let next = args.get(i + 1);
-                let is_flag = next
-                    .map(|n| n.starts_with("--"))
-                    .unwrap_or(true);
+                let is_flag = next.map(|n| n.starts_with("--")).unwrap_or(true);
                 if matches!(key.as_str(), "multi" | "secret" | "done" | "no-timeout") || is_flag {
                     payload.insert(key, Value::Bool(true));
                     i += 1;
@@ -195,7 +188,10 @@ fn parse_target(s: &str) -> Result<Value, String> {
     if let Ok(n) = s.parse::<u64>() {
         return Ok(json!({ "shell_id": n }));
     }
-    Err(format!("target must be shell:N | tag:T | * | <id> (got `{}`)", s))
+    Err(format!(
+        "target must be shell:N | tag:T | * | <id> (got `{}`)",
+        s
+    ))
 }
 
 // `zask progress` — passive status-line update. Uses ask_ask with kind=progress.
@@ -463,7 +459,9 @@ fn response(args: &[String]) -> i32 {
     }
     let id = match id {
         Some(s) => s,
-        None => return err_exit("response: usage <request_id> [<data>] [--cancelled] [--from-shell N]"),
+        None => {
+            return err_exit("response: usage <request_id> [<data>] [--cancelled] [--from-shell N]")
+        }
     };
     let raw = value_words.join(" ");
     let data: Value = if raw.is_empty() {

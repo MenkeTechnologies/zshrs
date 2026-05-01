@@ -142,9 +142,7 @@ pub fn parse_time_spec(s: &str) -> Result<u64, &'static str> {
         .unwrap_or(Duration::ZERO)
         .as_secs();
 
-    if s.starts_with('+') {
-        let rest = &s[1..];
-
+    if let Some(rest) = s.strip_prefix('+') {
         if let Some(colon_pos) = rest.find(':') {
             let hours: i64 = rest[..colon_pos]
                 .parse()

@@ -302,7 +302,18 @@ impl Supervisor {
 
         // Persist initial row.
         if let Some(state) = self.upgrade_state() {
-            let _ = self.persist_initial(&state, id, &command, &cwd, &tags, client_id, started_at, &output_path, &error_path, pid);
+            let _ = self.persist_initial(
+                &state,
+                id,
+                &command,
+                &cwd,
+                &tags,
+                client_id,
+                started_at,
+                &output_path,
+                &error_path,
+                pid,
+            );
         }
 
         // Publish job:{id}.start event.
@@ -349,11 +360,7 @@ impl Supervisor {
         path: PathBuf,
     ) {
         let mut buf_reader = BufReader::new(reader);
-        let mut file = match tokio::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .await
-        {
+        let mut file = match tokio::fs::OpenOptions::new().append(true).open(&path).await {
             Ok(f) => f,
             Err(e) => {
                 tracing::warn!(?e, %id, kind=topic_kind, "failed to open job output for append");
@@ -402,7 +409,11 @@ impl Supervisor {
         let _ = file.flush().await;
     }
 
-    async fn handle_exit(self: Arc<Self>, id: u64, exit: std::io::Result<std::process::ExitStatus>) {
+    async fn handle_exit(
+        self: Arc<Self>,
+        id: u64,
+        exit: std::io::Result<std::process::ExitStatus>,
+    ) {
         use std::os::unix::process::ExitStatusExt;
 
         let final_state = match exit {
@@ -454,7 +465,9 @@ impl Supervisor {
     }
 
     fn publish(&self, id: u64, topic_kind: &str, data: Value) {
-        let Some(state) = self.upgrade_state() else { return };
+        let Some(state) = self.upgrade_state() else {
+            return;
+        };
         let scope = format!("job:{}", id);
         let payload = json!({
             "subscription_id": null,
@@ -570,7 +583,9 @@ impl Supervisor {
                 // Still alive after grace period — SIGKILL and wait again.
                 let rx2 = self.wait_handle(id)?;
                 let _ = self.kill(id, Some("KILL"));
-                Ok(rx2.await.unwrap_or(JobState::Failed("KILL didn't reap".into())))
+                Ok(rx2
+                    .await
+                    .unwrap_or(JobState::Failed("KILL didn't reap".into())))
             }
         }
     }

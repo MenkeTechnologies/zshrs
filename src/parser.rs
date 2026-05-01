@@ -614,11 +614,11 @@ fn simple_name_with_inoutpar(list: &ZshList) -> Option<(Vec<String>, Vec<String>
         return None;
     }
     let suffix = "\u{88}\u{8a}"; // INPAR + OUTPAR
-    // Find the FIRST word ending in `()`. zsh accepts the
-    // multi-name shorthand `fna fnb fnc() { body }` (parse.c:
-    // par_funcdef wordlist) — words[0..i-1] are extra names,
-    // words[i] is `lastname()`. Words after are the body argv
-    // (one-line shorthand, `name() cmd args`).
+                                 // Find the FIRST word ending in `()`. zsh accepts the
+                                 // multi-name shorthand `fna fnb fnc() { body }` (parse.c:
+                                 // par_funcdef wordlist) — words[0..i-1] are extra names,
+                                 // words[i] is `lastname()`. Words after are the body argv
+                                 // (one-line shorthand, `name() cmd args`).
     let par_idx = simple.words.iter().position(|w| w.ends_with(suffix))?;
     let mut names: Vec<String> = Vec::with_capacity(par_idx + 1);
     for w in &simple.words[..par_idx] {
@@ -2429,10 +2429,8 @@ impl<'a> ZshParser<'a> {
             Some(body)
         } else {
             // Short loop - single command
-            match self.parse_list() {
-                Some(list) => Some(ZshProgram { lists: vec![list] }),
-                None => None,
-            }
+            self.parse_list()
+                .map(|list| ZshProgram { lists: vec![list] })
         }
     }
 
@@ -2644,16 +2642,15 @@ impl<'a> ZshParser<'a> {
             }))
         } else {
             // Short form
-            match self.parse_list() {
-                Some(list) => Some(ZshCommand::FuncDef(ZshFuncDef {
+            self.parse_list().map(|list| {
+                ZshCommand::FuncDef(ZshFuncDef {
                     names,
                     body: Box::new(ZshProgram { lists: vec![list] }),
                     tracing,
                     auto_call_args: None,
                     body_source: None,
-                })),
-                None => None,
-            }
+                })
+            })
         }
     }
 
@@ -2736,10 +2733,10 @@ impl<'a> ZshParser<'a> {
     /// <, >, ==, =~, -eq, -ne, -lt, -le, -gt, -ge, -nt, -ot, -ef).
     fn parse_cond(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip [[
-        // Empty cond `[[ ]]` is a parse error in zsh — emit the
-        // diagnostic and return None so the caller produces a
-        // non-zero exit. Without this, `[[ ]]` silently passed and
-        // returned exit 0.
+                             // Empty cond `[[ ]]` is a parse error in zsh — emit the
+                             // diagnostic and return None so the caller produces a
+                             // non-zero exit. Without this, `[[ ]]` silently passed and
+                             // returned exit 0.
         if self.lexer.tok == LexTok::Doutbrack {
             self.error("parse error near `]]'");
             self.lexer.zshlex();
@@ -2785,10 +2782,8 @@ impl<'a> ZshParser<'a> {
         let result = if self.lexer.tok == LexTok::Dbar {
             self.lexer.zshlex();
             self.skip_cond_separators();
-            match self.parse_cond_or() {
-                Some(right) => Some(ZshCond::Or(Box::new(left), Box::new(right))),
-                None => None,
-            }
+            self.parse_cond_or()
+                .map(|right| ZshCond::Or(Box::new(left), Box::new(right)))
         } else {
             Some(left)
         };
@@ -2819,10 +2814,8 @@ impl<'a> ZshParser<'a> {
         let result = if self.lexer.tok == LexTok::Damper {
             self.lexer.zshlex();
             self.skip_cond_separators();
-            match self.parse_cond_and() {
-                Some(right) => Some(ZshCond::And(Box::new(left), Box::new(right))),
-                None => None,
-            }
+            self.parse_cond_and()
+                .map(|right| ZshCond::And(Box::new(left), Box::new(right)))
         } else {
             Some(left)
         };

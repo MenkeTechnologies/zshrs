@@ -161,8 +161,16 @@ fn compare_numeric(a: &str, b: &str, signed_mode: bool) -> Ordering {
         // differ at position 2 but the leading-zero skip changes
         // alignment. zsh skips leading zeros first, then walks digit-
         // by-digit.
-        let run_a: Vec<u8> = ab[start..].iter().copied().take_while(|&c| is_digit(c)).collect();
-        let run_b: Vec<u8> = bb[start..].iter().copied().take_while(|&c| is_digit(c)).collect();
+        let run_a: Vec<u8> = ab[start..]
+            .iter()
+            .copied()
+            .take_while(|&c| is_digit(c))
+            .collect();
+        let run_b: Vec<u8> = bb[start..]
+            .iter()
+            .copied()
+            .take_while(|&c| is_digit(c))
+            .collect();
         let stripped_a: &[u8] = {
             let z = run_a.iter().take_while(|&&c| c == b'0').count();
             &run_a[z..]
@@ -174,10 +182,18 @@ fn compare_numeric(a: &str, b: &str, signed_mode: bool) -> Ordering {
         // Longer (post-zero) run wins (more digits = bigger number).
         match stripped_a.len().cmp(&stripped_b.len()) {
             Ordering::Greater => {
-                return if mul >= 0 { Ordering::Greater } else { Ordering::Less };
+                return if mul >= 0 {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                };
             }
             Ordering::Less => {
-                return if mul >= 0 { Ordering::Less } else { Ordering::Greater };
+                return if mul >= 0 {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
             }
             Ordering::Equal => {
                 // Same length — compare digit-by-digit.
@@ -232,7 +248,7 @@ fn parse_leading_number(s: &str, signed_mode: bool) -> Option<f64> {
     }
 
     // Check if next char is digit
-    if chars.peek().map_or(true, |c| !c.is_ascii_digit()) {
+    if chars.peek().is_none_or(|c| !c.is_ascii_digit()) {
         return None;
     }
 

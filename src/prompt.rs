@@ -772,7 +772,7 @@ impl<'a> PromptExpander<'a> {
                     None
                 };
                 if let Some(c) = color {
-                    self.attrs.fg_color = Some(c.clone());
+                    self.attrs.fg_color = Some(c);
                     // Emit ONLY the color code, not all active attrs.
                     // apply_attrs would re-emit bold/underline/standout
                     // each time `%F` runs, producing duplicate codes.
@@ -800,7 +800,7 @@ impl<'a> PromptExpander<'a> {
                     None
                 };
                 if let Some(c) = color {
-                    self.attrs.bg_color = Some(c.clone());
+                    self.attrs.bg_color = Some(c);
                     self.start_escape();
                     self.output.push_str(&c.to_ansi_bg());
                     self.end_escape();
@@ -1634,14 +1634,14 @@ pub fn mixattrs(primary: &TextAttrs, mask: &TextAttrs, secondary: &TextAttrs) ->
             secondary.standout
         },
         fg_color: if mask.fg_color.is_some() {
-            primary.fg_color.clone()
+            primary.fg_color
         } else {
-            secondary.fg_color.clone()
+            secondary.fg_color
         },
         bg_color: if mask.bg_color.is_some() {
-            primary.bg_color.clone()
+            primary.bg_color
         } else {
-            secondary.bg_color.clone()
+            secondary.bg_color
         },
     }
 }

@@ -41,7 +41,7 @@ const PROMOTIONS_SOURCE_ROOT: &str = "user-overlay";
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct CanonicalRow {
     pub key: String,
-    pub value: String,      // already JSON-encoded
+    pub value: String, // already JSON-encoded
     pub set_at_ns: i64,
     pub set_by_shell: Option<i64>,
 }
@@ -187,18 +187,15 @@ impl CanonicalEngine {
     ) -> usize {
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let mut g = self.inner.write();
-        g.rows
-            .entry(subsystem.to_string())
-            .or_default()
-            .insert(
-                key.to_string(),
-                CanonicalRow {
-                    key: key.to_string(),
-                    value: json_value.to_string(),
-                    set_at_ns: now,
-                    set_by_shell: set_by_shell.map(|n| n as i64),
-                },
-            );
+        g.rows.entry(subsystem.to_string()).or_default().insert(
+            key.to_string(),
+            CanonicalRow {
+                key: key.to_string(),
+                value: json_value.to_string(),
+                set_at_ns: now,
+                set_by_shell: set_by_shell.map(|n| n as i64),
+            },
+        );
         1
     }
 
@@ -257,9 +254,7 @@ impl CanonicalEngine {
                 magic: SHARD_MAGIC,
                 format_version: SHARD_FORMAT_VERSION,
                 generation,
-                built_at_ns: chrono::Utc::now()
-                    .timestamp_nanos_opt()
-                    .unwrap_or(0) as u64,
+                built_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
                 slug: PROMOTIONS_SLUG.to_string(),
                 source_root: PROMOTIONS_SOURCE_ROOT.to_string(),
                 entry_count: 0,
@@ -362,10 +357,7 @@ impl CanonicalEngine {
     /// Replace SQLite's `canonical` table with the current in-memory state.
     /// SQLite is the inspection mirror only — never the source of truth.
     /// Returns the number of rows written.
-    pub fn hydrate_sqlite_view(
-        &self,
-        state: &super::state::DaemonState,
-    ) -> Result<usize> {
+    pub fn hydrate_sqlite_view(&self, state: &super::state::DaemonState) -> Result<usize> {
         super::zsync::ensure_schema(state)?;
         let g = self.inner.read();
         let mut count = 0usize;

@@ -72,7 +72,10 @@ fn main() {
         ("complete", json!({ "prefix": "g", "limit": 32 })),
         ("suggest", json!({ "prefix": "git " })),
         ("highlight", json!({ "line": "ls -la /tmp" })),
-        ("history_query", json!({ "filter": "cargo", "mode": "fts", "limit": 32 })),
+        (
+            "history_query",
+            json!({ "filter": "cargo", "mode": "fts", "limit": 32 }),
+        ),
         ("info", json!({})),
         ("watcher_stats", json!({})),
     ] {

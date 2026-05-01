@@ -107,7 +107,7 @@ mod tests {
     fn test_random_real_range() {
         for _ in 0..100 {
             let r = random_real();
-            assert!(r >= 0.0 && r < 1.0);
+            assert!((0.0..1.0).contains(&r));
         }
     }
 
@@ -115,7 +115,7 @@ mod tests {
     fn test_random_real_max() {
         for _ in 0..100 {
             let r = random_real_max(10.0);
-            assert!(r >= 0.0 && r < 10.0);
+            assert!((0.0..10.0).contains(&r));
         }
     }
 
@@ -123,7 +123,7 @@ mod tests {
     fn test_random_real_min_max() {
         for _ in 0..100 {
             let r = random_real_range(5.0, 10.0);
-            assert!(r >= 5.0 && r < 10.0);
+            assert!((5.0..10.0).contains(&r));
         }
     }
 
@@ -131,7 +131,7 @@ mod tests {
     fn test_random_real_53() {
         for _ in 0..100 {
             let r = random_real_53();
-            assert!(r >= 0.0 && r < 1.0);
+            assert!((0.0..1.0).contains(&r));
         }
     }
 
@@ -140,7 +140,7 @@ mod tests {
         let result = math_random_real(&[]);
         assert!(result.is_ok());
         let r = result.unwrap();
-        assert!(r >= 0.0 && r < 1.0);
+        assert!((0.0..1.0).contains(&r));
     }
 
     #[test]
@@ -148,7 +148,7 @@ mod tests {
         let result = math_random_real(&[100.0]);
         assert!(result.is_ok());
         let r = result.unwrap();
-        assert!(r >= 0.0 && r < 100.0);
+        assert!((0.0..100.0).contains(&r));
     }
 
     #[test]
@@ -156,7 +156,7 @@ mod tests {
         let result = math_random_real(&[10.0, 20.0]);
         assert!(result.is_ok());
         let r = result.unwrap();
-        assert!(r >= 10.0 && r < 20.0);
+        assert!((10.0..20.0).contains(&r));
     }
 
     #[test]

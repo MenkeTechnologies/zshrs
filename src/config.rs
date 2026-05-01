@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 /// Top-level config
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct ZshrsConfig {
     pub worker_pool: WorkerPoolConfig,
     pub completion: CompletionConfig,
@@ -41,6 +42,7 @@ pub struct ZshrsConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct WorkerPoolConfig {
     /// Number of worker threads. 0 = auto (num_cpus clamped [2, 18]).
     pub size: usize,
@@ -77,24 +79,6 @@ pub struct LogConfig {
 }
 
 // ── Defaults ──
-
-impl Default for ZshrsConfig {
-    fn default() -> Self {
-        Self {
-            worker_pool: WorkerPoolConfig::default(),
-            completion: CompletionConfig::default(),
-            history: HistoryConfig::default(),
-            glob: GlobConfig::default(),
-            log: LogConfig::default(),
-        }
-    }
-}
-
-impl Default for WorkerPoolConfig {
-    fn default() -> Self {
-        Self { size: 0 } // 0 = auto
-    }
-}
 
 impl Default for CompletionConfig {
     fn default() -> Self {
@@ -227,7 +211,7 @@ parallel_threshold = 64
     fn test_resolve_pool_size() {
         let auto = WorkerPoolConfig { size: 0 };
         let resolved = resolve_pool_size(&auto);
-        assert!(resolved >= 2 && resolved <= 18);
+        assert!((2..=18).contains(&resolved));
 
         let explicit = WorkerPoolConfig { size: 4 };
         assert_eq!(resolve_pool_size(&explicit), 4);

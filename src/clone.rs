@@ -95,8 +95,7 @@ pub fn clone_shell(tty_path: &str) -> io::Result<CloneOutcome> {
                 // clone.c:85-91 — verify by opening /dev/tty. If this
                 // succeeds the kernel has assigned a ctty.
                 let dev_tty = b"/dev/tty\0";
-                let verify =
-                    libc::open(dev_tty.as_ptr() as *const libc::c_char, libc::O_RDWR);
+                let verify = libc::open(dev_tty.as_ptr() as *const libc::c_char, libc::O_RDWR);
                 if verify >= 0 {
                     got_ctty = true;
                     libc::close(verify);

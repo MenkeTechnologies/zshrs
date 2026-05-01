@@ -160,7 +160,7 @@ pub fn builtin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, Strin
 
         let nanoseconds = if args.len() > 2 {
             match args[2].parse::<i64>() {
-                Ok(ns) if ns >= 0 && ns <= 999_999_999 => Some(ns),
+                Ok(ns) if (0..=999_999_999).contains(&ns) => Some(ns),
                 Ok(_) => {
                     return (
                         1,
@@ -240,7 +240,7 @@ pub fn convert_timezone(timestamp: i64, to_utc: bool) -> i64 {
         let dt: DateTime<Local> = Local
             .timestamp_opt(timestamp, 0)
             .single()
-            .unwrap_or_else(|| Local::now());
+            .unwrap_or_else(Local::now);
         dt.with_timezone(&Utc).timestamp()
     } else {
         let dt: DateTime<Utc> = Utc
@@ -274,7 +274,7 @@ mod tests {
     fn test_epoch_time() {
         let (secs, nanos) = epoch_time();
         assert!(secs > 1700000000);
-        assert!(nanos >= 0 && nanos < 1_000_000_000);
+        assert!((0..1_000_000_000).contains(&nanos));
     }
 
     #[test]

@@ -409,7 +409,7 @@ pub fn builtin_echoti(args: &[&str]) -> (i32, String) {
                 if n >= 1 && n <= params.len() {
                     let v = match &params[n - 1] {
                         TParmArg::Int(i) => TParmArg::Int(*i),
-                        TParmArg::Str(s) => TParmArg::Str(*s),
+                        TParmArg::Str(s) => TParmArg::Str(s),
                     };
                     stack.push(v);
                 }

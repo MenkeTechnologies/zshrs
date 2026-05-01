@@ -159,7 +159,7 @@ pub fn tcp_connect_timeout(
                 dns_str.to_socket_addrs().map(|a| a.collect());
             let _ = tx.send(result);
         })
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::other(e))?;
 
     let addrs = rx
         .recv_timeout(timeout)
@@ -306,8 +306,8 @@ pub fn resolve_host(host: &str) -> io::Result<IpAddr> {
 /// Reverse DNS lookup
 pub fn reverse_lookup(addr: &IpAddr) -> Option<String> {
     let socket_addr = SocketAddr::new(*addr, 0);
-    let hostname = dns_lookup_reverse(&socket_addr);
-    hostname
+
+    dns_lookup_reverse(&socket_addr)
 }
 
 fn dns_lookup_reverse(_addr: &SocketAddr) -> Option<String> {

@@ -240,10 +240,7 @@ pub fn shard_lock_path(paths: &CachePaths, source_root: &str, slug: &str) -> Pat
 
 /// Atomic-rename writer for the canonical-state shard. Same crash-safety
 /// guarantees as `write_shard` (tmp + fsync + rename).
-pub fn write_canonical_shard(
-    paths: &CachePaths,
-    shard: &CanonicalShard,
-) -> Result<PathBuf> {
+pub fn write_canonical_shard(paths: &CachePaths, shard: &CanonicalShard) -> Result<PathBuf> {
     let final_path = shard_path(paths, &shard.header.source_root, &shard.header.slug);
     let pid = std::process::id();
     let nanos = now_ns();
@@ -542,9 +539,11 @@ pub fn rebuild_index(paths: &CachePaths) -> Result<(PathBuf, u32)> {
     let bytes = rkyv::to_bytes::<_, 4096>(&index)
         .map_err(|e| DaemonError::other(format!("rkyv index serialize: {e}")))?;
     let final_path = paths.index_rkyv.clone();
-    let tmp_path = paths
-        .root
-        .join(format!("index.rkyv.tmp.{}.{}", std::process::id(), generation));
+    let tmp_path = paths.root.join(format!(
+        "index.rkyv.tmp.{}.{}",
+        std::process::id(),
+        generation
+    ));
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
@@ -700,7 +699,10 @@ mod tests {
         let err = MmappedShard::open_sensitive(&symlink_path).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("symbolic link") || msg.contains("symlink") || msg.contains("ELOOP") || msg.contains("loop"),
+            msg.contains("symbolic link")
+                || msg.contains("symlink")
+                || msg.contains("ELOOP")
+                || msg.contains("loop"),
             "expected symlink-related error, got: {}",
             msg
         );
@@ -728,7 +730,11 @@ mod tests {
         let idx = read_index(&paths).unwrap();
         assert_eq!(idx.entries.len(), 2);
         let slugs: Vec<&str> = idx.entries.iter().map(|e| e.slug.as_str()).collect();
-        assert!(slugs.contains(&"system"), "system slug missing: {:?}", slugs);
+        assert!(
+            slugs.contains(&"system"),
+            "system slug missing: {:?}",
+            slugs
+        );
         assert!(slugs.contains(&"zpwr"), "zpwr slug missing: {:?}", slugs);
         assert!(idx.generation > 0);
     }

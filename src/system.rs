@@ -457,7 +457,7 @@ pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
     };
 
     let lck = libc::flock {
-        l_type: lock_type as i16,
+        l_type: lock_type,
         l_whence: libc::SEEK_SET as i16,
         l_start: 0,
         l_len: 0,
@@ -500,7 +500,7 @@ pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
         }
     }
 
-    let cmd = if options.timeout.map_or(true, |t| t != 0.0) {
+    let cmd = if options.timeout != Some(0.0) {
         libc::F_SETLKW
     } else {
         libc::F_SETLK
@@ -532,7 +532,7 @@ pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
 #[cfg(unix)]
 pub fn funlock(fd: i32) -> Result<(), String> {
     let lck = libc::flock {
-        l_type: libc::F_UNLCK as i16,
+        l_type: libc::F_UNLCK,
         l_whence: libc::SEEK_SET as i16,
         l_start: 0,
         l_len: 0,

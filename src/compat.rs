@@ -127,9 +127,7 @@ pub fn zopenmax() -> i64 {
                         // __error(), Linux/BSD use __errno_location().
                         // std::io::Error::last_os_error() abstracts
                         // both via the same OS error code.
-                        let e = std::io::Error::last_os_error()
-                            .raw_os_error()
-                            .unwrap_or(0);
+                        let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
                         if e == libc::EBADF || e == libc::EINTR {
                             if e != libc::EINTR {
                                 i += 1;
@@ -142,7 +140,7 @@ pub fn zopenmax() -> i64 {
                 }
                 openmax = j;
             }
-            return openmax;
+            openmax
         }
     }
 
@@ -160,24 +158,13 @@ pub fn zgetcwd() -> Option<String> {
 }
 
 /// Get directory with additional metadata
+#[derive(Default)]
 pub struct DirSav {
     pub dirname: Option<String>,
     #[cfg(unix)]
     pub ino: u64,
     #[cfg(unix)]
     pub dev: u64,
-}
-
-impl Default for DirSav {
-    fn default() -> Self {
-        DirSav {
-            dirname: None,
-            #[cfg(unix)]
-            ino: 0,
-            #[cfg(unix)]
-            dev: 0,
-        }
-    }
 }
 
 /// Get current directory with optional metadata storage
@@ -311,7 +298,7 @@ pub fn gethostname() -> Option<String> {
 /// Check if a character is printable (ASCII safe version)
 pub fn isprint_safe(c: char) -> bool {
     let b = c as u32;
-    b >= 0x20 && b <= 0x7e
+    (0x20..=0x7e).contains(&b)
 }
 
 /// Unicode-aware character width
@@ -336,7 +323,7 @@ pub fn metafy(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
         let b = c as u32;
-        if b < 32 || (b >= 0x83 && b <= 0x9b) {
+        if b < 32 || (0x83..=0x9b).contains(&b) {
             result.push('\u{83}'); // Meta marker
             result.push(char::from_u32(b ^ 32).unwrap_or(c));
         } else {

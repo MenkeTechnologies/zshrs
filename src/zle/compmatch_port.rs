@@ -132,11 +132,11 @@ fn try_matcher(line: &str, word: &str, matcher: &CompMatcher) -> bool {
         line.contains(word)
     } else if matcher.flags.partial_word {
         // Match word parts: "fb" matches "foobar" at word boundaries
-        let mut li = line.chars().peekable();
+        let li = line.chars().peekable();
         let mut wi = word.chars();
         let mut wc = wi.next();
 
-        while let Some(lc) = li.next() {
+        for lc in li {
             if let Some(w) = wc {
                 if lc.eq_ignore_ascii_case(&w) {
                     wc = wi.next();
@@ -233,7 +233,7 @@ pub fn parse_matcher_spec(spec: &str) -> Vec<CompMatcher> {
         };
 
         if let Some((line_pat, word_pat)) = part.split_once('=') {
-            let line_pat = line_pat.split(':').last().unwrap_or("");
+            let line_pat = line_pat.split(':').next_back().unwrap_or("");
             matchers.push(CompMatcher {
                 line_pattern: line_pat.to_string(),
                 word_pattern: word_pat.to_string(),

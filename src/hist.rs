@@ -354,7 +354,7 @@ impl History {
                 let mut new = String::new();
                 let mut in_new = false;
 
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c == '^' {
                         if in_new {
                             break;
@@ -473,7 +473,7 @@ impl History {
 }
 
 /// Save history context (from hist.c hist_context_save/restore)
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct HistStack {
     pub histactive: u32,
     pub histdone: i32,
@@ -484,22 +484,6 @@ pub struct HistStack {
     pub hlinesz: usize,
     pub defev: i64,
     pub hist_keep_comment: bool,
-}
-
-impl Default for HistStack {
-    fn default() -> Self {
-        HistStack {
-            histactive: 0,
-            histdone: 0,
-            stophist: 0,
-            chline: None,
-            hptr: 0,
-            chwords: Vec::new(),
-            hlinesz: 0,
-            defev: 0,
-            hist_keep_comment: false,
-        }
-    }
 }
 
 /// History done flags (from hist.c)
@@ -570,7 +554,7 @@ pub fn remtpath(s: &str, count: i32) -> String {
     let result: String = parts
         .iter()
         .take(count as usize)
-        .map(|s| *s)
+        .copied()
         .collect::<Vec<&str>>()
         .join("/");
 
@@ -607,7 +591,7 @@ pub fn remlpaths(s: &str, count: i32) -> String {
         .rev()
         .take(count as usize)
         .rev()
-        .map(|s| *s)
+        .copied()
         .collect::<Vec<&str>>()
         .join("/")
 }
@@ -974,8 +958,7 @@ impl History {
             }
 
             // Check for extended history format: : <timestamp>:0;<command>
-            if line.starts_with(": ") {
-                let rest = &line[2..];
+            if let Some(rest) = line.strip_prefix(": ") {
                 if let Some(semi) = rest.find(';') {
                     let time_part = &rest[..semi];
                     let cmd_part = &rest[semi + 1..];
@@ -1749,8 +1732,7 @@ pub fn readhistline(line: &str) -> Option<HistEntry> {
         return None;
     }
     // Extended history format: ": timestamp:duration;command"
-    if line.starts_with(": ") {
-        let rest = &line[2..];
+    if let Some(rest) = line.strip_prefix(": ") {
         if let Some(semi) = rest.find(';') {
             let meta = &rest[..semi];
             let cmd = &rest[semi + 1..];

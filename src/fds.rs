@@ -235,7 +235,7 @@ pub enum FdType {
 /// Move file descriptor to >= 10 to keep low fds free for user redirection
 /// Port from zsh/Src/utils.c movefd() lines 1980-2012
 pub fn movefd(fd: RawFd) -> RawFd {
-    if fd < 0 || fd >= FIRST_HIGH_FD {
+    if !(0..FIRST_HIGH_FD).contains(&fd) {
         return fd;
     }
 

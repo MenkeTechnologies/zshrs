@@ -214,7 +214,7 @@ pub fn list_lines(matches: &[String], columns: usize) -> usize {
     if columns == 0 {
         return matches.len();
     }
-    (matches.len() + columns - 1) / columns
+    matches.len().div_ceil(columns)
 }
 
 /// Check if listing should be skipped (from compresult.c skipnolist)

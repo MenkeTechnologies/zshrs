@@ -475,15 +475,12 @@ impl Zle {
             }
         }
 
-        match std::str::from_utf8(&bytes) {
-            Ok(s) => {
-                if let Some(c) = s.chars().next() {
-                    self.lastchar_wide = c as ZleInt;
-                    self.lastchar_wide_valid = true;
-                    return Some(c);
-                }
+        if let Ok(s) = std::str::from_utf8(&bytes) {
+            if let Some(c) = s.chars().next() {
+                self.lastchar_wide = c as ZleInt;
+                self.lastchar_wide_valid = true;
+                return Some(c);
             }
-            Err(_) => {}
         }
 
         self.lastchar_wide_valid = false;

@@ -68,7 +68,7 @@ pub fn color_256_to_16(color: u8) -> u8 {
     }
 
     if color >= 232 {
-        let gray = ((color - 232) * 255 / 23) as u8;
+        let gray = (color - 232) * 255 / 23;
         return nearest_color_16(gray, gray, gray);
     }
 

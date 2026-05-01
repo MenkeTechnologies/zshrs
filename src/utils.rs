@@ -444,7 +444,7 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
 
         QuoteType::SingleOptional => {
             // Only add quotes where necessary (lines 6314-6363)
-            let needs_quoting = s.chars().any(|c| is_special(c));
+            let needs_quoting = s.chars().any(is_special);
             if !needs_quoting {
                 return s.to_string();
             }
@@ -622,9 +622,7 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
 /// whitespace as a single separator.
 pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     if allownull {
-        s.split(|c: char| c == ' ' || c == '\t' || c == '\n')
-            .map(|p| p.to_string())
-            .collect()
+        s.split([' ', '\t', '\n']).map(|p| p.to_string()).collect()
     } else {
         s.split_whitespace().map(|p| p.to_string()).collect()
     }
@@ -873,7 +871,7 @@ pub fn metafy(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
         let b = c as u32;
-        if b < 32 || (b >= 0x83 && b <= 0x9b) {
+        if b < 32 || (0x83..=0x9b).contains(&b) {
             result.push(META_CHAR);
             result.push(char::from_u32((c as u8 ^ 32) as u32).unwrap_or(c));
         } else {
@@ -2260,7 +2258,7 @@ pub fn getkeystring(s: &str) -> (String, usize) {
                 oct.push(c);
                 for _ in 0..2 {
                     if let Some(&c) = chars.peek() {
-                        if c >= '0' && c <= '7' {
+                        if ('0'..='7').contains(&c) {
                             oct.push(chars.next().unwrap());
                             consumed += 1;
                         } else {
@@ -2336,7 +2334,7 @@ pub fn is_niceformat(s: &str) -> bool {
 
 /// Check for special characters that need quoting (from utils.c hasspecial)
 pub fn hasspecial(s: &str) -> bool {
-    s.chars().any(|c| is_special(c))
+    s.chars().any(is_special)
 }
 
 /// Print/format time in HH:MM:SS (from utils.c printhhmmss)
@@ -3311,7 +3309,7 @@ pub fn addunprintable(c: char) -> String {
         if (c as u8) < 32 {
             format!("^{}", (c as u8 + 64) as char)
         } else {
-            format!("^?")
+            "^?".to_string()
         }
     } else if !c.is_ascii() {
         format!("\\u{:04x}", c as u32)

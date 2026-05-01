@@ -172,7 +172,7 @@ impl FtpSession {
             .spawn(move || {
                 let _ = tx.send(dns.to_socket_addrs().map(|a| a.collect::<Vec<_>>()));
             })
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(|e| io::Error::other(e))?;
 
         let addrs = rx
             .recv_timeout(dns_timeout)
@@ -330,7 +330,7 @@ impl FtpSession {
         let resp = self.read_response()?;
 
         if !resp.is_positive_completion() {
-            return Err(io::Error::new(io::ErrorKind::Other, resp.message));
+            return Err(io::Error::other(resp.message));
         }
 
         let (ip, port) = parse_pasv_response(&resp.message)?;
@@ -611,7 +611,7 @@ pub fn builtin_zftp(args: &[&str], zftp: &mut Zftp) -> (i32, String) {
             }
 
             let user = args[1];
-            let pass = args.get(2).map(|s| *s);
+            let pass = args.get(2).copied();
 
             let sess = match zftp.get_session_mut(None) {
                 Some(s) => s,
@@ -689,7 +689,7 @@ pub fn builtin_zftp(args: &[&str], zftp: &mut Zftp) -> (i32, String) {
         }
 
         "dir" | "ls" => {
-            let path = args.get(1).map(|s| *s);
+            let path = args.get(1).copied();
             let use_nlst = args[0] == "ls";
 
             let sess = match zftp.get_session_mut(None) {

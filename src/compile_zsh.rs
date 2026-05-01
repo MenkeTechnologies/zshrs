@@ -59,6 +59,12 @@ pub struct ZshCompiler {
     pub lineno_offset: u64,
 }
 
+impl Default for ZshCompiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZshCompiler {
     pub fn new() -> Self {
         Self {
@@ -164,7 +170,7 @@ impl ZshCompiler {
         let mut ops: Vec<SublistOp> = Vec::new();
         let mut next_link = sublist.next.as_ref();
         while let Some((op, next_sublist)) = next_link {
-            ops.push(op.clone());
+            ops.push(*op);
             pipes.push(&next_sublist.pipe);
             next_link = next_sublist.next.as_ref();
         }
@@ -288,7 +294,11 @@ impl ZshCompiler {
                     0,
                 );
             }
-            ParamModifierKind::Strip { op, pattern, had_at } => {
+            ParamModifierKind::Strip {
+                op,
+                pattern,
+                had_at,
+            } => {
                 // Pass dq_context_depth as an additional arg so the
                 // runtime knows whether to join arrays before
                 // stripping (DQ form: `"${a%%pat}"`) or strip
@@ -310,7 +320,12 @@ impl ZshCompiler {
                 self.builder
                     .emit(Op::CallBuiltin(crate::exec::BUILTIN_PARAM_STRIP, 4), 0);
             }
-            ParamModifierKind::Replace { op, pattern, repl, had_at } => {
+            ParamModifierKind::Replace {
+                op,
+                pattern,
+                repl,
+                had_at,
+            } => {
                 // Pass dq_context_depth as a 5th arg so the runtime
                 // distinguishes DQ-wrapped (join-then-replace) from
                 // unquoted (per-element replace on arrays).
@@ -1221,11 +1236,9 @@ impl ZshCompiler {
                         && first
                             .map(|c| c == '_' || c.is_ascii_alphabetic())
                             .unwrap_or(false)
-                        && bare
-                            .chars()
-                            .all(|c| c == '_' || c.is_ascii_alphanumeric());
-                    let is_positional = !bare.is_empty()
-                        && bare.chars().all(|c| c.is_ascii_digit());
+                        && bare.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+                    let is_positional =
+                        !bare.is_empty() && bare.chars().all(|c| c.is_ascii_digit());
                     if is_ident || is_positional {
                         // Push the braced form `${#NAME[idx]}` and
                         // hand off to BUILTIN_EXPAND_TEXT mode 4
@@ -1237,13 +1250,8 @@ impl ZshCompiler {
                         let idx = self.builder.add_constant(Value::str(braced));
                         self.builder.emit(Op::LoadConst(idx), 0);
                         self.builder.emit(Op::LoadInt(4), 0);
-                        self.builder.emit(
-                            Op::CallBuiltin(
-                                crate::exec::BUILTIN_EXPAND_TEXT,
-                                2,
-                            ),
-                            0,
-                        );
+                        self.builder
+                            .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
                         return;
                     }
                 }
@@ -1516,9 +1524,7 @@ impl ZshCompiler {
                 // segments-loop above. Without this, the strip
                 // fast path passed dq=0 to BUILTIN_PARAM_STRIP
                 // even inside `"..."`.
-                let raw_dq = s.starts_with('\u{9e}')
-                    && s.ends_with('\u{9e}')
-                    && s.len() >= 2;
+                let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
                 if raw_dq {
                     self.dq_context_depth += 1;
                 }
@@ -2109,8 +2115,7 @@ impl ZshCompiler {
             || untoked_cond.contains('$')
             || untoked_step.contains(',')
             || untoked_step.contains('$');
-        let route_through_eval =
-            move |_s: &str| -> bool { needs_eval_global };
+        let route_through_eval = move |_s: &str| -> bool { needs_eval_global };
         let emit_arith = |this: &mut Self, s: &str| {
             let untoked = crate::lexer::untokenize(s);
             if route_through_eval(&untoked) {
@@ -2595,10 +2600,7 @@ impl ZshCompiler {
                 // File modified since last accessed (mtime > atime).
                 // zsh: used to gate mailbox-style "fresh content" checks.
                 self.builder.emit(
-                    Op::CallBuiltin(
-                        crate::exec::BUILTIN_FILE_MODIFIED_SINCE_ACCESS,
-                        1,
-                    ),
+                    Op::CallBuiltin(crate::exec::BUILTIN_FILE_MODIFIED_SINCE_ACCESS, 1),
                     0,
                 );
                 return;
@@ -2944,7 +2946,7 @@ fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
             ..raw
                 .char_indices()
                 .rev()
-                .nth(0)
+                .next()
                 .map(|(i, _)| i)
                 .unwrap_or(raw.len())];
         if !inner.contains('\u{9e}') {
@@ -3458,8 +3460,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
             // Only reject if `${…}` shows up in non-substring shapes
             // (no leading `:`-then-digit/`$`/`-`/`(` pattern).
             let after_first_trim = after_first.trim_start_matches(' ');
-            let is_substring_shape =
-                matches!(after_first_trim.chars().next(),
+            let is_substring_shape = matches!(after_first_trim.chars().next(),
                     Some(c) if c.is_ascii_digit()
                         || c == '-' || c == '$' || c == '(');
             if !is_substring_shape && off_section.contains("${") {
@@ -3612,8 +3613,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // `${var:offset[:length]}` substring. The post-`:` text must lead
     // with a digit, `-`, single space (negative-offset disambiguator),
     // OR `$`/`(` (variable / arith expression — runtime-evaluated).
-    if rest.starts_with(':') {
-        let after = &rest[1..];
+    if let Some(after) = rest.strip_prefix(':') {
         let trimmed = after.trim_start_matches(' ');
         let first_ch = trimmed.chars().next();
         if matches!(first_ch, Some(c) if c.is_ascii_digit() || c == '-' || c == '$' || c == '(') {
@@ -4198,8 +4198,7 @@ fn array_splice_ref(s: &str) -> Option<&str> {
         if let Some(rest) = s.strip_suffix(sub) {
             if let Some(name) = rest.strip_prefix("${") {
                 if !name.is_empty()
-                    && (name.chars().next().unwrap() == '_'
-                        || name.chars().next().unwrap().is_ascii_alphabetic())
+                    && (name.starts_with('_') || name.chars().next().unwrap().is_ascii_alphabetic())
                     && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
                 {
                     return Some(name);
@@ -4214,8 +4213,7 @@ fn array_splice_ref(s: &str) -> Option<&str> {
         if let Some(rest) = s.strip_suffix(sub) {
             if let Some(name) = rest.strip_prefix('$') {
                 if !name.is_empty()
-                    && (name.chars().next().unwrap() == '_'
-                        || name.chars().next().unwrap().is_ascii_alphabetic())
+                    && (name.starts_with('_') || name.chars().next().unwrap().is_ascii_alphabetic())
                     && name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
                 {
                     return Some(name);
@@ -4292,10 +4290,10 @@ fn braced_var_ref(s: &str) -> Option<&str> {
         return Some(inner);
     }
     // Plain identifier — reject anything with modifier syntax.
-    if first == '_' || first.is_ascii_alphabetic() {
-        if inner.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
-            return Some(inner);
-        }
+    if (first == '_' || first.is_ascii_alphabetic())
+        && inner.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+    {
+        return Some(inner);
     }
     None
 }
@@ -4324,14 +4322,13 @@ fn parse_forced_split_brace(s: &str) -> Option<(bool, &str, char)> {
     if rest.is_empty() {
         return None;
     }
-    let (name_part, splice) =
-        if let Some(stripped) = rest.strip_suffix("[@]") {
-            (stripped, '@')
-        } else if let Some(stripped) = rest.strip_suffix("[*]") {
-            (stripped, '*')
-        } else {
-            (rest, ' ')
-        };
+    let (name_part, splice) = if let Some(stripped) = rest.strip_suffix("[@]") {
+        (stripped, '@')
+    } else if let Some(stripped) = rest.strip_suffix("[*]") {
+        (stripped, '*')
+    } else {
+        (rest, ' ')
+    };
     if name_part.is_empty() {
         return None;
     }
@@ -4348,10 +4345,12 @@ fn parse_forced_split_brace(s: &str) -> Option<(bool, &str, char)> {
         return Some((force_split, name_part, splice));
     }
     // Plain identifier.
-    if first == '_' || first.is_ascii_alphabetic() {
-        if name_part.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
-            return Some((force_split, name_part, splice));
-        }
+    if (first == '_' || first.is_ascii_alphabetic())
+        && name_part
+            .chars()
+            .all(|c| c == '_' || c.is_ascii_alphanumeric())
+    {
+        return Some((force_split, name_part, splice));
     }
     None
 }
@@ -4383,10 +4382,10 @@ fn bare_var_ref(s: &str) -> Option<&str> {
         return Some(rest);
     }
     // Plain identifier: [_A-Za-z][_A-Za-z0-9]*
-    if first == '_' || first.is_ascii_alphabetic() {
-        if rest.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
-            return Some(rest);
-        }
+    if (first == '_' || first.is_ascii_alphabetic())
+        && rest.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+    {
+        return Some(rest);
     }
     None
 }
@@ -4582,7 +4581,7 @@ fn strip_quote_markers(s: &str) -> String {
 /// site.
 fn base64_encode(bytes: &[u8]) -> String {
     const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(((bytes.len() + 2) / 3) * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     let mut i = 0;
     while i + 3 <= bytes.len() {
         let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8) | (bytes[i + 2] as u32);

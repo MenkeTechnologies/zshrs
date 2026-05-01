@@ -150,13 +150,11 @@ pub fn mv(source: &Path, target: &Path, options: &MoveOptions) -> Result<(), Str
         target.to_path_buf()
     };
 
-    if target_path.exists() && !options.force && !options.interactive {
-        if target_path.is_dir() {
-            return Err(format!(
-                "'{}': cannot overwrite directory",
-                target_path.display()
-            ));
-        }
+    if target_path.exists() && !options.force && !options.interactive && target_path.is_dir() {
+        return Err(format!(
+            "'{}': cannot overwrite directory",
+            target_path.display()
+        ));
     }
 
     fs::rename(source, &target_path).map_err(|e| {

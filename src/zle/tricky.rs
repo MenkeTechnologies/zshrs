@@ -317,8 +317,7 @@ impl Zle {
         }
 
         // Check for variable expansion
-        if word.starts_with('$') {
-            let var_name = &word[1..];
+        if let Some(var_name) = word.strip_prefix('$') {
             if let Ok(val) = std::env::var(var_name) {
                 results.push(val);
             }
@@ -386,10 +385,8 @@ impl Zle {
                     if let Ok(entries) = std::fs::read_dir(dir) {
                         for entry in entries.flatten() {
                             let name = entry.file_name().to_string_lossy().to_string();
-                            if name.starts_with(prefix) {
-                                if !completions.contains(&name) {
-                                    completions.push(name);
-                                }
+                            if name.starts_with(prefix) && !completions.contains(&name) {
+                                completions.push(name);
                             }
                         }
                     }

@@ -178,14 +178,28 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let filter = args.get("filter").and_then(Value::as_str).map(str::to_string);
-    let range = args.get("range").and_then(Value::as_str).map(str::to_string);
+    let filter = args
+        .get("filter")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let range = args
+        .get("range")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let all_flag = args.get("all").and_then(Value::as_bool).unwrap_or(false);
 
     // Targets that honor filter/range/all natively, per DAEMON.md examples
     // (lines 552-555: command_hash --filter, history --filter --range,
     // subscriptions --all, plugins --filter).
-    if let Some(special) = render_filtered(state, &target, &format, filter.as_deref(), range.as_deref(), all_flag, include_sensitive) {
+    if let Some(special) = render_filtered(
+        state,
+        &target,
+        &format,
+        filter.as_deref(),
+        range.as_deref(),
+        all_flag,
+        include_sensitive,
+    ) {
         let body = special?;
         return Ok(json!({
             "target": target,
@@ -259,8 +273,10 @@ fn render_filtered(
                 Ok(r) => r,
                 Err(e) => return Some(Err(ErrPayload::new("catalog", e.to_string()))),
             };
-            let filtered: Vec<&(String, String)> =
-                rows.iter().filter(|(name, _)| glob_re.is_match(name)).collect();
+            let filtered: Vec<&(String, String)> = rows
+                .iter()
+                .filter(|(name, _)| glob_re.is_match(name))
+                .collect();
             let body = match format {
                 "json" => {
                     let arr: Vec<_> = filtered
@@ -285,11 +301,15 @@ fn render_filtered(
                 return None;
             }
             let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-            let from_ns = range.and_then(parse_range).map(|secs| now_ns - secs * 1_000_000_000);
+            let from_ns = range
+                .and_then(parse_range)
+                .map(|secs| now_ns - secs * 1_000_000_000);
             let limit: i64 = 10_000;
-            let res = state.with_history(|conn| -> rusqlite::Result<Vec<super::history::HistoryRow>> {
-                super::history::query(conn, filter, "fts", None, from_ns, None, limit, true)
-            });
+            let res = state.with_history(
+                |conn| -> rusqlite::Result<Vec<super::history::HistoryRow>> {
+                    super::history::query(conn, filter, "fts", None, from_ns, None, limit, true)
+                },
+            );
             let rows = match res {
                 Ok(r) => r,
                 Err(e) => return Some(Err(ErrPayload::new("history_query", e.to_string()))),
@@ -419,13 +439,13 @@ fn parse_range(s: &str) -> Option<i64> {
 /// _postpatcomps) so a single `eval` call rehydrates the full completion
 /// state too.
 const ALL_STATE_TARGETS: &[&str] = &[
-    "setopt",     // option mask first; downstream behavior depends on this
-    "zmodload",   // modules before features that need them
-    "path",       // PATH before command_hash + functions
-    "fpath",      // FPATH before autoload_table
+    "setopt",   // option mask first; downstream behavior depends on this
+    "zmodload", // modules before features that need them
+    "path",     // PATH before command_hash + functions
+    "fpath",    // FPATH before autoload_table
     "manpath",
     "named_dir",
-    "env",        // exported env before params
+    "env", // exported env before params
     "params",
     "zstyle",
     "bindkey",
@@ -433,12 +453,12 @@ const ALL_STATE_TARGETS: &[&str] = &[
     "command_hash",
     "autoload_table",
     "functions",
-    "_comps",     // assoc-array hashes — restored after compdef so the
-    "_services",  //   `compdef X Y` records above are reflected here too;
-    "_patcomps",  //   if the user only edits the assoc directly, this
-    "_postpatcomps",  // restores the post-edit state.
+    "_comps",        // assoc-array hashes — restored after compdef so the
+    "_services",     //   `compdef X Y` records above are reflected here too;
+    "_patcomps",     //   if the user only edits the assoc directly, this
+    "_postpatcomps", // restores the post-edit state.
     "_describe_handlers",
-    "aliases",    // alias is last so it can shadow function/builtin
+    "aliases", // alias is last so it can shadow function/builtin
     "galiases",
     "saliases",
 ];
@@ -521,9 +541,11 @@ fn render_zsh_histfile(
         ));
     }
     let rows = state
-        .with_history(|conn| -> rusqlite::Result<Vec<super::history::HistoryRow>> {
-            super::history::query(conn, None, "fts", None, None, None, 1_000_000, false)
-        })
+        .with_history(
+            |conn| -> rusqlite::Result<Vec<super::history::HistoryRow>> {
+                super::history::query(conn, None, "fts", None, None, None, 1_000_000, false)
+            },
+        )
         .map_err(|e| ErrPayload::new("history_query", e.to_string()))?;
     let mut out = String::new();
     for r in &rows {
@@ -861,8 +883,7 @@ fn render_sh(
                 out.push_str("# autoload table from $FPATH walk (Pass 3)\n");
             }
             // Single autoload -Uz with all names (zsh accepts batched form).
-            let mut names: Vec<String> =
-                entries.iter().map(|(n, _)| n.clone()).collect();
+            let mut names: Vec<String> = entries.iter().map(|(n, _)| n.clone()).collect();
             names.extend(completions.iter().map(|(n, _)| n.clone()));
             names.sort();
             names.dedup();
@@ -1086,7 +1107,8 @@ fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String,
                     "status": "not_built",
                     "path": state.paths.index_rkyv.display().to_string(),
                     "note": "run `zcache rebuild` or `zcache first-init` to populate",
-                }).to_string());
+                })
+                .to_string());
             }
             let payload = json!({
                 "magic": format!("{:#x}", idx.magic),
@@ -1208,7 +1230,8 @@ fn render_csv(state: &DaemonState, target: &str) -> std::result::Result<String, 
                     super::history::query(conn, None, "match", None, None, None, 100_000, true)
                 })
                 .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?;
-            let mut out = String::from("id,line,ts_ns,exit_code,cwd,duration_ns,sessid,hostname,shell_id\n");
+            let mut out =
+                String::from("id,line,ts_ns,exit_code,cwd,duration_ns,sessid,hostname,shell_id\n");
             for r in rows {
                 out.push_str(&format!(
                     "{},{},{},{},{},{},{},{},{}\n",
@@ -1258,7 +1281,9 @@ fn render_csv(state: &DaemonState, target: &str) -> std::result::Result<String, 
             Ok(out)
         }
         "shells" => {
-            let mut out = String::from("client_id,session_id,pid,tty,cwd,argv0,tags,login_time,uptime_secs\n");
+            let mut out = String::from(
+                "client_id,session_id,pid,tty,cwd,argv0,tags,login_time,uptime_secs\n",
+            );
             for s in state.snapshot_sessions() {
                 out.push_str(&format!(
                     "{},{},{},{},{},{},{},{},{}\n",
@@ -1276,27 +1301,32 @@ fn render_csv(state: &DaemonState, target: &str) -> std::result::Result<String, 
             Ok(out)
         }
         "plugins" => {
-            let rows: Vec<(String, Option<String>, Option<String>, Option<i64>, Option<bool>)> =
-                state
-                    .with_catalog(|conn| {
-                        let mut stmt = conn.prepare(
-                            "SELECT name, version, source, installed_at, enabled FROM plugins \
+            let rows: Vec<(
+                String,
+                Option<String>,
+                Option<String>,
+                Option<i64>,
+                Option<bool>,
+            )> = state
+                .with_catalog(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT name, version, source, installed_at, enabled FROM plugins \
                              ORDER BY name",
-                        )?;
-                        let rows = stmt
-                            .query_map([], |r| {
-                                Ok((
-                                    r.get::<_, String>(0)?,
-                                    r.get::<_, Option<String>>(1)?,
-                                    r.get::<_, Option<String>>(2)?,
-                                    r.get::<_, Option<i64>>(3)?,
-                                    r.get::<_, Option<bool>>(4)?,
-                                ))
-                            })?
-                            .collect::<rusqlite::Result<Vec<_>>>()?;
-                        Ok::<_, rusqlite::Error>(rows)
-                    })
-                    .map_err(ErrPayload::from)?;
+                    )?;
+                    let rows = stmt
+                        .query_map([], |r| {
+                            Ok((
+                                r.get::<_, String>(0)?,
+                                r.get::<_, Option<String>>(1)?,
+                                r.get::<_, Option<String>>(2)?,
+                                r.get::<_, Option<i64>>(3)?,
+                                r.get::<_, Option<bool>>(4)?,
+                            ))
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    Ok::<_, rusqlite::Error>(rows)
+                })
+                .map_err(ErrPayload::from)?;
             let mut out = String::from("name,version,source,installed_at,enabled\n");
             for (n, v, s, t, e) in rows {
                 out.push_str(&format!(
@@ -1501,8 +1531,7 @@ fn render_native(state: &DaemonState, target: &str) -> std::result::Result<Strin
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
-    const ALPHA: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0];
@@ -1666,9 +1695,8 @@ fn render_text(state: &DaemonState, target: &str) -> std::result::Result<String,
     // renderer's data path and pretty-print it as text. Avoids reaching the
     // canonical-fall-through which would print "0 entries" for these.
     match target {
-        "history" | "index" | "theme" | "shells" | "subscriptions"
-        | "daemon_state" | "entry_stats" | "plugins" | "compiled_files"
-        | "script" | "sourced" => {
+        "history" | "index" | "theme" | "shells" | "subscriptions" | "daemon_state"
+        | "entry_stats" | "plugins" | "compiled_files" | "script" | "sourced" => {
             let json_body = render_json(state, target)?;
             return Ok(json_body);
         }

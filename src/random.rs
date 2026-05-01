@@ -277,10 +277,10 @@ mod tests {
     #[test]
     fn test_zrand_int() {
         let r = zrand_int(Some(100), Some(50), false).unwrap();
-        assert!(r >= 50 && r < 100);
+        assert!((50..100).contains(&r));
 
         let r = zrand_int(Some(100), Some(50), true).unwrap();
-        assert!(r >= 50 && r <= 100);
+        assert!((50..=100).contains(&r));
     }
 
     #[test]
@@ -299,7 +299,7 @@ mod tests {
     fn test_zrand_float() {
         for _ in 0..100 {
             let r = zrand_float();
-            assert!(r >= 0.0 && r < 1.0);
+            assert!((0.0..1.0).contains(&r));
         }
     }
 
@@ -307,7 +307,7 @@ mod tests {
     fn test_random_real() {
         for _ in 0..100 {
             let r = random_real();
-            assert!(r >= 0.0 && r < 1.0);
+            assert!((0.0..1.0).contains(&r));
         }
     }
 
@@ -315,7 +315,7 @@ mod tests {
     fn test_random_range() {
         for _ in 0..100 {
             let r = random_range(10, 20);
-            assert!(r >= 10 && r <= 20);
+            assert!((10..=20).contains(&r));
         }
     }
 
@@ -325,7 +325,7 @@ mod tests {
         let original = arr.clone();
         shuffle(&mut arr);
         arr.sort();
-        assert_eq!(arr, original.iter().copied().collect::<Vec<_>>());
+        assert_eq!(arr, original.to_vec());
     }
 
     #[test]

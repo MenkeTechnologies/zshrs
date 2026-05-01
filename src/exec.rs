@@ -250,11 +250,7 @@ fn array_subscript_flag(arr: &[String], flags: &str, pat: &str) -> fusevm::Value
 /// mirror `array_subscript_flag` but `r`/`R` search values, while
 /// `i`/`I` return matching keys (zsh `i` flag for assoc returns the
 /// matching key, not a numeric index).
-fn assoc_subscript_flag(
-    map: &IndexMap<String, String>,
-    flags: &str,
-    pat: &str,
-) -> fusevm::Value {
+fn assoc_subscript_flag(map: &IndexMap<String, String>, flags: &str, pat: &str) -> fusevm::Value {
     use fusevm::Value;
     let exact = flags.contains('e');
     // zsh subst.c: on assoc, `(i)`/`(I)` search KEYS; `(r)`/`(R)`
@@ -464,8 +460,8 @@ fn parse_numeric_range<I: Iterator<Item = char> + Clone>(
     // Speculative scan into a buffer; only commit (advance the real
     // iterator) on success.
     let mut buf = String::new();
-    let mut peek_iter = chars.clone();
-    while let Some(c) = peek_iter.next() {
+    let peek_iter = chars.clone();
+    for c in peek_iter {
         buf.push(c);
         if c == '>' {
             break;
@@ -527,7 +523,7 @@ fn ksh_extglob_body_to_regex(body: &str) -> String {
             '?' => out.push('.'),
             '[' => {
                 out.push('[');
-                while let Some(cc) = chars.next() {
+                for cc in chars.by_ref() {
                     if cc == ']' {
                         out.push(']');
                         break;
@@ -719,12 +715,7 @@ fn expand_glob_alternation(pat: &str) -> Option<Vec<String>> {
                                 }
                                 k += 1;
                             }
-                            alts.push(format!(
-                                "{}{}{}",
-                                prefix,
-                                &body[last..],
-                                suffix
-                            ));
+                            alts.push(format!("{}{}{}", prefix, &body[last..], suffix));
                             return Some(alts);
                         }
                     }
@@ -808,7 +799,11 @@ fn strip_match_op(v: &str, op: u8, pattern: &str, m_flag: bool) -> String {
                 }
                 let prefix = &v[..i];
                 if ShellExecutor::glob_match_static(prefix, pattern) {
-                    return if m_flag { v[..i].to_string() } else { v[i..].to_string() };
+                    return if m_flag {
+                        v[..i].to_string()
+                    } else {
+                        v[i..].to_string()
+                    };
                 }
             }
             no_match()
@@ -822,7 +817,11 @@ fn strip_match_op(v: &str, op: u8, pattern: &str, m_flag: bool) -> String {
                 }
                 let prefix = &v[..i];
                 if ShellExecutor::glob_match_static(prefix, pattern) {
-                    return if m_flag { v[..i].to_string() } else { v[i..].to_string() };
+                    return if m_flag {
+                        v[..i].to_string()
+                    } else {
+                        v[i..].to_string()
+                    };
                 }
             }
             no_match()
@@ -836,7 +835,11 @@ fn strip_match_op(v: &str, op: u8, pattern: &str, m_flag: bool) -> String {
                 }
                 let suffix = &v[i..];
                 if ShellExecutor::glob_match_static(suffix, pattern) {
-                    return if m_flag { v[i..].to_string() } else { v[..i].to_string() };
+                    return if m_flag {
+                        v[i..].to_string()
+                    } else {
+                        v[..i].to_string()
+                    };
                 }
             }
             no_match()
@@ -850,7 +853,11 @@ fn strip_match_op(v: &str, op: u8, pattern: &str, m_flag: bool) -> String {
                 }
                 let suffix = &v[i..];
                 if ShellExecutor::glob_match_static(suffix, pattern) {
-                    return if m_flag { v[i..].to_string() } else { v[..i].to_string() };
+                    return if m_flag {
+                        v[i..].to_string()
+                    } else {
+                        v[..i].to_string()
+                    };
                 }
             }
             no_match()
@@ -1912,8 +1919,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             pipestatus
                 .iter()
                 .copied()
-                .filter(|&s| s != 0)
-                .next_back()
+                .rfind(|&s| s != 0)
                 .or_else(|| pipestatus.last().copied())
                 .unwrap_or(0)
         } else {
@@ -2037,10 +2043,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 // pairs for associative array` exit 1, no
                 // assignment. zshrs's `if let Some(v) = it.next()`
                 // silently dropped the orphaned key.
-                if values.len() % 2 != 0 {
-                    eprintln!(
-                        "zshrs:1: bad set of key/value pairs for associative array"
-                    );
+                if !values.len().is_multiple_of(2) {
+                    eprintln!("zshrs:1: bad set of key/value pairs for associative array");
                     return true;
                 }
                 let mut map: IndexMap<String, String> = IndexMap::new();
@@ -2263,7 +2267,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 fw = (term_width.saturating_sub(1)) / fct;
             }
             // loop.c:374 — colsz = (ct + fct - 1) / fct.
-            let colsz = (ct + fct - 1) / fct;
+            let colsz = ct.div_ceil(fct);
             // loop.c:375-395 — for each row t1, walk down columns.
             for t1 in 0..colsz {
                 let mut ap_idx = t1;
@@ -2670,13 +2674,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // magic_assoc path.
                     let known = matches!(
                         idx,
-                        "main"
-                            | "emacs"
-                            | "viins"
-                            | "vicmd"
-                            | "isearch"
-                            | "command"
-                            | "menuselect"
+                        "main" | "emacs" | "viins" | "vicmd" | "isearch" | "command" | "menuselect"
                     );
                     if known {
                         Some(Value::str("1"))
@@ -2736,7 +2734,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         ));
                     }
                     let val = crate::langinfo::get_langinfo(idx).unwrap_or_default();
-                    return Some(Value::str(val));
+                    Some(Value::str(val))
                 }
                 // `.zle.esc` and `.zle.sgr` — port of zsh/hlgroup
                 // module (src/zsh/Src/Modules/hlgroup.c:81-165).
@@ -2907,8 +2905,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         if let Some((flags, pat)) = parse_subscript_flags(&idx) {
                             if flags.contains('w') {
                                 if let Ok(n) = pat.parse::<i64>() {
-                                    let words: Vec<&str> =
-                                        scalar.split_whitespace().collect();
+                                    let words: Vec<&str> = scalar.split_whitespace().collect();
                                     let len = words.len() as i64;
                                     let i = if n > 0 {
                                         (n - 1) as usize
@@ -2922,10 +2919,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                         return Value::str("");
                                     };
                                     return Value::str(
-                                        words
-                                            .get(i)
-                                            .map(|s| s.to_string())
-                                            .unwrap_or_default(),
+                                        words.get(i).map(|s| s.to_string()).unwrap_or_default(),
                                     );
                                 }
                             }
@@ -2940,9 +2934,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             // through to char slicing.
                             if flags.starts_with('s') {
                                 if let Ok(i) = pat.parse::<i64>() {
-                                    return Value::str(
-                                        slice_scalar(&scalar, i, i),
-                                    );
+                                    return Value::str(slice_scalar(&scalar, i, i));
                                 }
                             }
                         }
@@ -3098,7 +3090,10 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // C semantics rely on left-to-right state, but `(ps:..:)` is
         // by far the dominant idiom and a position-aware pre-scan is
         // the simplest faithful match.
-        let print_escapes = chars.iter().take_while(|&&c| c != 's' && c != 'j' && c != 'l' && c != 'r').any(|&c| c == 'p');
+        let print_escapes = chars
+            .iter()
+            .take_while(|&&c| c != 's' && c != 'j' && c != 'l' && c != 'r')
+            .any(|&c| c == 'p');
         // print_escape_str — interpret \n, \t, \r, \\, \xNN, \NNN
         // (octal) per zsh's untok_and_escape behavior. Returns the
         // decoded string. Used inline below when print_escapes is set.
@@ -3191,7 +3186,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         // skip the error message (matches zsh's
                         // observed silent behavior under -f -c) and
                         // mirror the low-byte fallback.
-                        if n < 0 || n > 0x10FFFF {
+                        if !(0..=0x10FFFF).contains(&n) {
                             // Truncated cast: low 8 bits as Latin-1
                             // byte (zsh's `%c` sprintf on `(int)ires`).
                             let byte = (n as i32 as u32) & 0xFF;
@@ -3261,7 +3256,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             i += 1; // skip closing delim
                         }
                         if !f.is_empty() {
-                            fill = if print_escapes { print_escape_str(&f) } else { f };
+                            fill = if print_escapes {
+                                print_escape_str(&f)
+                            } else {
+                                f
+                            };
                         }
                     }
                     let pad_one = |s: String| -> String {
@@ -3356,16 +3355,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         //   "a,,,b"     → [a,b]        (2, 3 middle empties)
                         let keep_empty = chars.contains(&'@');
                         let collapse = |s: &str, sep: &str| -> Vec<String> {
-                            let parts: Vec<String> =
-                                s.split(sep).map(String::from).collect();
+                            let parts: Vec<String> = s.split(sep).map(String::from).collect();
                             if keep_empty {
                                 return parts;
                             }
                             // Find first and last non-empty positions.
-                            let first_nonempty =
-                                parts.iter().position(|p| !p.is_empty());
-                            let last_nonempty =
-                                parts.iter().rposition(|p| !p.is_empty());
+                            let first_nonempty = parts.iter().position(|p| !p.is_empty());
+                            let last_nonempty = parts.iter().rposition(|p| !p.is_empty());
                             match (first_nonempty, last_nonempty) {
                                 (None, _) => {
                                     // All-empty input. Collapse to a
@@ -3625,18 +3621,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // chars, NOT just whitespace) as a word boundary
                     // and lowercases mid-word uppercase letters.
                     state = match state {
-                        St::S(s) => St::S(crate::subst::casemodify(
-                            &s,
-                            crate::subst::CaseMod::Caps,
-                        )),
+                        St::S(s) => {
+                            St::S(crate::subst::casemodify(&s, crate::subst::CaseMod::Caps))
+                        }
                         St::A(a) => St::A(
                             a.into_iter()
-                                .map(|s| {
-                                    crate::subst::casemodify(
-                                        &s,
-                                        crate::subst::CaseMod::Caps,
-                                    )
-                                })
+                                .map(|s| crate::subst::casemodify(&s, crate::subst::CaseMod::Caps))
                                 .collect(),
                         ),
                     };
@@ -4075,7 +4065,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // independent behavior of zsh's flag dispatch (any
                     // `-` in the (...) group enables signed mode for the
                     // numeric sort).
-                    let signed = chars.iter().any(|&c| c == '-');
+                    let signed = chars.contains(&'-');
                     fn natural_cmp(a: &str, b: &str, signed: bool) -> std::cmp::Ordering {
                         use std::cmp::Ordering;
                         if signed {
@@ -4097,9 +4087,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                     c if c.is_ascii_digit() => (false, s),
                                     _ => return None,
                                 };
-                                rest.parse::<i128>()
-                                    .ok()
-                                    .map(|n| if neg { -n } else { n })
+                                rest.parse::<i128>().ok().map(|n| if neg { -n } else { n })
                             };
                             if let (Some(va), Some(vb)) = (parse_signed(a), parse_signed(b)) {
                                 return va.cmp(&vb);
@@ -4173,7 +4161,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // sort-key.
                     state = match state {
                         St::A(mut a) => {
-                            a.sort_by(|x, y| x.to_lowercase().cmp(&y.to_lowercase()));
+                            a.sort_by_key(|x| x.to_lowercase());
                             St::A(a)
                         }
                         s => s,
@@ -4707,10 +4695,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let name = vm.pop().to_str();
         with_executor(|exec| {
             exec.variables.remove(&name);
-            let map = exec
-                .assoc_arrays
-                .entry(name)
-                .or_insert_with(IndexMap::new);
+            let map = exec.assoc_arrays.entry(name).or_insert_with(IndexMap::new);
             match map.get_mut(&key) {
                 Some(existing) => existing.push_str(&tail),
                 None => {
@@ -4964,7 +4949,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // splice contexts. Scalar callers already handle Array via
             // pop_args' flatten.
             if let Some(arr) = exec.arrays.get(&name) {
-                return None.unwrap_or_else(|| -> String { arr.join(" ") });
+                return arr.join(" ");
             }
             exec.get_variable(&name)
         });
@@ -5281,8 +5266,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_SET_LINENO, |vm, _argc| {
         let n = vm.pop().to_int();
         with_executor(|exec| {
-            exec.variables
-                .insert("LINENO".to_string(), n.to_string());
+            exec.variables.insert("LINENO".to_string(), n.to_string());
         });
         fusevm::Value::Status(0)
     });
@@ -5294,7 +5278,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // the latter inverted). Strip any underscores/hyphens too —
         // user-typed names like `extended_glob` should match the
         // canonical `extendedglob`.
-        let normalized = name.to_lowercase().replace('_', "").replace('-', "");
+        let normalized = name.to_lowercase().replace(['_', '-'], "");
         let (canonical, invert) = if let Some(stripped) = normalized.strip_prefix("no") {
             if ZSH_OPTIONS_SET.contains(stripped) {
                 (stripped.to_string(), true)
@@ -5764,7 +5748,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // BEFORE the errexit check so a trap on the failing
         // command's last command can run before we exit.
         let zerr_body = with_executor(|exec| {
-            exec.traps.get("ZERR").cloned()
+            exec.traps
+                .get("ZERR")
+                .cloned()
                 .or_else(|| exec.traps.get("ERR").cloned())
         });
         if let Some(body) = zerr_body {
@@ -5853,9 +5839,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // not "default".
             let is_zsh_special = matches!(
                 name.as_str(),
-                "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME"
-                    | "RANDOM" | "LINENO" | "HISTCMD" | "PPID"
-                    | "UID" | "EUID" | "GID" | "EGID" | "SHLVL"
+                "SECONDS"
+                    | "EPOCHSECONDS"
+                    | "EPOCHREALTIME"
+                    | "RANDOM"
+                    | "LINENO"
+                    | "HISTCMD"
+                    | "PPID"
+                    | "UID"
+                    | "EUID"
+                    | "GID"
+                    | "EGID"
+                    | "SHLVL"
             );
             exec.variables.contains_key(&name)
                 || exec.arrays.contains_key(&name)
@@ -5867,7 +5862,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // For colon variants, "missing" = unset OR empty.
         // For no-colon variants, "missing" = unset only.
         let missing = match op {
-            0 | 1 | 2 | 3 => is_empty,
+            0..=3 => is_empty,
             _ => !is_set,
         };
         // The default/alt operand may contain `$var` / `$(cmd)` /
@@ -5939,29 +5934,23 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // the user wrote `${arr[@]:n}` and expects splice; return
         // Value::Array so downstream array-init keeps element
         // boundaries.
-        let (lookup_name, force_array) =
-            if let Some(stripped) = name
-                .strip_suffix("[@]")
-                .or_else(|| name.strip_suffix("[*]"))
-            {
-                (stripped.to_string(), true)
-            } else {
-                (name.clone(), false)
-            };
+        let (lookup_name, force_array) = if let Some(stripped) = name
+            .strip_suffix("[@]")
+            .or_else(|| name.strip_suffix("[*]"))
+        {
+            (stripped.to_string(), true)
+        } else {
+            (name.clone(), false)
+        };
         if lookup_name == "@" || lookup_name == "*" {
-            let result =
-                with_executor(|exec| slice_positionals(exec, offset, length));
-            return fusevm::Value::Array(
-                result.into_iter().map(fusevm::Value::str).collect(),
-            );
+            let result = with_executor(|exec| slice_positionals(exec, offset, length));
+            return fusevm::Value::Array(result.into_iter().map(fusevm::Value::str).collect());
         }
         let array_slice = with_executor(|exec| exec.arrays.get(&lookup_name).cloned());
         if let Some(arr) = array_slice {
             let result = slice_array_zero_based(&arr, offset, length);
             return if force_array {
-                fusevm::Value::Array(
-                    result.into_iter().map(fusevm::Value::str).collect(),
-                )
+                fusevm::Value::Array(result.into_iter().map(fusevm::Value::str).collect())
             } else {
                 fusevm::Value::str(result.join(" "))
             };
@@ -6006,15 +5995,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // `${@:n:m}` / `${arr[@]:n:m}` slice positionals/array
         // ELEMENTS, not chars. Without this, the expr-form fell
         // back to scalar char-slicing on the IFS-joined value.
-        let (lookup_name, force_array) =
-            if let Some(stripped) = name
-                .strip_suffix("[@]")
-                .or_else(|| name.strip_suffix("[*]"))
-            {
-                (stripped.to_string(), true)
-            } else {
-                (name.clone(), false)
-            };
+        let (lookup_name, force_array) = if let Some(stripped) = name
+            .strip_suffix("[@]")
+            .or_else(|| name.strip_suffix("[*]"))
+        {
+            (stripped.to_string(), true)
+        } else {
+            (name.clone(), false)
+        };
         // Use a dual-result: Array when force_array, Str otherwise.
         // zsh: `${a[@]:1}` keeps array splice for downstream array
         // assignment (`b=("${a[@]:1}")` should give 2 elements, not
@@ -6032,20 +6020,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
             };
             // Positional-param slice (`${@:1:2}`).
             if lookup_name == "@" || lookup_name == "*" {
-                let parts = slice_positionals(
-                    exec,
-                    offset,
-                    length_opt.unwrap_or(i64::MIN),
-                );
+                let parts = slice_positionals(exec, offset, length_opt.unwrap_or(i64::MIN));
                 return Result::Arr(parts);
             }
             // Array slice (`${arr:1:2}` or `${arr[@]:1:2}`).
             if let Some(arr) = exec.arrays.get(&lookup_name).cloned() {
-                let sliced = slice_array_zero_based(
-                    &arr,
-                    offset,
-                    length_opt.unwrap_or(i64::MIN),
-                );
+                let sliced = slice_array_zero_based(&arr, offset, length_opt.unwrap_or(i64::MIN));
                 return if force_array {
                     Result::Arr(sliced)
                 } else {
@@ -6063,12 +6043,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
             };
             let take = match length_opt {
                 None => chars.len().saturating_sub(start),
-                Some(length) if length < 0 => {
-                    chars.len().saturating_sub(start)
-                }
-                Some(length) => {
-                    (length as usize).min(chars.len().saturating_sub(start))
-                }
+                Some(length) if length < 0 => chars.len().saturating_sub(start),
+                Some(length) => (length as usize).min(chars.len().saturating_sub(start)),
             };
             Result::Str(chars.iter().skip(start).take(take).collect::<String>())
         });
@@ -6103,9 +6079,8 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // never carries (M) since `parse_param_modifier` rejects
         // flag forms and routes them through the bridge — so always
         // pass `m_flag=false` here.
-        let strip_one = |v: &str, op: u8, pattern: &str| -> String {
-            strip_match_op(v, op, pattern, false)
-        };
+        let strip_one =
+            |v: &str, op: u8, pattern: &str| -> String { strip_match_op(v, op, pattern, false) };
         // `${arr#pat}` / `${arr%pat}` / etc. on an array:
         //   - Unquoted form: iterate per element.
         //   - DQ-wrapped form (`"${arr%pat}"`): zsh joins as scalar
@@ -6324,9 +6299,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         // to literal if that's off.
                         let extglob_meta =
                             exec.options.get("extendedglob").copied().unwrap_or(false)
-                                && (s.starts_with('^')
-                                    || s.contains('~')
-                                    || s.contains("/^"));
+                                && (s.starts_with('^') || s.contains('~') || s.contains("/^"));
                         let has_numeric_range = s.contains('<')
                             && s.contains('>')
                             && !extract_numeric_ranges(&s).is_empty();
@@ -6336,9 +6309,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         // by `(` ... `|` ... `)` shape; the actual
                         // top-level-vs-nested check happens in
                         // expand_glob_alternation.
-                        let has_alternation = s.contains('(')
-                            && s.contains('|')
-                            && s.contains(')');
+                        let has_alternation = s.contains('(') && s.contains('|') && s.contains(')');
                         if !noglob
                             && !is_assignment_shape
                             && (s.contains('*')
@@ -6496,7 +6467,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             chars.next();
                             re.push('^');
                         }
-                        while let Some(cc) = chars.next() {
+                        for cc in chars.by_ref() {
                             re.push(cc);
                             if cc == ']' {
                                 break;
@@ -7773,9 +7744,7 @@ impl fusevm::ShellHost for ZshrsHost {
             // (zshrs_daemon::builtins::ZSHRS_BUILTIN_NAMES); routing through
             // try_dispatch keeps this site zero-touch as new z* builtins land.
             n if crate::daemon::builtins::is_zshrs_builtin(n) => {
-                let argv: Vec<String> = std::iter::once(name.to_string())
-                    .chain(args.into_iter())
-                    .collect();
+                let argv: Vec<String> = std::iter::once(name.to_string()).chain(args).collect();
                 return Some(crate::daemon::builtins::try_dispatch(n, &argv).unwrap_or(1));
             }
             _ => {}
@@ -7881,56 +7850,71 @@ impl fusevm::ShellHost for ZshrsHost {
         // nested CallBuiltin handlers and host callbacks all see the same
         // executor.
         let fn_name = name.to_string();
-        let (saved_params, saved_local_count, saved_local_arr_count, saved_local_assoc_count, saved_zero, saved_funcstack, saved_exit_trap) =
-            with_executor(|exec| {
-                let prev = std::mem::replace(&mut exec.positional_params, args.clone());
-                let count = exec.local_save_stack.len();
-                let arr_count = exec.local_array_save_stack.len();
-                let assoc_count = exec.local_assoc_save_stack.len();
-                exec.local_scope_depth += 1;
-                // Save and clear EXIT trap before function body
-                // runs. Direct port of zsh's exec.c
-                // `dotrapargs(SIGEXIT, ...)` deferred-fire pattern
-                // — an EXIT trap set INSIDE a function fires on
-                // function return (NOT shell exit), and the outer
-                // EXIT trap is preserved across the call. Without
-                // this save/restore, `foo() { trap "echo X" EXIT; }`
-                // either fired X at SHELL exit (if no outer trap)
-                // or polluted the parent's EXIT trap.
-                let saved = exec.traps.remove("EXIT");
-                // zsh's `$0` inside a function returns the function name
-                // (under the FUNCTION_ARGZERO option, default on). Save
-                // the previous `$0` and install the function name.
-                // Anonymous functions get the cosmetic name `(anon)` —
-                // zshrs's parser synthesizes `_zshrs_anon_N` /
-                // `_zshrs_anon_kw_N` for `() { … }` and `function { … }`
-                // so users would see the internal name otherwise.
-                let display_name = if fn_name.starts_with("_zshrs_anon_") {
-                    "(anon)".to_string()
-                } else {
-                    fn_name.clone()
-                };
-                let prev_zero = exec.variables.insert("0".to_string(), display_name);
-                // funcstack: prepend the function name; outermost call
-                // is at the END of the stack per zsh.
-                let prev_stack = exec.arrays.get("funcstack").cloned();
-                let mut new_stack = vec![fn_name.clone()];
-                if let Some(ref s) = prev_stack {
-                    new_stack.extend_from_slice(s);
-                }
-                exec.arrays.insert("funcstack".to_string(), new_stack);
-                // Set `$_` BEFORE the function body runs. zsh: inside
-                // a function, `echo $_` reads the function name (when
-                // called with no args) or the last call-arg.
-                // Without this, internal builtins that ran before
-                // (like REGISTER_COMPILED_FN) leaked their last arg
-                // (the function body source!) as $_.
-                let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
-                exec.variables
-                    .insert("_".to_string(), dollar_underscore.clone());
-                exec.pending_underscore = Some(dollar_underscore);
-                (prev, count, arr_count, assoc_count, prev_zero, prev_stack, saved)
-            });
+        let (
+            saved_params,
+            saved_local_count,
+            saved_local_arr_count,
+            saved_local_assoc_count,
+            saved_zero,
+            saved_funcstack,
+            saved_exit_trap,
+        ) = with_executor(|exec| {
+            let prev = std::mem::replace(&mut exec.positional_params, args.clone());
+            let count = exec.local_save_stack.len();
+            let arr_count = exec.local_array_save_stack.len();
+            let assoc_count = exec.local_assoc_save_stack.len();
+            exec.local_scope_depth += 1;
+            // Save and clear EXIT trap before function body
+            // runs. Direct port of zsh's exec.c
+            // `dotrapargs(SIGEXIT, ...)` deferred-fire pattern
+            // — an EXIT trap set INSIDE a function fires on
+            // function return (NOT shell exit), and the outer
+            // EXIT trap is preserved across the call. Without
+            // this save/restore, `foo() { trap "echo X" EXIT; }`
+            // either fired X at SHELL exit (if no outer trap)
+            // or polluted the parent's EXIT trap.
+            let saved = exec.traps.remove("EXIT");
+            // zsh's `$0` inside a function returns the function name
+            // (under the FUNCTION_ARGZERO option, default on). Save
+            // the previous `$0` and install the function name.
+            // Anonymous functions get the cosmetic name `(anon)` —
+            // zshrs's parser synthesizes `_zshrs_anon_N` /
+            // `_zshrs_anon_kw_N` for `() { … }` and `function { … }`
+            // so users would see the internal name otherwise.
+            let display_name = if fn_name.starts_with("_zshrs_anon_") {
+                "(anon)".to_string()
+            } else {
+                fn_name.clone()
+            };
+            let prev_zero = exec.variables.insert("0".to_string(), display_name);
+            // funcstack: prepend the function name; outermost call
+            // is at the END of the stack per zsh.
+            let prev_stack = exec.arrays.get("funcstack").cloned();
+            let mut new_stack = vec![fn_name.clone()];
+            if let Some(ref s) = prev_stack {
+                new_stack.extend_from_slice(s);
+            }
+            exec.arrays.insert("funcstack".to_string(), new_stack);
+            // Set `$_` BEFORE the function body runs. zsh: inside
+            // a function, `echo $_` reads the function name (when
+            // called with no args) or the last call-arg.
+            // Without this, internal builtins that ran before
+            // (like REGISTER_COMPILED_FN) leaked their last arg
+            // (the function body source!) as $_.
+            let dollar_underscore = args.last().cloned().unwrap_or_else(|| fn_name.clone());
+            exec.variables
+                .insert("_".to_string(), dollar_underscore.clone());
+            exec.pending_underscore = Some(dollar_underscore);
+            (
+                prev,
+                count,
+                arr_count,
+                assoc_count,
+                prev_zero,
+                prev_stack,
+                saved,
+            )
+        });
 
         let mut vm = fusevm::VM::new(chunk);
         register_builtins(&mut vm);
@@ -8726,7 +8710,7 @@ pub struct CompSpec {
 }
 
 /// A single completion match for zsh-style completion
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CompMatch {
     pub word: String,                   // The actual completion word
     pub display: Option<String>,        // Display string (-d)
@@ -8741,26 +8725,6 @@ pub struct CompMatch {
     pub remove_suffix: Option<String>,  // -r remove chars
     pub file_match: bool,               // -f flag
     pub quote_match: bool,              // -q flag
-}
-
-impl Default for CompMatch {
-    fn default() -> Self {
-        Self {
-            word: String::new(),
-            display: None,
-            prefix: None,
-            suffix: None,
-            hidden_prefix: None,
-            hidden_suffix: None,
-            ignored_prefix: None,
-            ignored_suffix: None,
-            group: None,
-            description: None,
-            remove_suffix: None,
-            file_match: false,
-            quote_match: false,
-        }
-    }
 }
 
 /// Completion group for organizing matches
@@ -8958,7 +8922,8 @@ pub fn underscore_separate_digits(s: &str, group: u32) -> String {
         return s.to_string();
     }
     // Find where the digit run starts (after any `-`, `BASE#`, or `0x`).
-    let prefix_end = s.rfind(|c: char| !c.is_ascii_alphanumeric())
+    let prefix_end = s
+        .rfind(|c: char| !c.is_ascii_alphanumeric())
         .map(|i| i + 1)
         .unwrap_or(0);
     let (head, digits) = s.split_at(prefix_end);
@@ -9092,7 +9057,7 @@ fn zsh_pattern_replace(val: &str, pattern: &str, repl: &str, op: u8) -> String {
                         chars.next();
                         re.push('^');
                     }
-                    while let Some(cc) = chars.next() {
+                    for cc in chars.by_ref() {
                         re.push(cc);
                         if cc == ']' {
                             break;
@@ -9848,7 +9813,7 @@ impl ShellExecutor {
         if let Some(funcs) = self.hook_functions.get(hook_name).cloned() {
             for func_name in funcs {
                 if self.function_exists(&func_name) {
-                    let _ = self.execute_script(&format!("{}", func_name));
+                    let _ = self.execute_script(&func_name.to_string());
                 }
             }
         }
@@ -9857,7 +9822,7 @@ impl ShellExecutor {
         if let Some(funcs) = self.arrays.get(&array_name).cloned() {
             for func_name in funcs {
                 if self.function_exists(&func_name) {
-                    let _ = self.execute_script(&format!("{}", func_name));
+                    let _ = self.execute_script(&func_name.to_string());
                 }
             }
         }
@@ -10185,16 +10150,12 @@ impl ShellExecutor {
             }
         }
 
-        match self.execute_external(cmd, &rest_vec, &[]) {
-            Ok(status) => status,
-            Err(_) => 127,
-        }
+        self.execute_external(cmd, &rest_vec, &[]).unwrap_or(127)
     }
 
     /// Expand ~ with named directories
     pub fn expand_tilde_named(&self, path: &str) -> String {
-        if path.starts_with('~') {
-            let rest = &path[1..];
+        if let Some(rest) = path.strip_prefix('~') {
             // Check for ~name or ~name/...
             let (name_raw, suffix) = if let Some(slash_pos) = rest.find('/') {
                 (&rest[..slash_pos], &rest[slash_pos..])
@@ -10643,7 +10604,7 @@ impl ShellExecutor {
                 if let Ok(entries) = fs::read_dir(&dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.extension().map_or(false, |e| e == "zwc")
+                        if path.extension().is_some_and(|e| e == "zwc")
                             && self.load_function_from_zwc(&path, name)
                         {
                             return true;
@@ -10733,7 +10694,7 @@ impl ShellExecutor {
                 '[' => {
                     regex_pattern.push('[');
                     // Handle character class
-                    while let Some(cc) = chars.next() {
+                    for cc in chars.by_ref() {
                         if cc == ']' {
                             regex_pattern.push(']');
                             break;
@@ -10769,7 +10730,13 @@ impl ShellExecutor {
     /// (those at the start of a line) are expanded; embedded TABs are
     /// emitted verbatim and `startpos` is advanced by one tabstop. When
     /// `all_tabs` is true, every TAB expands. Returns the new `startpos`.
-    fn zexpandtabs_into(s: &str, width: i32, startpos: i32, all_tabs: bool, out: &mut String) -> i32 {
+    fn zexpandtabs_into(
+        s: &str,
+        width: i32,
+        startpos: i32,
+        all_tabs: bool,
+        out: &mut String,
+    ) -> i32 {
         let mut startpos = startpos;
         let mut at_start = true;
         for c in s.chars() {
@@ -10831,7 +10798,7 @@ impl ShellExecutor {
             // form is what `*.txt~README*` and similar idioms produce.
             // Walk the pattern looking for a `~` that's NOT inside
             // `[...]` or `(...)` so nested specials stay literal.
-            if let Some(idx) = find_top_level_tilde(&pattern) {
+            if let Some(idx) = find_top_level_tilde(pattern) {
                 let lhs = &pattern[..idx];
                 let rhs = &pattern[idx + 1..];
                 return ShellExecutor::glob_match_static(s, lhs)
@@ -11047,8 +11014,8 @@ impl ShellExecutor {
                     // `#c` after the opening `(`.
                     let peek_iter = chars.clone();
                     let mut probe: Vec<char> = Vec::new();
-                    let mut p = peek_iter;
-                    while let Some(pc) = p.next() {
+                    let p = peek_iter;
+                    for pc in p {
                         probe.push(pc);
                         if pc == ')' || probe.len() > 32 {
                             break;
@@ -11751,7 +11718,7 @@ impl ShellExecutor {
                     // Remove extension
                     i += 1;
                     if let Some(pos) = sline.rfind('.') {
-                        if pos > 0 && sline[..pos].rfind('/').map_or(true, |sp| sp < pos) {
+                        if pos > 0 && sline[..pos].rfind('/').is_none_or(|sp| sp < pos) {
                             sline = sline[..pos].to_string();
                         }
                     }
@@ -12305,18 +12272,14 @@ impl ShellExecutor {
                                 // `{a-mnop}` → a b c ... m n o p. The option
                                 // is off by default; opt-in via `setopt
                                 // braceccl` or `set -B`.
-                                let braceccl_on = self
-                                    .options
-                                    .get("braceccl")
-                                    .copied()
-                                    .unwrap_or(false);
+                                let braceccl_on =
+                                    self.options.get("braceccl").copied().unwrap_or(false);
                                 if braceccl_on && !content.is_empty() {
                                     let ccl = Self::expand_brace_ccl(content);
                                     if !ccl.is_empty() {
                                         let mut results = Vec::with_capacity(ccl.len());
                                         for ch in ccl {
-                                            let combined =
-                                                format!("{}{}{}", prefix, ch, suffix);
+                                            let combined = format!("{}{}{}", prefix, ch, suffix);
                                             results.extend(self.expand_braces(&combined));
                                         }
                                         return results;
@@ -12331,10 +12294,12 @@ impl ShellExecutor {
                                 // zshrs left the whole token literal.
                                 if content.contains('{') && content.contains('}') {
                                     let inner = self.expand_braces(content);
-                                    if inner.len() > 1 || (inner.len() == 1 && inner[0] != content) {
+                                    if inner.len() > 1 || (inner.len() == 1 && inner[0] != content)
+                                    {
                                         let mut results = Vec::with_capacity(inner.len());
                                         for exp in inner {
-                                            results.push(format!("{}{{{}}}{}", prefix, exp, suffix));
+                                            results
+                                                .push(format!("{}{{{}}}{}", prefix, exp, suffix));
                                         }
                                         return results;
                                     }
@@ -12386,8 +12351,7 @@ impl ShellExecutor {
         if chars.is_empty() {
             return Vec::new();
         }
-        let mut set: std::collections::BTreeSet<char> =
-            std::collections::BTreeSet::new();
+        let mut set: std::collections::BTreeSet<char> = std::collections::BTreeSet::new();
         let mut lastch: Option<char> = None;
         let mut i = 0;
         while i < chars.len() {
@@ -12604,9 +12568,7 @@ impl ShellExecutor {
             // would output both.
             let mut out: Vec<String> = Vec::new();
             for alt in alternatives {
-                let has_meta = alt
-                    .chars()
-                    .any(|c| matches!(c, '*' | '?' | '[' | '('));
+                let has_meta = alt.chars().any(|c| matches!(c, '*' | '?' | '[' | '('));
                 if has_meta {
                     out.extend(self.expand_glob(&alt));
                 } else if std::path::Path::new(&alt).exists() {
@@ -12751,7 +12713,7 @@ impl ShellExecutor {
                         chars.next();
                         out.push('!');
                     }
-                    while let Some(cc) = chars.next() {
+                    for cc in chars.by_ref() {
                         out.push(cc);
                         if cc == ']' {
                             break;
@@ -12890,9 +12852,7 @@ impl ShellExecutor {
             // globs, sort by BASENAME to match zsh's locale-aware
             // case-folded output.
             if glob_pattern.contains("**/") {
-                expanded.sort_by(|a, b| {
-                    crate::glob::locale_aware_name_cmp(a, b)
-                });
+                expanded.sort_by(|a, b| crate::glob::locale_aware_name_cmp(a, b));
             } else {
                 expanded.sort_by(|a, b| {
                     let an = a.rsplit('/').next().unwrap_or(a);
@@ -13467,7 +13427,7 @@ impl ShellExecutor {
         }
 
         let pool_size = self.worker_pool.size();
-        let chunk_size = (files.len() + pool_size - 1) / pool_size;
+        let chunk_size = files.len().div_ceil(pool_size);
         let (tx, rx) = std::sync::mpsc::channel();
 
         for chunk in files.chunks(chunk_size) {
@@ -13563,8 +13523,7 @@ impl ShellExecutor {
                 }
             }
             clauses.push(current);
-            let mut seen: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut out: Vec<String> = Vec::new();
             for clause in &clauses {
                 let matched = self.filter_by_qualifiers(files.clone(), clause);
@@ -13644,151 +13603,130 @@ impl ShellExecutor {
                     // symlinks-to-files because `is_file()` on the
                     // followed metadata returned true. Check the
                     // SYMLINK metadata to filter out links first.
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let is_plain_file = meta_cache
-                                .get(f)
-                                .map(|(m, sm)| {
-                                    let is_link = sm
-                                        .as_ref()
-                                        .map(|m| m.file_type().is_symlink())
-                                        .unwrap_or(false);
-                                    let is_reg = m.as_ref().map(|m| m.is_file()).unwrap_or(false);
-                                    is_reg && !is_link
-                                })
-                                .unwrap_or(false);
-                            if negate {
-                                !is_plain_file
-                            } else {
-                                is_plain_file
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let is_plain_file = meta_cache
+                            .get(f)
+                            .map(|(m, sm)| {
+                                let is_link = sm
+                                    .as_ref()
+                                    .map(|m| m.file_type().is_symlink())
+                                    .unwrap_or(false);
+                                let is_reg = m.as_ref().map(|m| m.is_file()).unwrap_or(false);
+                                is_reg && !is_link
+                            })
+                            .unwrap_or(false);
+                        if negate {
+                            !is_plain_file
+                        } else {
+                            is_plain_file
+                        }
+                    });
                     negate = false;
                 }
                 '/' => {
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let is_dir = meta_cache
-                                .get(f)
-                                .and_then(|(m, _)| m.as_ref())
-                                .map(|m| m.is_dir())
-                                .unwrap_or(false);
-                            if negate {
-                                !is_dir
-                            } else {
-                                is_dir
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let is_dir = meta_cache
+                            .get(f)
+                            .and_then(|(m, _)| m.as_ref())
+                            .map(|m| m.is_dir())
+                            .unwrap_or(false);
+                        if negate {
+                            !is_dir
+                        } else {
+                            is_dir
+                        }
+                    });
                     negate = false;
                 }
                 '@' => {
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let is_link = meta_cache
-                                .get(f)
-                                .and_then(|(_, sm)| sm.as_ref())
-                                .map(|m| m.file_type().is_symlink())
-                                .unwrap_or(false);
-                            if negate {
-                                !is_link
-                            } else {
-                                is_link
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let is_link = meta_cache
+                            .get(f)
+                            .and_then(|(_, sm)| sm.as_ref())
+                            .map(|m| m.file_type().is_symlink())
+                            .unwrap_or(false);
+                        if negate {
+                            !is_link
+                        } else {
+                            is_link
+                        }
+                    });
                     negate = false;
                 }
                 '=' => {
                     // Sockets
                     use std::os::unix::fs::FileTypeExt;
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let is_socket = meta_cache
-                                .get(f)
-                                .and_then(|(_, sm)| sm.as_ref())
-                                .map(|m| m.file_type().is_socket())
-                                .unwrap_or(false);
-                            if negate {
-                                !is_socket
-                            } else {
-                                is_socket
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let is_socket = meta_cache
+                            .get(f)
+                            .and_then(|(_, sm)| sm.as_ref())
+                            .map(|m| m.file_type().is_socket())
+                            .unwrap_or(false);
+                        if negate {
+                            !is_socket
+                        } else {
+                            is_socket
+                        }
+                    });
                     negate = false;
                 }
                 'p' => {
                     // Named pipes (FIFOs)
                     use std::os::unix::fs::FileTypeExt;
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let is_fifo = meta_cache
-                                .get(f)
-                                .and_then(|(_, sm)| sm.as_ref())
-                                .map(|m| m.file_type().is_fifo())
-                                .unwrap_or(false);
-                            if negate {
-                                !is_fifo
-                            } else {
-                                is_fifo
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let is_fifo = meta_cache
+                            .get(f)
+                            .and_then(|(_, sm)| sm.as_ref())
+                            .map(|m| m.file_type().is_fifo())
+                            .unwrap_or(false);
+                        if negate {
+                            !is_fifo
+                        } else {
+                            is_fifo
+                        }
+                    });
                     negate = false;
                 }
                 '*' => {
                     // Executable files
                     use std::os::unix::fs::PermissionsExt;
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let is_exec = meta_cache
-                                .get(f)
-                                .and_then(|(m, _)| m.as_ref())
-                                .map(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
-                                .unwrap_or(false);
-                            if negate {
-                                !is_exec
-                            } else {
-                                is_exec
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let is_exec = meta_cache
+                            .get(f)
+                            .and_then(|(m, _)| m.as_ref())
+                            .map(|m| m.is_file() && (m.permissions().mode() & 0o111) != 0)
+                            .unwrap_or(false);
+                        if negate {
+                            !is_exec
+                        } else {
+                            is_exec
+                        }
+                    });
                     negate = false;
                 }
                 '%' => {
                     // Device files
                     use std::os::unix::fs::FileTypeExt;
                     let next = chars.peek().copied();
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let is_device = meta_cache
-                                .get(f)
-                                .and_then(|(_, sm)| sm.as_ref())
-                                .map(|m| match next {
-                                    Some('b') => m.file_type().is_block_device(),
-                                    Some('c') => m.file_type().is_char_device(),
-                                    _ => {
-                                        m.file_type().is_block_device()
-                                            || m.file_type().is_char_device()
-                                    }
-                                })
-                                .unwrap_or(false);
-                            if negate {
-                                !is_device
-                            } else {
-                                is_device
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let is_device = meta_cache
+                            .get(f)
+                            .and_then(|(_, sm)| sm.as_ref())
+                            .map(|m| match next {
+                                Some('b') => m.file_type().is_block_device(),
+                                Some('c') => m.file_type().is_char_device(),
+                                _ => {
+                                    m.file_type().is_block_device()
+                                        || m.file_type().is_char_device()
+                                }
+                            })
+                            .unwrap_or(false);
+                        if negate {
+                            !is_device
+                        } else {
+                            is_device
+                        }
+                    });
                     if next == Some('b') || next == Some('c') {
                         chars.next();
                     }
@@ -13840,39 +13778,32 @@ impl ShellExecutor {
                         _ => 1,
                     };
                     let target = n * unit_mult;
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            // zsh's L qualifier uses lstat size —
-                            // for symlinks, that's the path-string
-                            // length (NOT the target's size).
-                            // Direct port: prefer the symlink
-                            // metadata `sm` when present, fall
-                            // back to the followed metadata.
-                            let size = meta_cache
-                                .get(f)
-                                .map(|(m, sm)| {
-                                    sm.as_ref()
-                                        .map(|m| m.len())
-                                        .unwrap_or_else(|| {
-                                            m.as_ref()
-                                                .map(|m| m.len())
-                                                .unwrap_or(0)
-                                        })
-                                })
-                                .unwrap_or(0);
-                            let pass = match cmp {
-                                '+' => size > target,
-                                '-' => size < target,
-                                _ => size == target,
-                            };
-                            if negate {
-                                !pass
-                            } else {
-                                pass
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        // zsh's L qualifier uses lstat size —
+                        // for symlinks, that's the path-string
+                        // length (NOT the target's size).
+                        // Direct port: prefer the symlink
+                        // metadata `sm` when present, fall
+                        // back to the followed metadata.
+                        let size = meta_cache
+                            .get(f)
+                            .map(|(m, sm)| {
+                                sm.as_ref()
+                                    .map(|m| m.len())
+                                    .unwrap_or_else(|| m.as_ref().map(|m| m.len()).unwrap_or(0))
+                            })
+                            .unwrap_or(0);
+                        let pass = match cmp {
+                            '+' => size > target,
+                            '-' => size < target,
+                            _ => size == target,
+                        };
+                        if negate {
+                            !pass
+                        } else {
+                            pass
+                        }
+                    });
                     negate = false;
                 }
 
@@ -13898,22 +13829,23 @@ impl ShellExecutor {
                     }
                     let target: u64 = num_str.parse().unwrap_or(0);
                     use std::os::unix::fs::MetadataExt;
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let nlink = meta_cache
-                                .get(f)
-                                .and_then(|(m, _)| m.as_ref())
-                                .map(|m| m.nlink())
-                                .unwrap_or(0);
-                            let matches = match cmp {
-                                '+' => nlink > target,
-                                '-' => nlink < target,
-                                _ => nlink == target,
-                            };
-                            if negate { !matches } else { matches }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let nlink = meta_cache
+                            .get(f)
+                            .and_then(|(m, _)| m.as_ref())
+                            .map(|m| m.nlink())
+                            .unwrap_or(0);
+                        let matches = match cmp {
+                            '+' => nlink > target,
+                            '-' => nlink < target,
+                            _ => nlink == target,
+                        };
+                        if negate {
+                            !matches
+                        } else {
+                            matches
+                        }
+                    });
                     negate = false;
                 }
 
@@ -13970,21 +13902,18 @@ impl ShellExecutor {
                 // Full/empty directories
                 'F' => {
                     // Non-empty directories
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let path = std::path::Path::new(f);
-                            let is_nonempty = path.is_dir()
-                                && std::fs::read_dir(path)
-                                    .map(|mut d| d.next().is_some())
-                                    .unwrap_or(false);
-                            if negate {
-                                !is_nonempty
-                            } else {
-                                is_nonempty
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let path = std::path::Path::new(f);
+                        let is_nonempty = path.is_dir()
+                            && std::fs::read_dir(path)
+                                .map(|mut d| d.next().is_some())
+                                .unwrap_or(false);
+                        if negate {
+                            !is_nonempty
+                        } else {
+                            is_nonempty
+                        }
+                    });
                     negate = false;
                 }
 
@@ -13992,43 +13921,37 @@ impl ShellExecutor {
                 'U' => {
                     // Owned by effective UID
                     let euid = unsafe { libc::geteuid() };
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            use std::os::unix::fs::MetadataExt;
-                            let is_owned = meta_cache
-                                .get(f)
-                                .and_then(|(m, _)| m.as_ref())
-                                .map(|m| m.uid() == euid)
-                                .unwrap_or(false);
-                            if negate {
-                                !is_owned
-                            } else {
-                                is_owned
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        use std::os::unix::fs::MetadataExt;
+                        let is_owned = meta_cache
+                            .get(f)
+                            .and_then(|(m, _)| m.as_ref())
+                            .map(|m| m.uid() == euid)
+                            .unwrap_or(false);
+                        if negate {
+                            !is_owned
+                        } else {
+                            is_owned
+                        }
+                    });
                     negate = false;
                 }
                 'G' => {
                     // Owned by effective GID
                     let egid = unsafe { libc::getegid() };
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            use std::os::unix::fs::MetadataExt;
-                            let is_owned = meta_cache
-                                .get(f)
-                                .and_then(|(m, _)| m.as_ref())
-                                .map(|m| m.gid() == egid)
-                                .unwrap_or(false);
-                            if negate {
-                                !is_owned
-                            } else {
-                                is_owned
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        use std::os::unix::fs::MetadataExt;
+                        let is_owned = meta_cache
+                            .get(f)
+                            .and_then(|(m, _)| m.as_ref())
+                            .map(|m| m.gid() == egid)
+                            .unwrap_or(false);
+                        if negate {
+                            !is_owned
+                        } else {
+                            is_owned
+                        }
+                    });
                     negate = false;
                 }
 
@@ -14081,12 +14004,10 @@ impl ShellExecutor {
                             meta_cache
                                 .get(f)
                                 .and_then(|(m, _)| m.as_ref())
-                                .and_then(|m| {
+                                .map(|m| {
                                     use std::os::unix::fs::MetadataExt;
-                                    Some(
-                                        std::time::UNIX_EPOCH
-                                            + std::time::Duration::from_secs(m.ctime() as u64),
-                                    )
+                                    std::time::UNIX_EPOCH
+                                        + std::time::Duration::from_secs(m.ctime() as u64)
                                 })
                                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
                         });
@@ -14216,32 +14137,29 @@ impl ShellExecutor {
                         .map(|d| d.as_secs() as i64)
                         .unwrap_or(0);
                     use std::os::unix::fs::MetadataExt;
-                    result = result
-                        .into_iter()
-                        .filter(|f| {
-                            let m = match meta_cache.get(f).and_then(|(m, _)| m.as_ref()) {
-                                Some(m) => m,
-                                None => return false,
-                            };
-                            let ts = match qual_kind {
-                                'm' => m.mtime(),
-                                'a' => m.atime(),
-                                'c' => m.ctime(),
-                                _ => 0,
-                            };
-                            let age = now - ts;
-                            let pass = match op {
-                                '+' => age > cutoff,
-                                '-' => age < cutoff,
-                                _ => age >= cutoff && age < cutoff + unit_secs,
-                            };
-                            if negate {
-                                !pass
-                            } else {
-                                pass
-                            }
-                        })
-                        .collect();
+                    result.retain(|f| {
+                        let m = match meta_cache.get(f).and_then(|(m, _)| m.as_ref()) {
+                            Some(m) => m,
+                            None => return false,
+                        };
+                        let ts = match qual_kind {
+                            'm' => m.mtime(),
+                            'a' => m.atime(),
+                            'c' => m.ctime(),
+                            _ => 0,
+                        };
+                        let age = now - ts;
+                        let pass = match op {
+                            '+' => age > cutoff,
+                            '-' => age < cutoff,
+                            _ => age >= cutoff && age < cutoff + unit_secs,
+                        };
+                        if negate {
+                            !pass
+                        } else {
+                            pass
+                        }
+                    });
                     negate = false;
                 }
 
@@ -14640,7 +14558,7 @@ impl ShellExecutor {
                     chars.next(); // consume '{'
                     let mut brace_content = String::new();
                     let mut depth = 1;
-                    while let Some(ch) = chars.next() {
+                    for ch in chars.by_ref() {
                         if ch == '{' {
                             depth += 1;
                             brace_content.push(ch);
@@ -14866,7 +14784,10 @@ impl ShellExecutor {
         // identifiers — more elaborate shapes fall through.
         let is_ident = |s: &str| -> bool {
             !s.is_empty()
-                && s.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                && s.chars()
+                    .next()
+                    .map(|c| c == '_' || c.is_ascii_alphabetic())
+                    .unwrap_or(false)
                 && s.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
         };
         for (op_str, intersect) in &[(":|", false), (":*", true)] {
@@ -14912,7 +14833,10 @@ impl ShellExecutor {
             // through to the general path below.
             let is_ident = |s: &str| {
                 !s.is_empty()
-                    && s.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                    && s.chars()
+                        .next()
+                        .map(|c| c == '_' || c.is_ascii_alphabetic())
+                        .unwrap_or(false)
                     && s.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
             };
             if is_ident(lhs_name) && is_ident(rhs_name) {
@@ -15030,12 +14954,11 @@ impl ShellExecutor {
                 // helpers via a fast manual scan.
                 if rest.starts_with('/') {
                     // Distinguish `//` (global) from `/` (first).
-                    let (global, body) =
-                        if let Some(b) = rest.strip_prefix("//") {
-                            (true, b)
-                        } else {
-                            (false, &rest[1..])
-                        };
+                    let (global, body) = if let Some(b) = rest.strip_prefix("//") {
+                        (true, b)
+                    } else {
+                        (false, &rest[1..])
+                    };
                     // Find the unescaped delimiter `/` separating
                     // pattern and replacement.
                     let mut pat = String::new();
@@ -15194,10 +15117,8 @@ impl ShellExecutor {
                                     out = out.to_lowercase();
                                 }
                                 ZshParamFlag::Capitalize => {
-                                    out = crate::subst::casemodify(
-                                        &out,
-                                        crate::subst::CaseMod::Caps,
-                                    );
+                                    out =
+                                        crate::subst::casemodify(&out, crate::subst::CaseMod::Caps);
                                 }
                                 ZshParamFlag::Split(sep) => {
                                     // Split scalar on sep, return space-joined
@@ -15233,8 +15154,7 @@ impl ShellExecutor {
                                 let idx_str = &rest_after[..close_b];
                                 let idx_resolved = self.expand_string(idx_str);
                                 if let Ok(idx) = idx_resolved.trim().parse::<i64>() {
-                                    let parts: Vec<&str> =
-                                        out.split_whitespace().collect();
+                                    let parts: Vec<&str> = out.split_whitespace().collect();
                                     let len = parts.len() as i64;
                                     let pos = if idx < 0 { len + idx } else { idx - 1 };
                                     let picked = if pos >= 0 && (pos as usize) < parts.len() {
@@ -15436,9 +15356,18 @@ impl ShellExecutor {
                 // store them. Treat them as set.
                 let is_zsh_special = matches!(
                     var_name,
-                    "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME"
-                        | "RANDOM" | "LINENO" | "HISTCMD" | "PPID"
-                        | "UID" | "EUID" | "GID" | "EGID" | "SHLVL"
+                    "SECONDS"
+                        | "EPOCHSECONDS"
+                        | "EPOCHREALTIME"
+                        | "RANDOM"
+                        | "LINENO"
+                        | "HISTCMD"
+                        | "PPID"
+                        | "UID"
+                        | "EUID"
+                        | "GID"
+                        | "EGID"
+                        | "SHLVL"
                 );
                 let var_is_set = !var_name.is_empty()
                     && (self.variables.contains_key(var_name)
@@ -15481,9 +15410,7 @@ impl ShellExecutor {
                     // returned the lowercased value (bash compat
                     // creep). zsh's parser bin_paramsubst rejects
                     // these tokens with the standard error.
-                    if rest_after_var.starts_with('^')
-                        || rest_after_var.starts_with(',')
-                    {
+                    if rest_after_var.starts_with('^') || rest_after_var.starts_with(',') {
                         eprintln!("zshrs:1: bad substitution");
                         std::process::exit(1);
                     }
@@ -15510,40 +15437,19 @@ impl ShellExecutor {
                         // the var is an array AND (@) is in the
                         // flag run; otherwise fall back to the
                         // joined-scalar strip on `val`.
-                        let has_at_flag = flags
-                            .iter()
-                            .any(|f| matches!(f, ZshParamFlag::At));
+                        let has_at_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::At));
                         if has_at_flag {
-                            if let Some(arr) =
-                                self.arrays.get(var_name).cloned()
-                            {
+                            if let Some(arr) = self.arrays.get(var_name).cloned() {
                                 let stripped: Vec<String> = arr
                                     .iter()
-                                    .map(|e| {
-                                        strip_match_op(
-                                            e,
-                                            op,
-                                            &pat_expanded,
-                                            has_match_flag,
-                                        )
-                                    })
+                                    .map(|e| strip_match_op(e, op, &pat_expanded, has_match_flag))
                                     .collect();
                                 val = stripped.join(" ");
                             } else {
-                                val = strip_match_op(
-                                    &val,
-                                    op,
-                                    &pat_expanded,
-                                    has_match_flag,
-                                );
+                                val = strip_match_op(&val, op, &pat_expanded, has_match_flag);
                             }
                         } else {
-                            val = strip_match_op(
-                                &val,
-                                op,
-                                &pat_expanded,
-                                has_match_flag,
-                            );
+                            val = strip_match_op(&val, op, &pat_expanded, has_match_flag);
                         }
                     }
                 }
@@ -15563,8 +15469,7 @@ impl ShellExecutor {
         }
 
         // Handle ${#arr[@]} - array length
-        if content.starts_with('#') {
-            let rest = &content[1..];
+        if let Some(rest) = content.strip_prefix('#') {
             // ${#@} / ${#*} / ${#argv} / ${#argv[@]} — positional
             // param count. Without these special cases, `@`/`*`/`argv`
             // fell through to get_variable which returns the IFS-
@@ -15653,9 +15558,18 @@ impl ShellExecutor {
                         // the flag-aware path above (line ~14430).
                         let is_zsh_special = matches!(
                             var_name.as_str(),
-                            "SECONDS" | "EPOCHSECONDS" | "EPOCHREALTIME"
-                                | "RANDOM" | "LINENO" | "HISTCMD" | "PPID"
-                                | "UID" | "EUID" | "GID" | "EGID" | "SHLVL"
+                            "SECONDS"
+                                | "EPOCHSECONDS"
+                                | "EPOCHREALTIME"
+                                | "RANDOM"
+                                | "LINENO"
+                                | "HISTCMD"
+                                | "PPID"
+                                | "UID"
+                                | "EUID"
+                                | "GID"
+                                | "EGID"
+                                | "SHLVL"
                         );
                         let var_is_set = self.variables.contains_key(&var_name)
                             || self.arrays.contains_key(&var_name)
@@ -15683,9 +15597,7 @@ impl ShellExecutor {
         }
 
         // Handle ${+var} and ${+arr[key]} - test if variable/element is set (returns 1 if set, 0 if not)
-        if content.starts_with('+') {
-            let rest = &content[1..];
-
+        if let Some(rest) = content.strip_prefix('+') {
             // Check for array/assoc access: ${+arr[key]}
             if let Some(bracket_start) = rest.find('[') {
                 let var_name = &rest[..bracket_start];
@@ -15814,8 +15726,7 @@ impl ShellExecutor {
                     // the colon-default branch which only handles
                     // `:-`/`:=`/`:?`/`:+`. Apply per-element when
                     // the after-bracket suffix is a known modifier.
-                    if after_bracket.starts_with(':') {
-                        let modifier = &after_bracket[1..];
+                    if let Some(modifier) = after_bracket.strip_prefix(':') {
                         if !modifier.is_empty() && self.is_history_modifier(modifier) {
                             return self.apply_history_modifiers(&elem, modifier);
                         }
@@ -15904,8 +15815,7 @@ impl ShellExecutor {
                     // `${a[1]/.txt/.bak}` returned the unmodified
                     // element because the bracket-modifier path skipped
                     // pattern replacement.
-                    if after_bracket.starts_with('/') {
-                        let rest = &after_bracket[1..];
+                    if let Some(rest) = after_bracket.strip_prefix('/') {
                         let (op, body) = if let Some(b) = rest.strip_prefix('/') {
                             (1u8, b) // // = global
                         } else if let Some(b) = rest.strip_prefix('#') {
@@ -16133,10 +16043,9 @@ impl ShellExecutor {
                     Some(v) if !v.is_empty() => self.expand_string(&rest[1..]),
                     _ => String::new(),
                 };
-            } else if rest.starts_with('#') {
+            } else if let Some(pattern) = rest.strip_prefix('#') {
                 // ${var:#pattern} - filter: remove elements matching pattern
                 // With (M) flag, keep only matching elements
-                let pattern = &rest[1..];
                 // For scalars, return empty if matches, value if not
                 if self.glob_match(&val, pattern) {
                     return String::new();
@@ -16535,8 +16444,7 @@ impl ShellExecutor {
         }
 
         // Handle ${!prefix*} and ${!prefix@} - expand to variable names with prefix
-        if content.starts_with('!') {
-            let rest = &content[1..];
+        if let Some(rest) = content.strip_prefix('!') {
             // `${!prefix*}` and `${!prefix@}` — list variable names
             // matching prefix. THIS one is bash-only too BUT zsh
             // accepts it as `${(k)var}`-style; keep working until a
@@ -16612,7 +16520,7 @@ impl ShellExecutor {
                     // Collect the full braced expression including brackets
                     let mut brace_content = String::new();
                     let mut depth = 1;
-                    while let Some(c) = chars.next() {
+                    for c in chars.by_ref() {
                         if c == '{' {
                             depth += 1;
                             brace_content.push(c);
@@ -16679,26 +16587,23 @@ impl ShellExecutor {
                                     }
                                 }
                                 if let Some(arr) = self.arrays.get(&name).cloned() {
-                                    let idx_val =
-                                        self.eval_arith_expr(&idx_str);
+                                    let idx_val = self.eval_arith_expr(&idx_str);
                                     let len = arr.len() as i64;
                                     let real_idx = if idx_val > 0 {
                                         (idx_val - 1) as usize
                                     } else if idx_val < 0 {
                                         let off = len + idx_val;
                                         if off < 0 {
-                                            result.push_str("0");
+                                            result.push('0');
                                             continue;
                                         }
                                         off as usize
                                     } else {
-                                        result.push_str("0");
+                                        result.push('0');
                                         continue;
                                     };
-                                    let elem_len = arr
-                                        .get(real_idx)
-                                        .map(|s| s.chars().count())
-                                        .unwrap_or(0);
+                                    let elem_len =
+                                        arr.get(real_idx).map(|s| s.chars().count()).unwrap_or(0);
                                     result.push_str(&elem_len.to_string());
                                     continue;
                                 }
@@ -16706,8 +16611,7 @@ impl ShellExecutor {
                                 // length. Forward to the runtime
                                 // length-of-substring path via the
                                 // braced expand for consistency.
-                                let braced =
-                                    format!("${{#{}[{}]}}", name, idx_str);
+                                let braced = format!("${{#{}[{}]}}", name, idx_str);
                                 result.push_str(&self.expand_string(&braced));
                                 continue;
                             }
@@ -16785,7 +16689,7 @@ impl ShellExecutor {
                         chars.next(); // consume `[`
                         let mut sub = String::new();
                         let mut depth = 1;
-                        while let Some(c) = chars.next() {
+                        for c in chars.by_ref() {
                             if c == '[' {
                                 depth += 1;
                                 sub.push(c);
@@ -16876,7 +16780,7 @@ impl ShellExecutor {
         let mut result = String::new();
         let mut depth = 1;
 
-        while let Some(c) = chars.next() {
+        for c in chars.by_ref() {
             if c == '(' {
                 depth += 1;
                 result.push(c);
@@ -16984,7 +16888,7 @@ impl ShellExecutor {
 
         // Remove if exists, then create FIFO
         let _ = fs::remove_file(&fifo_path);
-        if let Err(_) = nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU) {
+        if nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU).is_err() {
             return String::new();
         }
 
@@ -17025,7 +16929,7 @@ impl ShellExecutor {
 
         // Remove if exists, then create FIFO
         let _ = fs::remove_file(&fifo_path);
-        if let Err(_) = nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU) {
+        if nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU).is_err() {
             return String::new();
         }
 
@@ -17354,9 +17258,7 @@ impl ShellExecutor {
                     keys.sort();
                     let vals: Vec<String> = keys
                         .iter()
-                        .filter_map(|k| {
-                            self.named_dirs.get(*k).map(|p| p.display().to_string())
-                        })
+                        .filter_map(|k| self.named_dirs.get(*k).map(|p| p.display().to_string()))
                         .collect();
                     return Some(vals.join(" "));
                 }
@@ -17705,8 +17607,7 @@ impl ShellExecutor {
                 // line. This still lets scripts that test
                 // `[[ -n $functrace[1] ]]` work without false-empty.
                 if let Some(stack) = self.arrays.get("funcstack") {
-                    let synth: Vec<String> =
-                        stack.iter().map(|n| format!("{}:0", n)).collect();
+                    let synth: Vec<String> = stack.iter().map(|n| format!("{}:0", n)).collect();
                     if key == "@" || key == "*" {
                         return Some(synth.join(" "));
                     }
@@ -17777,7 +17678,13 @@ impl ShellExecutor {
                 if key == "@" || key == "*" {
                     let mut names: Vec<&str> = zle.list_widgets();
                     names.sort();
-                    return Some(names.into_iter().map(String::from).collect::<Vec<_>>().join(" "));
+                    return Some(
+                        names
+                            .into_iter()
+                            .map(String::from)
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    );
                 }
                 if let Some(target) = zle.get_widget(key) {
                     if target == key {
@@ -19077,9 +18984,9 @@ impl ShellExecutor {
                 'S' => flags.push(ZshParamFlag::Subscript),
                 'P' => flags.push(ZshParamFlag::Parameter),
                 '~' => flags.push(ZshParamFlag::Glob),
-                'l' => {
+                'l'
                     // l:len:fill: - pad left
-                    if chars.peek() == Some(&':') {
+                    if chars.peek() == Some(&':') => {
                         chars.next();
                         let mut len_str = String::new();
                         while let Some(&ch) = chars.peek() {
@@ -19132,10 +19039,9 @@ impl ShellExecutor {
                             flags.push(ZshParamFlag::PadLeft(len, fill));
                         }
                     }
-                }
-                'r' => {
+                'r'
                     // r:len:fill[:fill2]: — pad right.
-                    if chars.peek() == Some(&':') {
+                    if chars.peek() == Some(&':') => {
                         chars.next();
                         let mut len_str = String::new();
                         while let Some(&ch) = chars.peek() {
@@ -19180,7 +19086,6 @@ impl ShellExecutor {
                             flags.push(ZshParamFlag::PadRight(len, fill));
                         }
                     }
-                }
                 'm' => {
                     // Width for padding - parse number if present
                     let mut width_str = String::new();
@@ -19476,7 +19381,7 @@ impl ShellExecutor {
                 if val.len() >= *len {
                     val.to_string()
                 } else {
-                    let padding: String = std::iter::repeat(*fill).take(len - val.len()).collect();
+                    let padding: String = std::iter::repeat_n(*fill, len - val.len()).collect();
                     format!("{}{}", padding, val)
                 }
             }
@@ -19484,7 +19389,7 @@ impl ShellExecutor {
                 if val.len() >= *len {
                     val.to_string()
                 } else {
-                    let padding: String = std::iter::repeat(*fill).take(len - val.len()).collect();
+                    let padding: String = std::iter::repeat_n(*fill, len - val.len()).collect();
                     format!("{}{}", val, padding)
                 }
             }
@@ -19540,33 +19445,31 @@ impl ShellExecutor {
             // `\e[?` — it's the apply_attrs preamble, not a user-asked
             // reset. Conservative: only strip when nothing real has
             // been emitted yet.
-            if !emitted_anything && c == '\x1b' {
-                if chars.peek() == Some(&'[') {
-                    let mut lookahead = String::new();
-                    let mut iter = chars.clone();
-                    while let Some(ch) = iter.next() {
-                        lookahead.push(ch);
-                        if ch.is_ascii_alphabetic() {
-                            break;
-                        }
-                        if lookahead.len() > 8 {
-                            break;
-                        }
+            if !emitted_anything && c == '\x1b' && chars.peek() == Some(&'[') {
+                let mut lookahead = String::new();
+                let iter = chars.clone();
+                for ch in iter {
+                    lookahead.push(ch);
+                    if ch.is_ascii_alphabetic() {
+                        break;
                     }
-                    if lookahead == "[0m" {
-                        // Skip the `[0m` (3 chars: `[`, `0`, `m`).
-                        let mut peek2 = chars.clone();
-                        peek2.next(); // [
-                        peek2.next(); // 0
-                        peek2.next(); // m
-                        if peek2.peek() == Some(&'\x1b') {
-                            // Confirm followed by another escape — the
-                            // suppression is safe.
-                            chars.next(); // [
-                            chars.next(); // 0
-                            chars.next(); // m
-                            continue;
-                        }
+                    if lookahead.len() > 8 {
+                        break;
+                    }
+                }
+                if lookahead == "[0m" {
+                    // Skip the `[0m` (3 chars: `[`, `0`, `m`).
+                    let mut peek2 = chars.clone();
+                    peek2.next(); // [
+                    peek2.next(); // 0
+                    peek2.next(); // m
+                    if peek2.peek() == Some(&'\x1b') {
+                        // Confirm followed by another escape — the
+                        // suppression is safe.
+                        chars.next(); // [
+                        chars.next(); // 0
+                        chars.next(); // m
+                        continue;
                     }
                 }
             }
@@ -19777,8 +19680,7 @@ impl ShellExecutor {
         let compound = parse_subscript_arith_compound(&expr)
             .map(|(n, i, o, r)| (n, i, o, r, false))
             .or_else(|| {
-                parse_subscript_arith_pre_inc(&expr)
-                    .map(|(n, i, o)| (n, i, o, String::new(), true))
+                parse_subscript_arith_pre_inc(&expr).map(|(n, i, o)| (n, i, o, String::new(), true))
             });
         if let Some((name, idx_expr, op, rhs, is_pre)) = compound {
             let is_assoc = self.assoc_arrays.contains_key(&name);
@@ -19812,7 +19714,11 @@ impl ShellExecutor {
                     .unwrap_or(0)
             } else if let Some(arr) = self.arrays.get(&name) {
                 let len = arr.len() as i64;
-                let pos = if idx_val < 0 { len + idx_val } else { idx_val - 1 };
+                let pos = if idx_val < 0 {
+                    len + idx_val
+                } else {
+                    idx_val - 1
+                };
                 if pos >= 0 && (pos as usize) < arr.len() {
                     arr[pos as usize].parse().unwrap_or(0)
                 } else {
@@ -19856,7 +19762,11 @@ impl ShellExecutor {
                 }
             } else if let Some(arr) = self.arrays.get_mut(&name) {
                 let len = arr.len() as i64;
-                let pos = if idx_val < 0 { len + idx_val } else { idx_val - 1 };
+                let pos = if idx_val < 0 {
+                    len + idx_val
+                } else {
+                    idx_val - 1
+                };
                 if pos >= 0 {
                     let p = pos as usize;
                     if p >= arr.len() {
@@ -20315,7 +20225,7 @@ impl ShellExecutor {
             return 1;
         }
 
-        let path_arg = positional_args.first().map(|s| *s).unwrap_or("~");
+        let path_arg = positional_args.first().copied().unwrap_or("~");
 
         // Handle stack indices
         if path_arg.starts_with('+') || path_arg.starts_with('-') {
@@ -20644,24 +20554,15 @@ impl ShellExecutor {
                     .map(|c| c.is_ascii_alphabetic() || c == '_')
                     .unwrap_or(false);
                 if !first_ok {
-                    if key
-                        .chars()
-                        .any(|c| !c.is_ascii_alphanumeric() && c != '_')
-                    {
-                        eprintln!(
-                            "zshrs:export:1: not valid in this context: {}",
-                            key
-                        );
+                    if key.chars().any(|c| !c.is_ascii_alphanumeric() && c != '_') {
+                        eprintln!("zshrs:export:1: not valid in this context: {}", key);
                     } else {
                         eprintln!("zshrs:export:1: not an identifier: {}", key);
                     }
                     return 1;
                 }
                 if chars.any(|c| !c.is_ascii_alphanumeric() && c != '_') {
-                    eprintln!(
-                        "zshrs:export:1: not valid in this context: {}",
-                        key
-                    );
+                    eprintln!("zshrs:export:1: not valid in this context: {}", key);
                     return 1;
                 }
                 self.variables.insert(key.to_string(), value.to_string());
@@ -20674,10 +20575,7 @@ impl ShellExecutor {
                 arg.clone()
             };
             // Mark the export attribute for `(t)` flag.
-            let entry = self
-                .var_attrs
-                .entry(key_owned)
-                .or_insert_with(VarAttr::default);
+            let entry = self.var_attrs.entry(key_owned).or_default();
             entry.export = true;
         }
         0
@@ -20725,8 +20623,7 @@ impl ShellExecutor {
             // function table.
             if match_glob {
                 let pats: Vec<String> = names.clone();
-                let keys: Vec<String> =
-                    self.functions_compiled.keys().cloned().collect();
+                let keys: Vec<String> = self.functions_compiled.keys().cloned().collect();
                 let mut matched = false;
                 for pat in &pats {
                     for k in &keys {
@@ -20760,7 +20657,7 @@ impl ShellExecutor {
                 for n in &var_names {
                     if ShellExecutor::glob_match_static(n, pat) {
                         self.variables.remove(n);
-                        let _ = std::env::remove_var(n);
+                        std::env::remove_var(n);
                         matched = true;
                     }
                 }
@@ -20834,11 +20731,7 @@ impl ShellExecutor {
             );
             let is_ro = is_intrinsic_ro
                 || self.readonly_vars.contains(arg)
-                || self
-                    .var_attrs
-                    .get(arg)
-                    .map(|a| a.readonly)
-                    .unwrap_or(false);
+                || self.var_attrs.get(arg).map(|a| a.readonly).unwrap_or(false);
             if is_ro {
                 eprintln!("zshrs:1: read-only variable: {}", arg);
                 return 1;
@@ -20852,16 +20745,12 @@ impl ShellExecutor {
             // `unset path` zeroes $PATH because they're tied. Without
             // this, our path-array got removed but $PATH retained the
             // pre-unset value.
-            if let Some((scalar_name, _sep)) =
-                self.tied_array_to_scalar.remove(arg)
-            {
+            if let Some((scalar_name, _sep)) = self.tied_array_to_scalar.remove(arg) {
                 env::remove_var(&scalar_name);
                 self.variables.remove(&scalar_name);
                 self.tied_scalar_to_array.remove(&scalar_name);
             }
-            if let Some((array_name, _sep)) =
-                self.tied_scalar_to_array.remove(arg)
-            {
+            if let Some((array_name, _sep)) = self.tied_scalar_to_array.remove(arg) {
                 self.arrays.remove(&array_name);
                 self.tied_array_to_scalar.remove(&array_name);
             }
@@ -21176,22 +21065,32 @@ impl ShellExecutor {
             }
         }
 
-        let push_alias =
-            |delta: &mut PluginDelta, map: &HashMap<String, String>, snap_set: &std::collections::HashSet<String>, kind: AliasKind| {
-                let mut keys: Vec<&String> = map.keys().collect();
-                keys.sort();
-                for name in keys {
-                    if !snap_set.contains(name) {
-                        let value = map.get(name).unwrap();
-                        delta
-                            .aliases
-                            .push((name.clone(), value.clone(), kind));
-                    }
+        let push_alias = |delta: &mut PluginDelta,
+                          map: &HashMap<String, String>,
+                          snap_set: &std::collections::HashSet<String>,
+                          kind: AliasKind| {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            for name in keys {
+                if !snap_set.contains(name) {
+                    let value = map.get(name).unwrap();
+                    delta.aliases.push((name.clone(), value.clone(), kind));
                 }
-            };
+            }
+        };
         push_alias(&mut delta, &self.aliases, &snap.aliases, AliasKind::Regular);
-        push_alias(&mut delta, &self.global_aliases, &snap.global_aliases, AliasKind::Global);
-        push_alias(&mut delta, &self.suffix_aliases, &snap.suffix_aliases, AliasKind::Suffix);
+        push_alias(
+            &mut delta,
+            &self.global_aliases,
+            &snap.global_aliases,
+            AliasKind::Global,
+        );
+        push_alias(
+            &mut delta,
+            &self.suffix_aliases,
+            &snap.suffix_aliases,
+            AliasKind::Suffix,
+        );
 
         // New/changed variables
         let mut var_keys: Vec<&String> = self.variables.keys().collect();
@@ -21249,7 +21148,7 @@ impl ShellExecutor {
             let funcs = self.hook_functions.get(hook).unwrap();
             let old_funcs = snap.hooks.get(hook);
             for f in funcs {
-                let is_new = old_funcs.map_or(true, |old| !old.contains(f));
+                let is_new = old_funcs.is_none_or(|old| !old.contains(f));
                 if is_new {
                     delta.hooks.push((hook.clone(), f.clone()));
                 }
@@ -21328,7 +21227,7 @@ impl ShellExecutor {
         for (hook, func) in &delta.hooks {
             self.hook_functions
                 .entry(hook.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(func.clone());
         }
 
@@ -21451,9 +21350,9 @@ impl ShellExecutor {
         for arg in &args {
             if !arg.starts_with('-') && !arg.starts_with('!') && *arg != "(" && *arg != ")" {
                 let path_str = arg.to_string();
-                if !meta_cache.contains_key(&path_str) {
-                    meta_cache.insert(path_str, std::fs::metadata(arg).ok());
-                }
+                meta_cache
+                    .entry(path_str)
+                    .or_insert_with(|| std::fs::metadata(arg).ok());
             }
         }
 
@@ -21745,7 +21644,7 @@ impl ShellExecutor {
             // and tries to look up the second `=` as a command).
             [_, "==", _] => {
                 eprintln!("zshrs:1: = not found");
-                return 1;
+                1
             }
             [a, "=", b] => {
                 if a == b {
@@ -21773,7 +21672,7 @@ impl ShellExecutor {
             [a, "<", b] | [a, ">", b] => {
                 eprintln!("zshrs:1: condition expected: {}", args[1]);
                 let _ = (a, b);
-                return 2;
+                2
             }
 
             // Numeric comparisons
@@ -21839,7 +21738,11 @@ impl ShellExecutor {
                         return 2;
                     }
                 };
-                if av < bv { 0 } else { 1 }
+                if av < bv {
+                    0
+                } else {
+                    1
+                }
             }
             [a, "-le", b] => {
                 let av = match a.parse::<i64>() {
@@ -21856,7 +21759,11 @@ impl ShellExecutor {
                         return 2;
                     }
                 };
-                if av <= bv { 0 } else { 1 }
+                if av <= bv {
+                    0
+                } else {
+                    1
+                }
             }
             [a, "-gt", b] => {
                 let av = match a.parse::<i64>() {
@@ -21873,7 +21780,11 @@ impl ShellExecutor {
                         return 2;
                     }
                 };
-                if av > bv { 0 } else { 1 }
+                if av > bv {
+                    0
+                } else {
+                    1
+                }
             }
             [a, "-ge", b] => {
                 let av = match a.parse::<i64>() {
@@ -21890,7 +21801,11 @@ impl ShellExecutor {
                         return 2;
                     }
                 };
-                if av >= bv { 0 } else { 1 }
+                if av >= bv {
+                    0
+                } else {
+                    1
+                }
             }
 
             // File comparisons
@@ -21898,13 +21813,7 @@ impl ShellExecutor {
                 let m1 = std::fs::metadata(f1).and_then(|m| m.modified()).ok();
                 let m2 = std::fs::metadata(f2).and_then(|m| m.modified()).ok();
                 match (m1, m2) {
-                    (Some(t1), Some(t2)) => {
-                        if t1 > t2 {
-                            0
-                        } else {
-                            1
-                        }
-                    }
+                    (Some(t1), Some(t2)) if t1 > t2 => 0,
                     (Some(_), None) => 0,
                     _ => 1,
                 }
@@ -21913,13 +21822,7 @@ impl ShellExecutor {
                 let m1 = std::fs::metadata(f1).and_then(|m| m.modified()).ok();
                 let m2 = std::fs::metadata(f2).and_then(|m| m.modified()).ok();
                 match (m1, m2) {
-                    (Some(t1), Some(t2)) => {
-                        if t1 < t2 {
-                            0
-                        } else {
-                            1
-                        }
-                    }
+                    (Some(t1), Some(t2)) if t1 < t2 => 0,
                     (None, Some(_)) => 0,
                     _ => 1,
                 }
@@ -21929,13 +21832,7 @@ impl ShellExecutor {
                 let m1 = std::fs::metadata(f1).ok();
                 let m2 = std::fs::metadata(f2).ok();
                 match (m1, m2) {
-                    (Some(a), Some(b)) => {
-                        if a.dev() == b.dev() && a.ino() == b.ino() {
-                            0
-                        } else {
-                            1
-                        }
-                    }
+                    (Some(a), Some(b)) if a.dev() == b.dev() && a.ino() == b.ino() => 0,
                     _ => 1,
                 }
             }
@@ -21970,9 +21867,7 @@ impl ShellExecutor {
                     && !matches!(args[0], "-a" | "-o")
                 {
                     let bytes = args[0].as_bytes();
-                    if bytes[1..].iter().all(|b| b.is_ascii_alphabetic())
-                        || args[0] == "--"
-                    {
+                    if bytes[1..].iter().all(|b| b.is_ascii_alphabetic()) || args[0] == "--" {
                         eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
                         return 2;
                     }
@@ -21989,10 +21884,7 @@ impl ShellExecutor {
                     && args[0] != "("
                     && args[1] != ")"
                 {
-                    eprintln!(
-                        "zshrs:1: parse error: condition expected: {}",
-                        args[0]
-                    );
+                    eprintln!("zshrs:1: parse error: condition expected: {}", args[0]);
                     return 2;
                 }
                 // `[ a -lt ]` (2 args: operand + binop, missing
@@ -22002,15 +21894,23 @@ impl ShellExecutor {
                     && !args[0].starts_with('-')
                     && matches!(
                         args[1],
-                        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
-                            | "=" | "!=" | "<" | ">" | "==" | "-nt"
-                            | "-ot" | "-ef"
+                        "-eq"
+                            | "-ne"
+                            | "-lt"
+                            | "-le"
+                            | "-gt"
+                            | "-ge"
+                            | "="
+                            | "!="
+                            | "<"
+                            | ">"
+                            | "=="
+                            | "-nt"
+                            | "-ot"
+                            | "-ef"
                     )
                 {
-                    eprintln!(
-                        "zshrs:1: parse error: condition expected: {}",
-                        args[0]
-                    );
+                    eprintln!("zshrs:1: parse error: condition expected: {}", args[0]);
                     return 2;
                 }
                 // 3-arg with binary operator at position 0 (not 1) —
@@ -22019,10 +21919,7 @@ impl ShellExecutor {
                 // appearing as the FIRST operand looks like a unary
                 // condition zsh doesn't recognise.
                 if args.len() == 3
-                    && matches!(
-                        args[0],
-                        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
-                    )
+                    && matches!(args[0], "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge")
                 {
                     eprintln!("zshrs:[:1: unknown condition: {}", args[0]);
                     return 2;
@@ -22063,10 +21960,28 @@ impl ShellExecutor {
                     && args[0].len() == 2
                     && matches!(
                         args[0],
-                        "-z" | "-n" | "-d" | "-f" | "-e" | "-r" | "-w"
-                            | "-x" | "-s" | "-h" | "-L" | "-O" | "-G"
-                            | "-N" | "-S" | "-p" | "-b" | "-c" | "-g"
-                            | "-k" | "-u" | "-t" | "-v"
+                        "-z" | "-n"
+                            | "-d"
+                            | "-f"
+                            | "-e"
+                            | "-r"
+                            | "-w"
+                            | "-x"
+                            | "-s"
+                            | "-h"
+                            | "-L"
+                            | "-O"
+                            | "-G"
+                            | "-N"
+                            | "-S"
+                            | "-p"
+                            | "-b"
+                            | "-c"
+                            | "-g"
+                            | "-k"
+                            | "-u"
+                            | "-t"
+                            | "-v"
                     )
                 {
                     eprintln!("zshrs:[:1: too many arguments");
@@ -22080,23 +21995,16 @@ impl ShellExecutor {
                     if matches!(args[1], "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge") {
                         // Check both operands are numeric.
                         if args[0].parse::<i64>().is_err() {
-                            eprintln!(
-                                "zshrs:[:1: integer expression expected: {}",
-                                args[0]
-                            );
+                            eprintln!("zshrs:[:1: integer expression expected: {}", args[0]);
                             return 2;
                         }
                         if args[2].parse::<i64>().is_err() {
-                            eprintln!(
-                                "zshrs:[:1: integer expression expected: {}",
-                                args[2]
-                            );
+                            eprintln!("zshrs:[:1: integer expression expected: {}", args[2]);
                             return 2;
                         }
                     } else if !matches!(
                         args[1],
-                        "=" | "!=" | "<" | ">" | "==" | "-a" | "-o"
-                            | "-nt" | "-ot" | "-ef"
+                        "=" | "!=" | "<" | ">" | "==" | "-a" | "-o" | "-nt" | "-ot" | "-ef"
                     ) && args[1].len() > 1
                         && args[1][1..].chars().all(|c| c.is_ascii_alphabetic())
                     {
@@ -22243,19 +22151,48 @@ impl ShellExecutor {
                 if args.len() >= 4 {
                     let known_binop = matches!(
                         args[1],
-                        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
-                            | "=" | "!=" | "<" | ">" | "==" | "-nt"
-                            | "-ot" | "-ef"
+                        "-eq"
+                            | "-ne"
+                            | "-lt"
+                            | "-le"
+                            | "-gt"
+                            | "-ge"
+                            | "="
+                            | "!="
+                            | "<"
+                            | ">"
+                            | "=="
+                            | "-nt"
+                            | "-ot"
+                            | "-ef"
                     );
                     let unary_flag_at_0 = args[0].starts_with('-')
                         && args[0].len() == 2
                         && matches!(
                             args[0],
-                            "-z" | "-n" | "-d" | "-f" | "-e" | "-r"
-                                | "-w" | "-x" | "-s" | "-h" | "-L"
-                                | "-O" | "-G" | "-N" | "-S" | "-p"
-                                | "-b" | "-c" | "-g" | "-k" | "-u"
-                                | "-t" | "-v" | "-o"
+                            "-z" | "-n"
+                                | "-d"
+                                | "-f"
+                                | "-e"
+                                | "-r"
+                                | "-w"
+                                | "-x"
+                                | "-s"
+                                | "-h"
+                                | "-L"
+                                | "-O"
+                                | "-G"
+                                | "-N"
+                                | "-S"
+                                | "-p"
+                                | "-b"
+                                | "-c"
+                                | "-g"
+                                | "-k"
+                                | "-u"
+                                | "-t"
+                                | "-v"
+                                | "-o"
                         );
                     if known_binop || unary_flag_at_0 {
                         eprintln!("zshrs:[:1: too many arguments");
@@ -22803,12 +22740,7 @@ impl ShellExecutor {
                 // PM_HIDE: zsh suppresses hidden vars from declarative
                 // listings. They're still expandable; just not visible
                 // from `set` / bare `typeset`.
-                if self
-                    .var_attrs
-                    .get(name)
-                    .map(|a| a.hidden)
-                    .unwrap_or(false)
-                {
+                if self.var_attrs.get(name).map(|a| a.hidden).unwrap_or(false) {
                     continue;
                 }
                 let val = self.variables.get(name).cloned().unwrap_or_default();
@@ -23017,13 +22949,9 @@ impl ShellExecutor {
                         .next()
                         .map(|c| c.is_ascii_alphabetic() || c == '_')
                         .unwrap_or(false);
-                    let body_ok = chars
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_');
+                    let body_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
                     if !first_ok || !body_ok {
-                        eprintln!(
-                            "zshrs:{}:1: not an identifier: {}",
-                            invoked_as, name
-                        );
+                        eprintln!("zshrs:{}:1: not an identifier: {}", invoked_as, name);
                         return 1;
                     }
                 }
@@ -23066,25 +22994,19 @@ impl ShellExecutor {
                         let mut i = 0;
                         while i < bytes.len() {
                             // Skip whitespace.
-                            while i < bytes.len()
-                                && (bytes[i] as char).is_whitespace()
-                            {
+                            while i < bytes.len() && (bytes[i] as char).is_whitespace() {
                                 i += 1;
                             }
                             if i >= bytes.len() {
                                 break;
                             }
                             let mut elem = String::new();
-                            while i < bytes.len()
-                                && !(bytes[i] as char).is_whitespace()
-                            {
+                            while i < bytes.len() && !(bytes[i] as char).is_whitespace() {
                                 let c = bytes[i] as char;
                                 if c == '"' || c == '\'' {
                                     let quote = c;
                                     i += 1;
-                                    while i < bytes.len()
-                                        && (bytes[i] as char) != quote
-                                    {
+                                    while i < bytes.len() && (bytes[i] as char) != quote {
                                         // Inside DQ, `\"` and `\\`
                                         // are escaped; pass through
                                         // verbatim (the lexer
@@ -23096,8 +23018,7 @@ impl ShellExecutor {
                                     if i < bytes.len() {
                                         i += 1; // close quote
                                     }
-                                } else if c == '\\' && i + 1 < bytes.len()
-                                {
+                                } else if c == '\\' && i + 1 < bytes.len() {
                                     // Backslash escape in arg —
                                     // keep next char literally.
                                     elem.push(bytes[i + 1] as char);
@@ -23235,8 +23156,7 @@ impl ShellExecutor {
                     || self.assoc_arrays.contains_key(arg.as_str());
                 if in_function || !exists {
                     if is_assoc {
-                        self.assoc_arrays
-                            .insert(arg.clone(), IndexMap::new());
+                        self.assoc_arrays.insert(arg.clone(), IndexMap::new());
                     } else {
                         self.arrays.insert(arg.clone(), Vec::new());
                     }
@@ -23370,7 +23290,11 @@ impl ShellExecutor {
                         hidden: is_hidden,
                         hide_val: is_hide_val,
                         trace: is_trace,
-                        float_precision: if is_float || is_float_exp { precision } else { None },
+                        float_precision: if is_float || is_float_exp {
+                            precision
+                        } else {
+                            None
+                        },
                     };
                     self.var_attrs.insert(attr_name.clone(), attr);
                     // Apply unique-dedupe immediately if the array
@@ -23635,10 +23559,16 @@ impl ShellExecutor {
             let line = buf.trim_end_matches('\n').to_string();
             if use_array {
                 let words: Vec<String> = line.split_whitespace().map(|s| s.to_string()).collect();
-                let target = var_names.first().cloned().unwrap_or_else(|| "reply".to_string());
+                let target = var_names
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "reply".to_string());
                 self.arrays.insert(target, words);
             } else {
-                let target = var_names.first().cloned().unwrap_or_else(|| "REPLY".to_string());
+                let target = var_names
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "REPLY".to_string());
                 self.variables.insert(target, line);
             }
             return 0;
@@ -23664,9 +23594,7 @@ impl ShellExecutor {
         use std::mem::ManuallyDrop;
         use std::os::unix::io::FromRawFd;
         let mut fd_file: Option<ManuallyDrop<std::fs::File>> = if fd > 0 {
-            Some(ManuallyDrop::new(unsafe {
-                std::fs::File::from_raw_fd(fd)
-            }))
+            Some(ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd) }))
         } else {
             None
         };
@@ -23749,8 +23677,8 @@ impl ShellExecutor {
                     br.read_line(&mut input)
                 } else {
                     let stdin = io::stdin();
-                    let r = stdin.lock().read_line(&mut input);
-                    r
+
+                    stdin.lock().read_line(&mut input)
                 };
                 match n_read {
                     Ok(0) => return 1,
@@ -23766,8 +23694,8 @@ impl ShellExecutor {
                         f.read_exact(&mut byte)
                     } else {
                         let stdin = io::stdin();
-                        let r = stdin.lock().read_exact(&mut byte);
-                        r
+
+                        stdin.lock().read_exact(&mut byte)
                     };
                     match r {
                         Ok(_) => {
@@ -23930,10 +23858,8 @@ impl ShellExecutor {
             // doesn't fire and we lose the collapse-runs +
             // strip-boundaries semantics that zsh's bin_read
             // applies for unset/default IFS).
-            let is_whitespace_ifs = !ifs.is_empty()
-                && ifs
-                    .chars()
-                    .all(|c| c.is_ascii_whitespace() || c == '\0');
+            let is_whitespace_ifs =
+                !ifs.is_empty() && ifs.chars().all(|c| c.is_ascii_whitespace() || c == '\0');
             // Strip leading AND trailing whitespace for default
             // IFS (zsh's bin_read does this so trailing
             // whitespace doesn't leak into the last var). For
@@ -23962,9 +23888,7 @@ impl ShellExecutor {
                         // separators (whitespace IFS only).
                         i += 1;
                         if is_whitespace_ifs {
-                            while i < bytes.len()
-                                && ifs.bytes().any(|c| c == bytes[i])
-                            {
+                            while i < bytes.len() && ifs.bytes().any(|c| c == bytes[i]) {
                                 i += 1;
                             }
                         }
@@ -23973,9 +23897,7 @@ impl ShellExecutor {
                     }
                     i += 1;
                     if is_whitespace_ifs {
-                        while i < bytes.len()
-                            && ifs.bytes().any(|c| c == bytes[i])
-                        {
+                        while i < bytes.len() && ifs.bytes().any(|c| c == bytes[i]) {
                             i += 1;
                         }
                     }
@@ -23999,12 +23921,9 @@ impl ShellExecutor {
                         // Trim the trailing separator from `head`
                         // before splitting so we don't get a stray
                         // empty.
-                        let head_trimmed = head
-                            .strip_suffix(|c: char| ifs.contains(c))
-                            .unwrap_or(head);
-                        head_trimmed
-                            .split(|c: char| ifs.contains(c))
-                            .collect()
+                        let head_trimmed =
+                            head.strip_suffix(|c: char| ifs.contains(c)).unwrap_or(head);
+                        head_trimmed.split(|c: char| ifs.contains(c)).collect()
                     };
                     head_words.push(tail);
                     head_words
@@ -24013,9 +23932,7 @@ impl ShellExecutor {
                     // Fewer fields than vars — split normally; the
                     // missing vars get empty.
                     if is_whitespace_ifs {
-                        processed
-                            .split_whitespace()
-                            .collect()
+                        processed.split_whitespace().collect()
                     } else {
                         processed.split(|c: char| ifs.contains(c)).collect()
                     }
@@ -24062,7 +23979,10 @@ impl ShellExecutor {
                 // returned 1 by default, then the count check
                 // erred when positionals were short.
                 count = 0;
-            } else if arg.starts_with('-') && arg[1..].chars().all(|c| c.is_ascii_digit()) && arg.len() > 1 {
+            } else if arg.starts_with('-')
+                && arg[1..].chars().all(|c| c.is_ascii_digit())
+                && arg.len() > 1
+            {
                 // zsh: negative count is rejected with this exact diagnostic.
                 eprintln!("zshrs:shift:1: argument to shift must be non-negative");
                 return 1;
@@ -24189,8 +24109,7 @@ impl ShellExecutor {
                 break;
             }
 
-            if arg.starts_with('+') {
-                let flags = &arg[1..];
+            if let Some(flags) = arg.strip_prefix('+') {
                 for c in flags.chars() {
                     match c {
                         'U' => no_alias = false,
@@ -24208,8 +24127,7 @@ impl ShellExecutor {
                         }
                     }
                 }
-            } else if arg.starts_with('-') {
-                let flags = &arg[1..];
+            } else if let Some(flags) = arg.strip_prefix('-') {
                 if flags.is_empty() {
                     // Just "-" means end of options
                     i += 1;
@@ -24306,8 +24224,7 @@ impl ShellExecutor {
         // Direct port of zsh/Src/builtin.c bin_autoload's pattern path.
         if match_pattern {
             let pats: Vec<String> = functions.clone();
-            let candidates: Vec<String> =
-                self.autoload_pending.keys().cloned().collect();
+            let candidates: Vec<String> = self.autoload_pending.keys().cloned().collect();
             functions = pats
                 .iter()
                 .flat_map(|p| {
@@ -24319,8 +24236,7 @@ impl ShellExecutor {
                 })
                 .collect();
             // Dedup preserving order.
-            let mut seen: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             functions.retain(|n| seen.insert(n.clone()));
         }
 
@@ -24355,13 +24271,11 @@ impl ShellExecutor {
             // chunk into `functions_compiled` and clears the pending entry.
 
             // If -r or -R, resolve the path now to verify it exists
-            if resolve {
-                if self.find_function_file(func_name).is_none() {
-                    eprintln!(
-                        "autoload: {}: function definition file not found",
-                        func_name
-                    );
-                }
+            if resolve && self.find_function_file(func_name).is_none() {
+                eprintln!(
+                    "autoload: {}: function definition file not found",
+                    func_name
+                );
             }
         }
 
@@ -24905,10 +24819,10 @@ impl ShellExecutor {
                 by_num.sort_by_key(|(_, n, _)| *n);
                 let max_num = by_num.iter().map(|(_, n, _)| *n).max().unwrap_or(0);
                 let width = if max_num >= 100 { 3 } else { 2 };
-                let zterm_columns = match env::var("COLUMNS").ok().and_then(|s| s.parse().ok()) {
-                    Some(c) => c,
-                    None => 80usize,
-                };
+                let zterm_columns = env::var("COLUMNS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(80usize);
                 let cols: usize = if zterm_columns >= 30 {
                     if zterm_columns < 90 {
                         std::cmp::max(1, zterm_columns / 15)
@@ -25067,10 +24981,7 @@ impl ShellExecutor {
                             // zsh's diagnostic always uses the SIG prefix
                             // even when the user's input lacked it:
                             // `kill -l XYZ` → `unknown signal: SIGXYZ`.
-                            eprintln!(
-                                "zshrs:kill:1: unknown signal: SIG{}",
-                                sig_name
-                            );
+                            eprintln!("zshrs:kill:1: unknown signal: SIG{}", sig_name);
                         }
                     }
                 }
@@ -25152,7 +25063,7 @@ impl ShellExecutor {
                     let raw = e.to_string();
                     let cleaned = raw
                         .split(':')
-                        .last()
+                        .next_back()
                         .unwrap_or(&raw)
                         .trim()
                         .to_lowercase();
@@ -25678,10 +25589,7 @@ impl ShellExecutor {
                             // (re-execute last command) which can
                             // recurse forever for `fc -h` since fc
                             // entered history.
-                            eprintln!(
-                                "zshrs:fc:1: bad option: -{}",
-                                chars[j]
-                            );
+                            eprintln!("zshrs:fc:1: bad option: -{}", chars[j]);
                             return 1;
                         }
                     }
@@ -25700,7 +25608,7 @@ impl ShellExecutor {
         // Handle file operations (read/write/append)
         // Note: HistoryEngine uses SQLite, so file ops are simplified
         if read_file || write_file || append_file {
-            let filename = positional.first().map(|s| *s).unwrap_or("~/.zsh_history");
+            let filename = positional.first().copied().unwrap_or("~/.zsh_history");
             let path = if filename.starts_with("~/") {
                 dirs::home_dir()
                     .map(|h| h.join(&filename[2..]))
@@ -25826,9 +25734,7 @@ impl ShellExecutor {
                 // recurse endlessly, aborted". Distinct from the
                 // -l case which uses "no such event: N".
                 if !list_mode && positional.is_empty() {
-                    eprintln!(
-                        "zsh:fc:1: current history line would recurse endlessly, aborted"
-                    );
+                    eprintln!("zsh:fc:1: current history line would recurse endlessly, aborted");
                     return 1;
                 }
                 // Non-numeric event spec (`fc -l blah`) is an "event
@@ -25853,9 +25759,7 @@ impl ShellExecutor {
                     // 3+ -> `too many arguments`. zshrs only
                     // checked args[0] earlier; extended to scan all
                     // bounds.
-                    let first_text = positional
-                        .iter()
-                        .find(|s| s.parse::<i64>().is_err());
+                    let first_text = positional.iter().find(|s| s.parse::<i64>().is_err());
                     if let Some(text) = first_text {
                         eprintln!("zshrs:fc:1: event not found: {}", text);
                     } else {
@@ -25945,8 +25849,7 @@ impl ShellExecutor {
                         // default: short time). zshrs previously
                         // dropped the timestamp column entirely.
                         let dt = chrono::DateTime::<chrono::Local>::from(
-                            std::time::UNIX_EPOCH
-                                + std::time::Duration::from_secs(ts as u64),
+                            std::time::UNIX_EPOCH + std::time::Duration::from_secs(ts as u64),
                         );
                         let stamp = dt.format("%H:%M").to_string();
                         println!("{:>5}  {}  {}", n, stamp, command);
@@ -26045,12 +25948,9 @@ impl ShellExecutor {
             // not found: N`, the wrong category for the range-edit
             // form.
             if !atty::is(atty::Stream::Stdin) {
-                let all_numeric = positional.iter()
-                    .all(|s| s.parse::<i64>().is_ok());
+                let all_numeric = positional.iter().all(|s| s.parse::<i64>().is_ok());
                 if all_numeric && positional.len() <= 2 {
-                    eprintln!(
-                        "zsh:fc:1: current history line would recurse endlessly, aborted"
-                    );
+                    eprintln!("zsh:fc:1: current history line would recurse endlessly, aborted");
                     return 1;
                 }
             }
@@ -26218,14 +26118,43 @@ impl ShellExecutor {
             // zsh runtime doesn't accept it. Match that.
             let known_sig = matches!(
                 sig_name.as_str(),
-                "EXIT" | "ZERR" | "DEBUG" | "ERR"
-                    | "HUP" | "INT" | "QUIT" | "ILL" | "TRAP"
-                    | "ABRT" | "EMT" | "BUS" | "FPE" | "KILL"
-                    | "USR1" | "SEGV" | "USR2" | "PIPE" | "ALRM"
-                    | "TERM" | "CHLD" | "CONT" | "STOP" | "TSTP"
-                    | "TTIN" | "TTOU" | "URG" | "XCPU" | "XFSZ"
-                    | "VTALRM" | "PROF" | "WINCH" | "IO" | "INFO"
-                    | "SYS" | "STKFLT" | "PWR"
+                "EXIT"
+                    | "ZERR"
+                    | "DEBUG"
+                    | "ERR"
+                    | "HUP"
+                    | "INT"
+                    | "QUIT"
+                    | "ILL"
+                    | "TRAP"
+                    | "ABRT"
+                    | "EMT"
+                    | "BUS"
+                    | "FPE"
+                    | "KILL"
+                    | "USR1"
+                    | "SEGV"
+                    | "USR2"
+                    | "PIPE"
+                    | "ALRM"
+                    | "TERM"
+                    | "CHLD"
+                    | "CONT"
+                    | "STOP"
+                    | "TSTP"
+                    | "TTIN"
+                    | "TTOU"
+                    | "URG"
+                    | "XCPU"
+                    | "XFSZ"
+                    | "VTALRM"
+                    | "PROF"
+                    | "WINCH"
+                    | "IO"
+                    | "INFO"
+                    | "SYS"
+                    | "STKFLT"
+                    | "PWR"
             ) || sig
                 .parse::<u32>()
                 .map(|n| n > 0 && n <= 63)
@@ -26937,9 +26866,9 @@ impl ShellExecutor {
                                 // (man zshoptions OPTION ALIASES). Accept
                                 // silently; the runtime knob isn't always
                                 // wired but the flag itself is real.
-                                'd' | 'g' | 'h' | 'k' | 'p' | 'r' | 's' | 't'
-                                | 'y' | 'A' | 'B' | 'E' | 'F' | 'G' | 'H' | 'K'
-                                | 'L' | 'N' | 'P' | 'R' | 'T' | 'U' | 'X' | 'Y' => {}
+                                'd' | 'g' | 'h' | 'k' | 'p' | 'r' | 's' | 't' | 'y' | 'A' | 'B'
+                                | 'E' | 'F' | 'G' | 'H' | 'K' | 'L' | 'N' | 'P' | 'R' | 'T'
+                                | 'U' | 'X' | 'Y' => {}
                                 _ => {
                                     // Unknown letter: zsh errors with
                                     // `can't change option: -X` exit 1.
@@ -26986,9 +26915,9 @@ impl ShellExecutor {
                                 // zsh's other single-letter `set` flags
                                 // (mirror the `-` arm so `+Z` errors
                                 // identically to `-Z`).
-                                'd' | 'g' | 'h' | 'k' | 'p' | 'r' | 's' | 't'
-                                | 'y' | 'A' | 'B' | 'E' | 'F' | 'G' | 'H' | 'K'
-                                | 'L' | 'N' | 'P' | 'R' | 'T' | 'U' | 'X' | 'Y' => {}
+                                'd' | 'g' | 'h' | 'k' | 'p' | 'r' | 's' | 't' | 'y' | 'A' | 'B'
+                                | 'E' | 'F' | 'G' | 'H' | 'K' | 'L' | 'N' | 'P' | 'R' | 'T'
+                                | 'U' | 'X' | 'Y' => {}
                                 _ => {
                                     eprintln!("zshrs:set:1: can't change option: +{}", c);
                                     return 1;
@@ -27891,7 +27820,7 @@ impl ShellExecutor {
             return Ok(status);
         }
         // External command
-        self.execute_external(cmd_name, &args.to_vec(), &[])
+        self.execute_external(cmd_name, args, &[])
     }
 
     /// intercept builtin — register AOP advice on commands.
@@ -28386,7 +28315,7 @@ impl ShellExecutor {
     fn builtin_help(&self, args: &[String]) -> i32 {
         if args.is_empty() {
             println!("zshrs shell builtins:");
-            println!("");
+            println!();
             println!("  alias, bg, bind, break, builtin, cd, command, continue,");
             println!("  declare, dirs, disown, echo, enable, eval, exec, exit,");
             println!("  export, false, fc, fg, getopts, hash, help, history,");
@@ -28394,7 +28323,7 @@ impl ShellExecutor {
             println!("  pwd, read, readonly, return, set, shift, shopt, source,");
             println!("  suspend, test, times, trap, true, type, typeset, ulimit,");
             println!("  umask, unalias, unset, wait, whence, where, which");
-            println!("");
+            println!();
             println!("Type 'help name' for more information about 'name'.");
             return 0;
         }
@@ -28499,9 +28428,7 @@ impl ShellExecutor {
         } else {
             let mut buf = [0u8; 8192];
             loop {
-                let n = unsafe {
-                    libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-                };
+                let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
                 if n <= 0 {
                     break;
                 }
@@ -28866,10 +28793,7 @@ impl ShellExecutor {
                             } else {
                                 self.variables.insert(varname.to_string(), "?".to_string());
                                 self.variables.insert("OPTARG".to_string(), String::new());
-                                eprintln!(
-                                    "zshrs:getopts:1: argument expected after -{} option",
-                                    c
-                                );
+                                eprintln!("zshrs:getopts:1: argument expected after -{} option", c);
                             }
                             return 0;
                         };
@@ -28951,8 +28875,8 @@ impl ShellExecutor {
         let mut show_word = false;
         let mut names = Vec::new();
 
-        let mut iter = args.iter();
-        while let Some(arg) = iter.next() {
+        let iter = args.iter();
+        for arg in iter {
             if arg.starts_with('-') && arg.len() > 1 {
                 for c in arg[1..].chars() {
                     match c {
@@ -29253,8 +29177,7 @@ impl ShellExecutor {
             // Named directories mode (hash -d). Sorted by name to
             // match zsh's table-walk order and stabilize the listing.
             if names.is_empty() {
-                let mut sorted: Vec<(&String, &PathBuf)> =
-                    self.named_dirs.iter().collect();
+                let mut sorted: Vec<(&String, &PathBuf)> = self.named_dirs.iter().collect();
                 sorted.sort_by(|a, b| a.0.cmp(b.0));
                 for (name, path) in sorted {
                     if list_form {
@@ -29807,9 +29730,7 @@ impl ShellExecutor {
                     if let Ok(entries) = std::fs::read_dir(".") {
                         let mut names: Vec<String> = entries
                             .flatten()
-                            .filter(|e| {
-                                e.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
-                            })
+                            .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
                             .map(|e| e.file_name().to_string_lossy().into_owned())
                             .collect();
                         names.sort();
@@ -29845,8 +29766,7 @@ impl ShellExecutor {
                             results.push(name);
                         }
                     }
-                    let mut env_names: Vec<String> =
-                        std::env::vars().map(|(k, _)| k).collect();
+                    let mut env_names: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
                     env_names.sort();
                     for name in env_names {
                         if name.starts_with(&prefix) && !results.contains(&name) {
@@ -30111,10 +30031,14 @@ impl ShellExecutor {
                         }
                         self.assoc_arrays
                             .insert("_comps".to_string(), result.comps.into_iter().collect());
-                        self.assoc_arrays
-                            .insert("_services".to_string(), result.services.into_iter().collect());
-                        self.assoc_arrays
-                            .insert("_patcomps".to_string(), result.patcomps.into_iter().collect());
+                        self.assoc_arrays.insert(
+                            "_services".to_string(),
+                            result.services.into_iter().collect(),
+                        );
+                        self.assoc_arrays.insert(
+                            "_patcomps".to_string(),
+                            result.patcomps.into_iter().collect(),
+                        );
 
                         // Background: fill bytecode blobs for any autoloads that have body but no ast.
                         // This populates the cache so subsequent autoload calls skip parsing.
@@ -30303,10 +30227,14 @@ impl ShellExecutor {
                     let comps = bg.result.comps.len();
                     self.assoc_arrays
                         .insert("_comps".to_string(), bg.result.comps.into_iter().collect());
-                    self.assoc_arrays
-                        .insert("_services".to_string(), bg.result.services.into_iter().collect());
-                    self.assoc_arrays
-                        .insert("_patcomps".to_string(), bg.result.patcomps.into_iter().collect());
+                    self.assoc_arrays.insert(
+                        "_services".to_string(),
+                        bg.result.services.into_iter().collect(),
+                    );
+                    self.assoc_arrays.insert(
+                        "_patcomps".to_string(),
+                        bg.result.patcomps.into_iter().collect(),
+                    );
                     self.compsys_cache = Some(bg.cache);
                     tracing::info!(
                         wall_ms = start.elapsed().as_millis() as u64,
@@ -30346,13 +30274,14 @@ impl ShellExecutor {
             .unwrap_or_else(|| PathBuf::from(&zdotdir).join(".zcompdump"));
 
         // -C: Try to use existing .zcompdump if valid
-        if use_cache && dump_path.exists() {
-            if compsys::check_dump(&dump_path, &self.fpath, "zshrs-0.1.0") {
-                // Valid dump - source it to load _comps
-                // For now, just rescan (proper impl would source the dump file)
-                if !quiet {
-                    tracing::info!("compinit: .zcompdump valid, rescanning for compat");
-                }
+        if use_cache
+            && dump_path.exists()
+            && compsys::check_dump(&dump_path, &self.fpath, "zshrs-0.1.0")
+        {
+            // Valid dump - source it to load _comps
+            // For now, just rescan (proper impl would source the dump file)
+            if !quiet {
+                tracing::info!("compinit: .zcompdump valid, rescanning for compat");
             }
         }
 
@@ -30375,12 +30304,18 @@ impl ShellExecutor {
         }
 
         // Set up _comps associative array
-        self.assoc_arrays
-            .insert("_comps".to_string(), result.comps.clone().into_iter().collect());
-        self.assoc_arrays
-            .insert("_services".to_string(), result.services.clone().into_iter().collect());
-        self.assoc_arrays
-            .insert("_patcomps".to_string(), result.patcomps.clone().into_iter().collect());
+        self.assoc_arrays.insert(
+            "_comps".to_string(),
+            result.comps.clone().into_iter().collect(),
+        );
+        self.assoc_arrays.insert(
+            "_services".to_string(),
+            result.services.clone().into_iter().collect(),
+        );
+        self.assoc_arrays.insert(
+            "_patcomps".to_string(),
+            result.patcomps.clone().into_iter().collect(),
+        );
 
         // No SQLite cache in compat mode
         self.compsys_cache = None;
@@ -30850,11 +30785,7 @@ impl ShellExecutor {
             // that set PUSHD_TO_HOME and expected `pushd` to go home
             // when the stack was empty.
             if self.dir_stack.is_empty() {
-                let pushd_to_home = self
-                    .options
-                    .get("pushdtohome")
-                    .copied()
-                    .unwrap_or(false);
+                let pushd_to_home = self.options.get("pushdtohome").copied().unwrap_or(false);
                 if pushd_to_home {
                     let home = match std::env::var("HOME") {
                         Ok(h) => PathBuf::from(h),
@@ -31082,11 +31013,7 @@ impl ShellExecutor {
         } else {
             target.display().to_string()
         };
-        let old_pwd = self
-            .variables
-            .get("PWD")
-            .cloned()
-            .unwrap_or_default();
+        let old_pwd = self.variables.get("PWD").cloned().unwrap_or_default();
         std::env::set_var("OLDPWD", &old_pwd);
         std::env::set_var("PWD", &new_pwd);
         self.variables.insert("OLDPWD".to_string(), old_pwd);
@@ -31995,7 +31922,7 @@ fn format_g(val: f64, prec: usize, upper: bool) -> String {
 }
 
 fn strip_trailing_zeros_g(s: &str) -> String {
-    let (mantissa, suffix) = match s.find(|c| c == 'e' || c == 'E') {
+    let (mantissa, suffix) = match s.find(['e', 'E']) {
         Some(i) => (&s[..i], &s[i..]),
         None => (s, ""),
     };
@@ -32159,7 +32086,7 @@ impl ShellExecutor {
                         let mut octal = String::new();
                         while octal.len() < 3 {
                             if let Some(&d) = chars.peek() {
-                                if d >= '0' && d <= '7' {
+                                if ('0'..='7').contains(&d) {
                                     octal.push(d);
                                     chars.next();
                                 } else {
@@ -32231,10 +32158,7 @@ impl ShellExecutor {
         };
         if levels <= 0 {
             // builtin.c:5820-5823 — non-positive levels error.
-            eprintln!(
-                "zshrs:break:1: argument is not positive: {}",
-                levels
-            );
+            eprintln!("zshrs:break:1: argument is not positive: {}", levels);
             return 1;
         }
         self.breaking = levels;
@@ -32249,10 +32173,7 @@ impl ShellExecutor {
             _ => 1,
         };
         if levels <= 0 {
-            eprintln!(
-                "zshrs:continue:1: argument is not positive: {}",
-                levels
-            );
+            eprintln!("zshrs:continue:1: argument is not positive: {}", levels);
             return 1;
         }
         self.continuing = levels;
@@ -32368,9 +32289,8 @@ impl ShellExecutor {
         // builtin.c:561-580 — glob (-m) dispatch.
         let mut returnval = 0;
         let mut matched_any = false;
-        let glob_match = |name: &str, pat: &str| -> bool {
-            ShellExecutor::glob_match_static(name, pat)
-        };
+        let glob_match =
+            |name: &str, pat: &str| -> bool { ShellExecutor::glob_match_static(name, pat) };
 
         for arg in &names {
             let mut hits: Vec<String> = Vec::new();
@@ -32648,7 +32568,8 @@ impl ShellExecutor {
         }
 
         // -c arg: execute command then restore
-        let result = if let Some(cmd) = command_arg {
+
+        if let Some(cmd) = command_arg {
             let status = self.execute_script(&cmd).unwrap_or(1);
 
             // Restore saved state
@@ -32664,9 +32585,7 @@ impl ShellExecutor {
             status
         } else {
             0
-        };
-
-        result
+        }
     }
 
     /// Get options to set/unset for an emulation mode
@@ -33034,17 +32953,13 @@ impl ShellExecutor {
                             // SAME arg ("-i16") or the NEXT arg
                             // ("-i 16"). Same shape as zsh.
                             let after = &body[ci + 1..];
-                            if !after.is_empty()
-                                && after.chars().all(|c| c.is_ascii_digit())
-                            {
+                            if !after.is_empty() && after.chars().all(|c| c.is_ascii_digit()) {
                                 int_base = after.parse().ok();
                                 break;
                             }
                             // Look at next arg.
                             if let Some(next) = args.get(i + 1) {
-                                if next.chars().all(|c| c.is_ascii_digit())
-                                    && !next.is_empty()
-                                {
+                                if next.chars().all(|c| c.is_ascii_digit()) && !next.is_empty() {
                                     int_base = next.parse().ok();
                                     consumed_base = true;
                                 }
@@ -33074,8 +32989,7 @@ impl ShellExecutor {
                     .next()
                     .map(|c| c.is_ascii_alphabetic() || c == '_')
                     .unwrap_or(false);
-                let body_ok =
-                    chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+                let body_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
                 if !first_ok || !body_ok {
                     eprintln!("zshrs:integer:1: not an identifier: {}", name);
                     return 1;
@@ -33088,7 +33002,7 @@ impl ShellExecutor {
             // Format display value per the -i base if set. zsh's
             // base-16 output reads `16#FF` for 255.
             let stored = if let Some(b) = int_base {
-                format_int_in_base(int_val, b as u32)
+                format_int_in_base(int_val, b)
             } else {
                 int_val.to_string()
             };
@@ -33576,7 +33490,7 @@ impl ShellExecutor {
         // SORTIT_IGNORING_CASE for both ascending (-o) and descending (-O).
         if sort_asc {
             if sort_ignore_case {
-                output_args.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+                output_args.sort_by_key(|a| a.to_lowercase());
             } else {
                 output_args.sort();
             }
@@ -33635,11 +33549,7 @@ impl ShellExecutor {
                     n => {
                         let bytes = output.as_bytes();
                         unsafe {
-                            libc::write(
-                                n as i32,
-                                bytes.as_ptr() as *const libc::c_void,
-                                bytes.len(),
-                            );
+                            libc::write(n, bytes.as_ptr() as *const libc::c_void, bytes.len());
                         }
                     }
                 }
@@ -33678,8 +33588,7 @@ impl ShellExecutor {
                     // iteration order picked the shallower one some
                     // runs and the deeper one others, breaking
                     // deterministic prompt rendering.
-                    let mut entries: Vec<(&String, &PathBuf)> =
-                        self.named_dirs.iter().collect();
+                    let mut entries: Vec<(&String, &PathBuf)> = self.named_dirs.iter().collect();
                     entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.as_os_str().len()));
                     for (name, path) in entries {
                         let path_str = path.to_string_lossy();
@@ -33765,11 +33674,7 @@ impl ShellExecutor {
                 n => {
                     let bytes = final_out.as_bytes();
                     unsafe {
-                        libc::write(
-                            n as i32,
-                            bytes.as_ptr() as *const libc::c_void,
-                            bytes.len(),
-                        );
+                        libc::write(n, bytes.as_ptr() as *const libc::c_void, bytes.len());
                     }
                 }
             }
@@ -33823,7 +33728,7 @@ impl ShellExecutor {
             // builtin.c:4998-5005 inner-loop strides by `nr`) → row-major
             // (-a, builtin.c:4986-4993 inner-loop strides by 1).
             let num_items = processed.len();
-            let rows = (num_items + columns - 1) / columns;
+            let rows = num_items.div_ceil(columns);
             // Compute width per column (max item width in that column).
             let mut col_widths = vec![0usize; columns];
             for col in 0..columns {
@@ -33923,11 +33828,7 @@ impl ShellExecutor {
                 n => {
                     let bytes = to_print.as_bytes();
                     unsafe {
-                        libc::write(
-                            n as i32,
-                            bytes.as_ptr() as *const libc::c_void,
-                            bytes.len(),
-                        );
+                        libc::write(n, bytes.as_ptr() as *const libc::c_void, bytes.len());
                     }
                 }
             }
@@ -34032,7 +33933,7 @@ impl ShellExecutor {
                         return s.to_string();
                     }
                     let fill = if zero && !left { '0' } else { ' ' };
-                    let extra: String = std::iter::repeat(fill).take(w - len).collect();
+                    let extra: String = std::iter::repeat_n(fill, w - len).collect();
                     if left {
                         format!("{}{}", s, extra)
                     } else {
@@ -34347,11 +34248,42 @@ impl ShellExecutor {
 
                     // Reserved words — scanmatchtable(reswdtab, ...) at builtin.c:4055.
                     const RESERVED_WORDS_M: &[&str] = &[
-                        "if", "then", "else", "elif", "fi", "case", "esac", "for", "select",
-                        "while", "until", "do", "done", "in", "function", "time", "coproc",
-                        "repeat", "foreach", "end", "nocorrect", "noglob", "local", "declare",
-                        "typeset", "readonly", "export", "integer", "float", "{", "}", "!",
-                        "[[", "]]", "((", "))",
+                        "if",
+                        "then",
+                        "else",
+                        "elif",
+                        "fi",
+                        "case",
+                        "esac",
+                        "for",
+                        "select",
+                        "while",
+                        "until",
+                        "do",
+                        "done",
+                        "in",
+                        "function",
+                        "time",
+                        "coproc",
+                        "repeat",
+                        "foreach",
+                        "end",
+                        "nocorrect",
+                        "noglob",
+                        "local",
+                        "declare",
+                        "typeset",
+                        "readonly",
+                        "export",
+                        "integer",
+                        "float",
+                        "{",
+                        "}",
+                        "!",
+                        "[[",
+                        "]]",
+                        "((",
+                        "))",
                     ];
                     for &rw in RESERVED_WORDS_M {
                         if Self::glob_match_static(rw, pat) {
@@ -34399,8 +34331,7 @@ impl ShellExecutor {
                     }
 
                     // Builtins — scanmatchtable(builtintab, ...) at builtin.c:4065.
-                    let mut builtin_keys: Vec<&'static str> =
-                        BUILTIN_SET.iter().copied().collect();
+                    let mut builtin_keys: Vec<&'static str> = BUILTIN_SET.iter().copied().collect();
                     builtin_keys.sort();
                     for bn in &builtin_keys {
                         if Self::glob_match_static(bn, pat) {
@@ -34747,8 +34678,8 @@ impl ShellExecutor {
         let mut soft = true;
         let mut value: Option<u64> = None;
 
-        let mut iter = args.iter();
-        while let Some(arg) = iter.next() {
+        let iter = args.iter();
+        for arg in iter {
             match arg.as_str() {
                 "-H" => {
                     hard = true;
@@ -34779,7 +34710,7 @@ impl ShellExecutor {
                 // get-only path; real Linux RLIMIT_MEMLOCK could be
                 // wired with cfg(target_os="linux") later.
                 "-l" => resource = RLIMIT_AS,
-                "unlimited" => value = Some(libc::RLIM_INFINITY as u64),
+                "unlimited" => value = Some(libc::RLIM_INFINITY),
                 _ if !arg.starts_with('-') => {
                     // zsh: `ulimit -f abc` (non-numeric value, not
                     // `unlimited`) -> `ulimit:1: invalid number:
@@ -34910,7 +34841,7 @@ impl ShellExecutor {
                 unsafe {
                     getrlimit(res, &mut rl);
                 }
-                let val = if rl.rlim_cur == RLIM_INFINITY as u64 {
+                let val = if rl.rlim_cur == RLIM_INFINITY {
                     "unlimited".to_string()
                 } else {
                     let v = rl.rlim_cur as u64 / divisor;
@@ -35020,10 +34951,7 @@ impl ShellExecutor {
                     }
                     let umaskop = bytes[i] as char;
                     if umaskop != '+' && umaskop != '-' && umaskop != '=' {
-                        eprintln!(
-                            "zshrs:umask:1: bad symbolic mode operator: {}",
-                            umaskop
-                        );
+                        eprintln!("zshrs:umask:1: bad symbolic mode operator: {}", umaskop);
                         return 1;
                     }
                     i += 1;
@@ -35399,8 +35327,8 @@ impl ShellExecutor {
                 }
                 "-u" => unload = true,
                 "-e" => existence_test = true,
-                "-a" | "-b" | "-c" | "-d" | "-f" | "-i" | "-p" | "-s" | "-A" | "-R"
-                | "-F" | "-I" | "-P" => {}
+                "-a" | "-b" | "-c" | "-d" | "-f" | "-i" | "-p" | "-s" | "-A" | "-R" | "-F"
+                | "-I" | "-P" => {}
                 _ if arg.starts_with('-') => {
                     // BUILTIN("zmodload", ..., "AFRILP:abcfdilmpsue")
                     // declares the valid letter set. Unknown flags
@@ -35750,8 +35678,7 @@ impl ShellExecutor {
             // setaparam(arrname, kvarr) call — zsh stores all
             // collected stat fields keyed by name.
             if as_array {
-                let map: indexmap::IndexMap<String, String> =
-                    collected.into_iter().collect();
+                let map: indexmap::IndexMap<String, String> = collected.into_iter().collect();
                 self.assoc_arrays.insert(array_name.clone(), map);
             }
         }
@@ -35859,10 +35786,7 @@ impl ShellExecutor {
             Some(s) => match s.parse::<i64>() {
                 Ok(n) if (0..=999_999_999).contains(&n) => n,
                 Ok(n) => {
-                    eprintln!(
-                        "zshrs:strftime:1: {}: invalid nanosecond value",
-                        n
-                    );
+                    eprintln!("zshrs:strftime:1: {}: invalid nanosecond value", n);
                     return 1;
                 }
                 Err(_) => {
@@ -35931,7 +35855,7 @@ impl ShellExecutor {
                     .format(&pre_format)
                     .to_string()
             })
-            .unwrap_or_else(|| String::new());
+            .unwrap_or_else(String::new);
 
         // datetime.c:174-180 — store in scalar OR write to stdout
         // with optional newline suppression via -n.
@@ -36077,7 +36001,9 @@ impl ShellExecutor {
                                 if i < args.len() {
                                     fdvar = Some(args[i].clone());
                                 } else {
-                                    eprintln!("zshrs:zsystem:1: flock: option f requires a variable name");
+                                    eprintln!(
+                                        "zshrs:zsystem:1: flock: option f requires a variable name"
+                                    );
                                     return 1;
                                 }
                             }
@@ -36101,7 +36027,10 @@ impl ShellExecutor {
                             match val.parse::<f64>() {
                                 Ok(t) => timeout = Some(t),
                                 Err(_) => {
-                                    eprintln!("zshrs:zsystem:1: flock: invalid timeout value: '{}'", val);
+                                    eprintln!(
+                                        "zshrs:zsystem:1: flock: invalid timeout value: '{}'",
+                                        val
+                                    );
                                     return 1;
                                 }
                             }
@@ -36203,9 +36132,9 @@ impl ShellExecutor {
             };
 
             let lock_type = if readlock {
-                libc::F_RDLCK as i16
+                libc::F_RDLCK
             } else {
-                libc::F_WRLCK as i16
+                libc::F_WRLCK
             };
 
             let mut flock = libc::flock {
@@ -36222,7 +36151,7 @@ impl ShellExecutor {
                 libc::F_SETLKW
             };
             let start = std::time::Instant::now();
-            let timeout_duration = timeout.map(|t| std::time::Duration::from_secs_f64(t));
+            let timeout_duration = timeout.map(std::time::Duration::from_secs_f64);
 
             loop {
                 let ret = unsafe { libc::fcntl(file_handle.as_raw_fd(), cmd, &mut flock) };
@@ -36678,10 +36607,7 @@ impl ShellExecutor {
                             }
                         }
                         Err(ce) => {
-                            eprintln!(
-                                "mv: cannot move '{}' to '{}': {}",
-                                src, dest, ce
-                            );
+                            eprintln!("mv: cannot move '{}' to '{}': {}", src, dest, ce);
                             mv_status = 1;
                             continue;
                         }
@@ -36825,11 +36751,11 @@ impl ShellExecutor {
                         let times = [
                             libc::timespec {
                                 tv_sec: meta.atime() as libc::time_t,
-                                tv_nsec: meta.atime_nsec() as i64,
+                                tv_nsec: meta.atime_nsec(),
                             },
                             libc::timespec {
                                 tv_sec: meta.mtime() as libc::time_t,
-                                tv_nsec: meta.mtime_nsec() as i64,
+                                tv_nsec: meta.mtime_nsec(),
                             },
                         ];
                         unsafe {
@@ -37156,14 +37082,8 @@ impl ShellExecutor {
                 (*gr).gr_gid
             }
         };
-        fn do_chgrp(
-            path: &std::path::Path,
-            gid: u32,
-            recursive: bool,
-            symlink: bool,
-        ) -> i32 {
-            let c_path = match std::ffi::CString::new(path.to_string_lossy().as_bytes())
-            {
+        fn do_chgrp(path: &std::path::Path, gid: u32, recursive: bool, symlink: bool) -> i32 {
+            let c_path = match std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
                 Ok(p) => p,
                 Err(_) => return 1,
             };
@@ -37569,8 +37489,8 @@ impl ShellExecutor {
                     let arg_value = if after_one_dash.contains('=') {
                         Some(
                             after_one_dash
-                                .splitn(2, '=')
-                                .nth(1)
+                                .split_once('=')
+                                .map(|x| x.1)
                                 .unwrap_or("")
                                 .to_string(),
                         )
@@ -37717,8 +37637,7 @@ impl ShellExecutor {
 
         for arg in args {
             if arg == "-p" {
-                let mut sorted: Vec<String> =
-                    self.readonly_vars.iter().cloned().collect();
+                let mut sorted: Vec<String> = self.readonly_vars.iter().cloned().collect();
                 sorted.sort();
                 for name in &sorted {
                     if let Some(val) = self.variables.get(name) {
@@ -37744,13 +37663,9 @@ impl ShellExecutor {
                         .next()
                         .map(|c| c.is_ascii_alphabetic() || c == '_')
                         .unwrap_or(false);
-                    let body_ok =
-                        chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+                    let body_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
                     if !first_ok || !body_ok {
-                        eprintln!(
-                            "zshrs:readonly:1: not an identifier: {}",
-                            name
-                        );
+                        eprintln!("zshrs:readonly:1: not an identifier: {}", name);
                         return 1;
                     }
                 }
@@ -37760,16 +37675,10 @@ impl ShellExecutor {
                 // returns "scalar-readonly" (not just "scalar"). zsh
                 // treats readonly as a compound type modifier, joined
                 // with the base kind via `-`.
-                self.var_attrs
-                    .entry(name.to_string())
-                    .or_insert_with(VarAttr::default)
-                    .readonly = true;
+                self.var_attrs.entry(name.to_string()).or_default().readonly = true;
             } else {
                 self.readonly_vars.insert(arg.clone());
-                self.var_attrs
-                    .entry(arg.clone())
-                    .or_insert_with(VarAttr::default)
-                    .readonly = true;
+                self.var_attrs.entry(arg.clone()).or_default().readonly = true;
             }
         }
         0
@@ -37805,10 +37714,8 @@ impl ShellExecutor {
             let mut matched_any = false;
             for pat in &names {
                 for fname in &all {
-                    if Self::glob_match_static(fname, pat) {
-                        if self.remove_function(fname) {
-                            matched_any = true;
-                        }
+                    if Self::glob_match_static(fname, pat) && self.remove_function(fname) {
+                        matched_any = true;
                     }
                 }
             }
@@ -38100,7 +38007,7 @@ impl ShellExecutor {
                     let mut returnval = 0;
                     let mut had_arg = false;
                     let mut zle = zle();
-                    while let Some(name) = iter.next() {
+                    for name in iter.by_ref() {
                         had_arg = true;
                         if !zle.delete_widget(name) {
                             eprintln!("zshrs:zle:1: no such widget: {}", name);
@@ -38288,14 +38195,7 @@ impl ShellExecutor {
                 } else {
                     ""
                 };
-                println!(
-                    "{:3} {} {}{}{}",
-                    i + 1,
-                    tbuf,
-                    flagstr,
-                    endstr,
-                    sch.command
-                );
+                println!("{:3} {} {}{}{}", i + 1, tbuf, flagstr, endstr, sch.command);
             }
             return 0;
         }
@@ -38553,7 +38453,7 @@ impl ShellExecutor {
                     Ok(entries) => {
                         for entry in entries.flatten() {
                             let p = entry.path();
-                            if p.is_file() && !p.extension().map_or(false, |e| e == "zwc") {
+                            if p.is_file() && !p.extension().is_some_and(|e| e == "zwc") {
                                 if let Err(e) = builder.add_file(&p) {
                                     eprintln!("zshrs:zcompile:1: can't read {:?}: {}", p, e);
                                 }
@@ -38616,7 +38516,7 @@ impl ShellExecutor {
         let mut iter = args.iter().peekable();
         while let Some(a) = iter.next() {
             if a == "--" {
-                while let Some(p) = iter.next() {
+                for p in iter.by_ref() {
                     positional.push(p.clone());
                 }
                 break;
@@ -38688,7 +38588,7 @@ impl ShellExecutor {
                 ')' => regex_src.push(')'),
                 '[' => {
                     regex_src.push('[');
-                    while let Some(cc) = chars.next() {
+                    for cc in chars.by_ref() {
                         if cc == ']' {
                             regex_src.push(']');
                             break;
@@ -38846,10 +38746,7 @@ impl ShellExecutor {
                             if s.success() {
                                 Ok(())
                             } else {
-                                Err(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    "exit nonzero",
-                                ))
+                                Err(std::io::Error::other("exit nonzero"))
                             }
                         }
                         Err(e) => Err(e),
@@ -39008,7 +38905,8 @@ impl ShellExecutor {
                     match right_opt {
                         Some(right) => {
                             let pad = max_left_chars.saturating_sub(left.chars().count());
-                            let mut s = String::with_capacity(left.len() + pad + sep.len() + right.len());
+                            let mut s =
+                                String::with_capacity(left.len() + pad + sep.len() + right.len());
                             s.push_str(&left);
                             for _ in 0..pad {
                                 s.push(' ');
@@ -39216,9 +39114,9 @@ impl ShellExecutor {
         // terminfo → termcap two-letter mapping (most-used subset).
         let mapped = match cap {
             "clear" => "cl",
-            "ed" => "cd",            // clear to end of display
-            "el" => "ce",            // clear to end of line
-            "cup" => "cm",           // cursor position (with row, col)
+            "ed" => "cd",  // clear to end of display
+            "el" => "ce",  // clear to end of line
+            "cup" => "cm", // cursor position (with row, col)
             "cuu1" => "up",
             "cud1" => "do",
             "cub1" => "le",
@@ -39733,21 +39631,17 @@ impl ShellExecutor {
                     }
                     let user_arr = &(*p).ut_user;
                     let line_arr = &(*p).ut_line;
-                    let user = CStr::from_bytes_until_nul(
-                        std::slice::from_raw_parts(
-                            user_arr.as_ptr() as *const u8,
-                            user_arr.len(),
-                        ),
-                    )
+                    let user = CStr::from_bytes_until_nul(std::slice::from_raw_parts(
+                        user_arr.as_ptr() as *const u8,
+                        user_arr.len(),
+                    ))
                     .ok()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                    let line = CStr::from_bytes_until_nul(
-                        std::slice::from_raw_parts(
-                            line_arr.as_ptr() as *const u8,
-                            line_arr.len(),
-                        ),
-                    )
+                    let line = CStr::from_bytes_until_nul(std::slice::from_raw_parts(
+                        line_arr.as_ptr() as *const u8,
+                        line_arr.len(),
+                    ))
                     .ok()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
@@ -39820,8 +39714,7 @@ impl ShellExecutor {
                 continue;
             }
             if let Some(arr) = self.arrays.get(name).cloned() {
-                let quoted: Vec<String> =
-                    arr.iter().map(|v| shell_quote_value(v)).collect();
+                let quoted: Vec<String> = arr.iter().map(|v| shell_quote_value(v)).collect();
                 self.arrays.insert(name.to_string(), quoted);
             } else if let Some(val) = self.variables.get(name).cloned() {
                 self.variables
@@ -40107,13 +40000,7 @@ impl ShellExecutor {
         }
 
         let mut buf = vec![0u8; bufsize];
-        let n = unsafe {
-            libc::read(
-                infd,
-                buf.as_mut_ptr() as *mut libc::c_void,
-                buf.len(),
-            )
-        };
+        let n = unsafe { libc::read(infd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
         if n < 0 {
             if let Some(cv) = countvar {
                 self.variables.insert(cv, n.to_string());
@@ -40306,17 +40193,22 @@ impl ShellExecutor {
 
         // system.c:342-347 — -u arg is either single digit (explicit
         // fd) or variable identifier to set after the open.
-        let explicit_fd: Option<i32> = if fdvar.len() == 1 && fdvar.chars().next().unwrap().is_ascii_digit() {
-            Some(fdvar.parse().unwrap())
-        } else {
-            None
-        };
+        let explicit_fd: Option<i32> =
+            if fdvar.len() == 1 && fdvar.chars().next().unwrap().is_ascii_digit() {
+                Some(fdvar.parse().unwrap())
+            } else {
+                None
+            };
 
         // system.c:323-325 — base flags from -r/-w/-a.
         let base = libc::O_NOCTTY
             | (if append_flag { libc::O_APPEND } else { 0 })
             | if append_flag || write_flag {
-                if read_flag { libc::O_RDWR } else { libc::O_WRONLY }
+                if read_flag {
+                    libc::O_RDWR
+                } else {
+                    libc::O_WRONLY
+                }
             } else {
                 libc::O_RDONLY
             };
@@ -40537,7 +40429,11 @@ impl ShellExecutor {
                     return 0;
                 }
                 if val_len < 0 {
-                    eprintln!("zshrs:zgetattr:1: {}: {}", file, std::io::Error::last_os_error());
+                    eprintln!(
+                        "zshrs:zgetattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
                     return 1;
                 }
                 let mut buf = vec![0u8; val_len as usize];
@@ -40574,8 +40470,16 @@ impl ShellExecutor {
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let attr_len: isize = -1;
                 if attr_len < 0 || attr_len > val_len {
-                    eprintln!("zshrs:zgetattr:1: {}: {}", file, std::io::Error::last_os_error());
-                    return if attr_len < 0 || attr_len > val_len { 2 } else { 1 };
+                    eprintln!(
+                        "zshrs:zgetattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
+                    return if attr_len < 0 || attr_len > val_len {
+                        2
+                    } else {
+                        1
+                    };
                 }
                 buf.truncate(attr_len as usize);
                 let val = String::from_utf8_lossy(&buf).to_string();
@@ -40634,7 +40538,11 @@ impl ShellExecutor {
                 if ret == 0 {
                     0
                 } else {
-                    eprintln!("zshrs:zsetattr:1: {}: {}", file, std::io::Error::last_os_error());
+                    eprintln!(
+                        "zshrs:zsetattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
                     1
                 }
             }
@@ -40665,7 +40573,11 @@ impl ShellExecutor {
                     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                     let ret: i32 = -1;
                     if ret != 0 {
-                        eprintln!("zshrs:zdelattr:1: {}: {}", file, std::io::Error::last_os_error());
+                        eprintln!(
+                            "zshrs:zdelattr:1: {}: {}",
+                            file,
+                            std::io::Error::last_os_error()
+                        );
                         return 1;
                     }
                 }
@@ -40703,7 +40615,11 @@ impl ShellExecutor {
                     return 0;
                 }
                 if val_len < 0 {
-                    eprintln!("zshrs:zlistattr:1: {}: {}", file, std::io::Error::last_os_error());
+                    eprintln!(
+                        "zshrs:zlistattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
                     return 1;
                 }
                 let mut buf = vec![0u8; val_len as usize];
@@ -40723,8 +40639,16 @@ impl ShellExecutor {
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let list_len: isize = -1;
                 if list_len < 0 || list_len > val_len {
-                    eprintln!("zshrs:zlistattr:1: {}: {}", file, std::io::Error::last_os_error());
-                    return if list_len < 0 || list_len > val_len { 2 } else { 1 };
+                    eprintln!(
+                        "zshrs:zlistattr:1: {}: {}",
+                        file,
+                        std::io::Error::last_os_error()
+                    );
+                    return if list_len < 0 || list_len > val_len {
+                        2
+                    } else {
+                        1
+                    };
                 }
                 buf.truncate(list_len as usize);
                 let names: Vec<String> = buf
@@ -40946,8 +40870,7 @@ impl ShellExecutor {
                     if let Some(m) = result.full_match {
                         self.variables.insert(var_name, m);
                     }
-                    let matches: Vec<String> =
-                        result.captures.into_iter().filter_map(|c| c).collect();
+                    let matches: Vec<String> = result.captures.into_iter().flatten().collect();
                     self.arrays.insert(array_name, matches);
                     0
                 } else {
@@ -41515,9 +41438,8 @@ impl ShellExecutor {
                         let mut handle = stdin.lock();
                         io::copy(&mut handle, &mut stdout)?;
                     } else {
-                        let mut f = std::fs::File::open(file).map_err(|e| {
-                            eprintln!("cat: {}: {}", file, pretty_io_err(&e));
-                            e
+                        let mut f = std::fs::File::open(file).inspect_err(|e| {
+                            eprintln!("cat: {}: {}", file, pretty_io_err(e));
                         })?;
                         io::copy(&mut f, &mut stdout)?;
                     }
@@ -41527,9 +41449,8 @@ impl ShellExecutor {
                 let reader: Box<dyn BufRead> = if file == "-" {
                     Box::new(BufReader::new(io::stdin()))
                 } else {
-                    let f = std::fs::File::open(file).map_err(|e| {
-                        eprintln!("cat: {}: {}", file, pretty_io_err(&e));
-                        e
+                    let f = std::fs::File::open(file).inspect_err(|e| {
+                        eprintln!("cat: {}: {}", file, pretty_io_err(e));
                     })?;
                     Box::new(BufReader::new(f))
                 };
@@ -42203,11 +42124,7 @@ impl ShellExecutor {
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|| ".".to_string());
-            let out = if dir.is_empty() {
-                ".".to_string()
-            } else {
-                dir
-            };
+            let out = if dir.is_empty() { ".".to_string() } else { dir };
             print!("{}{}", out, term);
         }
         0
@@ -42368,12 +42285,12 @@ impl ShellExecutor {
         let mut status = 0;
         for path in &paths {
             let p = std::path::Path::new(path);
-            let result: Result<std::path::PathBuf, std::io::Error> =
-                if allow_missing || no_symlinks {
-                    Ok(logical_normalize(p))
-                } else {
-                    std::fs::canonicalize(p)
-                };
+            let result: Result<std::path::PathBuf, std::io::Error> = if allow_missing || no_symlinks
+            {
+                Ok(logical_normalize(p))
+            } else {
+                std::fs::canonicalize(p)
+            };
             match result {
                 Ok(abs) => println!("{}", abs.display()),
                 Err(e) => {
@@ -42700,12 +42617,7 @@ impl ShellExecutor {
         if check_only {
             for w in lines.windows(2) {
                 if cmp_keys(&w[0], &w[1]) == std::cmp::Ordering::Greater {
-                    eprintln!(
-                        "sort: -:{}: disorder: {}",
-                        // coreutils prints the line number; we don't
-                        // track it, so use a placeholder.
-                        "?", w[1]
-                    );
+                    eprintln!("sort: -:?: disorder: {}", w[1]);
                     return 1;
                 }
             }
@@ -43127,44 +43039,40 @@ impl ShellExecutor {
         let line_term = if zero_term { '\0' } else { '\n' };
         // -z splits input on NUL too; otherwise BufRead::lines splits
         // on \\n (the default).
-        let process_line = |line: String| {
-            match mode {
-                Mode::Field => {
-                    if !line.contains(delimiter) {
-                        if !suppress_no_delim {
-                            print!("{}{}", line, line_term);
-                        }
-                        return;
+        let process_line = |line: String| match mode {
+            Mode::Field => {
+                if !line.contains(delimiter) {
+                    if !suppress_no_delim {
+                        print!("{}{}", line, line_term);
                     }
-                    let parts: Vec<&str> = line.split(delimiter).collect();
-                    let selected: Vec<&str> = parts
-                        .iter()
-                        .enumerate()
-                        .filter_map(
-                            |(idx, p)| if in_range(idx) { Some(*p) } else { None },
-                        )
-                        .collect();
-                    let out_sep: String = output_delimiter
-                        .clone()
-                        .unwrap_or_else(|| delimiter.to_string());
-                    print!("{}{}", selected.join(&out_sep), line_term);
+                    return;
                 }
-                Mode::Char => {
-                    let chars: String = line
-                        .chars()
-                        .enumerate()
-                        .filter_map(|(idx, c)| if in_range(idx) { Some(c) } else { None })
-                        .collect();
-                    print!("{}{}", chars, line_term);
-                }
-                Mode::Byte => {
-                    let bytes: Vec<u8> = line
-                        .bytes()
-                        .enumerate()
-                        .filter_map(|(idx, b)| if in_range(idx) { Some(b) } else { None })
-                        .collect();
-                    print!("{}{}", String::from_utf8_lossy(&bytes), line_term);
-                }
+                let parts: Vec<&str> = line.split(delimiter).collect();
+                let selected: Vec<&str> = parts
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, p)| if in_range(idx) { Some(*p) } else { None })
+                    .collect();
+                let out_sep: String = output_delimiter
+                    .clone()
+                    .unwrap_or_else(|| delimiter.to_string());
+                print!("{}{}", selected.join(&out_sep), line_term);
+            }
+            Mode::Char => {
+                let chars: String = line
+                    .chars()
+                    .enumerate()
+                    .filter_map(|(idx, c)| if in_range(idx) { Some(c) } else { None })
+                    .collect();
+                print!("{}{}", chars, line_term);
+            }
+            Mode::Byte => {
+                let bytes: Vec<u8> = line
+                    .bytes()
+                    .enumerate()
+                    .filter_map(|(idx, b)| if in_range(idx) { Some(b) } else { None })
+                    .collect();
+                print!("{}{}", String::from_utf8_lossy(&bytes), line_term);
             }
         };
 
@@ -43190,7 +43098,7 @@ impl ShellExecutor {
     fn builtin_tr(&self, args: &[String]) -> i32 {
         use std::io::Read;
 
-        if args.len() < 1 {
+        if args.is_empty() {
             eprintln!("tr: missing operand");
             return 1;
         }
@@ -43253,10 +43161,7 @@ impl ShellExecutor {
             let mut i = 0;
             while i < bytes.len() {
                 // [:CLASS:] character classes.
-                if bytes[i] == '['
-                    && i + 1 < bytes.len()
-                    && bytes[i + 1] == ':'
-                {
+                if bytes[i] == '[' && i + 1 < bytes.len() && bytes[i + 1] == ':' {
                     if let Some(end) = bytes[i + 2..]
                         .iter()
                         .position(|&c| c == ':')
@@ -43277,9 +43182,7 @@ impl ShellExecutor {
                                         "blank" => ch == ' ' || ch == '\t',
                                         "cntrl" => ch.is_ascii_control(),
                                         "graph" => ch.is_ascii_graphic(),
-                                        "print" => {
-                                            ch.is_ascii_graphic() || ch == ' '
-                                        }
+                                        "print" => ch.is_ascii_graphic() || ch == ' ',
                                         "xdigit" => ch.is_ascii_hexdigit(),
                                         _ => false,
                                     };
@@ -43328,10 +43231,7 @@ impl ShellExecutor {
                         d if d.is_digit(8) => {
                             let mut oct = String::from(d);
                             let mut j = i + 1;
-                            while j < bytes.len()
-                                && oct.len() < 3
-                                && bytes[j].is_digit(8)
-                            {
+                            while j < bytes.len() && oct.len() < 3 && bytes[j].is_digit(8) {
                                 oct.push(bytes[j]);
                                 j += 1;
                             }
@@ -43477,10 +43377,7 @@ impl ShellExecutor {
             i += 1;
         }
         // Parse all-or-nothing as f64 to handle '0.5', '1e3', etc.
-        let nums: Vec<f64> = nums_str
-            .iter()
-            .filter_map(|a| a.parse().ok())
-            .collect();
+        let nums: Vec<f64> = nums_str.iter().filter_map(|a| a.parse().ok()).collect();
         if nums.len() != nums_str.len() {
             eprintln!("seq: invalid argument");
             return 1;
@@ -43533,10 +43430,7 @@ impl ShellExecutor {
                         let mut j = i + 1;
                         while j < bytes.len() {
                             let c = bytes[j];
-                            if matches!(
-                                c,
-                                b'd' | b'i' | b'u' | b'f' | b'e' | b'g' | b'E' | b'G'
-                            ) {
+                            if matches!(c, b'd' | b'i' | b'u' | b'f' | b'e' | b'g' | b'E' | b'G') {
                                 break;
                             }
                             j += 1;
@@ -43655,11 +43549,7 @@ impl ShellExecutor {
                 files.push(s);
             }
         }
-        let targets: Vec<&str> = if files.is_empty() {
-            vec!["-"]
-        } else {
-            files
-        };
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
         let mut status = 0;
         for file in targets {
             let reader: Box<dyn BufRead> = if file == "-" {
@@ -44020,16 +43910,14 @@ impl ShellExecutor {
                 "-i" | "--input-range" => {
                     if let Some(s) = iter.next() {
                         if let Some((a, b)) = s.split_once('-') {
-                            if let (Ok(lo), Ok(hi)) =
-                                (a.parse::<i64>(), b.parse::<i64>())
-                            {
+                            if let (Ok(lo), Ok(hi)) = (a.parse::<i64>(), b.parse::<i64>()) {
                                 input_range = Some((lo, hi));
                             }
                         }
                     }
                 }
                 "-e" | "--echo" => {
-                    let rest: Vec<String> = iter.by_ref().map(|s| s.clone()).collect();
+                    let rest: Vec<String> = iter.by_ref().cloned().collect();
                     echo_args = Some(rest);
                     break;
                 }
@@ -44126,11 +44014,7 @@ impl ShellExecutor {
                             }
                         } else {
                             let n = CStr::from_ptr((*pw).pw_name);
-                            (
-                                n.to_string_lossy().into_owned(),
-                                (*pw).pw_uid,
-                                (*pw).pw_gid,
-                            )
+                            (n.to_string_lossy().into_owned(), (*pw).pw_uid, (*pw).pw_gid)
                         }
                     }
                 }
@@ -44142,11 +44026,7 @@ impl ShellExecutor {
                             (String::new(), euid, 0)
                         } else {
                             let n = CStr::from_ptr((*pw).pw_name);
-                            (
-                                n.to_string_lossy().into_owned(),
-                                (*pw).pw_uid,
-                                (*pw).pw_gid,
-                            )
+                            (n.to_string_lossy().into_owned(), (*pw).pw_uid, (*pw).pw_gid)
                         }
                     }
                 }
@@ -44179,7 +44059,7 @@ impl ShellExecutor {
             let names: Vec<String> = group_ids
                 .iter()
                 .filter_map(|&g| unsafe {
-                    let gr = libc::getgrgid(g as u32);
+                    let gr = libc::getgrgid(g);
                     if gr.is_null() {
                         Some(g.to_string())
                     } else {
@@ -44249,7 +44129,11 @@ impl ShellExecutor {
             };
             let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY) };
             if fd < 0 {
-                eprintln!("sync: cannot open '{}': {}", f, std::io::Error::last_os_error());
+                eprintln!(
+                    "sync: cannot open '{}': {}",
+                    f,
+                    std::io::Error::last_os_error()
+                );
                 status = 1;
                 continue;
             }
@@ -44276,7 +44160,11 @@ impl ShellExecutor {
                 unsafe { libc::fsync(fd) }
             };
             if r != 0 {
-                eprintln!("sync: cannot sync '{}': {}", f, std::io::Error::last_os_error());
+                eprintln!(
+                    "sync: cannot sync '{}': {}",
+                    f,
+                    std::io::Error::last_os_error()
+                );
                 status = 1;
             }
             unsafe {
@@ -44398,7 +44286,10 @@ impl ShellExecutor {
                 // Most modern terminals are 256 or truecolor; default
                 // to 256 since that's what TERM=xterm-256color reports.
                 let term = std::env::var("TERM").unwrap_or_default();
-                let n = if term.contains("256") || term.contains("direct") || term.contains("truecolor") {
+                let n = if term.contains("256")
+                    || term.contains("direct")
+                    || term.contains("truecolor")
+                {
                     256
                 } else {
                     8
@@ -44576,10 +44467,12 @@ impl ShellExecutor {
         };
         match crate::aot::build(&inputs, std::path::Path::new(&out_path)) {
             Ok(p) => {
-                eprintln!("zbuild: wrote {} ({} file{} embedded)",
+                eprintln!(
+                    "zbuild: wrote {} ({} file{} embedded)",
                     p.display(),
                     inputs.len(),
-                    if inputs.len() == 1 { "" } else { "s" });
+                    if inputs.len() == 1 { "" } else { "s" }
+                );
                 0
             }
             Err(e) => {
@@ -44663,7 +44556,9 @@ impl ShellExecutor {
                     // Bare COMMAND given. We can't fork-exec from
                     // the in-process model. Tell the user to use
                     // the external /usr/bin/nice for that case.
-                    eprintln!("nice: command-launching mode unavailable in-process; use /usr/bin/nice");
+                    eprintln!(
+                        "nice: command-launching mode unavailable in-process; use /usr/bin/nice"
+                    );
                     return 1;
                 }
                 s => {
@@ -44752,7 +44647,10 @@ impl ShellExecutor {
         if let Some(f) = file {
             // Reading a custom database file isn't implemented; emit
             // the default but tell the user we ignored the file.
-            eprintln!("dircolors: using built-in defaults (custom file ignored: '{}')", f);
+            eprintln!(
+                "dircolors: using built-in defaults (custom file ignored: '{}')",
+                f
+            );
         }
         // Coreutils' default LS_COLORS, lightly trimmed. Captured
         // from `dircolors --print-database` of GNU coreutils 9.x.
@@ -44923,7 +44821,7 @@ impl ShellExecutor {
                 tokens.push(tok.to_string());
             }
         }
-        if tokens.len() % 2 != 0 {
+        if !tokens.len().is_multiple_of(2) {
             // POSIX tsort: odd token count is an error per coreutils.
             eprintln!("tsort: input contains an odd number of tokens");
             return 1;
@@ -45009,11 +44907,7 @@ impl ShellExecutor {
                 }
             }
         }
-        let targets: Vec<&str> = if files.is_empty() {
-            vec!["-"]
-        } else {
-            files
-        };
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
         let bsd_sum = |bytes: &[u8]| -> u32 {
             let mut s: u32 = 0;
             for &b in bytes {
@@ -45055,7 +44949,7 @@ impl ShellExecutor {
             }
             if sysv {
                 let s = sysv_sum(&buf);
-                let kbytes = (buf.len() + 1023) / 1024;
+                let kbytes = buf.len().div_ceil(1024);
                 if path == "-" {
                     println!("{} {}", s, kbytes);
                 } else {
@@ -45063,7 +44957,7 @@ impl ShellExecutor {
                 }
             } else {
                 let s = bsd_sum(&buf);
-                let blocks = (buf.len() + 511) / 512;
+                let blocks = buf.len().div_ceil(512);
                 if path == "-" {
                     println!("{:05} {:5}", s, blocks);
                 } else {
@@ -45107,8 +45001,7 @@ impl ShellExecutor {
             // until length consumed.
             let mut n = len;
             while n != 0 {
-                crc = (crc << 8)
-                    ^ table[((crc >> 24) ^ (n as u32 & 0xff)) as usize & 0xff];
+                crc = (crc << 8) ^ table[((crc >> 24) ^ (n as u32 & 0xff)) as usize & 0xff];
                 n >>= 8;
             }
             (!crc, len)
@@ -45118,11 +45011,7 @@ impl ShellExecutor {
             .filter(|a| !a.starts_with('-') || *a == "-")
             .map(|s| s.as_str())
             .collect();
-        let targets: Vec<&str> = if files.is_empty() {
-            vec!["-"]
-        } else {
-            files
-        };
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
         let mut status = 0;
         for path in targets {
             let mut buf = Vec::new();
@@ -45163,10 +45052,7 @@ impl ShellExecutor {
                 let n: u64 = match tok.parse() {
                     Ok(v) => v,
                     Err(_) => {
-                        eprintln!(
-                            "factor: '{}' is not a valid positive integer",
-                            tok
-                        );
+                        eprintln!("factor: '{}' is not a valid positive integer", tok);
                         continue;
                     }
                 };
@@ -45178,13 +45064,13 @@ impl ShellExecutor {
                     println!("{}:", n);
                     continue;
                 }
-                while x % 2 == 0 {
+                while x.is_multiple_of(2) {
                     factors.push(2);
                     x /= 2;
                 }
                 let mut p: u64 = 3;
                 while p.saturating_mul(p) <= x {
-                    while x % p == 0 {
+                    while x.is_multiple_of(p) {
                         factors.push(p);
                         x /= p;
                     }
@@ -45193,8 +45079,7 @@ impl ShellExecutor {
                 if x > 1 {
                     factors.push(x);
                 }
-                let parts: Vec<String> =
-                    factors.iter().map(|p| p.to_string()).collect();
+                let parts: Vec<String> = factors.iter().map(|p| p.to_string()).collect();
                 println!("{}: {}", n, parts.join(" "));
             }
         };
@@ -45369,11 +45254,7 @@ impl ShellExecutor {
                 }
             }
         }
-        let targets: Vec<&str> = if files.is_empty() {
-            vec!["-"]
-        } else {
-            files
-        };
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
         let mut all: Vec<String> = Vec::new();
         for file in targets {
             let reader: Box<dyn BufRead> = if file == "-" {
@@ -45409,10 +45290,7 @@ impl ShellExecutor {
             match arg.as_str() {
                 "-t" | "--tabs" => {
                     if let Some(s) = iter.next() {
-                        tabs = s
-                            .split(|c: char| c == ',' || c == ' ')
-                            .filter_map(|x| x.parse().ok())
-                            .collect();
+                        tabs = s.split([',', ' ']).filter_map(|x| x.parse().ok()).collect();
                         if tabs.is_empty() {
                             tabs = vec![8];
                         }
@@ -45420,7 +45298,7 @@ impl ShellExecutor {
                 }
                 s if s.starts_with("-t") && s.len() > 2 => {
                     tabs = s[2..]
-                        .split(|c: char| c == ',' || c == ' ')
+                        .split([',', ' '])
                         .filter_map(|x| x.parse().ok())
                         .collect();
                     if tabs.is_empty() {
@@ -45456,11 +45334,7 @@ impl ShellExecutor {
                 col + 1
             }
         };
-        let targets: Vec<&str> = if files.is_empty() {
-            vec!["-"]
-        } else {
-            files
-        };
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
         for file in targets {
             let reader: Box<dyn BufRead> = if file == "-" {
                 Box::new(BufReader::new(std::io::stdin()))
@@ -45535,11 +45409,7 @@ impl ShellExecutor {
                 }
             }
         }
-        let targets: Vec<&str> = if files.is_empty() {
-            vec!["-"]
-        } else {
-            files
-        };
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
         for file in targets {
             let reader: Box<dyn BufRead> = if file == "-" {
                 Box::new(BufReader::new(std::io::stdin()))
@@ -45627,11 +45497,7 @@ impl ShellExecutor {
                 }
             }
         }
-        let targets: Vec<&str> = if files.is_empty() {
-            vec!["-"]
-        } else {
-            files
-        };
+        let targets: Vec<&str> = if files.is_empty() { vec!["-"] } else { files };
         let mut status = 0;
         for f in targets {
             let mut hasher = Sha256::new();
@@ -45682,8 +45548,7 @@ impl ShellExecutor {
     /// encode; 0 disables).
     fn builtin_base64(&self, args: &[String]) -> i32 {
         use std::io::Read;
-        const ALPHA: &[u8] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let mut decode = false;
         let mut wrap: usize = 76;
         let mut file: Option<&str> = None;
@@ -45700,7 +45565,7 @@ impl ShellExecutor {
                     wrap = s[7..].parse().unwrap_or(76);
                 }
                 "-i" | "--ignore-garbage" => {} // accepted, default behaviour
-                "--" => {} // end of options
+                "--" => {}                      // end of options
                 "-" => file = Some("-"),
                 s if !s.starts_with('-') => file = Some(s),
                 s => {
@@ -45727,8 +45592,11 @@ impl ShellExecutor {
         }
         if decode {
             // Strip whitespace then decode 4-char groups.
-            let cleaned: Vec<u8> =
-                input.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+            let cleaned: Vec<u8> = input
+                .iter()
+                .copied()
+                .filter(|b| !b.is_ascii_whitespace())
+                .collect();
             let mut out: Vec<u8> = Vec::with_capacity(cleaned.len() * 3 / 4);
             let mut buf = [0u8; 4];
             let mut have = 0usize;
@@ -46438,7 +46306,7 @@ impl ShellExecutor {
                 .iter()
                 .map(|g| {
                     if want_name {
-                        lookup_group_name(*g as u32).unwrap_or_else(|| g.to_string())
+                        lookup_group_name(*g).unwrap_or_else(|| g.to_string())
                     } else {
                         g.to_string()
                     }
@@ -46488,7 +46356,7 @@ impl ShellExecutor {
             let parts: Vec<String> = gids
                 .iter()
                 .map(|g| {
-                    let name = lookup_group_name(*g as u32).unwrap_or_else(|| g.to_string());
+                    let name = lookup_group_name(*g).unwrap_or_else(|| g.to_string());
                     format!("{}({})", g, name)
                 })
                 .collect();
@@ -46542,8 +46410,8 @@ impl ShellExecutor {
             // hostname(1)'s -i.
             use std::net::ToSocketAddrs;
             match (host.as_str(), 0u16).to_socket_addrs() {
-                Ok(addrs) => {
-                    for a in addrs {
+                Ok(mut addrs) => {
+                    if let Some(a) = addrs.next() {
                         println!("{}", a.ip());
                         return 0;
                     }
@@ -46557,8 +46425,8 @@ impl ShellExecutor {
             println!("{}", s);
         } else if domain_only {
             let d: String = host
-                .splitn(2, '.')
-                .nth(1)
+                .split_once('.')
+                .map(|x| x.1)
                 .map(|s| s.to_string())
                 .unwrap_or_default();
             println!("{}", d);
@@ -46578,11 +46446,21 @@ impl ShellExecutor {
             return 1;
         }
 
-        let sysname = unsafe { std::ffi::CStr::from_ptr(uts.sysname.as_ptr()) }.to_string_lossy().into_owned();
-        let nodename = unsafe { std::ffi::CStr::from_ptr(uts.nodename.as_ptr()) }.to_string_lossy().into_owned();
-        let release = unsafe { std::ffi::CStr::from_ptr(uts.release.as_ptr()) }.to_string_lossy().into_owned();
-        let version = unsafe { std::ffi::CStr::from_ptr(uts.version.as_ptr()) }.to_string_lossy().into_owned();
-        let machine = unsafe { std::ffi::CStr::from_ptr(uts.machine.as_ptr()) }.to_string_lossy().into_owned();
+        let sysname = unsafe { std::ffi::CStr::from_ptr(uts.sysname.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let nodename = unsafe { std::ffi::CStr::from_ptr(uts.nodename.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let release = unsafe { std::ffi::CStr::from_ptr(uts.release.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let version = unsafe { std::ffi::CStr::from_ptr(uts.version.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        let machine = unsafe { std::ffi::CStr::from_ptr(uts.machine.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
         // -p / -o aren't in struct utsname; coreutils synthesizes them
         // from the machine and sysname respectively. Match that.
         let processor = machine.clone();
@@ -46790,7 +46668,7 @@ impl ShellExecutor {
                 }
                 "-q" | "--quiet" => {} // accepted: don't emit errors (we still do; minimal port)
                 "-u" | "--dry-run" => {} // accepted: print name without creating
-                "--" => {} // end of options
+                "--" => {}             // end of options
                 a if !a.starts_with('-') => template = Some(a),
                 a => {
                     eprintln!("mktemp: unrecognized option: '{}'", a);
@@ -46864,9 +46742,7 @@ impl ShellExecutor {
             let path = try_path(make_name(base));
             if dir {
                 use std::os::unix::fs::DirBuilderExt;
-                let result = std::fs::DirBuilder::new()
-                    .mode(0o700)
-                    .create(&path);
+                let result = std::fs::DirBuilder::new().mode(0o700).create(&path);
                 match result {
                     Ok(_) => {
                         println!("{}", path.display());
