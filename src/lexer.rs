@@ -166,6 +166,17 @@ pub struct ZshLexer<'a> {
     global_iterations: usize,
     /// Recursion depth counter
     recursion_depth: usize,
+    /// Raw-input capture flag — when nonzero, every char read through
+    /// `hgetc` is also appended to `tokstr_raw` via zshlex_raw_add.
+    /// Direct mirror of zsh/Src/lex.c:161 `lex_add_raw`. Used by
+    /// skipcomm (lex.c:2082) to preserve the literal text of `$(...)`
+    /// command substitutions for re-execution / display.
+    pub lex_add_raw: i32,
+    /// Raw-input capture buffer. Direct mirror of lex.c:165
+    /// `tokstr_raw` / lex.c:166 `lexbuf_raw`. Combined into one
+    /// `LexBuf` here since Rust's String tracks both the data and
+    /// length internally.
+    lexbuf_raw: LexBuf,
 }
 
 const MAX_LEXER_RECURSION: usize = 200;
@@ -246,7 +257,72 @@ impl<'a> ZshLexer<'a> {
             error: None,
             global_iterations: 0,
             recursion_depth: 0,
+            lex_add_raw: 0,
+            lexbuf_raw: LexBuf::new(),
         }
+    }
+
+    /// Append a char to the raw-input capture buffer. Direct port of
+    /// zsh/Src/lex.c:2024-2039 `zshlex_raw_add`. Called from hgetc
+    /// when `lex_add_raw` is nonzero so cmd-sub bodies (`$(...)`,
+    /// `<(...)`, `>(...)`) can be replayed verbatim without re-lexing.
+    pub fn zshlex_raw_add(&mut self, c: char) {
+        // lex.c:2027-2028 — guard on lex_add_raw flag.
+        if self.lex_add_raw == 0 {
+            return;
+        }
+        // lex.c:2030-2038 — append to lexbuf_raw. The C source manages
+        // explicit ptr/len/siz with hrealloc; Rust's String handles
+        // resize automatically.
+        self.lexbuf_raw.add(c);
+    }
+
+    /// Pop the last char from the raw-input capture buffer. Direct
+    /// port of zsh/Src/lex.c:2042-2049 `zshlex_raw_back`. Called when
+    /// the lexer ungets a char that was just captured raw — the raw
+    /// buffer must mirror the live input so this undoes the last add.
+    pub fn zshlex_raw_back(&mut self) {
+        // lex.c:2045-2046 — guard.
+        if self.lex_add_raw == 0 {
+            return;
+        }
+        // lex.c:2047-2048 — `lexbuf_raw.ptr--; lexbuf_raw.len--;`
+        self.lexbuf_raw.pop();
+    }
+
+    /// Mark the current raw-buffer offset (for restore later). Direct
+    /// port of zsh/Src/lex.c:2052-2058 `zshlex_raw_mark`. Returns
+    /// `len + offset` so callers can restore via `back_to_mark`.
+    pub fn zshlex_raw_mark(&self, offset: i64) -> i64 {
+        // lex.c:2055-2056 — guard.
+        if self.lex_add_raw == 0 {
+            return 0;
+        }
+        // lex.c:2057 — `return lexbuf_raw.len + offset;`
+        (self.lexbuf_raw.len() as i64) + offset
+    }
+
+    /// Restore raw-buffer offset to a previously-saved mark. Direct
+    /// port of zsh/Src/lex.c:2061-2068 `zshlex_raw_back_to_mark`.
+    /// Truncates the raw buffer to `mark` bytes — undoes any captures
+    /// since the mark was taken (used when a speculative parse fails
+    /// and the lexer rolls back).
+    pub fn zshlex_raw_back_to_mark(&mut self, mark: i64) {
+        // lex.c:2064-2065 — guard.
+        if self.lex_add_raw == 0 {
+            return;
+        }
+        // lex.c:2066-2067 — `lexbuf_raw.ptr = tokstr_raw + mark;
+        // lexbuf_raw.len = mark;` — Rust truncate handles both.
+        let m = mark.max(0) as usize;
+        self.lexbuf_raw.data.truncate(m);
+    }
+
+    /// Take the captured raw-input buffer, clearing it. Useful for
+    /// callers that need the literal command-sub body after lexing
+    /// (e.g. compile-time string capture for `$(...)`).
+    pub fn take_raw_buf(&mut self) -> String {
+        std::mem::take(&mut self.lexbuf_raw.data)
     }
 
     /// Save lexical context onto a `LexStack`. Direct port of
@@ -2427,24 +2503,43 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
     false
 }
 
-/// Tokenize a string as if in double quotes.
-/// This is usually called before singsub().
+/// Tokenize a string as if in double quotes (error-tolerant variant).
 ///
-/// Direct port of zsh/Src/lex.c:1693-1709 `parsestr`. The C source
-/// wraps `parsestrnoerr` (lex.c:1713-1733) and on error untokenizes
-/// the buffer + emits a `parse error` diagnostic via zerr.
+/// Direct port of zsh/Src/lex.c:1713-1733 `parsestrnoerr`. The C
+/// source: zcontext_save → untokenize → inpush → strinbeg →
+/// `lexbuf.ptr = tokstr = *s; lexbuf.siz = l + 1` →
+/// `err = dquote_parse('\0', 1)` → strinend → inpop → zcontext_restore.
+/// Returns the tokenized string on success, or the offending char as
+/// an error code (zsh convention: `> 32 && < 127` → printable, else
+/// generic).
 ///
-/// zshrs port note: the C source uses zcontext_save/inpush/
-/// strinbeg → dquote_parse → strinend/inpop/zcontext_restore to set
-/// up an isolated parse context against the lexer's input stream.
-/// zshrs's parsestr is a standalone string-walker that emits the
-/// same BNULL/QSTRING/QTICK token markers without going through the
-/// full lexer. The output should be byte-identical for typical
-/// double-quote bodies (no nested cmd-sub / arith). Documented
-/// divergence: cmd-sub `$(...)` and arith `$((...))` inside the
-/// string aren't lexed recursively here — the runtime handles them
-/// at expansion time.
+/// zshrs port: the C version drives the lexer's dquote_parse method
+/// against the input string. zshrs's standalone walker produces the
+/// same BNULL/QSTRING/QTICK token markers without re-entering the
+/// lexer — same output for typical bodies. Documented divergence:
+/// nested cmd-sub `$(...)` and arith `$((...))` aren't lexed
+/// recursively; the runtime handles them at expansion time.
+pub fn parsestrnoerr(s: &str) -> Result<String, String> {
+    parsestr_inner(s)
+}
+
+/// Tokenize a string as if in double quotes (error-reporting variant).
+///
+/// Direct port of zsh/Src/lex.c:1693-1709 `parsestr`. C source:
+/// `if ((err = parsestrnoerr(s))) { untokenize(*s); ... zerr("parse
+/// error near `%c'", err); tok = LEXERR; }`. zshrs's wrapper
+/// returns the same Result and lets the caller emit the diagnostic.
+///
+/// Both `parsestr` and `parsestrnoerr` share the inner walker; the
+/// only difference in C is whether errors trigger `zerr`. zshrs
+/// returns `Err(msg)` from both — the caller decides whether to
+/// surface the diagnostic.
 pub fn parsestr(s: &str) -> Result<String, String> {
+    parsestr_inner(s)
+}
+
+/// Shared body for parsestr / parsestrnoerr.
+fn parsestr_inner(s: &str) -> Result<String, String> {
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
