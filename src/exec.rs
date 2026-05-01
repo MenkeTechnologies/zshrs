@@ -41591,6 +41591,14 @@ impl ShellExecutor {
         let mut random_sort = false;
         // -z / --zero-terminated: input records separated by NUL.
         let mut zero_term = false;
+        // -b / --ignore-leading-blanks: strip leading whitespace
+        // before comparing.
+        let mut ignore_blanks = false;
+        // -d / --dictionary-order: only [a-zA-Z0-9 \\t] are significant
+        // for comparison; everything else folds to nothing.
+        let mut dictionary = false;
+        // -c / --check: verify input is sorted; don't write output.
+        let mut check_only = false;
         // -k FIELD: sort by field N (1-based, N-M range).
         let mut key_start: Option<usize> = None;
         let mut key_end: Option<usize> = None;
@@ -41610,6 +41618,9 @@ impl ShellExecutor {
                 "-V" | "--version-sort" => version_sort = true,
                 "-R" | "--random-sort" => random_sort = true,
                 "-z" | "--zero-terminated" => zero_term = true,
+                "-b" | "--ignore-leading-blanks" => ignore_blanks = true,
+                "-d" | "--dictionary-order" => dictionary = true,
+                "-c" | "--check" => check_only = true,
                 "-k" if i + 1 < args.len() => {
                     i += 1;
                     if let Some((a, b)) = args[i].split_once(',') {
@@ -41646,6 +41657,9 @@ impl ShellExecutor {
                             'V' => version_sort = true,
                             'R' => random_sort = true,
                             'z' => zero_term = true,
+                            'b' => ignore_blanks = true,
+                            'd' => dictionary = true,
+                            'c' => check_only = true,
                             _ => {}
                         }
                     }
@@ -41702,26 +41716,47 @@ impl ShellExecutor {
             }
         }
 
-        // Extract the sort key from a line per -k/-t. Returns the
-        // selected fields joined back with the separator (or just the
-        // line when -k is absent).
+        // Extract the sort key from a line per -k/-t/-b/-d. Returns
+        // the selected fields joined back with the separator (or just
+        // the line when -k is absent), then optionally trimmed
+        // (-b) and dictionary-filtered (-d).
         let extract_key = |line: &str| -> String {
-            let start = match key_start {
-                Some(s) if s >= 1 => s - 1,
-                _ => return line.to_string(),
+            let raw = match key_start {
+                Some(s) if s >= 1 => {
+                    let start = s - 1;
+                    let parts: Vec<&str> = match sep {
+                        Some(c) => line.split(c).collect(),
+                        None => line.split_whitespace().collect(),
+                    };
+                    let end = key_end
+                        .map(|e| e.saturating_sub(1).min(parts.len().saturating_sub(1)))
+                        .unwrap_or_else(|| parts.len().saturating_sub(1));
+                    if start >= parts.len() {
+                        String::new()
+                    } else {
+                        let sep_str = sep
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| " ".to_string());
+                        parts[start..=end].join(&sep_str)
+                    }
+                }
+                _ => line.to_string(),
             };
-            let parts: Vec<&str> = match sep {
-                Some(c) => line.split(c).collect(),
-                None => line.split_whitespace().collect(),
+            let blanks_stripped: String = if ignore_blanks {
+                raw.trim_start().to_string()
+            } else {
+                raw
             };
-            let end = key_end
-                .map(|e| e.saturating_sub(1).min(parts.len().saturating_sub(1)))
-                .unwrap_or_else(|| parts.len().saturating_sub(1));
-            if start >= parts.len() {
-                return String::new();
+            if dictionary {
+                // Keep alnum + space/tab; drop everything else for
+                // comparison. Direct port of coreutils sort -d.
+                blanks_stripped
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == ' ' || *c == '\t')
+                    .collect()
+            } else {
+                blanks_stripped
             }
-            let sep_str = sep.map(|c| c.to_string()).unwrap_or_else(|| " ".to_string());
-            parts[start..=end].join(&sep_str)
         };
 
         // -h: parse '5K', '2.5M', '1G' etc. into an f64 with the
@@ -41838,6 +41873,24 @@ impl ShellExecutor {
                 ka.cmp(&kb)
             }
         };
+
+        // -c / --check: report whether input is sorted; never write
+        // sorted output. Direct port of coreutils sort -c. Returns 1
+        // (and prints diagnostic) on first out-of-order pair.
+        if check_only {
+            for w in lines.windows(2) {
+                if cmp_keys(&w[0], &w[1]) == std::cmp::Ordering::Greater {
+                    eprintln!(
+                        "sort: -:{}: disorder: {}",
+                        // coreutils prints the line number; we don't
+                        // track it, so use a placeholder.
+                        "?", w[1]
+                    );
+                    return 1;
+                }
+            }
+            return 0;
+        }
 
         if random_sort {
             // -R: shuffle. coreutils -R is a deterministic shuffle
