@@ -36961,8 +36961,24 @@ impl ShellExecutor {
 
         for arg in args {
             match arg.as_str() {
-                "-R" => recursive = true,
+                "-R" | "--recursive" => recursive = true,
+                "--" => {} // end of options
                 s if !s.starts_with('-') => positional.push(s),
+                // First arg starting with `-` followed by a digit is a
+                // mode like `-rwx` or numeric (treated as positional);
+                // a leading dash + symbolic-mode-letters could be
+                // confused. zsh's chmod accepts only octal modes —
+                // unknown flags like `-X` are rejected.
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // Allow forms that LOOK like a mode if they parse
+                    // as octal. Otherwise unknown flag.
+                    if u32::from_str_radix(&s[1..], 8).is_ok() {
+                        positional.push(s);
+                    } else {
+                        eprintln!("chmod: unrecognized option: '{}'", s);
+                        return 1;
+                    }
+                }
                 _ => {}
             }
         }
