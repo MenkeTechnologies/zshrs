@@ -37,12 +37,27 @@ pub struct WatcherStats {
     pub watched_path_count: usize,
 }
 
+/// What action a watched path triggers when it changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchKind {
+    /// Default: just emit `shard_updated` and let subscribers react.
+    Generic,
+    /// `.zshrc` (or transitively-sourced file): re-run analyze_with_sources
+    /// and update the canonical engine on every change.
+    ZshrcSource,
+    /// `$FPATH` directory: re-walk on changes so command_hash /
+    /// autoload_table catch up. (v1: just emits shard_updated; rebuild
+    /// dispatch is task #24-class work.)
+    FpathDir,
+}
+
 /// One watched-path registration: maps a filesystem path to the shard it belongs to.
 #[derive(Clone, Debug)]
 pub struct WatchedPath {
     pub path: PathBuf,
     pub shard_slug: String,
     pub source_root: String,
+    pub kind: WatchKind,
 }
 
 /// Top-level fsnotify state owned by DaemonState. Holds the debouncer + the
@@ -182,32 +197,159 @@ impl FsWatcher {
         };
 
         g.stats.events_routed += 1;
+        let kind = wp.kind;
         drop(g);
 
         tracing::info!(
             path = %path.display(),
             shard = %wp.shard_slug,
             source_root = %wp.source_root,
+            kind = ?kind,
             "fsnotify event routed"
         );
 
+        // Re-analyze on .zshrc-style changes: re-run analyze_with_sources
+        // and reseed the canonical engine. This is the steady-state piece of
+        // the walk lifecycle — file modified → daemon re-parses just that
+        // file → updates canonical → broadcasts canonical_changed.
+        if kind == WatchKind::ZshrcSource {
+            self.reanalyze_zshrc(&wp.source_root, state);
+        }
+
         // Emit `shard_updated` event so any subscriber tracking this shard knows
-        // the daemon picked up the change. Generation bump happens when the
-        // walk-lifecycle evaluator (task 24) runs the actual rebuild — for v1
-        // we emit the event with generation=null.
+        // the daemon picked up the change.
         let payload = serde_json::json!({
             "shard": wp.shard_slug,
             "source_root": wp.source_root,
             "trigger_path": path.display().to_string(),
             "generation": null,
         });
-        // Use the publish primitive — subscribers to `*.shard_updated` will get it.
         let frame = Frame::event("shard_updated", payload);
-        // No specific origin scope — broadcast through publish at "*"-shell pseudo-origin
-        // by walking subscribers manually. A future refactor introduces a global-origin
-        // publish for non-shell-originated events.
         let _ = state.broadcast(frame, &[]);
     }
+
+    fn reanalyze_zshrc(&self, source_root: &str, state: &Arc<DaemonState>) {
+        let path = std::path::Path::new(source_root);
+        if !path.exists() {
+            return;
+        }
+        let analysis = match super::zshrc_analysis::analyze_with_sources(path) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::warn!(?e, source = %source_root, "fsnotify reanalyze failed");
+                return;
+            }
+        };
+        let canon = &state.canonical;
+        // Replace per-subsystem rows so removed declarations actually disappear.
+        canon.replace_subsystem(
+            "alias",
+            analysis.aliases.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "galias",
+            analysis.global_aliases.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "salias",
+            analysis.suffix_aliases.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "named_dir",
+            analysis.named_dirs.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "compdef",
+            analysis.compdef.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "bindkey",
+            analysis.bindkeys.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "env",
+            analysis.env_exports.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "params",
+            analysis.params.iter().map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "function",
+            analysis
+                .functions
+                .iter()
+                .map(|(k, v)| (k.clone(), json_string_local(v))),
+            None,
+        );
+        canon.replace_subsystem(
+            "path",
+            analysis
+                .path_additions
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (i.to_string(), json_string_local(d))),
+            None,
+        );
+        canon.replace_subsystem(
+            "fpath",
+            analysis
+                .fpath_additions
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (i.to_string(), json_string_local(d))),
+            None,
+        );
+        canon.replace_subsystem(
+            "manpath",
+            analysis
+                .manpath_additions
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (i.to_string(), json_string_local(d))),
+            None,
+        );
+        // setopt is a union of setopts + unsetopts (latter wins for matching keys).
+        let mut setopt_iter: Vec<(String, String)> = Vec::new();
+        for opt in &analysis.setopts {
+            setopt_iter.push((opt.clone(), "\"on\"".to_string()));
+        }
+        for opt in &analysis.unsetopts {
+            setopt_iter.push((opt.clone(), "\"off\"".to_string()));
+        }
+        canon.replace_subsystem("setopt", setopt_iter, None);
+
+        let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+        if let Err(e) = canon.persist(generation) {
+            tracing::warn!(?e, "fsnotify reanalyze: persist failed");
+        }
+        let event = serde_json::json!({
+            "subsystem": "*",
+            "row_count": canon.total_rows(),
+            "set_at_ns": chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            "set_by_shell": 0,
+            "trigger": "fsnotify_reanalyze",
+            "source": source_root,
+        });
+        state.broadcast(Frame::event("canonical_changed", event), &[]);
+        tracing::info!(
+            source = %source_root,
+            captured = canon.total_rows(),
+            "fsnotify reanalyze complete"
+        );
+    }
+}
+
+fn json_string_local(s: &str) -> String {
+    serde_json::Value::String(s.to_string()).to_string()
 }
 
 type DebouncedResult = notify_debouncer_mini::DebounceEventResult;
@@ -235,6 +377,7 @@ mod tests {
             path: watch_dir.clone(),
             shard_slug: "test".to_string(),
             source_root: watch_dir.display().to_string(),
+            kind: WatchKind::Generic,
         };
         watcher.watch_path(wp.clone(), false).unwrap();
 
@@ -266,6 +409,7 @@ mod tests {
             path: watch_dir.clone(),
             shard_slug: "test".to_string(),
             source_root: watch_dir.display().to_string(),
+            kind: WatchKind::Generic,
         };
         watcher.watch_path(wp, false).unwrap();
 

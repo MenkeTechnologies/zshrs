@@ -36,6 +36,7 @@ pub mod zask;
 pub mod zask_builtin;
 pub mod zhistory_builtin;
 pub mod zjob_builtin;
+pub mod zsource_builtin;
 pub mod zshrc_analysis;
 pub mod zsync;
 pub mod zsync_builtin;

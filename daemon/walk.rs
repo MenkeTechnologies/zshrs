@@ -225,6 +225,7 @@ pub fn run_full_rebuild(
             path: dir_path.clone(),
             shard_slug: "system".to_string(),
             source_root: dir.clone(),
+            kind: super::fsnotify::WatchKind::FpathDir,
         };
         if let Err(e) = state.fs_watcher.watch_path(wp, false) {
             tracing::warn!(?e, dir = %dir, "fsnotify watch failed (non-fatal)");
