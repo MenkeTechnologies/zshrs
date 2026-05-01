@@ -41833,7 +41833,13 @@ impl ShellExecutor {
             match arg.as_str() {
                 "-z" | "--zero" => zero = true,
                 "--" => {} // accept end-of-options
-                s if s.starts_with('-') && s.len() > 1 => {} // unknown flag, silent
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // coreutils dirname rejects unknown flags with
+                    // \"unrecognized option\" exit 1. Silent-ignore
+                    // masked typos like \`dirname -Z foo\` (typo of -z).
+                    eprintln!("dirname: unrecognized option: '{}'", s);
+                    return 1;
+                }
                 s => paths.push(s),
             }
         }
