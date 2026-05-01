@@ -17178,12 +17178,17 @@ impl ShellExecutor {
             }
 
             // === NAMED DIRECTORIES ===
+            // ${nameddirs[@]} returns paths in sorted-name order (was
+            // HashMap::values() with random iteration).
             "nameddirs" => {
                 if key == "@" || key == "*" {
-                    let vals: Vec<String> = self
-                        .named_dirs
-                        .values()
-                        .map(|p| p.display().to_string())
+                    let mut keys: Vec<&String> = self.named_dirs.keys().collect();
+                    keys.sort();
+                    let vals: Vec<String> = keys
+                        .iter()
+                        .filter_map(|k| {
+                            self.named_dirs.get(*k).map(|p| p.display().to_string())
+                        })
                         .collect();
                     return Some(vals.join(" "));
                 }
