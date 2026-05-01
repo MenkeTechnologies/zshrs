@@ -29140,7 +29140,7 @@ impl ShellExecutor {
                 if let Some((n, p)) = name.split_once('=') {
                     self.add_named_dir(n, p);
                 } else {
-                    eprintln!("hash: -d: {} not in name=value format", name);
+                    eprintln!("zshrs:hash:1: -d: {} not in name=value format", name);
                     return 1;
                 }
             }
@@ -29905,11 +29905,11 @@ impl ShellExecutor {
                 let insecure = cache.compaudit_cached(&self.fpath);
                 if !insecure.is_empty() && !ignore_insecure {
                     if !quiet {
-                        eprintln!("compinit: insecure directories:");
+                        eprintln!("zshrs:compinit:1: insecure directories:");
                         for d in &insecure {
                             eprintln!("  {}", d);
                         }
-                        eprintln!("compinit: run with -i to ignore or -u to use anyway");
+                        eprintln!("zshrs:compinit:1: run with -i to ignore or -u to use anyway");
                     }
                     return 1;
                 }
@@ -30514,7 +30514,7 @@ impl ShellExecutor {
                         db_type = Some(args[i + 1].clone());
                         i += 2;
                     } else {
-                        eprintln!("ztie: -d requires an argument");
+                        eprintln!("zshrs:ztie:1: -d requires an argument");
                         return 1;
                     }
                 }
@@ -30523,7 +30523,7 @@ impl ShellExecutor {
                         file_path = Some(args[i + 1].clone());
                         i += 2;
                     } else {
-                        eprintln!("ztie: -f requires an argument");
+                        eprintln!("zshrs:ztie:1: -f requires an argument");
                         return 1;
                     }
                 }
@@ -30532,7 +30532,7 @@ impl ShellExecutor {
                     i += 1;
                 }
                 arg if arg.starts_with('-') => {
-                    eprintln!("ztie: bad option: {}", arg);
+                    eprintln!("zshrs:ztie:1: bad option: {}", arg);
                     return 1;
                 }
                 _ => {
@@ -30550,7 +30550,7 @@ impl ShellExecutor {
         ) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("ztie: {}", e);
+                eprintln!("zshrs:ztie:1: {}", e);
                 1
             }
         }
@@ -30568,7 +30568,7 @@ impl ShellExecutor {
             match arg.as_str() {
                 "-u" => force_unset = true,
                 a if a.starts_with('-') => {
-                    eprintln!("zuntie: bad option: {}", a);
+                    eprintln!("zshrs:zuntie:1: bad option: {}", a);
                     return 1;
                 }
                 _ => param_args.push(arg.clone()),
@@ -30576,14 +30576,14 @@ impl ShellExecutor {
         }
 
         if param_args.is_empty() {
-            eprintln!("zuntie: not enough arguments");
+            eprintln!("zshrs:zuntie:1: not enough arguments");
             return 1;
         }
 
         match db_gdbm::zuntie(&param_args, force_unset) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("zuntie: {}", e);
+                eprintln!("zshrs:zuntie:1: {}", e);
                 1
             }
         }
@@ -32385,7 +32385,7 @@ impl ShellExecutor {
 
         // -L and -c are mutually exclusive
         if local_mode && command_arg.is_some() {
-            eprintln!("emulate: -L and -c are mutually exclusive");
+            eprintln!("zshrs:emulate:1: -L and -c are mutually exclusive");
             return 1;
         }
 
@@ -34638,7 +34638,7 @@ impl ShellExecutor {
         };
         unsafe {
             if getrlimit(resource, &mut rlim) != 0 {
-                eprintln!("ulimit: cannot get limit");
+                eprintln!("zshrs:ulimit:1: cannot get limit");
                 return 1;
             }
         }
@@ -34653,7 +34653,7 @@ impl ShellExecutor {
             }
             unsafe {
                 if setrlimit(resource, &rlim) != 0 {
-                    eprintln!("ulimit: cannot set limit");
+                    eprintln!("zshrs:ulimit:1: cannot set limit");
                     return 1;
                 }
             }
