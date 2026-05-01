@@ -17526,6 +17526,55 @@ impl ShellExecutor {
             | "dis_reswords"
             | "dis_patchars" => Some(String::new()),
 
+            // === ZLE WIDGETS ===
+            // ${widgets[name]} → widget-type prefix per
+            // zsh/Src/Zle/zleparameter.c widgets_*: "builtin",
+            // "user:<funcname>", or "completion:<funcname>".
+            // Distinguishes builtin vs user-defined so
+            // ${(t)widgets[name]} works.
+            "widgets" => {
+                use crate::zle::zle;
+                let zle = zle();
+                if key == "@" || key == "*" {
+                    let mut names: Vec<&str> = zle.list_widgets();
+                    names.sort();
+                    return Some(names.into_iter().map(String::from).collect::<Vec<_>>().join(" "));
+                }
+                if let Some(target) = zle.get_widget(key) {
+                    if target == key {
+                        Some("builtin".to_string())
+                    } else {
+                        Some(format!("user:{}", target))
+                    }
+                } else {
+                    Some(String::new())
+                }
+            }
+
+            // === ZLE KEYMAPS ===
+            // ${keymaps[N]} per zleparameter.c keymaps_*: list of
+            // available keymap names. Single-key lookup returns 1
+            // ("set") if the keymap exists, "" otherwise.
+            "keymaps" => {
+                const KEYMAPS: &[&str] = &[
+                    "main",
+                    "emacs",
+                    "viins",
+                    "vicmd",
+                    "isearch",
+                    "command",
+                    "menuselect",
+                ];
+                if key == "@" || key == "*" {
+                    return Some(KEYMAPS.join(" "));
+                }
+                if KEYMAPS.contains(&key) {
+                    Some("1".to_string())
+                } else {
+                    Some(String::new())
+                }
+            }
+
             // Not a special array
             _ => None,
         }
