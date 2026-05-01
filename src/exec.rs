@@ -10133,6 +10133,7 @@ impl ShellExecutor {
             "tput" => return self.builtin_tput(&rest_vec),
             "users" => return self.builtin_users(&rest_vec),
             "sync" => return self.builtin_sync(&rest_vec),
+            "zbuild" => return self.builtin_zbuild(&rest_vec),
             _ => {}
         }
 
@@ -44324,6 +44325,95 @@ impl ShellExecutor {
             _ => {
                 // Unknown capability — exit 1 silently per tput
                 // convention. Don't emit error for boolean-cap probes.
+                1
+            }
+        }
+    }
+
+    /// zbuild --in SCRIPT --out OUT — bake a shell script into a
+    /// copy of the running zshrs binary, producing a self-contained
+    /// AOT executable. Mirrors `stryke build` for stryke.
+    ///
+    ///   zbuild --in deploy.zsh --out deploy
+    ///   ./deploy            # runs deploy.zsh embedded inside zshrs
+    ///
+    /// The output is `current_exe + zstd-compressed trailer`. zshrs
+    /// detects the trailer at startup via aot::try_load_embedded_script
+    /// and runs the embedded script. Without a trailer, the same
+    /// binary still works as plain zshrs.
+    ///
+    /// Flags:
+    ///   --in PATH   /  -i PATH      script source (required)
+    ///   --out PATH  /  -o PATH      output binary (required)
+    ///   --help                      print this usage
+    fn builtin_zbuild(&self, args: &[String]) -> i32 {
+        let mut input: Option<String> = None;
+        let mut output: Option<String> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--in" | "-i" | "--input" => {
+                    match iter.next() {
+                        Some(p) => input = Some(p.clone()),
+                        None => {
+                            eprintln!("zshrs:zbuild:1: --in requires a path");
+                            return 1;
+                        }
+                    }
+                }
+                s if s.starts_with("--in=") => input = Some(s[5..].to_string()),
+                s if s.starts_with("--input=") => input = Some(s[8..].to_string()),
+                "--out" | "-o" | "--output" => {
+                    match iter.next() {
+                        Some(p) => output = Some(p.clone()),
+                        None => {
+                            eprintln!("zshrs:zbuild:1: --out requires a path");
+                            return 1;
+                        }
+                    }
+                }
+                s if s.starts_with("--out=") => output = Some(s[6..].to_string()),
+                s if s.starts_with("--output=") => output = Some(s[9..].to_string()),
+                "--help" | "-h" => {
+                    println!("Usage: zbuild --in SCRIPT --out OUT");
+                    println!();
+                    println!("Bake a shell script into an AOT-compiled standalone executable.");
+                    println!();
+                    println!("Options:");
+                    println!("  --in / -i PATH    script source (required)");
+                    println!("  --out / -o PATH   output binary (required)");
+                    return 0;
+                }
+                _ => {
+                    eprintln!("zshrs:zbuild:1: unrecognized argument: {}", arg);
+                    return 1;
+                }
+            }
+        }
+        let in_path = match input {
+            Some(p) => p,
+            None => {
+                eprintln!("zshrs:zbuild:1: --in PATH required");
+                return 1;
+            }
+        };
+        let out_path = match output {
+            Some(p) => p,
+            None => {
+                eprintln!("zshrs:zbuild:1: --out PATH required");
+                return 1;
+            }
+        };
+        match crate::aot::build(
+            std::path::Path::new(&in_path),
+            std::path::Path::new(&out_path),
+        ) {
+            Ok(p) => {
+                eprintln!("zbuild: wrote {}", p.display());
+                0
+            }
+            Err(e) => {
+                eprintln!("zshrs:zbuild:1: {}", e);
                 1
             }
         }

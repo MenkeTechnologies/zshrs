@@ -701,6 +701,31 @@ pub fn zshrs_main() {
 
     let args: Vec<String> = env::args().collect();
 
+    // AOT trailer probe: if this binary was produced by `zbuild`, the last
+    // 32 bytes contain a magic + length pair pointing at a zstd-compressed
+    // shell script appended to the executable. Detect, decode, and run that
+    // script — bypassing the REPL entirely. Without a trailer this is a no-op.
+    // Mirror of stryke's AOT detection at startup.
+    if let Ok(self_exe) = env::current_exe() {
+        if let Some(embedded) = zsh::aot::try_load_embedded_script(&self_exe) {
+            // Remove our argv[0] (the binary path); positional args remain.
+            let script_args: Vec<String> = args.iter().skip(1).cloned().collect();
+            let mut executor = zsh::exec::ShellExecutor::new();
+            executor.positional_params = script_args;
+            executor
+                .variables
+                .insert("0".to_string(), embedded.name.clone());
+            let exit_code = match executor.execute_script(&embedded.source) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("zshrs: {}: {}", embedded.name, e);
+                    1
+                }
+            };
+            std::process::exit(exit_code);
+        }
+    }
+
     // Handle shell mode flags (must be checked early)
     if args.iter().any(|a| a == "--posix") {
         unsafe {

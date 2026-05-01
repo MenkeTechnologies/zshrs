@@ -68,6 +68,7 @@ sha2 = "0.10"
 notify = "6"
 notify-debouncer-mini = "0.4"
 crossterm = "0.27"
+zstd = "0.13"
 
 [features]
 default = ["daemon"]
