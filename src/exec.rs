@@ -35720,17 +35720,43 @@ impl ShellExecutor {
         err
     }
 
-    /// rmdir - remove directories
-    /// Port from zsh/Src/Modules/files.c bin_rmdir() lines 149-166
+    /// rmdir - remove directories.
+    /// Port from zsh/Src/Modules/files.c bin_rmdir() with the
+    /// coreutils -p (remove ancestors) extension.
     fn builtin_rmdir(&self, args: &[String]) -> i32 {
-        let mut err = 0;
+        let mut parents = false;
+        let mut dirs: Vec<&str> = Vec::new();
         for arg in args {
-            if arg.starts_with('-') {
-                continue;
+            match arg.as_str() {
+                "-p" => parents = true,
+                "--" => {} // end of options (rest collected in fall-through)
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // Unknown flag — accept silently per zsh's
+                    // permissive style.
+                }
+                s => dirs.push(s),
             }
+        }
+        let mut err = 0;
+        for arg in dirs {
             if let Err(e) = std::fs::remove_dir(arg) {
                 eprintln!("rmdir: cannot remove '{}': {}", arg, e);
                 err = 1;
+                continue;
+            }
+            // -p: walk parents up; stop on first non-empty / error.
+            // Direct port of coreutils rmdir(1) -p semantics.
+            if parents {
+                let mut p = std::path::Path::new(arg).parent().map(|p| p.to_path_buf());
+                while let Some(dir) = p {
+                    if dir.as_os_str().is_empty() || dir == std::path::Path::new("/") {
+                        break;
+                    }
+                    if std::fs::remove_dir(&dir).is_err() {
+                        break; // parent non-empty or no permission — stop.
+                    }
+                    p = dir.parent().map(|q| q.to_path_buf());
+                }
             }
         }
         err
