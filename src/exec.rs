@@ -26127,7 +26127,15 @@ impl ShellExecutor {
                         'r' => print_regular = true,
                         'L' => list_form = true,
                         'm' => pattern_match = true,
-                        _ => {}
+                        // BUILTIN("alias", ..., "Lgmrs") — `-` and `+`
+                        // forms share the same letter set. The `-`
+                        // form below already rejects unknown letters;
+                        // mirror that here so `alias +X` errors too
+                        // instead of silently swallowing the typo.
+                        _ => {
+                            eprintln!("zshrs:alias:1: bad option: +{}", ch);
+                            return 1;
+                        }
                     }
                 }
             } else if arg.starts_with('-') && arg != "-" {
