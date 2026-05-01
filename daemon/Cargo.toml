@@ -17,6 +17,10 @@ path = "lib.rs"
 name = "zshrs-daemon"
 path = "bins/zshrs-daemon.rs"
 
+[[bin]]
+name = "zshrs-daemon-bench"
+path = "bins/zshrs-daemon-bench.rs"
+
 [dependencies]
 atty = "0.2"
 byteorder = "1"

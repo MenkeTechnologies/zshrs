@@ -38,6 +38,12 @@ Options:
                              (sets XDG_CACHE_HOME).
   --log-level <DIRECTIVE>    Override ZSHRS_LOG for this session
                              (e.g. info | debug | info,fsnotify=trace).
+  --log-stderr               Stream tracing output to stderr in addition to
+                             ~/.cache/zshrs/zshrs.log. For live debugging /
+                             `daemon-reset.sh`. Same as ZSHRS_LOG_STDERR=1.
+  --verbose-init             Per docs/DAEMON.md:899: show daemon work to stderr
+                             on every run (not just first). Implies
+                             --log-stderr and ZSHRS_LOG=debug. For testing.
   --quiet-first-run          Suppress the 6-line first-run stderr block.
   --version                  Print version, exit.
   -h, --help                 Print this help, exit.
@@ -77,6 +83,16 @@ fn main() -> ExitCode {
                 }
             },
             "--quiet-first-run" => env::set_var("ZSHRS_QUIET_FIRST_RUN", "1"),
+            "--log-stderr" => env::set_var("ZSHRS_LOG_STDERR", "1"),
+            "--verbose-init" => {
+                // Implies --log-stderr + ZSHRS_LOG=debug. Per docs/DAEMON.md:899
+                // intended for testing/diagnosis on every run, not just first.
+                env::set_var("ZSHRS_LOG_STDERR", "1");
+                if env::var_os("ZSHRS_LOG").is_none() {
+                    env::set_var("ZSHRS_LOG", "debug");
+                }
+                env::set_var("ZSHRS_VERBOSE_INIT", "1");
+            }
             other => {
                 eprintln!("zshrs-daemon: unknown argument `{}` (try --help)", other);
                 return ExitCode::from(2);

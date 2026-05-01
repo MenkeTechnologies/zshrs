@@ -54,9 +54,15 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
     // bytecode, or one named function (+ disassembly with --format disasm)".
     if target == "functions" && name.is_some() {
         let n = name.unwrap();
+        // Unified function namespace per zsh semantics: inline-defined
+        // (subsystem `function`) and fpath-autoload (subsystem
+        // `function_autoload`) are queryable by the same name. Inline
+        // wins on collision (same as zsh — explicit definition shadows
+        // autoload).
         let row = state
             .canonical
             .row("function", &n)
+            .or_else(|| state.canonical.row("function_autoload", &n))
             .ok_or_else(|| ErrPayload::new("no_function", format!("function `{}` not found", n)))?;
         let body = unjson(&row.value);
         let out_str = match format.as_str() {
@@ -1069,35 +1075,35 @@ fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String,
             return Ok(serde_json::to_string_pretty(&payload).unwrap_or_default());
         }
         "index" => {
-            // Read ~/.cache/zshrs/index.rkyv if present; reports counts when
-            // it exists, an explicit "not_built" status otherwise. The
-            // index.rkyv top-level mapping (fq_name → (shard, generation,
-            // offset)) isn't yet a separate file in v1 — it's derived from
-            // the entries table during walk. Emit a summary.
-            let entries: Vec<(String, String, i64)> = state
-                .with_catalog(|conn| {
-                    let mut stmt = conn.prepare(
-                        "SELECT fq_name, plugin_id, byte_offset FROM entries \
-                         ORDER BY fq_name ASC LIMIT 10000",
-                    )?;
-                    let rows = stmt
-                        .query_map([], |r| {
-                            Ok((
-                                r.get::<_, String>(0)?,
-                                r.get::<_, String>(1)?,
-                                r.get::<_, i64>(2)?,
-                            ))
-                        })?
-                        .collect::<rusqlite::Result<Vec<_>>>()?;
-                    Ok::<_, rusqlite::Error>(rows)
-                })
-                .map_err(ErrPayload::from)?;
-            let payload: Vec<Value> = entries
-                .into_iter()
-                .map(|(fq, plugin, offset)| {
-                    json!({ "fq_name": fq, "plugin": plugin, "byte_offset": offset })
-                })
-                .collect();
+            // Top-level index.rkyv: one entry per shard with slug, generation,
+            // entry_count, byte_size. Per docs/DAEMON.md "Cache layout" line
+            // 192. If the file is missing (cold cache before first_init),
+            // returns a "not_built" status so the caller can react.
+            let idx = super::shard::read_index(&state.paths)
+                .map_err(|e| ErrPayload::new("read_index", e.to_string()))?;
+            if idx.entries.is_empty() && idx.generation == 0 {
+                return Ok(json!({
+                    "status": "not_built",
+                    "path": state.paths.index_rkyv.display().to_string(),
+                    "note": "run `zcache rebuild` or `zcache first-init` to populate",
+                }).to_string());
+            }
+            let payload = json!({
+                "magic": format!("{:#x}", idx.magic),
+                "format_version": idx.format_version,
+                "generation": idx.generation,
+                "built_at_ns": idx.built_at_ns,
+                "entries": idx.entries.iter().map(|e| json!({
+                    "slug": e.slug,
+                    "source_root": e.source_root,
+                    "generation": e.generation,
+                    "built_at_ns": e.built_at_ns,
+                    "entry_count": e.entry_count,
+                    "byte_size": e.byte_size,
+                    "path": e.path,
+                })).collect::<Vec<_>>(),
+                "entry_total": idx.entries.len(),
+            });
             return Ok(serde_json::to_string_pretty(&payload).unwrap_or_default());
         }
         "theme" => {

@@ -28,13 +28,22 @@ type ReloadFn =
 static FILTER_RELOAD: OnceLock<ReloadFn> = OnceLock::new();
 
 /// Initialize daemon-wide tracing. Returns a guard whose drop flushes the appender.
+///
+/// When the env var `ZSHRS_LOG_STDERR=1` is set (or the daemon binary was
+/// launched with `--log-stderr`), tracing also fans out to stderr — useful
+/// for `daemon-reset.sh` style live-debugging where you want to see every
+/// IPC op, fsnotify event, and walk pass scrolling in your terminal.
+///
+/// Single log file at `~/.cache/zshrs/zshrs.log`. No daily date suffix.
+/// Size-based rotation (10 MB → `.1`, `.1` → `.2`, … up to `.4`) is owned
+/// by `ticker::rotate_logs_if_needed`. The appender holds an `O_APPEND` fd
+/// against the active file; ticker truncates that file when it crosses
+/// the size cap, and the appender resumes writing at offset 0 cleanly.
 pub fn init(paths: &CachePaths) -> Result<tracing_appender::non_blocking::WorkerGuard> {
-    let appender = tracing_appender::rolling::Builder::new()
-        .filename_prefix(&paths.log_file_name)
-        .rotation(tracing_appender::rolling::Rotation::DAILY)
-        .max_log_files(5)
-        .build(&paths.log_dir)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("log appender: {e}")))?;
+    let appender = tracing_appender::rolling::never(&paths.log_dir, &paths.log_file_name);
+    // Coerce the log file to 0600 if the appender created it at the umask
+    // default (typically 644). Best-effort — done once at init.
+    let _ = super::paths::ensure_file_600(&paths.log);
 
     let (non_blocking, guard) = tracing_appender::non_blocking(appender);
 
@@ -47,20 +56,37 @@ pub fn init(paths: &CachePaths) -> Result<tracing_appender::non_blocking::Worker
 
     let (filter_layer, filter_handle) = reload::Layer::new(env_filter);
 
-    let fmt_layer = tracing_subscriber::fmt::layer()
+    let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(non_blocking)
         .with_ansi(false)
         .with_target(true)
         .with_level(true);
 
-    // Only store the reload closure if try_init actually installed the global.
-    // If a global was already set (test reuse, lib double-init), the layered
-    // registry is dropped along with our reload-Layer's receiver — keeping the
-    // closure would point at a dropped subscriber and break `zlog level`.
-    let init_result = tracing_subscriber::registry()
-        .with(filter_layer)
-        .with(fmt_layer)
-        .try_init();
+    let stderr_enabled = matches!(
+        std::env::var("ZSHRS_LOG_STDERR").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    );
+
+    // Build the registry differently depending on whether the user asked for
+    // stderr fanout. The two paths are otherwise identical — same env-filter,
+    // same reload handle, same file layer.
+    let init_result = if stderr_enabled {
+        let stderr_layer = tracing_subscriber::fmt::layer()
+            .with_writer(io::stderr)
+            .with_ansi(true)
+            .with_target(true)
+            .with_level(true);
+        tracing_subscriber::registry()
+            .with(filter_layer)
+            .with(file_layer)
+            .with(stderr_layer)
+            .try_init()
+    } else {
+        tracing_subscriber::registry()
+            .with(filter_layer)
+            .with(file_layer)
+            .try_init()
+    };
 
     if init_result.is_ok() {
         let reload_fn: ReloadFn = Box::new(move |directive: &str| {

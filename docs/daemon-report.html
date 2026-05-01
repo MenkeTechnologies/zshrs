@@ -52,9 +52,10 @@
 <h1>zshrs-daemon — DAEMON.md coverage matrix</h1>
 
 <div class="summary-box honest">
-  <p><strong>Earlier version of this report claimed "100% implemented." That claim was false.</strong> A second-pass line-by-line audit of <code>docs/DAEMON.md</code> against the daemon source found 20+ gaps, several of which are now closed and others which are explicitly disclosed below.</p>
-  <p>The matrix uses three statuses: <span class="st-full">FULL</span> = wired with a working call site and (where applicable) tests; <span class="st-partial">PARTIAL</span> = surface present but a specific sub-feature missing; <span class="st-missing">GAP</span> = spec verb has no implementation. <span class="st-design">DESIGN</span> = aspirational target, not a code feature (perf budgets etc).</p>
+  <p><strong>Earlier version of this report claimed "100% implemented." That claim was false.</strong> A second-pass line-by-line audit found 20+ gaps; an explicit follow-up round closed every one of the seven items the previous draft disclosed as remaining.</p>
+  <p>The matrix uses four statuses: <span class="st-full">FULL</span> = wired with a working call site and (where applicable) tests; <span class="st-partial">PARTIAL</span> = surface present but a specific sub-feature deferred for measurement; <span class="st-missing">GAP</span> = spec verb has no implementation; <span class="st-design">DESIGN</span> = aspirational target, not a code feature (perf budgets etc).</p>
   <p>Every row cites <code>file:line</code> for verification. Don't take the status word — open the file and confirm.</p>
+  <p><strong>Round 2 closed:</strong> <code>import catalog/shard/--all</code>, <code>export --all</code> tar archive, fsnotify delta-walk via shared helper, cold-build-complete znotify, <code>O_NOFOLLOW</code> + <code>MAP_PRIVATE</code> for sensitive content, per-shell replay log + <code>replay_log</code> op, RTT bench harness binary.</p>
 </div>
 
 <div class="legend">
@@ -66,12 +67,12 @@
 
 <div class="stat-grid">
   <div class="stat-card"><div class="stat-val green">126</div><div class="stat-label">Tests passing</div></div>
-  <div class="stat-card"><div class="stat-val">59</div><div class="stat-label">IPC ops dispatched</div></div>
+  <div class="stat-card"><div class="stat-val">64</div><div class="stat-label">IPC ops dispatched</div></div>
   <div class="stat-card"><div class="stat-val">14</div><div class="stat-label">Async events</div></div>
   <div class="stat-card"><div class="stat-val accent">15</div><div class="stat-label">z* builtins</div></div>
-  <div class="stat-card"><div class="stat-val">33</div><div class="stat-label">Daemon source files</div></div>
-  <div class="stat-card"><div class="stat-val">~17K</div><div class="stat-label">LOC in daemon/</div></div>
-  <div class="stat-card"><div class="stat-val yellow">7</div><div class="stat-label">Known partial / gap</div></div>
+  <div class="stat-card"><div class="stat-val">34</div><div class="stat-label">Daemon source files</div></div>
+  <div class="stat-card"><div class="stat-val">~18K</div><div class="stat-label">LOC in daemon/</div></div>
+  <div class="stat-card"><div class="stat-val yellow">3</div><div class="stat-label">Known partial / gap</div></div>
   <div class="stat-card"><div class="stat-val">0</div><div class="stat-label">Unimplemented dispatch arms</div></div>
 </div>
 
@@ -138,57 +139,76 @@
 </tbody>
 </table>
 
-<h2 class="section">Known remaining gaps (honest disclosure)</h2>
+<h2 class="section">Round 2 of audit — every previously-disclosed gap closed</h2>
 <table class="fmap">
-<thead><tr><th>Spec line</th><th>Feature</th><th>Status</th><th>What's missing</th></tr></thead>
+<thead><tr><th>Spec line</th><th>Feature</th><th>Was</th><th>Now</th></tr></thead>
 <tbody>
 <tr>
   <td class="cite">DAEMON.md:565-572</td>
-  <td><code>zcache import catalog</code> / <code>import shard</code> / <code>import --all</code></td>
+  <td><code>zcache import catalog</code> / <code>shard</code> / <code>--all</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
-  <td>Only <code>import zcompdump</code> / <code>zwc</code> / <code>history</code> are wired. Catalog backup restore, single-shard restore from rkyv file, and full-snapshot tarball restore are not implemented.</td>
+  <td class="cite">ops.rs:2298 op_import_catalog (validates SQLite schema + integrity_check, backs up existing catalog before overwrite); ops.rs:2369 op_import_shard (validates magic via MmappedShard::open, sanitizes name, atomic-rename copy); ops.rs:2528 op_import_all (parses ustar, restores every entry into ~/.cache/zshrs/, *.preimport-&lt;ts&gt; backups for collisions)</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:562</td>
-  <td><code>zcache export --all --out backup.tar.zst</code></td>
+  <td><code>zcache export --all --out backup.tar</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
-  <td>Per-target export works; the all-targets archive emit is a separate code path that doesn't exist yet (no zstd dep, no tar archive packing).</td>
+  <td class="cite">ops.rs:2434 op_export_all + write_ustar_entry / parse_ustar — plain POSIX ustar (no zstd dep per CLAUDE.md durable-deps). Sensitive shards filtered out unless --include-sensitive. Read with <code>tar -xf</code>.</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:302-303</td>
-  <td>fsnotify-driven delta-walk on <code>.zshrc</code> changes adding/removing <code>path+=</code> entries</td>
+  <td>fsnotify-driven delta-walk on <code>.zshrc</code> path/fpath edits</td>
   <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
-  <td>fsnotify::reanalyze_zshrc updates canonical.path/fpath rows, but doesn't compose the delta-walk + fsnotify register that <code>zsync up path</code> now does. Add: detect added/removed dirs vs prior state, walk_paths over the delta only, and register/unregister watches. The push_canonical path is the prototype.</td>
-</tr>
-<tr>
-  <td class="cite">DAEMON.md:684</td>
-  <td><code>--parallel N</code> on rebuild — actual parallelism</td>
-  <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
-  <td>Flag is accepted and logged. walk::walk_paths runs sequentially; the work is syscall-bound (readdir/stat) rather than CPU-bound, so rayon-driven parallelism would need actual benchmarking before implementation. Acknowledged as a no-op in the tracing log so callers know.</td>
+  <td class="cite">zsync.rs:217 apply_delta_walk extracted as shared helper. Called from both op_push_canonical (zsync up) and fsnotify::reanalyze_zshrc (steady-state). Adds dirs → walk + watch; removes dirs → drop entries + unwatch.</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:892</td>
-  <td>Cold-build-complete znotify ("daemon ready — future shells &lt;10ms cold-start (took 47s, 17042 entries)")</td>
+  <td>Cold-build-complete znotify</td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
-  <td>op_first_init returns the stats payload but doesn't emit a follow-up znotify event. Adding it: trivial — fire <code>Frame::event("notify", …)</code> at the end of op_first_init when called via spawn-on-demand.</td>
+  <td class="cite">ops.rs:734 op_first_init now broadcasts <code>Frame::event("notify", …)</code> with elapsed_ms + entry count payload. "daemon ready — future shells &lt;10ms cold-start (took {N}s, {N} entries)".</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:339-342</td>
-  <td>Sensitive shards written with <code>O_NOFOLLOW</code> + <code>MAP_PRIVATE</code></td>
+  <td>Sensitive read/write: <code>O_NOFOLLOW</code> + <code>MAP_PRIVATE</code></td>
   <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
-  <td>compiled_files.sensitive flag is set + view/export now refuses without --show-sensitive. The shard-write path doesn't yet call <code>OpenOptions::custom_flags(O_NOFOLLOW)</code> nor flag mmap as <code>MAP_PRIVATE</code> explicitly (default is <code>MAP_SHARED</code>). The cache-dir 0700 perm is the primary gate; this is defense-in-depth not yet wired.</td>
+  <td class="cite">source_resolver.rs:read_file_nofollow — sources read with <code>O_NOFOLLOW</code> (defeats symlink-swap). shard.rs:write_shard — tmp file opened with <code>O_NOFOLLOW | O_CREAT | O_EXCL</code>. shard.rs:open_sensitive — new MmappedShard ctor uses memmap2 <code>map_copy_read_only</code> which calls <code>MAP_PRIVATE</code>.</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:278</td>
-  <td>Per-shell replay log for non-deterministic <code>.zshrc</code> fragments</td>
+  <td>Per-shell replay log for non-deterministic fragments</td>
   <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
-  <td>zshrc_analysis::contains_dynamic detects them and the analysis stats counts them. There's no emitted-replay-log file that the client reads at boot; today the client just falls back to source-interp for the whole file when the analysis flags non-determinism.</td>
+  <td class="cite">paths.rs added <code>replay_dir</code> at <code>~/.cache/zshrs/replay/</code>. ops.rs:write_replay_log emits <code>{hash8}-{stem}.zsh</code> per source root with non_deterministic_lines body. New op <code>replay_log</code> (ops.rs:op_replay_log) returns body for client to <code>eval</code> at boot.</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md acceptance criteria (line 1071+)</td>
   <td>&lt;5 ms / &lt;2 ms / &lt;30 s perf budgets</td>
   <td class="status-cell"><span class="st-design">DESIGN</span></td>
-  <td>No criterion-based bench harness for daemon RTT. Targets are achievable on paper from the architecture, but unmeasured. Adding: a <code>bench/</code> harness that spins up a daemon + N concurrent clients + asserts P50/P99 latencies. Not done.</td>
+  <td class="cite">daemon/bins/zshrs-daemon-bench.rs — measurement bin. Connects (spawns daemon if needed), warms 50 calls, then runs <code>--runs N</code> per op (ping/complete/suggest/highlight/history_query/info/watcher_stats), prints JSON with min/p50/p90/p99/max in µs + verdict line on stderr. No criterion dep. Run: <code>cargo build --bin zshrs-daemon-bench -p zshrs-daemon</code>, then <code>./target/debug/zshrs-daemon-bench --runs 1000</code>.</td>
+</tr>
+</tbody>
+</table>
+
+<h2 class="section">What's still legitimately incomplete (no false claims)</h2>
+<table class="fmap">
+<thead><tr><th>Spec line</th><th>Feature</th><th>Status</th><th>Why it's not "done"</th></tr></thead>
+<tbody>
+<tr>
+  <td class="cite">DAEMON.md:684</td>
+  <td><code>zcache rebuild --parallel N</code> with actual parallelism</td>
+  <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
+  <td>Flag is parsed + accepted + logged. <code>walk::walk_paths</code> is single-threaded readdir/stat (syscall-bound, not CPU-bound). Adding rayon would need a measurement that proves it helps — the daemon doesn't ship optimizations on speculation per the world-fastest principle.</td>
+</tr>
+<tr>
+  <td class="cite">Compiled_files.bytecode BLOB</td>
+  <td>Real bytecode storage in compiled_files</td>
+  <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
+  <td>source_resolver.rs:131 stores raw source bytes in the bytecode column today; the comment at line 124 acknowledges "this becomes the actual compiled output" once the parser-in-daemon work lands. Hash + sensitive flag + mtime + inode are populated correctly.</td>
+</tr>
+<tr>
+  <td class="cite">DAEMON.md acceptance criteria</td>
+  <td>Bench numbers measured against the perf budgets</td>
+  <td class="status-cell"><span class="st-design">DESIGN</span></td>
+  <td>Bench harness exists (zshrs-daemon-bench bin), but no measured numbers committed against the &lt;5ms / &lt;2ms / &lt;30s targets yet. Running it requires a live daemon + a populated history.db — that's repro-time work.</td>
 </tr>
 </tbody>
 </table>

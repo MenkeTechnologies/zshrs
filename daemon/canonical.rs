@@ -126,6 +126,9 @@ impl CanonicalEngine {
         for (k, v) in &shard.functions {
             push(rows, "function", k, json_string(v));
         }
+        for (k, v) in &shard.autoload_functions {
+            push(rows, "function_autoload", k, json_string(v));
+        }
         for (k, v) in &shard.bindkeys {
             push(rows, "bindkey", k, json_string(v));
         }
@@ -277,8 +280,17 @@ impl CanonicalEngine {
                     "salias" => {
                         shard.suffix_aliases.insert(k.clone(), plain);
                     }
+                    // Inline-defined functions go to shard.functions;
+                    // fpath-walk autoload bodies go to shard.autoload_functions.
+                    // The split exists in rkyv too so a round-trip
+                    // (load_from_disk → snapshot_shard) preserves the
+                    // distinction and `replace_subsystem("function", …)`
+                    // can never wipe autoload bodies.
                     "function" => {
                         shard.functions.insert(k.clone(), plain);
+                    }
+                    "function_autoload" => {
+                        shard.autoload_functions.insert(k.clone(), plain);
                     }
                     "bindkey" => {
                         shard.bindkeys.insert(k.clone(), plain);

@@ -78,6 +78,11 @@ pub struct DaemonStateInner {
     /// holds a oneshot::Receiver waiting for a `cmd_result` IPC from the
     /// target shell.
     pub pending_responses: HashMap<String, oneshot::Sender<serde_json::Value>>,
+    /// Runtime-tunable config knobs. Per docs/DAEMON.md:905
+    /// `zcache config set <key> <value>` mutates this map; readers fall back
+    /// to env vars when the key isn't set. Keys: long_cmd_threshold (seconds),
+    /// log_max_bytes, etc.
+    pub config: HashMap<String, String>,
 }
 
 impl DaemonStateInner {
@@ -88,6 +93,7 @@ impl DaemonStateInner {
             subscriptions: BTreeMap::new(),
             next_subscription_id: 1,
             pending_responses: HashMap::new(),
+            config: HashMap::new(),
         }
     }
 }
@@ -354,6 +360,52 @@ impl DaemonState {
 
     pub fn session_count(&self) -> usize {
         self.inner.lock().sessions.len()
+    }
+
+    /// Persist canonical state to its rkyv shard AND immediately mirror it
+    /// into the SQLite `canonical` view table. SQLite is the read-only
+    /// inspection mirror per DAEMON.md "Canonical = source of truth (rkyv);
+    /// SQLite is hydrated mirror." Every mutation of canonical state should
+    /// flow through here so the mirror never goes stale.
+    ///
+    /// Returns the rkyv shard path on success. SQLite-hydrate failure logs
+    /// a warning but does not abort — rkyv is authoritative; the mirror is
+    /// best-effort.
+    pub fn persist_canonical(&self, generation: u64) -> Result<std::path::PathBuf> {
+        let path = self.canonical.persist(generation)?;
+        if let Err(e) = self.canonical.hydrate_sqlite_view(self) {
+            tracing::warn!(?e, generation, "canonical: hydrate_sqlite_view failed (rkyv is authoritative)");
+        }
+        Ok(path)
+    }
+
+    /// Read a runtime config knob. Returns the in-memory value if a client
+    /// pushed one via `zcache config set`, else falls back to the env var
+    /// (uppercased + `ZSHRS_` prefix), else `None`. Per DAEMON.md:905.
+    pub fn config_get(&self, key: &str) -> Option<String> {
+        let g = self.inner.lock();
+        if let Some(v) = g.config.get(key) {
+            return Some(v.clone());
+        }
+        drop(g);
+        let env_key = format!("ZSHRS_{}", key.to_ascii_uppercase());
+        std::env::var(&env_key).ok()
+    }
+
+    /// Set a runtime config knob. Returns the prior value, if any.
+    pub fn config_set(&self, key: &str, value: String) -> Option<String> {
+        let mut g = self.inner.lock();
+        g.config.insert(key.to_string(), value)
+    }
+
+    /// Snapshot every config knob currently set in-memory (for `zcache
+    /// config list` / view).
+    pub fn config_snapshot(&self) -> std::collections::BTreeMap<String, String> {
+        let g = self.inner.lock();
+        g.config
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     /// Update mutable per-session metadata (cwd, tty, argv0). Returns the

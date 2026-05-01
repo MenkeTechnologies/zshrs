@@ -247,11 +247,20 @@ fn analyze_line(state: &mut CanonicalState, line: &str, raw: &str) -> bool {
 
     // source FILE / . FILE
     if let Some(rest) = strip_prefix_word(line, "source").or_else(|| strip_prefix_word(line, ".")) {
-        // Skip if it has interpolation we can't resolve.
         let trimmed = rest.trim();
         let arg = strip_quotes(trimmed);
-        if arg.is_empty() || contains_dynamic(arg) {
-            // Non-deterministic — caller routes to replay log.
+        if arg.is_empty() {
+            return false;
+        }
+        // Try to resolve common interpolations ($HOME, $ZDOTDIR, ~, ${VAR}).
+        // If it expands to a real file, follow it. If we can't resolve, fall
+        // through to the dynamic-rejection path so the line ends up in the
+        // replay log.
+        if let Some(expanded) = try_expand_static_path(arg) {
+            state.sourced_files.push(expanded);
+            return true;
+        }
+        if contains_dynamic(arg) {
             return false;
         }
         state.sourced_files.push(arg.to_string());
@@ -397,6 +406,83 @@ fn strip_quotes(s: &str) -> &str {
         }
     }
     s
+}
+
+/// Try to expand a path like `~/.zpwr/init.sh`, `$HOME/.foo`, `$ZDOTDIR/bar`,
+/// `${ZSH}/oh-my-zsh.sh` into an absolute path that exists on disk. Returns
+/// `Some(resolved)` only if every variable was resolvable AND the resulting
+/// file or directory exists. Anything containing `$(...)`, backticks, or
+/// glob meta returns `None` so the caller routes to replay.
+fn try_expand_static_path(arg: &str) -> Option<String> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return None;
+    }
+    // Reject command substitution / globs outright.
+    if arg.contains('`') || arg.contains("$(") {
+        return None;
+    }
+    if arg.contains('*') || arg.contains('?') {
+        return None;
+    }
+
+    // Tilde expansion (only `~/...` form — `~user/...` requires getpwnam).
+    let tilde_expanded: String = if let Some(rest) = arg.strip_prefix("~/") {
+        match std::env::var("HOME") {
+            Ok(h) if !h.is_empty() => format!("{}/{}", h, rest),
+            _ => return None,
+        }
+    } else if arg == "~" {
+        std::env::var("HOME").ok()?
+    } else {
+        arg.to_string()
+    };
+
+    // Variable expansion. Walk the string once, replacing `$VAR` and
+    // `${VAR}`. Anything we can't resolve = bail out.
+    let bytes = tilde_expanded.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            i += 1;
+            if i >= bytes.len() {
+                return None;
+            }
+            let (name, advance) = if bytes[i] == b'{' {
+                let end = bytes[i + 1..].iter().position(|&b| b == b'}')?;
+                let n = std::str::from_utf8(&bytes[i + 1..i + 1 + end]).ok()?;
+                (n, i + 2 + end)
+            } else {
+                let mut j = i;
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                    j += 1;
+                }
+                if j == i {
+                    // Stray `$` not followed by an identifier — bail.
+                    return None;
+                }
+                let n = std::str::from_utf8(&bytes[i..j]).ok()?;
+                (n, j)
+            };
+            let v = std::env::var(name).ok()?;
+            if v.is_empty() {
+                return None;
+            }
+            out.push_str(&v);
+            i = advance;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    let p = std::path::Path::new(&out);
+    if p.exists() {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 /// Detect any `$`-or-`` ` `` substitution markers that mean we can't pre-resolve.

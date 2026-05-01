@@ -130,14 +130,16 @@ pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: V
             .upsert(&subsystem, key, json_val, Some(client_id));
     }
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    if let Err(e) = state.canonical.persist(generation) {
-        tracing::warn!(?e, "canonical: persist to rkyv failed");
+    if let Err(e) = state.persist_canonical(generation) {
+        tracing::warn!(?e, "canonical: persist+hydrate after push failed");
     }
 
     //   3. Rebuild any derived hashtable that depends on the changed
     //      subsystem (e.g., command hash table for PATH change). Only the
     //      *new* directories get walked — bounded delta-walk per
     //      DAEMON.md:302-304.
+    //   4. Register fsnotify watch on the new directory so future file
+    //      additions are picked up automatically (steady-state).
     let mut walked_new_dirs: Vec<String> = Vec::new();
     if matches!(subsystem.as_str(), "path" | "fpath") {
         let post_dirs: Vec<String> = entries
@@ -150,71 +152,7 @@ pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: V
             }
         }
         if !walked_new_dirs.is_empty() {
-            // Delta-walk: only the newly-added directories get enumerated.
-            // walk::walk_paths handles both PATH-style (executables) and
-            // FPATH-style (autoload functions) sources.
-            let (path_in, fpath_in): (Vec<String>, Vec<String>) =
-                if subsystem == "path" {
-                    (walked_new_dirs.clone(), Vec::new())
-                } else {
-                    (Vec::new(), walked_new_dirs.clone())
-                };
-            let walk = super::walk::walk_paths(&path_in, &fpath_in);
-
-            // Hydrate catalog with the new entries. We append (no clear) so
-            // existing command_hash entries from prior PATH dirs survive.
-            let _ = state.with_catalog(|conn| -> rusqlite::Result<()> {
-                let tx = conn.unchecked_transaction()?;
-                for (name, exe) in &walk.command_hash {
-                    tx.execute(
-                        "INSERT OR REPLACE INTO entries \
-                         (fq_name, plugin_id, kind, image_path, byte_offset, source_loc) \
-                         VALUES (?, 'system', 'command', '', 0, ?)",
-                        rusqlite::params![format!("cmd:{}", name), exe],
-                    )?;
-                }
-                for (name, file) in &walk.autoload_table {
-                    tx.execute(
-                        "INSERT OR REPLACE INTO entries \
-                         (fq_name, plugin_id, kind, image_path, byte_offset, source_loc) \
-                         VALUES (?, 'system', 'autoload', '', 0, ?)",
-                        rusqlite::params![format!("fn:{}", name), file],
-                    )?;
-                }
-                tx.commit()?;
-                Ok(())
-            });
-
-            //   4. Register fsnotify watch on the new directory so future
-            //      file additions are picked up automatically (steady-state).
-            for d in &walked_new_dirs {
-                let dir = std::path::PathBuf::from(d);
-                if !dir.is_dir() {
-                    continue;
-                }
-                let kind = if subsystem == "fpath" {
-                    super::fsnotify::WatchKind::FpathDir
-                } else {
-                    super::fsnotify::WatchKind::Generic
-                };
-                let wp = super::fsnotify::WatchedPath {
-                    path: dir.clone(),
-                    shard_slug: format!("system-{}", super::shard::hash8(d)),
-                    source_root: subsystem.clone(),
-                    kind,
-                };
-                if let Err(e) = state.fs_watcher.watch_path(wp, false) {
-                    tracing::warn!(?e, %d, "delta-walk: fsnotify watch failed");
-                }
-            }
-
-            tracing::info!(
-                subsystem = %subsystem,
-                new_dirs = walked_new_dirs.len(),
-                commands = walk.command_hash.len(),
-                autoloads = walk.autoload_table.len(),
-                "push_canonical delta-walk complete"
-            );
+            apply_delta_walk(state, &subsystem, &walked_new_dirs, &[]);
         }
     }
 
@@ -240,6 +178,119 @@ pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: V
         "delta_walked_dirs": walked_new_dirs,
         "generation": generation,
     }))
+}
+
+/// Apply a bounded delta-walk over newly-added PATH/FPATH directories.
+/// Per docs/DAEMON.md:302-304 — walks ONLY the new directories, hydrates
+/// catalog command_hash / autoload_table entries, registers fsnotify watch
+/// on each new dir. Also drops command_hash entries that came from
+/// `removed_dirs` and unregisters their fsnotify watches.
+///
+/// Shared between `op_push_canonical` (zsync up) and
+/// `fsnotify::reanalyze_zshrc` (steady-state .zshrc edit detection) so both
+/// code paths produce identical post-state.
+pub fn apply_delta_walk(
+    state: &Arc<DaemonState>,
+    subsystem: &str,
+    added_dirs: &[String],
+    removed_dirs: &[String],
+) {
+    if !matches!(subsystem, "path" | "fpath") {
+        return;
+    }
+
+    // Walk only the new directories.
+    if !added_dirs.is_empty() {
+        let (path_in, fpath_in): (Vec<String>, Vec<String>) = if subsystem == "path" {
+            (added_dirs.to_vec(), Vec::new())
+        } else {
+            (Vec::new(), added_dirs.to_vec())
+        };
+        let walk = super::walk::walk_paths(&path_in, &fpath_in);
+
+        let _ = state.with_catalog(|conn| -> rusqlite::Result<()> {
+            let tx = conn.unchecked_transaction()?;
+            for (name, exe) in &walk.command_hash {
+                tx.execute(
+                    "INSERT OR REPLACE INTO entries \
+                     (fq_name, plugin_id, kind, image_path, byte_offset, source_loc) \
+                     VALUES (?, 'system', 'command', '', 0, ?)",
+                    rusqlite::params![format!("cmd:{}", name), exe],
+                )?;
+            }
+            for (name, file) in &walk.autoload_table {
+                tx.execute(
+                    "INSERT OR REPLACE INTO entries \
+                     (fq_name, plugin_id, kind, image_path, byte_offset, source_loc) \
+                     VALUES (?, 'system', 'autoload', '', 0, ?)",
+                    rusqlite::params![format!("fn:{}", name), file],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        });
+
+        for d in added_dirs {
+            let dir = std::path::PathBuf::from(d);
+            if !dir.is_dir() {
+                continue;
+            }
+            let kind = if subsystem == "fpath" {
+                super::fsnotify::WatchKind::FpathDir
+            } else {
+                super::fsnotify::WatchKind::Generic
+            };
+            let wp = super::fsnotify::WatchedPath {
+                path: dir.clone(),
+                shard_slug: format!("system-{}", super::shard::hash8(d)),
+                source_root: subsystem.to_string(),
+                kind,
+            };
+            if let Err(e) = state.fs_watcher.watch_path(wp, false) {
+                tracing::warn!(?e, %d, "delta-walk: fsnotify watch failed");
+            }
+        }
+
+        tracing::info!(
+            subsystem,
+            added = added_dirs.len(),
+            commands = walk.command_hash.len(),
+            autoloads = walk.autoload_table.len(),
+            "delta-walk: directories added"
+        );
+    }
+
+    // Drop command_hash / autoload_table entries that came from removed dirs,
+    // unregister the fsnotify watch.
+    if !removed_dirs.is_empty() {
+        let _ = state.with_catalog(|conn| -> rusqlite::Result<()> {
+            let tx = conn.unchecked_transaction()?;
+            for d in removed_dirs {
+                let prefix = format!("{}/", d.trim_end_matches('/'));
+                let kind = if subsystem == "fpath" { "autoload" } else { "command" };
+                tx.execute(
+                    "DELETE FROM entries WHERE plugin_id='system' AND kind = ? \
+                     AND (source_loc = ? OR source_loc LIKE ?)",
+                    rusqlite::params![kind, d, format!("{}%", prefix)],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        });
+
+        for d in removed_dirs {
+            let dir = std::path::PathBuf::from(d);
+            if let Err(e) = state.fs_watcher.unwatch_path(&dir) {
+                tracing::debug!(?e, %d, "delta-walk: fsnotify unwatch failed (was probably never registered)");
+            }
+        }
+
+        tracing::info!(
+            subsystem,
+            removed = removed_dirs.len(),
+            "delta-walk: directories removed"
+        );
+    }
 }
 
 /// Per docs/DAEMON.md "Daemon-side commit flow on push_canonical" step 1:

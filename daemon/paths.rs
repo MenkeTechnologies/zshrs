@@ -31,17 +31,28 @@ pub struct CachePaths {
     pub socket: PathBuf,
     pub pid_file: PathBuf,
     pub index_rkyv: PathBuf,
+    /// `replay/` — per-shell scripts holding the non-deterministic
+    /// fragments of `.zshrc` that the daemon couldn't bake into canonical
+    /// state. Per docs/DAEMON.md "Determinism boundary" (line 278).
+    pub replay_dir: PathBuf,
 }
 
 impl CachePaths {
-    /// Resolve cache paths from the user's `XDG_CACHE_HOME` or `~/.cache`.
+    /// Resolve cache paths from `XDG_CACHE_HOME` or `~/.cache/zshrs`.
+    ///
+    /// **Not** `dirs::cache_dir()`, which on macOS returns
+    /// `~/Library/Caches/`. The spec (docs/DAEMON.md) says `~/.cache/zshrs/`
+    /// on every platform, and so do every doc, script, and example. Cross-
+    /// platform consistency wins over Apple's HIG.
     pub fn resolve() -> Result<Self> {
-        let cache_home = std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| dirs::cache_dir())
-            .ok_or_else(|| DaemonError::other("could not resolve cache home"))?;
-
-        let root = cache_home.join("zshrs");
+        let root = if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
+            PathBuf::from(xdg).join("zshrs")
+        } else {
+            let home = std::env::var_os("HOME")
+                .or_else(|| dirs::home_dir().map(|p| p.into_os_string()))
+                .ok_or_else(|| DaemonError::other("could not resolve $HOME"))?;
+            PathBuf::from(home).join(".cache").join("zshrs")
+        };
         Ok(Self::with_root(root))
     }
 
@@ -57,6 +68,7 @@ impl CachePaths {
         let socket = root.join("daemon.sock");
         let pid_file = root.join("daemon.pid");
         let index_rkyv = root.join("index.rkyv");
+        let replay_dir = root.join("replay");
 
         Self {
             root,
@@ -69,6 +81,7 @@ impl CachePaths {
             socket,
             pid_file,
             index_rkyv,
+            replay_dir,
         }
     }
 
@@ -76,6 +89,7 @@ impl CachePaths {
     pub fn ensure_dirs(&self) -> Result<()> {
         ensure_dir_700(&self.root)?;
         ensure_dir_700(&self.images)?;
+        ensure_dir_700(&self.replay_dir)?;
         Ok(())
     }
 
