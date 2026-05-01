@@ -43,6 +43,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
 
         "rebuild" => op_rebuild(state, args).await,
         "zshrc_analyze" => op_zshrc_analyze(state, args).await,
+        "canonical_hydrate_view" => op_canonical_hydrate_view(state).await,
         "clean" => op_clean(state, args).await,
         "verify" => op_verify(state).await,
         "compact" => op_compact(state).await,
@@ -369,7 +370,6 @@ async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
 /// etc. emit the discovered values directly. Per docs/DAEMON.md "Starting
 /// state served by daemon" + "Walk lifecycle — first init".
 async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    super::zsync::ensure_schema(state)?;
     let path_str = args
         .get("path")
         .and_then(Value::as_str)
@@ -385,67 +385,66 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let analysis = super::zshrc_analysis::analyze_with_sources(path)
         .map_err(|e| ErrPayload::new("analyze_failed", e.to_string()))?;
 
-    // Push the captured deterministic state into the canonical table. Each
-    // family writes via the same path push_canonical takes — wrapping each as
-    // a JSON object keyed by the entry name.
-    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-    let captured = state.with_catalog(|conn| -> std::result::Result<usize, super::DaemonError> {
-        let tx = conn.unchecked_transaction()?;
-        let mut n = 0;
-        for (k, v) in &analysis.aliases {
-            n += upsert_canonical(&tx, "alias", k, &json_string(v), now)?;
-        }
-        for (k, v) in &analysis.global_aliases {
-            n += upsert_canonical(&tx, "galias", k, &json_string(v), now)?;
-        }
-        for (k, v) in &analysis.suffix_aliases {
-            n += upsert_canonical(&tx, "salias", k, &json_string(v), now)?;
-        }
-        for (k, v) in &analysis.named_dirs {
-            n += upsert_canonical(&tx, "named_dir", k, &json_string(v), now)?;
-        }
-        for (k, v) in &analysis.compdef {
-            n += upsert_canonical(&tx, "compdef", k, &json_string(v), now)?;
-        }
-        for (k, v) in &analysis.bindkeys {
-            n += upsert_canonical(&tx, "bindkey", k, &json_string(v), now)?;
-        }
-        for (k, v) in &analysis.env_exports {
-            n += upsert_canonical(&tx, "env", k, &json_string(v), now)?;
-        }
-        for (k, v) in &analysis.params {
-            n += upsert_canonical(&tx, "params", k, &json_string(v), now)?;
-        }
-        for opt in &analysis.setopts {
-            n += upsert_canonical(&tx, "setopt", opt, "\"on\"", now)?;
-        }
-        for opt in &analysis.unsetopts {
-            n += upsert_canonical(&tx, "setopt", opt, "\"off\"", now)?;
-        }
-        for module in &analysis.zmodload {
-            n += upsert_canonical(&tx, "zmodload", module, "\"loaded\"", now)?;
-        }
-        for (i, dir) in analysis.path_additions.iter().enumerate() {
-            n += upsert_canonical(&tx, "path", &i.to_string(), &json_string(dir), now)?;
-        }
-        for (i, dir) in analysis.fpath_additions.iter().enumerate() {
-            n += upsert_canonical(&tx, "fpath", &i.to_string(), &json_string(dir), now)?;
-        }
-        for (i, dir) in analysis.manpath_additions.iter().enumerate() {
-            n += upsert_canonical(&tx, "manpath", &i.to_string(), &json_string(dir), now)?;
-        }
-        for (name, body) in &analysis.functions {
-            n += upsert_canonical(&tx, "function", name, &json_string(body), now)?;
-        }
-        for (pat, rest) in &analysis.zstyle {
-            n += upsert_canonical(&tx, "zstyle", pat, &json_string(rest), now)?;
-        }
-        tx.commit()?;
-        Ok(n)
-    })?;
+    // Seed the rkyv-backed canonical engine. SQLite is not touched here; the
+    // hydrated `canonical` view table is refreshed lazily on `zcache hydrate-view`.
+    let mut captured = 0usize;
+    let canon = &state.canonical;
+    for (k, v) in &analysis.aliases {
+        captured += canon.upsert("alias", k, &json_string(v), None);
+    }
+    for (k, v) in &analysis.global_aliases {
+        captured += canon.upsert("galias", k, &json_string(v), None);
+    }
+    for (k, v) in &analysis.suffix_aliases {
+        captured += canon.upsert("salias", k, &json_string(v), None);
+    }
+    for (k, v) in &analysis.named_dirs {
+        captured += canon.upsert("named_dir", k, &json_string(v), None);
+    }
+    for (k, v) in &analysis.compdef {
+        captured += canon.upsert("compdef", k, &json_string(v), None);
+    }
+    for (k, v) in &analysis.bindkeys {
+        captured += canon.upsert("bindkey", k, &json_string(v), None);
+    }
+    for (k, v) in &analysis.env_exports {
+        captured += canon.upsert("env", k, &json_string(v), None);
+    }
+    for (k, v) in &analysis.params {
+        captured += canon.upsert("params", k, &json_string(v), None);
+    }
+    for opt in &analysis.setopts {
+        captured += canon.upsert("setopt", opt, "\"on\"", None);
+    }
+    for opt in &analysis.unsetopts {
+        captured += canon.upsert("setopt", opt, "\"off\"", None);
+    }
+    for module in &analysis.zmodload {
+        captured += canon.upsert("zmodload", module, "\"loaded\"", None);
+    }
+    for (i, dir) in analysis.path_additions.iter().enumerate() {
+        captured += canon.upsert("path", &i.to_string(), &json_string(dir), None);
+    }
+    for (i, dir) in analysis.fpath_additions.iter().enumerate() {
+        captured += canon.upsert("fpath", &i.to_string(), &json_string(dir), None);
+    }
+    for (i, dir) in analysis.manpath_additions.iter().enumerate() {
+        captured += canon.upsert("manpath", &i.to_string(), &json_string(dir), None);
+    }
+    for (name, body) in &analysis.functions {
+        captured += canon.upsert("function", name, &json_string(body), None);
+    }
+    for (pat, rest) in &analysis.zstyle {
+        captured += canon.upsert("zstyle", pat, &json_string(rest), None);
+    }
 
-    // Broadcast canonical_changed for every subsystem touched (clients use
-    // this to opt into mid-session refresh via `zsync pull`).
+    // Persist the seeded state to the rkyv shard.
+    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+    if let Err(e) = canon.persist(generation) {
+        tracing::warn!(?e, "canonical: persist after analyze failed");
+    }
+
+    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
     let event = serde_json::json!({
         "subsystem": "*",
         "row_count": captured,
@@ -475,26 +474,23 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
     }))
 }
 
-fn upsert_canonical(
-    tx: &rusqlite::Transaction,
-    subsystem: &str,
-    key: &str,
-    json_value: &str,
-    now: i64,
-) -> rusqlite::Result<usize> {
-    tx.execute(
-        "INSERT INTO canonical (subsystem, key, value, set_at_ns, set_by_shell) \
-         VALUES (?, ?, ?, ?, NULL) \
-         ON CONFLICT(subsystem, key) DO UPDATE SET value = excluded.value, set_at_ns = excluded.set_at_ns",
-        rusqlite::params![subsystem, key, json_value, now],
-    )?;
-    Ok(1)
+fn json_string(s: &str) -> String {
+    serde_json::Value::String(s.to_string()).to_string()
 }
 
-fn json_string(s: &str) -> String {
-    // Re-encode as a JSON string so it round-trips through `unjson` in
-    // export.rs the same way push_canonical's serialize_pushed_value does.
-    serde_json::Value::String(s.to_string()).to_string()
+/// Refresh the SQLite `canonical` view table from the in-memory rkyv-backed
+/// state. Hot lookups never hit SQLite (per docs/DAEMON.md "Daemon = sole
+/// writer"); this op exists for `zcache view --format sql` / external
+/// `sqlite3 catalog.db` inspection.
+async fn op_canonical_hydrate_view(state: &Arc<DaemonState>) -> OpResult {
+    let n = state
+        .canonical
+        .hydrate_sqlite_view(state)
+        .map_err(|e| ErrPayload::new("hydrate_failed", e.to_string()))?;
+    Ok(json!({
+        "rows_written": n,
+        "total_in_memory": state.canonical.total_rows(),
+    }))
 }
 
 async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {

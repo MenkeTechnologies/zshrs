@@ -78,25 +78,9 @@ fn read_canonical(
     state: &DaemonState,
     subsystem: &str,
 ) -> std::result::Result<Vec<CanonicalRow>, ErrPayload> {
-    state
-        .with_catalog(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT key, value, set_at_ns, set_by_shell FROM canonical \
-             WHERE subsystem = ? ORDER BY key ASC",
-            )?;
-            let rows = stmt
-                .query_map(rusqlite::params![subsystem], |r| {
-                    Ok(CanonicalRow {
-                        key: r.get(0)?,
-                        value: r.get(1)?,
-                        set_at_ns: r.get(2)?,
-                        set_by_shell: r.get(3)?,
-                    })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok::<_, rusqlite::Error>(rows)
-        })
-        .map_err(ErrPayload::from)
+    // rkyv-backed in-memory state is the source of truth — SQLite is only a
+    // hydrated view target (refreshed by `zcache hydrate-view`).
+    Ok(super::zsync::read_canonical_rows_inmem(state, subsystem))
 }
 
 /// Strip JSON quoting if the value-string came from canonical.value (which we stored

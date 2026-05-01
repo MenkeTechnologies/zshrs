@@ -33466,15 +33466,22 @@ impl ShellExecutor {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /// zstat - file status (zsh/stat module)
-    fn builtin_zstat(&self, args: &[String]) -> i32 {
+    fn builtin_zstat(&mut self, args: &[String]) -> i32 {
         use std::os::unix::fs::MetadataExt;
         use std::os::unix::fs::PermissionsExt;
 
+        // Direct port of src/zsh/Src/Modules/stat.c bin_stat. The
+        // `-A NAME` flag stores results in an assoc array NAME instead
+        // of printing. The previous Rust impl received -A NAME but
+        // its `_as_array` / `_array_name` were prefixed with `_`
+        // (i.e. ignored) and the output_element closure just
+        // printed `key=value` to stdout regardless. Now actually
+        // writes to self.assoc_arrays[NAME].
         let mut show_all = true;
         let mut symbolic_mode = false;
         let mut show_link = false;
-        let mut _as_array = false;
-        let mut _array_name = String::new();
+        let mut as_array = false;
+        let mut array_name = String::new();
         let mut format_time = String::new();
         let mut elements: Vec<String> = Vec::new();
         let mut files: Vec<&str> = Vec::new();
@@ -33488,9 +33495,12 @@ impl ShellExecutor {
                 "-n" => {} // Numeric user/group
                 "-o" => show_all = false,
                 "-A" => {
-                    _as_array = true;
+                    as_array = true;
                     if let Some(name) = iter.next() {
-                        _array_name = name.clone();
+                        array_name = name.clone();
+                    } else {
+                        eprintln!("zshrs:zstat:1: argument expected: -A");
+                        return 1;
                     }
                 }
                 "-F" => {
@@ -33527,10 +33537,14 @@ impl ShellExecutor {
                 }
             };
 
-            let output_element = |name: &str, value: &str| {
-                if _as_array {
-                    // Would need mutable self to store in array
-                    println!("{}={}", name, value);
+            // Collect into a local map first; flush to assoc_arrays
+            // below so the &mut borrow doesn't tangle with iteration.
+            let mut collected: Vec<(String, String)> = Vec::new();
+            let mut output_element = |name: &str, value: &str| {
+                if as_array {
+                    if show_all || elements.contains(&name.to_string()) {
+                        collected.push((name.to_string(), value.to_string()));
+                    }
                 } else if show_all || elements.contains(&name.to_string()) {
                     println!("{}: {}", name, value);
                 }
@@ -33612,6 +33626,16 @@ impl ShellExecutor {
                 if let Ok(target) = std::fs::read_link(file) {
                     output_element("link", &target.to_string_lossy());
                 }
+            }
+
+            // Flush collected key=value pairs into the assoc array
+            // when -A was given. Direct port of stat.c's
+            // setaparam(arrname, kvarr) call — zsh stores all
+            // collected stat fields keyed by name.
+            if as_array {
+                let map: indexmap::IndexMap<String, String> =
+                    collected.into_iter().collect();
+                self.assoc_arrays.insert(array_name.clone(), map);
             }
         }
 
