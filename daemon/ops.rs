@@ -88,8 +88,11 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "job_cancel" => op_job_cancel(state, args).await,
         "job_wait" => op_job_wait(state, args).await,
 
-        // Stubs — ZLE-integrated keystroke-rate ops; arrive with the ZLE wiring cycle.
-        "complete" | "suggest" | "highlight" | "register" => Err(ErrPayload::new(
+        "complete" => op_complete(state, args).await,
+        "suggest" => op_suggest(state, args).await,
+        // `highlight` still needs the zsh parser — keystroke wiring waits for
+        // the parser-in-daemon work that lives outside this scope.
+        "highlight" | "register" => Err(ErrPayload::new(
             "unimplemented",
             format!("op `{op}` arrives with ZLE integration"),
         )),
@@ -356,6 +359,47 @@ async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // system shard right now (per-shard partial rebuild arrives with the .zshrc
     // analysis pass producing distinct shards per source root).
     let _shard_filter = args.get("shard").and_then(Value::as_str);
+    let async_mode = args.get("async").and_then(Value::as_bool).unwrap_or(false);
+
+    if async_mode {
+        // Async path: spawn a background task, return job_id immediately.
+        // rebuild_complete event fires when the walk finishes.
+        let job_id = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+        let bg_state = Arc::clone(state);
+        tokio::spawn(async move {
+            let start = std::time::Instant::now();
+            let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+            match super::walk::run_full_rebuild(&bg_state, generation) {
+                Ok((image_path, hydrated, _stats)) => {
+                    let event = json!({
+                        "job_id": job_id,
+                        "shard": "system",
+                        "generation": generation,
+                        "duration_ms": start.elapsed().as_millis() as u64,
+                        "entries_hydrated": hydrated,
+                        "image_path": image_path.display().to_string(),
+                    });
+                    let _ = bg_state
+                        .broadcast(super::ipc::Frame::event("rebuild_complete", event), &[]);
+                }
+                Err(e) => {
+                    tracing::warn!(?e, %job_id, "async rebuild failed");
+                    let event = json!({
+                        "job_id": job_id,
+                        "shard": "system",
+                        "error": e.to_string(),
+                    });
+                    let _ = bg_state
+                        .broadcast(super::ipc::Frame::event("rebuild_failed", event), &[]);
+                }
+            }
+        });
+        return Ok(json!({
+            "job_id": job_id,
+            "async": true,
+            "rebuilt": ["system"],
+        }));
+    }
 
     let start = std::time::Instant::now();
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
@@ -561,6 +605,159 @@ async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
         },
         "generation": generation,
     }))
+}
+
+/// `complete` — tab-completion data plane. Given a partial line / cursor
+/// position, return three slabs of matches:
+///   - **commands**: PATH walk results matching the prefix (from
+///     catalog.entries kind='command', built by walk.rs Pass 3)
+///   - **handlers**: _comps registry entries (canonical compdef) matching
+///     the prefix — what zsh's `_main_complete` would dispatch to
+///   - **history**: prior commands sharing the prefix, ordered by recency
+///
+/// Pure server-side data lookup; the actual ZLE keystroke pipe (parsing
+/// the buffer, painting the menu) is shell-side work. This op does the
+/// heavy state-walking part — the no-walking-in-clients invariant.
+async fn op_complete(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let prefix = args
+        .get("prefix")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(64)
+        .min(10000) as usize;
+
+    // 1. Commands from PATH walk.
+    let commands: Vec<String> = state
+        .with_catalog(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT fq_name FROM entries WHERE plugin_id='system' AND kind='command' \
+                 AND fq_name LIKE ? ORDER BY fq_name ASC LIMIT ?",
+            )?;
+            let pat = format!("cmd:{}%", prefix);
+            let rows: Vec<String> = stmt
+                .query_map(rusqlite::params![pat, limit as i64], |r| {
+                    r.get::<_, String>(0)
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok::<_, rusqlite::Error>(rows)
+        })
+        .map_err(ErrPayload::from)?
+        .into_iter()
+        .filter_map(|s| s.strip_prefix("cmd:").map(str::to_string))
+        .collect();
+
+    // 2. Handlers from canonical compdef (the _comps table).
+    let handlers: Vec<(String, String)> = state
+        .canonical
+        .rows_for("compdef")
+        .into_iter()
+        .filter(|r| r.key.starts_with(&prefix))
+        .take(limit)
+        .map(|r| {
+            let val = serde_json::from_str::<serde_json::Value>(&r.value)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| r.value.clone());
+            (r.key, val)
+        })
+        .collect();
+
+    // 3. History suggestions matching prefix.
+    let history_rows = state
+        .with_history(|conn| {
+            super::history::query(
+                conn,
+                Some(&prefix),
+                "prefix",
+                None,
+                None,
+                None,
+                limit as i64,
+                true,
+            )
+        })
+        .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?;
+    let history: Vec<String> = history_rows.into_iter().map(|r| r.line).collect();
+
+    Ok(json!({
+        "prefix": prefix,
+        "commands": commands,
+        "handlers": handlers.iter().map(|(k, v)| json!({"command": k, "handler": v})).collect::<Vec<_>>(),
+        "history": history,
+        "totals": {
+            "commands": commands.len(),
+            "handlers": handlers.len(),
+            "history": history.len(),
+        },
+    }))
+}
+
+/// `suggest` — inline autosuggest data plane. Given a prefix + cwd, return
+/// the single best-match history row by frecency (recency × call_count).
+/// Cwd-scoped first, then global.
+async fn op_suggest(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let prefix = args
+        .get("prefix")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let cwd = args
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    // Try cwd-scoped first (frecency wins for "in this dir, recently"),
+    // then fall back to global prefix match.
+    let row_opt = if let Some(c) = &cwd {
+        state
+            .with_history(|conn| {
+                super::history::query(
+                    conn,
+                    Some(&prefix),
+                    "prefix",
+                    Some(c),
+                    None,
+                    None,
+                    1,
+                    true,
+                )
+            })
+            .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?
+            .into_iter()
+            .next()
+    } else {
+        None
+    };
+    let row_opt = if row_opt.is_none() {
+        state
+            .with_history(|conn| {
+                super::history::query(conn, Some(&prefix), "prefix", None, None, None, 1, true)
+            })
+            .map_err(|e: rusqlite::Error| ErrPayload::new("history_query", e.to_string()))?
+            .into_iter()
+            .next()
+    } else {
+        row_opt
+    };
+
+    Ok(match row_opt {
+        Some(r) => json!({
+            "prefix": prefix,
+            "suggestion": r.line,
+            "ts_ns": r.ts_ns,
+            "cwd": r.cwd,
+            "matched": true,
+        }),
+        None => json!({
+            "prefix": prefix,
+            "suggestion": null,
+            "matched": false,
+        }),
+    })
 }
 
 /// Refresh the SQLite `canonical` view table from the in-memory rkyv-backed
