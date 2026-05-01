@@ -21222,12 +21222,17 @@ impl ShellExecutor {
             return 1;
         }
 
-        // Strip trailing "]" when called as `[`
-        let args: Vec<&str> = args
-            .iter()
-            .map(|s| s.as_str())
-            .filter(|&s| s != "]")
-            .collect();
+        // builtin.c:7240-7247 — when called as `[`, the LAST arg
+        // must be `]` and is dropped. zshrs's previous `.filter(|&s|
+        // s != "]")` stripped ALL `]` tokens, so an expression like
+        //   [ "]" = "]" ]
+        // (string-equality of literal-]-against-literal-]) had its
+        // operands erased and degenerated to `[ = ]` — parse error.
+        // The fix mirrors the C: drop only one trailing `]`.
+        let mut args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        if args.last().copied() == Some("]") {
+            args.pop();
+        }
 
         // Prefetch metadata for all file paths in the expression — one stat() per unique path
         // instead of one stat() per test flag. Avoids 7 serial stat()s for -r -w -x -g -k -u -s.
