@@ -35781,59 +35781,114 @@ impl ShellExecutor {
         err
     }
 
-    /// ln - create links
-    /// Port from zsh/Src/Modules/files.c bin_ln() lines 200-294
+    /// ln - create links. Port from zsh/Src/Modules/files.c bin_ln().
+    /// Coreutils-compatible flag set: -s/-f/-i/-n/-v/-T plus combined
+    /// short flags and --long forms. Last-wins between -f and -i.
     fn builtin_ln(&self, args: &[String]) -> i32 {
         let mut symbolic = false;
         let mut force = false;
+        let mut interactive = false;
         let mut no_deref = false;
-        let mut files: Vec<&str> = Vec::new();
-
+        let mut verbose = false;
+        let mut no_target_dir = false;
+        let mut files: Vec<String> = Vec::new();
+        let mut end_of_options = false;
         for arg in args {
+            if end_of_options {
+                files.push(arg.clone());
+                continue;
+            }
             match arg.as_str() {
-                "-s" => symbolic = true,
-                "-f" => force = true,
-                "-n" | "-h" => no_deref = true,
-                s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                "--" => end_of_options = true,
+                "-s" | "--symbolic" => symbolic = true,
+                "-f" | "--force" => {
+                    force = true;
+                    interactive = false;
+                }
+                "-i" | "--interactive" => {
+                    interactive = true;
+                    force = false;
+                }
+                "-n" | "-h" | "--no-dereference" => no_deref = true,
+                "-v" | "--verbose" => verbose = true,
+                "-T" | "--no-target-directory" => no_target_dir = true,
+                s if s.starts_with("--") => {} // unknown long, silent
+                s if s.starts_with('-') && s.len() > 1 => {
+                    for c in s[1..].chars() {
+                        match c {
+                            's' => symbolic = true,
+                            'f' => {
+                                force = true;
+                                interactive = false;
+                            }
+                            'i' => {
+                                interactive = true;
+                                force = false;
+                            }
+                            'n' | 'h' => no_deref = true,
+                            'v' => verbose = true,
+                            'T' => no_target_dir = true,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => files.push(arg.clone()),
             }
         }
 
-        if files.len() < 2 {
-            if files.len() == 1 {
-                let src = files[0];
-                let target = std::path::Path::new(src)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| src.to_string());
-                files.push(Box::leak(target.into_boxed_str()));
-            } else {
-                eprintln!("ln: missing file operand");
-                return 1;
-            }
+        if files.is_empty() {
+            eprintln!("ln: missing file operand");
+            return 1;
+        }
+        if files.len() == 1 {
+            // ln SRC: link to SRC's basename in cwd. Direct port of
+            // coreutils ln 1-arg form. Was Box::leak'd; now owned
+            // strings so the leak goes away.
+            let src = files[0].clone();
+            let target = std::path::Path::new(&src)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(src.clone());
+            files.push(target);
         }
 
         let target = files.pop().unwrap();
-        let target_path = std::path::Path::new(target);
-        let is_dir = !no_deref && target_path.is_dir();
+        let target_path = std::path::Path::new(&target);
+        let is_dir = !no_deref && !no_target_dir && target_path.is_dir();
 
-        for src in files {
+        let mut status = 0;
+        for src in &files {
             let dest = if is_dir {
                 format!(
                     "{}/{}",
                     target,
                     std::path::Path::new(src)
                         .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| src.to_string())
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| src.clone())
                 )
             } else {
-                target.to_string()
+                target.clone()
             };
 
             let dest_path = std::path::Path::new(&dest);
-            if force && dest_path.exists() {
-                let _ = std::fs::remove_file(&dest);
+            if dest_path.exists() {
+                if force {
+                    let _ = std::fs::remove_file(&dest);
+                } else if interactive {
+                    eprint!("ln: replace '{}'? ", dest);
+                    let mut response = String::new();
+                    if std::io::stdin().read_line(&mut response).is_err()
+                        || !response.trim().eq_ignore_ascii_case("y")
+                    {
+                        continue;
+                    }
+                    let _ = std::fs::remove_file(&dest);
+                } else {
+                    eprintln!("ln: failed to create link '{}': File exists", dest);
+                    status = 1;
+                    continue;
+                }
             }
 
             let result = if symbolic {
@@ -35852,12 +35907,20 @@ impl ShellExecutor {
                 std::fs::hard_link(src, &dest)
             };
 
-            if let Err(e) = result {
-                eprintln!("ln: cannot create link '{}' -> '{}': {}", dest, src, e);
-                return 1;
+            match result {
+                Ok(()) => {
+                    if verbose {
+                        let arrow = if symbolic { "->" } else { "=>" };
+                        println!("'{}' {} '{}'", dest, arrow, src);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ln: cannot create link '{}' -> '{}': {}", dest, src, e);
+                    status = 1;
+                }
             }
         }
-        0
+        status
     }
 
     /// mv - move/rename files
