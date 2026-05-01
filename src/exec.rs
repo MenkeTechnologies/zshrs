@@ -44263,11 +44263,32 @@ impl ShellExecutor {
     /// coreutils tac(1).
     fn builtin_tac(&self, args: &[String]) -> i32 {
         use std::io::{BufRead, BufReader};
-        let files: Vec<&str> = args
-            .iter()
-            .filter(|a| !a.starts_with('-') || *a == "-")
-            .map(|s| s.as_str())
-            .collect();
+        // tac in coreutils accepts -b (before) / -r (regex separator)
+        // / -s (separator). Most usage is positional-only. Validate
+        // unknown flags rather than silent-drop.
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(a) = iter.next() {
+            let s: &str = a.as_str();
+            match s {
+                "-" => files.push("-"),
+                "-b" | "--before" | "-r" | "--regex" => {} // accepted, no-op
+                "-s" | "--separator" => {
+                    iter.next(); // consume the separator arg
+                }
+                "--" => {
+                    for rest in iter.by_ref() {
+                        files.push(rest);
+                    }
+                    break;
+                }
+                x if !x.starts_with('-') => files.push(x),
+                _ => {
+                    eprintln!("tac: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
         let targets: Vec<&str> = if files.is_empty() {
             vec!["-"]
         } else {
