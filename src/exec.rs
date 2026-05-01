@@ -10111,6 +10111,8 @@ impl ShellExecutor {
             "expr" => return self.builtin_expr(&rest_vec),
             "sha256sum" => return self.builtin_sha256sum(&rest_vec),
             "base64" => return self.builtin_base64(&rest_vec),
+            "tac" => return self.builtin_tac(&rest_vec),
+            "expand" => return self.builtin_expand(&rest_vec),
             _ => {}
         }
 
@@ -42954,6 +42956,130 @@ impl ShellExecutor {
             return 0;
         }
         std::thread::sleep(std::time::Duration::from_secs_f64(total_secs));
+        0
+    }
+
+    /// tac [FILE...] — concatenate files, reverse line order.
+    /// coreutils tac(1).
+    fn builtin_tac(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let files: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-') || *a == "-")
+            .map(|s| s.as_str())
+            .collect();
+        let targets: Vec<&str> = if files.is_empty() {
+            vec!["-"]
+        } else {
+            files
+        };
+        let mut all: Vec<String> = Vec::new();
+        for file in targets {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("tac: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().flatten() {
+                all.push(line);
+            }
+        }
+        for line in all.iter().rev() {
+            println!("{}", line);
+        }
+        0
+    }
+
+    /// expand [-t TAB] [FILE...] — convert tabs to spaces.
+    /// coreutils expand(1).
+    fn builtin_expand(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        // Default tab stop 8.
+        let mut tabs: Vec<usize> = vec![8];
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-t" | "--tabs" => {
+                    if let Some(s) = iter.next() {
+                        tabs = s
+                            .split(|c: char| c == ',' || c == ' ')
+                            .filter_map(|x| x.parse().ok())
+                            .collect();
+                        if tabs.is_empty() {
+                            tabs = vec![8];
+                        }
+                    }
+                }
+                s if s.starts_with("-t") && s.len() > 2 => {
+                    tabs = s[2..]
+                        .split(|c: char| c == ',' || c == ' ')
+                        .filter_map(|x| x.parse().ok())
+                        .collect();
+                    if tabs.is_empty() {
+                        tabs = vec![8];
+                    }
+                }
+                "-i" | "--initial" => {} // accepted: only-leading-tabs
+                s if !s.starts_with('-') => files.push(s),
+                _ => {}
+            }
+        }
+        let stop_for = |col: usize| -> usize {
+            if tabs.len() == 1 {
+                let t = tabs[0];
+                col + (t - col % t)
+            } else {
+                // Multi-stop: find the first stop > col, else 1-extend.
+                for &s in &tabs {
+                    if s > col {
+                        return s;
+                    }
+                }
+                col + 1
+            }
+        };
+        let targets: Vec<&str> = if files.is_empty() {
+            vec!["-"]
+        } else {
+            files
+        };
+        for file in targets {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("expand: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().flatten() {
+                let mut col = 0usize;
+                let mut out = String::with_capacity(line.len());
+                for c in line.chars() {
+                    if c == '\t' {
+                        let target = stop_for(col);
+                        while col < target {
+                            out.push(' ');
+                            col += 1;
+                        }
+                    } else {
+                        out.push(c);
+                        col += 1;
+                    }
+                }
+                println!("{}", out);
+            }
+        }
         0
     }
 
