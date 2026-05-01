@@ -252,7 +252,7 @@ impl FsWatcher {
         if !path.exists() {
             return;
         }
-        let analysis = match super::zshrc_analysis::analyze_with_sources(path) {
+        let analysis = match super::ast_walker::analyze_with_ast(path) {
             Ok(a) => a,
             Err(e) => {
                 tracing::warn!(?e, source = %source_root, "fsnotify reanalyze failed");
