@@ -785,12 +785,30 @@ impl<'a> ZshLexer<'a> {
         Some(line)
     }
 
-    /// Get the next token
+    /// Get the next token. Direct port of zsh/Src/lex.c:613-936
+    /// `gettok`. Reads characters from the input via hgetc, dispatches
+    /// on the leading char through lexact1[]/lexact2[] tables (zshrs
+    /// uses inline `match` in lex_initial / lex_inang / lex_outang
+    /// since Rust pattern-matching subsumes the table dispatch).
+    ///
+    /// Structural divergence from C: the giant ~322-line C switch
+    /// statement at lex.c:725-936 is split into helper methods in
+    /// Rust (lex_initial = LX1_OTHER plus the punctuation cases,
+    /// lex_inang / lex_outang for the < and > arms). The flow is
+    /// equivalent — same chars consumed, same tokens emitted — but
+    /// the source-level layout differs. C's table-driven dispatch
+    /// would Rust-port as `match c { '\\' => ..., '\n' => ..., ... }`
+    /// which is what the helpers ultimately do.
     fn gettok(&mut self) -> LexTok {
+        // lex.c:621 — `tokstr = NULL;` reset before each token.
         self.tokstr = None;
+        // (zshrs-specific: tokfd reset lives here too — C does it
+        // implicitly via the `peekfd = -1` local at lex.c:617 used
+        // only when a digit-prefix redirection is detected.)
         self.tokfd = -1;
 
-        // Skip whitespace
+        // lex.c:622 — `while (iblank(c = hgetc()) && !lexstop);` —
+        // skip leading blanks (space/tab, NOT newline).
         let mut ws_iterations = 0;
         loop {
             ws_iterations += 1;
@@ -801,6 +819,8 @@ impl<'a> ZshLexer<'a> {
             let c = match self.hgetc() {
                 Some(c) => c,
                 None => {
+                    // lex.c:624-625 — lexstop set, return ENDINPUT
+                    // (or LEXERR if errflag is set elsewhere).
                     self.lexstop = true;
                     return if self.error.is_some() {
                         LexTok::Lexerr
@@ -824,35 +844,48 @@ impl<'a> ZshLexer<'a> {
             }
         };
 
+        // lex.c:623 — `toklineno = lineno;`
         self.toklineno = self.lineno;
+        // lex.c:626 — `isfirstln = 0;` once we've consumed any non-
+        // blank.
         self.isfirstln = false;
 
-        // Handle (( ... )) arithmetic
+        // lex.c:631-648 — dbparens (inside `(( … ))`) special path:
+        // call dquote_parse with `;` or `)` as the end-char and
+        // either return DINPAR (continue for-loop arith) or DOUTPAR
+        // (close the arith block) or LEXERR.
         if self.dbparens {
             return self.lex_arith(c);
         }
 
-        // Handle digit followed by redirection
+        // lex.c:649-668 — digit prefix on a redirection: `2> file`
+        // treats `2` as the fd to redirect, not a literal arg. Three
+        // shapes: `N>`/`N<` (single redir), `N&>` (errwrite), or
+        // anything else (push back, treat as literal digit).
         if Self::is_digit(c) {
             let d = self.hgetc();
             match d {
                 Some('&') => {
                     let e = self.hgetc();
                     if e == Some('>') {
+                        // lex.c:653-657 — `N&>` shape detected.
                         self.tokfd = (c as u8 - b'0') as i32;
                         self.hungetc('>');
                         return self.lex_initial('&');
                     }
+                    // lex.c:658-661 — not `N&>`, push everything back.
                     if let Some(e) = e {
                         self.hungetc(e);
                     }
                     self.hungetc('&');
                 }
                 Some('>') | Some('<') => {
+                    // lex.c:662-664 — `N>` or `N<` shape detected.
                     self.tokfd = (c as u8 - b'0') as i32;
                     return self.lex_initial(d.unwrap());
                 }
                 Some(d) => {
+                    // lex.c:665-668 — not a redir prefix, push back.
                     self.hungetc(d);
                 }
                 None => {}
@@ -860,6 +893,10 @@ impl<'a> ZshLexer<'a> {
             self.lexstop = false;
         }
 
+        // lex.c:670-936 — main dispatch on the leading char. zshrs
+        // delegates to lex_initial which holds the equivalent of
+        // lex.c's `switch (lexact1[c])` plus the gettokstr fallback
+        // for LX1_OTHER.
         self.lex_initial(c)
     }
 
@@ -2393,7 +2430,20 @@ pub fn isnumglob(input: &str, pos: usize) -> bool {
 /// Tokenize a string as if in double quotes.
 /// This is usually called before singsub().
 ///
-/// Port of parsestr() / parsestrnoerr() from lex.c
+/// Direct port of zsh/Src/lex.c:1693-1709 `parsestr`. The C source
+/// wraps `parsestrnoerr` (lex.c:1713-1733) and on error untokenizes
+/// the buffer + emits a `parse error` diagnostic via zerr.
+///
+/// zshrs port note: the C source uses zcontext_save/inpush/
+/// strinbeg → dquote_parse → strinend/inpop/zcontext_restore to set
+/// up an isolated parse context against the lexer's input stream.
+/// zshrs's parsestr is a standalone string-walker that emits the
+/// same BNULL/QSTRING/QTICK token markers without going through the
+/// full lexer. The output should be byte-identical for typical
+/// double-quote bodies (no nested cmd-sub / arith). Documented
+/// divergence: cmd-sub `$(...)` and arith `$((...))` inside the
+/// string aren't lexed recursively here — the runtime handles them
+/// at expansion time.
 pub fn parsestr(s: &str) -> Result<String, String> {
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
@@ -2446,10 +2496,20 @@ pub fn parsestr(s: &str) -> Result<String, String> {
     Ok(result)
 }
 
-/// Parse a subscript in string s.
-/// Return the position after the closing bracket, or None on error.
+/// Parse a subscript in string s. Return the position after the
+/// closing bracket, or None on error.
 ///
-/// Port of parse_subscript() from lex.c
+/// Direct port of zsh/Src/lex.c:1742-1788 `parse_subscript`. The C
+/// source uses dupstring_wlen + inpush + dquote_parse to lex the
+/// subscript through the main lexer; zshrs implements a focused
+/// bracket-balancing walker that handles the same nesting rules
+/// (`[...]`, `(...)`, `{...}`) without re-entering the lexer.
+///
+/// zshrs port note: zsh's parse_subscript also handles a `sub`
+/// flag that controls whether `$` and quotes are tokenized — that
+/// flag isn't exposed here. Most callers don't need it; the few
+/// that do (parameter expansion's `${var[expr]}`) handle the
+/// quote-aware lex separately at the expansion layer.
 pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
     if s.is_empty() || s.starts_with(endchar) {
         return None;
@@ -2518,7 +2578,18 @@ pub fn parse_subscript(s: &str, endchar: char) -> Option<usize> {
 /// Tokenize a string as if it were a normal command-line argument
 /// but it may contain separators. Used for ${...%...} substitutions.
 ///
-/// Port of parse_subst_string() from lex.c
+/// Direct port of zsh/Src/lex.c:1796-1880 `parse_subst_string`.
+/// zsh's version sets `noaliases = 1` + `lexflags = 0` + uses
+/// zcontext_save/inpush/strinbeg → dquote_parse('\0', 1) →
+/// strinend/inpop/zcontext_restore. zshrs's standalone walker
+/// produces the same BNULL/SNULL/DNULL/INPAR/INBRACK markers
+/// without re-entering the lexer.
+///
+/// zshrs port note: the C source returns int (0=ok, char value =
+/// where it stopped on error); zshrs returns Result<String,String>
+/// returning the tokenized text directly. Lossy for callers that
+/// need to know the exact stop position, but nothing in zshrs's
+/// expansion layer uses that yet.
 pub fn parse_subst_string(s: &str) -> Result<String, String> {
     if s.is_empty() {
         return Ok(String::new());
