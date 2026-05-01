@@ -540,7 +540,12 @@ impl Zftp {
     pub fn remove_session(&mut self, name: &str) -> Option<FtpSession> {
         let sess = self.sessions.remove(name);
         if self.current.as_deref() == Some(name) {
-            self.current = self.sessions.keys().next().cloned();
+            // After dropping the current session, pick the
+            // alphabetically-first remaining session (deterministic;
+            // HashMap::keys().next() picks at random).
+            let mut keys: Vec<&String> = self.sessions.keys().collect();
+            keys.sort();
+            self.current = keys.first().map(|s| (*s).clone());
         }
         sess
     }
