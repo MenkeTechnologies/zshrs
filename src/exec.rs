@@ -41037,12 +41037,19 @@ impl ShellExecutor {
 
         let mut count = false;
         let mut repeated = false;
+        let mut unique_only = false;
+        let mut ignore_case = false;
         let mut files: Vec<&str> = Vec::new();
 
         for arg in args {
             match arg.as_str() {
                 "-c" => count = true,
                 "-d" => repeated = true,
+                // -u: print only lines that appear exactly once.
+                // Direct port of coreutils uniq(1).
+                "-u" => unique_only = true,
+                // -i: case-insensitive comparison.
+                "-i" => ignore_case = true,
                 a if !a.starts_with('-') => files.push(a),
                 _ => {}
             }
@@ -41062,19 +41069,36 @@ impl ShellExecutor {
 
         let mut prev: Option<String> = None;
         let mut cnt = 0usize;
+        let key = |s: &str| -> String {
+            if ignore_case {
+                s.to_lowercase()
+            } else {
+                s.to_string()
+            }
+        };
+        // Per coreutils, -d and -u select different subsets and -d -u
+        // together produces no output (no line is both repeated and
+        // appearing-once). Match that.
+        let emit = |p: &str, cnt: usize| {
+            if repeated && cnt <= 1 {
+                return;
+            }
+            if unique_only && cnt > 1 {
+                return;
+            }
+            if count {
+                println!("{:7} {}", cnt, p);
+            } else {
+                println!("{}", p);
+            }
+        };
 
         for line in reader.lines().flatten() {
-            if prev.as_ref() == Some(&line) {
+            if prev.as_ref().map(|p| key(p)) == Some(key(&line)) {
                 cnt += 1;
             } else {
                 if let Some(p) = prev.take() {
-                    if !repeated || cnt > 1 {
-                        if count {
-                            println!("{:7} {}", cnt, p);
-                        } else {
-                            println!("{}", p);
-                        }
-                    }
+                    emit(&p, cnt);
                 }
                 prev = Some(line);
                 cnt = 1;
@@ -41082,13 +41106,7 @@ impl ShellExecutor {
         }
 
         if let Some(p) = prev {
-            if !repeated || cnt > 1 {
-                if count {
-                    println!("{:7} {}", cnt, p);
-                } else {
-                    println!("{}", p);
-                }
-            }
+            emit(&p, cnt);
         }
         0
     }
