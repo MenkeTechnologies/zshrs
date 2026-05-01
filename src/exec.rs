@@ -17250,8 +17250,51 @@ impl ShellExecutor {
             }
 
             // === FUNCTION CALL STACK ===
-            "funcstack" | "functrace" | "funcfiletrace" | "funcsourcetrace" => {
-                // Would need call stack tracking - return empty for now
+            // $funcstack: array of function names in the current call
+            // chain (innermost first). Already maintained by the
+            // function-call code at exec.rs:7828-7835. Surface it here
+            // so `${funcstack[1]}` / `${funcstack[@]}` reads work.
+            // funcfiletrace / funcsourcetrace need separate tables (file
+            // and definition tracking) which we don't yet wire; emit
+            // empty for those until they're populated.
+            "funcstack" => {
+                if let Some(stack) = self.arrays.get("funcstack") {
+                    if key == "@" || key == "*" {
+                        return Some(stack.join(" "));
+                    }
+                    if let Ok(idx) = key.parse::<usize>() {
+                        // zsh subscripts are 1-based.
+                        if idx >= 1 && idx <= stack.len() {
+                            return Some(stack[idx - 1].clone());
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+            "functrace" => {
+                // $functrace: `caller_name:callsite_lineno` for each
+                // frame. We don't yet track call-site line numbers, so
+                // synthesize from funcstack with a `:0` placeholder
+                // line. This still lets scripts that test
+                // `[[ -n $functrace[1] ]]` work without false-empty.
+                if let Some(stack) = self.arrays.get("funcstack") {
+                    let synth: Vec<String> =
+                        stack.iter().map(|n| format!("{}:0", n)).collect();
+                    if key == "@" || key == "*" {
+                        return Some(synth.join(" "));
+                    }
+                    if let Ok(idx) = key.parse::<usize>() {
+                        if idx >= 1 && idx <= synth.len() {
+                            return Some(synth[idx - 1].clone());
+                        }
+                    }
+                }
+                Some(String::new())
+            }
+            "funcfiletrace" | "funcsourcetrace" => {
+                // Would need file:line where each function was called
+                // from / defined in. Per-frame file tracking is not yet
+                // wired — return empty.
                 Some(String::new())
             }
 
