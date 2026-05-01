@@ -17023,23 +17023,41 @@ impl ShellExecutor {
             }
 
             // === ALIASES ===
+            // ${aliases[@]} returns values in sorted-name order.
+            // Iterating HashMap::values() gave random order; tests
+            // and prompt code that snapshot ${(v)aliases} flickered.
             "aliases" => {
                 if key == "@" || key == "*" {
-                    let vals: Vec<String> = self.aliases.values().cloned().collect();
+                    let mut keys: Vec<&String> = self.aliases.keys().collect();
+                    keys.sort();
+                    let vals: Vec<String> = keys
+                        .iter()
+                        .filter_map(|k| self.aliases.get(*k).cloned())
+                        .collect();
                     return Some(vals.join(" "));
                 }
                 Some(self.aliases.get(key).cloned().unwrap_or_default())
             }
             "galiases" => {
                 if key == "@" || key == "*" {
-                    let vals: Vec<String> = self.global_aliases.values().cloned().collect();
+                    let mut keys: Vec<&String> = self.global_aliases.keys().collect();
+                    keys.sort();
+                    let vals: Vec<String> = keys
+                        .iter()
+                        .filter_map(|k| self.global_aliases.get(*k).cloned())
+                        .collect();
                     return Some(vals.join(" "));
                 }
                 Some(self.global_aliases.get(key).cloned().unwrap_or_default())
             }
             "saliases" => {
                 if key == "@" || key == "*" {
-                    let vals: Vec<String> = self.suffix_aliases.values().cloned().collect();
+                    let mut keys: Vec<&String> = self.suffix_aliases.keys().collect();
+                    keys.sort();
+                    let vals: Vec<String> = keys
+                        .iter()
+                        .filter_map(|k| self.suffix_aliases.get(*k).cloned())
+                        .collect();
                     return Some(vals.join(" "));
                 }
                 Some(self.suffix_aliases.get(key).cloned().unwrap_or_default())
