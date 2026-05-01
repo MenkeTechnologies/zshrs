@@ -10132,6 +10132,7 @@ impl ShellExecutor {
             "logname" => return self.builtin_logname(&rest_vec),
             "tput" => return self.builtin_tput(&rest_vec),
             "users" => return self.builtin_users(&rest_vec),
+            "sync" => return self.builtin_sync(&rest_vec),
             _ => {}
         }
 
@@ -36139,14 +36140,6 @@ impl ShellExecutor {
 
     /// sync - flush filesystem buffers
     /// Port from zsh/Src/Modules/files.c bin_sync() lines 52-57
-    fn builtin_sync(&self, _args: &[String]) -> i32 {
-        #[cfg(unix)]
-        unsafe {
-            libc::sync();
-        }
-        0
-    }
-
     /// mkdir - create directories
     /// Port from zsh/Src/Modules/files.c bin_mkdir() lines 62-111
     fn builtin_mkdir(&self, args: &[String]) -> i32 {
@@ -44067,6 +44060,84 @@ impl ShellExecutor {
             }
             status
         }
+    }
+
+    /// sync [FILE...] — flush filesystem buffers. Coreutils sync(1)
+    /// / POSIX. Without args, calls sync(2) (sync all filesystems).
+    /// With file args, calls fsync(2) on each. Flags --data
+    /// (fdatasync) and --file-system (syncfs) accepted; data-only
+    /// uses fdatasync(2) per file. Other flags rejected.
+    fn builtin_sync(&self, args: &[String]) -> i32 {
+        let mut data_only = false;
+        let mut filesystem = false;
+        let mut files: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-d" | "--data" => data_only = true,
+                "-f" | "--file-system" => filesystem = true,
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    eprintln!("sync: unrecognized option: '{}'", s);
+                    return 1;
+                }
+                s => files.push(s),
+            }
+        }
+        if files.is_empty() {
+            // Plain sync — flush all FS.
+            unsafe {
+                libc::sync();
+            }
+            return 0;
+        }
+        // Per-file flush. Open each, fdatasync/fsync, close.
+        let mut status = 0;
+        for f in files {
+            let cpath = match std::ffi::CString::new(f) {
+                Ok(c) => c,
+                Err(_) => {
+                    eprintln!("sync: invalid path '{}'", f);
+                    status = 1;
+                    continue;
+                }
+            };
+            let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY) };
+            if fd < 0 {
+                eprintln!("sync: cannot open '{}': {}", f, std::io::Error::last_os_error());
+                status = 1;
+                continue;
+            }
+            let r = if data_only {
+                #[cfg(target_os = "linux")]
+                unsafe {
+                    libc::fdatasync(fd)
+                }
+                // macOS doesn't expose fdatasync; fall back to fsync.
+                #[cfg(not(target_os = "linux"))]
+                unsafe {
+                    libc::fsync(fd)
+                }
+            } else if filesystem {
+                #[cfg(target_os = "linux")]
+                unsafe {
+                    libc::syncfs(fd)
+                }
+                #[cfg(not(target_os = "linux"))]
+                unsafe {
+                    libc::fsync(fd)
+                }
+            } else {
+                unsafe { libc::fsync(fd) }
+            };
+            if r != 0 {
+                eprintln!("sync: cannot sync '{}': {}", f, std::io::Error::last_os_error());
+                status = 1;
+            }
+            unsafe {
+                libc::close(fd);
+            }
+        }
+        status
     }
 
     /// users — print logged-in usernames. Coreutils users(1) /
