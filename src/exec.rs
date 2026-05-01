@@ -29472,9 +29472,11 @@ impl ShellExecutor {
         for action in actions {
             match action {
                 "alias" => {
-                    for name in self.aliases.keys() {
+                    let mut names: Vec<String> = self.aliases.keys().cloned().collect();
+                    names.sort();
+                    for name in names {
                         if name.starts_with(&prefix) {
-                            results.push(name.clone());
+                            results.push(name);
                         }
                     }
                 }
@@ -29492,23 +29494,31 @@ impl ShellExecutor {
                     }
                 }
                 "directory" => {
+                    // Sort dir entries for stable completion order.
                     if let Ok(entries) = std::fs::read_dir(".") {
-                        for entry in entries.flatten() {
-                            if let Ok(ft) = entry.file_type() {
-                                if ft.is_dir() {
-                                    let name = entry.file_name().to_string_lossy().to_string();
-                                    if name.starts_with(&prefix) {
-                                        results.push(name);
-                                    }
-                                }
+                        let mut names: Vec<String> = entries
+                            .flatten()
+                            .filter(|e| {
+                                e.file_type().map(|ft| ft.is_dir()).unwrap_or(false)
+                            })
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect();
+                        names.sort();
+                        for name in names {
+                            if name.starts_with(&prefix) {
+                                results.push(name);
                             }
                         }
                     }
                 }
                 "file" => {
                     if let Ok(entries) = std::fs::read_dir(".") {
-                        for entry in entries.flatten() {
-                            let name = entry.file_name().to_string_lossy().to_string();
+                        let mut names: Vec<String> = entries
+                            .flatten()
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect();
+                        names.sort();
+                        for name in names {
                             if name.starts_with(&prefix) {
                                 results.push(name);
                             }
