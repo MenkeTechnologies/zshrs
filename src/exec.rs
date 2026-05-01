@@ -31518,7 +31518,9 @@ impl ShellExecutor {
                 return 1;
             }
         }
-        let _ = fd; // TODO: actual fd-write routing for fd != 1/2
+        // fd routing happens at the actual write call below — this
+        // arm is just the validation step (port of builtin.c:4843
+        // `dup(fdarg)` failure check).
 
         // `print -m PATTERN args…` — first positional is a glob pattern;
         // only print the args that match. zsh: bare `print -m '*.txt'
@@ -31565,7 +31567,31 @@ impl ShellExecutor {
             if let Some(var) = store_var {
                 self.variables.insert(var, output);
             } else {
-                print!("{}", output);
+                // Same fd-routing as the non-format path below per
+                // src/zsh/Src/builtin.c:4810-4852 — `print -u N -f
+                // FMT ARGS` redirects formatted output to fd N.
+                // Without this, `-f` always wrote to stdout.
+                use std::io::Write as _;
+                match fd {
+                    1 => {
+                        print!("{}", output);
+                        let _ = std::io::stdout().flush();
+                    }
+                    2 => {
+                        eprint!("{}", output);
+                        let _ = std::io::stderr().flush();
+                    }
+                    n => {
+                        let bytes = output.as_bytes();
+                        unsafe {
+                            libc::write(
+                                n as i32,
+                                bytes.as_ptr() as *const libc::c_void,
+                                bytes.len(),
+                            );
+                        }
+                    }
+                }
             }
             return 0;
         }
