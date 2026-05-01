@@ -45446,6 +45446,25 @@ impl ShellExecutor {
     /// closes, the write fails and we exit 0 silently.
     fn builtin_yes(&self, args: &[String]) -> i32 {
         use std::io::Write;
+        // coreutils yes: \`yes --help\` / \`yes --version\` print
+        // help/version and exit when --help/--version is the sole
+        // arg. With multiple args (\`yes --help foo\`), --help is
+        // treated as part of the literal string to repeat (matches
+        // GNU yes 9.x exactly).
+        if args.len() == 1 {
+            match args[0].as_str() {
+                "--help" => {
+                    println!("Usage: yes [STRING]...");
+                    println!("Repeatedly output STRING, or 'y' if STRING omitted.");
+                    return 0;
+                }
+                "--version" => {
+                    println!("yes (zshrs) {}", env!("CARGO_PKG_VERSION"));
+                    return 0;
+                }
+                _ => {}
+            }
+        }
         let line = if args.is_empty() {
             "y\n".to_string()
         } else {
