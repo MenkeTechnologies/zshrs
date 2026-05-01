@@ -373,6 +373,61 @@ pub fn get_exe_path() -> Option<PathBuf> {
     }
 }
 
+/// Direct port of src/zsh/Src/init.c:909-1004 getmypath. Used to
+/// resolve the absolute path of the running shell binary on
+/// platforms where the kernel doesn't expose it (no /proc/self/exe,
+/// no _NSGetExecutablePath, no KERN_PROC_PATHNAME). Walks the
+/// argv[0]/cwd/$PATH heuristics that zsh uses as a fallback.
+///
+/// Algorithm (init.c:956-1004):
+///   1. If name starts with `-`, skip it (login-shell prefix).
+///   2. If name is empty or ends with `/`, return None.
+///   3. If name is absolute (starts with `/`), return as-is.
+///   4. If name contains `/`, treat as relative — return cwd/name.
+///   5. Otherwise walk $PATH: for each dir, return realpath(dir/name)
+///      if it exists.
+pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<PathBuf> {
+    // Try the kernel-supported path first (init.c:914-953).
+    if let Some(p) = get_exe_path() {
+        return Some(p);
+    }
+
+    // Fallback to the argv[0]/cwd/$PATH walk (init.c:956-1004).
+    let name = name?;
+    let name = if name.starts_with('-') { &name[1..] } else { name };
+    if name.is_empty() {
+        return None;
+    }
+    if name.ends_with('/') {
+        return None;
+    }
+    if name.starts_with('/') {
+        return Some(PathBuf::from(name));
+    }
+    if name.contains('/') {
+        let cwd = cwd?;
+        return Some(PathBuf::from(format!("{}/{}", cwd, name)));
+    }
+    // PATH walk via realpath equivalent.
+    let path = env::var("PATH").ok()?;
+    if path.is_empty() {
+        return None;
+    }
+    for dir in path.split(':') {
+        let candidate = if dir.is_empty() {
+            PathBuf::from(name)
+        } else {
+            PathBuf::from(format!("{}/{}", dir, name))
+        };
+        if let Ok(real) = std::fs::canonicalize(&candidate) {
+            if real.is_file() {
+                return Some(real);
+            }
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Missing functions from init.c
 // ---------------------------------------------------------------------------
