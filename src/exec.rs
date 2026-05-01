@@ -30898,7 +30898,16 @@ impl ShellExecutor {
                         'l' => full_paths = true,
                         'p' => per_line = true,
                         'v' => verbose = true,
-                        _ => {}
+                        // Direct port of zsh BUILTIN("dirs", ..., "clpv")
+                        // — only c/l/p/v are valid. Anything else is
+                        // rejected by zsh's option parser BEFORE bin_dirs
+                        // runs. zshrs previously consumed unknown letters
+                        // silently, so `dirs -X` printed the stack as if
+                        // -X were a no-op flag (typo masked).
+                        _ => {
+                            eprintln!("zshrs:dirs:1: bad option: -{}", ch);
+                            return 1;
+                        }
                     }
                 }
             } else if arg.starts_with('+') && arg.len() > 1 {
