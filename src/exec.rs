@@ -32684,15 +32684,13 @@ impl ShellExecutor {
     fn builtin_float(&mut self, args: &[String]) -> i32 {
         // zsh: bare `float NAME=VAL` defaults to `-E` (scientific
         // exponential format); `float -F` opts into fixed-decimal.
-        let mut explicit_F = false;
+        let mut explicit_f = false;
         for a in args {
-            if a.starts_with('-') {
-                if a.contains('F') {
-                    explicit_F = true;
-                }
+            if a.starts_with('-') && a.contains('F') {
+                explicit_f = true;
             }
         }
-        let use_exp = !explicit_F;
+        let use_exp = !explicit_f;
         for arg in args {
             if arg.starts_with('-') {
                 continue;
