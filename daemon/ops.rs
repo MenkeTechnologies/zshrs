@@ -78,6 +78,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "job_status" => op_job_status(state, args).await,
         "job_output" => op_job_output(state, args).await,
         "job_kill" => op_job_kill(state, args).await,
+        "job_cancel" => op_job_cancel(state, args).await,
         "job_wait" => op_job_wait(state, args).await,
 
         // Stubs — ZLE-integrated keystroke-rate ops; arrive with the ZLE wiring cycle.
@@ -184,44 +185,80 @@ async fn op_send(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult {
     });
     let frame = Frame::event(event_name(Event::CmdExecute), event_payload);
 
-    let delivered: Vec<u64> = if let Some(all) = target.get("all").and_then(Value::as_bool) {
-        if all {
-            // Broadcast to every session except originator.
-            let _ = state.broadcast(frame, &[from]);
-            state
-                .snapshot_sessions()
-                .into_iter()
-                .filter(|s| s.client_id != from)
-                .map(|s| s.client_id)
-                .collect()
-        } else {
-            return Err(ErrPayload::new(
-                "bad_args",
-                "target.all must be true if present",
-            ));
-        }
-    } else if let Some(tag) = target.get("tag").and_then(Value::as_str) {
-        state.send_tag(tag, frame)
-    } else if let Some(shell_id) = target.get("shell_id").and_then(Value::as_u64) {
-        if state.send_to(shell_id, frame) {
-            vec![shell_id]
-        } else {
-            return Err(ErrPayload::new(
-                "no_shell",
-                format!("shell_id {shell_id} not found"),
-            ));
-        }
-    } else {
-        return Err(ErrPayload::new(
-            "bad_args",
-            "target must be one of {shell_id, tag, all}",
-        ));
+    let delivered = match resolve_target(state, &target, from, frame) {
+        Ok(v) => v,
+        Err(e) => return Err(e),
     };
 
     Ok(json!({
         "delivered_to": delivered,
         "delivered_count": delivered.len(),
     }))
+}
+
+/// Resolve `target` (any of {shell_id, tag, user, all}) into the list of shell ids
+/// the frame was actually queued to. Used by `op_send` and `op_notify` so they
+/// share a single routing implementation.
+fn resolve_target(
+    state: &Arc<DaemonState>,
+    target: &Value,
+    from: u64,
+    frame: Frame,
+) -> std::result::Result<Vec<u64>, ErrPayload> {
+    if let Some(all) = target.get("all").and_then(Value::as_bool) {
+        if all {
+            let _ = state.broadcast(frame, &[from]);
+            return Ok(state
+                .snapshot_sessions()
+                .into_iter()
+                .filter(|s| s.client_id != from)
+                .map(|s| s.client_id)
+                .collect());
+        }
+        return Err(ErrPayload::new(
+            "bad_args",
+            "target.all must be true if present",
+        ));
+    }
+    if let Some(tag) = target.get("tag").and_then(Value::as_str) {
+        return Ok(state.send_tag(tag, frame));
+    }
+    if let Some(shell_id) = target.get("shell_id").and_then(Value::as_u64) {
+        if state.send_to(shell_id, frame) {
+            return Ok(vec![shell_id]);
+        }
+        return Err(ErrPayload::new(
+            "no_shell",
+            format!("shell_id {shell_id} not found"),
+        ));
+    }
+    if let Some(user) = target.get("user").and_then(Value::as_str) {
+        // V1 user routing: same-user only. The daemon listens on a UNIX socket
+        // it owns; every client necessarily shares the daemon's UID. Until
+        // SO_PEERCRED + privilege drop is wired, cross-user is refused with a
+        // clear error rather than silently delivering to local-user sessions.
+        let daemon_user = std::env::var("USER").unwrap_or_default();
+        if user == daemon_user || daemon_user.is_empty() {
+            let _ = state.broadcast(frame, &[from]);
+            return Ok(state
+                .snapshot_sessions()
+                .into_iter()
+                .filter(|s| s.client_id != from)
+                .map(|s| s.client_id)
+                .collect());
+        }
+        return Err(ErrPayload::new(
+            "user_mismatch",
+            format!(
+                "cross-user dispatch (`{}` vs daemon `{}`) requires root + SO_PEERCRED, not yet wired",
+                user, daemon_user
+            ),
+        ));
+    }
+    Err(ErrPayload::new(
+        "bad_args",
+        "target must be one of {shell_id, tag, user, all}",
+    ))
 }
 
 async fn op_notify(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult {
@@ -246,32 +283,7 @@ async fn op_notify(state: &Arc<DaemonState>, from: u64, args: Value) -> OpResult
         "urgency": urgency,
     });
     let frame = Frame::event(event_name(Event::Notify), event_payload);
-
-    let delivered: Vec<u64> = if target.get("all").and_then(Value::as_bool).unwrap_or(false) {
-        let _ = state.broadcast(frame, &[from]);
-        state
-            .snapshot_sessions()
-            .into_iter()
-            .filter(|s| s.client_id != from)
-            .map(|s| s.client_id)
-            .collect()
-    } else if let Some(tag) = target.get("tag").and_then(Value::as_str) {
-        state.send_tag(tag, frame)
-    } else if let Some(shell_id) = target.get("shell_id").and_then(Value::as_u64) {
-        if state.send_to(shell_id, frame) {
-            vec![shell_id]
-        } else {
-            return Err(ErrPayload::new(
-                "no_shell",
-                format!("shell_id {shell_id} not found"),
-            ));
-        }
-    } else {
-        return Err(ErrPayload::new(
-            "bad_args",
-            "target must be one of {shell_id, tag, all}",
-        ));
-    };
+    let delivered = resolve_target(state, &target, from, frame)?;
 
     Ok(json!({
         "delivered_to": delivered,
@@ -941,6 +953,27 @@ async fn op_job_kill(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .kill(id, signal)
         .map_err(|e| ErrPayload::new("kill_failed", e.to_string()))?;
     Ok(json!({ "job_id": id, "killed": killed }))
+}
+
+async fn op_job_cancel(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let id = args
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
+    let grace_ms = args
+        .get("grace_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(5_000);
+    let final_state = state
+        .jobs
+        .cancel(id, std::time::Duration::from_millis(grace_ms))
+        .await
+        .map_err(|e| ErrPayload::new("cancel_failed", e.to_string()))?;
+    Ok(json!({
+        "job_id": id,
+        "state": final_state.label(),
+        "exit_code": final_state.exit_code(),
+    }))
 }
 
 async fn op_job_wait(state: &Arc<DaemonState>, args: Value) -> OpResult {

@@ -55,23 +55,58 @@ fn connect() -> Result<Client, ()> {
 
 pub fn zjob(args: &[String]) -> i32 {
     let verb = args.get(1).map(|s| s.as_str()).unwrap_or("");
+    let rest: &[String] = if args.len() > 2 { &args[2..] } else { &[] };
     match verb {
-        "submit" => submit(&args[2..]),
-        "list" | "ls" => list(&args[2..]),
-        "status" => status(&args[2..]),
-        "output" | "out" => output(&args[2..]),
-        "kill" => kill(&args[2..]),
-        "wait" => wait_for(&args[2..]),
+        "submit" => submit(rest),
+        "list" | "ls" => list(rest),
+        "status" => status(rest),
+        "output" | "out" => output(rest),
+        "kill" => kill(rest),
+        "cancel" => cancel(rest),
+        "attach" => err_exit(
+            "attach: foreground attach not yet wired (planned: ptmx + stdin/stdout pump for v2)",
+        ),
+        "wait" => wait_for(rest),
         "" | "-h" | "--help" => {
             println!("usage: zjob submit <cmd> [<args>...] [--cwd DIR] [--tag T...] [--env K=V...]");
             println!("       zjob list   [--state running|exited|killed|failed] [--tag T] [--limit N]");
             println!("       zjob status <id>");
             println!("       zjob output <id> [--follow] [--stderr] [--lines N]");
-            println!("       zjob kill   <id> [--signal NAME]");
+            println!("       zjob kill   <id> [--signal NAME]              # immediate signal, configurable");
+            println!("       zjob cancel <id> [--grace SECS]                # SIGTERM, wait grace, SIGKILL");
             println!("       zjob wait   <id> [--timeout SECS]");
             0
         }
         other => err_exit(&format!("unknown verb `{}`", other)),
+    }
+}
+
+fn cancel(args: &[String]) -> i32 {
+    let id = match args.first().and_then(|s| s.parse::<u64>().ok()) {
+        Some(n) => n,
+        None => return err_exit("cancel: missing or non-integer <id>"),
+    };
+    let mut grace_ms: u64 = 5_000;
+    if let Some(idx) = args.iter().position(|a| a == "--grace") {
+        match args.get(idx + 1).and_then(|s| s.parse::<u64>().ok()) {
+            Some(secs) => grace_ms = secs * 1000,
+            None => return err_exit("cancel: --grace requires integer seconds"),
+        }
+    }
+    let payload = json!({ "id": id, "grace_ms": grace_ms });
+    let mut client = match connect() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    if let Err(e) = client.set_read_timeout(Some(std::time::Duration::from_millis(grace_ms + 5_000))) {
+        return err_exit(&format!("cancel: {}", e));
+    }
+    match client.call("job_cancel", payload) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit(&format!("cancel: {}", e)),
     }
 }
 

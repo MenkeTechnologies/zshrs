@@ -542,6 +542,39 @@ impl Supervisor {
         Ok(true)
     }
 
+    /// Graceful cancel: SIGTERM, wait for grace period, SIGKILL if still running.
+    /// Returns the final JobState. Async because we wait for the terminal-state
+    /// channel rather than busy-poll the job map.
+    pub async fn cancel(self: &Arc<Self>, id: u64, grace: std::time::Duration) -> Result<JobState> {
+        let already = {
+            let g = self.inner.lock();
+            let m = g
+                .jobs
+                .get(&id)
+                .ok_or_else(|| super::DaemonError::other(format!("job {} not found", id)))?;
+            if m.state.is_terminal() {
+                Some(m.state.clone())
+            } else {
+                None
+            }
+        };
+        if let Some(s) = already {
+            return Ok(s);
+        }
+
+        let rx = self.wait_handle(id)?;
+        let _ = self.kill(id, Some("TERM"));
+        match tokio::time::timeout(grace, rx).await {
+            Ok(Ok(state)) => Ok(state),
+            _ => {
+                // Still alive after grace period — SIGKILL and wait again.
+                let rx2 = self.wait_handle(id)?;
+                let _ = self.kill(id, Some("KILL"));
+                Ok(rx2.await.unwrap_or(JobState::Failed("KILL didn't reap".into())))
+            }
+        }
+    }
+
     /// Async wait for a job to enter a terminal state. If the job is already
     /// terminal, returns immediately.
     pub fn wait_handle(&self, id: u64) -> Result<oneshot::Receiver<JobState>> {
