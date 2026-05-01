@@ -38712,7 +38712,7 @@ impl ShellExecutor {
                 return 0;
             }
         }
-        eprintln!("zcalc: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
+        eprintln!("zshrs:zcalc:1: interactive mode not supported in non-tty; use `zcalc -e EXPR`");
         1
     }
 
