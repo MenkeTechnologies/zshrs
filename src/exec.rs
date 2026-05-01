@@ -10125,6 +10125,7 @@ impl ShellExecutor {
             "mkfifo" => return self.builtin_mkfifo(&rest_vec),
             "link" => return self.builtin_link(&rest_vec),
             "unlink" => return self.builtin_unlink(&rest_vec),
+            "dircolors" => return self.builtin_dircolors(&rest_vec),
             _ => {}
         }
 
@@ -43805,6 +43806,75 @@ impl ShellExecutor {
         let term = if zero_term { '\0' } else { '\n' };
         for item in items {
             print!("{}{}", item, term);
+        }
+        0
+    }
+
+    /// dircolors [-bcp] [FILE] — emit shell commands to set
+    /// LS_COLORS. Coreutils dircolors(1). Without args, emits the
+    /// default ls color database. -b for Bourne (export VAR=val),
+    /// -c for csh (setenv VAR val), -p prints the database.
+    /// We hard-code coreutils' compiled-in default since shipping
+    /// the full /etc/DIR_COLORS database file isn't feasible here.
+    fn builtin_dircolors(&self, args: &[String]) -> i32 {
+        let mut bourne = true;
+        let mut csh = false;
+        let mut print_database = false;
+        let mut file: Option<&str> = None;
+        for arg in args {
+            match arg.as_str() {
+                "-b" | "--sh" | "--bourne-shell" => {
+                    bourne = true;
+                    csh = false;
+                }
+                "-c" | "--csh" | "--c-shell" => {
+                    bourne = false;
+                    csh = true;
+                }
+                "-p" | "--print-database" => print_database = true,
+                "--" => {}
+                s if !s.starts_with('-') => file = Some(s),
+                s => {
+                    eprintln!("dircolors: unrecognized option: '{}'", s);
+                    return 1;
+                }
+            }
+        }
+        if let Some(f) = file {
+            // Reading a custom database file isn't implemented; emit
+            // the default but tell the user we ignored the file.
+            eprintln!("dircolors: using built-in defaults (custom file ignored: '{}')", f);
+        }
+        // Coreutils' default LS_COLORS, lightly trimmed. Captured
+        // from `dircolors --print-database` of GNU coreutils 9.x.
+        // Hardcoding here keeps the builtin self-contained.
+        let default_ls_colors = concat!(
+            "rs=0:di=01;34:ln=01;36:mh=00:pi=40;33:so=01;35:do=01;35:bd=40;33;01:",
+            "cd=40;33;01:or=40;31;01:mi=00:su=37;41:sg=30;43:ca=00:tw=30;42:",
+            "ow=34;42:st=37;44:ex=01;32:*.tar=01;31:*.tgz=01;31:*.zip=01;31:",
+            "*.gz=01;31:*.bz2=01;31:*.xz=01;31:*.7z=01;31:*.rar=01;31:",
+            "*.jpg=01;35:*.jpeg=01;35:*.png=01;35:*.gif=01;35:*.bmp=01;35:",
+            "*.tiff=01;35:*.svg=01;35:*.mp3=00;36:*.wav=00;36:*.flac=00;36:",
+            "*.mp4=01;35:*.mkv=01;35:*.avi=01;35:*.mov=01;35:"
+        );
+        if print_database {
+            // Emit one entry per line (coreutils format).
+            for entry in default_ls_colors.split(':') {
+                if entry.is_empty() {
+                    continue;
+                }
+                if let Some((k, v)) = entry.split_once('=') {
+                    println!("{} {}", k, v);
+                }
+            }
+            return 0;
+        }
+        if csh {
+            println!("setenv LS_COLORS '{}';", default_ls_colors);
+        } else {
+            let _ = bourne;
+            println!("LS_COLORS='{}';", default_ls_colors);
+            println!("export LS_COLORS");
         }
         0
     }
