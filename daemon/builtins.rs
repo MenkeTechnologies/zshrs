@@ -304,16 +304,26 @@ fn zcache_daemon(verb: &str) -> i32 {
 
 fn zcache_rebuild(args: &[String]) -> i32 {
     let mut shard: Option<String> = None;
+    let mut zshrc: Option<String> = None;
     let mut iter = args.iter();
     while let Some(a) = iter.next() {
         match a.as_str() {
             "shard" => shard = iter.next().cloned(),
+            "--zshrc" => zshrc = iter.next().cloned(),
             "--wait" | "--parallel" => {
                 let _ = iter.next();
             } // accepted but ignored in v1
             _ => {}
         }
     }
+
+    // `zcache rebuild --zshrc <path>` runs the .zshrc analysis pass, seeds the
+    // canonical table from deterministic state declarations, broadcasts
+    // canonical_changed. Per docs/DAEMON.md "Walk lifecycle — first init".
+    if let Some(path) = zshrc {
+        return zcache_simple_op("zshrc_analyze", json!({ "path": path }));
+    }
+
     let payload = match shard {
         Some(s) => json!({ "shard": s }),
         None => json!({}),

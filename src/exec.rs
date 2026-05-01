@@ -34409,15 +34409,16 @@ impl ShellExecutor {
         let mode_spec = positional[0];
         let files = &positional[1..];
 
-        // Parse mode (octal or symbolic)
+        // Direct port of src/zsh/Src/Modules/files.c:660-666 bin_chmod
+        // — mode parses as octal only. Symbolic forms (`u+x`, `g-w`,
+        // etc.) are NOT supported by zsh's chmod builtin, only by
+        // /bin/chmod. Mirror by erroring with the same diagnostic
+        // format zsh uses: `chmod: invalid mode `<spec>'` exit 1.
         let mode: Option<u32> = u32::from_str_radix(mode_spec, 8).ok();
-
         if mode.is_none() {
-            // Symbolic mode not fully implemented
-            eprintln!("chmod: symbolic mode not implemented, use octal");
+            eprintln!("chmod: invalid mode `{}'", mode_spec);
             return 1;
         }
-
         let mode = mode.unwrap();
 
         fn do_chmod(path: &std::path::Path, mode: u32, recursive: bool) -> i32 {
