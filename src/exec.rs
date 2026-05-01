@@ -24440,7 +24440,14 @@ impl ShellExecutor {
                             eprintln!("zshrs:jobs:1: -Z requires one argument");
                             return 1;
                         }
-                        _ => {}
+                        // BUILTIN("jobs", ..., "dlpZrs") — only six
+                        // letters are valid. zshrs's `_ => {}`
+                        // accepted any letter silently so `jobs -X`
+                        // would print all jobs as if -X were a no-op.
+                        _ => {
+                            eprintln!("zshrs:jobs:1: bad option: -{}", c);
+                            return 1;
+                        }
                     }
                 }
             } else if arg.starts_with('%') {
