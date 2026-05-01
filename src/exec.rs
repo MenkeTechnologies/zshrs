@@ -23157,7 +23157,18 @@ impl ShellExecutor {
                             }
                             break;
                         }
-                        'q' => quiet = true,
+                        'q' => {
+                            // read -q: implies -k 1 (read one raw
+                            // char from tty). Direct port of
+                            // builtin.c:6457-6486 — `keys = 1` triggers
+                            // the cbreak path and a 1-char read; the
+                            // -q caller then tests for 'y'/'Y' to
+                            // decide the exit code.
+                            quiet = true;
+                            if nchars.is_none() {
+                                nchars = Some(1);
+                            }
+                        }
                         't' => {
                             let rest: String = chars.collect();
                             if !rest.is_empty() {
@@ -23551,7 +23562,12 @@ impl ShellExecutor {
         };
 
         if quiet {
-            return if processed.is_empty() { 1 } else { 0 };
+            // read -q: exit 0 iff the first character is 'y' or 'Y'.
+            // Direct port of zsh/Src/builtin.c:6493-6501 (keys==1 branch
+            // returns *c == 'Y' || *c == 'y'). Trim leading whitespace
+            // to be lenient with line-mode input that snuck in.
+            let first = processed.chars().next().unwrap_or(' ');
+            return if first == 'y' || first == 'Y' { 0 } else { 1 };
         }
 
         // -e: echo the read line on stdout and DON'T assign. -E: echo
