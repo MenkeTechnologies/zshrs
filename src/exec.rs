@@ -4092,11 +4092,29 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 .cloned()
                 .unwrap_or_else(|| " \t\n".to_string())
         });
-        let parts: Vec<fusevm::Value> = s
-            .split(|c: char| ifs.contains(c))
-            .filter(|p| !p.is_empty())
-            .map(fusevm::Value::str)
-            .collect();
+        // Direct port of multsub's IFS-split path (src/zsh/Src/subst.c:
+        // 567-680). zsh distinguishes WHITESPACE IFS (default) from
+        // NON-WHITESPACE IFS:
+        //   - whitespace IFS chars (space/tab/newline): runs of separator
+        //     collapse and empty fields are SUPPRESSED
+        //   - non-whitespace IFS chars: every separator boundary creates a
+        //     field, including empties between adjacent separators
+        // Mixed IFS treats whitespace runs as collapsing, but a single
+        // non-whitespace IFS character creates a field boundary regardless.
+        let only_ws = ifs.chars().all(|c| matches!(c, ' ' | '\t' | '\n'));
+        let parts: Vec<fusevm::Value> = if only_ws {
+            s.split(|c: char| ifs.contains(c))
+                .filter(|p| !p.is_empty())
+                .map(fusevm::Value::str)
+                .collect()
+        } else {
+            // Non-whitespace IFS: preserve every separator boundary,
+            // including empty fields. Matches zsh's behaviour for
+            // `IFS=:; ${=a}` on `x:y::z` -> [x, y, "", z].
+            s.split(|c: char| ifs.contains(c))
+                .map(fusevm::Value::str)
+                .collect()
+        };
         if parts.is_empty() {
             fusevm::Value::str("")
         } else if parts.len() == 1 {
