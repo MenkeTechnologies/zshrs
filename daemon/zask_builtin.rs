@@ -139,12 +139,25 @@ fn ask(args: &[String]) -> i32 {
 }
 
 fn pending(args: &[String]) -> i32 {
-    let all = args.iter().any(|a| a == "--all");
+    let mut payload = json!({});
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--shell" => match iter.next().and_then(|s| s.parse::<u64>().ok()) {
+                Some(id) => payload["shell_id"] = json!(id),
+                None => return err_exit("pending: --shell requires an integer"),
+            },
+            other if other.starts_with('-') && other != "--all" => {
+                return err_exit(&format!("pending: unknown flag `{}`", other));
+            }
+            _ => {}
+        }
+    }
     let mut client = match connect() {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    match client.call("ask_pending", json!({ "all": all })) {
+    match client.call("ask_pending", payload) {
         Ok(v) => {
             print_pretty(&v);
             0
