@@ -36344,7 +36344,20 @@ impl ShellExecutor {
                     return 0;
                 }
                 "-K" => {
-                    // Select keymap - stub
+                    // zle -K NAME: select active keymap. zsh:
+                    // unknown name -> 'no such keymap: NAME' exit 1.
+                    let name = match iter.next() {
+                        Some(s) => s.clone(),
+                        None => {
+                            eprintln!("zle: -K requires keymap name");
+                            return 1;
+                        }
+                    };
+                    let mut zle = zle();
+                    if !zle.select_keymap(&name) {
+                        eprintln!("zle: no such keymap: {}", name);
+                        return 1;
+                    }
                     return 0;
                 }
                 "-F" => {
@@ -36352,7 +36365,24 @@ impl ShellExecutor {
                     return 0;
                 }
                 "-M" => {
-                    // Display message - stub
+                    // zle -M message: display a message in the editor
+                    // status area. Outside ZLE we have no status line,
+                    // so emit to stderr (matches zsh's non-interactive
+                    // fallback at zle_main.c:bin_zle 'M' branch).
+                    if let Some(msg) = iter.next() {
+                        eprintln!("{}", msg);
+                    }
+                    return 0;
+                }
+                "-U" => {
+                    // zle -U string: push string back onto the input
+                    // queue so the editor reads it as the next typed
+                    // chars. Outside ZLE there's no input queue; push
+                    // onto the buffer stack so getln/read -z can pick
+                    // it up — same shared queue used by print -z.
+                    if let Some(s) = iter.next() {
+                        self.buffer_stack.push(s.clone());
+                    }
                     return 0;
                 }
                 "-I" => {
