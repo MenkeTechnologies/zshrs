@@ -42,6 +42,7 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
         "zsource" => super::zsource_builtin::zsource(args),
         "zcomplete" => super::zcomplete_builtin::zcomplete(args),
         "zsuggest" => super::zcomplete_builtin::zsuggest(args),
+        "zcmd-result" => zcmd_result(args),
         "zlog" => zlog(args),
         _ => return None,
     };
@@ -85,6 +86,7 @@ pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[
     "zsource",
     "zcomplete",
     "zsuggest",
+    "zcmd-result",
     "zlog",
 ];
 
@@ -351,6 +353,67 @@ fn zcache_watch(args: &[String]) -> i32 {
             0
         }
         Err(e) => err_exit("zcache watch", &e.to_string()),
+    }
+}
+
+// `zcmd-result` — responder side of zsend --wait. Used by tests / scripts /
+// shells with a cmd:execute event handler to send the executed command's
+// stdout / stderr / exit_code back to the daemon, which resolves the
+// pending oneshot the sender is blocked on.
+fn zcmd_result(args: &[String]) -> i32 {
+    let mut delivery_id: Option<String> = None;
+    let mut exit_code: Option<i64> = None;
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut iter = args.iter().skip(1);
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--id" | "--delivery-id" => {
+                if let Some(v) = iter.next() {
+                    delivery_id = Some(v.clone());
+                }
+            }
+            "--exit-code" => match iter.next().and_then(|s| s.parse::<i64>().ok()) {
+                Some(c) => exit_code = Some(c),
+                None => return err_exit("zcmd-result", "--exit-code requires an integer"),
+            },
+            "--stdout" => {
+                if let Some(v) = iter.next() {
+                    stdout = v.clone();
+                }
+            }
+            "--stderr" => {
+                if let Some(v) = iter.next() {
+                    stderr = v.clone();
+                }
+            }
+            "-h" | "--help" => {
+                println!("usage: zcmd-result --id <delivery_id> [--exit-code N] [--stdout TEXT] [--stderr TEXT]");
+                return 0;
+            }
+            _ => {}
+        }
+    }
+    let id = match delivery_id {
+        Some(s) => s,
+        None => return err_exit("zcmd-result", "missing --id <delivery_id>"),
+    };
+    let payload = json!({
+        "delivery_id": id,
+        "exit_code": exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+    });
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("cmd_result", payload) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zcmd-result", &e.to_string()),
     }
 }
 
@@ -765,9 +828,27 @@ fn zuntag(args: &[String]) -> i32 {
 
 fn zsend(args: &[String]) -> i32 {
     let json_out = args.iter().any(|a| a == "--json");
-    // Strip --json before parsing so parse_send_args doesn't see it as the
-    // first positional.
-    let stripped: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
+    let wait = args.iter().any(|a| a == "--wait");
+    let mut timeout_ms: u64 = 60_000;
+    if let Some(idx) = args.iter().position(|a| a == "--timeout") {
+        if let Some(secs) = args.get(idx + 1).and_then(|s| s.parse::<u64>().ok()) {
+            timeout_ms = secs * 1000;
+        }
+    }
+    // Strip the meta-flags before passing to the parser so they don't get
+    // misread as positionals. --timeout takes a value, so we need to skip
+    // both the flag and its value.
+    let mut stripped: Vec<String> = Vec::new();
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--json" | "--wait" => {}
+            "--timeout" => {
+                let _ = iter.next();
+            }
+            _ => stripped.push(a.clone()),
+        }
+    }
     let (target, command) = match parse_send_args(&stripped, "zsend") {
         Ok(v) => v,
         Err(code) => return code,
@@ -776,9 +857,43 @@ fn zsend(args: &[String]) -> i32 {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    match client.call("send", json!({ "target": target, "command": command })) {
+    let mut payload = json!({ "target": target, "command": command });
+    if wait {
+        payload["wait"] = json!(true);
+        payload["timeout_ms"] = json!(timeout_ms);
+        // Server holds the request open up to timeout_ms; bump client
+        // socket read timeout above that so the client doesn't give up
+        // first.
+        let _ = client.set_read_timeout(Some(std::time::Duration::from_millis(
+            timeout_ms + 5_000,
+        )));
+    }
+    match client.call("send", payload) {
         Ok(v) => {
             if json_out {
+                print_pretty(&v);
+            } else if wait {
+                let timed_out = v.get("timed_out").and_then(Value::as_bool).unwrap_or(false);
+                if timed_out {
+                    eprintln!("zsend: timed out waiting for cmd_result");
+                    return 124;
+                }
+                if let Some(result) = v.get("result") {
+                    if let Some(out) = result.get("stdout").and_then(Value::as_str) {
+                        print!("{}", out);
+                    }
+                    if let Some(err) = result.get("stderr").and_then(Value::as_str) {
+                        if !err.is_empty() {
+                            eprint!("{}", err);
+                        }
+                    }
+                    let exit = result
+                        .get("exit_code")
+                        .and_then(Value::as_i64)
+                        .map(|c| c as i32)
+                        .unwrap_or(0);
+                    return exit;
+                }
                 print_pretty(&v);
             } else {
                 let count = v
