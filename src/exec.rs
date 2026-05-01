@@ -36105,7 +36105,13 @@ impl ShellExecutor {
                     match c {
                         'p' => parents = true,
                         'v' => verbose = true,
-                        _ => {}
+                        // coreutils mkdir errors on unknown flags;
+                        // old `_ => {}` made `mkdir -X foo` create
+                        // foo silently with -X dropped.
+                        _ => {
+                            eprintln!("mkdir: unrecognized option: '-{}'", c);
+                            return 1;
+                        }
                     }
                 }
             }
