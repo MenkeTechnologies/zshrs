@@ -39651,7 +39651,7 @@ impl ShellExecutor {
     /// zcurses - curses interface (stub)
     fn builtin_zcurses(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("zcurses: requires subcommand");
+            eprintln!("zshrs:zcurses:1: requires subcommand");
             return 1;
         }
 
@@ -39723,7 +39723,7 @@ impl ShellExecutor {
                 0
             }
             cmd => {
-                eprintln!("zcurses: unknown subcommand: {}", cmd);
+                eprintln!("zshrs:zcurses:1: unknown subcommand: {}", cmd);
                 1
             }
         }
@@ -45162,7 +45162,7 @@ impl ShellExecutor {
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0),
                 Err(e) => {
-                    eprintln!("date: {}: {}", refpath, e);
+                    eprintln!("zshrs:date:1: {}: {}", refpath, e);
                     return 1;
                 }
             }
