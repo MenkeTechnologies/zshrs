@@ -54,6 +54,9 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "publish" => op_publish(state, client_id, args).await,
         "fpath_changed" => op_fpath_changed(state, args).await,
         "watcher_stats" => op_watcher_stats(state).await,
+        "log_level" => op_log_level(args).await,
+        "log_rotate" => op_log_rotate(state, args).await,
+        "log_stats" => op_log_stats(state).await,
         "push_canonical" => super::zsync::op_push_canonical(state, client_id, args).await,
         "pull_canonical" => super::zsync::op_pull_canonical(state, args).await,
         "diff_canonical" => super::zsync::op_diff_canonical(state, args).await,
@@ -500,6 +503,49 @@ async fn op_fpath_changed(state: &Arc<DaemonState>, args: Value) -> OpResult {
 async fn op_watcher_stats(state: &Arc<DaemonState>) -> OpResult {
     let stats = state.fs_watcher.stats();
     Ok(json!(stats))
+}
+
+async fn op_log_level(args: Value) -> OpResult {
+    let directive = args
+        .get("directive")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `directive`"))?;
+    super::log::set_runtime_level(directive)
+        .map_err(|e| ErrPayload::new("reload_failed", e))?;
+    Ok(json!({ "directive": directive }))
+}
+
+async fn op_log_rotate(state: &Arc<DaemonState>, _args: Value) -> OpResult {
+    let rotated = super::ticker::force_rotate_now(state);
+    Ok(json!({ "rotated": rotated }))
+}
+
+async fn op_log_stats(state: &Arc<DaemonState>) -> OpResult {
+    let mut total_bytes: u64 = 0;
+    let mut total_lines: u64 = 0;
+    let mut files: Vec<Value> = Vec::new();
+    if let Ok(dir) = std::fs::read_dir(&state.paths.root) {
+        for entry in dir.flatten() {
+            let name = entry.file_name();
+            let s = name.to_string_lossy().to_string();
+            if !s.starts_with("zshrs.log") {
+                continue;
+            }
+            let path = entry.path();
+            let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let lines = std::fs::read_to_string(&path)
+                .map(|c| c.lines().count() as u64)
+                .unwrap_or(0);
+            total_bytes += bytes;
+            total_lines += lines;
+            files.push(json!({ "name": s, "bytes": bytes, "lines": lines }));
+        }
+    }
+    Ok(json!({
+        "files": files,
+        "total_bytes": total_bytes,
+        "total_lines": total_lines,
+    }))
 }
 
 // -------- pub/sub --------

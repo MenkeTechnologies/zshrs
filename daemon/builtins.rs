@@ -718,6 +718,41 @@ fn parse_send_args(args: &[String], cmd: &str) -> Result<(Value, String), i32> {
 // EnvFilter reload (level) or appender fd handoff (rotate), neither of which
 // is wired in v1; those two verbs surface a clear "restart-required" error.
 
+fn zlog_level(args: &[String]) -> i32 {
+    let directive = match args.first() {
+        Some(d) => d.clone(),
+        None => return err_exit(
+            "zlog level",
+            "usage: zlog level <directive>  (e.g. info | debug | info,fsnotify=trace)",
+        ),
+    };
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("log_level", json!({ "directive": directive })) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zlog level", &e.to_string()),
+    }
+}
+
+fn zlog_rotate() -> i32 {
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("log_rotate", json!({})) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zlog rotate", &e.to_string()),
+    }
+}
+
 fn zlog(args: &[String]) -> i32 {
     let verb = args.get(1).map(|s| s.as_str()).unwrap_or("path");
     let rest = if args.len() > 2 { &args[2..] } else { &[][..] };
@@ -727,14 +762,8 @@ fn zlog(args: &[String]) -> i32 {
         "grep" => zlog_grep(rest),
         "clear" => zlog_clear(),
         "stats" => zlog_stats(),
-        "level" => err_exit(
-            "zlog",
-            "dynamic level change not yet wired; restart daemon with ZSHRS_LOG=<level>",
-        ),
-        "rotate" => err_exit(
-            "zlog",
-            "explicit rotation not yet wired; daily rotation runs automatically",
-        ),
+        "level" => zlog_level(rest),
+        "rotate" => zlog_rotate(),
         _ => err_exit("zlog", &format!("unknown verb `{}`", verb)),
     }
 }

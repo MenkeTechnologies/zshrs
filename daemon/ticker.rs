@@ -80,6 +80,33 @@ fn log_max_rotations() -> u32 {
         .unwrap_or(DEFAULT_LOG_MAX_ROTATIONS)
 }
 
+/// Force a rotation NOW for every active log file (size-cap is bypassed). Used
+/// by the `log_rotate` IPC op (`zlog rotate` client). Returns the count of files
+/// rotated.
+pub fn force_rotate_now(state: &super::state::DaemonState) -> usize {
+    let max_rot = log_max_rotations();
+    let dir = match std::fs::read_dir(&state.paths.root) {
+        Ok(d) => d,
+        Err(_) => return 0,
+    };
+    let mut bases: Vec<std::path::PathBuf> = Vec::new();
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        let s = name.to_string_lossy();
+        if !s.starts_with("zshrs.log") || is_rotation_suffix(&s) {
+            continue;
+        }
+        bases.push(entry.path());
+    }
+    let mut count = 0;
+    for base in bases {
+        if rotate_one(&base, max_rot).is_ok() {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// Walk every `zshrs.log*` file (daily-rolled by tracing-appender) and rotate
 /// any one whose size exceeds the configured cap. Rotation is in-place: the
 /// file is copied to `<basename>.1`, the original is truncated. Existing
