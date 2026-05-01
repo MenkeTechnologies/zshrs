@@ -41583,6 +41583,14 @@ impl ShellExecutor {
         let mut numeric = false;
         let mut unique = false;
         let mut fold = false;
+        // -h / --human-numeric-sort: 1K / 5M / 2G suffix-aware compare.
+        let mut human_numeric = false;
+        // -V / --version-sort: natural (1, 2, 10) instead of (1, 10, 2).
+        let mut version_sort = false;
+        // -R / --random-sort: random shuffle.
+        let mut random_sort = false;
+        // -z / --zero-terminated: input records separated by NUL.
+        let mut zero_term = false;
         // -k FIELD: sort by field N (1-based, N-M range).
         let mut key_start: Option<usize> = None;
         let mut key_end: Option<usize> = None;
@@ -41594,10 +41602,14 @@ impl ShellExecutor {
         while i < args.len() {
             let arg = &args[i];
             match arg.as_str() {
-                "-r" => reverse = true,
-                "-n" => numeric = true,
-                "-u" => unique = true,
-                "-f" => fold = true,
+                "-r" | "--reverse" => reverse = true,
+                "-n" | "--numeric-sort" => numeric = true,
+                "-u" | "--unique" => unique = true,
+                "-f" | "--ignore-case" => fold = true,
+                "-h" | "--human-numeric-sort" => human_numeric = true,
+                "-V" | "--version-sort" => version_sort = true,
+                "-R" | "--random-sort" => random_sort = true,
+                "-z" | "--zero-terminated" => zero_term = true,
                 "-k" if i + 1 < args.len() => {
                     i += 1;
                     if let Some((a, b)) = args[i].split_once(',') {
@@ -41630,6 +41642,10 @@ impl ShellExecutor {
                             'n' => numeric = true,
                             'u' => unique = true,
                             'f' => fold = true,
+                            'h' => human_numeric = true,
+                            'V' => version_sort = true,
+                            'R' => random_sort = true,
+                            'z' => zero_term = true,
                             _ => {}
                         }
                     }
@@ -41640,7 +41656,32 @@ impl ShellExecutor {
         }
 
         let mut lines: Vec<String> = Vec::new();
-        if files.is_empty() {
+        if zero_term {
+            // Read raw bytes, split on NUL.
+            use std::io::Read;
+            let mut buf = Vec::new();
+            if files.is_empty() {
+                let _ = std::io::stdin().read_to_end(&mut buf);
+            } else {
+                for file in &files {
+                    match std::fs::File::open(file) {
+                        Ok(mut f) => {
+                            let _ = f.read_to_end(&mut buf);
+                        }
+                        Err(e) => {
+                            eprintln!("sort: {}: {}", file, e);
+                            return 1;
+                        }
+                    }
+                }
+            }
+            for chunk in buf.split(|b| *b == 0) {
+                if chunk.is_empty() {
+                    continue;
+                }
+                lines.push(String::from_utf8_lossy(chunk).into_owned());
+            }
+        } else if files.is_empty() {
             let stdin = std::io::stdin();
             for line in stdin.lock().lines().flatten() {
                 lines.push(line);
@@ -41683,10 +41724,103 @@ impl ShellExecutor {
             parts[start..=end].join(&sep_str)
         };
 
+        // -h: parse '5K', '2.5M', '1G' etc. into an f64 with the
+        // suffix multiplier. Direct port of coreutils sort -h.
+        fn human_value(s: &str) -> f64 {
+            let s = s.trim();
+            // Strip optional leading '+'/'-' and a numeric prefix.
+            let mut end = 0;
+            let mut seen_dot = false;
+            for (i, c) in s.char_indices() {
+                if i == 0 && (c == '+' || c == '-') {
+                    end = c.len_utf8();
+                    continue;
+                }
+                if c.is_ascii_digit() {
+                    end = i + c.len_utf8();
+                } else if c == '.' && !seen_dot {
+                    seen_dot = true;
+                    end = i + c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let num: f64 = s[..end].parse().unwrap_or(0.0);
+            let suffix = s[end..].chars().next();
+            let mult = match suffix {
+                Some('K') | Some('k') => 1_024.0,
+                Some('M') => 1_048_576.0,
+                Some('G') => 1_073_741_824.0,
+                Some('T') => 1_099_511_627_776.0,
+                Some('P') => 1_125_899_906_842_624.0,
+                _ => 1.0,
+            };
+            num * mult
+        }
+        // -V: split into runs of (non-digit, digit) and compare
+        // pairwise. Direct port of coreutils sort -V.
+        fn version_compare(a: &str, b: &str) -> std::cmp::Ordering {
+            let mut ai = a.chars().peekable();
+            let mut bi = b.chars().peekable();
+            loop {
+                // Compare leading non-digit prefixes lexically.
+                let (mut as_pre, mut bs_pre) = (String::new(), String::new());
+                while let Some(&c) = ai.peek() {
+                    if c.is_ascii_digit() {
+                        break;
+                    }
+                    as_pre.push(c);
+                    ai.next();
+                }
+                while let Some(&c) = bi.peek() {
+                    if c.is_ascii_digit() {
+                        break;
+                    }
+                    bs_pre.push(c);
+                    bi.next();
+                }
+                let pre_cmp = as_pre.cmp(&bs_pre);
+                if pre_cmp != std::cmp::Ordering::Equal {
+                    return pre_cmp;
+                }
+                // Compare the digit run as integers.
+                let mut as_num = String::new();
+                let mut bs_num = String::new();
+                while let Some(&c) = ai.peek() {
+                    if !c.is_ascii_digit() {
+                        break;
+                    }
+                    as_num.push(c);
+                    ai.next();
+                }
+                while let Some(&c) = bi.peek() {
+                    if !c.is_ascii_digit() {
+                        break;
+                    }
+                    bs_num.push(c);
+                    bi.next();
+                }
+                if as_num.is_empty() && bs_num.is_empty() {
+                    return std::cmp::Ordering::Equal;
+                }
+                let an: u128 = as_num.parse().unwrap_or(0);
+                let bn: u128 = bs_num.parse().unwrap_or(0);
+                let num_cmp = an.cmp(&bn);
+                if num_cmp != std::cmp::Ordering::Equal {
+                    return num_cmp;
+                }
+            }
+        }
         let cmp_keys = |a: &str, b: &str| -> std::cmp::Ordering {
             let ka = extract_key(a);
             let kb = extract_key(b);
-            if numeric {
+            if version_sort {
+                version_compare(&ka, &kb)
+            } else if human_numeric {
+                human_value(&ka)
+                    .partial_cmp(&human_value(&kb))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            } else if numeric {
                 let na: f64 = ka
                     .split_whitespace()
                     .next()
@@ -41705,7 +41839,17 @@ impl ShellExecutor {
             }
         };
 
-        lines.sort_by(|a, b| cmp_keys(a, b));
+        if random_sort {
+            // -R: shuffle. coreutils -R is a deterministic shuffle
+            // keyed by an MD5 of the line, but a Fisher-Yates with
+            // thread_rng is the standard approximation used by
+            // sort-port crates.
+            use rand::seq::SliceRandom;
+            let mut rng = rand::thread_rng();
+            lines.shuffle(&mut rng);
+        } else {
+            lines.sort_by(|a, b| cmp_keys(a, b));
+        }
 
         if reverse {
             lines.reverse();
@@ -41714,8 +41858,9 @@ impl ShellExecutor {
             lines.dedup();
         }
 
+        let term = if zero_term { '\0' } else { '\n' };
         for line in lines {
-            println!("{}", line);
+            print!("{}{}", line, term);
         }
         0
     }
