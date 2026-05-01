@@ -31820,6 +31820,7 @@ impl ShellExecutor {
         let mut split_word_history = false; // -S specifically (not -s)
         let mut sort_asc = false;
         let mut sort_desc = false;
+        let mut sort_ignore_case = false; // -i: case-folded sort (builtin.c:4805)
         let mut named_dir_subst = false;
         let mut match_pattern_flag = false;
         let mut store_var: Option<String> = None;
@@ -31828,6 +31829,8 @@ impl ShellExecutor {
         // -x N: expand leading tabs only; -X N: expand all tabs.
         // (width, all-tabs) per zsh/Src/utils.c:5973 zexpandtabs.
         let mut tab_expand: Option<(i32, bool)> = None;
+        // -a: print across — row-major column layout (builtin.c:4980-4994).
+        let mut print_across = false;
 
         let mut i = 0;
         let mut accept_flags = true;
@@ -31946,7 +31949,9 @@ impl ShellExecutor {
                             }
                             break;
                         }
-                        'a' | 'b' | 'i' | 'p' => {} // TODO
+                        'a' => print_across = true,
+                        'i' => sort_ignore_case = true,
+                        'b' | 'p' => {} // TODO
                         'u' => {
                             // -u n: output to fd n. zsh requires a
                             // numeric argument; non-numeric ->
@@ -32066,11 +32071,20 @@ impl ShellExecutor {
             output_args.retain(|a| Self::glob_match_static(a, &pattern));
         }
 
-        // Sort if requested
+        // Sort if requested. -i (case-fold) per builtin.c:4805 selects
+        // SORTIT_IGNORING_CASE for both ascending (-o) and descending (-O).
         if sort_asc {
-            output_args.sort();
+            if sort_ignore_case {
+                output_args.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            } else {
+                output_args.sort();
+            }
         } else if sort_desc {
-            output_args.sort_by(|a, b| b.cmp(a));
+            if sort_ignore_case {
+                output_args.sort_by(|a, b| b.to_lowercase().cmp(&a.to_lowercase()));
+            } else {
+                output_args.sort_by(|a, b| b.cmp(a));
+            }
         }
 
         // Handle -f format — cycle the format string while args remain
@@ -32269,13 +32283,21 @@ impl ShellExecutor {
             // single-char items reads as "a  c" / "b  d"). Earlier we
             // joined with a single tab, which most terminals render
             // wider than zsh's two-space output.
+            //
+            // -a (print across) flips index order: col-major (default,
+            // builtin.c:4998-5005 inner-loop strides by `nr`) → row-major
+            // (-a, builtin.c:4986-4993 inner-loop strides by 1).
             let num_items = processed.len();
             let rows = (num_items + columns - 1) / columns;
             // Compute width per column (max item width in that column).
             let mut col_widths = vec![0usize; columns];
             for col in 0..columns {
                 for row in 0..rows {
-                    let idx = row + col * rows;
+                    let idx = if print_across {
+                        row * columns + col
+                    } else {
+                        row + col * rows
+                    };
                     if idx < num_items {
                         col_widths[col] = col_widths[col].max(processed[idx].chars().count());
                     }
@@ -32287,10 +32309,21 @@ impl ShellExecutor {
                 // an item — only pad+separate columns BEFORE it.
                 let last_col_in_row = (0..columns)
                     .rev()
-                    .find(|c| row + c * rows < num_items)
+                    .find(|c| {
+                        let i = if print_across {
+                            row * columns + *c
+                        } else {
+                            row + *c * rows
+                        };
+                        i < num_items
+                    })
                     .unwrap_or(0);
                 for col in 0..=last_col_in_row {
-                    let idx = row + col * rows;
+                    let idx = if print_across {
+                        row * columns + col
+                    } else {
+                        row + col * rows
+                    };
                     if idx < num_items {
                         let item = processed[idx].as_str();
                         result.push_str(item);
