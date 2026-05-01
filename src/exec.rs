@@ -8292,6 +8292,7 @@ static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "stat",
         "strftime",
         "zsleep",
+        "zselect",
         "zln",
         "zmv",
         "zcp",
@@ -10059,6 +10060,7 @@ impl ShellExecutor {
             "zcp" => return self.builtin_zmv(&rest_vec, "cp"),
             "zln" => return self.builtin_zmv(&rest_vec, "ln"),
             "zcalc" => return self.builtin_zcalc(&rest_vec),
+            "zselect" => return self.builtin_zselect(&rest_vec),
             _ => {}
         }
 
@@ -34926,6 +34928,23 @@ impl ShellExecutor {
         }
 
         0
+    }
+
+    /// zselect — select(2)-based fd polling. Direct dispatch into
+    /// zselect.rs's parse + zselect implementation. Per zsh's
+    /// zsh/Src/Modules/zselect.c bin_zselect, the result is returned
+    /// in the `reply` array (index→fd-set string) and the exit code
+    /// signals success/timeout/error.
+    fn builtin_zselect(&mut self, args: &[String]) -> i32 {
+        let argv: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let (code, reply, env_kv) = crate::zselect::builtin_zselect(&argv);
+        // zselect.c sets `reply` to "fd:rwe" entries; assign here so
+        // the calling script can iterate $reply / ${reply[fd]}.
+        self.arrays.insert("reply".to_string(), reply);
+        for (k, v) in env_kv {
+            self.variables.insert(k, v);
+        }
+        code
     }
 
     /// zsleep - sleep with fractional seconds
