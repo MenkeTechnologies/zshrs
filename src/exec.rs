@@ -41513,23 +41513,33 @@ impl ShellExecutor {
     }
 
     fn builtin_tee(&self, args: &[String]) -> i32 {
+        // coreutils tee(1) port: stream stdin to stdout AND each
+        // named file in 8 KB chunks so 'tail -f log | tee out' works
+        // — was buffering everything until EOF, which never arrives
+        // for streaming sources.
         use std::io::{Read, Write};
 
-        let append = args.iter().any(|a| a == "-a");
-        let files: Vec<&str> = args
-            .iter()
-            .filter(|a| !a.starts_with('-'))
-            .map(|s| s.as_str())
-            .collect();
+        let mut append = false;
+        let mut ignore_int = false;
+        let mut files: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-a" => append = true,
+                // -i: ignore SIGINT — coreutils flag for keeping the
+                // process alive when the upstream gets ^C'd. We just
+                // accept; real ignore wiring would need signal masks.
+                "-i" => ignore_int = true,
+                s if !s.starts_with('-') => files.push(s),
+                _ => {}
+            }
+        }
+        let _ = ignore_int;
 
-        let mut input = Vec::new();
-        std::io::stdin().read_to_end(&mut input).ok();
-
-        // Write to stdout
-        std::io::stdout().write_all(&input).ok();
-
-        // Write to files
-        for file in files {
+        // Open every output file once; bail per-file but keep going
+        // for the rest (matches coreutils behaviour).
+        let mut handles: Vec<Box<dyn Write>> = Vec::with_capacity(files.len());
+        let mut returnval = 0;
+        for file in &files {
             let result = if append {
                 std::fs::OpenOptions::new()
                     .create(true)
@@ -41538,15 +41548,34 @@ impl ShellExecutor {
             } else {
                 std::fs::File::create(file)
             };
-
             match result {
-                Ok(mut f) => {
-                    f.write_all(&input).ok();
+                Ok(f) => handles.push(Box::new(f)),
+                Err(e) => {
+                    eprintln!("tee: {}: {}", file, e);
+                    returnval = 1;
                 }
-                Err(e) => eprintln!("tee: {}: {}", file, e),
             }
         }
-        0
+
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
+        let stdout = std::io::stdout();
+        let mut out = stdout.lock();
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            let _ = out.write_all(&buf[..n]);
+            let _ = out.flush();
+            for h in handles.iter_mut() {
+                let _ = h.write_all(&buf[..n]);
+                let _ = h.flush();
+            }
+        }
+        returnval
     }
 
     fn builtin_sleep(&self, args: &[String]) -> i32 {
