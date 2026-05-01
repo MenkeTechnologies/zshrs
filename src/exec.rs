@@ -34379,6 +34379,20 @@ impl ShellExecutor {
             loop {
                 let ret = unsafe { libc::fcntl(file_handle.as_raw_fd(), cmd, &mut flock) };
                 if ret == 0 {
+                    // Port of system.c:695-701: when -e is NOT set
+                    // (cloexec defaults to 1, cleared only by -e), set
+                    // FD_CLOEXEC on the lock fd so it doesn't survive
+                    // exec(). Without this, `zsystem flock f; exec ls`
+                    // leaked the lock fd into the new process.
+                    if cloexec {
+                        let fd = file_handle.as_raw_fd();
+                        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD, 0) };
+                        if flags != -1 {
+                            unsafe {
+                                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+                            }
+                        }
+                    }
                     if let Some(ref var) = fdvar {
                         let fd = file_handle.as_raw_fd();
                         std::mem::forget(file_handle);
@@ -34386,7 +34400,6 @@ impl ShellExecutor {
                     } else {
                         std::mem::forget(file_handle);
                     }
-                    let _ = cloexec;
                     return 0;
                 }
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
