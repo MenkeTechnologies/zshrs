@@ -43336,13 +43336,19 @@ impl ShellExecutor {
         let mut files: Vec<&str> = Vec::new();
         for arg in args {
             match arg.as_str() {
-                "-a" => append = true,
+                "-a" | "--append" => append = true,
                 // -i: ignore SIGINT — coreutils flag for keeping the
                 // process alive when the upstream gets ^C'd. We just
                 // accept; real ignore wiring would need signal masks.
-                "-i" => ignore_int = true,
-                s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                "-i" | "--ignore-interrupts" => ignore_int = true,
+                "--" => {} // end of options
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                s => {
+                    // coreutils tee rejects unknown flags. Old
+                    // \`_ => {}\` operated normally with -X dropped.
+                    eprintln!("tee: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
         let _ = ignore_int;
