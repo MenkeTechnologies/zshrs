@@ -40898,6 +40898,10 @@ impl ShellExecutor {
     }
 
     fn builtin_touch(&self, args: &[String]) -> i32 {
+        // coreutils touch(1) port: -a/-m, -c (no create), -r REF
+        // (copy times from REF). -d / -t / -h are accepted but
+        // not yet honored — they need date-string parsing through
+        // strptime.
         use std::fs::OpenOptions;
 
         if args.is_empty() {
@@ -40905,27 +40909,80 @@ impl ShellExecutor {
             return 1;
         }
 
-        let mut status = 0;
-        for file in args {
-            if file.starts_with('-') {
-                continue; // ignore flags for now
-            }
-            let path = std::path::Path::new(file);
-            if path.exists() {
-                // Update mtime
-                let now = std::time::SystemTime::now();
-                if let Err(e) =
-                    filetime::set_file_mtime(path, filetime::FileTime::from_system_time(now))
-                {
-                    eprintln!("touch: {}: {}", file, e);
-                    status = 1;
+        let mut atime_only = false;
+        let mut mtime_only = false;
+        let mut no_create = false;
+        let mut reference: Option<String> = None;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-a" => atime_only = true,
+                "-m" => mtime_only = true,
+                "-c" | "--no-create" => no_create = true,
+                "-r" | "--reference" => {
+                    if let Some(r) = iter.next() {
+                        reference = Some(r.clone());
+                    }
                 }
-            } else {
-                // Create empty file
+                "--" => {} // accept; remaining are files
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // -ac, -am combos: walk chars.
+                    for c in s[1..].chars() {
+                        match c {
+                            'a' => atime_only = true,
+                            'm' => mtime_only = true,
+                            'c' => no_create = true,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => files.push(arg),
+            }
+        }
+
+        // Determine the target times: from -r REF, or now.
+        let (target_atime, target_mtime) = if let Some(ref refpath) = reference {
+            match std::fs::metadata(refpath) {
+                Ok(meta) => (
+                    filetime::FileTime::from_last_access_time(&meta),
+                    filetime::FileTime::from_last_modification_time(&meta),
+                ),
+                Err(e) => {
+                    eprintln!("touch: {}: {}", refpath, e);
+                    return 1;
+                }
+            }
+        } else {
+            let ft = filetime::FileTime::from_system_time(std::time::SystemTime::now());
+            (ft, ft)
+        };
+
+        let mut status = 0;
+        for file in files {
+            let path = std::path::Path::new(file);
+            if !path.exists() {
+                if no_create {
+                    continue;
+                }
                 if let Err(e) = OpenOptions::new().create(true).write(true).open(path) {
                     eprintln!("touch: {}: {}", file, e);
                     status = 1;
+                    continue;
                 }
+            }
+            // Write times: -a → atime only, -m → mtime only,
+            // neither → both.
+            let result = if atime_only && !mtime_only {
+                filetime::set_file_atime(path, target_atime)
+            } else if mtime_only && !atime_only {
+                filetime::set_file_mtime(path, target_mtime)
+            } else {
+                filetime::set_file_times(path, target_atime, target_mtime)
+            };
+            if let Err(e) = result {
+                eprintln!("touch: {}: {}", file, e);
+                status = 1;
             }
         }
         status
