@@ -42857,8 +42857,20 @@ impl ShellExecutor {
             } else if arg == "--output-delimiter" && i + 1 < args.len() {
                 i += 1;
                 output_delimiter = Some(args[i].clone());
+            } else if arg == "-" {
+                files.push("-");
+            } else if arg == "--" {
+                i += 1;
+                while i < args.len() {
+                    files.push(&args[i]);
+                    i += 1;
+                }
+                break;
             } else if !arg.starts_with('-') {
                 files.push(arg);
+            } else {
+                eprintln!("cut: unrecognized option: '{}'", arg);
+                return 1;
             }
             i += 1;
         }
