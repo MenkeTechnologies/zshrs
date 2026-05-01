@@ -23389,6 +23389,40 @@ impl ShellExecutor {
             }
         }
 
+        // `read -k N` (and bash's -n): when reading from a tty, switch
+        // to cbreak (non-canonical) so the read returns after N raw
+        // bytes instead of waiting for a newline. Direct port of
+        // builtin.c:6481-6483 (setcbreak() before the read). Restored
+        // via a Drop guard mirroring EchoGuard above.
+        struct CbreakGuard {
+            fd: i32,
+            saved: libc::termios,
+        }
+        impl Drop for CbreakGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    libc::tcsetattr(self.fd, libc::TCSANOW, &self.saved);
+                }
+            }
+        }
+        let _cbreak_guard = if nchars.is_some() && unsafe { libc::isatty(fd) } != 0 {
+            let mut ti: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(fd, &mut ti) } == 0 {
+                let saved = ti;
+                ti.c_lflag &= !(libc::ICANON | libc::ECHO);
+                ti.c_cc[libc::VMIN] = 1;
+                ti.c_cc[libc::VTIME] = 0;
+                unsafe {
+                    libc::tcsetattr(fd, libc::TCSANOW, &ti);
+                }
+                Some(CbreakGuard { fd, saved })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let input = if let Some(n) = nchars {
             let mut buf = vec![0u8; n];
             let read_result = if let Some(ref mut f) = fd_file {
