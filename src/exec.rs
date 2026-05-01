@@ -26756,16 +26756,39 @@ impl ShellExecutor {
     }
 
     /// caller - display call stack (bash)
+    /// caller [N] — bash builtin returning the location of the
+    /// current frame N. With no arg or N=0: 'LINE FUNC' (or just
+    /// 'LINE main' at top level). With N>0: 'LINE FUNC FILE' for
+    /// frame N. Direct port of bash's bin_caller in builtins.def.
+    /// Reads from the existing $funcstack array we now maintain
+    /// (exec.rs:7828-7835).
     fn builtin_caller(&self, args: &[String]) -> i32 {
         let depth: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-        // In a real implementation, we'd track the call stack
-        // For now, show basic info
+        let stack = self.arrays.get("funcstack").cloned().unwrap_or_default();
+        // funcstack[0] is the current (innermost) frame — caller 0
+        // refers to the immediate caller per bash semantics, which
+        // is funcstack[0] for us. With no args, just LINE FUNC; we
+        // don't track per-frame line numbers yet so emit `0` as
+        // line number until the VM pipes that through.
         if depth == 0 {
-            println!("1 main");
+            let func = stack.first().cloned().unwrap_or_else(|| "main".to_string());
+            println!("0 {}", func);
+            0
+        } else if depth < stack.len() {
+            let func = stack[depth].clone();
+            // 'main' synonyms shouldn't carry a file. For others,
+            // surface the source file from find_function_file when
+            // available — same path used by $functions_source.
+            let file = self
+                .find_function_file(&func)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "main".to_string());
+            println!("0 {} {}", func, file);
+            0
         } else {
-            println!("{} main", depth);
+            // Bash returns 1 (no frame at that depth) silently.
+            1
         }
-        0
     }
 
     /// doctor - diagnostic report of shell health, caches, and performance
