@@ -31226,6 +31226,113 @@ fn strip_trailing_zeros_g(s: &str) -> String {
 }
 
 impl ShellExecutor {
+    /// Interpret bindkey-style escapes per zsh/Src/utils.c:getkeystring
+    /// when called with GETKEYS_BINDKEY. Superset of expand_printf_escapes:
+    /// adds `\C-x` (ctrl-X), `\M-y` (meta-Y, high bit set), and `\^x`
+    /// (alias for `\C-x`). Used by `print -b`.
+    fn expand_bindkey_escapes(&self, s: &str) -> String {
+        let mut out = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('a') => out.push('\x07'),
+                Some('b') => out.push('\x08'),
+                Some('e') | Some('E') => out.push('\x1b'),
+                Some('f') => out.push('\x0c'),
+                Some('v') => out.push('\x0b'),
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some('\'') => out.push('\''),
+                // \C-x: ctrl+x (mask 0x1f). Accepts both `\C-X` and `\C-x`.
+                Some('C') => {
+                    if chars.peek() == Some(&'-') {
+                        chars.next();
+                    }
+                    if let Some(target) = chars.next() {
+                        let upper = target.to_ascii_uppercase();
+                        let code = (upper as u32) & 0x1f;
+                        if let Some(ch) = char::from_u32(code) {
+                            out.push(ch);
+                        }
+                    }
+                }
+                // \^x: alias for \C-x (sans the optional `-`).
+                Some('^') => {
+                    if let Some(target) = chars.next() {
+                        let upper = target.to_ascii_uppercase();
+                        let code = (upper as u32) & 0x1f;
+                        if let Some(ch) = char::from_u32(code) {
+                            out.push(ch);
+                        }
+                    }
+                }
+                // \M-x: meta+x (set high bit on x). Most terminals emit
+                // ESC + x for this, so emit `\x1b` followed by the
+                // unmodified char to match the convention.
+                Some('M') => {
+                    if chars.peek() == Some(&'-') {
+                        chars.next();
+                    }
+                    if let Some(target) = chars.next() {
+                        out.push('\x1b');
+                        out.push(target);
+                    }
+                }
+                // \xHH hex byte
+                Some('x') => {
+                    let mut hex = String::new();
+                    for _ in 0..2 {
+                        if let Some(&p) = chars.peek() {
+                            if p.is_ascii_hexdigit() {
+                                hex.push(p);
+                                chars.next();
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                    if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                        if let Some(ch) = char::from_u32(n) {
+                            out.push(ch);
+                        }
+                    }
+                }
+                // \NNN octal (1-3 digits)
+                Some(c) if c.is_digit(8) => {
+                    let mut oct = String::from(c);
+                    for _ in 0..2 {
+                        if let Some(&p) = chars.peek() {
+                            if p.is_digit(8) {
+                                oct.push(p);
+                                chars.next();
+                                continue;
+                            }
+                        }
+                        break;
+                    }
+                    if let Ok(n) = u32::from_str_radix(&oct, 8) {
+                        if let Some(ch) = char::from_u32(n) {
+                            out.push(ch);
+                        }
+                    }
+                }
+                Some(c) => {
+                    out.push('\\');
+                    out.push(c);
+                }
+                None => out.push('\\'),
+            }
+        }
+        out
+    }
+
     fn expand_printf_escapes(&self, s: &str) -> String {
         let mut result = String::new();
         let mut chars = s.chars().peekable();
@@ -32279,6 +32386,10 @@ impl ShellExecutor {
         let mut tab_expand: Option<(i32, bool)> = None;
         // -a: print across — row-major column layout (builtin.c:4980-4994).
         let mut print_across = false;
+        // -b: bindkey-style escape interpretation. Adds \C-x / \M-y /
+        // \^x escapes on top of the standard set. Per builtin.c:4711
+        // selecting GETKEYS_BINDKEY mode.
+        let mut bindkey_escapes = false;
 
         let mut i = 0;
         let mut accept_flags = true;
@@ -32399,7 +32510,8 @@ impl ShellExecutor {
                         }
                         'a' => print_across = true,
                         'i' => sort_ignore_case = true,
-                        'b' | 'p' => {} // TODO
+                        'b' => bindkey_escapes = true,
+                        'p' => {} // -p (write to coprocess) — TODO
                         'u' => {
                             // -u n: output to fd n. zsh requires a
                             // numeric argument; non-numeric ->
@@ -32607,7 +32719,11 @@ impl ShellExecutor {
                     // preamble reset.
                     result = self.expand_prompt_string_for_print(&result);
                 }
-                if interpret_escapes && !raw_mode {
+                if bindkey_escapes && !raw_mode {
+                    // -b takes precedence over -e: bindkey escapes are
+                    // a superset of the standard set.
+                    result = self.expand_bindkey_escapes(&result);
+                } else if interpret_escapes && !raw_mode {
                     result = self.expand_printf_escapes(&result);
                 }
                 if named_dir_subst {
