@@ -37696,75 +37696,156 @@ impl ShellExecutor {
         0
     }
 
-    /// sysopen - open file descriptor (zsh/system module)
+    /// sysopen - open file descriptor (zsh/system module). Direct port
+    /// of zsh/Src/Modules/system.c:319 bin_sysopen. Return values
+    /// (system.c:311-315): 0 = success, 1 = bad params, 2 = open()
+    /// error.
     fn builtin_sysopen(&mut self, args: &[String]) -> i32 {
-        use std::fs::OpenOptions;
-
-        let mut filename = String::new();
-        let mut var_name = "REPLY".to_string();
-        let mut read = false;
-        let mut write = false;
-        let mut append = false;
-        let mut create = false;
-        let mut truncate = false;
+        let mut read_flag = false;
+        let mut write_flag = false;
+        let mut append_flag = false;
+        let mut o_opts: Option<String> = None;
+        let mut perms: u32 = 0o666;
+        let mut fdvar: Option<String> = None;
+        let mut filename: Option<String> = None;
 
         let mut i = 0;
         while i < args.len() {
-            match args[i].as_str() {
-                "-r" => read = true,
-                "-w" => write = true,
-                "-a" => append = true,
-                "-c" => create = true,
-                "-t" => truncate = true,
-                "-u" => {
+            let arg = &args[i];
+            match arg.as_str() {
+                "-r" => read_flag = true,
+                "-w" => write_flag = true,
+                "-a" => append_flag = true,
+                "-u" if i + 1 < args.len() => {
                     i += 1;
-                    if i < args.len() {
-                        var_name = args[i].clone();
-                    }
+                    fdvar = Some(args[i].clone());
                 }
-                "-o" => {
+                "-o" if i + 1 < args.len() => {
                     i += 1;
-                    // Mode flags like O_RDONLY etc - parse as needed
+                    o_opts = Some(args[i].clone());
+                }
+                "-m" if i + 1 < args.len() => {
+                    i += 1;
+                    let mode_str = &args[i];
+                    if !mode_str.chars().all(|c| ('0'..='7').contains(&c)) || mode_str.len() < 3 {
+                        eprintln!("zshrs:sysopen:1: invalid mode {}", mode_str);
+                        return 1;
+                    }
+                    perms = u32::from_str_radix(mode_str, 8).unwrap_or(0o666);
                 }
                 s if !s.starts_with('-') => {
-                    filename = s.to_string();
+                    filename = Some(s.to_string());
                 }
                 _ => {}
             }
             i += 1;
         }
 
-        if filename.is_empty() {
-            eprintln!("sysopen: need filename");
-            return 1;
-        }
-
-        // Default to read if nothing specified
-        if !read && !write && !append {
-            read = true;
-        }
-
-        let file = OpenOptions::new()
-            .read(read)
-            .write(write || append || truncate)
-            .append(append)
-            .create(create || write)
-            .truncate(truncate)
-            .open(&filename);
-
-        match file {
-            Ok(f) => {
-                let fd = self.next_fd;
-                self.next_fd += 1;
-                self.open_fds.insert(fd, f);
-                self.variables.insert(var_name, fd.to_string());
-                0
+        // system.c:335-338 — -u is required.
+        let fdvar = match fdvar {
+            Some(s) => s,
+            None => {
+                eprintln!("zshrs:sysopen:1: file descriptor not specified");
+                return 1;
             }
-            Err(e) => {
-                eprintln!("sysopen: {}: {}", filename, e);
-                1
+        };
+        let filename = match filename {
+            Some(s) => s,
+            None => return 1,
+        };
+
+        // system.c:342-347 — -u arg is either single digit (explicit
+        // fd) or variable identifier to set after the open.
+        let explicit_fd: Option<i32> = if fdvar.len() == 1 && fdvar.chars().next().unwrap().is_ascii_digit() {
+            Some(fdvar.parse().unwrap())
+        } else {
+            None
+        };
+
+        // system.c:323-325 — base flags from -r/-w/-a.
+        let base = libc::O_NOCTTY
+            | (if append_flag { libc::O_APPEND } else { 0 })
+            | if append_flag || write_flag {
+                if read_flag { libc::O_RDWR } else { libc::O_WRONLY }
+            } else {
+                libc::O_RDONLY
+            };
+
+        // system.c:350-369 — comma-list of O_* names, case-insensitive,
+        // optional 'O_' prefix.
+        let mut flags = base;
+        if let Some(opts) = &o_opts {
+            for tok in opts.split(',') {
+                let mut t = tok.to_uppercase();
+                if t.starts_with("O_") {
+                    t = t[2..].to_string();
+                }
+                let f = match t.as_str() {
+                    "CLOEXEC" => libc::O_CLOEXEC,
+                    "NOFOLLOW" => libc::O_NOFOLLOW,
+                    "SYNC" => libc::O_SYNC,
+                    "NONBLOCK" => libc::O_NONBLOCK,
+                    "EXCL" => libc::O_EXCL | libc::O_CREAT,
+                    "CREAT" | "CREATE" => libc::O_CREAT,
+                    "TRUNCATE" | "TRUNC" => libc::O_TRUNC,
+                    #[cfg(target_os = "linux")]
+                    "NOATIME" => libc::O_NOATIME,
+                    _ => {
+                        eprintln!("zshrs:sysopen:1: unsupported option: {}", tok);
+                        return 1;
+                    }
+                };
+                flags |= f;
             }
         }
+
+        let cstr = match std::ffi::CString::new(filename.as_bytes()) {
+            Ok(s) => s,
+            Err(_) => return 1,
+        };
+        let fd = unsafe {
+            if (flags & libc::O_CREAT) != 0 {
+                libc::open(cstr.as_ptr(), flags, perms as libc::c_uint)
+            } else {
+                libc::open(cstr.as_ptr(), flags)
+            }
+        };
+        if fd == -1 {
+            let e = std::io::Error::last_os_error();
+            eprintln!("zshrs:sysopen: can't open file {}: {}", filename, e);
+            return 2;
+        }
+
+        // system.c:392 — redup(fd, explicit) or movefd(fd) to land
+        // outside the user's interactive 0-9 range. Use dup2 for
+        // explicit; for default, just use the kernel-assigned fd.
+        let final_fd = if let Some(target) = explicit_fd {
+            let r = unsafe { libc::dup2(fd, target) };
+            unsafe {
+                libc::close(fd);
+            }
+            if r == -1 {
+                let e = std::io::Error::last_os_error();
+                eprintln!("zshrs:sysopen: dup2 failed: {}", e);
+                return 2;
+            }
+            target
+        } else {
+            fd
+        };
+
+        // system.c:406-410 — when O_CLOEXEC was requested but the fd
+        // got moved (dup2 strips CLOEXEC), reapply via fcntl.
+        if (flags & libc::O_CLOEXEC) != 0 && fd != final_fd {
+            unsafe {
+                libc::fcntl(final_fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+        }
+
+        if explicit_fd.is_none() {
+            self.variables.insert(fdvar, final_fd.to_string());
+        }
+        0
     }
 
     /// sysseek - seek on file descriptor (zsh/system module)
