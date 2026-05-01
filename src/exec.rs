@@ -17425,17 +17425,44 @@ impl ShellExecutor {
             }
 
             // === DISABLED VARIANTS (dis_*) ===
+            // ${dis_builtins[name]} → "defined" if the builtin was
+            // disabled via `disable name`. Tracked through
+            // self.options['_disabled_<name>']. The other dis_*
+            // variants (aliases/functions/reswords/patchars) lose
+            // their entries entirely on disable in zshrs's table
+            // model (see do_enable_disable at exec.rs:31371) so the
+            // disabled list isn't recoverable post-disable; emit
+            // empty for those.
+            "dis_builtins" => {
+                let disabled: Vec<String> = self
+                    .options
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        if *v {
+                            k.strip_prefix("_disabled_").map(|s| s.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if key == "@" || key == "*" {
+                    let mut sorted = disabled.clone();
+                    sorted.sort();
+                    return Some(sorted.join(" "));
+                }
+                if disabled.iter().any(|d| d == key) {
+                    Some("defined".to_string())
+                } else {
+                    Some(String::new())
+                }
+            }
             "dis_aliases"
             | "dis_galiases"
             | "dis_saliases"
             | "dis_functions"
             | "dis_functions_source"
-            | "dis_builtins"
             | "dis_reswords"
-            | "dis_patchars" => {
-                // We don't track disabled items - return empty
-                Some(String::new())
-            }
+            | "dis_patchars" => Some(String::new()),
 
             // Not a special array
             _ => None,
