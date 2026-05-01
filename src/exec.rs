@@ -29876,6 +29876,16 @@ impl ShellExecutor {
                 }
                 "-u" => use_insecure = true,
                 "-i" => ignore_insecure = true,
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // compinit -X errors in zsh ("bad option") rather
+                    // than silently no-op'ing. Without this, typos
+                    // like \`compinit -B\` (bash convention) would
+                    // proceed normally and only fail later via the
+                    // missing flag's effect.
+                    let bad: String = s[1..].chars().take(1).collect();
+                    eprintln!("zshrs:compinit:1: bad option: -{}", bad);
+                    return 1;
+                }
                 _ => {}
             }
             i += 1;
