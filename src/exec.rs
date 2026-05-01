@@ -33780,36 +33780,96 @@ impl ShellExecutor {
         0
     }
 
-    /// unhash - remove entries from hash table
+    /// unhash - remove entries from hash table. Direct port of
+    /// zsh/Src/builtin.c:4346 bin_unhash. Target table follows the C
+    /// flag dispatch (builtin.c:4354-4379):
+    ///   -d  named directories
+    ///   -f  shell functions
+    ///   -s  suffix aliases
+    ///   -a  aliases (BIN_UNHASH only)
+    ///   default  cmdnamtab (PATH command hash)
+    /// `-m` treats each arg as a glob pattern and removes all matches
+    /// (builtin.c:4396-4424); when no pattern matches we return 1.
     fn builtin_unhash(&mut self, args: &[String]) -> i32 {
-        let mut remove_aliases = false;
-        let mut remove_functions = false;
-        let mut remove_dirs = false;
+        #[derive(Copy, Clone)]
+        enum Target {
+            Aliases,
+            SuffixAliases,
+            Functions,
+            NamedDirs,
+            Commands,
+        }
+        let mut target = Target::Commands;
+        let mut pattern_mode = false;
         let mut names: Vec<&str> = Vec::new();
 
         for arg in args {
             match arg.as_str() {
-                "-a" => remove_aliases = true,
-                "-f" => remove_functions = true,
-                "-d" => remove_dirs = true,
-                "-m" => {} // pattern matching (TODO)
-                _ if arg.starts_with('-') => {}
+                "-a" => target = Target::Aliases,
+                "-s" => target = Target::SuffixAliases,
+                "-f" => target = Target::Functions,
+                "-d" => target = Target::NamedDirs,
+                "-m" => pattern_mode = true,
+                s if s.starts_with('-') => {}
                 _ => names.push(arg),
             }
         }
 
+        let collect_keys = |this: &Self, t: Target| -> Vec<String> {
+            match t {
+                Target::Aliases => this.aliases.keys().cloned().collect(),
+                Target::SuffixAliases => this.suffix_aliases.keys().cloned().collect(),
+                Target::Functions => this.function_names(),
+                Target::NamedDirs => this.named_dirs.keys().cloned().collect(),
+                Target::Commands => this.command_hash.keys().cloned().collect(),
+            }
+        };
+
+        let mut returnval = 0;
+        if pattern_mode {
+            let mut matched = 0;
+            let keys = collect_keys(self, target);
+            let to_remove: Vec<String> = names
+                .iter()
+                .flat_map(|p| {
+                    keys.iter()
+                        .filter(|k| Self::glob_match_static(k, p))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            for n in &to_remove {
+                let removed = match target {
+                    Target::Aliases => self.aliases.remove(n).is_some(),
+                    Target::SuffixAliases => self.suffix_aliases.remove(n).is_some(),
+                    Target::Functions => self.remove_function(n),
+                    Target::NamedDirs => self.named_dirs.remove(n).is_some(),
+                    Target::Commands => self.command_hash.remove(n).is_some(),
+                };
+                if removed {
+                    matched += 1;
+                }
+            }
+            if matched == 0 {
+                returnval = 1;
+            }
+            return returnval;
+        }
+
         for name in names {
-            if remove_aliases {
-                self.aliases.remove(name);
-            }
-            if remove_functions {
-                self.remove_function(name);
-            }
-            if remove_dirs {
-                // Remove from named directories (TODO)
+            let removed = match target {
+                Target::Aliases => self.aliases.remove(name).is_some(),
+                Target::SuffixAliases => self.suffix_aliases.remove(name).is_some(),
+                Target::Functions => self.remove_function(name),
+                Target::NamedDirs => self.named_dirs.remove(name).is_some(),
+                Target::Commands => self.command_hash.remove(name).is_some(),
+            };
+            if !removed {
+                eprintln!("zshrs:unhash:1: no such hash table element: {}", name);
+                returnval = 1;
             }
         }
-        0
+        returnval
     }
 
     /// times - print accumulated user and system times
