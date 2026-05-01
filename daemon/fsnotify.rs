@@ -260,6 +260,20 @@ impl FsWatcher {
             }
         };
         let canon = &state.canonical;
+        // Capture pre-edit path/fpath state so we can compute the delta-walk
+        // after replace_subsystem mutates them. Per DAEMON.md:302-303,
+        // .zshrc edits adding `path+=(/opt/foo/bin)` walk ONLY the new dir;
+        // edits that remove path entries drop only those entries.
+        let pre_path: std::collections::BTreeSet<String> = canon
+            .rows_for("path")
+            .into_iter()
+            .map(|r| unjson_local(&r.value))
+            .collect();
+        let pre_fpath: std::collections::BTreeSet<String> = canon
+            .rows_for("fpath")
+            .into_iter()
+            .map(|r| unjson_local(&r.value))
+            .collect();
         // Replace per-subsystem rows so removed declarations actually disappear.
         canon.replace_subsystem(
             "alias",
@@ -347,9 +361,34 @@ impl FsWatcher {
         canon.replace_subsystem("setopt", setopt_iter, None);
 
         let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-        if let Err(e) = canon.persist(generation) {
-            tracing::warn!(?e, "fsnotify reanalyze: persist failed");
+        if let Err(e) = state.persist_canonical(generation) {
+            tracing::warn!(?e, "fsnotify reanalyze: persist+hydrate failed");
         }
+
+        // Steady-state delta-walk per DAEMON.md:302-304. Compose the same
+        // helper push_canonical uses so both code paths produce identical
+        // post-state. Only the *delta* set of dirs is enumerated/dropped.
+        let post_path: std::collections::BTreeSet<String> = canon
+            .rows_for("path")
+            .into_iter()
+            .map(|r| unjson_local(&r.value))
+            .collect();
+        let post_fpath: std::collections::BTreeSet<String> = canon
+            .rows_for("fpath")
+            .into_iter()
+            .map(|r| unjson_local(&r.value))
+            .collect();
+        let path_added: Vec<String> = post_path.difference(&pre_path).cloned().collect();
+        let path_removed: Vec<String> = pre_path.difference(&post_path).cloned().collect();
+        let fpath_added: Vec<String> = post_fpath.difference(&pre_fpath).cloned().collect();
+        let fpath_removed: Vec<String> = pre_fpath.difference(&post_fpath).cloned().collect();
+        if !path_added.is_empty() || !path_removed.is_empty() {
+            super::zsync::apply_delta_walk(state, "path", &path_added, &path_removed);
+        }
+        if !fpath_added.is_empty() || !fpath_removed.is_empty() {
+            super::zsync::apply_delta_walk(state, "fpath", &fpath_added, &fpath_removed);
+        }
+
         let event = serde_json::json!({
             "subsystem": "*",
             "row_count": canon.total_rows(),
@@ -357,6 +396,10 @@ impl FsWatcher {
             "set_by_shell": 0,
             "trigger": "fsnotify_reanalyze",
             "source": source_root,
+            "path_added": path_added,
+            "path_removed": path_removed,
+            "fpath_added": fpath_added,
+            "fpath_removed": fpath_removed,
         });
         state.broadcast(Frame::event("canonical_changed", event), &[]);
         tracing::info!(
@@ -365,6 +408,20 @@ impl FsWatcher {
             "fsnotify reanalyze complete"
         );
     }
+}
+
+/// Local helper — strip JSON-string quoting around values stored in the
+/// canonical engine. Mirrors canonical::unjson, copied here to avoid making
+/// it pub.
+fn unjson_local(s: &str) -> String {
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
+            if let Some(s2) = v.as_str() {
+                return s2.to_string();
+            }
+        }
+    }
+    s.to_string()
 }
 
 fn json_string_local(s: &str) -> String {

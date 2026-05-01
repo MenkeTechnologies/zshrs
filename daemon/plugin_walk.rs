@@ -92,7 +92,10 @@ pub fn run_full_discovery(
     }
 
     // Persist the rolled-up canonical state once at the end (single rkyv
-    // write covers every plugin contribution).
+    // write covers every plugin contribution). SQLite mirror is hydrated
+    // by the caller (op_first_init / op_plugin_discover) right after this
+    // returns, so each `INFO ... canonical shard written` line is followed
+    // by a fresh `canonical` table view.
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
     let _ = canonical.persist(generation);
 
@@ -143,9 +146,45 @@ fn walk_zinit_plugins(
         if !local.fpath_additions.iter().any(|e| e == &fpath_entry) {
             local.fpath_additions.push(fpath_entry.clone());
         }
+        // Heuristic for plugins like zsh-more-completions that nest
+        // completion files in subdirs (`more_src/`, `man_src/`,
+        // `architecture_src/`, …) and add them to fpath via dynamic
+        // `fpath+=(${0:h}/subdir)` calls our static analyzer can't
+        // resolve. Auto-add any first-level subdir containing `_*` files
+        // to fpath. Bounded scan: stops at first `_*` hit per subdir.
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for sub in rd.flatten() {
+                let sp = sub.path();
+                if !sp.is_dir() {
+                    continue;
+                }
+                let sname = match sp.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if sname.starts_with('.') || sname == "__pycache__" || sname == ".git" {
+                    continue;
+                }
+                let has_completion = std::fs::read_dir(&sp)
+                    .map(|inner| {
+                        inner
+                            .flatten()
+                            .any(|e| e.file_name().to_string_lossy().starts_with('_'))
+                    })
+                    .unwrap_or(false);
+                if has_completion {
+                    let s = sp.display().to_string();
+                    if !local.fpath_additions.iter().any(|e| e == &s) {
+                        local.fpath_additions.push(s);
+                    }
+                }
+            }
+        }
         merge_into_canonical(canonical, &local);
-        write_per_plugin_shard(paths, "zinit-plugin", &plugin_name, &dir, &local)?;
-        stats.shards_written += 1;
+        let wrote = write_per_plugin_shard(paths, "zinit-plugin", &plugin_name, &dir, &local)?;
+        if wrote {
+            stats.shards_written += 1;
+        }
         accumulate_stats(stats, &local);
         records.push(PluginRecord {
             source: "zinit-plugin".to_string(),
@@ -212,8 +251,10 @@ fn walk_zinit_snippets(
         }
         merge_into_canonical(canonical, &local);
         let dir_path = fpath_dir.clone().unwrap_or_else(|| path.clone());
-        write_per_plugin_shard(paths, "zinit-snippet", &name, &dir_path, &local)?;
-        stats.shards_written += 1;
+        let wrote = write_per_plugin_shard(paths, "zinit-snippet", &name, &dir_path, &local)?;
+        if wrote {
+            stats.shards_written += 1;
+        }
         accumulate_stats(stats, &local);
         records.push(PluginRecord {
             source: "zinit-snippet".to_string(),
@@ -357,7 +398,7 @@ fn write_per_plugin_shard(
     name: &str,
     dir: &Path,
     local: &CanonicalState,
-) -> Result<()> {
+) -> Result<bool> {
     let slug = format!("{}-{}", source, sanitize_name(name));
     let source_root = dir.display().to_string();
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
@@ -405,9 +446,20 @@ fn write_per_plugin_shard(
         + shard.zmodload.len()
         + shard.setopts.len()
         + shard.unsetopts.len();
+    // Skip writing empty shards. zinit-snippet entries that point at OMZ
+    // plugins the user has *mentioned* (in their .zshrc) but never actually
+    // loaded — their init scripts produce no aliases / functions / fpath /
+    // anything — would otherwise generate a 350-byte rkyv stub per entry.
+    // Those are pure disk litter. Per docs/DAEMON.md "Plugin discovery"
+    // section: shard creation captures the *state contribution* of the
+    // plugin; zero contribution = no shard.
+    if total == 0 {
+        tracing::debug!(slug = %slug, "skipping empty per-plugin shard");
+        return Ok(false);
+    }
     shard.header.entry_count = total as u32;
     write_canonical_shard(paths, &shard)?;
-    Ok(())
+    Ok(true)
 }
 
 fn per_plugin_shard_path(paths: &super::paths::CachePaths, source: &str, name: &str) -> PathBuf {

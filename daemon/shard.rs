@@ -30,6 +30,55 @@ pub const SHARD_MAGIC: u32 = 0x5A53_4853; // "ZSHS"
 /// Bumped on incompatible rkyv schema changes.
 pub const SHARD_FORMAT_VERSION: u32 = 1;
 
+/// One row in `index.rkyv` — points at a single shard. Per docs/DAEMON.md
+/// "Cache layout (locked)" line 192: `index.rkyv ← top-level fq_name →
+/// (shard_id, generation, byte_offset)`. Today we index by *shard slug*
+/// (one entry per shard file) rather than per fq_name. fq_name → shard
+/// resolution is still O(1) on the client side because every fq_name lives
+/// in exactly one shard whose name is recoverable from the catalog.entries
+/// row's image_path column. Per-fq_name flattening becomes worthwhile once
+/// PHF replaces the rkyv-internal HashMap.
+#[derive(Archive, Deserialize, Serialize, Clone, Debug)]
+#[archive(check_bytes)]
+pub struct IndexEntry {
+    pub slug: String,
+    pub source_root: String,
+    pub generation: u64,
+    pub built_at_ns: u64,
+    pub entry_count: u32,
+    pub byte_size: u64,
+    pub path: String,
+}
+
+/// Top-level index file (`~/.cache/zshrs/index.rkyv`). Written LAST in the
+/// rebuild ordering — every shard atomic-renames into place, then this file
+/// gets a fresh generation. Clients mmap this first to discover what shards
+/// exist + their generations. Per DAEMON.md:184-185: "atomic-rename per
+/// shard with strict ordering — shard rename FIRST, then `index.rkyv`
+/// update — prevents torn reads."
+#[derive(Archive, Deserialize, Serialize, Clone, Debug)]
+#[archive(check_bytes)]
+pub struct IndexShard {
+    pub magic: u32,
+    pub format_version: u32,
+    /// Monotonic generation across the entire index. Each rebuild bumps it.
+    pub generation: u64,
+    pub built_at_ns: u64,
+    pub entries: Vec<IndexEntry>,
+}
+
+impl Default for IndexShard {
+    fn default() -> Self {
+        Self {
+            magic: SHARD_MAGIC,
+            format_version: SHARD_FORMAT_VERSION,
+            generation: 0,
+            built_at_ns: 0,
+            entries: Vec::new(),
+        }
+    }
+}
+
 /// Header of every shard. Generation is monotonic, bumped on each rebuild.
 #[derive(Archive, Deserialize, Serialize, Clone, Debug)]
 #[archive(check_bytes)]
@@ -66,7 +115,14 @@ pub struct CanonicalShard {
     pub aliases: HashMap<String, String>,
     pub global_aliases: HashMap<String, String>,
     pub suffix_aliases: HashMap<String, String>,
+    /// Inline-defined functions captured from `.zshrc` + transitively
+    /// sourced files. Replaced on every fsnotify reanalysis.
     pub functions: HashMap<String, String>,
+    /// Autoload function bodies pre-loaded from $FPATH at first_init / full
+    /// rebuild. Per docs/DAEMON.md "NO WALKING IN CLIENTS" — clients mmap
+    /// these instead of reading $FPATH files at runtime. Never touched by
+    /// .zshrc reanalysis (so a `.zshrc` save doesn't wipe 18k bodies).
+    pub autoload_functions: HashMap<String, String>,
     pub setopts: Vec<String>,
     pub unsetopts: Vec<String>,
     pub bindkeys: HashMap<String, String>,
@@ -104,6 +160,7 @@ impl Default for CanonicalShard {
             global_aliases: HashMap::new(),
             suffix_aliases: HashMap::new(),
             functions: HashMap::new(),
+            autoload_functions: HashMap::new(),
             setopts: Vec::new(),
             unsetopts: Vec::new(),
             bindkeys: HashMap::new(),
@@ -200,8 +257,19 @@ pub fn write_canonical_shard(
     let bytes = rkyv::to_bytes::<_, 4096>(shard)
         .map_err(|e| DaemonError::other(format!("rkyv canonical serialize: {e}")))?;
     {
+        // Born 0600. Without this OpenOptions block, File::create applies
+        // the user's umask (typically 022 → 644), and ensure_file_600 then
+        // coerces every shard with a WARN log line. With it, ensure_file_600
+        // is silent on the happy path. O_NOFOLLOW + O_CREAT|O_EXCL prevents
+        // tmp-file symlink races.
         use std::io::Write;
-        let mut f = std::fs::File::create(&tmp_path)?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .mode(0o600)
+            .open(&tmp_path)?;
         f.write_all(&bytes)?;
         f.sync_all()?;
     }
@@ -253,8 +321,19 @@ pub fn write_shard(paths: &CachePaths, shard: &Shard) -> Result<PathBuf> {
         .map_err(|e| DaemonError::other(format!("rkyv serialize: {e}")))?;
 
     {
+        // O_NOFOLLOW | O_CREAT | O_EXCL on the tmp path: prevents symlink
+        // races where an attacker pre-creates the tmp file as a symlink to
+        // somewhere else. Per docs/DAEMON.md "Sensitive content" — applied
+        // to all shards (the cost is negligible) so sensitive flag is just
+        // a downstream signal, not a separate write path.
         use std::io::Write;
-        let mut f = std::fs::File::create(&tmp_path)?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .mode(0o600)
+            .open(&tmp_path)?;
         f.write_all(&bytes)?;
         f.sync_all()?;
     }
@@ -312,6 +391,30 @@ impl MmappedShard {
 
         let archived_ptr = archived as *const ArchivedShard;
 
+        Ok(Self {
+            _mmap: mmap,
+            path: path.to_path_buf(),
+            archived: archived_ptr,
+        })
+    }
+
+    /// Open a shard with `O_NOFOLLOW` + `MAP_PRIVATE` for sensitive content.
+    /// Per docs/DAEMON.md "Sensitive content" (line 339-342). MAP_PRIVATE
+    /// causes any writes (defensive programming — we don't write but the
+    /// kernel guarantee is "no shared visibility") to stay copy-on-write
+    /// inside this process. O_NOFOLLOW prevents symlink-swap attacks.
+    pub fn open_sensitive(path: &Path) -> Result<Self> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
+        // memmap2's `MmapOptions::map_copy_read_only` returns a private (COW)
+        // read-only mapping → MAP_PRIVATE on Linux/macOS.
+        let mmap = unsafe { memmap2::MmapOptions::new().map_copy_read_only(&file)? };
+        let archived = rkyv::check_archived_root::<Shard>(&mmap[..])
+            .map_err(|e| DaemonError::other(format!("shard validation failed: {e}")))?;
+        let archived_ptr = archived as *const ArchivedShard;
         Ok(Self {
             _mmap: mmap,
             path: path.to_path_buf(),
@@ -381,6 +484,106 @@ pub fn sweep_tmp_files(paths: &CachePaths, max_age: std::time::Duration) -> Resu
         }
     }
     Ok(removed)
+}
+
+/// Build an IndexShard from every existing shard in `paths.images/`. Walks
+/// the dir, opens each shard via mmap to read its header (slug, source_root,
+/// generation, entry_count), populates an IndexEntry, then writes
+/// `~/.cache/zshrs/index.rkyv` atomically. Per DAEMON.md:184-185: shard
+/// rename FIRST, index.rkyv update LAST.
+///
+/// Returns the path the index was written to + the entry count.
+pub fn rebuild_index(paths: &CachePaths) -> Result<(PathBuf, u32)> {
+    let shard_paths = list_shards(paths)?;
+    let mut entries: Vec<IndexEntry> = Vec::with_capacity(shard_paths.len());
+    for sp in &shard_paths {
+        // Try plain Shard first; if that fails, try CanonicalShard (per-plugin
+        // shards use the canonical archive, not the bytecode-entries form).
+        let byte_size = std::fs::metadata(sp).map(|m| m.len()).unwrap_or(0);
+        let path_str = sp.display().to_string();
+
+        if let Ok(m) = MmappedShard::open(sp) {
+            entries.push(IndexEntry {
+                slug: m.slug().to_string(),
+                source_root: m.shard().header.source_root.as_str().to_string(),
+                generation: m.generation(),
+                built_at_ns: m.shard().header.built_at_ns.into(),
+                entry_count: m.entry_count(),
+                byte_size,
+                path: path_str,
+            });
+            continue;
+        }
+        if let Ok(c) = read_canonical_shard(sp) {
+            entries.push(IndexEntry {
+                slug: c.header.slug.clone(),
+                source_root: c.header.source_root.clone(),
+                generation: c.header.generation,
+                built_at_ns: c.header.built_at_ns,
+                entry_count: c.header.entry_count,
+                byte_size,
+                path: path_str,
+            });
+            continue;
+        }
+        tracing::warn!(path = %sp.display(), "rebuild_index: shard unreadable, skipping");
+    }
+    entries.sort_by(|a, b| a.slug.cmp(&b.slug));
+
+    let generation = now_ns();
+    let index = IndexShard {
+        magic: SHARD_MAGIC,
+        format_version: SHARD_FORMAT_VERSION,
+        generation,
+        built_at_ns: generation,
+        entries: entries.clone(),
+    };
+
+    let bytes = rkyv::to_bytes::<_, 4096>(&index)
+        .map_err(|e| DaemonError::other(format!("rkyv index serialize: {e}")))?;
+    let final_path = paths.index_rkyv.clone();
+    let tmp_path = paths
+        .root
+        .join(format!("index.rkyv.tmp.{}.{}", std::process::id(), generation));
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .mode(0o600)
+            .open(&tmp_path)?;
+        f.write_all(&bytes)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp_path, &final_path)?;
+
+    let entry_count = entries.len() as u32;
+    tracing::info!(
+        path = %final_path.display(),
+        generation,
+        entries = entry_count,
+        bytes = bytes.len(),
+        "index.rkyv written"
+    );
+    Ok((final_path, entry_count))
+}
+
+/// Read `index.rkyv` back, returning the owned IndexShard. Used by `zcache
+/// info`, `zcache view index`, and integrity checks. Clients that just want
+/// "is shard X up-to-date" can mmap the file directly and check generation.
+pub fn read_index(paths: &CachePaths) -> Result<IndexShard> {
+    if !paths.index_rkyv.exists() {
+        return Ok(IndexShard::default());
+    }
+    let bytes = std::fs::read(&paths.index_rkyv)?;
+    let archived = rkyv::check_archived_root::<IndexShard>(&bytes)
+        .map_err(|e| DaemonError::other(format!("index.rkyv validation: {e}")))?;
+    let owned: IndexShard = archived
+        .deserialize(&mut rkyv::Infallible)
+        .map_err(|e| DaemonError::other(format!("index.rkyv deserialize: {e:?}")))?;
+    Ok(owned)
 }
 
 /// List every shard file currently in the images dir (sorted by name).
@@ -468,6 +671,74 @@ mod tests {
             Some(&b"\xff\xee\xdd kubectl bytecode"[..])
         );
         assert_eq!(read.get("_nonexistent"), None);
+
+        // Same shard via the sensitive open path (MAP_PRIVATE + O_NOFOLLOW).
+        // Per docs/DAEMON.md:339-342. Read result must match exactly.
+        let read_sensitive = MmappedShard::open_sensitive(&path).unwrap();
+        assert_eq!(read_sensitive.entry_count(), 3);
+        assert_eq!(read_sensitive.slug(), "test");
+        assert_eq!(
+            read_sensitive.get("_docker"),
+            Some(&b"\xaa\xbb\xcc docker bytecode"[..])
+        );
+    }
+
+    #[test]
+    fn open_sensitive_rejects_symlink() {
+        // O_NOFOLLOW means a symlink at the shard path can't be opened.
+        // Defense-in-depth per DAEMON.md sensitive-content section.
+        let (_tmp, paths) = fresh();
+        let mut shard = Shard::new("real", "/Users/wizard/test", 1);
+        shard.insert("_git", b"real bytecode".to_vec());
+        let real_path = write_shard(&paths, &shard).unwrap();
+
+        let symlink_path = paths.images.join("symlink-real.rkyv");
+        std::os::unix::fs::symlink(&real_path, &symlink_path).unwrap();
+
+        // Plain open follows the symlink; sensitive open refuses it.
+        assert!(MmappedShard::open(&symlink_path).is_ok());
+        let err = MmappedShard::open_sensitive(&symlink_path).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("symbolic link") || msg.contains("symlink") || msg.contains("ELOOP") || msg.contains("loop"),
+            "expected symlink-related error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn rebuild_index_writes_index_rkyv() {
+        let (_tmp, paths) = fresh();
+        let mut s1 = Shard::new("system", "/Users/wizard/test", 100);
+        s1.insert("_git", b"git bc".to_vec());
+        write_shard(&paths, &s1).unwrap();
+
+        let mut s2 = Shard::new("zpwr", "/Users/wizard/zpwr", 200);
+        s2.insert("_zpwr", b"zpwr bc".to_vec());
+        write_shard(&paths, &s2).unwrap();
+
+        let (idx_path, count) = rebuild_index(&paths).unwrap();
+        assert_eq!(idx_path, paths.index_rkyv);
+        assert_eq!(count, 2);
+        assert!(idx_path.exists());
+        let mode = std::fs::metadata(&idx_path).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(mode.mode() & 0o777, 0o600);
+
+        let idx = read_index(&paths).unwrap();
+        assert_eq!(idx.entries.len(), 2);
+        let slugs: Vec<&str> = idx.entries.iter().map(|e| e.slug.as_str()).collect();
+        assert!(slugs.contains(&"system"), "system slug missing: {:?}", slugs);
+        assert!(slugs.contains(&"zpwr"), "zpwr slug missing: {:?}", slugs);
+        assert!(idx.generation > 0);
+    }
+
+    #[test]
+    fn read_index_returns_default_when_absent() {
+        let (_tmp, paths) = fresh();
+        let idx = read_index(&paths).unwrap();
+        assert_eq!(idx.entries.len(), 0);
+        assert_eq!(idx.generation, 0);
     }
 
     #[test]

@@ -112,7 +112,12 @@ pub async fn op_source_resolve(state: &std::sync::Arc<DaemonState>, args: Value)
     }
 
     // Read content + compute hash + sensitive-content heuristic.
-    let content = match std::fs::read(p) {
+    //
+    // Per docs/DAEMON.md "Sensitive content" (line 339-342): the read path
+    // uses O_NOFOLLOW so a symlink swap between client stat() and our read
+    // can't redirect us to an attacker-controlled file. This is defense-in-
+    // depth on top of the cache dir being 0700.
+    let content = match read_file_nofollow(p) {
         Ok(b) => b,
         Err(e) => {
             return Err(ErrPayload::new("read_failed", format!("{}: {}", path, e)));
@@ -121,8 +126,10 @@ pub async fn op_source_resolve(state: &std::sync::Arc<DaemonState>, args: Value)
     let hash = Sha256::digest(&content).to_vec();
     let sensitive = is_sensitive(&path, &content);
 
-    // V1: store the source bytes in `bytecode` as a placeholder. When the bytecode
-    // compile path lands, this becomes the actual compiled output.
+    // SQLite is the read-only inspection mirror per DAEMON.md. The actual
+    // bytecode lives in a rkyv shard at images/{hash8}-source-{slug}.rkyv;
+    // SQLite tracks only the metadata needed for staleness checks +
+    // queryable inspection (kind, mtime, inode, hash, sensitive flag).
     let bytes_in = content.len() as i64;
     let bytes_out = content.len() as i64;
     let parent_paths_json = "[]"; // populated when transitive sources are wired
@@ -130,13 +137,12 @@ pub async fn op_source_resolve(state: &std::sync::Arc<DaemonState>, args: Value)
     state.with_catalog(|conn| {
         conn.execute(
             r#"INSERT INTO compiled_files
-               (path, kind, mtime, inode, hash, bytecode, last_used_at, use_count, bytes_in, bytes_out, sensitive, parent_paths)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+               (path, kind, mtime, inode, hash, last_used_at, use_count, bytes_in, bytes_out, sensitive, parent_paths)
+               VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
                ON CONFLICT(path) DO UPDATE SET
                    mtime = excluded.mtime,
                    inode = excluded.inode,
                    hash  = excluded.hash,
-                   bytecode = excluded.bytecode,
                    last_used_at = excluded.last_used_at,
                    use_count = compiled_files.use_count + 1,
                    bytes_in = excluded.bytes_in,
@@ -148,7 +154,6 @@ pub async fn op_source_resolve(state: &std::sync::Arc<DaemonState>, args: Value)
                 on_disk_mtime,
                 on_disk_inode,
                 hash,
-                content,
                 now_ns_i64(),
                 bytes_in,
                 bytes_out,
@@ -199,6 +204,23 @@ fn is_sensitive(path: &str, content: &[u8]) -> bool {
         || upper.contains("SECRET_ACCESS_KEY")
 }
 
+/// Read a file with `O_NOFOLLOW` so a symlink swap between stat() and read()
+/// can't redirect us. Per docs/DAEMON.md "Sensitive content" defense-in-depth.
+/// Linux + macOS + BSD all honor `O_NOFOLLOW`; on platforms that don't,
+/// fall back to plain read (the cache dir is 0700 so the surface is
+/// already small).
+fn read_file_nofollow(p: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(p)?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 fn now_ns_i64() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -235,5 +257,67 @@ mod tests {
             "/Users/wizard/.zshrc",
             b"alias ll='ls -la'\nbindkey ..."
         ));
+    }
+
+    /// Regression: a `source` of a tokens file results in a compiled_files
+    /// row with `sensitive=1`. Catches the failure mode where someone moves
+    /// the heuristic call site without updating the INSERT params.
+    #[tokio::test]
+    async fn source_resolve_sets_sensitive_flag_in_catalog() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let paths = super::super::paths::CachePaths::with_root(tmp.path().join("zshrs"));
+        paths.ensure_dirs().unwrap();
+        let state = super::super::state::DaemonState::new(paths.clone()).unwrap();
+
+        // Write a fake tokens file outside the cache dir.
+        let outside = tmp.path().join("tokens.sh");
+        let mut f = std::fs::File::create(&outside).unwrap();
+        writeln!(f, "export AWS_SECRET_ACCESS_KEY=abc123").unwrap();
+        drop(f);
+
+        let resp = op_source_resolve(
+            &state,
+            serde_json::json!({"path": outside.display().to_string()}),
+        )
+        .await
+        .expect("op_source_resolve");
+        assert_eq!(resp["sensitive"].as_bool(), Some(true), "response flag");
+
+        // Verify the catalog row was written with sensitive=1.
+        let flag: i64 = state
+            .with_catalog(|conn| -> rusqlite::Result<i64> {
+                conn.query_row(
+                    "SELECT sensitive FROM compiled_files WHERE path = ?",
+                    rusqlite::params![outside.display().to_string()],
+                    |r| r.get(0),
+                )
+            })
+            .expect("catalog query");
+        assert_eq!(flag, 1, "catalog row should have sensitive=1");
+
+        // Same file, plain content — sensitive must be 0.
+        let plain = tmp.path().join("plain.sh");
+        let mut f2 = std::fs::File::create(&plain).unwrap();
+        writeln!(f2, "alias ll='ls -la'").unwrap();
+        drop(f2);
+        op_source_resolve(
+            &state,
+            serde_json::json!({"path": plain.display().to_string()}),
+        )
+        .await
+        .expect("op_source_resolve plain");
+        let flag: i64 = state
+            .with_catalog(|conn| -> rusqlite::Result<i64> {
+                conn.query_row(
+                    "SELECT sensitive FROM compiled_files WHERE path = ?",
+                    rusqlite::params![plain.display().to_string()],
+                    |r| r.get(0),
+                )
+            })
+            .expect("catalog query");
+        assert_eq!(flag, 0, "innocent content must not be flagged");
     }
 }

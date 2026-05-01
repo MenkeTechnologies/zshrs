@@ -31,6 +31,12 @@ use super::Result;
 pub struct WalkResult {
     pub command_hash: HashMap<String, String>, // cmd → absolute path
     pub autoload_table: HashMap<String, String>, // function name → file path
+    /// function name → full body bytes. Populated at first_init walk so the
+    /// rkyv canonical shard holds every $FPATH function inline. Clients
+    /// mmap and never re-walk. Per docs/DAEMON.md "NO WALKING IN CLIENTS"
+    /// + "Daemon parsed it once, serialized into rkyv, and clients mmap
+    /// the rkyv shard."
+    pub autoload_bodies: HashMap<String, String>,
     pub completion_files: Vec<String>,         // _foo files in fpath
     pub fpath: Vec<String>,
     pub path: Vec<String>,
@@ -45,6 +51,8 @@ pub struct WalkStats {
     pub fpath_dirs_missing: usize,
     pub commands_found: usize,
     pub autoload_funcs_found: usize,
+    pub autoload_bodies_read: usize,
+    pub autoload_bodies_failed: usize,
     pub completion_files_found: usize,
     pub duration_ms: u64,
 }
@@ -89,7 +97,12 @@ pub fn walk_paths(path_dirs: &[String], fpath_dirs: &[String]) -> WalkResult {
     }
     result.stats.commands_found = result.command_hash.len();
 
-    // Walk $FPATH dirs — collect autoload function file names + completion files.
+    // Walk $FPATH dirs — collect autoload function file names + read every
+    // body. Per docs/DAEMON.md: this walk happens ONCE at first_init; the
+    // bodies land in the rkyv canonical shard; every subsequent shell
+    // launch mmaps the shard with zero walking. Files larger than 4 MiB
+    // are skipped (defensive cap; real autoload functions are KB-sized).
+    const AUTOLOAD_BODY_CAP: u64 = 4 * 1024 * 1024;
     for dir_str in fpath_dirs {
         let dir = Path::new(dir_str);
         if !dir.exists() || !dir.is_dir() {
@@ -101,7 +114,7 @@ pub fn walk_paths(path_dirs: &[String], fpath_dirs: &[String]) -> WalkResult {
             for entry in entries.flatten() {
                 let p = entry.path();
                 if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                    if name.starts_with('.') {
+                    if name.starts_with('.') || name.ends_with(".zwc") {
                         continue;
                     }
                     let path_str = p.display().to_string();
@@ -109,10 +122,26 @@ pub fn walk_paths(path_dirs: &[String], fpath_dirs: &[String]) -> WalkResult {
                     if name.starts_with('_') {
                         result.completion_files.push(path_str.clone());
                     }
-                    result
+                    let inserted = result
                         .autoload_table
                         .entry(name.to_string())
-                        .or_insert(path_str);
+                        .or_insert(path_str.clone());
+                    // Only read body for the first occurrence (zsh "first
+                    // match wins" $FPATH semantics).
+                    if inserted == &path_str {
+                        if let Ok(meta) = entry.metadata() {
+                            if meta.is_file() && meta.len() <= AUTOLOAD_BODY_CAP {
+                                if let Ok(body) = std::fs::read_to_string(&p) {
+                                    result
+                                        .autoload_bodies
+                                        .insert(name.to_string(), body);
+                                    result.stats.autoload_bodies_read += 1;
+                                } else {
+                                    result.stats.autoload_bodies_failed += 1;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -126,6 +155,32 @@ pub fn walk_paths(path_dirs: &[String], fpath_dirs: &[String]) -> WalkResult {
 
 /// Read $PATH/$FPATH from the daemon's own process env. Real Pass 1+2 from .zshrc
 /// analysis replaces this; v1 fallback is the env the daemon was launched with.
+/// Strip canonical engine's JSON-string quoting (mirrors canonical::unjson;
+/// duplicated here to avoid making it pub).
+fn unjson_local(s: &str) -> String {
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
+            if let Some(s2) = v.as_str() {
+                return s2.to_string();
+            }
+        }
+    }
+    s.to_string()
+}
+
+/// Preserve first-seen order, drop duplicates. Used to merge canonical-state
+/// $PATH/$FPATH with the daemon's process env without re-ordering.
+fn dedup_keep_order<I: IntoIterator<Item = String>>(it: I) -> Vec<String> {
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut out = Vec::<String>::new();
+    for s in it {
+        if seen.insert(s.clone()) {
+            out.push(s);
+        }
+    }
+    out
+}
+
 pub fn current_env_paths() -> (Vec<String>, Vec<String>) {
     let path = std::env::var("PATH")
         .unwrap_or_default()
@@ -170,8 +225,8 @@ pub fn hydrate_catalog(state: &DaemonState, walk: &WalkResult, image_path: &Path
 
         let mut insert_entry = conn.prepare(
             "INSERT OR REPLACE INTO entries
-             (fq_name, plugin_id, kind, image_path, byte_offset, source_loc, bytecode)
-             VALUES (?, 'system', ?, ?, 0, ?, NULL)",
+             (fq_name, plugin_id, kind, image_path, byte_offset, source_loc)
+             VALUES (?, 'system', ?, ?, 0, ?)",
         )?;
 
         for (name, source) in &walk.command_hash {
@@ -208,12 +263,68 @@ pub fn run_full_rebuild(
     state: &DaemonState,
     generation: u64,
 ) -> Result<(PathBuf, usize, WalkStats)> {
-    let (path, fpath) = current_env_paths();
+    // Walk what the user's .zshrc actually defines, not what the daemon's
+    // own process env happens to have. After Pass 1+2 (analyze) the
+    // canonical engine knows every `path+=` and `fpath+=` line in the
+    // user's startup files, including zsh-more-completions, zinit
+    // auto-fpath plugin dirs, etc. Falls back to current_env_paths only
+    // when canonical hasn't been seeded yet (cold first ever rebuild
+    // before analyze).
+    let canonical_path: Vec<String> = state
+        .canonical
+        .rows_for("path")
+        .into_iter()
+        .map(|r| unjson_local(&r.value))
+        .filter(|s| !s.is_empty())
+        .collect();
+    let canonical_fpath: Vec<String> = state
+        .canonical
+        .rows_for("fpath")
+        .into_iter()
+        .map(|r| unjson_local(&r.value))
+        .filter(|s| !s.is_empty())
+        .collect();
+    let (env_path, env_fpath) = current_env_paths();
+    // Union of canonical + env (canonical first to preserve $PATH order
+    // semantics — first match wins). De-dup while preserving order.
+    let path = dedup_keep_order(canonical_path.into_iter().chain(env_path));
+    let fpath = dedup_keep_order(canonical_fpath.into_iter().chain(env_fpath));
+    tracing::info!(
+        path_dirs = path.len(),
+        fpath_dirs = fpath.len(),
+        "run_full_rebuild starting walk"
+    );
     let walk = walk_paths(&path, &fpath);
     let stats = walk.stats.clone();
     let shard = build_system_shard(&walk, generation);
     let image_path = shard::write_shard(&state.paths, &shard)?;
     let hydrated = hydrate_catalog(state, &walk, &image_path)?;
+
+    // Per docs/DAEMON.md "NO WALKING IN CLIENTS": every autoload function
+    // body is folded into canonical state at first_init, persisted to the
+    // promotions rkyv shard, and mirrored into SQLite. Subsequent shells
+    // mmap the shard — never re-walk the filesystem.
+    //
+    // Use a SEPARATE `function_autoload` subsystem (not `function`) so that
+    // fsnotify-driven `.zshrc` reanalysis (which calls `replace_subsystem
+    // ("function", ...)` to reflect newly-removed inline definitions) can't
+    // accidentally wipe the 18k autoload bodies. View/lookup falls back
+    // across both subsystems — the namespace is unified at lookup time.
+    let bodies: Vec<(String, String)> = walk
+        .autoload_bodies
+        .iter()
+        .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone()).to_string()))
+        .collect();
+    state
+        .canonical
+        .replace_subsystem("function_autoload", bodies, None);
+    if let Err(e) = state.persist_canonical(generation) {
+        tracing::warn!(?e, "canonical: persist+hydrate of autoload bodies failed");
+    }
+    tracing::info!(
+        bodies_loaded = walk.autoload_bodies.len(),
+        "autoload bodies merged into canonical (rkyv + SQLite mirror)"
+    );
 
     // Register fsnotify watches on every walked $PATH and $FPATH dir.
     for dir in path.iter().chain(fpath.iter()) {
@@ -230,6 +341,13 @@ pub fn run_full_rebuild(
         if let Err(e) = state.fs_watcher.watch_path(wp, false) {
             tracing::warn!(?e, dir = %dir, "fsnotify watch failed (non-fatal)");
         }
+    }
+
+    // Per docs/DAEMON.md:184-185: shard rename FIRST (done above), then
+    // index.rkyv update LAST. Rebuild_index walks every shard in images/
+    // and writes the top-level index atomically.
+    if let Err(e) = shard::rebuild_index(&state.paths) {
+        tracing::warn!(?e, "rebuild_index after run_full_rebuild failed (non-fatal)");
     }
 
     Ok((image_path, hydrated, stats))

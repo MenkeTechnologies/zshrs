@@ -72,6 +72,14 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "import_zcompdump" => op_import_zcompdump(state, args).await,
         "import_zwc" => op_import_zwc(state, args).await,
         "import_history" => op_import_history(state, args).await,
+        "import_catalog" => op_import_catalog(state, args).await,
+        "import_shard" => op_import_shard(state, args).await,
+        "import_all" => op_import_all(state, args).await,
+        "export_all" => op_export_all(state, args).await,
+        "replay_log" => op_replay_log(state, args).await,
+        "config_get" => op_config_get(state, args).await,
+        "config_set" => op_config_set(state, args).await,
+        "config_list" => op_config_list(state).await,
 
         "job_submit" => op_job_submit(state, client_id, args).await,
         "job_list" => op_job_list(state, args).await,
@@ -617,10 +625,18 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
         captured += canon.upsert("zstyle", pat, &json_string(rest), None);
     }
 
-    // Persist the seeded state to the rkyv shard.
+    // Persist the seeded state to the rkyv shard AND mirror into SQLite
+    // via persist_canonical (rkyv is authoritative, SQLite is a hydrated
+    // read-only mirror — every canonical mutation refreshes both).
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    if let Err(e) = canon.persist(generation) {
+    if let Err(e) = state.persist_canonical(generation) {
         tracing::warn!(?e, "canonical: persist after analyze failed");
+    }
+    // Refresh the top-level index so downstream tooling sees the new
+    // canonical shard's generation. Strict-ordering guarantee per
+    // DAEMON.md:184-185 — shard always written before index update.
+    if let Err(e) = super::shard::rebuild_index(&state.paths) {
+        tracing::warn!(?e, "rebuild_index after analyze failed (non-fatal)");
     }
 
     // Register the .zshrc + every transitively-sourced file with the
@@ -646,6 +662,14 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
         }
     }
 
+    // Per-source-root replay log: every non-deterministic line that the
+    // analyzer couldn't fold into canonical state. Per docs/DAEMON.md
+    // "Determinism boundary" (line 278). Clients fetch this on boot via
+    // op_replay_log and execute it locally — preserves correctness for
+    // .zshrc fragments that depend on $$ / $RANDOM / $(date) / etc.
+    let replay_path = write_replay_log(state, &path.display().to_string(), &analysis.non_deterministic_lines)
+        .unwrap_or_default();
+
     let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
     let event = serde_json::json!({
         "subsystem": "*",
@@ -653,6 +677,7 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "set_at_ns": now,
         "set_by_shell": 0,
         "source": path.display().to_string(),
+        "replay_path": replay_path,
     });
     state.broadcast(super::ipc::Frame::event("canonical_changed", event), &[]);
 
@@ -672,8 +697,71 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "setopts": analysis.setopts.len(),
         "env_exports": analysis.env_exports.len(),
         "path_additions": analysis.path_additions.len(),
+        "replay_path": replay_path,
         "fpath_additions": analysis.fpath_additions.len(),
     }))
+}
+
+/// Emit the per-source-root replay log under `~/.cache/zshrs/replay/`. Per
+/// docs/DAEMON.md "Determinism boundary" — the small file holds the
+/// non-deterministic .zshrc fragments that the daemon can't pre-bake. The
+/// client reads it at boot via `op_replay_log` and executes it in-process.
+///
+/// Filename: `{hash8}-{slug}.zsh` where hash8 is taken from the absolute
+/// source-root path so each user's `.zshrc` (or wherever) gets a stable name.
+/// Returns the path the file was written to, or empty string on failure.
+fn write_replay_log(
+    state: &Arc<DaemonState>,
+    source_root: &str,
+    fragments: &[String],
+) -> std::io::Result<String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let _ = std::fs::create_dir_all(&state.paths.replay_dir);
+    let hash8 = super::shard::hash8(source_root);
+    let stem = std::path::Path::new(source_root)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.replace('.', "_"))
+        .unwrap_or_else(|| "anon".to_string());
+    let dest = state.paths.replay_dir.join(format!("{}-{}.zsh", hash8, stem));
+    let tmp = dest.with_extension("zsh.tmp");
+
+    let mut body = String::new();
+    body.push_str("# zshrs replay log — non-deterministic .zshrc fragments\n");
+    body.push_str(&format!("# source: {}\n", source_root));
+    body.push_str(&format!("# fragments: {}\n", fragments.len()));
+    body.push_str(&format!(
+        "# generated: {}\n\n",
+        chrono::Utc::now().to_rfc3339()
+    ));
+    for line in fragments {
+        body.push_str(line);
+        if !line.ends_with('\n') {
+            body.push('\n');
+        }
+    }
+
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .mode(0o600)
+        .open(&tmp)?;
+    f.write_all(body.as_bytes())?;
+    f.sync_all()?;
+    drop(f);
+    std::fs::rename(&tmp, &dest)?;
+
+    tracing::info!(
+        source = source_root,
+        path = %dest.display(),
+        fragments = fragments.len(),
+        "replay log written"
+    );
+    Ok(dest.display().to_string())
 }
 
 fn json_string(s: &str) -> String {
@@ -691,6 +779,11 @@ fn json_string(s: &str) -> String {
 async fn op_plugin_discover(state: &Arc<DaemonState>, _args: Value) -> OpResult {
     let (stats, records) = super::plugin_walk::run_full_discovery(&state.paths, &state.canonical)
         .map_err(|e| ErrPayload::new("plugin_walk_failed", e.to_string()))?;
+    // Refresh SQLite hydration after plugin discoveries roll into canonical
+    // — keeps the inspection mirror fresh for `zcache view function <name>`.
+    if let Err(e) = state.canonical.hydrate_sqlite_view(state) {
+        tracing::warn!(?e, "hydrate after plugin_discover failed (rkyv authoritative)");
+    }
     Ok(json!({
         "stats": stats,
         "plugins": records,
@@ -708,6 +801,8 @@ async fn op_plugin_discover(state: &Arc<DaemonState>, _args: Value) -> OpResult 
 /// Replaces the manual `zcache rebuild --zshrc <path> && zcache rebuild`
 /// dance. Returns combined stats from both passes.
 async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let started_at = std::time::Instant::now();
+
     // ------ Pass 1+2: .zshrc analysis ------
     let analysis_resp = if let Some(path) = args.get("zshrc").and_then(Value::as_str) {
         Some(
@@ -718,18 +813,65 @@ async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
         None
     };
 
-    // ------ Pass 3+4: walk + hydrate ------
-    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    let (image_path, hydrated, walk_stats) = super::walk::run_full_rebuild(state, generation)
-        .map_err(|e| ErrPayload::new("rebuild_failed", e.to_string()))?;
-
-    // ------ Pass 5: plugin tree discovery ------
+    // ------ Pass 3: plugin tree discovery (must run before walk so plugin
+    // fpath_additions land in canonical before walk reads from canonical).
     let (plugin_stats, plugin_records) =
         super::plugin_walk::run_full_discovery(&state.paths, &state.canonical)
             .map_err(|e| ErrPayload::new("plugin_walk_failed", e.to_string()))?;
 
+    // ------ Pass 4+5: walk $PATH + $FPATH using FULL canonical state
+    // (.zshrc analysis + plugin contributions). This is where the 18k+
+    // autoload bodies get loaded into rkyv. Order matters: plugin
+    // discovery first so its fpath additions are visible to the walk.
+    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+    let (image_path, hydrated, walk_stats) = super::walk::run_full_rebuild(state, generation)
+        .map_err(|e| ErrPayload::new("rebuild_failed", e.to_string()))?;
+
+    // ------ Pass 6: hydrate SQLite mirror from rkyv-canonical. Per
+    // DAEMON.md "rkyv = source of truth, SQLite = hydrated mirror". After
+    // analyze + plugin discovery, every alias/function/compdef/path/etc
+    // captured this run lands in the catalog.canonical table so users can
+    // `zcache view function <name>` / sqlite3 it directly.
+    let hydrated_rows = state
+        .canonical
+        .hydrate_sqlite_view(state)
+        .unwrap_or_else(|e| {
+            tracing::warn!(?e, "hydrate after first_init failed (rkyv authoritative)");
+            0
+        });
+
+    // ------ Final pass: rebuild top-level index.rkyv. Per docs/DAEMON.md:
+    // 184-185 strict ordering — every shard atomic-renamed first, then
+    // index.rkyv last so a torn read is impossible.
+    if let Err(e) = super::shard::rebuild_index(&state.paths) {
+        tracing::warn!(?e, "rebuild_index after first_init failed (non-fatal)");
+    }
+
+    // Cold-build-complete notice per docs/DAEMON.md:892. Emitted as a single
+    // `notify` event (OSC-9 / status-line ready on every connected shell)
+    // with elapsed time + entry count. Per the no-banner rule everywhere else,
+    // this fires only on a true first-init (cold cache) — subsequent rebuilds
+    // emit `rebuild_complete` instead, which is silent for the user.
+    let elapsed_ms = started_at.elapsed().as_millis() as u64;
+    let elapsed_s = elapsed_ms / 1000;
+    let total_entries = hydrated + plugin_records.len();
+    let msg = format!(
+        "daemon ready — future shells <10ms cold-start (took {}s, {} entries)",
+        elapsed_s, total_entries,
+    );
+    let notify_payload = json!({
+        "from_shell": 0,
+        "message": msg,
+        "urgency": "low",
+        "kind": "first_init_complete",
+        "elapsed_ms": elapsed_ms,
+        "entries": total_entries,
+    });
+    let _ = state.broadcast(super::ipc::Frame::event("notify", notify_payload), &[]);
+    tracing::info!(elapsed_ms, total_entries, "first_init complete");
+
     Ok(json!({
-        "passes": ["analyze", "walk", "hydrate", "plugin_walk"],
+        "passes": ["analyze", "walk", "hydrate_catalog", "plugin_walk", "hydrate_canonical_view", "rebuild_index"],
         "analysis": analysis_resp,
         "walk": {
             "image_path": image_path.display().to_string(),
@@ -740,7 +882,9 @@ async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
             "stats": plugin_stats,
             "count": plugin_records.len(),
         },
+        "canonical_view_rows": hydrated_rows,
         "generation": generation,
+        "elapsed_ms": elapsed_ms,
     }))
 }
 
@@ -2277,8 +2421,8 @@ async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
     }
 
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    if let Err(e) = state.canonical.persist(generation) {
-        tracing::warn!(?e, "canonical: persist after import failed");
+    if let Err(e) = state.persist_canonical(generation) {
+        tracing::warn!(?e, "canonical: persist+hydrate after import failed");
     }
 
     Ok(json!({
@@ -2419,9 +2563,9 @@ async fn op_import_zwc(state: &Arc<DaemonState>, args: Value) -> OpResult {
         let res = state.with_catalog(|conn| -> rusqlite::Result<()> {
             conn.execute(
                 "INSERT INTO compiled_files \
-                   (path, kind, mtime, inode, hash, bytecode, last_used_at, use_count, \
+                   (path, kind, mtime, inode, hash, last_used_at, use_count, \
                     bytes_in, bytes_out, sensitive, parent_paths) \
-                   VALUES (?, 'autoload', ?, ?, '', NULL, ?, 0, ?, 0, 0, ?) \
+                   VALUES (?, 'autoload', ?, ?, '', ?, 0, ?, 0, 0, ?) \
                    ON CONFLICT(path) DO UPDATE SET \
                      mtime=excluded.mtime, inode=excluded.inode, \
                      parent_paths=excluded.parent_paths",
@@ -2530,6 +2674,589 @@ async fn op_import_history(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "from": path,
         "bytes_in": bytes.len(),
     }))
+}
+
+/// `config_get` — read a runtime config knob. Per docs/DAEMON.md:905.
+async fn op_config_get(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let key = args
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `key`"))?;
+    let value = state.config_get(key);
+    Ok(json!({
+        "key": key,
+        "value": value,
+        "source": match value.is_some() {
+            true => "runtime_or_env",
+            false => "unset",
+        },
+    }))
+}
+
+/// `config_set` — runtime override for any tunable knob (long_cmd_threshold,
+/// log level shortcuts, etc.). Per docs/DAEMON.md:905
+/// `zcache config set long_cmd_threshold <seconds>`.
+async fn op_config_set(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let key = args
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `key`"))?
+        .to_string();
+    let value = args
+        .get("value")
+        .map(|v| match v {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            Value::Bool(b) => b.to_string(),
+            other => other.to_string(),
+        })
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `value`"))?;
+
+    // Surface validation for known keys so callers get a clear error rather
+    // than silent acceptance of garbage. Unknown keys are accepted (forward-
+    // compat for future knobs).
+    match key.as_str() {
+        "long_cmd_threshold" | "log_max_bytes" | "log_max_rotations" => {
+            value
+                .parse::<u64>()
+                .map_err(|e| ErrPayload::new("bad_value", format!("`{}` requires a non-negative integer: {}", key, e)))?;
+        }
+        _ => {}
+    }
+    let prior = state.config_set(&key, value.clone());
+    tracing::info!(key, value, prior = ?prior, "config_set");
+    Ok(json!({
+        "key": key,
+        "value": value,
+        "prior": prior,
+    }))
+}
+
+/// `config_list` — full snapshot of in-memory runtime overrides.
+async fn op_config_list(state: &Arc<DaemonState>) -> OpResult {
+    let snap = state.config_snapshot();
+    let map: serde_json::Map<String, Value> = snap
+        .into_iter()
+        .map(|(k, v)| (k, Value::String(v)))
+        .collect();
+    Ok(json!({
+        "runtime": map,
+        "note": "env vars (ZSHRS_*) act as fallbacks when a key isn't set here",
+    }))
+}
+
+/// `replay_log` — return the per-source-root replay-log body so a booting
+/// client can `eval` it in-process. Per docs/DAEMON.md "Determinism
+/// boundary" (line 278). Two modes:
+///   - source_root: explicit absolute path (typical: `~/.zshrc`).
+///   - default:     scan replay_dir for the user's most-recently-modified
+///     log; that's what spawn-on-demand wants on cold-start.
+async fn op_replay_log(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let source_root = args
+        .get("source_root")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+
+    let replay_path = match source_root {
+        Some(sr) => {
+            let hash8 = super::shard::hash8(&sr);
+            // Pick whichever stem matches our hash8 prefix (don't try to
+            // reconstruct the stem heuristic — just glob the dir).
+            let mut found: Option<std::path::PathBuf> = None;
+            if let Ok(rd) = std::fs::read_dir(&state.paths.replay_dir) {
+                for ent in rd.flatten() {
+                    let n = ent.file_name();
+                    let s = n.to_string_lossy();
+                    if s.starts_with(&format!("{}-", hash8)) && s.ends_with(".zsh") {
+                        found = Some(ent.path());
+                        break;
+                    }
+                }
+            }
+            found
+        }
+        None => {
+            // Newest replay file in the dir (most-recently regenerated).
+            let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+            if let Ok(rd) = std::fs::read_dir(&state.paths.replay_dir) {
+                for ent in rd.flatten() {
+                    let p = ent.path();
+                    if p.extension().and_then(|s| s.to_str()) != Some("zsh") {
+                        continue;
+                    }
+                    let mtime = match ent.metadata().and_then(|m| m.modified()) {
+                        Ok(t) => t,
+                        Err(_) => continue,
+                    };
+                    match &newest {
+                        Some((cur, _)) if *cur >= mtime => {}
+                        _ => newest = Some((mtime, p)),
+                    }
+                }
+            }
+            newest.map(|(_, p)| p)
+        }
+    };
+
+    let path = match replay_path {
+        Some(p) => p,
+        None => {
+            return Ok(json!({
+                "found": false,
+                "body": "",
+            }));
+        }
+    };
+
+    let body = std::fs::read_to_string(&path)
+        .map_err(|e| ErrPayload::new("read_failed", format!("{}: {}", path.display(), e)))?;
+    let line_count = body.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()).count();
+    Ok(json!({
+        "found": true,
+        "path": path.display().to_string(),
+        "body": body,
+        "line_count": line_count,
+    }))
+}
+
+/// `import_catalog` — restore catalog.db from a backup file. Per
+/// docs/DAEMON.md:569. The incoming file is validated as a SQLite database
+/// (open + integrity_check) before being copied into place. Existing
+/// catalog.db is moved to `catalog.db.backup-<ts>` so an accidental import
+/// can be reversed.
+async fn op_import_catalog(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path`"))?
+        .to_string();
+    let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+
+    let p = std::path::Path::new(&path);
+    if !p.is_file() {
+        return Err(ErrPayload::new(
+            "no_such_file",
+            format!("`{}` not found or not a file", path),
+        ));
+    }
+
+    // Validate the incoming file is a real SQLite db with intact tables we expect.
+    let probe = super::catalog::open_at(p)
+        .map_err(|e| ErrPayload::new("bad_catalog", format!("open: {}", e)))?;
+    let table_count: i64 = probe
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| ErrPayload::new("bad_catalog", format!("schema check: {}", e)))?;
+    if table_count == 0 {
+        return Err(ErrPayload::new(
+            "bad_catalog",
+            "incoming file has no tables; not a catalog backup",
+        ));
+    }
+    let integrity_ok: bool = probe
+        .query_row("PRAGMA integrity_check", [], |r| {
+            r.get::<_, String>(0).map(|s| s == "ok")
+        })
+        .unwrap_or(false);
+    if !integrity_ok && !force {
+        return Err(ErrPayload::new(
+            "integrity_check_failed",
+            "incoming catalog failed PRAGMA integrity_check (pass --force to override)",
+        ));
+    }
+    drop(probe);
+
+    let dest = state.paths.catalog_db.clone();
+    let backup_name = format!(
+        "catalog.db.backup-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%S")
+    );
+    let backup_path = state.paths.root.join(&backup_name);
+
+    if dest.exists() {
+        std::fs::rename(&dest, &backup_path).map_err(|e| {
+            ErrPayload::new(
+                "rename_failed",
+                format!("could not back up existing catalog: {}", e),
+            )
+        })?;
+    }
+    std::fs::copy(p, &dest)
+        .map_err(|e| ErrPayload::new("copy_failed", format!("{}: {}", path, e)))?;
+    super::paths::ensure_file_600(&dest).ok();
+
+    tracing::info!(from = %path, backup = %backup_name, integrity_ok, "catalog imported");
+
+    Ok(json!({
+        "imported_from": path,
+        "backup_at": backup_path.display().to_string(),
+        "integrity_ok": integrity_ok,
+        "table_count": table_count,
+    }))
+}
+
+/// `import_shard` — restore a single rkyv shard into images/. Per
+/// docs/DAEMON.md:570. Validates magic + format_version before placing.
+async fn op_import_shard(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let name = args
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `name` (shard slug)"))?
+        .to_string();
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path` (incoming .rkyv file)"))?
+        .to_string();
+    let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+
+    let src = std::path::Path::new(&path);
+    if !src.is_file() {
+        return Err(ErrPayload::new(
+            "no_such_file",
+            format!("`{}` not found", path),
+        ));
+    }
+
+    // Validate magic + format_version by attempting to mmap it.
+    let _probe = super::shard::MmappedShard::open(src)
+        .map_err(|e| ErrPayload::new("bad_shard", format!("{}: {}", path, e)))?;
+
+    // Sanitize the slug — only [A-Za-z0-9_-] allowed, prevents directory escape.
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(ErrPayload::new(
+            "bad_name",
+            "shard name must match [A-Za-z0-9_-]+",
+        ));
+    }
+
+    let dest = state.paths.images.join(format!("{}.rkyv", name));
+    if dest.exists() && !force {
+        return Err(ErrPayload::new(
+            "exists",
+            format!(
+                "shard `{}` already present at {} — pass --force to overwrite",
+                name,
+                dest.display()
+            ),
+        ));
+    }
+
+    let tmp = dest.with_extension("rkyv.tmp.import");
+    std::fs::copy(src, &tmp)
+        .map_err(|e| ErrPayload::new("copy_failed", format!("{}: {}", path, e)))?;
+    super::paths::ensure_file_600(&tmp).ok();
+    std::fs::rename(&tmp, &dest)
+        .map_err(|e| ErrPayload::new("rename_failed", format!("{}: {}", dest.display(), e)))?;
+
+    tracing::info!(name, from = %path, dest = %dest.display(), "shard imported");
+
+    Ok(json!({
+        "imported": name,
+        "from": path,
+        "to": dest.display().to_string(),
+    }))
+}
+
+/// `export_all` — pack every cache artifact into one tar archive. Per
+/// docs/DAEMON.md:562. Plain tar (no zstd dep — keeps the durable-deps
+/// principle from CLAUDE.md). Includes index.rkyv, every shard, catalog.db,
+/// history.db, log files. Sensitive shards excluded unless include_sensitive.
+async fn op_export_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let out = args
+        .get("out")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `out`"))?
+        .to_string();
+    let include_sensitive = args
+        .get("include_sensitive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    // Collect candidate file list (relative paths within ~/.cache/zshrs/).
+    let root = &state.paths.root;
+    let mut entries: Vec<std::path::PathBuf> = Vec::new();
+    if state.paths.index_rkyv.exists() {
+        entries.push(state.paths.index_rkyv.clone());
+    }
+    for shard in super::shard::list_shards(&state.paths).unwrap_or_default() {
+        entries.push(shard);
+    }
+    if state.paths.catalog_db.exists() {
+        entries.push(state.paths.catalog_db.clone());
+    }
+    if state.paths.history_db.exists() {
+        entries.push(state.paths.history_db.clone());
+    }
+    if let Ok(rd) = std::fs::read_dir(root) {
+        for ent in rd.flatten() {
+            let n = ent.file_name();
+            let s = n.to_string_lossy();
+            if s.starts_with("zshrs.log") {
+                entries.push(ent.path());
+            }
+        }
+    }
+
+    // Filter out sensitive shards unless --include-sensitive. Lookup is by
+    // matching shard slug against compiled_files.path that has sensitive=1
+    // (we only know the source-file path, not the shard, so we filter
+    // shards whose slug encodes a sensitive source path's hash8).
+    if !include_sensitive {
+        let sensitive_paths: Vec<String> = state
+            .with_catalog(|conn| -> rusqlite::Result<Vec<String>> {
+                let mut stmt = conn.prepare(
+                    "SELECT path FROM compiled_files WHERE sensitive=1",
+                )?;
+                let rows = stmt
+                    .query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .unwrap_or_default();
+        let sensitive_hashes: Vec<String> = sensitive_paths
+            .iter()
+            .map(|p| super::shard::hash8(p))
+            .collect();
+        if !sensitive_hashes.is_empty() {
+            entries.retain(|p| {
+                let fname = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                !sensitive_hashes.iter().any(|h| fname.starts_with(h))
+            });
+        }
+    }
+
+    // Write a simple ustar archive (POSIX). We avoid the `tar` crate dep —
+    // keeps the daemon self-contained per CLAUDE.md endgame rule.
+    let out_path = std::path::Path::new(&out);
+    let mut writer = std::fs::File::create(out_path)
+        .map_err(|e| ErrPayload::new("create_failed", format!("{}: {}", out, e)))?;
+    let mut archived: Vec<String> = Vec::new();
+    for src in &entries {
+        let rel = src.strip_prefix(root).unwrap_or(src);
+        let rel_str = rel.display().to_string();
+        let bytes = match std::fs::read(src) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        if let Err(e) = write_ustar_entry(&mut writer, &rel_str, &bytes) {
+            return Err(ErrPayload::new(
+                "tar_failed",
+                format!("write entry {}: {}", rel_str, e),
+            ));
+        }
+        archived.push(rel_str);
+    }
+    // ustar end marker: two zero blocks.
+    use std::io::Write as _;
+    let zero = [0u8; 1024];
+    writer
+        .write_all(&zero)
+        .map_err(|e| ErrPayload::new("tar_failed", format!("trailer: {}", e)))?;
+    writer
+        .flush()
+        .map_err(|e| ErrPayload::new("tar_failed", format!("flush: {}", e)))?;
+
+    let total_bytes = std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0);
+    tracing::info!(out = %out, archived_count = archived.len(), total_bytes, "export_all complete");
+
+    Ok(json!({
+        "out": out,
+        "archived": archived,
+        "archived_count": archived.len(),
+        "total_bytes": total_bytes,
+        "include_sensitive": include_sensitive,
+    }))
+}
+
+/// `import_all` — unpack a tar archive produced by `export_all` back into
+/// ~/.cache/zshrs/. Per docs/DAEMON.md:571. Existing files are renamed to
+/// `*.preimport-<ts>` so the import is reversible.
+async fn op_import_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path`"))?
+        .to_string();
+    let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+
+    let src = std::path::Path::new(&path);
+    if !src.is_file() {
+        return Err(ErrPayload::new(
+            "no_such_file",
+            format!("`{}` not found", path),
+        ));
+    }
+
+    let bytes = std::fs::read(src)
+        .map_err(|e| ErrPayload::new("read_failed", format!("{}: {}", path, e)))?;
+
+    let entries = parse_ustar(&bytes)
+        .map_err(|e| ErrPayload::new("bad_archive", e))?;
+    if entries.is_empty() {
+        return Err(ErrPayload::new("bad_archive", "no entries in archive"));
+    }
+
+    let root = &state.paths.root;
+    let backup_suffix = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
+    let mut imported: Vec<String> = Vec::new();
+    let mut skipped: Vec<Value> = Vec::new();
+
+    for (rel, content) in &entries {
+        // Path-traversal guard.
+        if rel.contains("..") || rel.starts_with('/') {
+            skipped.push(json!({"path": rel, "reason": "unsafe path"}));
+            continue;
+        }
+        let dest = root.join(rel);
+        if dest.exists() {
+            if !force {
+                let backup = dest.with_file_name(format!(
+                    "{}.preimport-{}",
+                    dest.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+                    backup_suffix
+                ));
+                let _ = std::fs::rename(&dest, &backup);
+            } else {
+                let _ = std::fs::remove_file(&dest);
+            }
+        }
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(&dest, content) {
+            skipped.push(json!({"path": rel, "reason": e.to_string()}));
+            continue;
+        }
+        super::paths::ensure_file_600(&dest).ok();
+        imported.push(rel.clone());
+    }
+
+    tracing::info!(
+        from = %path,
+        imported = imported.len(),
+        skipped = skipped.len(),
+        "import_all complete",
+    );
+
+    Ok(json!({
+        "from": path,
+        "imported": imported,
+        "imported_count": imported.len(),
+        "skipped": skipped,
+        "skipped_count": skipped.len(),
+        "advice": "run `zcache verify` to confirm the restore",
+    }))
+}
+
+/// Append one ustar-format entry to `writer`. Plain POSIX tar — no extensions,
+/// no GNU tar magic, no compression. Matches what `tar -xf` will read.
+fn write_ustar_entry(
+    writer: &mut std::fs::File,
+    name: &str,
+    data: &[u8],
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let name_bytes = name.as_bytes();
+    if name_bytes.len() > 100 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("path `{}` exceeds ustar 100-char limit", name),
+        ));
+    }
+    let mut header = [0u8; 512];
+    header[..name_bytes.len()].copy_from_slice(name_bytes);
+    // mode (octal, 7 chars + null): 0600
+    let mode_field = b"0000600";
+    header[100..107].copy_from_slice(mode_field);
+    // uid / gid: 0
+    header[108..115].copy_from_slice(b"0000000");
+    header[116..123].copy_from_slice(b"0000000");
+    // size (octal, 11 chars + null)
+    let size_str = format!("{:011o}", data.len());
+    header[124..135].copy_from_slice(size_str.as_bytes());
+    // mtime: now (octal, 11 chars + null)
+    let mtime = chrono::Utc::now().timestamp() as u64;
+    let mtime_str = format!("{:011o}", mtime);
+    header[136..147].copy_from_slice(mtime_str.as_bytes());
+    // chksum field starts as spaces (8 bytes)
+    for i in 148..156 {
+        header[i] = b' ';
+    }
+    // typeflag: '0' (regular file)
+    header[156] = b'0';
+    // ustar magic + version
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    // checksum is sum-of-bytes interpreted as unsigned, with chksum field
+    // counted as spaces (already done above).
+    let checksum: u32 = header.iter().map(|&b| b as u32).sum();
+    let chk_str = format!("{:06o}\0 ", checksum);
+    header[148..156].copy_from_slice(chk_str.as_bytes());
+    writer.write_all(&header)?;
+    writer.write_all(data)?;
+    // Pad data to 512-byte boundary.
+    let pad_len = (512 - (data.len() % 512)) % 512;
+    if pad_len > 0 {
+        let zeros = vec![0u8; pad_len];
+        writer.write_all(&zeros)?;
+    }
+    Ok(())
+}
+
+/// Parse a ustar archive into (relative_path, content) pairs. Mirrors what
+/// `write_ustar_entry` produces. Stops at the trailing zero blocks.
+fn parse_ustar(bytes: &[u8]) -> std::result::Result<Vec<(String, Vec<u8>)>, String> {
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut pos = 0usize;
+    while pos + 512 <= bytes.len() {
+        let header = &bytes[pos..pos + 512];
+        // Two zero blocks → end.
+        if header.iter().all(|&b| b == 0) {
+            break;
+        }
+        // Validate ustar magic.
+        if &header[257..263] != b"ustar\0" {
+            return Err(format!("bad ustar magic at offset {}", pos));
+        }
+        // Name (up to 100 bytes, NUL-terminated).
+        let name_end = header[..100]
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(100);
+        let name = std::str::from_utf8(&header[..name_end])
+            .map_err(|e| format!("bad name encoding at offset {}: {}", pos, e))?
+            .to_string();
+        // Size (octal in 12 bytes, last is NUL).
+        let size_str = std::str::from_utf8(&header[124..135])
+            .map_err(|e| format!("bad size encoding: {}", e))?
+            .trim();
+        let size: usize = usize::from_str_radix(size_str.trim_end_matches('\0'), 8)
+            .map_err(|e| format!("bad size value `{}`: {}", size_str, e))?;
+        pos += 512;
+        if pos + size > bytes.len() {
+            return Err(format!(
+                "entry `{}` claims {} bytes but archive is truncated",
+                name, size
+            ));
+        }
+        let content = bytes[pos..pos + size].to_vec();
+        out.push((name, content));
+        pos += size;
+        // Round up to next 512-byte boundary.
+        let pad = (512 - (size % 512)) % 512;
+        pos += pad;
+    }
+    Ok(out)
 }
 
 /// Parse a zsh history file. Supports both EXTENDED_HISTORY format

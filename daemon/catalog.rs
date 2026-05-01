@@ -4,12 +4,17 @@
 //
 //   plugins        (name, version, source, installed_at, enabled)
 //   plugin_deps    (plugin, dep, constraint)
-//   entries        (fq_name, plugin_id, kind, image_path, byte_offset, source_loc, bytecode BLOB)
+//   entries        (fq_name, plugin_id, kind, image_path, byte_offset, source_loc)
 //   hooks          (kind, name, fq_name)
 //   entry_stats    (fq_name, last_called_at, call_count, total_ns)
-//   compiled_files (path PRIMARY KEY, kind, mtime, inode, hash, bytecode BLOB,
+//   compiled_files (path PRIMARY KEY, kind, mtime, inode, hash,
 //                   last_used_at, use_count, bytes_in, bytes_out, sensitive,
 //                   parent_paths)
+//
+// SQLite is the read-only inspection mirror per DAEMON.md. Bytecode lives in
+// rkyv shards (~/.cache/zshrs/images/), NOT in SQLite BLOBs. The schema-v2
+// migration drops the bytecode columns that v1 carried — they were redundant
+// disk + memory pressure for zero query value.
 //
 // Foundation v1 just creates the schema. Hydration of entries/compiled_files happens
 // later when the parse + bytecode-compile pipelines land. catalog.db starts empty
@@ -25,8 +30,16 @@ use rusqlite::Connection;
 use super::{paths::CachePaths, Result};
 
 /// Schema version stamped into `PRAGMA user_version`. Bumped on incompatible changes;
-/// migrations live in `migrate_to_current` (only one version for now).
-pub const SCHEMA_VERSION: i64 = 1;
+/// migrations live in `migrate_to_current`.
+///
+/// History:
+///   v1 — initial schema (had bytecode BLOB columns on entries + compiled_files)
+///   v2 — drop bytecode BLOBs. SQLite is a read-only inspection mirror per
+///        DAEMON.md; the actual bytecode lives in rkyv shards in
+///        ~/.cache/zshrs/images/. SQLite blob storage was redundant disk +
+///        memory pressure for zero query value (nobody queries bytecode by
+///        content).
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Open (or create) catalog.db, set WAL mode + foreign keys, and ensure the
 /// schema is at SCHEMA_VERSION.
@@ -48,15 +61,100 @@ pub fn open_at(path: &Path) -> Result<Connection> {
     if current_version == 0 {
         create_schema(&conn)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-    } else if current_version != SCHEMA_VERSION {
-        // Future: real migration step. For v1, only version 1 exists.
+    } else if current_version < SCHEMA_VERSION {
+        migrate_to_current(&conn, current_version)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    } else if current_version > SCHEMA_VERSION {
+        // Newer DB, older daemon — refuse rather than risk forward incompat.
         return Err(super::DaemonError::other(format!(
-            "catalog.db schema version mismatch: file is {}, daemon expects {}",
+            "catalog.db schema version mismatch: file is {}, daemon expects {} (downgrade?)",
             current_version, SCHEMA_VERSION
         )));
     }
 
     Ok(conn)
+}
+
+/// Migrate an older catalog.db to SCHEMA_VERSION. Forward-only.
+///
+/// Per docs/DAEMON.md "Versioning & migration": migrations are forward-only,
+/// applied at daemon startup before any writes; failure falls back to a
+/// rebuild-from-sources path. Each step here handles exactly one version
+/// bump so transitive migrations (v1 → v2 → v3 → vN) just chain.
+fn migrate_to_current(conn: &Connection, from: i64) -> rusqlite::Result<()> {
+    tracing::info!(from, to = SCHEMA_VERSION, "catalog: migrating");
+    let mut current = from;
+    while current < SCHEMA_VERSION {
+        match current {
+            1 => migrate_v1_to_v2(conn)?,
+            v => {
+                // No migration registered — fall through. Caller treats this
+                // as a fatal mismatch via the version check after migrate
+                // returns, so the daemon refuses to corrupt unknown data.
+                tracing::error!(version = v, "no migration registered; aborting");
+                return Err(rusqlite::Error::ToSqlConversionFailure(
+                    format!("no migration for catalog v{}", v).into(),
+                ));
+            }
+        }
+        current += 1;
+        tracing::info!(now = current, "catalog: migration step complete");
+    }
+    Ok(())
+}
+
+/// v1 → v2: drop bytecode BLOB columns from `entries` and `compiled_files`.
+/// SQLite is read-only inspection only — bytecode lives in rkyv shards. The
+/// blob columns were redundant disk + memory pressure for zero query value.
+fn migrate_v1_to_v2(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        r#"
+        BEGIN;
+
+        -- entries: drop bytecode column.
+        CREATE TABLE entries_v2 (
+            fq_name        TEXT PRIMARY KEY,
+            plugin_id      TEXT,
+            kind           TEXT NOT NULL,
+            image_path     TEXT,
+            byte_offset    INTEGER,
+            source_loc     TEXT
+        );
+        INSERT INTO entries_v2 (fq_name, plugin_id, kind, image_path, byte_offset, source_loc)
+        SELECT fq_name, plugin_id, kind, image_path, byte_offset, source_loc FROM entries;
+        DROP TABLE entries;
+        ALTER TABLE entries_v2 RENAME TO entries;
+        CREATE INDEX IF NOT EXISTS entries_plugin_idx ON entries(plugin_id);
+        CREATE INDEX IF NOT EXISTS entries_kind_idx   ON entries(kind);
+
+        -- compiled_files: drop bytecode column.
+        CREATE TABLE compiled_files_v2 (
+            path           TEXT PRIMARY KEY,
+            kind           TEXT NOT NULL,
+            mtime          INTEGER,
+            inode          INTEGER,
+            hash           BLOB,
+            last_used_at   INTEGER,
+            use_count      INTEGER NOT NULL DEFAULT 0,
+            bytes_in       INTEGER,
+            bytes_out      INTEGER,
+            sensitive      INTEGER NOT NULL DEFAULT 0,
+            parent_paths   TEXT
+        );
+        INSERT INTO compiled_files_v2
+            (path, kind, mtime, inode, hash, last_used_at, use_count, bytes_in, bytes_out, sensitive, parent_paths)
+        SELECT
+            path, kind, mtime, inode, hash, last_used_at, use_count, bytes_in, bytes_out, sensitive, parent_paths
+        FROM compiled_files;
+        DROP TABLE compiled_files;
+        ALTER TABLE compiled_files_v2 RENAME TO compiled_files;
+        CREATE INDEX IF NOT EXISTS compiled_files_kind_idx      ON compiled_files(kind);
+        CREATE INDEX IF NOT EXISTS compiled_files_sensitive_idx ON compiled_files(sensitive);
+
+        COMMIT;
+        "#,
+    )?;
+    Ok(())
 }
 
 fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
@@ -79,14 +177,15 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         -- One row per cacheable named entity (function, completion handler, etc.).
+        -- The actual bytecode lives in the rkyv shard at `image_path`; SQLite
+        -- is a read-only inspection mirror, NOT bytecode storage.
         CREATE TABLE IF NOT EXISTS entries (
             fq_name        TEXT PRIMARY KEY,
             plugin_id      TEXT,           -- shard slug, '' for system / orphan
             kind           TEXT NOT NULL,  -- 'function' / 'completion' / 'autoload' / 'hook' / 'alias'
             image_path     TEXT,           -- absolute path of the rkyv shard
             byte_offset    INTEGER,        -- offset within shard (rkyv slice start)
-            source_loc     TEXT,           -- 'file.zsh:line' for traceability
-            bytecode       BLOB            -- compiled output (queryable copy)
+            source_loc     TEXT            -- 'file.zsh:line' for traceability
         );
 
         CREATE INDEX IF NOT EXISTS entries_plugin_idx ON entries(plugin_id);
@@ -112,17 +211,19 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
 
         -- Files the daemon has parsed + bytecode-cached, looked up by absolute path.
         -- Covers: `zshrs FILE`, `source FILE`, .zshrc, plugin entry-points, autoload files.
+        -- The actual bytecode lives in a rkyv shard (one per file or aggregated
+        -- depending on kind); SQLite tracks only the metadata needed for
+        -- staleness checks and queryable inspection.
         CREATE TABLE IF NOT EXISTS compiled_files (
             path           TEXT PRIMARY KEY,
             kind           TEXT NOT NULL,  -- 'script' / 'source' / 'zshrc' / 'plugin_init' / 'autoload'
             mtime          INTEGER,        -- ns since epoch
             inode          INTEGER,
-            hash           BLOB,           -- content hash
-            bytecode       BLOB,
+            hash           BLOB,           -- content hash (sha256, NOT bytecode)
             last_used_at   INTEGER,
             use_count      INTEGER NOT NULL DEFAULT 0,
             bytes_in       INTEGER,        -- source size
-            bytes_out      INTEGER,        -- bytecode size
+            bytes_out      INTEGER,        -- bytecode size (in the rkyv shard)
             sensitive      INTEGER NOT NULL DEFAULT 0, -- 1 if heuristics flagged secrets
             parent_paths   TEXT            -- JSON array of files that transitively included this
         );

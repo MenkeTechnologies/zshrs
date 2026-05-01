@@ -143,7 +143,40 @@ fn zcache(args: &[String]) -> i32 {
         "hydrate-view" => zcache_hydrate_view(),
         "watch" => zcache_watch(rest),
         "log" => super::builtins::zlog(args), // alias for `zlog ...`
+        "config" => zcache_config(rest),
+        "doctor" => zcache_simple_op("doctor", json!({})),
         other => err_exit("zcache", &format!("unknown verb `{}`", other)),
+    }
+}
+
+// `zcache config get|set|list <key> [<value>]` — runtime tunable knobs.
+// Per docs/DAEMON.md:905. Known keys: long_cmd_threshold, log_max_bytes,
+// log_max_rotations.
+fn zcache_config(args: &[String]) -> i32 {
+    let verb = args.first().map(|s| s.as_str()).unwrap_or("list");
+    match verb {
+        "list" | "" => zcache_simple_op("config_list", json!({})),
+        "get" => match args.get(1) {
+            Some(key) => zcache_simple_op("config_get", json!({ "key": key })),
+            None => err_exit("zcache config", "usage: zcache config get <key>"),
+        },
+        "set" => match (args.get(1), args.get(2)) {
+            (Some(key), Some(value)) => {
+                zcache_simple_op("config_set", json!({ "key": key, "value": value }))
+            }
+            _ => err_exit(
+                "zcache config",
+                "usage: zcache config set <key> <value>\n\
+                 known keys: long_cmd_threshold, log_max_bytes, log_max_rotations",
+            ),
+        },
+        other => err_exit(
+            "zcache config",
+            &format!(
+                "unknown verb `{}` (try get|set|list)",
+                other
+            ),
+        ),
     }
 }
 
@@ -156,6 +189,13 @@ fn zcache_view(args: &[String]) -> i32 {
     };
     let mut format = "text".to_string();
     let mut filter: Option<String> = None;
+    let mut range: Option<String> = None;
+    let mut all = false;
+    // First non-flag positional after target is the per-target name (e.g.
+    // function name, script path, sourced path, shard slug). Critical for
+    // `zcache view functions _docker-buildx` to actually return that one
+    // function rather than empty.
+    let mut name: Option<String> = None;
     let mut iter = args.iter().skip(1);
     while let Some(a) = iter.next() {
         match a.as_str() {
@@ -167,15 +207,33 @@ fn zcache_view(args: &[String]) -> i32 {
                 Some(p) => filter = Some(p.clone()),
                 None => return err_exit("zcache view", "--filter requires a value"),
             },
+            "--range" => match iter.next() {
+                Some(r) => range = Some(r.clone()),
+                None => return err_exit("zcache view", "--range requires a value"),
+            },
+            "--all" => all = true,
             other if other.starts_with('-') => {
                 return err_exit("zcache view", &format!("unknown flag `{}`", other));
             }
-            _ => {}
+            other => {
+                if name.is_none() {
+                    name = Some(other.to_string());
+                }
+            }
         }
     }
     let mut payload = json!({ "target": target, "format": format });
+    if let Some(n) = name {
+        payload["name"] = json!(n);
+    }
     if let Some(f) = filter {
         payload["filter"] = json!(f);
+    }
+    if let Some(r) = range {
+        payload["range"] = json!(r);
+    }
+    if all {
+        payload["all"] = json!(true);
     }
     let mut client = match connect_or_err() {
         Ok(c) => c,
@@ -201,23 +259,36 @@ fn zcache_view(args: &[String]) -> i32 {
 // Default format = sh (eval-compatible). The canonical reset pattern:
 //   eval $(zcache export aliases)
 fn zcache_export(args: &[String]) -> i32 {
-    // Allow leading `--all-state` / `--all` flag form before the positional
-    // target (per docs/DAEMON.md `zcache export --all-state [--out <path>]`).
+    // Per DAEMON.md the top-level surface has TWO meanings for `--all`:
+    //   - `zcache export --all-state` → eval-compatible all-state script
+    //     (in-memory shell-state restore via `eval $(zcache export --all-state)`)
+    //   - `zcache export --all --out backup.tar.zst` → archive every cache
+    //     artifact into one file (op_export_all). Distinguish by --out presence.
     let (target, args_rest): (String, &[String]) = if let Some(first) = args.first() {
-        if first == "--all-state" || first == "--all" {
+        if first == "--all-state" {
             ("all-state".to_string(), &args[1..])
+        } else if first == "--all" {
+            // If --out comes later, route to archive emit; otherwise legacy
+            // all-state alias.
+            if args[1..].iter().any(|a| a == "--out") {
+                ("--all".to_string(), &args[1..])
+            } else {
+                ("all-state".to_string(), &args[1..])
+            }
         } else {
             (first.clone(), &args[1..])
         }
     } else {
         return err_exit(
             "zcache export",
-            "usage: zcache export <target>|--all-state [<name>] [--format <fmt>] [--additive] [--out <path>]",
+            "usage: zcache export <target>|--all-state|--all --out <path> [<name>] [--format <fmt>] [--additive] [--out <path>] [--include-sensitive]",
         );
     };
     let mut format = "sh".to_string();
     let mut additive = false;
     let mut out_path: Option<String> = None;
+    let mut include_sensitive = false;
+    let mut show_sensitive = false;
     // For `zcache export functions <name>` / `export shard <name>` /
     // `export script <path>` — first non-flag positional after the target.
     let mut name: Option<String> = None;
@@ -233,6 +304,8 @@ fn zcache_export(args: &[String]) -> i32 {
                 Some(p) => out_path = Some(p.clone()),
                 None => return err_exit("zcache export", "--out requires a path"),
             },
+            "--include-sensitive" => include_sensitive = true,
+            "--show-sensitive" => show_sensitive = true,
             other if other.starts_with('-') => {
                 return err_exit("zcache export", &format!("unknown flag `{}`", other));
             }
@@ -245,6 +318,13 @@ fn zcache_export(args: &[String]) -> i32 {
     }
     // Dedicated server ops for non-canonical targets that need bespoke rendering.
     let (op_name, op_payload) = match target.as_str() {
+        "--all" => {
+            let out = match out_path.as_ref() {
+                Some(o) => o.clone(),
+                None => return err_exit("zcache export", "--all requires --out <path>"),
+            };
+            ("export_all", json!({ "out": out, "include_sensitive": include_sensitive }))
+        }
         "zcompdump" => {
             let mut p = json!({});
             if let Some(o) = out_path.as_ref() {
@@ -271,7 +351,13 @@ fn zcache_export(args: &[String]) -> i32 {
             ("export_shard", p)
         }
         _ => {
-            let mut p = json!({ "target": target, "format": format, "additive": additive });
+            let mut p = json!({
+                "target": target,
+                "format": format,
+                "additive": additive,
+                "include_sensitive": include_sensitive,
+                "show_sensitive": show_sensitive,
+            });
             if let Some(n) = name.as_ref() {
                 p["name"] = Value::String(n.clone());
             }
@@ -481,20 +567,60 @@ fn zcache_import(args: &[String]) -> i32 {
         "zcompdump" => "import_zcompdump",
         "zwc" => "import_zwc",
         "history" => "import_history",
+        "catalog" => "import_catalog",
+        "shard" => "import_shard",
+        "--all" => "import_all",
         other => return err_exit(
             "zcache import",
-            &format!("unknown target `{}` (try zcompdump|zwc|history)", other),
+            &format!("unknown target `{}` (try zcompdump|zwc|history|catalog|shard|--all)", other),
         ),
     };
-    let path = match args.get(1) {
-        Some(p) => p.clone(),
-        None => return err_exit("zcache import", "usage: zcache import <target> <path>"),
-    };
+
+    // Per-target arg parsing.
+    //   zcache import shard <name> <path>      → name + path positional
+    //   zcache import zwc --tree <dir>         → tree dir
+    //   zcache import zwc <path>               → single .zwc file
+    //   zcache import {zcompdump,history,catalog,--all} <path> → path
+    let mut name: Option<String> = None;
+    let mut path: Option<String> = None;
+    let mut tree: Option<String> = None;
+    let mut force = false;
+    let mut iter = args.iter().skip(1);
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--tree" => tree = iter.next().cloned(),
+            "--force" => force = true,
+            "--name" => name = iter.next().cloned(),
+            _ => {
+                if op == "import_shard" && name.is_none() {
+                    name = Some(a.clone());
+                } else if path.is_none() {
+                    path = Some(a.clone());
+                }
+            }
+        }
+    }
+
+    let mut payload = serde_json::Map::new();
+    if let Some(p) = path {
+        payload.insert("path".into(), json!(p));
+    }
+    if let Some(n) = name {
+        payload.insert("name".into(), json!(n));
+    }
+    if let Some(t) = tree {
+        payload.insert("path".into(), json!(t));
+        payload.insert("tree".into(), json!(true));
+    }
+    if force {
+        payload.insert("force".into(), json!(true));
+    }
+
     let mut client = match connect_or_err() {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    match client.call(op, json!({ "path": path })) {
+    match client.call(op, Value::Object(payload)) {
         Ok(v) => {
             print_pretty(&v);
             0

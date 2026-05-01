@@ -264,8 +264,11 @@ pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value)
         .map(|v| v != "0")
         .unwrap_or(true)
     {
-        let threshold_secs: u64 = std::env::var("ZSHRS_LONG_CMD_THRESHOLD")
-            .ok()
+        // Resolution order: in-memory config (set via `zcache config set`)
+        // → ZSHRS_LONG_CMD_THRESHOLD env → 30s default.
+        // Per docs/DAEMON.md:905.
+        let threshold_secs: u64 = state
+            .config_get("long_cmd_threshold")
             .and_then(|v| v.parse().ok())
             .unwrap_or(30);
         let threshold_ns: i64 = (threshold_secs as i64) * 1_000_000_000;
