@@ -23879,11 +23879,39 @@ impl ShellExecutor {
                 list_args = args[i + 1..].to_vec();
                 break;
             } else if arg == "-L" {
-                // zsh treats `-L` as `-` + signal name "L" (no such
-                // signal). Match that error path exactly.
-                eprintln!("zshrs:kill:1: unknown signal: SIGL");
-                eprintln!("zshrs:kill:1: type kill -l for a list of signals");
-                return 1;
+                // `kill -L`: tabular signal listing with numbers + names.
+                // Direct port of jobs.c:2881-2909. Width is 2 for <100
+                // signals, 3 otherwise; columns derive from terminal width
+                // (cols = zterm_columns/15 when 30..90, capped at 6).
+                let mut by_num: Vec<&(&str, i32, _)> = signal_map.iter().collect();
+                by_num.sort_by_key(|(_, n, _)| *n);
+                let max_num = by_num.iter().map(|(_, n, _)| *n).max().unwrap_or(0);
+                let width = if max_num >= 100 { 3 } else { 2 };
+                let zterm_columns = match env::var("COLUMNS").ok().and_then(|s| s.parse().ok()) {
+                    Some(c) => c,
+                    None => 80usize,
+                };
+                let cols: usize = if zterm_columns >= 30 {
+                    if zterm_columns < 90 {
+                        std::cmp::max(1, zterm_columns / 15)
+                    } else {
+                        6
+                    }
+                } else {
+                    1
+                };
+                for (idx, (name, num, _)) in by_num.iter().enumerate() {
+                    let sig1 = idx + 1; // 1-based per jobs.c sig counter
+                    let sep = if sig1 % cols != 0 { ' ' } else { '\n' };
+                    print!("{:>width$} {:<10}{}", num, name, sep, width = width);
+                }
+                // jobs.c:2876 ends with putchar('\n') only when no -L; -L
+                // path's loop already terminates the last group with `\n`
+                // when sig1 % cols == 0. If it didn't, force a newline.
+                if by_num.len() % cols != 0 {
+                    println!();
+                }
+                return 0;
             } else if arg == "-s" {
                 // -s signal_name (or numeric signal-by-name)
                 i += 1;
