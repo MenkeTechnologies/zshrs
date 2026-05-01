@@ -20398,11 +20398,14 @@ impl ShellExecutor {
     }
 
     fn builtin_export(&mut self, args: &[String]) -> i32 {
+        // Bare `export` lists every exported var, same form as
+        // `export -p`. Direct port of zsh/Src/builtin.c:bin_typeset
+        // BIN_EXPORT path; POSIX requires this listing.
         // `export -p` (with no other args) — print every exported var
         // as a re-executable `export NAME=value` line. Matches POSIX +
         // zsh behavior. Skips ARG-less / ARG-with-flag iteration only
         // when -p is the sole flag.
-        let only_print = args.len() == 1 && args[0] == "-p";
+        let only_print = args.is_empty() || (args.len() == 1 && args[0] == "-p");
         if only_print {
             let mut keys: Vec<String> = std::env::vars().map(|(k, _)| k).collect();
             keys.sort();
