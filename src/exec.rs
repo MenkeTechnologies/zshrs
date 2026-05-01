@@ -44900,8 +44900,13 @@ impl ShellExecutor {
                         width = s.parse().unwrap_or(6);
                     }
                 }
+                "-" => files.push("-"),
+                "--" => {} // end of options
                 s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                s => {
+                    eprintln!("nl: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
         if files.is_empty() {
