@@ -22553,7 +22553,6 @@ impl ShellExecutor {
         }
 
         let _ = to_history;
-        let _ = fd;
         let _ = silent;
 
         // `read -q` reads a single character (y/n) from a terminal.
@@ -22565,18 +22564,40 @@ impl ShellExecutor {
             return 1;
         }
 
+        // `-u FD` reads from the given file descriptor instead of
+        // stdin. Direct port of zsh's bin_read in builtin.c which
+        // calls dup2(fd, 0) for the read; we keep stdin alone and
+        // read directly from the fd via from_raw_fd. fd=0 (default
+        // or explicit) means stdin — use the standard io::stdin
+        // path so terminal handling (line-buffering, etc.) stays
+        // intact. ManuallyDrop prevents from_raw_fd from closing
+        // the user's fd when the helper File goes out of scope.
+        use std::mem::ManuallyDrop;
+        use std::os::unix::io::FromRawFd;
+        let mut fd_file: Option<ManuallyDrop<std::fs::File>> = if fd > 0 {
+            Some(ManuallyDrop::new(unsafe {
+                std::fs::File::from_raw_fd(fd)
+            }))
+        } else {
+            None
+        };
+
         let input = if let Some(n) = nchars {
             let mut buf = vec![0u8; n];
-            let stdin = io::stdin();
             if let Some(_t) = timeout {
                 // TODO: proper timeout
             }
-            match stdin.lock().read_exact(&mut buf) {
+            let read_result = if let Some(ref mut f) = fd_file {
+                f.read_exact(&mut buf).map(|_| ())
+            } else {
+                let stdin = io::stdin();
+                stdin.lock().read_exact(&mut buf).map(|_| ())
+            };
+            match read_result {
                 Ok(_) => String::from_utf8_lossy(&buf).to_string(),
                 Err(_) => return 1,
             }
         } else {
-            let stdin = io::stdin();
             let mut input = String::new();
             // Track whether the read hit a real terminator. If EOF
             // arrived before the delimiter, zsh's read returns 1 even
@@ -22585,7 +22606,17 @@ impl ShellExecutor {
             // for the trailing partial line.
             let mut hit_terminator = false;
             if delimiter == '\n' {
-                match stdin.lock().read_line(&mut input) {
+                let n_read = if let Some(ref mut f) = fd_file {
+                    // BufReader gives us read_line on a raw fd.
+                    use std::io::BufReader;
+                    let mut br = BufReader::new(&mut **f);
+                    br.read_line(&mut input)
+                } else {
+                    let stdin = io::stdin();
+                    let r = stdin.lock().read_line(&mut input);
+                    r
+                };
+                match n_read {
                     Ok(0) => return 1,
                     Ok(_) => {
                         hit_terminator = input.ends_with('\n');
@@ -22595,7 +22626,14 @@ impl ShellExecutor {
             } else {
                 let mut byte = [0u8; 1];
                 loop {
-                    match stdin.lock().read_exact(&mut byte) {
+                    let r = if let Some(ref mut f) = fd_file {
+                        f.read_exact(&mut byte)
+                    } else {
+                        let stdin = io::stdin();
+                        let r = stdin.lock().read_exact(&mut byte);
+                        r
+                    };
+                    match r {
                         Ok(_) => {
                             let c = byte[0] as char;
                             if c == delimiter {
