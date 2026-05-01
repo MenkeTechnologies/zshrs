@@ -68,7 +68,10 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
 
 /// All shell-state-eval-compatible subsystems, in the dependency order that
 /// `eval $(zcache export --all-state)` expects (path before commands; fpath
-/// before autoloads; aliases last so user-mutable state wins).
+/// before autoloads; aliases last so user-mutable state wins). Includes
+/// the four zsh assoc-array hashes (_comps / _services / _patcomps /
+/// _postpatcomps) so a single `eval` call rehydrates the full completion
+/// state too.
 const ALL_STATE_TARGETS: &[&str] = &[
     "setopt",     // option mask first; downstream behavior depends on this
     "zmodload",   // modules before features that need them
@@ -84,6 +87,11 @@ const ALL_STATE_TARGETS: &[&str] = &[
     "command_hash",
     "autoload_table",
     "functions",
+    "_comps",     // assoc-array hashes — restored after compdef so the
+    "_services",  //   `compdef X Y` records above are reflected here too;
+    "_patcomps",  //   if the user only edits the assoc directly, this
+    "_postpatcomps",  // restores the post-edit state.
+    "_describe_handlers",
     "aliases",    // alias is last so it can shadow function/builtin
     "galiases",
     "saliases",
@@ -147,6 +155,50 @@ fn read_canonical(
     // rkyv-backed in-memory state is the source of truth — SQLite is only a
     // hydrated view target (refreshed by `zcache hydrate-view`).
     Ok(super::zsync::read_canonical_rows_inmem(state, subsystem))
+}
+
+/// Render a zsh assoc-array hash from a canonical subsystem. Output:
+///
+///   typeset -gA <name>
+///   <name>=(
+///   'k1' 'v1'
+///   'k2' 'v2'
+///   ...
+///   )
+///
+/// On `--additive` the wipe is suppressed (the `=( ... )` literal already
+/// reset-replaces the array); the comment switches to additive form
+/// (insertions only via `<name>+=(...)`).
+fn push_zsh_assoc_hash(
+    out: &mut String,
+    array_name: &str,
+    subsystem: &str,
+    state: &DaemonState,
+    additive: bool,
+) -> std::result::Result<(), ErrPayload> {
+    let rows = read_canonical(state, subsystem)?;
+    out.push_str(&format!("typeset -gA {}\n", array_name));
+    if additive {
+        out.push_str(&format!("{}+=(\n", array_name));
+    } else {
+        out.push_str(&format!("{}=(\n", array_name));
+    }
+    for r in &rows {
+        let v = unjson(&r.value);
+        out.push_str(&format!(
+            "'{}' '{}'\n",
+            zsh_singlequote_escape(&r.key),
+            zsh_singlequote_escape(&v)
+        ));
+    }
+    out.push_str(")\n");
+    Ok(())
+}
+
+/// Escape `'` inside a zsh single-quoted string per the standard `'\''`
+/// closing/escaping/opening trick. Other characters are emitted verbatim.
+fn zsh_singlequote_escape(s: &str) -> String {
+    s.replace('\'', "'\\''")
 }
 
 /// Read walk-output entries (command_hash / autoload_table / completions)
@@ -373,6 +425,36 @@ fn render_sh(
                 out.push_str(&format!("compdef {} {}\n", unjson(&r.value), r.key));
             }
         }
+        // The zsh associative-array hashes themselves: emit as
+        //   typeset -gA NAME
+        //   NAME=( 'k1' 'v1' 'k2' 'v2' ... )
+        // so `eval $(zcache export _comps)` populates the running shell's
+        // _comps directly. _comps is keyed off the canonical "compdef"
+        // subsystem (one source of truth — same data as what `compdef`
+        // shell-builtin records). The other three (_services, _patcomps,
+        // _postpatcomps) live under their own subsystems populated by
+        // `zcache import zcompdump`.
+        "_comps" => {
+            push_zsh_assoc_hash(&mut out, "_comps", "compdef", state, additive)?;
+        }
+        "_services" => {
+            push_zsh_assoc_hash(&mut out, "_services", "service", state, additive)?;
+        }
+        "_patcomps" => {
+            push_zsh_assoc_hash(&mut out, "_patcomps", "patcomp", state, additive)?;
+        }
+        "_postpatcomps" => {
+            push_zsh_assoc_hash(&mut out, "_postpatcomps", "postpatcomp", state, additive)?;
+        }
+        "_describe_handlers" => {
+            push_zsh_assoc_hash(
+                &mut out,
+                "_describe_handlers",
+                "describe_handler",
+                state,
+                additive,
+            )?;
+        }
         "command_hash" => {
             // Sourced from catalog.entries WHERE kind='command' (mirror of the
             // system rkyv shard's `cmd:*` entries built by walk.rs Pass 3).
@@ -414,10 +496,13 @@ fn render_sh(
                 out.push_str(&format!("function {} {{\n{}\n}}\n", r.key, body));
             }
         }
-        // Binary / introspection-only targets refuse sh format.
+        // Binary / introspection-only targets refuse sh format. (The
+        // assoc-array hashes _comps / _services / _patcomps /
+        // _postpatcomps / _describe_handlers were here pre-eval-output;
+        // they're handled above now.)
         "shard" | "index" | "catalog" | "history" | "entry_stats" | "subscriptions" | "shells"
-        | "plugins" | "compiled_files" | "daemon_state" | "_comps" | "_services" | "_patcomps"
-        | "_describe_handlers" | "theme" | "zcompdump" | "script" | "sourced" => {
+        | "plugins" | "compiled_files" | "daemon_state" | "theme" | "zcompdump" | "script"
+        | "sourced" => {
             return Err(ErrPayload::new(
                 "format_unsupported_for_target",
                 format!(
@@ -614,6 +699,22 @@ fn render_json(state: &DaemonState, target: &str) -> std::result::Result<String,
             .collect();
         return Ok(serde_json::to_string_pretty(&payload).unwrap_or_default());
     }
+    // Assoc-array hashes (_comps / _services / _patcomps / _postpatcomps /
+    // _describe_handlers) read from their underlying canonical subsystem.
+    if let Some(sub) = assoc_subsystem_for(target) {
+        let rows = read_canonical(state, sub)?;
+        let payload: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                json!({
+                    "key": r.key,
+                    "value": serde_json::from_str::<Value>(&r.value)
+                        .unwrap_or(Value::String(r.value.clone()))
+                })
+            })
+            .collect();
+        return Ok(serde_json::to_string_pretty(&payload).unwrap_or_default());
+    }
     let subsystem = normalize_subsystem(target)?;
     let rows = read_canonical(state, &subsystem)?;
     let payload: Vec<Value> = rows
@@ -666,6 +767,17 @@ fn render_walk_text(
     state: &DaemonState,
     target: &str,
 ) -> std::result::Result<Option<String>, ErrPayload> {
+    // Assoc-array hashes read from canonical (text view).
+    if let Some(sub) = assoc_subsystem_for(target) {
+        let rows = read_canonical(state, sub)?;
+        let mut out = String::new();
+        out.push_str(&format!("# target: {}  (canonical: {})\n", target, sub));
+        out.push_str(&format!("# {} entries\n\n", rows.len()));
+        for r in &rows {
+            out.push_str(&format!("{} = {}\n", r.key, unjson(&r.value)));
+        }
+        return Ok(Some(out));
+    }
     let kinds: &[&str] = match target {
         "command_hash" => &["command"],
         "autoload_table" => &["autoload", "completion"],
@@ -690,6 +802,22 @@ fn yaml_quote(v: &str) -> String {
         format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
         v.to_string()
+    }
+}
+
+/// Map a `zcache view` / `zcache export` target name to the canonical
+/// subsystem when the assoc-array form is renderable in JSON / text by
+/// reading rows directly. Used so `zcache view _comps --format json`
+/// returns the {key,value} list without needing a hand-rolled handler per
+/// target.
+fn assoc_subsystem_for(target: &str) -> Option<&'static str> {
+    match target {
+        "_comps" => Some("compdef"),
+        "_services" => Some("service"),
+        "_patcomps" => Some("patcomp"),
+        "_postpatcomps" => Some("postpatcomp"),
+        "_describe_handlers" => Some("describe_handler"),
+        _ => None,
     }
 }
 
