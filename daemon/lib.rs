@@ -19,6 +19,7 @@ pub mod firstrun;
 pub mod fsnotify;
 pub mod history;
 pub mod ipc;
+pub mod jobs;
 pub mod log;
 pub mod ops;
 pub mod paths;

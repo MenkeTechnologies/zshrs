@@ -5,6 +5,62 @@
 use regex::Regex;
 use std::collections::HashMap;
 
+/// Save/restore for the per-pattern-match magic vars `$match`,
+/// `$mbegin`, `$mend`. Direct port of `MatchData` and the
+/// `savematch`/`restorematch`/`freematch` trio in
+/// src/zsh/Src/Modules/zutil.c:33-80.
+///
+/// zstyle's `-e` (eval pattern on retrieve) and zregexparse's
+/// inner pattern matches both want to evaluate patterns without
+/// clobbering the caller's `$match[]`, `$mbegin[]`, `$mend[]`
+/// variables. The C version keeps a heap-duplicated copy in a
+/// `MatchData` struct, runs the inner match, then either
+/// restores or frees. The Rust port stores `Option<Vec<String>>`
+/// — `None` means the var was unset.
+pub struct MatchData {
+    pub r#match: Option<Vec<String>>,
+    pub mbegin: Option<Vec<String>>,
+    pub mend: Option<Vec<String>>,
+}
+
+impl MatchData {
+    /// Snapshot the current match arrays from the supplied accessor.
+    /// Mirrors zutil.c:39-52 savematch.
+    ///
+    /// `get_arr(name)` should return `Some(arr.clone())` if the
+    /// array variable exists, else `None` — same semantic as
+    /// zsh's `getaparam(name)` returning NULL.
+    pub fn save<F: Fn(&str) -> Option<Vec<String>>>(get_arr: F) -> Self {
+        Self {
+            r#match: get_arr("match"),
+            mbegin: get_arr("mbegin"),
+            mend: get_arr("mend"),
+        }
+    }
+
+    /// Restore the match arrays via the supplied set/unset callbacks.
+    /// Mirrors zutil.c:54-69 restorematch — set if Some(arr),
+    /// otherwise unset.
+    pub fn restore<S, U>(self, mut set_arr: S, mut unset_arr: U)
+    where
+        S: FnMut(&str, Vec<String>),
+        U: FnMut(&str),
+    {
+        match self.r#match {
+            Some(a) => set_arr("match", a),
+            None => unset_arr("match"),
+        }
+        match self.mbegin {
+            Some(a) => set_arr("mbegin", a),
+            None => unset_arr("mbegin"),
+        }
+        match self.mend {
+            Some(a) => set_arr("mend", a),
+            None => unset_arr("mend"),
+        }
+    }
+}
+
 /// Style pattern with associated values
 #[derive(Debug, Clone)]
 pub struct StylePattern {
