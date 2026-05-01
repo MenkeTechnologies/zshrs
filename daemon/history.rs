@@ -148,7 +148,7 @@ pub fn query(
 
     if let Some(f) = filter {
         match mode {
-            "match" => {
+            "match" | "fts" => {
                 sql.push_str(" JOIN history_fts ON h.id = history_fts.rowid");
                 conds.push("history_fts.line MATCH ?".to_string());
                 params.push(Box::new(f.to_string()));

@@ -194,14 +194,24 @@ fn zcache_view(args: &[String]) -> i32 {
 // Default format = sh (eval-compatible). The canonical reset pattern:
 //   eval $(zcache export aliases)
 fn zcache_export(args: &[String]) -> i32 {
-    let target = match args.first() {
-        Some(t) => t.clone(),
-        None => return err_exit("zcache export", "usage: zcache export <target> [--format <fmt>] [--additive] [--out <path>]"),
+    // Allow leading `--all-state` / `--all` flag form before the positional
+    // target (per docs/DAEMON.md `zcache export --all-state [--out <path>]`).
+    let (target, args_rest): (String, &[String]) = if let Some(first) = args.first() {
+        if first == "--all-state" || first == "--all" {
+            ("all-state".to_string(), &args[1..])
+        } else {
+            (first.clone(), &args[1..])
+        }
+    } else {
+        return err_exit(
+            "zcache export",
+            "usage: zcache export <target>|--all-state [--format <fmt>] [--additive] [--out <path>]",
+        );
     };
     let mut format = "sh".to_string();
     let mut additive = false;
     let mut out_path: Option<String> = None;
-    let mut iter = args.iter().skip(1);
+    let mut iter = args_rest.iter();
     while let Some(a) = iter.next() {
         match a.as_str() {
             "--format" => match iter.next() {
@@ -219,13 +229,50 @@ fn zcache_export(args: &[String]) -> i32 {
             _ => {}
         }
     }
-    let payload = json!({ "target": target, "format": format, "additive": additive });
+    // Dedicated server ops for non-canonical targets that need bespoke rendering.
+    let (op_name, op_payload) = match target.as_str() {
+        "zcompdump" => {
+            let mut p = json!({});
+            if let Some(o) = out_path.as_ref() {
+                p["path"] = Value::String(o.clone());
+            }
+            ("export_zcompdump", p)
+        }
+        "catalog" => {
+            let mut p = json!({});
+            if let Some(o) = out_path.as_ref() {
+                p["path"] = Value::String(o.clone());
+            }
+            ("export_catalog", p)
+        }
+        "shard" => {
+            // Need a name. Last positional is the shard name.
+            let name = match args.iter().skip(1).find(|a| !a.starts_with("--") && a.as_str() != args.first().map(|s| s.as_str()).unwrap_or("")) {
+                Some(n) => n.clone(),
+                None => return err_exit("zcache export", "shard target requires a name (zcache export shard <name>)"),
+            };
+            let mut p = json!({ "name": name });
+            if let Some(o) = out_path.as_ref() {
+                p["path"] = Value::String(o.clone());
+            }
+            ("export_shard", p)
+        }
+        _ => ("export", json!({ "target": target, "format": format, "additive": additive })),
+    };
+
     let mut client = match connect_or_err() {
         Ok(c) => c,
         Err(()) => return 1,
     };
-    match client.call("export", payload) {
+    match client.call(op_name, op_payload) {
         Ok(v) => {
+            // Bespoke ops return file-path metadata directly (e.g. "wrote N
+            // bytes to <path>") rather than a body to print. Detect by
+            // absence of "body" field.
+            if v.get("body").is_none() {
+                print_pretty(&v);
+                return 0;
+            }
             let body = v.get("body").and_then(Value::as_str).unwrap_or("");
             match out_path {
                 Some(p) => match std::fs::write(&p, body) {

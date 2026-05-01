@@ -947,29 +947,34 @@ async fn op_export_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
                 .unwrap_or_else(|| std::path::PathBuf::from(".zcompdump"))
         });
 
-    // Synthesize a minimal .zcompdump-compatible body from canonical compdef rows.
-    // The real zsh format is more elaborate (autoload declarations, _comps array,
-    // _patcomps, _services, etc.); v1 emits the assignment-array form which legacy
-    // tooling parses. Future iteration: full byte-compatible emission.
-    let rows: Vec<(String, String)> = state.with_catalog(|conn| {
-        let mut stmt = conn
-            .prepare("SELECT key, value FROM canonical WHERE subsystem = 'compdef' ORDER BY key")?;
-        let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok::<_, rusqlite::Error>(rows)
-    })?;
+    // Synthesize a minimal .zcompdump-compatible body from the rkyv-backed
+    // canonical engine. SQLite is no longer authoritative — engine reads are
+    // in-memory and zero-cost compared to a SQL query.
+    let rows: Vec<(String, String)> = state
+        .canonical
+        .rows_for("compdef")
+        .into_iter()
+        .map(|r| (r.key, r.value))
+        .collect();
 
     let mut body = String::from(
         "#files: 1 version: 5.9\n# Synthesized by zshrs daemon — see docs/DAEMON.md\n\n",
     );
     body.push_str("typeset -gA _comps\n");
     for (cmd, handler) in &rows {
-        let h = handler.trim_matches('"');
+        // Stored value is JSON-encoded ("foo"); strip the JSON quoting.
+        let h = if handler.starts_with('"') && handler.ends_with('"') && handler.len() >= 2 {
+            serde_json::from_str::<serde_json::Value>(handler)
+                .ok()
+                .and_then(|v| v.as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| handler.clone())
+        } else {
+            handler.clone()
+        };
         body.push_str(&format!(
             "_comps[{}]={}\n",
             shell_quote_loose(cmd),
-            shell_quote_loose(h)
+            shell_quote_loose(&h)
         ));
     }
     std::fs::write(&out_path, body)?;
