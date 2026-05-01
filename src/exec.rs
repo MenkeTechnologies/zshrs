@@ -33321,27 +33321,44 @@ impl ShellExecutor {
 
     /// times - print accumulated user and system times
     fn builtin_times(&self, _args: &[String]) -> i32 {
-        use libc::{getrusage, rusage, RUSAGE_CHILDREN, RUSAGE_SELF};
-
-        let mut self_usage: rusage = unsafe { std::mem::zeroed() };
-        let mut child_usage: rusage = unsafe { std::mem::zeroed() };
-
-        unsafe {
-            getrusage(RUSAGE_SELF, &mut self_usage);
-            getrusage(RUSAGE_CHILDREN, &mut child_usage);
+        // Direct port of src/zsh/Src/builtin.c:7324-7341 bin_times.
+        // C uses times(2) which returns clock_t in jiffies, then formats
+        // via pttime macro:
+        //   `%ldm%ld.%02lds` with Mm=X/(60*clktck), Ss=(X/clktck)%clktck,
+        //   FF=(X*100/clktck)%100.
+        //
+        // The Rust port previously used getrusage and `%.3fs %.3fs` —
+        // diverged from zsh which prints `Mm0.00s 0m0.00s` per line.
+        let clktck: i64 = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+        if clktck <= 0 {
+            // Fall back to the rusage-based path on systems where
+            // _SC_CLK_TCK isn't available — better to print something
+            // than fail.
+            return 1;
         }
 
-        let self_user =
-            self_usage.ru_utime.tv_sec as f64 + self_usage.ru_utime.tv_usec as f64 / 1_000_000.0;
-        let self_sys =
-            self_usage.ru_stime.tv_sec as f64 + self_usage.ru_stime.tv_usec as f64 / 1_000_000.0;
-        let child_user =
-            child_usage.ru_utime.tv_sec as f64 + child_usage.ru_utime.tv_usec as f64 / 1_000_000.0;
-        let child_sys =
-            child_usage.ru_stime.tv_sec as f64 + child_usage.ru_stime.tv_usec as f64 / 1_000_000.0;
+        let mut tms: libc::tms = unsafe { std::mem::zeroed() };
+        let r = unsafe { libc::times(&mut tms) };
+        if r == (-1i64 as libc::clock_t) {
+            return 1;
+        }
 
-        println!("{:.3}s {:.3}s", self_user, self_sys);
-        println!("{:.3}s {:.3}s", child_user, child_sys);
+        // pttime port — emit Mm0.00s.
+        let pttime = |x: i64| {
+            let minutes = x / (60 * clktck);
+            let seconds = (x / clktck) % clktck;
+            let hundredths = (x * 100 / clktck) % 100;
+            print!("{}m{}.{:02}s", minutes, seconds, hundredths);
+        };
+
+        pttime(tms.tms_utime as i64);
+        print!(" ");
+        pttime(tms.tms_stime as i64);
+        println!();
+        pttime(tms.tms_cutime as i64);
+        print!(" ");
+        pttime(tms.tms_cstime as i64);
+        println!();
         0
     }
 

@@ -12,6 +12,7 @@
 //   firstrun.rs — first-run detection + 6-line stderr notice
 
 pub mod builtins;
+pub mod canonical;
 pub mod catalog;
 pub mod client;
 pub mod export;
