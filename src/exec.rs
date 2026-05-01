@@ -37402,26 +37402,76 @@ impl ShellExecutor {
     /// Find command in PATH
     /// Port of findcmd() from exec.c
     pub fn findcmd(&self, name: &str, do_hash: bool) -> Option<String> {
-        // Check command hash table first
+        // Direct port of src/zsh/Src/exec.c:897-953 findcmd.
+        //
+        // Algorithm:
+        //   1. If name contains `/` and is relative-prefixed (starts
+        //      with `./`/`../`) OR is an absolute path, the caller
+        //      shouldn't be calling findcmd — return None per
+        //      exec.c:914-919 `if (s = strchr(arg0, '/')) ... return
+        //      NULL;`. Match zsh: cmds with `/` are NOT searched
+        //      through PATH.
+        //   2. Hash table lookup first (exec.c:909-911) — fast path
+        //      for cached resolutions.
+        //   3. PATH walk (exec.c:943-951) — for each dir in $PATH,
+        //      try `dir/name` and check via iscom (X_OK + S_ISREG).
+        if name.is_empty() {
+            return None;
+        }
+        if name.contains('/') {
+            // exec.c:914-919 — path-containing names skip PATH.
+            // The caller is expected to handle absolute / relative
+            // paths directly via spawn/exec.
+            return None;
+        }
+
+        // exec.c:909-911 — hash table lookup. Match zsh:
+        // unconditional even when do_hash=true (the option is HASHCMDS
+        // in zsh, governing whether to *populate* the hash, not
+        // whether to consult it).
         if do_hash {
             if let Some(path) = self.command_hash.get(name) {
-                if std::path::Path::new(path).exists() {
+                if Self::iscom_static(path) {
                     return Some(path.clone());
                 }
             }
         }
 
-        // Search PATH
+        // exec.c:943-951 — walk $PATH and X_OK-test each candidate.
         if let Ok(path_var) = std::env::var("PATH") {
             for dir in path_var.split(':') {
-                let full_path = format!("{}/{}", dir, name);
-                if std::path::Path::new(&full_path).is_file() {
-                    return Some(full_path);
+                let full = if dir.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}/{}", dir, name)
+                };
+                if Self::iscom_static(&full) {
+                    return Some(full);
                 }
             }
         }
 
         None
+    }
+
+    /// Check if `s` is an executable regular file. Direct port of
+    /// src/zsh/Src/exec.c:961-969 iscom — `access(s, X_OK) == 0 &&
+    /// stat(s).S_ISREG`. Static so findcmd can call it without
+    /// borrowing self.
+    fn iscom_static(s: &str) -> bool {
+        use std::ffi::CString;
+        let c = match CString::new(s) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        if unsafe { libc::access(c.as_ptr(), libc::X_OK) } != 0 {
+            return false;
+        }
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::stat(c.as_ptr(), &mut st) } != 0 {
+            return false;
+        }
+        (st.st_mode & libc::S_IFMT) == libc::S_IFREG
     }
 
     /// Hash a command (add to command hash table)
