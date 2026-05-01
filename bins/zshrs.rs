@@ -888,11 +888,45 @@ pub fn zshrs_main() {
         // basename-stripped, which lost the full path zsh exposes).
         let zero = args[0].clone();
         executor.variables.insert("0".to_string(), zero);
+
+        // Long-cmd-started watchdog (-c path mirrors the interactive loop).
+        #[cfg(feature = "daemon")]
+        let completed_c =
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        #[cfg(feature = "daemon")]
+        {
+            let line_owned = code.clone();
+            let cwd_owned = std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string());
+            let completed_c = std::sync::Arc::clone(&completed_c);
+            let threshold_secs: u64 = std::env::var("ZSHRS_LONG_CMD_PRE_THRESHOLD")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5);
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(threshold_secs));
+                if !completed_c.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = zsh::daemon::client::call_once_no_spawn(
+                        "cmd_started",
+                        serde_json::json!({
+                            "line": line_owned,
+                            "cwd": cwd_owned,
+                            "shell_id": 0u64,
+                        }),
+                    );
+                }
+            });
+        }
+
         let start = Instant::now();
         let result = executor.execute_script(code);
-        let duration = start.elapsed().as_millis() as i64;
+        #[cfg(feature = "daemon")]
+        completed_c.store(true, std::sync::atomic::Ordering::SeqCst);
+        let duration_ns_total = start.elapsed().as_nanos() as i64;
+        let duration = (duration_ns_total / 1_000_000) as i64;
 
-        // Track in history
+        // Track in local history
         if let Some(ref engine) = executor.history {
             let cwd = std::env::current_dir()
                 .ok()
@@ -900,6 +934,23 @@ pub fn zshrs_main() {
             if let Ok(id) = engine.add(code, cwd.as_deref()) {
                 let _ = engine.update_last(id, duration, executor.last_status);
             }
+        }
+
+        // Daemon history_append (broadcasts long_cmd_complete on its end).
+        #[cfg(feature = "daemon")]
+        {
+            let cwd = std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string());
+            let _ = zsh::daemon::client::call_once_no_spawn(
+                "history_append",
+                serde_json::json!({
+                    "line": code,
+                    "exit_code": executor.last_status as i64,
+                    "cwd": cwd,
+                    "duration_ns": duration_ns_total,
+                }),
+            );
         }
 
         if let Err(e) = result {
@@ -1782,9 +1833,46 @@ fn run_interactive() {
                     break;
                 }
 
+                // Long-cmd-started watchdog: spawn a thread that fires
+                // cmd_started IPC if the command runs longer than the
+                // threshold without completing. Per docs/DAEMON.md
+                // "Long-running command completion notices — companion
+                // events long_cmd_started fires when a command crosses 5s
+                // of runtime (not waiting for completion)".
+                #[cfg(feature = "daemon")]
+                let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                #[cfg(feature = "daemon")]
+                {
+                    let line_owned = line.to_string();
+                    let cwd_owned = std::env::current_dir()
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string());
+                    let completed = std::sync::Arc::clone(&completed);
+                    let threshold_secs: u64 = std::env::var("ZSHRS_LONG_CMD_PRE_THRESHOLD")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(5);
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(threshold_secs));
+                        if !completed.load(std::sync::atomic::Ordering::SeqCst) {
+                            let _ = zsh::daemon::client::call_once_no_spawn(
+                                "cmd_started",
+                                serde_json::json!({
+                                    "line": line_owned,
+                                    "cwd": cwd_owned,
+                                    "shell_id": 0u64,
+                                }),
+                            );
+                        }
+                    });
+                }
+
                 let start = Instant::now();
                 process_line(line, &mut executor);
-                let duration = start.elapsed().as_millis() as i64;
+                #[cfg(feature = "daemon")]
+                completed.store(true, std::sync::atomic::Ordering::SeqCst);
+                let duration_ns_total = start.elapsed().as_nanos() as i64;
+                let duration = (duration_ns_total / 1_000_000) as i64;
 
                 // Ship history write to worker pool — prompt returns instantly,
                 // SQLite write happens in background.
@@ -1801,6 +1889,29 @@ fn run_interactive() {
                                 let _ = eng.update_last(id, duration, status);
                             }
                         }
+                    });
+                }
+
+                // Daemon history_append IPC — daemon stores the row in
+                // history.db, broadcasts long_cmd_complete / failed /
+                // signaled to other shells if duration > threshold.
+                #[cfg(feature = "daemon")]
+                {
+                    let line_owned = line.to_string();
+                    let cwd_owned = std::env::current_dir()
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string());
+                    let status = executor.last_status as i64;
+                    executor.worker_pool.submit(move || {
+                        let _ = zsh::daemon::client::call_once_no_spawn(
+                            "history_append",
+                            serde_json::json!({
+                                "line": line_owned,
+                                "exit_code": status,
+                                "cwd": cwd_owned,
+                                "duration_ns": duration_ns_total,
+                            }),
+                        );
                     });
                 }
             }
