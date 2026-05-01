@@ -30549,8 +30549,37 @@ impl ShellExecutor {
         };
 
         if positional_args.is_empty() {
-            // Swap top two directories
+            // Swap top two directories — but if PUSHD_TO_HOME is set,
+            // bare `pushd` instead pushes onto the stack and cd's to
+            // $HOME (zsh behavior; man zshbuiltins pushd). zshrs's
+            // unconditional "no other directory" error broke scripts
+            // that set PUSHD_TO_HOME and expected `pushd` to go home
+            // when the stack was empty.
             if self.dir_stack.is_empty() {
+                let pushd_to_home = self
+                    .options
+                    .get("pushdtohome")
+                    .copied()
+                    .unwrap_or(false);
+                if pushd_to_home {
+                    let home = match std::env::var("HOME") {
+                        Ok(h) => PathBuf::from(h),
+                        Err(_) => {
+                            eprintln!("pushd: HOME not set");
+                            return 1;
+                        }
+                    };
+                    self.dir_stack.push(current.clone());
+                    if let Err(e) = std::env::set_current_dir(&home) {
+                        eprintln!("pushd: {}: {}", home.display(), e);
+                        self.dir_stack.pop();
+                        return 1;
+                    }
+                    if !quiet {
+                        self.print_dir_stack();
+                    }
+                    return 0;
+                }
                 eprintln!("pushd: no other directory");
                 return 1;
             }
