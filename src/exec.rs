@@ -28783,10 +28783,13 @@ impl ShellExecutor {
         }
 
         if dir_mode {
-            // Named directories mode (hash -d)
+            // Named directories mode (hash -d). Sorted by name to
+            // match zsh's table-walk order and stabilize the listing.
             if names.is_empty() {
-                // List named directories
-                for (name, path) in &self.named_dirs {
+                let mut sorted: Vec<(&String, &PathBuf)> =
+                    self.named_dirs.iter().collect();
+                sorted.sort_by(|a, b| a.0.cmp(b.0));
+                for (name, path) in sorted {
                     if list_form {
                         println!("hash -d {}={}", name, path.display());
                     } else if verbose {
@@ -28837,8 +28840,14 @@ impl ShellExecutor {
 
         // Regular hash - command path lookup
         if names.is_empty() {
-            // List all hashed commands
-            for (name, path) in &self.command_hash {
+            // List all hashed commands. zsh lists them sorted by name
+            // (per builtin.c bin_hash via the table-walk on the sorted
+            // hash); zshrs's HashMap iteration was nondeterministic so
+            // listings flickered between runs and broke diff-based
+            // tests. Sort by key.
+            let mut sorted: Vec<(&String, &String)> = self.command_hash.iter().collect();
+            sorted.sort_by(|a, b| a.0.cmp(b.0));
+            for (name, path) in sorted {
                 if list_form {
                     println!("hash {}={}", name, path);
                 } else {
