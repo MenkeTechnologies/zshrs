@@ -248,10 +248,27 @@ impl MathFunctions {
     }
 
     fn ldexp(args: &[MathNumber]) -> Result<MathNumber, String> {
+        // Direct port of src/zsh/Src/Modules/mathfunc.c:373-377
+        // (case MF_LDEXP). Calls libc's ldexp(3) — `x * 2^exp` with
+        // proper handling of subnormals, infinity, and underflow
+        // that the naive `x * 2.powi(exp)` doesn't get right at
+        // the f64 boundaries.
         Self::check_args(args, 2, 2, "ldexp")?;
         let x = args[0].as_float();
         let exp = args[1].as_int() as i32;
-        Ok(MathNumber::Float(x * 2f64.powi(exp)))
+        // Rust's std doesn't expose ldexp directly; use libc.
+        #[cfg(unix)]
+        {
+            extern "C" {
+                fn ldexp(x: f64, exp: i32) -> f64;
+            }
+            let r = unsafe { ldexp(x, exp) };
+            return Ok(MathNumber::Float(r));
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(MathNumber::Float(x * 2f64.powi(exp)))
+        }
     }
 
     fn scalbn(args: &[MathNumber]) -> Result<MathNumber, String> {

@@ -116,7 +116,7 @@ fn ask(args: &[String]) -> i32 {
     }
 
     let mut payload = json!({
-        "target_shell": shell_id,
+        "target": { "shell_id": shell_id },
         "kind": kind,
         "payload": { "prompt": prompt },
         "urgency": urgency,
