@@ -1315,6 +1315,38 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: `${=NAME}` (forced IFS-split) and `${==NAME}`
+        // (force NO-split). Direct port of src/zsh/Src/subst.c:2558-2569
+        // — leading `=` sets `spbreak = 2` which forces split on IFS
+        // regardless of SH_WORD_SPLIT, while `==` sets `spbreak = 0`
+        // which forces no-split. Also handles `${=NAME[@]}` /
+        // `${=NAME[*]}` for arrays. The split applies even in DQ
+        // context per zsh semantics — `"${=a}"` still splits.
+        //
+        // Scalar-assignment context (`b=${=a}`) suppresses the split
+        // per subst.c:3901-3920 — `force_split = !ssub && spbreak`,
+        // so `ssub=true` makes the split a no-op and the joined
+        // value is assigned. We detect via `scalar_assign_depth`.
+        if !has_bnull {
+            if let Some((force_split, name, splice)) = parse_forced_split_brace(&untoked) {
+                let name_const = self.builder.add_constant(Value::str(name));
+                self.builder.emit(Op::LoadConst(name_const), 0);
+                let load_bid = match splice {
+                    '@' => crate::exec::BUILTIN_ARRAY_ALL,
+                    '*' => crate::exec::BUILTIN_ARRAY_JOIN_STAR,
+                    _ => crate::exec::BUILTIN_GET_VAR,
+                };
+                let argc = if splice == ' ' { 1 } else { 0 };
+                self.builder.emit(Op::CallBuiltin(load_bid, argc), 0);
+                let in_scalar_assign = self.scalar_assign_depth > 0;
+                if force_split && !in_scalar_assign {
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_WORD_SPLIT, 0), 0);
+                }
+                return;
+            }
+        }
+
         // Fast path: `${NAME[@]}` / `${NAME[*]}` — array splice/join.
         //   `[@]` → BUILTIN_ARRAY_ALL (returns Value::Array, splice).
         //   `[*]` → BUILTIN_ARRAY_JOIN_STAR (joins with first IFS
@@ -4263,6 +4295,62 @@ fn braced_var_ref(s: &str) -> Option<&str> {
     if first == '_' || first.is_ascii_alphabetic() {
         if inner.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
             return Some(inner);
+        }
+    }
+    None
+}
+
+/// Match `${=NAME}` / `${==NAME}` / `${=NAME[@]}` / `${=NAME[*]}` —
+/// the forced-split (single `=`) and force-no-split (double `==`)
+/// flags. Direct port of src/zsh/Src/subst.c:2558-2569 where a leading
+/// `=` after `${` sets `spbreak = 2` (force IFS-split) and `==` sets
+/// `spbreak = 0` (override SH_WORD_SPLIT to no-split).
+///
+/// Returns `Some((force_split, name, splice_kind))` where:
+/// - `force_split = true` for `${=NAME}` (single `=`),
+/// - `force_split = false` for `${==NAME}` (double `==`),
+/// - `splice_kind` is `' '` for plain, `'@'` for `[@]`, `'*'` for `[*]`.
+fn parse_forced_split_brace(s: &str) -> Option<(bool, &str, char)> {
+    let inner = s.strip_prefix("${")?.strip_suffix('}')?;
+    let inner_b = inner.as_bytes();
+    if inner_b.first()? != &b'=' {
+        return None;
+    }
+    let (force_split, rest) = if inner.starts_with("==") {
+        (false, &inner[2..])
+    } else {
+        (true, &inner[1..])
+    };
+    if rest.is_empty() {
+        return None;
+    }
+    let (name_part, splice) =
+        if let Some(stripped) = rest.strip_suffix("[@]") {
+            (stripped, '@')
+        } else if let Some(stripped) = rest.strip_suffix("[*]") {
+            (stripped, '*')
+        } else {
+            (rest, ' ')
+        };
+    if name_part.is_empty() {
+        return None;
+    }
+    let first = name_part.chars().next()?;
+    // Special single-char params (no splice variant for these).
+    if splice == ' '
+        && matches!(first, '#' | '?' | '!' | '_' | '$' | '-' | '@' | '*')
+        && name_part.chars().count() == 1
+    {
+        return Some((force_split, name_part, splice));
+    }
+    // All-digit positional (no splice variant).
+    if splice == ' ' && first.is_ascii_digit() && name_part.chars().all(|c| c.is_ascii_digit()) {
+        return Some((force_split, name_part, splice));
+    }
+    // Plain identifier.
+    if first == '_' || first.is_ascii_alphabetic() {
+        if name_part.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+            return Some((force_split, name_part, splice));
         }
     }
     None

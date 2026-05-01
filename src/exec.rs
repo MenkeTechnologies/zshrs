@@ -4101,7 +4101,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
         //     field, including empties between adjacent separators
         // Mixed IFS treats whitespace runs as collapsing, but a single
         // non-whitespace IFS character creates a field boundary regardless.
-        let only_ws = ifs.chars().all(|c| matches!(c, ' ' | '\t' | '\n'));
+        // zsh's default IFS is " \t\n\0" (space, tab, newline, NUL).
+        // Treat NUL as whitespace-class so the default-IFS path
+        // collapses runs and suppresses empties; without this the
+        // NUL char triggered the non-whitespace branch and emitted
+        // empty fields between every separator.
+        let only_ws = ifs.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\0'));
         let parts: Vec<fusevm::Value> = if only_ws {
             s.split(|c: char| ifs.contains(c))
                 .filter(|p| !p.is_empty())
@@ -4115,8 +4120,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 .map(fusevm::Value::str)
                 .collect()
         };
-        if parts.is_empty() {
-            fusevm::Value::str("")
+        // zsh: word-splitting an empty value yields ZERO words, not one
+        // empty word. `unset b; for w in ${=b}` iterates zero times.
+        // Whitespace-IFS path filtered out the empties already; the
+        // non-whitespace path may have produced a single-empty Vec from
+        // `"".split(...)` which still iterates once — collapse to an
+        // empty Array so for-loops and arg expansion see no words.
+        if parts.is_empty() || (parts.len() == 1 && parts[0].to_str().is_empty()) {
+            fusevm::Value::Array(Vec::new())
         } else if parts.len() == 1 {
             parts.into_iter().next().unwrap()
         } else {
