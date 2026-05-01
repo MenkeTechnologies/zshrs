@@ -45376,7 +45376,14 @@ impl ShellExecutor {
                         'G' => want_groups = true,
                         'n' => want_name = true,
                         'r' => {} // -r: real id (we already use real uid/gid)
-                        _ => {}
+                        // coreutils id rejects unknown flags. Old
+                        // \`_ => {}\` accepted any letter and the
+                        // remaining letters fell through to the
+                        // default print-everything path.
+                        _ => {
+                            eprintln!("id: invalid option -- '{}'", c);
+                            return 1;
+                        }
                     }
                 }
             }
