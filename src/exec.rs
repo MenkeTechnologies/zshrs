@@ -3912,13 +3912,57 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'n' => {
-                    // Natural-numeric sort. Compares chunk-by-chunk: digit
-                    // runs as integers (so "file2" &lt; "file10"), other runs
-                    // lexicographically. Combined with prior `o`/`O` it
-                    // re-sorts; standalone it's a no-op on scalars and a
-                    // numeric sort on arrays.
-                    fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+                    // Numeric sort. Direct port of src/zsh/Src/sort.c:137-172
+                    // (eltpcmp's `if (sortnumeric)` block) and subst.c:2217
+                    // (case 'n' sets SORTIT_NUMERICALLY).
+                    //
+                    // Two flavors per zsh — controlled by sortnumeric value:
+                    //   1  (positive)  — unsigned. A leading `-` is just
+                    //                   another non-digit char and is
+                    //                   compared lexicographically. (n)
+                    //                   alone takes this path.
+                    //   -1 (negative) — signed. A `-` immediately preceding
+                    //                   digits flips the comparison so that
+                    //                   `-5 < -3 < 1`. Triggered by the
+                    //                   `-` flag char per subst.c:2220-2222
+                    //                   (case '-': sortit |= NUMERICALLY_SIGNED).
+                    //
+                    // We pre-scan the flag string for a literal `-` after
+                    // the `n` to enable signed mode. This matches the order-
+                    // independent behavior of zsh's flag dispatch (any
+                    // `-` in the (...) group enables signed mode for the
+                    // numeric sort).
+                    let signed = chars.iter().any(|&c| c == '-');
+                    fn natural_cmp(a: &str, b: &str, signed: bool) -> std::cmp::Ordering {
                         use std::cmp::Ordering;
+                        if signed {
+                            // Strip a leading sign and compare numerically
+                            // when both look like signed integers. Falls
+                            // back to per-char compare when not numeric.
+                            let parse_signed = |s: &str| -> Option<i128> {
+                                let bytes = s.as_bytes();
+                                if bytes.is_empty() {
+                                    return None;
+                                }
+                                let (neg, rest) = match bytes[0] {
+                                    b'-' if bytes.len() > 1 && bytes[1].is_ascii_digit() => {
+                                        (true, &s[1..])
+                                    }
+                                    b'+' if bytes.len() > 1 && bytes[1].is_ascii_digit() => {
+                                        (false, &s[1..])
+                                    }
+                                    c if c.is_ascii_digit() => (false, s),
+                                    _ => return None,
+                                };
+                                rest.parse::<i128>()
+                                    .ok()
+                                    .map(|n| if neg { -n } else { n })
+                            };
+                            if let (Some(va), Some(vb)) = (parse_signed(a), parse_signed(b)) {
+                                return va.cmp(&vb);
+                            }
+                            // fall through to natural compare below
+                        }
                         let mut ai = a.chars().peekable();
                         let mut bi = b.chars().peekable();
                         loop {
@@ -3967,11 +4011,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     }
                     state = match state {
                         St::A(mut a) => {
-                            a.sort_by(|x, y| natural_cmp(x, y));
+                            a.sort_by(|x, y| natural_cmp(x, y, signed));
                             St::A(a)
                         }
                         s => s,
                     };
+                }
+                '-' => {
+                    // `(-)` — signed-numeric sort modifier per
+                    // src/zsh/Src/subst.c:2220-2222. The actual sort
+                    // happens in the `n` arm above; this arm just
+                    // consumes the flag char so unrecognized-flag
+                    // paths don't trip on it.
                 }
                 'i' => {
                     // Case-insensitive sort. Re-applies sort using lowercase
