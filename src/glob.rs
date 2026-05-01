@@ -421,6 +421,15 @@ pub struct QualifierSet {
     pub colon_mods: Option<String>,
     pub pre_words: Vec<String>,
     pub post_words: Vec<String>,
+    /// `(M)` qualifier — append `/` to directory entries in output.
+    /// Direct port of zsh/Src/glob.c:1557-1561 (`case 'M'`):
+    ///   `gf_markdirs = !(sense & 1)` — set when the qualifier appears
+    ///   without a `^` toggle. Stored per-qualifier-set rather than per
+    ///   GlobOptions so a single glob call's qualifier picks it up.
+    pub mark_dirs: bool,
+    /// `(T)` qualifier — append type-char (ls -F style) to every entry.
+    /// Direct port of zsh/Src/glob.c:1562-1566 (`case 'T'`).
+    pub list_types: bool,
 }
 
 /// Main glob state
@@ -449,14 +458,20 @@ impl GlobState {
         self.pathbuf.clear();
         self.pathpos = 0;
 
-        // Check if globbing is enabled and pattern has wildcards
-        if !has_wildcards(pattern) {
-            return vec![pattern.to_string()];
-        }
-
-        // Parse qualifiers if present
+        // Parse qualifiers first so a bare-qualifier pattern like `dir(/)`
+        // (no wildcard, just a stat-based filter) still enters the expansion
+        // path. Without this, `has_wildcards("dir(/)")` returns false and the
+        // pattern echoes back unfiltered, which defeats the whole point of
+        // qualifiers.
         let (pat, quals) = self.parse_qualifiers(pattern);
         self.qualifiers = quals;
+
+        // Now check wildcards on the qualifier-stripped pattern. A pure
+        // literal with a qualifier (`name(.)`) still needs to enter the
+        // scanner so the qualifier filter can run against the literal name.
+        if !has_wildcards(&pat) && self.qualifiers.is_none() {
+            return vec![pattern.to_string()];
+        }
 
         // Parse the pattern into components
         if let Some(complist) = self.parse_pattern(&pat) {
@@ -476,16 +491,25 @@ impl GlobState {
         // Apply subscript selection
         self.apply_selection();
 
-        // Extract filenames
+        // Extract filenames. Mark-dirs / list-types come from EITHER the
+        // GlobOptions (caller-supplied default) OR the parsed `(M)`/`(T)`
+        // qualifier on this glob — whichever is set wins. Direct port of
+        // zsh/Src/glob.c:355,372 — output marker emission consults the
+        // per-glob `gf_markdirs` / `gf_listtypes` flags which the qualifier
+        // parser at glob.c:1557-1566 sets.
+        let mark_dirs = self.options.mark_dirs
+            || self.qualifiers.as_ref().map(|q| q.mark_dirs).unwrap_or(false);
+        let list_types = self.options.list_types
+            || self.qualifiers.as_ref().map(|q| q.list_types).unwrap_or(false);
         let mut results: Vec<String> = self
             .matches
             .iter()
             .map(|m| {
                 let mut s = m.path.to_string_lossy().to_string();
-                if self.options.mark_dirs || self.options.list_types {
+                if mark_dirs || list_types {
                     if let Ok(meta) = fs::symlink_metadata(&m.path) {
                         let ch = file_type_char(meta.mode());
-                        if self.options.list_types || (self.options.mark_dirs && ch == '/') {
+                        if list_types || (mark_dirs && ch == '/') {
                             s.push(ch);
                         }
                     }
@@ -710,8 +734,14 @@ impl GlobState {
                 'N' => { /* nullglob handled elsewhere */ }
                 'D' => { /* dotglob handled elsewhere */ }
                 'n' => { /* numsort handled elsewhere */ }
-                'M' => { /* markdirs handled elsewhere */ }
-                'T' => { /* listtypes handled elsewhere */ }
+                // (M) / (T) — set per-qualifier-set flags. glob.c:1557-1566:
+                //   case 'M': gf_markdirs = !(sense & 1);  break;
+                //   case 'T': gf_listtypes = !(sense & 1); break;
+                // `sense & 1` = the `^`-toggle bit. zshrs's parser tracks
+                // `negated`; mirror by `!negated`. Read at output-emit
+                // time to mark dirs / list types like coreutils ls -F.
+                'M' => qs.mark_dirs = !negated,
+                'T' => qs.list_types = !negated,
                 'F' => qs.qualifiers.push(Qualifier::NonEmptyDir),
                 // Subscript
                 '[' => {
@@ -924,6 +954,21 @@ impl GlobState {
 
         if !current.is_empty() {
             components.push(PatternComponent::Pattern(current));
+        }
+
+        // Trailing `**` (or `**/`) with no following pattern — without an
+        // implicit `*`, the scanner walks the tree but emits nothing, since
+        // `Pattern` components are what produce match output. zshrs synthesis
+        // direction (per CLAUDE.md): absorb good ideas from other shells. Both
+        // zsh-strict (`**` ≡ `*` top-level) and bash-globstar (`**` ≡ `**/*`
+        // recursive) are reasonable; we pick the bash-globstar interpretation
+        // because `**` empty-handed should mean "everything", and `*` already
+        // exists for the top-level case. A user wanting top-level only writes
+        // `*`, never `**`. This makes `**(/)` ≡ "every directory recursively"
+        // and `**(.)` ≡ "every file recursively" — the readings users reach
+        // for first.
+        if let Some(PatternComponent::Recursive { .. }) = components.last() {
+            components.push(PatternComponent::Pattern("*".to_string()));
         }
 
         if components.is_empty() {
@@ -1703,6 +1748,36 @@ fn expand_ccl(prefix: &str, content: &str, suffix: &str) -> Option<Vec<String>> 
 // ============================================================================
 // Convenience functions
 // ============================================================================
+
+/// Split a pattern at its trailing zsh-style qualifier suffix. Returns
+/// `(pattern_without_qualifier, qualifier_inner)` — the inner is the bytes
+/// between the matching parens, without the surrounding `()` and without
+/// any leading `#q`. Returns `(pattern, None)` when there is no qualifier
+/// suffix. Useful for callers that want to use the pattern half with the
+/// runtime [`pattern_match`] (which has no qualifier semantics) while
+/// reporting or applying the qualifier separately.
+pub fn split_qualifier(pattern: &str) -> (&str, Option<&str>) {
+    if !pattern.ends_with(')') {
+        return (pattern, None);
+    }
+    let bytes = pattern.as_bytes();
+    let mut depth = 0;
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                depth -= 1;
+                if depth == 0 {
+                    let inner = &pattern[i + 1..pattern.len() - 1];
+                    let inner = inner.strip_prefix("#q").unwrap_or(inner);
+                    return (&pattern[..i], Some(inner));
+                }
+            }
+            _ => {}
+        }
+    }
+    (pattern, None)
+}
 
 /// Glob with default options
 pub fn glob(pattern: &str) -> Vec<String> {

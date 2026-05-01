@@ -4646,6 +4646,37 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     .unwrap_or(0)
             });
         }
+        // (M) mark-dirs / (T) list-types qualifiers — direct port of
+        // zsh/Src/glob.c:1557-1566 (case 'M' / case 'T'). zsh appends
+        // a single char to each output (or only to dirs for `M`):
+        //   /  directory      *  executable regular file
+        //   @  symlink        |  fifo
+        //   =  socket         #  block device   %  char device
+        //
+        // M alone marks ONLY directories with `/`; T marks every
+        // file with its type char. Both sourced from glob.c:355,372
+        // emit-side logic on gf_markdirs / gf_listtypes flags.
+        let mark_dirs = qual.contains('M');
+        let list_types = qual.contains('T');
+        if mark_dirs || list_types {
+            matches = matches
+                .into_iter()
+                .map(|p| {
+                    use std::os::unix::fs::PermissionsExt;
+                    let meta = match std::fs::symlink_metadata(&p) {
+                        Ok(m) => m,
+                        Err(_) => return p,
+                    };
+                    let mode = meta.permissions().mode();
+                    let ch = crate::glob::file_type_char(mode);
+                    if list_types || (mark_dirs && ch == '/') {
+                        format!("{}{}", p, ch)
+                    } else {
+                        p
+                    }
+                })
+                .collect();
+        }
         fusevm::Value::Array(matches.into_iter().map(fusevm::Value::str).collect())
     });
 
@@ -13478,12 +13509,30 @@ impl ShellExecutor {
 
         let mut result = files;
         let mut negate = false;
+        // (M) mark-dirs and (T) list-types qualifiers — direct port of
+        // zsh/Src/glob.c:1557-1566. zsh appends a single char to each
+        // output (or only to dirs for `M`). We collect the flags during
+        // the filter loop and apply marking AFTER all filtering is done
+        // so the suffix sticks on the final result, not midway. `^M`
+        // disables (toggles negate to clear the flag) — same as zsh.
+        let mut mark_dirs = false;
+        let mut list_types = false;
         let mut chars = qualifiers.chars().peekable();
 
         while let Some(c) = chars.next() {
             match c {
                 // Negation
                 '^' => negate = !negate,
+                // (M) mark dirs with `/`. negate=true (`^M`) clears.
+                'M' => {
+                    mark_dirs = !negate;
+                    negate = false;
+                }
+                // (T) list types (ls -F style: /, *, @, |, =, #, %).
+                'T' => {
+                    list_types = !negate;
+                    negate = false;
+                }
 
                 // History modifier `:r` / `:e` / `:t` / `:h` /
                 // `:s/pat/repl/` etc. applied to each match. Direct
@@ -14125,6 +14174,28 @@ impl ShellExecutor {
                 // Unknown qualifier - ignore
                 _ => {}
             }
+        }
+
+        // Apply (M) / (T) marking AFTER all filters have run. Direct
+        // port of zsh/Src/glob.c:355,372 — output emit consults
+        // gf_markdirs / gf_listtypes set by case 'M' / case 'T'.
+        if mark_dirs || list_types {
+            use std::os::unix::fs::PermissionsExt;
+            result = result
+                .into_iter()
+                .map(|p| {
+                    let meta = match std::fs::symlink_metadata(&p) {
+                        Ok(m) => m,
+                        Err(_) => return p,
+                    };
+                    let ch = crate::glob::file_type_char(meta.permissions().mode());
+                    if list_types || (mark_dirs && ch == '/') {
+                        format!("{}{}", p, ch)
+                    } else {
+                        p
+                    }
+                })
+                .collect();
         }
 
         result
