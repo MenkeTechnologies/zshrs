@@ -2212,42 +2212,82 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let mut last_status: i32 = 0;
 
         loop {
-            // Draw menu — zsh's format: `N) item` cells, padded to the
-            // longest cell width, packed across columns to fit the
-            // terminal (defaults to 80 cols when unknown). Trailing
-            // single space + newline at the end of the row.
+            // Direct port of zsh's selectlist from
+            // src/zsh/Src/loop.c:347-409. Layout is column-major
+            // ("down columns, then across") — NOT row-major. With
+            // 6 items in 3 cols zsh produces:
+            //   1  3  5
+            //   2  4  6
+            // The previous Rust impl walked row-major which
+            // produced 1 2 3 / 4 5 6 (visually similar but wrong
+            // for prompts that mention ordering and breaks scripts
+            // that rely on column count == ceil(N/rows)).
+            //
+            // C variable mapping:
+            //   ct      -> word count (n)
+            //   longest -> max item width + 1, then plus digits-of-ct
+            //   fct     -> column count
+            //   fw      -> per-column width
+            //   colsz   -> row count = ceil(ct / fct)
+            //   t1      -> row index, walks 0..colsz
+            //   ap      -> item pointer; advances by colsz to step
+            //              DOWN a column.
             let term_width: usize = std::env::var("COLUMNS")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(80);
-            let max_n = words.len();
-            let n_width = max_n.to_string().len();
-            let max_cell = words
-                .iter()
-                .enumerate()
-                .map(|(i, w)| {
-                    // "N) word" + 1 trailing-space = N_DIGITS + 2 + len + 1
-                    let digits = (i + 1).to_string().len();
-                    digits + 2 + w.chars().count() + 1
-                })
-                .max()
-                .unwrap_or(1)
-                .max(n_width + 2 + 1);
-            let cols = (term_width / max_cell).max(1);
-            let mut col_in_row = 0usize;
-            for (i, w) in words.iter().enumerate() {
-                let cell = format!("{:>w$}) {}", i + 1, w, w = n_width);
-                let pad = max_cell.saturating_sub(cell.chars().count());
-                let _ = write!(std::io::stderr(), "{}", cell);
-                col_in_row += 1;
-                if col_in_row >= cols || i + 1 == words.len() {
-                    let _ = writeln!(std::io::stderr());
-                    col_in_row = 0;
-                } else {
-                    for _ in 0..pad {
-                        let _ = write!(std::io::stderr(), " ");
-                    }
+            let ct = words.len();
+            // loop.c:354-363 — find longest item width.
+            let mut longest = 1usize;
+            for w in &words {
+                let aplen = w.chars().count();
+                if aplen > longest {
+                    longest = aplen;
                 }
+            }
+            // loop.c:365-367 — `longest++` then add digits of `ct`.
+            longest += 1;
+            let mut t0 = ct;
+            while t0 > 0 {
+                t0 /= 10;
+                longest += 1;
+            }
+            // loop.c:369-373 — fct = (cols - 1) / (longest + 3); if
+            // 0, fct = 1; else fw = (cols - 1) / fct.
+            let mut fct = (term_width.saturating_sub(1)) / (longest + 3);
+            let fw;
+            if fct == 0 {
+                fct = 1;
+                fw = longest + 3;
+            } else {
+                fw = (term_width.saturating_sub(1)) / fct;
+            }
+            // loop.c:374 — colsz = (ct + fct - 1) / fct.
+            let colsz = (ct + fct - 1) / fct;
+            // loop.c:375-395 — for each row t1, walk down columns.
+            for t1 in 0..colsz {
+                let mut ap_idx = t1;
+                while ap_idx < ct {
+                    let w = &words[ap_idx];
+                    let n = ap_idx + 1;
+                    let cell = format!("{}) {}", n, w);
+                    let cell_chars = cell.chars().count();
+                    let _ = write!(std::io::stderr(), "{}", cell);
+                    let mut t2 = w.chars().count() + 2;
+                    let mut t3 = n;
+                    while t3 > 0 {
+                        t2 += 1;
+                        t3 /= 10;
+                    }
+                    // Pad to fw (loop.c:389-390).
+                    while t2 < fw {
+                        let _ = write!(std::io::stderr(), " ");
+                        t2 += 1;
+                    }
+                    let _ = cell_chars;
+                    ap_idx += colsz;
+                }
+                let _ = writeln!(std::io::stderr());
             }
             let _ = write!(std::io::stderr(), "{}", prompt);
             let _ = std::io::stderr().flush();
