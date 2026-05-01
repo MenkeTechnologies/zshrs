@@ -36781,8 +36781,12 @@ impl ShellExecutor {
                 // set. Default WITHOUT -h is to follow (chown the
                 // target), matching coreutils chown(1).
                 "-h" => symlink = true,
+                "--" => {} // end of options
                 s if !s.starts_with('-') => positional.push(s),
-                _ => {}
+                s => {
+                    eprintln!("chown: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
 
@@ -36907,8 +36911,12 @@ impl ShellExecutor {
             match arg.as_str() {
                 "-R" | "--recursive" => recursive = true,
                 "-h" | "--no-dereference" => symlink = true,
+                "--" => {}
                 s if !s.starts_with('-') => positional.push(s),
-                _ => {}
+                s => {
+                    eprintln!("chgrp: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
         if positional.len() < 2 {
