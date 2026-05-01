@@ -34259,35 +34259,113 @@ impl ShellExecutor {
 
     /// zmodload - load/unload zsh modules (stub)
     fn builtin_zmodload(&mut self, args: &[String]) -> i32 {
+        // Direct port of zsh/Src/module.c bin_zmodload control flow.
+        // zshrs's modules are compiled-in, so load/unload simply toggle
+        // a tracking flag in self.options['_module_<name>']. Listing
+        // returns the union of always-loaded compiled-in modules plus
+        // any user-zmodload'd entries.
         let mut list_loaded = false;
+        let mut list_reusable = false;
         let mut unload = false;
+        let mut existence_test = false; // -e: query whether loaded
         let mut modules: Vec<&str> = Vec::new();
 
         for arg in args {
             match arg.as_str() {
-                "-l" | "-L" => list_loaded = true,
+                "-l" => list_loaded = true,
+                "-L" => {
+                    list_loaded = true;
+                    list_reusable = true;
+                }
                 "-u" => unload = true,
-                "-a" | "-b" | "-c" | "-d" | "-e" | "-f" | "-i" | "-p" | "-s" => {}
+                "-e" => existence_test = true,
+                "-a" | "-b" | "-c" | "-d" | "-f" | "-i" | "-p" | "-s" | "-A" | "-R"
+                | "-F" | "-I" | "-P" => {}
                 _ if arg.starts_with('-') => {}
                 _ => modules.push(arg),
             }
         }
 
+        // Always-loaded compiled-in modules. Mirrors the lists in the
+        // ${modules[]} special-array paths so all three sources agree.
+        const ALWAYS_LOADED: &[&str] = &[
+            "zsh/datetime",
+            "zsh/sched",
+            "zsh/zutil",
+            "zsh/parameter",
+            "zsh/files",
+            "zsh/complete",
+            "zsh/complist",
+            "zsh/regex",
+            "zsh/system",
+            "zsh/stat",
+            "zsh/net/tcp",
+            "zsh/net/socket",
+            "zsh/private",
+            "zsh/zftp",
+            "zsh/zselect",
+            "zsh/zle",
+            "zsh/random",
+            "zsh/pcre",
+            "zsh/db/gdbm",
+            "zsh/cap",
+            "zsh/clone",
+            "zsh/curses",
+            "zsh/mapfile",
+            "zsh/nearcolor",
+            "zsh/newuser",
+            "zsh/mathfunc",
+            "zsh/termcap",
+            "zsh/terminfo",
+            "zsh/profiler",
+            "zsh/main",
+        ];
+
+        let is_loaded = |this: &Self, name: &str| -> bool {
+            ALWAYS_LOADED.contains(&name)
+                || this
+                    .options
+                    .get(&format!("_module_{}", name))
+                    .copied()
+                    .unwrap_or(false)
+        };
+
+        // -e: existence test. Exit 0 if all named modules are loaded,
+        // else 1. zsh module.c bin_zmodload case 'e'.
+        if existence_test {
+            for m in &modules {
+                if !is_loaded(self, m) {
+                    return 1;
+                }
+            }
+            return 0;
+        }
+
         if list_loaded || modules.is_empty() {
-            // List loaded modules (stub - we don't really have modules)
-            println!("zsh/complete");
-            println!("zsh/complist");
-            println!("zsh/parameter");
-            println!("zsh/zutil");
+            let mut all: Vec<String> = ALWAYS_LOADED.iter().map(|s| s.to_string()).collect();
+            for (k, v) in &self.options {
+                if *v {
+                    if let Some(name) = k.strip_prefix("_module_") {
+                        all.push(name.to_string());
+                    }
+                }
+            }
+            all.sort();
+            all.dedup();
+            for m in &all {
+                if list_reusable {
+                    println!("zmodload {}", m);
+                } else {
+                    println!("{}", m);
+                }
+            }
             return 0;
         }
 
         for module in modules {
             if unload {
-                // Unload module (stub)
                 self.options.remove(&format!("_module_{}", module));
             } else {
-                // Load module (stub)
                 self.options.insert(format!("_module_{}", module), true);
             }
         }
