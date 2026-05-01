@@ -282,8 +282,11 @@ pub async fn op_history_append(state: &std::sync::Arc<DaemonState>, args: Value)
                 } else {
                     "long_cmd_complete"
                 };
+                // NOTE: don't put "event" inside the payload — Frame::event
+                // already adds an outer "event" field via flatten, and a
+                // duplicate key on the wire breaks untagged-Frame deserialize
+                // for streaming consumers (zsubscribe).
                 let payload = json!({
-                    "event": event_kind,
                     "from_shell": from_shell,
                     "command": line,
                     "exit_code": exit_code,

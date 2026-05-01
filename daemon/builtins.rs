@@ -132,6 +132,7 @@ fn zcache(args: &[String]) -> i32 {
         "view" => zcache_view(rest),
         "export" => zcache_export(rest),
         "import" => zcache_import(rest),
+        "first-init" => zcache_first_init(rest),
         "hydrate-view" => zcache_hydrate_view(),
         "watch" => zcache_watch(rest),
         "log" => super::builtins::zlog(args), // alias for `zlog ...`
@@ -244,6 +245,40 @@ fn zcache_export(args: &[String]) -> i32 {
             }
         }
         Err(e) => err_exit("zcache export", &e.to_string()),
+    }
+}
+
+// `zcache first-init [--zshrc <path>]` — single-pass walk lifecycle:
+// .zshrc analyze (Pass 1+2) + $PATH/$FPATH walk (Pass 3) + system shard
+// build + entries hydrate (Pass 4). Replaces the manual
+// `zcache rebuild --zshrc PATH && zcache rebuild` dance.
+fn zcache_first_init(args: &[String]) -> i32 {
+    let mut payload = json!({});
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--zshrc" => match iter.next() {
+                Some(p) => {
+                    payload["zshrc"] = Value::String(p.clone());
+                }
+                None => return err_exit("zcache first-init", "--zshrc requires a path"),
+            },
+            other if other.starts_with('-') => {
+                return err_exit("zcache first-init", &format!("unknown flag `{}`", other));
+            }
+            _ => {}
+        }
+    }
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("first_init", payload) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zcache first-init", &e.to_string()),
     }
 }
 
@@ -676,7 +711,11 @@ fn zuntag(args: &[String]) -> i32 {
 // -------- zsend --------
 
 fn zsend(args: &[String]) -> i32 {
-    let (target, command) = match parse_send_args(args, "zsend") {
+    let json_out = args.iter().any(|a| a == "--json");
+    // Strip --json before parsing so parse_send_args doesn't see it as the
+    // first positional.
+    let stripped: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
+    let (target, command) = match parse_send_args(&stripped, "zsend") {
         Ok(v) => v,
         Err(code) => return code,
     };
@@ -686,11 +725,15 @@ fn zsend(args: &[String]) -> i32 {
     };
     match client.call("send", json!({ "target": target, "command": command })) {
         Ok(v) => {
-            let count = v
-                .get("delivered_count")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            println!("delivered to {} shell(s)", count);
+            if json_out {
+                print_pretty(&v);
+            } else {
+                let count = v
+                    .get("delivered_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                println!("delivered to {} shell(s)", count);
+            }
             0
         }
         Err(e) => err_exit("zsend", &e.to_string()),
@@ -1013,6 +1056,7 @@ fn zsubscribe(args: &[String]) -> i32 {
     let mut all = false;
     let mut count: Option<u64> = None;
     let mut pattern: Option<String> = None;
+    let mut filter: Option<FilterPredicate> = None;
 
     let mut iter = args.iter().skip(1);
     while let Some(a) = iter.next() {
@@ -1032,6 +1076,13 @@ fn zsubscribe(args: &[String]) -> i32 {
                     Err(_) => return err_exit("zsubscribe", "--count requires an integer"),
                 },
                 None => return err_exit("zsubscribe", "--count requires a value"),
+            },
+            "--filter" => match iter.next() {
+                Some(expr) => match FilterPredicate::parse(expr) {
+                    Ok(p) => filter = Some(p),
+                    Err(e) => return err_exit("zsubscribe", &format!("--filter: {}", e)),
+                },
+                None => return err_exit("zsubscribe", "--filter requires <expr>"),
             },
             "-h" | "--help" => {
                 println!("usage: zsubscribe [--json] [--count N] <pattern>");
@@ -1090,6 +1141,12 @@ fn zsubscribe(args: &[String]) -> i32 {
     loop {
         match client.next_frame() {
             Ok(Frame::Event { event, payload }) => {
+                // Apply --filter (if any) before counting/printing.
+                if let Some(ref pred) = filter {
+                    if !pred.matches(&payload) {
+                        continue;
+                    }
+                }
                 if json_out {
                     let line = json!({ "event": event, "payload": payload });
                     println!("{}", line);
@@ -1152,6 +1209,136 @@ fn zsubscribe_list() -> i32 {
             0
         }
         Err(e) => err_exit("zsubscribe --list", &e.to_string()),
+    }
+}
+
+/// `--filter` predicate parser. Accepts `<key> <op> <value>` where:
+///   - key is a JSON path, dot-separated. `payload.duration_ns` walks down two
+///     levels; `event` is also valid against the synthetic top-level event
+///     name. Bare `duration_ns` is shorthand for `payload.duration_ns`.
+///   - op is one of `>`, `>=`, `<`, `<=`, `=`, `==`, `!=`.
+///   - value is parsed as: integer | float (with `e` notation) | quoted
+///     string | bare string.
+#[derive(Clone, Debug)]
+struct FilterPredicate {
+    path: Vec<String>,
+    op: FilterOp,
+    needle: FilterValue,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FilterOp {
+    Eq,
+    Ne,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+}
+
+#[derive(Clone, Debug)]
+enum FilterValue {
+    Number(f64),
+    Text(String),
+}
+
+impl FilterPredicate {
+    fn parse(expr: &str) -> Result<Self, String> {
+        // Split on the first op token. Order of checks matters: longer
+        // operators first so `>=` doesn't get parsed as `>`.
+        let s = expr.trim();
+        let (key_raw, op, val_raw) = if let Some(i) = s.find(">=") {
+            (&s[..i], FilterOp::Ge, &s[i + 2..])
+        } else if let Some(i) = s.find("<=") {
+            (&s[..i], FilterOp::Le, &s[i + 2..])
+        } else if let Some(i) = s.find("==") {
+            (&s[..i], FilterOp::Eq, &s[i + 2..])
+        } else if let Some(i) = s.find("!=") {
+            (&s[..i], FilterOp::Ne, &s[i + 2..])
+        } else if let Some(i) = s.find('>') {
+            (&s[..i], FilterOp::Gt, &s[i + 1..])
+        } else if let Some(i) = s.find('<') {
+            (&s[..i], FilterOp::Lt, &s[i + 1..])
+        } else if let Some(i) = s.find('=') {
+            (&s[..i], FilterOp::Eq, &s[i + 1..])
+        } else {
+            return Err(format!("no operator in `{}` (try `key=value` or `key>N`)", expr));
+        };
+        let key = key_raw.trim();
+        let val = val_raw.trim();
+        if key.is_empty() {
+            return Err("empty key before operator".into());
+        }
+        if val.is_empty() {
+            return Err("empty value after operator".into());
+        }
+        // Bare keys default to walking under `payload.`.
+        let path: Vec<String> = if key.contains('.') {
+            key.split('.').map(str::to_string).collect()
+        } else {
+            vec!["payload".to_string(), key.to_string()]
+        };
+        let needle = if let Ok(n) = val.parse::<f64>() {
+            FilterValue::Number(n)
+        } else {
+            FilterValue::Text(val.trim_matches(|c: char| c == '"' || c == '\'').to_string())
+        };
+        Ok(Self {
+            path,
+            op,
+            needle,
+        })
+    }
+
+    fn matches(&self, payload: &Value) -> bool {
+        // Synthetic top-level: tree starts at the WIRE FRAME (`{event, payload}`).
+        // Our caller passes only `payload` here, so we wrap it for path lookup.
+        let mut cursor = payload;
+        for seg in &self.path {
+            if seg == "payload" {
+                continue; // already at payload
+            }
+            cursor = match cursor.get(seg) {
+                Some(v) => v,
+                None => return false,
+            };
+        }
+        match (&self.needle, cursor) {
+            (FilterValue::Number(n), Value::Number(v)) => {
+                let lhs = v.as_f64().unwrap_or(f64::NAN);
+                self.cmp_num(lhs, *n)
+            }
+            (FilterValue::Number(n), Value::String(s)) => match s.parse::<f64>() {
+                Ok(lhs) => self.cmp_num(lhs, *n),
+                Err(_) => false,
+            },
+            (FilterValue::Text(t), Value::String(s)) => self.cmp_str(s, t),
+            (FilterValue::Text(t), other) => self.cmp_str(&other.to_string(), t),
+            (_, Value::Null) => matches!(self.op, FilterOp::Ne),
+            _ => false,
+        }
+    }
+
+    fn cmp_num(&self, lhs: f64, rhs: f64) -> bool {
+        match self.op {
+            FilterOp::Eq => lhs == rhs,
+            FilterOp::Ne => lhs != rhs,
+            FilterOp::Gt => lhs > rhs,
+            FilterOp::Ge => lhs >= rhs,
+            FilterOp::Lt => lhs < rhs,
+            FilterOp::Le => lhs <= rhs,
+        }
+    }
+
+    fn cmp_str(&self, lhs: &str, rhs: &str) -> bool {
+        match self.op {
+            FilterOp::Eq => lhs == rhs,
+            FilterOp::Ne => lhs != rhs,
+            FilterOp::Gt => lhs > rhs,
+            FilterOp::Ge => lhs >= rhs,
+            FilterOp::Lt => lhs < rhs,
+            FilterOp::Le => lhs <= rhs,
+        }
     }
 }
 

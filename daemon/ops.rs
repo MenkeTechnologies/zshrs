@@ -43,6 +43,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
 
         "rebuild" => op_rebuild(state, args).await,
         "zshrc_analyze" => op_zshrc_analyze(state, args).await,
+        "first_init" => op_first_init(state, args).await,
         "canonical_hydrate_view" => op_canonical_hydrate_view(state).await,
         "clean" => op_clean(state, args).await,
         "verify" => op_verify(state).await,
@@ -499,6 +500,44 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
 
 fn json_string(s: &str) -> String {
     serde_json::Value::String(s.to_string()).to_string()
+}
+
+/// `first_init` — single-shot multi-pass walk lifecycle. Per docs/DAEMON.md
+/// "Walk lifecycle — first init" Pass 1-4:
+///   Pass 1+2: analyze_with_sources(.zshrc + transitive) → canonical state
+///   Pass 3:   walk_paths over the now-resolved $PATH/$FPATH → command_hash
+///             + autoload_table
+///   Pass 4:   serialize system shard, hydrate catalog.entries, register
+///             watches.
+///
+/// Replaces the manual `zcache rebuild --zshrc <path> && zcache rebuild`
+/// dance. Returns combined stats from both passes.
+async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    // ------ Pass 1+2: .zshrc analysis ------
+    let analysis_resp = if let Some(path) = args.get("zshrc").and_then(Value::as_str) {
+        Some(
+            op_zshrc_analyze(state, json!({ "path": path }))
+                .await?,
+        )
+    } else {
+        None
+    };
+
+    // ------ Pass 3+4: walk + hydrate ------
+    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+    let (image_path, hydrated, walk_stats) = super::walk::run_full_rebuild(state, generation)
+        .map_err(|e| ErrPayload::new("rebuild_failed", e.to_string()))?;
+
+    Ok(json!({
+        "passes": ["analyze", "walk", "hydrate"],
+        "analysis": analysis_resp,
+        "walk": {
+            "image_path": image_path.display().to_string(),
+            "entries_hydrated": hydrated,
+            "stats": walk_stats,
+        },
+        "generation": generation,
+    }))
 }
 
 /// Refresh the SQLite `canonical` view table from the in-memory rkyv-backed

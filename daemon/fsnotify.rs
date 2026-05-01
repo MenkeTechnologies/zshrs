@@ -215,6 +215,13 @@ impl FsWatcher {
         if kind == WatchKind::ZshrcSource {
             self.reanalyze_zshrc(&wp.source_root, state);
         }
+        // Re-walk on FpathDir changes: $FPATH-served autoload table needs
+        // to catch up on add / modify / delete in the directory. Cheap
+        // because walk_paths only iterates the directory's entries; the
+        // resulting system shard atomic-renames into place.
+        if kind == WatchKind::FpathDir {
+            self.rewalk_for_fpath(state);
+        }
 
         // Emit `shard_updated` event so any subscriber tracking this shard knows
         // the daemon picked up the change.
@@ -350,6 +357,25 @@ impl FsWatcher {
 
 fn json_string_local(s: &str) -> String {
     serde_json::Value::String(s.to_string()).to_string()
+}
+
+impl FsWatcher {
+    fn rewalk_for_fpath(&self, state: &Arc<DaemonState>) {
+        let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+        match super::walk::run_full_rebuild(state, generation) {
+            Ok((_path, hydrated, stats)) => {
+                tracing::info!(
+                    hydrated,
+                    commands = stats.commands_found,
+                    autoload = stats.autoload_funcs_found,
+                    "fsnotify FpathDir re-walk complete"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(?e, "fsnotify FpathDir re-walk failed");
+            }
+        }
+    }
 }
 
 type DebouncedResult = notify_debouncer_mini::DebounceEventResult;
