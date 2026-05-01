@@ -36220,7 +36220,10 @@ impl ShellExecutor {
                 "-n" | "-h" | "--no-dereference" => no_deref = true,
                 "-v" | "--verbose" => verbose = true,
                 "-T" | "--no-target-directory" => no_target_dir = true,
-                s if s.starts_with("--") => {} // unknown long, silent
+                s if s.starts_with("--") => {
+                    eprintln!("ln: unrecognized option: '{}'", s);
+                    return 1;
+                }
                 s if s.starts_with('-') && s.len() > 1 => {
                     for c in s[1..].chars() {
                         match c {
@@ -36236,7 +36239,12 @@ impl ShellExecutor {
                             'n' | 'h' => no_deref = true,
                             'v' => verbose = true,
                             'T' => no_target_dir = true,
-                            _ => {}
+                            // coreutils ln errors on unknown short
+                            // flags inside combined forms.
+                            _ => {
+                                eprintln!("ln: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
                         }
                     }
                 }
