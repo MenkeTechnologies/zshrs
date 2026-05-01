@@ -41659,7 +41659,13 @@ impl ShellExecutor {
                             'c' => count_bytes = true,
                             'm' => count_chars = true,
                             'L' => count_max = true,
-                            _ => {}
+                            // coreutils wc errors on unknown short
+                            // flags. \`wc -lXw foo\` previously counted
+                            // lines+words while ignoring -X.
+                            _ => {
+                                eprintln!("wc: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
                         }
                     }
                 }
