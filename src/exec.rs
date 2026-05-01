@@ -11913,14 +11913,50 @@ impl ShellExecutor {
                                 }
                                 found
                             };
+                            // Top-level `..` (depth 0) means a sequence range —
+                            // distinguish from `{a..b}` nested inside e.g.
+                            // `{x{a..b}y}`.
+                            let has_top_dotdot = {
+                                let mut d = 0;
+                                let mut prev = '\0';
+                                let mut found = false;
+                                for c in content.chars() {
+                                    match c {
+                                        '{' => d += 1,
+                                        '}' => d -= 1,
+                                        '.' if d == 0 && prev == '.' => {
+                                            found = true;
+                                            break;
+                                        }
+                                        _ => {}
+                                    }
+                                    prev = c;
+                                }
+                                found
+                            };
                             let expansions = if has_top_comma {
                                 self.expand_brace_list(content)
-                            } else if content.contains("..") {
+                            } else if has_top_dotdot {
                                 self.expand_brace_sequence(content)
-                            } else if content.contains(',') {
-                                self.expand_brace_list(content)
                             } else {
-                                // Not a valid brace expansion, return as-is
+                                // No top-level comma or `..` — outer braces
+                                // are NOT a brace expansion. Direct port of
+                                // zsh's brace-expand pass: `{a{1,2}b}` keeps
+                                // the literal outer braces, but recursively
+                                // expands any nested brace expressions inside,
+                                // re-wrapping each result. Without this,
+                                // zshrs left the whole token literal.
+                                if content.contains('{') && content.contains('}') {
+                                    let inner = self.expand_braces(content);
+                                    if inner.len() > 1 || (inner.len() == 1 && inner[0] != content) {
+                                        let mut results = Vec::with_capacity(inner.len());
+                                        for exp in inner {
+                                            results.push(format!("{}{{{}}}{}", prefix, exp, suffix));
+                                        }
+                                        return results;
+                                    }
+                                }
+                                // Not a valid brace expansion, return as-is.
                                 return vec![s.to_string()];
                             };
 
