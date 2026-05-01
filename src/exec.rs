@@ -45413,7 +45413,18 @@ impl ShellExecutor {
     /// tty — print the controlling-terminal device path. coreutils
     /// tty(1). -s suppresses output (just sets the exit code).
     fn builtin_tty(&self, args: &[String]) -> i32 {
-        let silent = args.iter().any(|a| a == "-s" || a == "--silent" || a == "--quiet");
+        let mut silent = false;
+        for arg in args {
+            match arg.as_str() {
+                "-s" | "--silent" | "--quiet" => silent = true,
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    eprintln!("tty: unrecognized option: '{}'", s);
+                    return 1;
+                }
+                _ => {} // bare arg ignored — coreutils tty takes no operands
+            }
+        }
         unsafe {
             let p = libc::ttyname(0);
             if p.is_null() {
