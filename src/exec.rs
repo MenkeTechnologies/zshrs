@@ -36755,12 +36755,22 @@ impl ShellExecutor {
         if list_mode {
             let zle = zle();
             if list_all {
+                // Direct port of zsh/Src/Zle/zle_keymap.c bin_bindkey
+                // case 'l': enumerate every keymap registered, sorted
+                // by canonical name. Was a hardcoded 3-name subset
+                // missing main/isearch/command/menuselect.
                 for km_name in &[
+                    KeymapName::Main,
                     KeymapName::Emacs,
                     KeymapName::ViInsert,
                     KeymapName::ViCommand,
+                    KeymapName::Isearch,
+                    KeymapName::Command,
+                    KeymapName::MenuSelect,
                 ] {
-                    println!("{}", km_name.as_str());
+                    if zle.keymaps.contains_key(km_name) {
+                        println!("{}", km_name.as_str());
+                    }
                 }
             } else {
                 if let Some(km) = zle.keymaps.get(&keymap) {
