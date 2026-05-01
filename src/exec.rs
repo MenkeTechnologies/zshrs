@@ -33109,6 +33109,41 @@ impl ShellExecutor {
             i += 1;
         }
 
+        // builtin.c:4661-4677 — three mutex groups print enforces
+        // before any output runs. Without these checks, a mistake
+        // like `print -sv name "x"` would silently both push to
+        // history AND assign to `name`, producing surprising side
+        // effects with no diagnostic.
+        //
+        //   1. `-z`, `-s`, `-S`, `-v` are mutually exclusive — they
+        //      all redirect output away from stdout to a different
+        //      sink (buffer stack / history / variable).
+        //   2. `-c` and `-C` are not allowed with `-s`, `-S`, or `-z`
+        //      — column layout requires a printable destination.
+        //   3. `-p` and `-u` are not allowed with `-s`, `-S`, `-v`,
+        //      or `-z` — the explicit-fd flags also require stdout-
+        //      like output, not the redirected sinks.
+        let group1 = (push_to_stack as u32)
+            + ((add_to_history && !split_word_history) as u32)
+            + (split_word_history as u32)
+            + (store_var.is_some() as u32);
+        if group1 > 1 {
+            eprintln!("zshrs:print:1: only one of -s, -S, -v, or -z allowed");
+            return 1;
+        }
+        let any_redirect_sink = push_to_stack || add_to_history;
+        let any_columns = columns != 0;
+        if any_redirect_sink && any_columns {
+            eprintln!("zshrs:print:1: -c or -C not allowed with -s, -S, or -z");
+            return 1;
+        }
+        let any_redirect_or_var = push_to_stack || add_to_history || store_var.is_some();
+        let explicit_fd = fd != 1;
+        if any_redirect_or_var && explicit_fd {
+            eprintln!("zshrs:print:1: -p or -u not allowed with -s, -S, -v, or -z");
+            return 1;
+        }
+
         // `print -z` pushes the joined args (sep-joined per
         // builtin.c:5042 `sepjoin(args, NULL, 0)` which uses IFS[0] = ' '
         // by default) onto the editor buffer stack. `getln` and
