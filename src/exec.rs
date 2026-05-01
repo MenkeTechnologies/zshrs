@@ -41943,7 +41943,13 @@ impl ShellExecutor {
                             'a' => atime_only = true,
                             'm' => mtime_only = true,
                             'c' => no_create = true,
-                            _ => {}
+                            // coreutils touch errors on unknown flag
+                            // letters (esp. inside combined forms like
+                            // \`-amX\`). Old \`_ => {}\` swallowed.
+                            _ => {
+                                eprintln!("touch: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
                         }
                     }
                 }
