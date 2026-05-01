@@ -29649,6 +29649,7 @@ impl ShellExecutor {
         let mut per_line = false;
         let mut verbose = false;
         let mut indices: Vec<i32> = Vec::new();
+        let mut positional: Vec<String> = Vec::new();
 
         for arg in args {
             if arg.starts_with('-') && arg.len() > 1 {
@@ -29672,16 +29673,32 @@ impl ShellExecutor {
                 if let Ok(n) = arg[1..].parse::<i32>() {
                     indices.push(n);
                 }
+            } else if let Ok(n) = arg.parse::<i32>() {
+                // Bare numeric arg — treat as index (legacy behavior).
+                indices.push(n);
             } else {
-                // Could be a number
-                if let Ok(n) = arg.parse::<i32>() {
-                    indices.push(n);
-                }
+                // Plain path — collect for stack-replace per
+                // src/zsh/Src/builtin.c:786-791. zsh: `dirs path1
+                // path2 ...` REPLACES the entire stack with the args.
+                positional.push(arg.clone());
             }
         }
 
         if clear {
             self.dir_stack.clear();
+            return 0;
+        }
+
+        // Direct port of builtin.c:786-791 — replace the stack with
+        // the supplied directory paths. Only fires if there are
+        // positional args AND no display flags / indices (zsh's
+        // dispatch in builtin.c:755-756 short-circuits the display
+        // path when args exist without -c/-v/-p).
+        if !positional.is_empty() && !verbose && !per_line && indices.is_empty() {
+            self.dir_stack = positional
+                .into_iter()
+                .map(std::path::PathBuf::from)
+                .collect();
             return 0;
         }
 
