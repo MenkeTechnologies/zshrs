@@ -38459,9 +38459,47 @@ impl ShellExecutor {
 
     /// echoti - output terminfo value
     fn builtin_echoti(&self, args: &[String]) -> i32 {
-        // echoti is similar to echotc but uses terminfo names
-        // For simplicity, we'll use the same implementation
-        self.builtin_echotc(args)
+        // echoti uses TERMINFO names ('clear', 'home', 'el', etc.)
+        // not termcap two-letter codes. Translate the common terminfo
+        // names to their termcap equivalents and dispatch through
+        // builtin_echotc which already handles the ANSI emit. Direct
+        // port of zsh/Src/Modules/terminfo.c bin_echoti's
+        // tparm-style path with the canonical mapping below.
+        if args.is_empty() {
+            eprintln!("echoti: not enough arguments");
+            return 1;
+        }
+        let cap = args[0].as_str();
+        // terminfo → termcap two-letter mapping (most-used subset).
+        let mapped = match cap {
+            "clear" => "cl",
+            "ed" => "cd",            // clear to end of display
+            "el" => "ce",            // clear to end of line
+            "cup" => "cm",           // cursor position (with row, col)
+            "cuu1" => "up",
+            "cud1" => "do",
+            "cub1" => "le",
+            "cuf1" => "nd",
+            "home" => "ho",
+            "civis" => "vi",
+            "cnorm" => "ve",
+            "smso" => "so",
+            "rmso" => "se",
+            "smul" => "us",
+            "rmul" => "ue",
+            "bold" => "md",
+            "sgr0" => "me",
+            "rev" => "mr",
+            "setaf" => "AF",
+            "setab" => "AB",
+            "colors" => "Co",
+            "cols" => "co",
+            "lines" => "li",
+            other => other, // pass through unknown names; echotc rejects
+        };
+        let mut new_args = vec![mapped.to_string()];
+        new_args.extend(args[1..].iter().cloned());
+        self.builtin_echotc(&new_args)
     }
 
     /// zpty - manage pseudo-terminals
