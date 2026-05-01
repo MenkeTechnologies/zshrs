@@ -532,34 +532,199 @@ fn parse_send_args(args: &[String], cmd: &str) -> Result<(Value, String), i32> {
 }
 
 // -------- zlog --------
+//
+// Most zlog verbs are pure client-side file operations against the daemon's
+// log files in ~/.cache/zshrs/. Daemon-side ops would require dynamic
+// EnvFilter reload (level) or appender fd handoff (rotate), neither of which
+// is wired in v1; those two verbs surface a clear "restart-required" error.
 
 fn zlog(args: &[String]) -> i32 {
     let verb = args.get(1).map(|s| s.as_str()).unwrap_or("path");
+    let rest = if args.len() > 2 { &args[2..] } else { &[][..] };
     match verb {
         "path" => zlog_path(),
-        "tail" | "grep" | "level" | "clear" | "rotate" | "stats" => err_exit(
+        "tail" => zlog_tail(rest),
+        "grep" => zlog_grep(rest),
+        "clear" => zlog_clear(),
+        "stats" => zlog_stats(),
+        "level" => err_exit(
             "zlog",
-            &format!(
-                "`{}` not yet implemented in v1 foundation; use `tail` on the path",
-                verb
-            ),
+            "dynamic level change not yet wired; restart daemon with ZSHRS_LOG=<level>",
+        ),
+        "rotate" => err_exit(
+            "zlog",
+            "explicit rotation not yet wired; daily rotation runs automatically",
         ),
         _ => err_exit("zlog", &format!("unknown verb `{}`", verb)),
     }
 }
 
 fn zlog_path() -> i32 {
-    match CachePaths::resolve() {
-        Ok(p) => {
-            // Pick the most recent rolled file matching the prefix, or the bare prefix path.
-            // tracing-appender writes daily-rotated files like `zshrs.log.2026-04-29`. Since
-            // we don't know today's filename a priori, fall back to printing the directory
-            // and prefix and let the user `ls` it for now.
-            println!("{}", p.log.display());
-            0
-        }
-        Err(e) => err_exit("zlog path", &e.to_string()),
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return err_exit("zlog path", &e.to_string()),
+    };
+    // Walk the cache root for `zshrs.log*` files; print the newest one (the
+    // bare prefix or the most recent rolled file). If none exist yet, print
+    // the prefix path so callers can `ls` it.
+    let files = log_files(&paths);
+    match files.first() {
+        Some(p) => println!("{}", p.display()),
+        None => println!("{}", paths.log.display()),
     }
+    0
+}
+
+fn zlog_tail(args: &[String]) -> i32 {
+    let mut lines: usize = 100;
+    let mut iter = args.iter();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "-n" | "--lines" => match iter.next().and_then(|s| s.parse::<usize>().ok()) {
+                Some(n) => lines = n,
+                None => return err_exit("zlog tail", "-n requires an integer"),
+            },
+            other if other.starts_with('-') => {
+                return err_exit("zlog tail", &format!("unknown flag `{}`", other));
+            }
+            _ => {}
+        }
+    }
+
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return err_exit("zlog tail", &e.to_string()),
+    };
+    let files = log_files(&paths);
+    let mut buf: std::collections::VecDeque<String> =
+        std::collections::VecDeque::with_capacity(lines);
+    for f in files.iter().rev() {
+        let content = match std::fs::read_to_string(f) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        for line in content.lines() {
+            if buf.len() == lines {
+                buf.pop_front();
+            }
+            buf.push_back(line.to_string());
+        }
+    }
+    for line in buf {
+        println!("{}", line);
+    }
+    0
+}
+
+fn zlog_grep(args: &[String]) -> i32 {
+    let pattern = match args.first() {
+        Some(p) => p.clone(),
+        None => return err_exit("zlog grep", "usage: zlog grep <pattern>"),
+    };
+    let re = match regex::Regex::new(&pattern) {
+        Ok(r) => r,
+        Err(e) => return err_exit("zlog grep", &format!("bad regex: {}", e)),
+    };
+
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return err_exit("zlog grep", &e.to_string()),
+    };
+    let files = log_files(&paths);
+    let mut hits = 0u64;
+    for f in files.iter().rev() {
+        let content = match std::fs::read_to_string(f) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let name = f.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        for line in content.lines() {
+            if re.is_match(line) {
+                println!("{}: {}", name, line);
+                hits += 1;
+            }
+        }
+    }
+    if hits == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+fn zlog_clear() -> i32 {
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return err_exit("zlog clear", &e.to_string()),
+    };
+    let files = log_files(&paths);
+    let mut cleared = 0;
+    for f in &files {
+        // Truncate rather than unlink — tracing-appender holds an fd on the
+        // active file, and an unlink leaves it as a write-only "deleted"
+        // inode that consumes disk until daemon restart.
+        if std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(f)
+            .is_ok()
+        {
+            cleared += 1;
+        }
+    }
+    println!("cleared {} log file(s)", cleared);
+    0
+}
+
+fn zlog_stats() -> i32 {
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return err_exit("zlog stats", &e.to_string()),
+    };
+    let files = log_files(&paths);
+    let mut total_bytes: u64 = 0;
+    let mut total_lines: u64 = 0;
+    println!("{:<40} {:>12} {:>10}", "FILE", "BYTES", "LINES");
+    for f in &files {
+        let bytes = std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);
+        let lines = std::fs::read_to_string(f)
+            .map(|s| s.lines().count() as u64)
+            .unwrap_or(0);
+        total_bytes += bytes;
+        total_lines += lines;
+        let name = f.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        println!("{:<40} {:>12} {:>10}", name, bytes, lines);
+    }
+    println!(
+        "{:<40} {:>12} {:>10}",
+        format!("(total: {} files)", files.len()),
+        total_bytes,
+        total_lines
+    );
+    0
+}
+
+/// Enumerate `~/.cache/zshrs/zshrs.log*` files, newest first by mtime. Used by
+/// the read-only zlog verbs (tail, grep, stats) and by `zlog clear`.
+fn log_files(paths: &CachePaths) -> Vec<std::path::PathBuf> {
+    let dir = match std::fs::read_dir(&paths.root) {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
+    for entry in dir.flatten() {
+        let name = entry.file_name();
+        let s = name.to_string_lossy();
+        if s.starts_with("zshrs.log") {
+            let mtime = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            out.push((mtime, entry.path()));
+        }
+    }
+    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out.into_iter().map(|(_, p)| p).collect()
 }
 
 // -------- zsubscribe --------

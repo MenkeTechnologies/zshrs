@@ -29,6 +29,7 @@ pub mod server;
 pub mod shard;
 pub mod source_resolver;
 pub mod state;
+pub mod ticker;
 pub mod walk;
 pub mod zask;
 pub mod zask_builtin;

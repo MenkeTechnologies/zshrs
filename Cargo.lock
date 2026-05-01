@@ -2774,6 +2774,7 @@ dependencies = [
  "notify-debouncer-mini",
  "parking_lot",
  "rand 0.8.6",
+ "regex",
  "rkyv",
  "rusqlite",
  "serde",

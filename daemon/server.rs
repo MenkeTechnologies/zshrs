@@ -45,6 +45,10 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
         tracing::warn!(?e, "fsnotify watcher failed to start; running degraded");
     }
 
+    // Spawn the periodic housekeeping ticker (tmp sweep, log size monitor,
+    // catalog vacuum, zask timeouts). One minute cadence, weak-ref to state.
+    super::ticker::spawn(Arc::clone(&state));
+
     let shutdown = tokio::sync::Notify::new();
     let shutdown = Arc::new(shutdown);
 

@@ -25,6 +25,7 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 parking_lot = "0.12"
 rand = "0.8"
+regex = "1.11"
 rkyv = { version = "0.7", features = ["validation", "archive_le", "size_32"] }
 rusqlite = "0.32"
 serde = { version = "1", features = ["derive"] }

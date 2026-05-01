@@ -2668,6 +2668,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         _ => Some(Value::str("")),
                     }
                 }
+                // `langinfo` — port of zsh/langinfo module
+                // (src/zsh/Src/Modules/langinfo.c:402-449). Read-
+                // only assoc keyed by nl_item names (CODESET,
+                // D_FMT, RADIXCHAR, etc.); each lookup goes through
+                // nl_langinfo(3). Splice (`@`/`*`) returns all the
+                // names known to the module's static table.
+                "langinfo" => {
+                    if idx == "@" || idx == "*" {
+                        return Some(Value::Array(
+                            crate::langinfo::LANGINFO_NAMES
+                                .iter()
+                                .map(|s| Value::str(*s))
+                                .collect(),
+                        ));
+                    }
+                    let val = crate::langinfo::get_langinfo(idx).unwrap_or_default();
+                    return Some(Value::str(val));
+                }
                 // `.zle.esc` and `.zle.sgr` — port of zsh/hlgroup
                 // module (src/zsh/Src/Modules/hlgroup.c:81-165).
                 // Both back into the user's `.zle.hlgroups` assoc.
