@@ -40989,20 +40989,70 @@ impl ShellExecutor {
     }
 
     fn builtin_realpath(&self, args: &[String]) -> i32 {
+        // coreutils realpath(1) port. Adds -q (quiet), -m (no-exist
+        // check, logical resolution), -s (no symlink resolution),
+        // and the implicit default (-e: every component must exist).
         if args.is_empty() {
             eprintln!("realpath: missing operand");
             return 1;
         }
+        let mut quiet = false;
+        let mut allow_missing = false;
+        let mut no_symlinks = false;
+        let mut paths: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-q" | "--quiet" => quiet = true,
+                "-m" | "--canonicalize-missing" => allow_missing = true,
+                "-s" | "--strip" | "--no-symlinks" => no_symlinks = true,
+                "-e" | "--canonicalize-existing" => {
+                    // Default behaviour; flag accepted for portability.
+                }
+                "-L" | "--logical" => no_symlinks = true,
+                "-P" | "--physical" => no_symlinks = false,
+                s if s.starts_with('-') => {} // unknown flags accepted silently
+                _ => paths.push(arg.as_str()),
+            }
+        }
+
+        // Logical normalize: collapse `.` and `..` components without
+        // following symlinks. Used by -m / -s. Direct port of
+        // coreutils canonicalize_filename_mode in the LOGICAL case.
+        let logical_normalize = |p: &std::path::Path| -> std::path::PathBuf {
+            let mut abs: std::path::PathBuf = if p.is_absolute() {
+                std::path::PathBuf::new()
+            } else {
+                std::env::current_dir().unwrap_or_default()
+            };
+            for comp in p.components() {
+                use std::path::Component::*;
+                match comp {
+                    Prefix(_) | RootDir => abs.push(comp.as_os_str()),
+                    CurDir => {}
+                    ParentDir => {
+                        abs.pop();
+                    }
+                    Normal(c) => abs.push(c),
+                }
+            }
+            abs
+        };
 
         let mut status = 0;
-        for path in args {
-            if path.starts_with('-') {
-                continue;
-            }
-            match std::fs::canonicalize(path) {
+        for path in &paths {
+            let p = std::path::Path::new(path);
+            let result: Result<std::path::PathBuf, std::io::Error> =
+                if allow_missing || no_symlinks {
+                    Ok(logical_normalize(p))
+                } else {
+                    std::fs::canonicalize(p)
+                };
+            match result {
                 Ok(abs) => println!("{}", abs.display()),
                 Err(e) => {
-                    eprintln!("realpath: {}: {}", path, e);
+                    if !quiet {
+                        eprintln!("realpath: {}: {}", path, e);
+                    }
                     status = 1;
                 }
             }
