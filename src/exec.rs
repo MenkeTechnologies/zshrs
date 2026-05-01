@@ -41994,7 +41994,12 @@ impl ShellExecutor {
                 }
                 "-L" | "--logical" => no_symlinks = true,
                 "-P" | "--physical" => no_symlinks = false,
-                s if s.starts_with('-') => {} // unknown flags accepted silently
+                s if s.starts_with('-') => {
+                    // coreutils realpath rejects unknown flags with
+                    // \"unrecognized option\" exit 1.
+                    eprintln!("realpath: unrecognized option: '{}'", s);
+                    return 1;
+                }
                 _ => paths.push(arg.as_str()),
             }
         }
