@@ -24347,9 +24347,24 @@ impl ShellExecutor {
             }
 
             if show_dir {
-                if let Ok(cwd) = env::current_dir() {
-                    println!("    (pwd: {})", cwd.display());
-                }
+                // jobs -d: print the directory the job was started in.
+                // We don't yet capture per-job cwd at launch (would
+                // need a JobInfo.cwd field plumbed through add_job),
+                // so use logical $PWD as a best-effort proxy. Same
+                // proxy that ${jobdirs[N]} uses, so the two views
+                // agree. Direct port of zsh/Src/jobs.c printjob's
+                // `pwd: %s` line when SHOWDIR is set.
+                let pwd = self
+                    .variables
+                    .get("PWD")
+                    .cloned()
+                    .or_else(|| env::var("PWD").ok())
+                    .unwrap_or_else(|| {
+                        env::current_dir()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                    });
+                println!("    (pwd: {})", pwd);
             }
         }
         0
