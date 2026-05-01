@@ -42119,11 +42119,16 @@ impl ShellExecutor {
             Byte,
         }
         let mut delimiter = '\t';
+        let mut output_delimiter: Option<String> = None;
         let mut mode = Mode::Field;
         // Each entry is (start, end) inclusive, 0-based. end == usize::MAX
         // means "to end of line".
         let mut ranges: Vec<(usize, usize)> = Vec::new();
         let mut suppress_no_delim = false;
+        // -z / --zero-terminated: line delim becomes NUL.
+        let mut zero_term = false;
+        // --complement: print complement of selected ranges.
+        let mut complement = false;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
 
@@ -42190,8 +42195,17 @@ impl ShellExecutor {
             } else if let Some(s) = arg.strip_prefix("-b") {
                 mode = Mode::Byte;
                 parse_spec(s, &mut ranges);
-            } else if arg == "-s" {
+            } else if arg == "-s" || arg == "--only-delimited" {
                 suppress_no_delim = true;
+            } else if arg == "-z" || arg == "--zero-terminated" {
+                zero_term = true;
+            } else if arg == "--complement" {
+                complement = true;
+            } else if let Some(s) = arg.strip_prefix("--output-delimiter=") {
+                output_delimiter = Some(s.to_string());
+            } else if arg == "--output-delimiter" && i + 1 < args.len() {
+                i += 1;
+                output_delimiter = Some(args[i].clone());
             } else if !arg.starts_with('-') {
                 files.push(arg);
             }
@@ -42199,7 +42213,12 @@ impl ShellExecutor {
         }
 
         let in_range = |idx: usize| -> bool {
-            ranges.iter().any(|(s, e)| idx >= *s && idx <= *e)
+            let m = ranges.iter().any(|(s, e)| idx >= *s && idx <= *e);
+            if complement {
+                !m
+            } else {
+                m
+            }
         };
 
         let reader: Box<dyn BufRead> = if files.is_empty() || files[0] == "-" {
@@ -42214,22 +42233,30 @@ impl ShellExecutor {
             }
         };
 
-        for line in reader.lines().flatten() {
+        let line_term = if zero_term { '\0' } else { '\n' };
+        // -z splits input on NUL too; otherwise BufRead::lines splits
+        // on \\n (the default).
+        let process_line = |line: String| {
             match mode {
                 Mode::Field => {
                     if !line.contains(delimiter) {
                         if !suppress_no_delim {
-                            println!("{}", line);
+                            print!("{}{}", line, line_term);
                         }
-                        continue;
+                        return;
                     }
                     let parts: Vec<&str> = line.split(delimiter).collect();
                     let selected: Vec<&str> = parts
                         .iter()
                         .enumerate()
-                        .filter_map(|(idx, p)| if in_range(idx) { Some(*p) } else { None })
+                        .filter_map(
+                            |(idx, p)| if in_range(idx) { Some(*p) } else { None },
+                        )
                         .collect();
-                    println!("{}", selected.join(&delimiter.to_string()));
+                    let out_sep: String = output_delimiter
+                        .clone()
+                        .unwrap_or_else(|| delimiter.to_string());
+                    print!("{}{}", selected.join(&out_sep), line_term);
                 }
                 Mode::Char => {
                     let chars: String = line
@@ -42237,7 +42264,7 @@ impl ShellExecutor {
                         .enumerate()
                         .filter_map(|(idx, c)| if in_range(idx) { Some(c) } else { None })
                         .collect();
-                    println!("{}", chars);
+                    print!("{}{}", chars, line_term);
                 }
                 Mode::Byte => {
                     let bytes: Vec<u8> = line
@@ -42245,8 +42272,25 @@ impl ShellExecutor {
                         .enumerate()
                         .filter_map(|(idx, b)| if in_range(idx) { Some(b) } else { None })
                         .collect();
-                    println!("{}", String::from_utf8_lossy(&bytes));
+                    print!("{}{}", String::from_utf8_lossy(&bytes), line_term);
                 }
+            }
+        };
+
+        if zero_term {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let mut reader = reader;
+            let _ = reader.read_to_end(&mut buf);
+            for chunk in buf.split(|b| *b == 0) {
+                if chunk.is_empty() {
+                    continue;
+                }
+                process_line(String::from_utf8_lossy(chunk).into_owned());
+            }
+        } else {
+            for line in reader.lines().flatten() {
+                process_line(line);
             }
         }
         0
