@@ -39188,7 +39188,7 @@ impl ShellExecutor {
                     // Listen on Unix socket: zsocket -l path
                     i += 1;
                     if i >= args.len() {
-                        eprintln!("zsocket: -l requires path");
+                        eprintln!("zshrs:zsocket:1: -l requires path");
                         return 1;
                     }
                     let path = PathBuf::from(&args[i]);
@@ -39218,7 +39218,7 @@ impl ShellExecutor {
                             return 0;
                         }
                         Err(e) => {
-                            eprintln!("zsocket: bind failed: {}", e);
+                            eprintln!("zshrs:zsocket:1: bind failed: {}", e);
                             return 1;
                         }
                     }
@@ -39227,7 +39227,7 @@ impl ShellExecutor {
                     // Accept connection: zsocket -a fd
                     i += 1;
                     if i >= args.len() {
-                        eprintln!("zsocket: -a requires fd");
+                        eprintln!("zshrs:zsocket:1: -a requires fd");
                         return 1;
                     }
                     let listen_fd: i32 = args[i].parse().unwrap_or(-1);
@@ -39256,20 +39256,20 @@ impl ShellExecutor {
                                     return 0;
                                 }
                                 Err(e) => {
-                                    eprintln!("zsocket: accept failed: {}", e);
+                                    eprintln!("zshrs:zsocket:1: accept failed: {}", e);
                                     return 1;
                                 }
                             }
                         }
                     }
-                    eprintln!("zsocket: invalid fd");
+                    eprintln!("zshrs:zsocket:1: invalid fd");
                     return 1;
                 }
                 "-d" => {
                     // Close socket: zsocket -d fd
                     i += 1;
                     if i >= args.len() {
-                        eprintln!("zsocket: -d requires fd");
+                        eprintln!("zshrs:zsocket:1: -d requires fd");
                         return 1;
                     }
                     let fd: i32 = args[i].parse().unwrap_or(-1);
@@ -39280,7 +39280,7 @@ impl ShellExecutor {
                         }
                         return 0;
                     }
-                    eprintln!("zsocket: no such fd");
+                    eprintln!("zshrs:zsocket:1: no such fd");
                     return 1;
                 }
                 path if !path.starts_with('-') => {
@@ -39307,7 +39307,7 @@ impl ShellExecutor {
                             return 0;
                         }
                         Err(e) => {
-                            eprintln!("zsocket: connect failed: {}", e);
+                            eprintln!("zshrs:zsocket:1: connect failed: {}", e);
                             return 1;
                         }
                     }
@@ -43238,7 +43238,7 @@ impl ShellExecutor {
 
     fn builtin_sleep(&self, args: &[String]) -> i32 {
         if args.is_empty() {
-            eprintln!("sleep: missing operand");
+            eprintln!("zshrs:sleep:1: missing operand");
             return 1;
         }
 
