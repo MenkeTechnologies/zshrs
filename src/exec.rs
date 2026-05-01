@@ -44962,8 +44962,13 @@ impl ShellExecutor {
                     wrap = s[7..].parse().unwrap_or(76);
                 }
                 "-i" | "--ignore-garbage" => {} // accepted, default behaviour
+                "--" => {} // end of options
+                "-" => file = Some("-"),
                 s if !s.starts_with('-') => file = Some(s),
-                _ => {}
+                s => {
+                    eprintln!("base64: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
         let mut input = Vec::new();
