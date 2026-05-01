@@ -1423,31 +1423,126 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .and_then(Value::as_str)
         .unwrap_or("all")
         .to_string();
+    let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    let no_stats = args.get("no_stats").and_then(Value::as_bool).unwrap_or(false);
+    let shard_name = args
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     let mut removed: Vec<String> = Vec::new();
+    let mut would_remove: Vec<String> = Vec::new();
     let paths = &state.paths;
+
+    let mut record = |path: std::path::PathBuf| {
+        if dry_run {
+            would_remove.push(path.display().to_string());
+        } else {
+            let _ = std::fs::remove_file(&path);
+            removed.push(path.display().to_string());
+        }
+    };
 
     match target.as_str() {
         "all" => {
             for shard in super::shard::list_shards(paths).unwrap_or_default() {
-                let _ = std::fs::remove_file(&shard);
-                removed.push(shard.display().to_string());
+                record(shard);
             }
             if paths.index_rkyv.exists() {
-                let _ = std::fs::remove_file(&paths.index_rkyv);
-                removed.push(paths.index_rkyv.display().to_string());
+                record(paths.index_rkyv.clone());
             }
         }
         "shards" => {
             for shard in super::shard::list_shards(paths).unwrap_or_default() {
-                let _ = std::fs::remove_file(&shard);
-                removed.push(shard.display().to_string());
+                record(shard);
+            }
+        }
+        // `zcache clean shard <name>` per DAEMON.md:676.
+        "shard" => {
+            let name = shard_name
+                .as_ref()
+                .ok_or_else(|| ErrPayload::new("bad_args", "missing `name` for shard target"))?;
+            let target_match = format!("-{}.rkyv", name);
+            for shard in super::shard::list_shards(paths).unwrap_or_default() {
+                let fname = shard
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                if fname.contains(&target_match) || fname == format!("{}.rkyv", name) {
+                    record(shard);
+                }
             }
         }
         "index" => {
             if paths.index_rkyv.exists() {
-                let _ = std::fs::remove_file(&paths.index_rkyv);
-                removed.push(paths.index_rkyv.display().to_string());
+                record(paths.index_rkyv.clone());
+            }
+        }
+        // `zcache clean catalog [--no-stats]` per DAEMON.md:677-678.
+        "catalog" => {
+            // Default: preserve entry_stats by reading them out, blowing away
+            // catalog.db, recreating schema, replaying entry_stats.
+            let preserved_stats: Vec<(String, Option<i64>, i64, Option<i64>)> = if no_stats {
+                Vec::new()
+            } else {
+                state
+                    .with_catalog(|conn| -> rusqlite::Result<_> {
+                        let mut stmt = conn.prepare(
+                            "SELECT fq_name, last_called_at, call_count, total_ns FROM entry_stats",
+                        )?;
+                        let rows = stmt
+                            .query_map([], |r| {
+                                Ok((
+                                    r.get::<_, String>(0)?,
+                                    r.get::<_, Option<i64>>(1)?,
+                                    r.get::<_, i64>(2)?,
+                                    r.get::<_, Option<i64>>(3)?,
+                                ))
+                            })?
+                            .collect::<rusqlite::Result<Vec<_>>>()?;
+                        Ok(rows)
+                    })
+                    .unwrap_or_default()
+            };
+            if dry_run {
+                would_remove.push(paths.catalog_db.display().to_string());
+            } else if paths.catalog_db.exists() {
+                let _ = std::fs::remove_file(&paths.catalog_db);
+                removed.push(paths.catalog_db.display().to_string());
+                // Reopen + reschema so subsequent ops don't NotConnected.
+                let conn = super::catalog::open(paths)
+                    .map_err(|e| ErrPayload::new("catalog_reopen", e.to_string()))?;
+                if !no_stats && !preserved_stats.is_empty() {
+                    let _ = conn.execute_batch("BEGIN");
+                    for (fq, last, count, total) in &preserved_stats {
+                        let _ = conn.execute(
+                            "INSERT OR REPLACE INTO entry_stats (fq_name, last_called_at, call_count, total_ns) VALUES (?, ?, ?, ?)",
+                            rusqlite::params![fq, last, count, total],
+                        );
+                    }
+                    let _ = conn.execute_batch("COMMIT");
+                }
+                tracing::info!(
+                    preserved = preserved_stats.len(),
+                    no_stats,
+                    "catalog cleaned"
+                );
+            }
+        }
+        // `zcache clean stats` per DAEMON.md:680.
+        "stats" => {
+            if dry_run {
+                would_remove.push("entry_stats (catalog table)".into());
+            } else {
+                let n = state
+                    .with_catalog(|conn| -> rusqlite::Result<i64> {
+                        let n: i64 =
+                            conn.query_row("SELECT COUNT(*) FROM entry_stats", [], |r| r.get(0))?;
+                        conn.execute("DELETE FROM entry_stats", [])?;
+                        Ok(n)
+                    })
+                    .unwrap_or(0);
+                removed.push(format!("entry_stats ({} rows)", n));
             }
         }
         "log" => {
@@ -1459,11 +1554,50 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
                     let name = entry.file_name();
                     let s = name.to_string_lossy();
                     if s.starts_with("zshrs.log") {
-                        let _ = std::fs::OpenOptions::new()
-                            .write(true)
-                            .truncate(true)
-                            .open(entry.path());
-                        removed.push(entry.path().display().to_string());
+                        if dry_run {
+                            would_remove.push(entry.path().display().to_string());
+                        } else {
+                            let _ = std::fs::OpenOptions::new()
+                                .write(true)
+                                .truncate(true)
+                                .open(entry.path());
+                            removed.push(entry.path().display().to_string());
+                        }
+                    }
+                }
+            }
+        }
+        // `zcache clean zwc` / `zcompdump` / `legacy` per DAEMON.md:387-396.
+        // Walks only directories the daemon knows about: $HOME, $ZDOTDIR,
+        // $ZPWR_LOCAL, $XDG_CACHE_HOME, plus every dir referenced in the
+        // canonical path/fpath subsystems and every parent of a watched file.
+        "zwc" | "zcompdump" | "legacy" => {
+            let scope = legacy_scope_dirs(state);
+            let want_zwc = matches!(target.as_str(), "zwc" | "legacy");
+            let want_zcompdump = matches!(target.as_str(), "zcompdump" | "legacy");
+            for dir in scope {
+                if !dir.is_dir() {
+                    continue;
+                }
+                let walker = walkdir::WalkDir::new(&dir)
+                    .max_depth(if dir.starts_with(&paths.root) { 2 } else { 6 })
+                    .follow_links(false)
+                    .into_iter()
+                    .filter_map(|r| r.ok());
+                for ent in walker {
+                    if !ent.file_type().is_file() {
+                        continue;
+                    }
+                    let p = ent.path();
+                    let n = match p.file_name().and_then(|n| n.to_str()) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    let is_zwc = want_zwc && n.ends_with(".zwc");
+                    let is_zcd = want_zcompdump
+                        && (n.starts_with(".zcompdump") || n.contains(".zcompdump-"));
+                    if is_zwc || is_zcd {
+                        record(p.to_path_buf());
                     }
                 }
             }
@@ -1472,17 +1606,73 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
             return Err(ErrPayload::new(
                 "bad_target",
                 format!(
-                    "clean target `{}` not supported (try all|shards|index|log)",
+                    "clean target `{}` not supported (try all|shards|shard|index|log|catalog|stats|zwc|zcompdump|legacy)",
                     other
                 ),
             ));
         }
     }
 
-    Ok(json!({
+    let mut out = json!({
+        "target": target,
+        "dry_run": dry_run,
         "removed": removed,
         "removed_count": removed.len(),
-    }))
+    });
+    if dry_run {
+        out["would_remove"] = json!(would_remove);
+        out["would_remove_count"] = json!(would_remove.len());
+    }
+    Ok(out)
+}
+
+/// Build the directory scope for legacy artifact (`.zwc` / `.zcompdump`)
+/// cleanup. Per DAEMON.md "Out-of-scope dirs are never touched (no recursive
+/// `find ~ -name '*.zwc'`). Daemon walks only the directories it already
+/// knows about."
+fn legacy_scope_dirs(state: &Arc<DaemonState>) -> Vec<std::path::PathBuf> {
+    let mut out: Vec<std::path::PathBuf> = Vec::new();
+    let mut push = |p: std::path::PathBuf| {
+        if !out.iter().any(|q| q == &p) {
+            out.push(p);
+        }
+    };
+
+    // Cache root (catches anything inside ~/.cache/zshrs/).
+    push(state.paths.root.clone());
+
+    // HOME + ZDOTDIR + XDG_CACHE_HOME + ZPWR_LOCAL.
+    if let Some(home) = dirs::home_dir() {
+        push(home);
+    }
+    for var in &["ZDOTDIR", "XDG_CACHE_HOME", "ZPWR_LOCAL", "ZSH"] {
+        if let Ok(v) = std::env::var(var) {
+            if !v.is_empty() {
+                push(std::path::PathBuf::from(v));
+            }
+        }
+    }
+
+    // Every directory in the canonical path / fpath subsystems.
+    for sub in &["path", "fpath", "manpath"] {
+        for row in state.canonical.rows_for(sub) {
+            let val = row.value.trim_matches('"').to_string();
+            let p = std::path::PathBuf::from(val);
+            if p.is_dir() {
+                push(p);
+            }
+        }
+    }
+
+    // Every parent of a watched fsnotify path (covers .zwc next to any
+    // sourced file).
+    for wp in state.fs_watcher.registered_paths() {
+        if let Some(parent) = wp.path.parent() {
+            push(parent.to_path_buf());
+        }
+    }
+
+    out
 }
 
 async fn op_verify(state: &Arc<DaemonState>) -> OpResult {
