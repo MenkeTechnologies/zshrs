@@ -37957,11 +37957,11 @@ impl ShellExecutor {
                 if num_str.chars().all(|c| c.is_ascii_digit()) && !num_str.is_empty() {
                     let sn: usize = num_str.parse().unwrap_or(0);
                     if sn == 0 {
-                        eprintln!("sched: usage for delete: sched -<item#>.");
+                        eprintln!("zshrs:sched:1: usage for delete: sched -<item#>.");
                         return 1;
                     }
                     if sn > self.scheduled_commands.len() {
-                        eprintln!("sched: not that many entries");
+                        eprintln!("zshrs:sched:1: not that many entries");
                         return 1;
                     }
                     self.scheduled_commands.remove(sn - 1);
@@ -37976,7 +37976,7 @@ impl ShellExecutor {
                     idx += 1;
                     continue;
                 }
-                eprintln!("sched: bad option: -{}", num_str);
+                eprintln!("zshrs:sched:1: bad option: -{}", num_str);
                 return 1;
             }
             break;
@@ -38015,7 +38015,7 @@ impl ShellExecutor {
 
         if idx + 1 >= args.len() {
             // sched.c:227-232 — at least time + command required.
-            eprintln!("sched: not enough arguments");
+            eprintln!("zshrs:sched:1: not enough arguments");
             return 1;
         }
 
@@ -38030,7 +38030,7 @@ impl ShellExecutor {
                 let h: i64 = match h_str.parse() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("sched: bad time specifier");
+                        eprintln!("zshrs:sched:1: bad time specifier");
                         return 1;
                     }
                 };
@@ -38047,7 +38047,7 @@ impl ShellExecutor {
                 let n: i64 = match rel.parse() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("sched: bad time specifier");
+                        eprintln!("zshrs:sched:1: bad time specifier");
                         return 1;
                     }
                 };
@@ -38060,7 +38060,7 @@ impl ShellExecutor {
                 let mut h: i64 = match h_str.parse() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("sched: bad time specifier");
+                        eprintln!("zshrs:sched:1: bad time specifier");
                         return 1;
                     }
                 };
@@ -38103,7 +38103,7 @@ impl ShellExecutor {
                 match s.parse::<i64>() {
                     Ok(n) => n,
                     Err(_) => {
-                        eprintln!("sched: bad time specifier");
+                        eprintln!("zshrs:sched:1: bad time specifier");
                         return 1;
                     }
                 }
