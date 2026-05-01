@@ -33146,8 +33146,16 @@ impl ShellExecutor {
                             result = format!("~{}", &result[home.len()..]);
                         }
                     }
-                    // Replace named dirs
-                    for (name, path) in &self.named_dirs {
+                    // Replace named dirs — longest-prefix-first so a
+                    // nested ~zpwr=/Users/wizard/zpwr wins over a
+                    // shallower ~home=/Users/wizard. Random HashMap
+                    // iteration order picked the shallower one some
+                    // runs and the deeper one others, breaking
+                    // deterministic prompt rendering.
+                    let mut entries: Vec<(&String, &PathBuf)> =
+                        self.named_dirs.iter().collect();
+                    entries.sort_by_key(|(_, p)| std::cmp::Reverse(p.as_os_str().len()));
+                    for (name, path) in entries {
                         let path_str = path.to_string_lossy();
                         if result.starts_with(path_str.as_ref()) {
                             result = format!("~{}{}", name, &result[path_str.len()..]);
