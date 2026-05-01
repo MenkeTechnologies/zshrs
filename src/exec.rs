@@ -42960,6 +42960,244 @@ impl ShellExecutor {
         0
     }
 
+    /// paste [-d LIST] [FILE...] — merge lines of files. coreutils
+    /// paste(1). Default delim is TAB; -d cycles through the
+    /// supplied delimiter chars.
+    fn builtin_paste(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let mut delims: Vec<char> = vec!['\t'];
+        let mut serial = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-d" | "--delimiters" => {
+                    if let Some(s) = iter.next() {
+                        delims = s.chars().collect();
+                        if delims.is_empty() {
+                            delims = vec!['\t'];
+                        }
+                    }
+                }
+                s if s.starts_with("-d") && s.len() > 2 => {
+                    delims = s[2..].chars().collect();
+                    if delims.is_empty() {
+                        delims = vec!['\t'];
+                    }
+                }
+                "-s" | "--serial" => serial = true,
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                _ => {}
+            }
+        }
+        if files.is_empty() {
+            files.push("-");
+        }
+        let mut readers: Vec<Box<dyn BufRead>> = Vec::with_capacity(files.len());
+        for file in &files {
+            let r: Box<dyn BufRead> = if *file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("paste: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            readers.push(r);
+        }
+        if serial {
+            // -s: each file's lines on a single output line.
+            for r in readers.iter_mut() {
+                let lines: Vec<String> = r.lines().filter_map(|l| l.ok()).collect();
+                let mut out = String::new();
+                for (i, l) in lines.iter().enumerate() {
+                    out.push_str(l);
+                    if i + 1 < lines.len() {
+                        out.push(delims[i % delims.len()]);
+                    }
+                }
+                println!("{}", out);
+            }
+            return 0;
+        }
+        // Parallel-merge: round-robin one line from each reader.
+        let mut iters: Vec<_> = readers.into_iter().map(|r| r.lines()).collect();
+        loop {
+            let mut row: Vec<Option<String>> = Vec::with_capacity(iters.len());
+            for it in iters.iter_mut() {
+                row.push(it.next().and_then(|r| r.ok()));
+            }
+            if row.iter().all(|c| c.is_none()) {
+                break;
+            }
+            let mut out = String::new();
+            for (i, cell) in row.iter().enumerate() {
+                if let Some(s) = cell {
+                    out.push_str(s);
+                }
+                if i + 1 < row.len() {
+                    out.push(delims[i % delims.len()]);
+                }
+            }
+            println!("{}", out);
+        }
+        0
+    }
+
+    /// fold [-w WIDTH] [-s] [-b] [FILE...] — wrap input lines.
+    /// coreutils fold(1).
+    fn builtin_fold(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let mut width: usize = 80;
+        let mut break_at_space = false;
+        let mut count_bytes = false;
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-w" | "--width" => {
+                    if let Some(s) = iter.next() {
+                        width = s.parse().unwrap_or(80);
+                    }
+                }
+                s if s.starts_with("-w") && s.len() > 2 => {
+                    width = s[2..].parse().unwrap_or(80);
+                }
+                "-s" | "--spaces" => break_at_space = true,
+                "-b" | "--bytes" => count_bytes = true,
+                s if !s.starts_with('-') => files.push(s),
+                _ => {}
+            }
+        }
+        if files.is_empty() {
+            files.push("-");
+        }
+        for file in files {
+            let reader: Box<dyn BufRead> = if file == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                match std::fs::File::open(file) {
+                    Ok(f) => Box::new(BufReader::new(f)),
+                    Err(e) => {
+                        eprintln!("fold: {}: {}", file, e);
+                        return 1;
+                    }
+                }
+            };
+            for line in reader.lines().flatten() {
+                let mut chunk = String::new();
+                let walker: Box<dyn Iterator<Item = char>> = if count_bytes {
+                    // Treat each byte as a char (lossy for UTF-8).
+                    Box::new(line.bytes().map(|b| b as char))
+                } else {
+                    Box::new(line.chars())
+                };
+                let mut col = 0usize;
+                let mut last_space: Option<usize> = None;
+                for c in walker {
+                    chunk.push(c);
+                    col += 1;
+                    if c == ' ' || c == '\t' {
+                        last_space = Some(chunk.len());
+                    }
+                    if col >= width {
+                        if break_at_space {
+                            if let Some(pos) = last_space {
+                                let head = &chunk[..pos];
+                                let tail = chunk[pos..].to_string();
+                                println!("{}", head);
+                                chunk = tail;
+                                col = chunk.chars().count();
+                                last_space = None;
+                                continue;
+                            }
+                        }
+                        println!("{}", chunk);
+                        chunk.clear();
+                        col = 0;
+                        last_space = None;
+                    }
+                }
+                if !chunk.is_empty() {
+                    println!("{}", chunk);
+                }
+            }
+        }
+        0
+    }
+
+    /// shuf [-n N] [-i LO-HI] [-e [STR...]] [FILE] — random
+    /// permutation. coreutils shuf(1).
+    fn builtin_shuf(&self, args: &[String]) -> i32 {
+        use rand::seq::SliceRandom;
+        use std::io::{BufRead, BufReader};
+        let mut count: Option<usize> = None;
+        let mut input_range: Option<(i64, i64)> = None;
+        let mut echo_args: Option<Vec<String>> = None;
+        let mut zero_term = false;
+        let mut file: Option<&str> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "-n" | "--head-count" => {
+                    if let Some(s) = iter.next() {
+                        count = s.parse().ok();
+                    }
+                }
+                "-i" | "--input-range" => {
+                    if let Some(s) = iter.next() {
+                        if let Some((a, b)) = s.split_once('-') {
+                            if let (Ok(lo), Ok(hi)) =
+                                (a.parse::<i64>(), b.parse::<i64>())
+                            {
+                                input_range = Some((lo, hi));
+                            }
+                        }
+                    }
+                }
+                "-e" | "--echo" => {
+                    let rest: Vec<String> = iter.by_ref().map(|s| s.clone()).collect();
+                    echo_args = Some(rest);
+                    break;
+                }
+                "-z" | "--zero-terminated" => zero_term = true,
+                s if !s.starts_with('-') => file = Some(s),
+                _ => {}
+            }
+        }
+
+        let mut items: Vec<String> = if let Some((lo, hi)) = input_range {
+            (lo..=hi).map(|n| n.to_string()).collect()
+        } else if let Some(echo) = echo_args {
+            echo
+        } else {
+            let reader: Box<dyn BufRead> = match file {
+                Some(f) if f != "-" => match std::fs::File::open(f) {
+                    Ok(fh) => Box::new(BufReader::new(fh)),
+                    Err(e) => {
+                        eprintln!("shuf: {}: {}", f, e);
+                        return 1;
+                    }
+                },
+                _ => Box::new(BufReader::new(std::io::stdin())),
+            };
+            reader.lines().filter_map(|l| l.ok()).collect()
+        };
+        let mut rng = rand::thread_rng();
+        items.shuffle(&mut rng);
+        if let Some(n) = count {
+            items.truncate(n);
+        }
+        let term = if zero_term { '\0' } else { '\n' };
+        for item in items {
+            print!("{}{}", item, term);
+        }
+        0
+    }
+
     /// tac [FILE...] — concatenate files, reverse line order.
     /// coreutils tac(1).
     fn builtin_tac(&self, args: &[String]) -> i32 {

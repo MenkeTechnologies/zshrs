@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 
-use super::ipc::{self, ErrPayload, Frame, Hello, Welcome, PROTOCOL_VERSION};
+use super::ipc::{self, ErrPayload, Frame, Welcome, PROTOCOL_VERSION};
 use super::ops;
 use super::paths::CachePaths;
 use super::state::DaemonState;
@@ -128,6 +128,32 @@ async fn handle_connection(
     state: Arc<DaemonState>,
     _shutdown: Arc<tokio::sync::Notify>,
 ) -> Result<()> {
+    // Peer-credential check FIRST — before reading any frame. Daemon-owned
+    // ~/.cache/zshrs/ is mode 0700, so the socket itself is unreachable from
+    // other UIDs unless the directory perms drift. Defense-in-depth: we
+    // explicitly verify peer UID and refuse cross-UID connections (unless we
+    // ARE root, in which case cross-uid is allowed for fleet-wide
+    // coordination — see docs/DAEMON.md "Security model").
+    match peer_uid(&stream) {
+        Ok(peer) => {
+            let our_uid = nix::unistd::Uid::current().as_raw();
+            if our_uid != 0 && peer != our_uid {
+                tracing::warn!(peer_uid = peer, our_uid, "rejected cross-uid client");
+                return Err(DaemonError::other(format!(
+                    "peer uid {} != daemon uid {}",
+                    peer, our_uid
+                )));
+            }
+        }
+        Err(e) => {
+            // SO_PEERCRED / getpeereid both supported on every targeted
+            // platform. A failure here is a real protocol-level problem —
+            // log + close.
+            tracing::warn!(?e, "peer-cred lookup failed; refusing connection");
+            return Err(DaemonError::other(format!("peer cred: {e}")));
+        }
+    }
+
     let (read_half, write_half) = stream.into_split();
     let mut reader = tokio::io::BufReader::new(read_half);
     let mut writer = write_half;
@@ -260,4 +286,75 @@ async fn handle_connection(
 
     tracing::info!(client_id, "client unregistered");
     Ok(())
+}
+
+/// Recover the peer UID of a Unix-domain-socket connection. Used by the
+/// connection handler to enforce same-UID-only access on the daemon socket.
+///
+/// Linux: `SO_PEERCRED` (struct ucred, 12 bytes: pid, uid, gid).
+/// macOS / *BSD: `getpeereid(fd, &uid, &gid)`.
+///
+/// Returns the raw UID. Errors propagate to the caller, which closes the
+/// connection on any failure (defense-in-depth).
+fn peer_uid(stream: &UnixStream) -> std::io::Result<u32> {
+    use std::os::unix::io::AsRawFd;
+    let fd = stream.as_raw_fd();
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::mem::MaybeUninit;
+        #[repr(C)]
+        struct UCred {
+            pid: i32,
+            uid: u32,
+            gid: u32,
+        }
+        let mut cred = MaybeUninit::<UCred>::uninit();
+        let mut len = std::mem::size_of::<UCred>() as libc::socklen_t;
+        let r = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                cred.as_mut_ptr() as *mut _,
+                &mut len,
+            )
+        };
+        if r != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let cred = unsafe { cred.assume_init() };
+        Ok(cred.uid)
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    {
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        let r = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+        if r != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(uid)
+    }
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    )))]
+    {
+        // Unknown platform: fall back to "trust the directory perms" — the
+        // ~/.cache/zshrs/ being 0700 already gates this.
+        Ok(nix::unistd::Uid::current().as_raw())
+    }
 }

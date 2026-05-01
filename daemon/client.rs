@@ -7,9 +7,7 @@
 //   - clients are read-only data-plane consumers; here we only handle the control-plane
 //     IPC (op requests + responses)
 
-use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -267,5 +265,3 @@ pub fn call_once_no_spawn(op: &str, args: Value) -> Result<Value> {
     client.call(op, args)
 }
 
-#[cfg(test)]
-fn _path_unused(_: &Path) {} // silence unused import in restricted feature builds

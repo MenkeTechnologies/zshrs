@@ -356,6 +356,31 @@ impl DaemonState {
         self.inner.lock().sessions.len()
     }
 
+    /// Update mutable per-session metadata (cwd, tty, argv0). Returns the
+    /// post-update snapshot. Used by the `register` IPC op for mid-session
+    /// updates (chpwd, tmux reattach, exec rebrand). None values leave the
+    /// existing field untouched.
+    pub fn update_session(
+        &self,
+        client_id: u64,
+        cwd: Option<String>,
+        tty: Option<String>,
+        argv0: Option<String>,
+    ) -> Option<SessionSnapshot> {
+        let mut g = self.inner.lock();
+        let s = g.sessions.get_mut(&client_id)?;
+        if let Some(c) = cwd {
+            s.cwd = Some(c);
+        }
+        if let Some(t) = tty {
+            s.tty = Some(t);
+        }
+        if let Some(a) = argv0 {
+            s.argv0 = Some(a);
+        }
+        Some(s.snapshot())
+    }
+
     pub fn add_tags(&self, client_id: u64, tags: &[String]) -> Option<Vec<String>> {
         let mut g = self.inner.lock();
         let s = g.sessions.get_mut(&client_id)?;

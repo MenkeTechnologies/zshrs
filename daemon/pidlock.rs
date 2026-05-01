@@ -15,6 +15,11 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
+// `nix::fcntl::flock` is the simpler API; the newer `Flock` wrapper takes
+// ownership of the file which clashes with our PidLock { file, path } design
+// (we want to hold the file for writing the pid AND keep the lock alive).
+// Keeping the legacy fn-form on purpose; suppress the deprecation lint.
+#[allow(deprecated)]
 use nix::fcntl::{flock, FlockArg};
 
 use super::{paths::CachePaths, DaemonError, Result};
@@ -38,7 +43,9 @@ impl PidLock {
             .mode(0o600)
             .open(&paths.pid_file)?;
 
-        match flock(file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
+        #[allow(deprecated)]
+        let lock_res = flock(file.as_raw_fd(), FlockArg::LockExclusiveNonblock);
+        match lock_res {
             Ok(()) => {}
             Err(nix::errno::Errno::EWOULDBLOCK) => {
                 let mut buf = String::new();

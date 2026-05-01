@@ -33,8 +33,6 @@ const DEFAULT_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
 /// Up to N rotated copies kept per active file (.1 .. .N). Default 4 per docs.
 const DEFAULT_LOG_MAX_ROTATIONS: u32 = 4;
 const VACUUM_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
-/// Soft cap for warning when zshrs.log family exceeds it.
-const LOG_SIZE_WARN: u64 = DEFAULT_LOG_MAX_BYTES;
 
 /// Spawn the ticker as a tokio task. Returns immediately; the task lives for
 /// daemon lifetime (or until DaemonState is dropped, since it holds only a
