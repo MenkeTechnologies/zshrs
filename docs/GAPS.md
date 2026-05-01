@@ -2569,14 +2569,14 @@ Test: `test_arith_output_radix_with_prefix`.
 
 Tests: `test_integer_dash_i_with_base_arg`, `test_trap_dash_p_not_a_flag`.
 
-### Array `"${a%%pat}"` joined-then-stripped (DQ); `"${a[@]%%pat}"` per-element; brace `{{1..3},x,y}` nested
+### Array `"${a%%pat}"` joined-then-stripped (DQ); `"${a[@]%%pat}"` per-element; brace {% raw %}`{{1..3},x,y}`{% endraw %} nested
 
 Three closely-related fixes from the systematic differential audit. All driven by reading zsh source rather than guessing from output.
 
 - **DQ-context array strip** (zsh subst.c: getmatch vs getmatcharr split): `"${a%%pat}"` for an array `a` joins via `$IFS` first, then strips the joined scalar — direct port of `getmatch` in pattern.c which operates on a single string. zshrs's BUILTIN_PARAM_STRIP fast path bypassed the BUILTIN_EXPAND_TEXT wrapper that bumps `exec.in_dq_context`, so the runtime DQ check was always 0 and the strip went per-element. Fix: pass `dq_context_depth` from the compiler as a 4th arg to BUILTIN_PARAM_STRIP, and bump `dq_context_depth` for the duration of `emit_param_modifier` when the raw word is DNULL-wrapped (mirrors the existing segments-loop bump).
 - **Explicit `[@]` subscript override** (zsh subst.c: nojoin/spbreak path): `"${a[@]%%pat}"` forces per-element strip even inside DQ — `[@]` marks the array as splice-expanded. `parse_param_modifier` previously stripped the `[@]` from the name and lost the info. Added `had_at: bool` to `ParamModifierKind::Strip` so the emitter can override DQ to per-element when present. `[*]` (join-with-IFS) keeps the bare-DQ join-then-strip semantics.
 - **Extendedglob `~` exclusion** (zsh pattern.c: P_EXCLUDE handling, line 155): `pat1~pat2` matches strings matching pat1 AND NOT matching pat2. Direct port of the top-level case via a new `find_top_level_tilde` helper that honors `[...]` and `(...)` nesting per the canonical scan.
-- **Nested brace list with sequence** (zsh: brace-expansion is a token-balanced scan): `{{1..3},x,y}` is a LIST at the top level that happens to contain a `..` sequence inside one of its commas. The previous detector preferred `..` over `,`, miscategorizing the outer braces as a sequence. Fix: scan for top-level `,` (depth-0) first; only fall through to sequence detection when no top comma is present.
+- **Nested brace list with sequence** (zsh: brace-expansion is a token-balanced scan): {% raw %}`{{1..3},x,y}`{% endraw %} is a LIST at the top level that happens to contain a `..` sequence inside one of its commas. The previous detector preferred `..` over `,`, miscategorizing the outer braces as a sequence. Fix: scan for top-level `,` (depth-0) first; only fall through to sequence detection when no top comma is present.
 
 Tests: `test_dq_array_strip_joins_scalar`, `test_dq_array_strip_at_subscript_per_element`, `test_extglob_tilde_exclusion`, `test_brace_nested_sequence_in_list`.
 

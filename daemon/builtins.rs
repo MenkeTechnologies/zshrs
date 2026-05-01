@@ -560,24 +560,42 @@ fn zcache_rebuild(args: &[String]) -> i32 {
 }
 
 fn zcache_clean(args: &[String]) -> i32 {
-    // zcache clean [shards|index|log|--all]
-    let target = args
-        .iter()
-        .find(|a| {
-            matches!(
-                a.as_str(),
-                "shards" | "index" | "log" | "stats" | "shard" | "catalog"
-            )
-        })
-        .map(|s| s.as_str())
-        .unwrap_or_else(|| {
-            if args.iter().any(|a| a == "--all") {
-                "all"
-            } else {
-                "all"
+    // Per DAEMON.md "z* builtin family":
+    //   zcache clean [--wait]               regenerable only (preserves entry_stats)
+    //   zcache clean --all [--wait]         everything
+    //   zcache clean shards [--wait]
+    //   zcache clean shard <name> [--wait]
+    //   zcache clean catalog [--no-stats] [--wait]
+    //   zcache clean index | stats | log
+    //   zcache clean zwc | zcompdump | legacy [--dry-run]
+    let mut target: Option<String> = None;
+    let mut shard_name: Option<String> = None;
+    let mut dry_run = false;
+    let mut no_stats = false;
+    let mut iter = args.iter().peekable();
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--all" => target = Some("all".into()),
+            "--dry-run" => dry_run = true,
+            "--no-stats" => no_stats = true,
+            "--wait" => {} // accepted; daemon clean is synchronous already
+            "shards" | "index" | "log" | "stats" | "catalog" | "zwc" | "zcompdump" | "legacy"
+            | "all" => target = Some(a.clone()),
+            "shard" => {
+                target = Some("shard".into());
+                if let Some(n) = iter.next() {
+                    shard_name = Some(n.clone());
+                }
             }
-        });
-    zcache_simple_op("clean", json!({ "target": target }))
+            _ => {}
+        }
+    }
+    let target = target.unwrap_or_else(|| "all".to_string());
+    let mut payload = json!({ "target": target, "dry_run": dry_run, "no_stats": no_stats });
+    if let Some(n) = shard_name {
+        payload["name"] = json!(n);
+    }
+    zcache_simple_op("clean", payload)
 }
 
 fn zcache_simple_op(op: &str, args: Value) -> i32 {

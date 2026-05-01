@@ -141,12 +141,269 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
         }));
     }
 
+    // Sensitive-content guard per DAEMON.md "Sensitive content" + the
+    // "no friction" CLAUDE.md rule: refuse plaintext print of sensitive
+    // sourced files unless --show-sensitive is passed. Implemented by
+    // checking the compiled_files.sensitive flag for `script <path>` and
+    // `sourced <path>` targets.
+    let show_sensitive = args
+        .get("show_sensitive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !show_sensitive {
+        if let Some(path) = args.get("name").and_then(Value::as_str) {
+            if (target == "script" || target == "sourced")
+                && is_path_sensitive(state, path).unwrap_or(false)
+            {
+                return Err(ErrPayload::new(
+                    "sensitive",
+                    format!(
+                        "`{}` is flagged sensitive; pass --show-sensitive to print contents",
+                        path
+                    ),
+                ));
+            }
+        }
+    }
+    // For `--all` archive-style export, exclude sensitive files unless the
+    // caller passed --include-sensitive.
+    let include_sensitive = args
+        .get("include_sensitive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let filter = args.get("filter").and_then(Value::as_str).map(str::to_string);
+    let range = args.get("range").and_then(Value::as_str).map(str::to_string);
+    let all_flag = args.get("all").and_then(Value::as_bool).unwrap_or(false);
+
+    // Targets that honor filter/range/all natively, per DAEMON.md examples
+    // (lines 552-555: command_hash --filter, history --filter --range,
+    // subscriptions --all, plugins --filter).
+    if let Some(special) = render_filtered(state, &target, &format, filter.as_deref(), range.as_deref(), all_flag, include_sensitive) {
+        let body = special?;
+        return Ok(json!({
+            "target": target,
+            "format": format,
+            "filter": filter,
+            "range": range,
+            "all": all_flag,
+            "body": body,
+        }));
+    }
+
     let body = render(state, &target, &format, additive)?;
     Ok(json!({
         "target": target,
         "format": format,
         "body": body,
     }))
+}
+
+/// Compiled-files sensitive-flag lookup. Used by view/export to gate
+/// terminal output.
+fn is_path_sensitive(state: &Arc<DaemonState>, path: &str) -> rusqlite::Result<bool> {
+    state.with_catalog(|conn| -> rusqlite::Result<bool> {
+        let n: Option<bool> = conn
+            .query_row(
+                "SELECT sensitive FROM compiled_files WHERE path = ?",
+                rusqlite::params![path],
+                |r| r.get::<_, bool>(0),
+            )
+            .optional()?;
+        Ok(n.unwrap_or(false))
+    })
+}
+
+/// Honor --filter / --range / --all on the targets where the spec mentions
+/// them. Returns Some(Ok(body)) on a hit, Some(Err) on a hit-but-failed,
+/// None on a miss (caller falls through to the regular render path).
+fn render_filtered(
+    state: &Arc<DaemonState>,
+    target: &str,
+    format: &str,
+    filter: Option<&str>,
+    range: Option<&str>,
+    all_flag: bool,
+    _include_sensitive: bool,
+) -> Option<std::result::Result<String, ErrPayload>> {
+    match target {
+        // command_hash --filter '<glob>': scan catalog entries kind='command'
+        // and filter by the glob pattern.
+        "command_hash" => {
+            let pat = filter?;
+            let glob_re = match glob_to_regex(pat) {
+                Ok(r) => r,
+                Err(e) => return Some(Err(ErrPayload::new("bad_filter", e))),
+            };
+            let res = state.with_catalog(|conn| -> rusqlite::Result<Vec<(String, String)>> {
+                let mut stmt = conn.prepare(
+                    "SELECT fq_name, source_loc FROM entries WHERE plugin_id='system' \
+                     AND kind='command' ORDER BY fq_name ASC",
+                )?;
+                let rows = stmt
+                    .query_map([], |r| {
+                        let fq: String = r.get(0)?;
+                        let src: String = r.get(1).unwrap_or_default();
+                        Ok((fq.strip_prefix("cmd:").unwrap_or(&fq).to_string(), src))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            });
+            let rows = match res {
+                Ok(r) => r,
+                Err(e) => return Some(Err(ErrPayload::new("catalog", e.to_string()))),
+            };
+            let filtered: Vec<&(String, String)> =
+                rows.iter().filter(|(name, _)| glob_re.is_match(name)).collect();
+            let body = match format {
+                "json" => {
+                    let arr: Vec<_> = filtered
+                        .iter()
+                        .map(|(n, p)| json!({"name": n, "path": p}))
+                        .collect();
+                    serde_json::to_string_pretty(&arr).unwrap_or_default()
+                }
+                _ => {
+                    let mut s = String::new();
+                    for (n, p) in &filtered {
+                        s.push_str(&format!("{}\t{}\n", n, p));
+                    }
+                    s
+                }
+            };
+            Some(Ok(body))
+        }
+        // history --filter '<query>' --range 7d: FTS query + time bound.
+        "history" => {
+            if filter.is_none() && range.is_none() {
+                return None;
+            }
+            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            let from_ns = range.and_then(parse_range).map(|secs| now_ns - secs * 1_000_000_000);
+            let limit: u64 = 10_000;
+            let res = state.with_history(|conn| -> rusqlite::Result<Vec<super::history::HistoryRow>> {
+                super::history::query(conn, filter, "fts", None, from_ns, None, limit, true)
+            });
+            let rows = match res {
+                Ok(r) => r,
+                Err(e) => return Some(Err(ErrPayload::new("history_query", e.to_string()))),
+            };
+            let body = match format {
+                "json" => serde_json::to_string_pretty(&rows).unwrap_or_default(),
+                "csv" => {
+                    let mut s = String::from("ts_ns,exit_code,duration_ns,cwd,line\n");
+                    for r in &rows {
+                        s.push_str(&format!(
+                            "{},{},{},{},{}\n",
+                            r.ts_ns,
+                            r.exit_code.unwrap_or(0),
+                            r.duration_ns.unwrap_or(0),
+                            r.cwd.as_deref().unwrap_or(""),
+                            r.line.replace('\n', " ")
+                        ));
+                    }
+                    s
+                }
+                _ => {
+                    let mut s = String::new();
+                    for r in &rows {
+                        s.push_str(&format!("{}\t{}\n", r.ts_ns, r.line));
+                    }
+                    s
+                }
+            };
+            Some(Ok(body))
+        }
+        // subscriptions --all: fan out across every shell, not just the
+        // calling one. Without --all, render only the caller's view (which
+        // already happens via the regular subscriptions render path).
+        "subscriptions" if all_flag => {
+            let subs = state.list_all_subscriptions();
+            let body = match format {
+                "json" => serde_json::to_string_pretty(
+                    &subs
+                        .iter()
+                        .map(|s| {
+                            json!({
+                                "id": s.id,
+                                "client_id": s.client_id,
+                                "pattern": s.pattern,
+                                "scope_pat": s.scope_pat,
+                                "topic_pat": s.topic_pat,
+                                "paused": s.paused,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap_or_default(),
+                _ => {
+                    let mut s = String::new();
+                    for sub in &subs {
+                        s.push_str(&format!(
+                            "shell:{}\tid:{}\t{}\t{}\n",
+                            sub.client_id,
+                            sub.id,
+                            sub.pattern,
+                            if sub.paused { "paused" } else { "active" }
+                        ));
+                    }
+                    s
+                }
+            };
+            Some(Ok(body))
+        }
+        _ => None,
+    }
+}
+
+/// Convert a shell glob (`*`, `?`, character classes) to a regex anchored at
+/// both ends. Used by --filter on command_hash. Errors out on malformed glob.
+fn glob_to_regex(glob: &str) -> std::result::Result<regex::Regex, String> {
+    let mut re = String::with_capacity(glob.len() + 4);
+    re.push('^');
+    let mut chars = glob.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' => re.push_str(".*"),
+            '?' => re.push('.'),
+            '[' => {
+                re.push('[');
+                while let Some(&next) = chars.peek() {
+                    if next == ']' {
+                        chars.next();
+                        re.push(']');
+                        break;
+                    }
+                    re.push(chars.next().unwrap());
+                }
+            }
+            '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' | '\\' => {
+                re.push('\\');
+                re.push(c);
+            }
+            _ => re.push(c),
+        }
+    }
+    re.push('$');
+    regex::Regex::new(&re).map_err(|e| format!("bad glob `{}`: {}", glob, e))
+}
+
+/// Parse a `--range` value like `7d`, `24h`, `30m`, `60s` into seconds.
+fn parse_range(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (digits, unit) = s.split_at(s.find(|c: char| !c.is_ascii_digit())?);
+    let n: i64 = digits.parse().ok()?;
+    match unit {
+        "s" => Some(n),
+        "m" => Some(n * 60),
+        "h" => Some(n * 3600),
+        "d" => Some(n * 86400),
+        "w" => Some(n * 86400 * 7),
+        _ => None,
+    }
 }
 
 /// All shell-state-eval-compatible subsystems, in the dependency order that

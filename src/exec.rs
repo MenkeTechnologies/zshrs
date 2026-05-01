@@ -10114,6 +10114,9 @@ impl ShellExecutor {
             "tac" => return self.builtin_tac(&rest_vec),
             "expand" => return self.builtin_expand(&rest_vec),
             "unexpand" => return self.builtin_unexpand(&rest_vec),
+            "paste" => return self.builtin_paste(&rest_vec),
+            "fold" => return self.builtin_fold(&rest_vec),
+            "shuf" => return self.builtin_shuf(&rest_vec),
             _ => {}
         }
 
@@ -34631,8 +34634,19 @@ impl ShellExecutor {
                     if o & 1 != 0 { "x" } else { "" },
                 );
             } else {
-                // zsh prints 3 octal digits (022), not 4 (0022).
-                println!("{:03o}", mask);
+                // builtin.c:7519-7521 — `if (um & 0700) putchar('0');
+                // printf("%03o\n", um);` — emit leading '0' when any
+                // user-class bit is set, then 3 octal digits. zshrs
+                // always emitted `%03o` so `umask 0444` printed `444`
+                // instead of `0444` (the latter is what zsh prints
+                // and what scripts that re-feed `$(umask)` to umask
+                // expect — without the leading 0, octal parsers may
+                // reject or misinterpret the value).
+                if mask & 0o700 != 0 {
+                    println!("0{:03o}", mask);
+                } else {
+                    println!("{:03o}", mask);
+                }
             }
         }
         0
