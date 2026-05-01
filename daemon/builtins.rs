@@ -115,20 +115,159 @@ fn err_exit(code: &str, msg: &str) -> i32 {
 
 fn zcache(args: &[String]) -> i32 {
     let verb = args.get(1).map(|s| s.as_str()).unwrap_or("info");
+    let rest: &[String] = if args.len() > 2 { &args[2..] } else { &[] };
     match verb {
         "info" | "" => zcache_info(),
         "daemon" => zcache_daemon(args.get(2).map(|s| s.as_str()).unwrap_or("status")),
-        "rebuild" => zcache_rebuild(&args[2..]),
-        "clean" => zcache_clean(&args[2..]),
+        "rebuild" => zcache_rebuild(rest),
+        "clean" => zcache_clean(rest),
         "verify" => zcache_simple_op("verify", json!({})),
         "compact" => zcache_simple_op("compact", json!({})),
         "list" => zcache_list_targets(),
         "jobs" => zcache_simple_op("info", json!({})), // info doubles as jobs view for v1
-        "view" | "export" | "import" | "log" => err_exit(
-            "zcache",
-            &format!("`{}` not yet implemented in v1 foundation", verb),
-        ),
+        "view" => zcache_view(rest),
+        "export" => zcache_export(rest),
+        "import" => zcache_import(rest),
+        "log" => super::builtins::zlog(args), // alias for `zlog ...`
         other => err_exit("zcache", &format!("unknown verb `{}`", other)),
+    }
+}
+
+// `zcache view <target> [--format text|json|yaml|sh] [--filter <pat>]`
+// Default format = text. Calls server's `view` op which renders the target.
+fn zcache_view(args: &[String]) -> i32 {
+    let target = match args.first() {
+        Some(t) => t.clone(),
+        None => return err_exit("zcache view", "usage: zcache view <target> [--format <fmt>]"),
+    };
+    let mut format = "text".to_string();
+    let mut filter: Option<String> = None;
+    let mut iter = args.iter().skip(1);
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--format" => match iter.next() {
+                Some(f) => format = f.clone(),
+                None => return err_exit("zcache view", "--format requires a value"),
+            },
+            "--filter" => match iter.next() {
+                Some(p) => filter = Some(p.clone()),
+                None => return err_exit("zcache view", "--filter requires a value"),
+            },
+            other if other.starts_with('-') => {
+                return err_exit("zcache view", &format!("unknown flag `{}`", other));
+            }
+            _ => {}
+        }
+    }
+    let mut payload = json!({ "target": target, "format": format });
+    if let Some(f) = filter {
+        payload["filter"] = json!(f);
+    }
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("view", payload) {
+        Ok(v) => {
+            if let Some(body) = v.get("body").and_then(Value::as_str) {
+                print!("{}", body);
+                if !body.ends_with('\n') {
+                    println!();
+                }
+            } else {
+                print_pretty(&v);
+            }
+            0
+        }
+        Err(e) => err_exit("zcache view", &e.to_string()),
+    }
+}
+
+// `zcache export <target> [--format sh|json|yaml|native] [--additive] [--out <path>]`
+// Default format = sh (eval-compatible). The canonical reset pattern:
+//   eval $(zcache export aliases)
+fn zcache_export(args: &[String]) -> i32 {
+    let target = match args.first() {
+        Some(t) => t.clone(),
+        None => return err_exit("zcache export", "usage: zcache export <target> [--format <fmt>] [--additive] [--out <path>]"),
+    };
+    let mut format = "sh".to_string();
+    let mut additive = false;
+    let mut out_path: Option<String> = None;
+    let mut iter = args.iter().skip(1);
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--format" => match iter.next() {
+                Some(f) => format = f.clone(),
+                None => return err_exit("zcache export", "--format requires a value"),
+            },
+            "--additive" => additive = true,
+            "--out" => match iter.next() {
+                Some(p) => out_path = Some(p.clone()),
+                None => return err_exit("zcache export", "--out requires a path"),
+            },
+            other if other.starts_with('-') => {
+                return err_exit("zcache export", &format!("unknown flag `{}`", other));
+            }
+            _ => {}
+        }
+    }
+    let payload = json!({ "target": target, "format": format, "additive": additive });
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("export", payload) {
+        Ok(v) => {
+            let body = v.get("body").and_then(Value::as_str).unwrap_or("");
+            match out_path {
+                Some(p) => match std::fs::write(&p, body) {
+                    Ok(()) => {
+                        eprintln!("wrote {} bytes to {}", body.len(), p);
+                        0
+                    }
+                    Err(e) => err_exit("zcache export", &format!("write {}: {}", p, e)),
+                },
+                None => {
+                    print!("{}", body);
+                    if !body.ends_with('\n') {
+                        println!();
+                    }
+                    0
+                }
+            }
+        }
+        Err(e) => err_exit("zcache export", &e.to_string()),
+    }
+}
+
+// `zcache import <target> <path>`. Recognised targets: zwc, zcompdump.
+// (Other targets per docs route to specific server ops; v1 supports the two
+// migration-assist surfaces.)
+fn zcache_import(args: &[String]) -> i32 {
+    let target = match args.first() {
+        Some(t) => t.as_str(),
+        None => return err_exit("zcache import", "usage: zcache import <target> <path>"),
+    };
+    let op = match target {
+        "zcompdump" => "import_zcompdump",
+        "zwc" => return err_exit("zcache import", "zwc import not yet wired (v1 reads .zwc opportunistically only on user `source` of the .zwc path)"),
+        other => return err_exit("zcache import", &format!("unknown target `{}` (try zcompdump|zwc)", other)),
+    };
+    let path = match args.get(1) {
+        Some(p) => p.clone(),
+        None => return err_exit("zcache import", "usage: zcache import <target> <path>"),
+    };
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call(op, json!({ "path": path })) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zcache import", &e.to_string()),
     }
 }
 
