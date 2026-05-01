@@ -10118,6 +10118,8 @@ impl ShellExecutor {
             "fold" => return self.builtin_fold(&rest_vec),
             "shuf" => return self.builtin_shuf(&rest_vec),
             "comm" => return self.builtin_comm(&rest_vec),
+            "cksum" => return self.builtin_cksum(&rest_vec),
+            "factor" => return self.builtin_factor(&rest_vec),
             _ => {}
         }
 
@@ -43288,6 +43290,148 @@ impl ShellExecutor {
         let term = if zero_term { '\0' } else { '\n' };
         for item in items {
             print!("{}{}", item, term);
+        }
+        0
+    }
+
+    /// cksum [FILE...] — POSIX CRC-32 + byte-count + filename.
+    /// Output: `<crc> <bytes> <name>`. With no files or `-` reads
+    /// stdin (filename column omitted in that case, per coreutils).
+    /// Polynomial: 0x04C11DB7, init 0, length appended (POSIX).
+    fn builtin_cksum(&self, args: &[String]) -> i32 {
+        use std::io::Read;
+        // POSIX cksum table, generated for polynomial 0x04C11DB7 with
+        // bits processed MSB-first. Built once at runtime per call;
+        // a const table would be ~1KB but the runtime cost of building
+        // is microseconds and avoids the const-array boilerplate.
+        let mut table = [0u32; 256];
+        for (i, slot) in table.iter_mut().enumerate() {
+            let mut c = (i as u32) << 24;
+            for _ in 0..8 {
+                c = if c & 0x8000_0000 != 0 {
+                    (c << 1) ^ 0x04C11DB7
+                } else {
+                    c << 1
+                };
+            }
+            *slot = c;
+        }
+        let crc_bytes = |bytes: &[u8]| -> (u32, u64) {
+            let mut crc: u32 = 0;
+            let mut len: u64 = 0;
+            for &b in bytes {
+                crc = (crc << 8) ^ table[((crc >> 24) ^ b as u32) as usize & 0xff];
+                len += 1;
+            }
+            // POSIX cksum appends the length as little-endian-by-byte
+            // until length consumed.
+            let mut n = len;
+            while n != 0 {
+                crc = (crc << 8)
+                    ^ table[((crc >> 24) ^ (n as u32 & 0xff)) as usize & 0xff];
+                n >>= 8;
+            }
+            (!crc, len)
+        };
+        let files: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-') || *a == "-")
+            .map(|s| s.as_str())
+            .collect();
+        let targets: Vec<&str> = if files.is_empty() {
+            vec!["-"]
+        } else {
+            files
+        };
+        let mut status = 0;
+        for path in targets {
+            let mut buf = Vec::new();
+            let read_res = if path == "-" {
+                std::io::stdin().read_to_end(&mut buf)
+            } else {
+                match std::fs::File::open(path) {
+                    Ok(mut f) => f.read_to_end(&mut buf),
+                    Err(e) => {
+                        eprintln!("cksum: {}: {}", path, e);
+                        status = 1;
+                        continue;
+                    }
+                }
+            };
+            if let Err(e) = read_res {
+                eprintln!("cksum: {}: {}", path, e);
+                status = 1;
+                continue;
+            }
+            let (crc, len) = crc_bytes(&buf);
+            if path == "-" {
+                println!("{} {}", crc, len);
+            } else {
+                println!("{} {} {}", crc, len, path);
+            }
+        }
+        status
+    }
+
+    /// factor N... — print prime factorization of each integer arg.
+    /// Coreutils factor(1). Format: `N: p1 p2 p3 ...`. Reads stdin
+    /// if no args. Negative numbers and zero are rejected.
+    fn builtin_factor(&self, args: &[String]) -> i32 {
+        use std::io::BufRead;
+        let factor_line = |line: &str| {
+            for tok in line.split_whitespace() {
+                let n: u64 = match tok.parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        eprintln!(
+                            "factor: '{}' is not a valid positive integer",
+                            tok
+                        );
+                        continue;
+                    }
+                };
+                let mut x = n;
+                let mut factors: Vec<u64> = Vec::new();
+                if x < 2 {
+                    // 0 and 1 have no prime factorization. coreutils
+                    // emits `N:` with empty list. Match that.
+                    println!("{}:", n);
+                    continue;
+                }
+                while x % 2 == 0 {
+                    factors.push(2);
+                    x /= 2;
+                }
+                let mut p: u64 = 3;
+                while p.saturating_mul(p) <= x {
+                    while x % p == 0 {
+                        factors.push(p);
+                        x /= p;
+                    }
+                    p += 2;
+                }
+                if x > 1 {
+                    factors.push(x);
+                }
+                let parts: Vec<String> =
+                    factors.iter().map(|p| p.to_string()).collect();
+                println!("{}: {}", n, parts.join(" "));
+            }
+        };
+        let nums: Vec<&str> = args
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .collect();
+        if nums.is_empty() {
+            let stdin = std::io::stdin();
+            for line in stdin.lock().lines().filter_map(|l| l.ok()) {
+                factor_line(&line);
+            }
+        } else {
+            for tok in nums {
+                factor_line(tok);
+            }
         }
         0
     }
