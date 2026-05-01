@@ -2589,9 +2589,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 "modules" => {
-                    // Loaded modules — fixed list of modules zshrs always
-                    // exposes (compiled-in, not dlopen'd).
-                    let known_modules = [
+                    // Loaded modules — compiled-in always-loaded plus
+                    // anything zmodload registered via the
+                    // `_module_<name>` option flag (see
+                    // builtin_zmodload). Same source as the
+                    // magic_assoc_lookup path so both `${modules[X]}`
+                    // and `${(t)modules[X]}` agree.
+                    const ALWAYS_LOADED: &[&str] = &[
                         "zsh/datetime",
                         "zsh/sched",
                         "zsh/zutil",
@@ -2622,7 +2626,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         "zsh/terminfo",
                         "zsh/profiler",
                     ];
-                    if known_modules.contains(&idx) {
+                    if ALWAYS_LOADED.contains(&idx) {
+                        Some(Value::str("loaded"))
+                    } else if exec
+                        .options
+                        .get(&format!("_module_{}", idx))
+                        .copied()
+                        .unwrap_or(false)
+                    {
                         Some(Value::str("loaded"))
                     } else {
                         Some(Value::str(""))
