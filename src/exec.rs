@@ -41557,6 +41557,20 @@ impl ShellExecutor {
                 lines = arg[1..].parse().unwrap_or(10);
             } else if !arg.starts_with('-') || arg == "-" {
                 files.push(arg);
+            } else if arg == "--" {
+                i += 1;
+                while i < args.len() {
+                    files.push(&args[i]);
+                    i += 1;
+                }
+                break;
+            } else if arg == "-f" || arg == "--follow" {
+                // -f (follow): not yet wired through; accept as no-op
+                // for compat. coreutils-style \`tail -f\` would need a
+                // separate streaming loop.
+            } else {
+                eprintln!("tail: unrecognized option: '{}'", arg);
+                return 1;
             }
             i += 1;
         }
