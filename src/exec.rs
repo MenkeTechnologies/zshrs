@@ -34167,11 +34167,65 @@ impl ShellExecutor {
                 }
             },
         };
-        let _ = nanos; // chrono's format() doesn't expose %N nanoseconds.
+        // Pre-process zsh-extension `%.` / `%N.` (utils.c:3408-3431):
+        // optional N-digit prefix before `.` selects how many digits of
+        // the fractional second to emit (default 3 = milliseconds, max
+        // 9 = full nanoseconds). Substitute with the formatted nsec
+        // value before handing off to chrono, since chrono only knows
+        // standard strftime tokens.
+        let pre_format: String = {
+            let mut out = String::new();
+            let mut chars = format.chars().peekable();
+            while let Some(ch) = chars.next() {
+                if ch == '%' {
+                    let mut digit_buf = String::new();
+                    while let Some(&d) = chars.peek() {
+                        if d.is_ascii_digit() {
+                            digit_buf.push(d);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if chars.peek() == Some(&'.') {
+                        chars.next(); // consume '.'
+                        let digs: usize = if digit_buf.is_empty() {
+                            3
+                        } else {
+                            digit_buf.parse().unwrap_or(3).min(9)
+                        };
+                        // Truncate (with rounding) per utils.c:3416-3426.
+                        // Keep top `digs` digits of nanos.
+                        let mut fnsec = nanos;
+                        if digs < 9 {
+                            let mut max: i64 = 100_000_000;
+                            for _ in 0..(8 - digs) {
+                                max /= 10;
+                                fnsec /= 10;
+                            }
+                            max -= 1;
+                            fnsec = (fnsec + 5) / 10;
+                            if fnsec > max {
+                                fnsec = max;
+                            }
+                        }
+                        out.push_str(&format!("{:0w$}", fnsec, w = digs));
+                    } else {
+                        out.push('%');
+                        out.push_str(&digit_buf);
+                    }
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        };
 
         let result = chrono::DateTime::from_timestamp(ts, 0)
             .map(|dt: chrono::DateTime<chrono::Utc>| {
-                dt.with_timezone(&chrono::Local).format(format).to_string()
+                dt.with_timezone(&chrono::Local)
+                    .format(&pre_format)
+                    .to_string()
             })
             .unwrap_or_else(|| String::new());
 
