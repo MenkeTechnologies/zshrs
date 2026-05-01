@@ -692,11 +692,20 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse a program (list of lists)
+    /// Parse a complete program (top-level entry). Calls
+    /// parse_program_until with no end-token sentinel. Direct port of
+    /// zsh/Src/parse.c:614-720 `parse_event` / `parse_list` /
+    /// `par_event` flow. C distinguishes COND_EVENT (single command
+    /// for here-string) from full event parse; zshrs's parse_program
+    /// is the full-event entry.
     fn parse_program(&mut self) -> ZshProgram {
         self.parse_program_until(None)
     }
 
     /// Parse a program until we hit an end token
+    /// Parse a program until one of `end_tokens` is seen (or EOF).
+    /// Drives parse_list in a loop. C equivalent: the body of par_event
+    /// (parse.c:635-695) iterating par_list against the lexer.
     fn parse_program_until(&mut self, end_tokens: Option<&[LexTok]>) -> ZshProgram {
         let mut lists = Vec::new();
 
@@ -1223,6 +1232,11 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse an assignment
+    /// Parse an assignment word `NAME=value` or `NAME=(arr items)`.
+    /// Sub-routine of parse_simple. The C source handles assignments
+    /// inline in par_simple via the ENVSTRING/ENVARRAY token paths
+    /// (parse.c:1842-2000ish); zshrs splits it out to a dedicated
+    /// helper for clarity.
     fn parse_assign(&mut self) -> Option<ZshAssign> {
         use crate::tokens::char_tokens;
 
@@ -1522,6 +1536,10 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse C-style for loop: for (( init; cond; step ))
+    /// Parse the c-style `for ((init; cond; incr)) do BODY done`.
+    /// Inner branch of zsh/Src/parse.c:1100-1140 inside par_for.
+    /// Recognized when the token after FOR is DINPAR (the `((`
+    /// detected by gettok via dbparens setup).
     fn parse_for_cstyle(&mut self) -> Option<ZshCommand> {
         // We're at (( (Dinpar None) - the opening ((
         // Lexer returns:
@@ -1568,6 +1586,10 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse select loop (same syntax as for)
+    /// Parse `select NAME in WORDS; do BODY; done`. Same shape as
+    /// `for NAME in WORDS; do ...` but with menu-prompt semantics in
+    /// the executor. C equivalent: the SELECT case in par_for at
+    /// parse.c:1087-1207 (selects share parser flow with foreach).
     fn parse_select(&mut self) -> Option<ZshCommand> {
         // `select` shares parse_for's grammar (var, words, body) but the
         // compile path is different (interactive prompt loop).
@@ -1928,6 +1950,13 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse loop body (do...done, {...}, or shortloop)
+    /// Parse the `do BODY done` body of a for/while/until/select/
+    /// repeat loop. Direct equivalent of zsh's parse.c handling
+    /// inside the loop builders — they all consume DOLOOP, parse a
+    /// list until DONE, and return the list. The `foreach_style`
+    /// flag signals foreach (where short-form `for NAME in WORDS;
+    /// CMD` may skip do/done) vs c-style (which always requires
+    /// do/done).
     fn parse_loop_body(&mut self, foreach_style: bool) -> Option<ZshProgram> {
         if self.lexer.tok == LexTok::Doloop {
             self.lexer.zshlex();
@@ -1977,6 +2006,11 @@ impl<'a> ZshParser<'a> {
     /// body runs with positional params set. Implemented as the desugared
     /// pair (FuncDef + Simple call) so the compile path doesn't need new
     /// machinery.
+    /// Parse an anonymous function definition `() { BODY }` followed
+    /// by call args. zsh treats `() { echo hi; } a b c` as defining
+    /// and immediately calling an anon fn with args a/b/c. C
+    /// equivalent: the INOUTPAR shape in par_simple at parse.c:1836+
+    /// triggers an anon-funcdef path.
     fn parse_anon_funcdef(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip ()
         self.skip_separators();
@@ -2020,6 +2054,10 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse {...} cursh
+    /// Parse a current-shell brace block `{ BODY }`. C source:
+    /// par_cmd at parse.c:958-1085 handles INBRACE → emit WC_CURSH
+    /// + recurse into list. zshrs's parse_cursh extracts that arm
+    /// into a dedicated method.
     fn parse_cursh(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip {
         let prog = self.parse_program();
@@ -2172,6 +2210,11 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse inline function definition: name() { ... }
+    /// Parse the inline form `NAME () { BODY }` (POSIX-style funcdef
+    /// without the `function` keyword). The name has already been
+    /// consumed and pushed by parse_simple before this method fires.
+    /// C source: handled inline in par_simple's INOUTPAR-after-name
+    /// arm (parse.c:1836-2228).
     fn parse_inline_funcdef(&mut self, name: String) -> Option<ZshCommand> {
         // Skip ()
         if self.lexer.tok == LexTok::Inoutpar {
@@ -2264,10 +2307,15 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse conditional expression
+    /// Top of `[[ ]]` cond-expression parsing — entry to recursive
+    /// descent (or → and → not → primary). Direct port of zsh's
+    /// par_cond_1 at parse.c:2434-2475.
     fn parse_cond_expr(&mut self) -> Option<ZshCond> {
         self.parse_cond_or()
     }
 
+    /// Cond-expression `||` level. C: inside par_cond_1 at
+    /// parse.c:2434-2475 (the `cond_or` ladder).
     fn parse_cond_or(&mut self) -> Option<ZshCond> {
         self.recursion_depth += 1;
         if self.check_recursion() {
@@ -2301,6 +2349,7 @@ impl<'a> ZshParser<'a> {
         result
     }
 
+    /// Cond-expression `&&` level. C: par_cond_2 at parse.c:2476-2625.
     fn parse_cond_and(&mut self) -> Option<ZshCond> {
         self.recursion_depth += 1;
         if self.check_recursion() {
@@ -2334,6 +2383,8 @@ impl<'a> ZshParser<'a> {
         result
     }
 
+    /// Cond-expression `!` negation level. C: handled inside
+    /// par_cond_2 at parse.c:2476-2625 via the BANG token check.
     fn parse_cond_not(&mut self) -> Option<ZshCond> {
         self.recursion_depth += 1;
         if self.check_recursion() {
@@ -2389,6 +2440,10 @@ impl<'a> ZshParser<'a> {
         result
     }
 
+    /// Cond-expression primary: unary tests (-f, -d, ...), binary
+    /// tests (=, !=, <, >, ==, =~, -eq, -ne, ...), and parenthesized
+    /// sub-expressions. Direct port of par_cond_double / par_cond_triple
+    /// / par_cond_multi at parse.c:2626-2731 (chosen by arg count).
     fn parse_cond_primary(&mut self) -> Option<ZshCond> {
         let s1 = match self.lexer.tok {
             LexTok::String => {
@@ -2460,6 +2515,9 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse (( ... )) arithmetic command
+    /// Parse `(( EXPR ))` arithmetic command. C source: parse.c:1810-1834
+    /// `par_dinbrack` (despite the name; the function actually handles
+    /// DINPAR `(( ))` blocks too).
     fn parse_arith(&mut self) -> Option<ZshCommand> {
         let expr = self.lexer.tokstr.clone().unwrap_or_default();
         self.lexer.zshlex();
@@ -2467,6 +2525,9 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse time command
+    /// Parse `time CMD` (POSIX time keyword). Direct port of
+    /// zsh/Src/parse.c:1787-1808 `par_time`. The `time` keyword
+    /// times the execution of the following pipeline / cmd.
     fn parse_time(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip 'time'
 
