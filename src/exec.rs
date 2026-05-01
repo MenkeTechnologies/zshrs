@@ -8753,6 +8753,10 @@ pub struct ScheduledCommand {
     pub id: u32,
     pub run_at: std::time::SystemTime,
     pub command: String,
+    /// SCHEDFLAG_TRASH_ZLE — set by `sched -o` (sched.c:195). When the
+    /// scheduled command fires, the line editor is cleared so the
+    /// command's output isn't blended into the prompt redraw.
+    pub trash_zle: bool,
 }
 
 /// Profiling entry for zprof
@@ -35843,103 +35847,188 @@ impl ShellExecutor {
 
     /// sched - scheduled command execution (stub)
     fn builtin_sched(&mut self, args: &[String]) -> i32 {
-        use std::time::{Duration, SystemTime};
+        // Direct port of zsh/Src/Builtins/sched.c:150 bin_sched.
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-        if args.is_empty() {
-            // List scheduled commands
-            if self.scheduled_commands.is_empty() {
-                return 0;
+        // sched.c:161-203 — parse leading -<N> / -o / -- options.
+        let mut idx = 0;
+        let mut trash_zle = false;
+        while idx < args.len() {
+            let a = &args[idx];
+            if !a.starts_with('-') || a.len() == 1 {
+                break;
             }
-            let now = SystemTime::now();
-            for cmd in &self.scheduled_commands {
-                let remaining = cmd.run_at.duration_since(now).unwrap_or(Duration::ZERO);
-                println!("{:3}  +{:5}  {}", cmd.id, remaining.as_secs(), cmd.command);
+            // sched.c:163 — `-<digits>` deletes that item.
+            if let Some(num_str) = a.strip_prefix('-') {
+                if num_str.chars().all(|c| c.is_ascii_digit()) && !num_str.is_empty() {
+                    let sn: usize = num_str.parse().unwrap_or(0);
+                    if sn == 0 {
+                        eprintln!("sched: usage for delete: sched -<item#>.");
+                        return 1;
+                    }
+                    if sn > self.scheduled_commands.len() {
+                        eprintln!("sched: not that many entries");
+                        return 1;
+                    }
+                    self.scheduled_commands.remove(sn - 1);
+                    return 0;
+                }
+                if num_str == "-" {
+                    idx += 1;
+                    break;
+                }
+                if num_str == "o" {
+                    trash_zle = true;
+                    idx += 1;
+                    continue;
+                }
+                eprintln!("sched: bad option: -{}", num_str);
+                return 1;
+            }
+            break;
+        }
+
+        // sched.c:206-226 — no positional args: list. Format is
+        // `%3d %a %b %e %k:%M:%S [-o ][-- ]<cmd>` per ztrftime call.
+        if idx >= args.len() {
+            for (i, sch) in self.scheduled_commands.iter().enumerate() {
+                let secs = sch
+                    .run_at
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let dt = chrono::DateTime::<chrono::Local>::from(
+                    UNIX_EPOCH + Duration::from_secs(secs as u64),
+                );
+                let tbuf = dt.format("%a %b %e %k:%M:%S").to_string();
+                let flagstr = if sch.trash_zle { "-o " } else { "" };
+                let endstr = if sch.command.starts_with('-') {
+                    "-- "
+                } else {
+                    ""
+                };
+                println!(
+                    "{:3} {} {}{}{}",
+                    i + 1,
+                    tbuf,
+                    flagstr,
+                    endstr,
+                    sch.command
+                );
             }
             return 0;
         }
 
-        let mut i = 0;
-        while i < args.len() {
-            match args[i].as_str() {
-                "-L" => {
-                    // List scheduled items (zsh syntax: `sched -L`).
-                    let now = SystemTime::now();
-                    for cmd in &self.scheduled_commands {
-                        let remaining = cmd.run_at.duration_since(now).unwrap_or(Duration::ZERO);
-                        println!("{:3}  +{:5}  {}", cmd.id, remaining.as_secs(), cmd.command);
-                    }
-                    return 0;
-                }
-                "-" => {
-                    // Remove scheduled item
-                    i += 1;
-                    if i >= args.len() {
-                        eprintln!("sched: -: need item number");
+        if idx + 1 >= args.len() {
+            // sched.c:227-232 — at least time + command required.
+            eprintln!("sched: not enough arguments");
+            return 1;
+        }
+
+        let s = &args[idx];
+        let now = SystemTime::now();
+        let now_secs = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+
+        let target_secs: i64 = if let Some(rel) = s.strip_prefix('+') {
+            // sched.c:236-265 — `+` introduces relative time. Either
+            // HH:MM[:SS] or raw seconds.
+            if let Some((h_str, rest)) = rel.split_once(':') {
+                let h: i64 = match h_str.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        eprintln!("sched: bad time specifier");
                         return 1;
                     }
-                    if let Ok(id) = args[i].parse::<u32>() {
-                        self.scheduled_commands.retain(|c| c.id != id);
-                        return 0;
+                };
+                let (m, sec) = if let Some((m_str, sec_str)) = rest.split_once(':') {
+                    let m: i64 = m_str.parse().unwrap_or(0);
+                    let sec: i64 = sec_str.parse().unwrap_or(0);
+                    (m, sec)
+                } else {
+                    let m: i64 = rest.parse().unwrap_or(0);
+                    (m, 0)
+                };
+                now_secs + h * 3600 + m * 60 + sec
+            } else {
+                let n: i64 = match rel.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        eprintln!("sched: bad time specifier");
+                        return 1;
+                    }
+                };
+                now_secs + n
+            }
+        } else {
+            // sched.c:266-305 — absolute. Either HH:MM[:SS][a|p] or
+            // raw epoch seconds.
+            if let Some((h_str, rest)) = s.split_once(':') {
+                let mut h: i64 = match h_str.parse() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        eprintln!("sched: bad time specifier");
+                        return 1;
+                    }
+                };
+                let (m, sec, suffix) = {
+                    let (m_part, suffix) = rest.split_at(
+                        rest.chars()
+                            .position(|c| c == 'a' || c == 'A' || c == 'p' || c == 'P')
+                            .unwrap_or(rest.len()),
+                    );
+                    if let Some((m_str, sec_str)) = m_part.split_once(':') {
+                        let m: i64 = m_str.parse().unwrap_or(0);
+                        let sec: i64 = sec_str.parse().unwrap_or(0);
+                        (m, sec, suffix.chars().next())
                     } else {
-                        eprintln!("sched: invalid item number");
-                        return 1;
+                        let m: i64 = m_part.parse().unwrap_or(0);
+                        (m, 0, suffix.chars().next())
                     }
+                };
+                if matches!(suffix, Some('p' | 'P')) && h < 12 {
+                    h += 12;
                 }
-                "+" => {
-                    // Schedule relative time
-                    i += 1;
-                    if i >= args.len() {
-                        eprintln!("sched: +: need time");
-                        return 1;
-                    }
-                    let secs: u64 = args[i].parse().unwrap_or(0);
-                    i += 1;
-                    let command = args[i..].join(" ");
-
-                    let id = self.scheduled_commands.len() as u32 + 1;
-                    self.scheduled_commands.push(ScheduledCommand {
-                        id,
-                        run_at: SystemTime::now() + Duration::from_secs(secs),
-                        command,
-                    });
-                    return 0;
+                if matches!(suffix, Some('a' | 'A')) && h == 12 {
+                    h = 0;
                 }
-                time_str => {
-                    // Parse HH:MM, HH:MM:SS, or +H:M / +H:M:S relative form.
-                    // The leading `+` makes the time relative; we still
-                    // compute target_secs as duration from now (same path).
-                    let stripped = time_str.strip_prefix('+').unwrap_or(time_str);
-                    let parts: Vec<&str> = stripped.split(':').collect();
-                    if parts.len() >= 2 {
-                        let hour: u32 = parts[0].parse().unwrap_or(0);
-                        let min: u32 = parts[1].parse().unwrap_or(0);
-                        let sec: u32 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-
-                        // Calculate duration until that time today/tomorrow
-                        let now = SystemTime::now();
-                        let target_secs = (hour * 3600 + min * 60 + sec) as u64;
-                        let _day_secs = 86400u64;
-
-                        // Simplified: just add as seconds from now
-                        let run_at = now + Duration::from_secs(target_secs);
-
-                        i += 1;
-                        let command = args[i..].join(" ");
-
-                        let id = self.scheduled_commands.len() as u32 + 1;
-                        self.scheduled_commands.push(ScheduledCommand {
-                            id,
-                            run_at,
-                            command,
-                        });
-                        return 0;
-                    } else {
-                        eprintln!("sched: invalid time format");
+                // sched.c:285-290 — start at midnight today, then add
+                // h:m:s; if past, bump to tomorrow.
+                let now_dt = chrono::Local::now();
+                let midnight = now_dt
+                    .date_naive()
+                    .and_hms_opt(0, 0, 0)
+                    .map(|nd| nd.and_local_timezone(chrono::Local).unwrap())
+                    .map(|t| t.timestamp())
+                    .unwrap_or(now_secs);
+                let mut t = midnight + h * 3600 + m * 60 + sec;
+                if t < now_secs {
+                    t += 86400;
+                }
+                t
+            } else {
+                match s.parse::<i64>() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        eprintln!("sched: bad time specifier");
                         return 1;
                     }
                 }
             }
-        }
+        };
+
+        let command = args[idx + 1..].join(" ");
+        let run_at = UNIX_EPOCH + Duration::from_secs(target_secs.max(0) as u64);
+        // sched.c:313-334 — insert in time order; assign id based on
+        // post-insert position. We use len()+1 as a stable id and sort
+        // by time so listing reflects schedule order.
+        let id = self.scheduled_commands.len() as u32 + 1;
+        self.scheduled_commands.push(ScheduledCommand {
+            id,
+            run_at,
+            command,
+            trash_zle,
+        });
+        self.scheduled_commands.sort_by_key(|c| c.run_at);
         0
     }
 
