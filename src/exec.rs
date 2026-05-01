@@ -41986,36 +41986,91 @@ impl ShellExecutor {
     }
 
     fn builtin_uname(&self, args: &[String]) -> i32 {
+        // coreutils uname(1) port: combinable flags emit selected
+        // fields space-separated in canonical order. -a is short for
+        // every field. With no flags, default is -s (kernel name).
         let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
         if unsafe { libc::uname(&mut uts) } != 0 {
             eprintln!("uname: cannot get system info");
             return 1;
         }
 
-        let sysname = unsafe { std::ffi::CStr::from_ptr(uts.sysname.as_ptr()) }.to_string_lossy();
-        let nodename = unsafe { std::ffi::CStr::from_ptr(uts.nodename.as_ptr()) }.to_string_lossy();
-        let release = unsafe { std::ffi::CStr::from_ptr(uts.release.as_ptr()) }.to_string_lossy();
-        let version = unsafe { std::ffi::CStr::from_ptr(uts.version.as_ptr()) }.to_string_lossy();
-        let machine = unsafe { std::ffi::CStr::from_ptr(uts.machine.as_ptr()) }.to_string_lossy();
-
-        if args.is_empty() || args.iter().any(|a| a == "-s") {
-            println!("{}", sysname);
-        } else if args.iter().any(|a| a == "-a") {
-            println!(
-                "{} {} {} {} {}",
-                sysname, nodename, release, version, machine
-            );
-        } else if args.iter().any(|a| a == "-n") {
-            println!("{}", nodename);
-        } else if args.iter().any(|a| a == "-r") {
-            println!("{}", release);
-        } else if args.iter().any(|a| a == "-v") {
-            println!("{}", version);
-        } else if args.iter().any(|a| a == "-m") {
-            println!("{}", machine);
+        let sysname = unsafe { std::ffi::CStr::from_ptr(uts.sysname.as_ptr()) }.to_string_lossy().into_owned();
+        let nodename = unsafe { std::ffi::CStr::from_ptr(uts.nodename.as_ptr()) }.to_string_lossy().into_owned();
+        let release = unsafe { std::ffi::CStr::from_ptr(uts.release.as_ptr()) }.to_string_lossy().into_owned();
+        let version = unsafe { std::ffi::CStr::from_ptr(uts.version.as_ptr()) }.to_string_lossy().into_owned();
+        let machine = unsafe { std::ffi::CStr::from_ptr(uts.machine.as_ptr()) }.to_string_lossy().into_owned();
+        // -p / -o aren't in struct utsname; coreutils synthesizes them
+        // from the machine and sysname respectively. Match that.
+        let processor = machine.clone();
+        let os = if sysname == "Linux" {
+            "GNU/Linux".to_string()
         } else {
-            println!("{}", sysname);
+            sysname.clone()
+        };
+
+        let mut want_s = false;
+        let mut want_n = false;
+        let mut want_r = false;
+        let mut want_v = false;
+        let mut want_m = false;
+        let mut want_p = false;
+        let mut want_o = false;
+        let mut all = false;
+        for arg in args {
+            if let Some(s) = arg.strip_prefix('-') {
+                for c in s.chars() {
+                    match c {
+                        's' => want_s = true,
+                        'n' => want_n = true,
+                        'r' => want_r = true,
+                        'v' => want_v = true,
+                        'm' => want_m = true,
+                        'p' => want_p = true,
+                        'o' => want_o = true,
+                        'a' => all = true,
+                        _ => {}
+                    }
+                }
+            }
         }
+        if all {
+            // coreutils -a output order: sysname nodename release
+            // version machine [processor [os]]. processor/os are
+            // suppressed when 'unknown'; we always have machine so
+            // include processor; os synthesized too.
+            println!(
+                "{} {} {} {} {} {} {}",
+                sysname, nodename, release, version, machine, processor, os
+            );
+            return 0;
+        }
+        if !want_s && !want_n && !want_r && !want_v && !want_m && !want_p && !want_o {
+            want_s = true; // default
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if want_s {
+            parts.push(sysname);
+        }
+        if want_n {
+            parts.push(nodename);
+        }
+        if want_r {
+            parts.push(release);
+        }
+        if want_v {
+            parts.push(version);
+        }
+        if want_m {
+            parts.push(machine);
+        }
+        if want_p {
+            parts.push(processor);
+        }
+        if want_o {
+            parts.push(os);
+        }
+        println!("{}", parts.join(" "));
         0
     }
 
