@@ -36039,12 +36039,18 @@ impl ShellExecutor {
         use std::os::unix::fs::MetadataExt;
 
         let mut recursive = false;
+        let mut symlink = false;
         let mut positional: Vec<&str> = Vec::new();
 
         for arg in args {
             match arg.as_str() {
                 "-R" => recursive = true,
-                "-h" => {} // don't deference symlinks (default on most systems)
+                // -h: act on the symlink itself (lchown) rather than
+                // following it. Direct port of zsh/Src/Modules/files.c
+                // bin_chown which selects chown_dolchown when -h is
+                // set. Default WITHOUT -h is to follow (chown the
+                // target), matching coreutils chown(1).
+                "-h" => symlink = true,
                 s if !s.starts_with('-') => positional.push(s),
                 _ => {}
             }
@@ -36101,13 +36107,27 @@ impl ShellExecutor {
             _ => u32::MAX,
         };
 
-        fn do_chown(path: &std::path::Path, uid: u32, gid: u32, recursive: bool) -> i32 {
+        fn do_chown(
+            path: &std::path::Path,
+            uid: u32,
+            gid: u32,
+            recursive: bool,
+            symlink: bool,
+        ) -> i32 {
             let c_path = match std::ffi::CString::new(path.to_string_lossy().as_bytes()) {
                 Ok(p) => p,
                 Err(_) => return 1,
             };
 
-            let ret = unsafe { libc::chown(c_path.as_ptr(), uid, gid) };
+            // -h selects lchown to act on the symlink itself; default
+            // chown follows the link to its target.
+            let ret = unsafe {
+                if symlink {
+                    libc::lchown(c_path.as_ptr(), uid, gid)
+                } else {
+                    libc::chown(c_path.as_ptr(), uid, gid)
+                }
+            };
             if ret != 0 {
                 eprintln!(
                     "chown: changing ownership of '{}': {}",
@@ -36120,7 +36140,7 @@ impl ShellExecutor {
             if recursive && path.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(path) {
                     for entry in entries.flatten() {
-                        if do_chown(&entry.path(), uid, gid, true) != 0 {
+                        if do_chown(&entry.path(), uid, gid, true, symlink) != 0 {
                             return 1;
                         }
                     }
@@ -36130,7 +36150,7 @@ impl ShellExecutor {
         }
 
         for file in files {
-            if do_chown(std::path::Path::new(file), uid, gid, recursive) != 0 {
+            if do_chown(std::path::Path::new(file), uid, gid, recursive, symlink) != 0 {
                 return 1;
             }
         }
