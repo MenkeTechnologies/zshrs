@@ -35447,7 +35447,14 @@ impl ShellExecutor {
                     show_all = false;
                 }
                 s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                s => {
+                    // BUILTIN("zstat", ..., "AfHLnNoTrs") in
+                    // zsh/Src/Modules/stat.c declares the valid letter
+                    // set. Old \`_ => {}\` accepted any letter.
+                    let bad: String = s[1..].chars().take(1).collect();
+                    eprintln!("zshrs:zstat:1: bad option: -{}", bad);
+                    return 1;
+                }
             }
         }
 
