@@ -23884,6 +23884,7 @@ impl ShellExecutor {
         let mut resolve = false; // -r
         let mut trace = false; // -t
         let mut use_caller_dir = false; // -d
+        let mut match_pattern = false; // -m: each NAME is a glob pattern
         let _list_mode = false;
 
         let mut i = 0;
@@ -23926,7 +23927,7 @@ impl ShellExecutor {
                         'W' => {} // warn nested
                         'd' => use_caller_dir = true,
                         'w' => {} // wordcode
-                        'm' => {} // pattern match
+                        'm' => match_pattern = true,
                         // zsh: unknown autoload flag -> `autoload:1:
                         // bad option: -X` exit 1. zshrs's silent
                         // fallback accepted any letter, masking
@@ -23950,9 +23951,14 @@ impl ShellExecutor {
             i += 1;
         }
 
-        // If no functions specified, list autoloaded functions
+        // If no functions specified, list autoloaded functions.
+        // Sorted alphabetically per zsh's table-walk order; HashMap
+        // iteration was nondeterministic so output flickered between
+        // runs and broke save/restore-state idioms.
         if functions.is_empty() && !execute_now {
-            for (name, _) in &self.autoload_pending {
+            let mut names: Vec<&String> = self.autoload_pending.keys().collect();
+            names.sort();
+            for name in names {
                 if no_alias && zsh_style {
                     println!("autoload -Uz {}", name);
                 } else if no_alias {
@@ -23992,6 +23998,30 @@ impl ShellExecutor {
                 }
             }
             return 0;
+        }
+
+        // -m: each `function_name` arg is a glob pattern. Expand to
+        // every existing autoload-pending entry that matches; useful
+        // for `autoload -m '_my_*'` to mark a whole namespace at once.
+        // Direct port of zsh/Src/builtin.c bin_autoload's pattern path.
+        if match_pattern {
+            let pats: Vec<String> = functions.clone();
+            let candidates: Vec<String> =
+                self.autoload_pending.keys().cloned().collect();
+            functions = pats
+                .iter()
+                .flat_map(|p| {
+                    candidates
+                        .iter()
+                        .filter(|c| Self::glob_match_static(c, p))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            // Dedup preserving order.
+            let mut seen: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            functions.retain(|n| seen.insert(n.clone()));
         }
 
         // Register functions for autoload - create stub functions
