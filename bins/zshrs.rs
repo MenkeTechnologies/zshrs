@@ -703,26 +703,37 @@ pub fn zshrs_main() {
 
     // AOT trailer probe: if this binary was produced by `zbuild`, the last
     // 32 bytes contain a magic + length pair pointing at a zstd-compressed
-    // shell script appended to the executable. Detect, decode, and run that
-    // script — bypassing the REPL entirely. Without a trailer this is a no-op.
-    // Mirror of stryke's AOT detection at startup.
+    // payload of one-or-more shell scripts appended to the executable.
+    // Detect, decode, and run each in input order under a single executor —
+    // globals + functions defined by file N are visible to file N+1.
+    // Without a trailer this is a no-op (all binaries get the same probe).
     if let Ok(self_exe) = env::current_exe() {
-        if let Some(embedded) = zsh::aot::try_load_embedded_script(&self_exe) {
-            // Remove our argv[0] (the binary path); positional args remain.
+        if let Some(embedded) = zsh::aot::try_load_embedded(&self_exe) {
+            // Remove our argv[0] (the binary path); positional args remain
+            // for the entire bundle (every file sees the same $1..$N).
             let script_args: Vec<String> = args.iter().skip(1).cloned().collect();
             let mut executor = zsh::exec::ShellExecutor::new();
             executor.positional_params = script_args;
-            executor
-                .variables
-                .insert("0".to_string(), embedded.name.clone());
-            let exit_code = match executor.execute_script(&embedded.source) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("zshrs: {}: {}", embedded.name, e);
-                    1
-                }
-            };
-            std::process::exit(exit_code);
+            let mut last_status = 0;
+            for file in &embedded.0 {
+                executor
+                    .variables
+                    .insert("0".to_string(), file.name.clone());
+                last_status = match executor.execute_script(&file.source) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("zshrs: {}: {}", file.name, e);
+                        std::process::exit(1);
+                    }
+                };
+                // If a script called `exit N` (zsh's exit propagates via
+                // the `returning` field in subshell-snapshot scope, but
+                // here at top scope it terminates the process directly
+                // through builtin_exit's process::exit). If we reach this
+                // line the script ran to completion without calling exit;
+                // continue to the next file.
+            }
+            std::process::exit(last_status);
         }
     }
 

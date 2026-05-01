@@ -44330,57 +44330,60 @@ impl ShellExecutor {
         }
     }
 
-    /// zbuild --in SCRIPT --out OUT — bake a shell script into a
-    /// copy of the running zshrs binary, producing a self-contained
-    /// AOT executable. Mirrors `stryke build` for stryke.
+    /// zbuild --in A.zsh [--in B.zsh ...] --out OUT — bake one or
+    /// more shell scripts into a copy of the running zshrs binary
+    /// in input order, producing a self-contained AOT executable.
     ///
-    ///   zbuild --in deploy.zsh --out deploy
-    ///   ./deploy            # runs deploy.zsh embedded inside zshrs
+    ///   zbuild --in lib1.zsh --in lib2.zsh --in main.zsh --out app
+    ///   ./app             # runs lib1, lib2, main sequentially under
+    ///                     # one ShellExecutor (globals/functions
+    ///                     # from earlier files visible to later ones)
     ///
-    /// The output is `current_exe + zstd-compressed trailer`. zshrs
-    /// detects the trailer at startup via aot::try_load_embedded_script
-    /// and runs the embedded script. Without a trailer, the same
-    /// binary still works as plain zshrs.
+    /// zsh has no project concept, so there's no manifest, no entry
+    /// point convention, no library directory walker. Order is
+    /// exactly the `--in` argv order.
     ///
     /// Flags:
-    ///   --in PATH   /  -i PATH      script source (required)
+    ///   --in PATH   /  -i PATH      script source (repeatable, required)
     ///   --out PATH  /  -o PATH      output binary (required)
-    ///   --help                      print this usage
+    ///   --help / -h                 print usage
     fn builtin_zbuild(&self, args: &[String]) -> i32 {
-        let mut input: Option<String> = None;
+        let mut inputs: Vec<std::path::PathBuf> = Vec::new();
         let mut output: Option<String> = None;
         let mut iter = args.iter();
         while let Some(arg) = iter.next() {
             match arg.as_str() {
-                "--in" | "-i" | "--input" => {
-                    match iter.next() {
-                        Some(p) => input = Some(p.clone()),
-                        None => {
-                            eprintln!("zshrs:zbuild:1: --in requires a path");
-                            return 1;
-                        }
+                "--in" | "-i" | "--input" => match iter.next() {
+                    Some(p) => inputs.push(std::path::PathBuf::from(p)),
+                    None => {
+                        eprintln!("zshrs:zbuild:1: --in requires a path");
+                        return 1;
                     }
+                },
+                s if s.starts_with("--in=") => {
+                    inputs.push(std::path::PathBuf::from(&s[5..]));
                 }
-                s if s.starts_with("--in=") => input = Some(s[5..].to_string()),
-                s if s.starts_with("--input=") => input = Some(s[8..].to_string()),
-                "--out" | "-o" | "--output" => {
-                    match iter.next() {
-                        Some(p) => output = Some(p.clone()),
-                        None => {
-                            eprintln!("zshrs:zbuild:1: --out requires a path");
-                            return 1;
-                        }
+                s if s.starts_with("--input=") => {
+                    inputs.push(std::path::PathBuf::from(&s[8..]));
+                }
+                "--out" | "-o" | "--output" => match iter.next() {
+                    Some(p) => output = Some(p.clone()),
+                    None => {
+                        eprintln!("zshrs:zbuild:1: --out requires a path");
+                        return 1;
                     }
-                }
+                },
                 s if s.starts_with("--out=") => output = Some(s[6..].to_string()),
                 s if s.starts_with("--output=") => output = Some(s[9..].to_string()),
                 "--help" | "-h" => {
-                    println!("Usage: zbuild --in SCRIPT --out OUT");
+                    println!("Usage: zbuild --in A.zsh [--in B.zsh ...] --out OUT");
                     println!();
-                    println!("Bake a shell script into an AOT-compiled standalone executable.");
+                    println!("Bake one or more shell scripts into an AOT-compiled");
+                    println!("standalone executable. Files run sequentially in input");
+                    println!("order under a single ShellExecutor.");
                     println!();
                     println!("Options:");
-                    println!("  --in / -i PATH    script source (required)");
+                    println!("  --in / -i PATH    script source (repeatable, required)");
                     println!("  --out / -o PATH   output binary (required)");
                     return 0;
                 }
@@ -44390,13 +44393,10 @@ impl ShellExecutor {
                 }
             }
         }
-        let in_path = match input {
-            Some(p) => p,
-            None => {
-                eprintln!("zshrs:zbuild:1: --in PATH required");
-                return 1;
-            }
-        };
+        if inputs.is_empty() {
+            eprintln!("zshrs:zbuild:1: at least one --in PATH required");
+            return 1;
+        }
         let out_path = match output {
             Some(p) => p,
             None => {
@@ -44404,12 +44404,12 @@ impl ShellExecutor {
                 return 1;
             }
         };
-        match crate::aot::build(
-            std::path::Path::new(&in_path),
-            std::path::Path::new(&out_path),
-        ) {
+        match crate::aot::build(&inputs, std::path::Path::new(&out_path)) {
             Ok(p) => {
-                eprintln!("zbuild: wrote {}", p.display());
+                eprintln!("zbuild: wrote {} ({} file{} embedded)",
+                    p.display(),
+                    inputs.len(),
+                    if inputs.len() == 1 { "" } else { "s" });
                 0
             }
             Err(e) => {
