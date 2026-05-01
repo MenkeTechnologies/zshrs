@@ -35137,6 +35137,11 @@ impl ShellExecutor {
 
     /// zsleep - sleep with fractional seconds
     fn builtin_zsleep(&self, args: &[String]) -> i32 {
+        // zsh/Src/Modules/system.c sleep_main accepts a single
+        // non-negative numeric arg (NaN / negative / inf are
+        // rejected). Direct port of bin_zsleep in zsh's mod_zselect:
+        // negative-or-non-finite -> no-op exit 0; valid duration
+        // sleeps via nanosleep.
         if args.is_empty() {
             eprintln!("zsleep: missing argument");
             return 1;
@@ -35150,6 +35155,11 @@ impl ShellExecutor {
             }
         };
 
+        // Duration::from_secs_f64 panics on negative / NaN / +inf.
+        // zsh's sleep just returns 0 for non-positive durations.
+        if !secs.is_finite() || secs <= 0.0 {
+            return 0;
+        }
         std::thread::sleep(std::time::Duration::from_secs_f64(secs));
         0
     }
@@ -40972,6 +40982,12 @@ impl ShellExecutor {
             }
         }
 
+        // Duration::from_secs_f64 panics on negative / NaN / +inf.
+        // coreutils sleep treats negative as an error; here we
+        // tolerate non-positive total as a no-op exit 0.
+        if !total_secs.is_finite() || total_secs <= 0.0 {
+            return 0;
+        }
         std::thread::sleep(std::time::Duration::from_secs_f64(total_secs));
         0
     }
