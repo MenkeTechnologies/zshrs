@@ -41165,7 +41165,13 @@ impl ShellExecutor {
                                 show_tabs = true;
                                 show_nonprint = true;
                             }
-                            _ => {}
+                            // coreutils cat errors on unknown short
+                            // flag letters (esp. inside combined forms
+                            // like \`-nX\`). Old \`_ => {}\` swallowed.
+                            _ => {
+                                eprintln!("cat: unrecognized option: '-{}'", c);
+                                return 1;
+                            }
                         }
                     }
                 }
