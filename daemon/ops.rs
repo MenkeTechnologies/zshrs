@@ -51,6 +51,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "source_resolve" => super::source_resolver::op_source_resolve(state, args).await,
         "history_append" => super::history::op_history_append(state, args).await,
         "history_query" => super::history::op_history_query(state, args).await,
+        "cmd_started" => op_cmd_started(state, args).await,
         "subscribe" => op_subscribe(state, client_id, args).await,
         "unsubscribe" => op_unsubscribe(state, client_id, args).await,
         "subscription_set_paused" => op_subscription_set_paused(state, client_id, args).await,
@@ -605,6 +606,33 @@ async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
         },
         "generation": generation,
     }))
+}
+
+/// `cmd_started` — shell-side hook fires this when a command crosses the
+/// long-running threshold (5s by default) without having completed. Daemon
+/// broadcasts `long_cmd_started` to all of the user's other shells so they
+/// can show a status-line indicator. Per docs/DAEMON.md "Long-running
+/// command completion notices" companion events.
+async fn op_cmd_started(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let line = args
+        .get("line")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let from_shell = args.get("shell_id").and_then(Value::as_u64).unwrap_or(0);
+    let cwd = args
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let payload = json!({
+        "from_shell": from_shell,
+        "command": line,
+        "cwd": cwd,
+        "ts_ns": chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+    });
+    let frame = super::ipc::Frame::event("long_cmd_started", payload);
+    let count = state.broadcast(frame, &[from_shell]);
+    Ok(json!({ "delivered_to": count }))
 }
 
 /// `complete` — tab-completion data plane. Given a partial line / cursor
