@@ -18661,7 +18661,7 @@ impl ShellExecutor {
     }
 
     /// Apply a single zsh parameter expansion flag
-    fn apply_zsh_param_flag(&self, val: &str, name: &str, flag: &ZshParamFlag) -> String {
+    fn apply_zsh_param_flag(&mut self, val: &str, name: &str, flag: &ZshParamFlag) -> String {
         match flag {
             // `@` is a context marker (force array semantics in DQ),
             // not a value transform. It's already consumed at the
@@ -18891,8 +18891,12 @@ impl ShellExecutor {
                 val.chars().count().to_string()
             }
             ZshParamFlag::Expand => {
-                // Would need mutable self to do expansions
-                val.to_string()
+                // (e) — re-expand the value through parameter,
+                // command-substitution and arithmetic. Direct port of
+                // zsh/Src/subst.c paramsubst's PSUB_EXPAND branch
+                // (the (e) flag triggers a recursive subst pass on
+                // the value). expand_string covers that surface.
+                self.expand_string(val)
             }
             ZshParamFlag::PromptExpand => {
                 // Expand prompt escapes
