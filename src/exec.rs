@@ -18829,20 +18829,42 @@ impl ShellExecutor {
                     if let Some(group) = output_underscore {
                         body = underscore_separate_digits(&body, group);
                     }
-                    // zsh's convbase (Src/params.c:5586): no prefix
-                    // when base == 10 (matches `[#10]42` -> `42`).
-                    // Same when the user asked for `##` form
-                    // (`[##16]255` -> `FF`). Only `[#N]` for N != 10
-                    // gets the `N#` prefix.
-                    return if no_prefix || base == 10 {
-                        if let Some(idx) = body.find('#') {
-                            body[idx + 1..].to_string()
-                        } else {
-                            body
-                        }
+                    // Direct port of convbase_ptr at
+                    // src/zsh/Src/params.c:5596-5604:
+                    //   isset(CBASES) && base == 16              → "0x"
+                    //   isset(CBASES) && base == 8 && OCTALZEROES → "0"
+                    //   base != 10                                → "N#"
+                    //   else                                      → ""
+                    // The double-`##` form (`[##N]`) drops the prefix
+                    // entirely (math.c outputradix < 0 → params.c:5606
+                    // takes the else branch with negated base, no prefix).
+                    let cbases = self.options.get("cbases").copied().unwrap_or(false);
+                    let octalzeroes = self.options.get("octalzeroes").copied().unwrap_or(false);
+                    // body currently has "N#DIGITS" (or "-N#DIGITS").
+                    // Strip the "N#" so we can prepend whichever prefix
+                    // the option-set demands.
+                    let (sign, raw_digits) = if let Some(stripped) = body.strip_prefix('-') {
+                        ("-", stripped)
                     } else {
-                        body
+                        ("", body.as_str())
                     };
+                    let digits = match raw_digits.find('#') {
+                        Some(idx) => &raw_digits[idx + 1..],
+                        None => raw_digits,
+                    };
+                    let prefix = if no_prefix {
+                        ""
+                    } else if cbases && base == 16 {
+                        "0x"
+                    } else if cbases && base == 8 && octalzeroes {
+                        "0"
+                    } else if base != 10 {
+                        // Will format below with `N#` prefix.
+                        return format!("{}{}#{}", sign, base, digits);
+                    } else {
+                        ""
+                    };
+                    return format!("{}{}{}", sign, prefix, digits);
                 }
                 // zsh splits formatting between the two contexts that
                 // share this code path:
