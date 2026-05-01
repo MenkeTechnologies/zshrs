@@ -36129,34 +36129,66 @@ impl ShellExecutor {
 
     /// rm - remove files
     fn builtin_rm(&self, args: &[String]) -> i32 {
+        // coreutils rm(1) port: combinable -rfv flags + -d (empty
+        // dirs) + '--' end-of-options + --long-forms. Per-file
+        // continue on error so 'rm a b c' deletes b/c when a fails.
         let mut recursive = false;
         let mut force = false;
         let mut interactive = false;
         let mut verbose = false;
+        let mut empty_dir = false;
         let mut files: Vec<&str> = Vec::new();
-
+        let mut end_of_options = false;
         for arg in args {
+            if end_of_options {
+                files.push(arg);
+                continue;
+            }
             match arg.as_str() {
-                "-r" | "-R" => recursive = true,
-                "-f" => force = true,
-                "-i" => interactive = true,
-                "-v" => verbose = true,
-                "-rf" | "-fr" => {
-                    recursive = true;
+                "--" => end_of_options = true,
+                "-r" | "-R" | "--recursive" => recursive = true,
+                "-f" | "--force" => {
                     force = true;
+                    interactive = false;
                 }
-                s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                "-i" | "--interactive" => {
+                    interactive = true;
+                    force = false;
+                }
+                "-v" | "--verbose" => verbose = true,
+                "-d" | "--dir" => empty_dir = true,
+                s if s.starts_with("--") => {} // unknown long form, silent
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // Combined short flags: walk every char.
+                    for c in s[1..].chars() {
+                        match c {
+                            'r' | 'R' => recursive = true,
+                            'f' => {
+                                force = true;
+                                interactive = false;
+                            }
+                            'i' => {
+                                interactive = true;
+                                force = false;
+                            }
+                            'v' => verbose = true,
+                            'd' => empty_dir = true,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => files.push(arg),
             }
         }
 
+        let mut status = 0;
         for file in files {
             let path = std::path::Path::new(file);
 
             if !path.exists() {
                 if !force {
                     eprintln!("rm: cannot remove '{}': No such file or directory", file);
-                    return 1;
+                    status = 1;
                 }
                 continue;
             }
@@ -36175,9 +36207,14 @@ impl ShellExecutor {
             let result = if path.is_dir() {
                 if recursive {
                     std::fs::remove_dir_all(path)
+                } else if empty_dir {
+                    // -d: only empty dirs (rmdir-like). Errors loudly
+                    // if non-empty unless -f.
+                    std::fs::remove_dir(path)
                 } else {
                     eprintln!("rm: cannot remove '{}': Is a directory", file);
-                    return 1;
+                    status = 1;
+                    continue;
                 }
             } else {
                 std::fs::remove_file(path)
@@ -36186,13 +36223,13 @@ impl ShellExecutor {
             if let Err(e) = result {
                 if !force {
                     eprintln!("rm: cannot remove '{}': {}", file, e);
-                    return 1;
+                    status = 1;
                 }
             } else if verbose {
                 println!("removed '{}'", file);
             }
         }
-        0
+        status
     }
 
     /// chown - change file owner (Unix only)
