@@ -280,7 +280,7 @@ fn render_filtered(
             }
             let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
             let from_ns = range.and_then(parse_range).map(|secs| now_ns - secs * 1_000_000_000);
-            let limit: u64 = 10_000;
+            let limit: i64 = 10_000;
             let res = state.with_history(|conn| -> rusqlite::Result<Vec<super::history::HistoryRow>> {
                 super::history::query(conn, filter, "fts", None, from_ns, None, limit, true)
             });
