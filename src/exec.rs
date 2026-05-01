@@ -17179,9 +17179,26 @@ impl ShellExecutor {
                 Some(String::new())
             }
             "jobdirs" => {
-                // We don't track job directories separately - return current dir
+                // ${jobdirs[N]}: cwd at the time job N was launched.
+                // We don't yet capture per-job cwd at launch (would
+                // need a JobInfo.cwd field plumbed through add_job),
+                // so use the current PWD as a best-effort proxy. With
+                // @/* expansion, return one entry per active job so
+                // arr-length math (${#jobdirs}) matches ${#jobtexts}.
+                let pwd = self
+                    .variables
+                    .get("PWD")
+                    .cloned()
+                    .or_else(|| env::var("PWD").ok())
+                    .unwrap_or_default();
                 if key == "@" || key == "*" {
-                    return Some(String::new());
+                    let n = self.jobs.iter().count();
+                    return Some(vec![pwd; n].join(" "));
+                }
+                if let Ok(id) = key.parse::<usize>() {
+                    if self.jobs.get(id).is_some() {
+                        return Some(pwd);
+                    }
                 }
                 Some(String::new())
             }
