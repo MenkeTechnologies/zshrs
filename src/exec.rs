@@ -39328,7 +39328,7 @@ impl ShellExecutor {
     /// zregexparse - parse with regex
     fn builtin_zregexparse(&mut self, args: &[String]) -> i32 {
         if args.len() < 2 {
-            eprintln!("zregexparse: usage: zregexparse var pattern [string]");
+            eprintln!("zshrs:zregexparse:1: usage: zregexparse var pattern [string]");
             return 1;
         }
 
@@ -39381,7 +39381,7 @@ impl ShellExecutor {
                 }
             }
             Err(e) => {
-                eprintln!("zregexparse: invalid regex: {}", e);
+                eprintln!("zshrs:zregexparse:1: invalid regex: {}", e);
                 2
             }
         }
