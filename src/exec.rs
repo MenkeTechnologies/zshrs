@@ -42542,7 +42542,13 @@ impl ShellExecutor {
                     skip_chars = s[2..].parse().unwrap_or(0);
                 }
                 a if !a.starts_with('-') => files.push(a),
-                _ => {}
+                "-" => files.push("-"),
+                s => {
+                    // coreutils uniq rejects unknown flags. Old `_ => {}`
+                    // accepted any -X letter silently.
+                    eprintln!("uniq: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
 
