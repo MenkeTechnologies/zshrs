@@ -1,6 +1,6 @@
 [package]
 name = "zshrs"
-version = "0.10.2"
+version = "0.10.4"
 edition = "2021"
 description = "The first compiled Unix shell — bytecode VM, worker pool, AOP intercept, SQLite caching"
 license = "MIT"
