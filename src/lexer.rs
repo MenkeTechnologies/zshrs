@@ -181,6 +181,38 @@ pub struct ZshLexer<'a> {
 
 const MAX_LEXER_RECURSION: usize = 200;
 
+/// Per-alias info returned by `AliasResolver::lookup_alias` and
+/// `lookup_suffix_alias`. Mirrors zsh's `struct alias` fields used
+/// at lex.c:1914-1943: `text` (replacement body), `in_use` (the
+/// recursion-guard flag), `global` (vs command-position-only).
+#[derive(Debug, Clone)]
+pub struct AliasInfo {
+    pub text: String,
+    pub in_use: bool,
+    pub global: bool,
+}
+
+/// Trait the lexer uses to look up aliases and reserved words during
+/// `exalias`. Implementors typically delegate to the executor's
+/// alias/reswd hash tables. Defining the trait here keeps lexer.rs
+/// free of executor-specific types — same pattern zsh uses with the
+/// hashtable.h opaque-handle approach against aliastab/reswdtab/
+/// sufaliastab.
+pub trait AliasResolver {
+    /// Look up an alias by name. Returns `None` if not found, or the
+    /// alias body + flags otherwise.
+    fn lookup_alias(&self, name: &str) -> Option<AliasInfo>;
+    /// Look up a suffix alias (e.g. `.txt → less`) by suffix only.
+    fn lookup_suffix_alias(&self, suffix: &str) -> Option<AliasInfo>;
+    /// Resolve a reserved word. Returns the LexTok the word should
+    /// promote to (e.g. "if" → IF), or None if not a reswd.
+    fn lookup_reswd(&self, name: &str) -> Option<LexTok>;
+    /// Mark an alias as in-use (recursion guard). Called when an
+    /// alias is about to be expanded; the matching unmark happens
+    /// when the alias text has been fully consumed by the lexer.
+    fn mark_in_use(&mut self, name: &str, in_use: bool);
+}
+
 /// Saved lexical state for nested-context handling. Direct port of
 /// `struct lex_stack` declared in zsh/Src/zsh.h and used by
 /// zsh/Src/lex.c:215-239 (`lex_context_save`) and lex.c:244-262
@@ -275,6 +307,195 @@ impl<'a> ZshLexer<'a> {
         // explicit ptr/len/siz with hrealloc; Rust's String handles
         // resize automatically.
         self.lexbuf_raw.add(c);
+    }
+
+    /// Run alias / reserved-word expansion on the just-lexed token.
+    /// Direct port of zsh/Src/lex.c:1949-2021 `exalias`. Returns true
+    /// if an alias was injected (the caller's loop should re-run
+    /// gettok to consume the injected text).
+    ///
+    /// C source flow:
+    ///   1. Spell-correct (lex.c:1958-1962) — disabled in zshrs.
+    ///   2. If tokstr is None: set lextext from tokstrings[tok] and
+    ///      checkalias against that (lex.c:1964-1969).
+    ///   3. Otherwise: untokenize tokstr into a working copy (lex.c:
+    ///      1971-1980).
+    ///   4. ZLE word-tracking: call gotword() if LEXFLAGS_ZLE
+    ///      (lex.c:1982-1991).
+    ///   5. STRING tokens: try checkalias, then reservation lookup
+    ///      (lex.c:1993-2015).
+    ///   6. Clear inalmore (lex.c:2016).
+    ///
+    /// Takes an `AliasResolver` trait object so the lexer doesn't
+    /// hard-depend on the executor's alias-table types. zshrs callers
+    /// implement `AliasResolver` over their alias hash tables.
+    pub fn exalias<R: AliasResolver>(&mut self, resolver: &mut R) -> bool {
+        // lex.c:1957 — `hwend()` ends the history-word region. zshrs's
+        // history layer doesn't track per-word boundaries here; no-op.
+
+        // lex.c:1958-1962 — spell correction via spckword. zshrs
+        // doesn't implement spell correction yet; documented divergence.
+
+        // lex.c:1964-1969 — bare-token path (no tokstr).
+        if self.tokstr.is_none() {
+            // lex.c:1965 — `zshlextext = tokstrings[tok];` — for tokens
+            // like SEMI/AMPER/etc. the canonical text comes from a
+            // static table. zshrs's check_alias_for_text uses the
+            // resolver directly with the token's text representation.
+            if self.tok == LexTok::Newlin {
+                return false;
+            }
+            // Use punctuation-token text; unknown tokens skip alias.
+            let text = match self.tok {
+                LexTok::Semi => ";",
+                LexTok::Amper => "&",
+                LexTok::Bar => "|",
+                _ => return false,
+            };
+            return self.check_alias(resolver, text);
+        }
+
+        let tokstr = self.tokstr.clone().unwrap();
+        // lex.c:1973-1980 — untokenize: convert the lexer's internal
+        // tokenized form (Pound..ztokens shifts) into the literal
+        // shell text. Call the global helper.
+        let lextext = if has_token(&tokstr) {
+            untokenize(&tokstr)
+        } else {
+            tokstr.clone()
+        };
+
+        // lex.c:1982-1991 — ZLE word-tracking for completion.
+        if self.lexflags.zle {
+            let zp = self.lexflags;
+            self.gotword();
+            // lex.c:1986-1990 — if gotword cleared lexflags, the cursor
+            // word has been reached; abort exalias so completion can
+            // capture the partial token unchanged.
+            if zp.zle && !self.lexflags.zle {
+                return false;
+            }
+        }
+
+        // lex.c:1993-2015 — STRING-token alias / reswd check.
+        if self.tok == LexTok::String {
+            // lex.c:1995 — `checkalias()`. POSIX-aliases gate skipped
+            // here (zshrs doesn't have the option flag wired).
+            if self.check_alias(resolver, &lextext) {
+                return true;
+            }
+
+            // lex.c:2002-2009 — reserved-word lookup. Fires when in
+            // command position OR when the text is bare `}` and
+            // IGNOREBRACES is unset (so `}` ends a brace block).
+            if self.incmdpos || lextext == "}" {
+                if let Some(rwtok) = resolver.lookup_reswd(&lextext) {
+                    self.tok = rwtok;
+                    if rwtok == LexTok::Repeat {
+                        self.inrepeat = 1;
+                    }
+                    if rwtok == LexTok::Dinbrack {
+                        self.incond = 1;
+                    }
+                }
+            } else if self.incond > 0 && lextext == "]]" {
+                // lex.c:2010-2012 — `]]` closes the cond expression.
+                self.tok = LexTok::Doutbrack;
+                self.incond = 0;
+            } else if self.incond == 1 && lextext == "!" {
+                // lex.c:2013-2014 — `!` inside `[[ ]]` is the BANG
+                // negation, not a literal.
+                self.tok = LexTok::Bang;
+            }
+        }
+
+        // lex.c:2016 — `inalmore = 0;` — alias-more flag clears after
+        // any non-alias token.
+        // (zshrs's lexer doesn't have inalmore yet — added here would
+        // require gettok to track when an alias-pushed token has more
+        // text after it. Documented divergence.)
+
+        false
+    }
+
+    /// Helper for `exalias`. Direct port of zsh/Src/lex.c:1899-1947
+    /// `checkalias`. Returns true if the lookup matched (regular or
+    /// suffix alias) AND the alias text was successfully injected
+    /// back into the input stream for re-lexing.
+    fn check_alias<R: AliasResolver>(&mut self, resolver: &mut R, lextext: &str) -> bool {
+        // lex.c:1906-1907 — guard on null lextext.
+        if lextext.is_empty() {
+            return false;
+        }
+
+        // lex.c:1909-1911 — guard: alias expansion is disabled, or
+        // POSIX aliases require the token to be a STRING and not a
+        // reserved word.
+        if self.noaliases {
+            return false;
+        }
+
+        // lex.c:1914-1933 — regular alias lookup.
+        if let Some(alias) = resolver.lookup_alias(lextext) {
+            if !alias.in_use
+                && (alias.global || (self.incmdpos && self.tok == LexTok::String))
+            {
+                // lex.c:1918-1927 — if the next char isn't blank,
+                // insert a space so the alias body can't accidentally
+                // join the following word.
+                if !self.lexstop {
+                    if let Some(c) = self.peek() {
+                        if !Self::is_blank(c) {
+                            self.inject_alias_text(" ");
+                        }
+                    }
+                }
+                // lex.c:1928 — `inpush(an->text, INP_ALIAS, an);`
+                self.inject_alias_text(&alias.text);
+                resolver.mark_in_use(lextext, true);
+                self.lexstop = false;
+                return true;
+            }
+        }
+
+        // lex.c:1934-1943 — suffix-alias lookup. The token must end
+        // with `.SUFFIX`, the suffix name must be a registered
+        // suffix-alias, AND the lexer must be in command position.
+        if self.incmdpos {
+            if let Some(dot_pos) = lextext.rfind('.') {
+                if dot_pos > 0 && dot_pos + 1 < lextext.len() {
+                    let suffix = &lextext[dot_pos + 1..];
+                    if let Some(alias) = resolver.lookup_suffix_alias(suffix) {
+                        if !alias.in_use {
+                            // lex.c:1938-1940 — push three things in
+                            // reverse: the alias text, a space, then
+                            // the original word.
+                            self.inject_alias_text(&alias.text);
+                            self.inject_alias_text(" ");
+                            self.inject_alias_text(lextext);
+                            resolver.mark_in_use(suffix, true);
+                            self.lexstop = false;
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Push alias text back into the input stream so the lexer
+    /// re-reads it. Equivalent to zsh's `inpush(text, INP_ALIAS, an)`
+    /// at lex.c:1928,1938,1940. zshrs uses the existing `unget_buf`
+    /// (a VecDeque<char>) to inject chars in reverse order so the
+    /// next hgetc consumes them first.
+    fn inject_alias_text(&mut self, text: &str) {
+        // Insert at front in reverse so the first char of `text`
+        // comes out first.
+        for c in text.chars().rev() {
+            self.unget_buf.push_front(c);
+        }
     }
 
     /// Pop the last char from the raw-input capture buffer. Direct
