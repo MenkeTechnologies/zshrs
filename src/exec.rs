@@ -29023,7 +29023,14 @@ impl ShellExecutor {
                         'm' => pattern_match = true,
                         'v' => verbose = true,
                         'L' => list_form = true,
-                        _ => {}
+                        // BUILTIN("hash", ..., "Ldfmrv") — exactly six
+                        // valid flag letters. `hash -X foo` should
+                        // error like zsh, not silently add `foo` to
+                        // the hash table.
+                        _ => {
+                            eprintln!("zshrs:hash:1: bad option: -{}", ch);
+                            return 1;
+                        }
                     }
                 }
             } else {
@@ -32275,7 +32282,7 @@ impl ShellExecutor {
                 if i < args.len() {
                     command_arg = Some(args[i].clone());
                 } else {
-                    eprintln!("emulate: -c requires an argument");
+                    eprintln!("zshrs:emulate:1: -c requires an argument");
                     return 1;
                 }
             } else if arg == "-o" {
@@ -32284,7 +32291,7 @@ impl ShellExecutor {
                 if i < args.len() {
                     extra_set_opts.push(args[i].clone());
                 } else {
-                    eprintln!("emulate: -o requires an argument");
+                    eprintln!("zshrs:emulate:1: -o requires an argument");
                     return 1;
                 }
             } else if arg == "+o" {
@@ -32293,7 +32300,7 @@ impl ShellExecutor {
                 if i < args.len() {
                     extra_unset_opts.push(args[i].clone());
                 } else {
-                    eprintln!("emulate: +o requires an argument");
+                    eprintln!("zshrs:emulate:1: +o requires an argument");
                     return 1;
                 }
             } else if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
@@ -32304,7 +32311,7 @@ impl ShellExecutor {
                         'R' => reset_mode = true,
                         'l' => list_mode = true,
                         _ => {
-                            eprintln!("emulate: bad option: -{}", ch);
+                            eprintln!("zshrs:emulate:1: bad option: -{}", ch);
                             return 1;
                         }
                     }
