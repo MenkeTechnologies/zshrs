@@ -30775,17 +30775,43 @@ impl ShellExecutor {
     // Additional zsh builtins
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// break - exit from for/while/until loop
+    /// break - exit from for/while/until loop. Direct port of
+    /// src/zsh/Src/builtin.c:5815-5823 bin_break (BIN_BREAK case).
+    /// The argument is a math expression per builtin.c:5816
+    /// `num = mathevali(*argv++)` — must be positive (5820-5823
+    /// rejects num <= 0 with "argument is not positive").
     fn builtin_break(&mut self, args: &[String]) -> i32 {
-        let levels: i32 = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
-        self.breaking = levels.max(1);
+        let levels: i32 = match args.first() {
+            Some(s) if !s.is_empty() => self.eval_arith_expr(s) as i32,
+            _ => 1,
+        };
+        if levels <= 0 {
+            // builtin.c:5820-5823 — non-positive levels error.
+            eprintln!(
+                "zshrs:break:1: argument is not positive: {}",
+                levels
+            );
+            return 1;
+        }
+        self.breaking = levels;
         0
     }
 
-    /// continue - skip to next iteration of loop
+    /// continue - skip to next iteration of loop. Same math-eval
+    /// + positivity rules as break per builtin.c:5815-5823.
     fn builtin_continue(&mut self, args: &[String]) -> i32 {
-        let levels: i32 = args.first().and_then(|s| s.parse().ok()).unwrap_or(1);
-        self.continuing = levels.max(1);
+        let levels: i32 = match args.first() {
+            Some(s) if !s.is_empty() => self.eval_arith_expr(s) as i32,
+            _ => 1,
+        };
+        if levels <= 0 {
+            eprintln!(
+                "zshrs:continue:1: argument is not positive: {}",
+                levels
+            );
+            return 1;
+        }
+        self.continuing = levels;
         0
     }
 
