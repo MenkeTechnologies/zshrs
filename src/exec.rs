@@ -35663,9 +35663,45 @@ impl ShellExecutor {
                 }
             }
 
-            if let Err(e) = std::fs::rename(src, &dest) {
-                eprintln!("mv: cannot move '{}' to '{}': {}", src, dest, e);
-                return 1;
+            // Try rename first (fast same-filesystem path). On
+            // EXDEV (cross-filesystem), fall back to copy+unlink —
+            // matches coreutils mv's strategy. zsh's bin_ln (which
+            // backs mv) does the same via the libc do_rename helper
+            // that retries with file_copy on EXDEV.
+            let rename_err = std::fs::rename(src, &dest);
+            if let Err(e) = rename_err {
+                let is_exdev = e.raw_os_error() == Some(libc::EXDEV);
+                if is_exdev {
+                    // Cross-fs: copy then unlink. For directories
+                    // we fall through to the same copy_dir_recursive
+                    // helper used by cp.
+                    let src_path = std::path::Path::new(src);
+                    let dest_path_buf = std::path::PathBuf::from(&dest);
+                    let copy_result = if src_path.is_dir() {
+                        Self::copy_dir_recursive(src_path, &dest_path_buf)
+                    } else {
+                        std::fs::copy(src, &dest).map(|_| ())
+                    };
+                    match copy_result {
+                        Ok(()) => {
+                            if src_path.is_dir() {
+                                let _ = std::fs::remove_dir_all(src_path);
+                            } else {
+                                let _ = std::fs::remove_file(src_path);
+                            }
+                        }
+                        Err(ce) => {
+                            eprintln!(
+                                "mv: cannot move '{}' to '{}': {}",
+                                src, dest, ce
+                            );
+                            return 1;
+                        }
+                    }
+                } else {
+                    eprintln!("mv: cannot move '{}' to '{}': {}", src, dest, e);
+                    return 1;
+                }
             }
 
             if verbose {
