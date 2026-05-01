@@ -444,6 +444,29 @@ async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
         tracing::warn!(?e, "canonical: persist after analyze failed");
     }
 
+    // Register the .zshrc + every transitively-sourced file with the
+    // fsnotify watcher under WatchKind::ZshrcSource. Future modifications
+    // trigger re-analysis automatically (handled in fsnotify::reanalyze_zshrc).
+    let mut watch_paths = vec![path.display().to_string()];
+    for src in &analysis.sourced_files {
+        watch_paths.push(src.clone());
+    }
+    for wp_path_str in watch_paths {
+        let wp_path = std::path::PathBuf::from(&wp_path_str);
+        if !wp_path.exists() {
+            continue;
+        }
+        let wp = super::fsnotify::WatchedPath {
+            path: wp_path,
+            shard_slug: format!("zshrc-{}", super::shard::hash8(&wp_path_str)),
+            source_root: path.display().to_string(), // re-analysis target
+            kind: super::fsnotify::WatchKind::ZshrcSource,
+        };
+        if let Err(e) = state.fs_watcher.watch_path(wp, false) {
+            tracing::warn!(?e, path=%wp_path_str, "fsnotify watch failed for zshrc source");
+        }
+    }
+
     let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
     let event = serde_json::json!({
         "subsystem": "*",
@@ -621,6 +644,7 @@ async fn op_fpath_changed(state: &Arc<DaemonState>, args: Value) -> OpResult {
             path: std::path::PathBuf::from(path),
             shard_slug: format!("fpath-{}", super::shard::hash8(path)),
             source_root: path.to_string(),
+            kind: super::fsnotify::WatchKind::FpathDir,
         };
         match state.fs_watcher.watch_path(wp, false) {
             Ok(()) => registered.push(path.to_string()),
@@ -964,7 +988,6 @@ async fn op_export_shard(state: &Arc<DaemonState>, args: Value) -> OpResult {
 }
 
 async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    super::zsync::ensure_schema(state)?;
     let path = args
         .get("path")
         .and_then(Value::as_str)
@@ -975,41 +998,38 @@ async fn op_import_zcompdump(state: &Arc<DaemonState>, args: Value) -> OpResult 
         .map_err(|e| ErrPayload::new("read_failed", format!("{}: {}", path, e)))?;
 
     // Match `_comps[CMD]=HANDLER` lines (handles both quoted and bare values).
+    // Writes go through the rkyv-backed canonical engine — SQLite is never
+    // touched on the import path. (The legacy hydrate-view op refreshes
+    // sqlite from rkyv on demand for inspection consumers.)
     let mut imported = 0usize;
-    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-    state.with_catalog(|conn| {
-        let tx = conn.unchecked_transaction()?;
-        for line in content.lines() {
-            let line = line.trim();
-            if !line.starts_with("_comps[") {
-                continue;
-            }
-            // _comps[KEY]=VALUE
-            let close = line.find(']');
-            let eq = line.find('=');
-            let (Some(c), Some(e)) = (close, eq) else {
-                continue;
-            };
-            if e <= c {
-                continue;
-            }
-            let key = &line[7..c];
-            let key = key.trim_matches(|ch| ch == '\'' || ch == '"');
-            let val = &line[e + 1..];
-            let val = val.trim().trim_matches(|ch| ch == '\'' || ch == '"');
-            tx.execute(
-                "INSERT INTO canonical (subsystem, key, value, set_at_ns, set_by_shell) \
-                 VALUES ('compdef', ?, ?, ?, NULL) \
-                 ON CONFLICT(subsystem, key) DO UPDATE SET \
-                     value = excluded.value, \
-                     set_at_ns = excluded.set_at_ns",
-                rusqlite::params![key, format!("\"{}\"", val), now],
-            )?;
-            imported += 1;
+    for line in content.lines() {
+        let line = line.trim();
+        if !line.starts_with("_comps[") {
+            continue;
         }
-        tx.commit()?;
-        Ok::<_, rusqlite::Error>(())
-    })?;
+        let close = line.find(']');
+        let eq = line.find('=');
+        let (Some(c), Some(e)) = (close, eq) else {
+            continue;
+        };
+        if e <= c {
+            continue;
+        }
+        let key = &line[7..c];
+        let key = key.trim_matches(|ch| ch == '\'' || ch == '"');
+        let val = &line[e + 1..];
+        let val = val.trim().trim_matches(|ch| ch == '\'' || ch == '"');
+        // Store as JSON-quoted string so unjson() in render_sh emits the bare
+        // handler name — matches what `zsync up compdef` produces.
+        let json_val = serde_json::Value::String(val.to_string()).to_string();
+        state.canonical.upsert("compdef", key, &json_val, None);
+        imported += 1;
+    }
+
+    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+    if let Err(e) = state.canonical.persist(generation) {
+        tracing::warn!(?e, "canonical: persist after import failed");
+    }
 
     Ok(json!({
         "imported": imported,
