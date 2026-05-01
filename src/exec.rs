@@ -20736,7 +20736,15 @@ impl ShellExecutor {
 
         let path = &args[0];
 
-        // Resolve to absolute path
+        // Resolve to absolute path. Direct port of
+        // src/zsh/Src/builtin.c:6080-6123 bin_dot path resolution:
+        //   1. For `source` (not `.`): try CWD/arg first.
+        //   2. If arg contains `/`, use that path directly.
+        //   3. Otherwise (bare name) search every $path entry for arg.
+        // zshrs's previous logic always resolved to CWD/arg for bare
+        // names, so `. somefile` in zsh-style "search $path" usage
+        // (zinit and many plugin managers do this) failed unless the
+        // CWD happened to contain the file.
         let abs_path = if path.starts_with('/') {
             path.clone()
         } else if path.starts_with("~/") {
@@ -20745,10 +20753,51 @@ impl ShellExecutor {
             } else {
                 path.clone()
             }
-        } else {
+        } else if path.contains('/') {
+            // Relative path with a slash — resolve via CWD per the
+            // C source's `for (s = arg0; *s; s++) if (*s == '/') ...`
+            // branch which calls `source(arg0)` directly.
             std::env::current_dir()
                 .map(|cwd| cwd.join(path).to_string_lossy().to_string())
                 .unwrap_or_else(|_| path.clone())
+        } else {
+            // Bare name — for `source` only, try CWD first
+            // (builtin.c:6084-6088 short-circuit).
+            let cwd_candidate = std::env::current_dir()
+                .map(|cwd| cwd.join(path).to_string_lossy().to_string())
+                .unwrap_or_else(|_| path.clone());
+            let cwd_ok = invoked_as != "."
+                && std::path::Path::new(&cwd_candidate)
+                    .metadata()
+                    .map(|m| m.is_file())
+                    .unwrap_or(false);
+            if cwd_ok {
+                cwd_candidate
+            } else {
+                // Walk $path looking for the file. Matches
+                // builtin.c:6106-6121 — empty / `.` entries refer
+                // to CWD (the diddot guard prevents re-trying CWD
+                // here since we already did above).
+                let path_var = std::env::var("PATH").unwrap_or_default();
+                let mut found: Option<String> = None;
+                for entry in path_var.split(':') {
+                    let candidate = if entry.is_empty() || entry == "." {
+                        // Skip the CWD slot — already attempted above.
+                        continue;
+                    } else {
+                        format!("{}/{}", entry, path)
+                    };
+                    if std::path::Path::new(&candidate)
+                        .metadata()
+                        .map(|m| m.is_file())
+                        .unwrap_or(false)
+                    {
+                        found = Some(candidate);
+                        break;
+                    }
+                }
+                found.unwrap_or(cwd_candidate)
+            }
         };
 
         // Daemon source/dot interception (per docs/DAEMON.md "Source / dot
