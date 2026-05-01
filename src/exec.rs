@@ -29603,7 +29603,23 @@ impl ShellExecutor {
                 "-u" => actions.push("user"),
                 "-v" => actions.push("variable"),
                 s if !s.starts_with('-') => prefix = s.to_string(),
-                _ => {}
+                s => {
+                    // bash compgen has many flags. Reject unknown
+                    // ones rather than silently dropping. -F func and
+                    // -C cmd aren't yet wired but they're real flags;
+                    // accept as no-op pending impl.
+                    if matches!(s, "-F" | "-C" | "-S" | "-P" | "-X" | "-o") {
+                        // Take the following arg.
+                        if i + 1 < args.len() {
+                            i += 1;
+                        }
+                    } else if matches!(s, "-r" | "-A" | "-D" | "-E" | "-I") {
+                        // Multi-letter or single-arg flags accepted as no-op.
+                    } else {
+                        eprintln!("zshrs:compgen:1: bad option: {}", s);
+                        return 1;
+                    }
+                }
             }
             i += 1;
         }
