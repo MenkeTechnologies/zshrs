@@ -14346,6 +14346,47 @@ impl ShellExecutor {
     }
 
     fn expand_braced_variable(&mut self, content: &str) -> String {
+        // `${a:|b}` (subtract) and `${a:*b}` (intersect) — array set
+        // operators. Direct port of src/zsh/Src/subst.c:3522-3584.
+        // zsh's flow:
+        //   1. Build a hash from `compare = getaparam(b)`.
+        //   2. For each element of `aval` (the lhs), test presence.
+        //   3. `:*` keeps elements present in `b`; `:|` keeps absent.
+        // Returns space-joined scalar (since this function returns
+        // String); array context is provided by the caller's splice
+        // (echo / for-loop) which re-splits on whitespace as a
+        // pragmatic approximation. Both operands must be plain
+        // identifiers — more elaborate shapes fall through.
+        let is_ident = |s: &str| -> bool {
+            !s.is_empty()
+                && s.chars().next().map(|c| c == '_' || c.is_ascii_alphabetic()).unwrap_or(false)
+                && s.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+        };
+        for (op_str, intersect) in &[(":|", false), (":*", true)] {
+            if let Some(colon_pos) = content.find(*op_str) {
+                let lhs_name = &content[..colon_pos];
+                let rhs_name = &content[colon_pos + 2..];
+                if is_ident(lhs_name) && is_ident(rhs_name) {
+                    let a: Vec<String> = self.arrays.get(lhs_name).cloned().unwrap_or_default();
+                    let b: Vec<String> = self.arrays.get(rhs_name).cloned().unwrap_or_default();
+                    use std::collections::HashSet;
+                    let bset: HashSet<&str> = b.iter().map(|s| s.as_str()).collect();
+                    let kept: Vec<String> = a
+                        .into_iter()
+                        .filter(|elem| {
+                            let present = bset.contains(elem.as_str());
+                            if *intersect {
+                                present
+                            } else {
+                                !present
+                            }
+                        })
+                        .collect();
+                    return kept.join(" ");
+                }
+            }
+        }
+
         // `${a:^b}` / `${a:^^b}` — array zip operators. zsh subst.c
         // SUB_ZIP_SHORT (`^`) interleaves up to min(len). SUB_ZIP_LONG
         // (`^^`) cycles the shorter array. Both yield space-joined
