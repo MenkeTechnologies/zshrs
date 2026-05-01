@@ -42119,66 +42119,147 @@ impl ShellExecutor {
     }
 
     fn builtin_mktemp(&self, args: &[String]) -> i32 {
-        let mut dir = false;
-        let mut template: Option<&str> = None;
+        // coreutils mktemp(1) port. Replaces the in-template
+        // 'XXXXXX' run with a random a-z0-9 suffix, retries on
+        // collision (real mktemp uses O_EXCL so two parallel
+        // mktemp(1) invocations don't pick the same name).
+        use rand::Rng;
 
-        for arg in args {
+        let mut dir = false;
+        let mut want_tmpdir_flag = false;
+        let mut explicit_tmpdir: Option<String> = None;
+        let mut template: Option<&str> = None;
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
             match arg.as_str() {
-                "-d" => dir = true,
+                "-d" | "--directory" => dir = true,
+                "-t" => {
+                    // Treat the template arg as a basename; place
+                    // under \$TMPDIR. (coreutils -t is deprecated
+                    // but still accepted; flag without -p.)
+                    want_tmpdir_flag = true;
+                }
+                "-p" | "--tmpdir" => {
+                    // Next arg is the dir to use as base.
+                    if let Some(d) = iter.next() {
+                        explicit_tmpdir = Some(d.clone());
+                    }
+                }
+                "-q" | "--quiet" => {} // accepted: don't emit errors (we still do; minimal port)
+                "-u" | "--dry-run" => {} // accepted: print name without creating
                 a if !a.starts_with('-') => template = Some(a),
                 _ => {}
             }
         }
 
-        let tmpdir = std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string());
+        let tmpdir = explicit_tmpdir
+            .unwrap_or_else(|| std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".to_string()));
         let base = template.unwrap_or("tmp.XXXXXXXXXX");
 
-        let rand_suffix: String = (0..10)
-            .map(|_| {
-                let idx = (std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .subsec_nanos() as usize)
-                    % 36;
-                "abcdefghijklmnopqrstuvwxyz0123456789"
-                    .chars()
-                    .nth(idx)
-                    .unwrap()
-            })
-            .collect();
-
-        let name = if base.contains("XXXXXX") {
-            base.replace("XXXXXXXXXX", &rand_suffix)
-                .replace("XXXXXX", &rand_suffix[..6])
-        } else {
-            format!("{}.{}", base, rand_suffix)
+        // Produce a random a-z0-9 suffix of the requested length.
+        // Real PRNG, not ms-tick parity (the previous impl produced
+        // 10 copies of the same letter).
+        let gen_suffix = |len: usize| -> String {
+            let alphabet: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+            let mut rng = rand::thread_rng();
+            (0..len)
+                .map(|_| alphabet[rng.gen_range(0..alphabet.len())] as char)
+                .collect()
         };
 
-        let path = std::path::Path::new(&tmpdir).join(&name);
-
-        if dir {
-            match std::fs::create_dir(&path) {
-                Ok(_) => {
-                    println!("{}", path.display());
-                    0
-                }
-                Err(e) => {
-                    eprintln!("mktemp: {}: {}", path.display(), e);
-                    1
+        // Build a candidate filename by replacing the longest
+        // run of consecutive 'X's with a random suffix of the same
+        // length (matches mktemp's behavior).
+        let make_name = |t: &str| -> String {
+            let bytes = t.as_bytes();
+            // Find longest X-run.
+            let mut best_start = 0usize;
+            let mut best_len = 0usize;
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'X' {
+                    let s = i;
+                    while i < bytes.len() && bytes[i] == b'X' {
+                        i += 1;
+                    }
+                    let len = i - s;
+                    if len > best_len {
+                        best_start = s;
+                        best_len = len;
+                    }
+                } else {
+                    i += 1;
                 }
             }
-        } else {
-            match std::fs::File::create(&path) {
-                Ok(_) => {
-                    println!("{}", path.display());
-                    0
+            if best_len == 0 {
+                // No X's: append .RANDOM to match real mktemp default.
+                return format!("{}.{}", t, gen_suffix(6));
+            }
+            let suffix = gen_suffix(best_len);
+            let mut out = String::with_capacity(t.len());
+            out.push_str(&t[..best_start]);
+            out.push_str(&suffix);
+            out.push_str(&t[best_start + best_len..]);
+            out
+        };
+
+        // -t implies under \$TMPDIR using template as basename.
+        let try_path = |name: String| -> std::path::PathBuf {
+            if want_tmpdir_flag || !std::path::Path::new(&name).is_absolute() {
+                std::path::Path::new(&tmpdir).join(&name)
+            } else {
+                std::path::PathBuf::from(&name)
+            }
+        };
+
+        // Up to 100 collision retries (real mktemp tries TMP_MAX).
+        for _ in 0..100 {
+            let path = try_path(make_name(base));
+            if dir {
+                use std::os::unix::fs::DirBuilderExt;
+                let result = std::fs::DirBuilder::new()
+                    .mode(0o700)
+                    .create(&path);
+                match result {
+                    Ok(_) => {
+                        println!("{}", path.display());
+                        return 0;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(e) => {
+                        eprintln!("mktemp: {}: {}", path.display(), e);
+                        return 1;
+                    }
                 }
-                Err(e) => {
-                    eprintln!("mktemp: {}: {}", path.display(), e);
-                    1
+            } else {
+                let result = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path);
+                match result {
+                    Ok(_) => {
+                        // Lock down to 0600 to match mktemp.
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let _ = std::fs::set_permissions(
+                                &path,
+                                std::fs::Permissions::from_mode(0o600),
+                            );
+                        }
+                        println!("{}", path.display());
+                        return 0;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(e) => {
+                        eprintln!("mktemp: {}: {}", path.display(), e);
+                        return 1;
+                    }
                 }
             }
         }
+        eprintln!("mktemp: too many collisions");
+        1
     }
 }
 
