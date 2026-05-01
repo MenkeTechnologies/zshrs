@@ -19791,7 +19791,10 @@ impl ShellExecutor {
             }
             for ch in arg.strip_prefix('-').unwrap_or("").chars() {
                 match ch {
-                    'P' => physical = true,
+                    // Direct port of src/zsh/Src/builtin.c:730 —
+                    // `-r` is equivalent to `-P` (resolve via
+                    // syscall/realpath, not the tracked $PWD).
+                    'P' | 'r' => physical = true,
                     'L' => physical = false,
                     // zsh: `pwd -X` -> `pwd:1: bad option: -X` exit 1.
                     // zshrs's silent fallback ignored unknown letters
