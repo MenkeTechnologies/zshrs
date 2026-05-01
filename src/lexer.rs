@@ -170,6 +170,47 @@ pub struct ZshLexer<'a> {
 
 const MAX_LEXER_RECURSION: usize = 200;
 
+/// Saved lexical state for nested-context handling. Direct port of
+/// `struct lex_stack` declared in zsh/Src/zsh.h and used by
+/// zsh/Src/lex.c:215-239 (`lex_context_save`) and lex.c:244-262
+/// (`lex_context_restore`). Used when entering command substitution,
+/// here-docs, or eval where the outer lexer state must be pushed and
+/// restored after the inner parse completes.
+#[derive(Debug, Clone)]
+pub struct LexStack {
+    pub dbparens: bool,
+    pub isfirstln: bool,
+    pub isfirstch: bool,
+    pub lexflags: LexFlags,
+    pub tok: LexTok,
+    pub tokstr: Option<String>,
+    pub lexbuf_data: String,
+    pub lexbuf_siz: usize,
+    pub lexstop: bool,
+    pub toklineno: u64,
+}
+
+impl Default for LexStack {
+    fn default() -> Self {
+        // Mirrors lex.c:235-238 reset state after a save: tokstr / lexbuf
+        // zeroed, lexbuf.siz back to the initial 256 alloc, tok to
+        // ENDINPUT (the C source doesn't explicitly reset tok here but
+        // the natural baseline is ENDINPUT — same as lexinit).
+        LexStack {
+            dbparens: false,
+            isfirstln: false,
+            isfirstch: false,
+            lexflags: LexFlags::default(),
+            tok: LexTok::Endinput,
+            tokstr: None,
+            lexbuf_data: String::new(),
+            lexbuf_siz: 256,
+            lexstop: false,
+            toklineno: 0,
+        }
+    }
+}
+
 impl<'a> ZshLexer<'a> {
     /// Create a new lexer for the given input
     pub fn new(input: &'a str) -> Self {
@@ -206,6 +247,63 @@ impl<'a> ZshLexer<'a> {
             global_iterations: 0,
             recursion_depth: 0,
         }
+    }
+
+    /// Save lexical context onto a `LexStack`. Direct port of
+    /// zsh/Src/lex.c:215-239 `lex_context_save`. After save, the lexer
+    /// is in a clean state suitable for parsing a nested input (command
+    /// substitution body, here-doc terminator, eval'd string).
+    pub fn lex_context_save(&mut self, ls: &mut LexStack) {
+        // lex.c:220-233 — copy live state into the stack.
+        ls.dbparens = self.dbparens;
+        ls.isfirstln = self.isfirstln;
+        ls.isfirstch = self.isfirstch;
+        ls.lexflags = self.lexflags;
+        ls.tok = self.tok;
+        ls.tokstr = self.tokstr.take();
+        ls.lexbuf_data = std::mem::take(&mut self.lexbuf.data);
+        ls.lexbuf_siz = self.lexbuf.siz;
+        ls.lexstop = self.lexstop;
+        ls.toklineno = self.toklineno;
+
+        // lex.c:235-238 — reset live state to defaults so a nested
+        // parse starts from a clean slate. tokstr/lexbuf are zeroed,
+        // lexbuf.siz reset to 256 (the C-source initial alloc).
+        self.tokstr = None;
+        self.lexbuf.data.clear();
+        self.lexbuf.siz = 256;
+    }
+
+    /// Restore lexical context from a `LexStack`. Direct port of
+    /// zsh/Src/lex.c:244-262 `lex_context_restore`. Inverse of
+    /// `lex_context_save`. Called after the nested parse completes.
+    pub fn lex_context_restore(&mut self, ls: &mut LexStack) {
+        // lex.c:249-261 — copy stack state back into live fields.
+        self.dbparens = ls.dbparens;
+        self.isfirstln = ls.isfirstln;
+        self.isfirstch = ls.isfirstch;
+        self.lexflags = ls.lexflags;
+        self.tok = ls.tok;
+        self.tokstr = ls.tokstr.take();
+        self.lexbuf.data = std::mem::take(&mut ls.lexbuf_data);
+        self.lexbuf.siz = ls.lexbuf_siz;
+        self.lexstop = ls.lexstop;
+        self.toklineno = ls.toklineno;
+    }
+
+    /// Initialize lexical state. Direct port of zsh/Src/lex.c:440-445
+    /// `lexinit`. Resets dbparens / nocorrect / lexstop and sets `tok`
+    /// to ENDINPUT so the next gettok starts from a known baseline.
+    /// Note: the constructor `Self::new` already sets equivalent
+    /// defaults; this method exists for the rare case a caller wants
+    /// to recycle a `ZshLexer` across multiple input strings.
+    pub fn lexinit(&mut self) {
+        // lex.c:443 — `nocorrect = dbparens = lexstop = 0;`
+        self.nocorrect = 0;
+        self.dbparens = false;
+        self.lexstop = false;
+        // lex.c:444 — `tok = ENDINPUT;`
+        self.tok = LexTok::Endinput;
     }
 
     /// Check recursion depth; returns true if exceeded
@@ -357,8 +455,19 @@ impl<'a> ZshLexer<'a> {
         c.is_ascii_alphanumeric() || c == '_'
     }
 
-    /// Main lexer entry point - get next token
+    /// Main lexer entry point — fetch the next token. Direct port of
+    /// zsh/Src/lex.c:265-313 `zshlex`. Loop body matches the C source
+    /// `do { ... } while (tok != ENDINPUT && exalias())` at lex.c:270-276,
+    /// followed by here-doc draining (lex.c:278-306), newline tracking
+    /// (lex.c:307-310), and SEMI/NEWLIN→SEPER folding (lex.c:311-312).
+    ///
+    /// zshrs port note: `exalias()` (lex.c:1953) is not yet wired into
+    /// the loop. The C source iterates as long as exalias keeps
+    /// re-injecting alias text into the input buffer; zshrs's alias
+    /// expansion happens post-lex in exec.rs. The loop body therefore
+    /// runs once and breaks unconditionally — documented divergence.
     pub fn zshlex(&mut self) {
+        // lex.c:268-269 — early-out on prior LEXERR.
         if self.tok == LexTok::Lexerr {
             return;
         }
@@ -366,33 +475,55 @@ impl<'a> ZshLexer<'a> {
         // Note: Do NOT reset global_iterations here - it must accumulate across all
         // zshlex calls in a parse to prevent infinite loops in the parser
 
+        // lex.c:270-276 — gettok / exalias loop. Without exalias wired,
+        // the inner body runs once and we `break` unconditionally.
         loop {
+            // lex.c:271-272 — bump inrepeat counter for `repeat N {}`
+            // detection.
             if self.inrepeat > 0 {
                 self.inrepeat += 1;
             }
+            // lex.c:273-274 — at the third token after `repeat`,
+            // SHORTLOOPS / SHORTREPEAT options force back into cmd
+            // position so the loop body can start. zshrs unconditionally
+            // does this since the option-lookup lives in exec.rs.
             if self.inrepeat == 3 {
                 self.incmdpos = true;
             }
 
+            // lex.c:275 — `tok = gettok();`
             self.tok = self.gettok();
 
-            // Handle alias expansion would go here
+            // lex.c:276 — `while (tok != ENDINPUT && exalias())` —
+            // when exalias re-injects alias text it returns true and
+            // the loop iterates. Without exalias wired, we break.
             break;
         }
 
+        // lex.c:277 — `nocorrect &= 1;` — clear bit 1 (lookahead-only)
+        // so the persistent low bit survives but the per-word bit is
+        // dropped.
         self.nocorrect &= 1;
 
-        // Handle here-documents at end of line
+        // lex.c:278-306 — drain pending here-documents at the start
+        // of a new line. zshrs's process_heredocs reads the full body
+        // and stitches it onto the matching redir token.
         if self.tok == LexTok::Newlin || self.tok == LexTok::Endinput {
             self.process_heredocs();
         }
 
+        // lex.c:307-310 — track whether we just saw a newline.
+        // C uses `inbufct` to distinguish "newline at EOF" (=1)
+        // from "newline mid-input" (=-1); zshrs reads `pos < len`.
         if self.tok != LexTok::Newlin {
             self.isnewlin = 0;
         } else {
             self.isnewlin = if self.pos < self.input.len() { -1 } else { 1 };
         }
 
+        // lex.c:311-312 — fold SEMI / NEWLIN into SEPER unless
+        // LEXFLAGS_NEWLINE is set to preserve newlines (used by
+        // ZLE for completion of partial lines).
         if self.tok == LexTok::Semi || (self.tok == LexTok::Newlin && !self.lexflags.newline) {
             self.tok = LexTok::Seper;
         }
@@ -2089,11 +2220,25 @@ impl<'a> ZshLexer<'a> {
         }
     }
 
-    /// Update parser state after lexing based on token type
+    /// Lex next token AND update per-context flags. Direct port of
+    /// zsh/Src/lex.c:316-369 `ctxtlex`. The post-token state machine
+    /// at lex.c:322-358 sets `incmdpos` based on the token shape:
+    /// list separators / pipes / control keywords reset to cmd-pos;
+    /// word-shaped tokens leave cmd-pos. Redirections (lex.c:361-368)
+    /// stash prior incmdpos and force the redir target to non-cmd-pos.
     pub fn ctxtlex(&mut self) {
+        // lex.c:319 — static `oldpos` cache for redir-target restore
+        // is captured per-call here as `oldpos` below (zshrs's parser
+        // re-enters ctxtlex per token, no need for static persistence).
+
+        // lex.c:321 — `zshlex();` to advance to the next token.
         self.zshlex();
 
+        // lex.c:322-358 — post-token incmdpos switch.
         match self.tok {
+            // lex.c:323-343 — separators / openers / conjunctions /
+            // control keywords — back into cmd-pos so the next token
+            // can be a fresh command.
             LexTok::Seper
             | LexTok::Newlin
             | LexTok::Semi
@@ -2116,7 +2261,8 @@ impl<'a> ZshLexer<'a> {
             | LexTok::Doutbrack => {
                 self.incmdpos = true;
             }
-
+            // lex.c:345-353 — word/value-shaped tokens leave cmd-pos
+            // so subsequent tokens are arguments, not a fresh command.
             LexTok::String
             | LexTok::Typeset
             | LexTok::Envarray
@@ -2125,14 +2271,20 @@ impl<'a> ZshLexer<'a> {
             | LexTok::Dinbrack => {
                 self.incmdpos = false;
             }
-
             _ => {}
         }
 
+        // lex.c:359-360 — `infor` decay. FOR sets infor=2 so the next
+        // DINPAR can detect c-style for. After any non-DINPAR, decay
+        // to 0 (or back to 2 if we just saw FOR again).
         if self.tok != LexTok::Dinpar {
             self.infor = if self.tok == LexTok::For { 2 } else { 0 };
         }
 
+        // lex.c:361-368 — redir-target context dance. After consuming
+        // a redir operator, the following token (the file path) sees
+        // incmdpos=0 even when its inherent shape would put it back
+        // in cmd-pos. After the redir target, restore `oldpos`.
         let oldpos = self.incmdpos;
         if self.tok.is_redirop()
             || self.tok == LexTok::For
@@ -2145,6 +2297,23 @@ impl<'a> ZshLexer<'a> {
             self.incmdpos = oldpos;
             self.inredir = false;
         }
+    }
+
+    /// Mark the current word as the one ZLE was looking for. Direct
+    /// port of zsh/Src/lex.c:1881-1897 `gotword`. Only meaningful
+    /// when the lexer was started with LEXFLAGS_ZLE for completion;
+    /// after this call `lexflags` is cleared so subsequent tokens
+    /// don't re-trigger word tracking.
+    ///
+    /// zshrs port note: zsh's gotword updates `wb`/`we` (word begin/
+    /// end positions) based on `zlemetacs` (cursor pos), `zlemetall`
+    /// (line length), `inbufct`, and `addedx` — all live in zsh's
+    /// input.c globals which zshrs hasn't wired through the lexer.
+    /// Only the `lexflags = 0` side-effect at lex.c:1895 is
+    /// reproducible without that integration.
+    pub fn gotword(&mut self) {
+        // lex.c:1895 — `lexflags = 0;`
+        self.lexflags = LexFlags::default();
     }
 
     /// Register a heredoc to be processed at next newline
