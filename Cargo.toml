@@ -25,7 +25,7 @@ atty = "0.2"
 reedline = "0.47.0"
 nu-ansi-term = "0.50"
 compsys = { path = "compsys", version = "0.9.0" }
-zshrs-daemon = { path = "daemon", version = "0.10.1" }
+zshrs-daemon = { path = "daemon", version = "0.10.1", optional = true }
 fusevm = "0.12.1"
 regex = "1.11"
 glob = "0.3"
@@ -70,7 +70,13 @@ notify-debouncer-mini = "0.4"
 crossterm = "0.27"
 
 [features]
-default = []
+default = ["daemon"]
+# `daemon` enables the zshrs-daemon dep. Disable with --no-default-features
+# to compile zshrs lib without dragging the daemon crate into the build —
+# useful while the daemon is mid-refactor in a concurrent session and the
+# port-only lib work shouldn't depend on it. Stubs in src/lib.rs cover the
+# few `crate::daemon::*` references when this feature is off.
+daemon = ["zshrs-daemon"]
 profiling = []
 flamegraph = ["tracing-flame"]
 prometheus = ["metrics", "metrics-exporter-prometheus"]
