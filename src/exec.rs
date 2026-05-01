@@ -10129,6 +10129,7 @@ impl ShellExecutor {
             "groups" => return self.builtin_groups(&rest_vec),
             "arch" => return self.builtin_arch(&rest_vec),
             "nice" => return self.builtin_nice(&rest_vec),
+            "logname" => return self.builtin_logname(&rest_vec),
             _ => {}
         }
 
@@ -44063,6 +44064,39 @@ impl ShellExecutor {
                 }
             }
             status
+        }
+    }
+
+    /// logname — print login name. Coreutils logname(1) / POSIX.
+    /// Calls getlogin(3) which reads from utmp. Falls back to
+    /// \$LOGNAME if getlogin fails.
+    fn builtin_logname(&self, args: &[String]) -> i32 {
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
+                eprintln!("logname: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            if !arg.starts_with('-') {
+                eprintln!("logname: extra operand '{}'", arg);
+                return 1;
+            }
+        }
+        let p = unsafe { libc::getlogin() };
+        if !p.is_null() {
+            let name = unsafe { std::ffi::CStr::from_ptr(p) };
+            println!("{}", name.to_string_lossy());
+            return 0;
+        }
+        // Fallback for environments without utmp (e.g. CI containers).
+        match std::env::var("LOGNAME") {
+            Ok(v) if !v.is_empty() => {
+                println!("{}", v);
+                0
+            }
+            _ => {
+                eprintln!("logname: no login name");
+                1
+            }
         }
     }
 
