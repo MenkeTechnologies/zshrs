@@ -10130,6 +10130,7 @@ impl ShellExecutor {
             "arch" => return self.builtin_arch(&rest_vec),
             "nice" => return self.builtin_nice(&rest_vec),
             "logname" => return self.builtin_logname(&rest_vec),
+            "tput" => return self.builtin_tput(&rest_vec),
             _ => {}
         }
 
@@ -44064,6 +44065,162 @@ impl ShellExecutor {
                 }
             }
             status
+        }
+    }
+
+    /// tput — terminfo capability query (minimal subset).
+    /// Common subset of ncurses tput(1):
+    ///   tput cols / lines      → terminal width / height
+    ///   tput colors            → terminal color count
+    ///   tput clear / cl        → clear screen
+    ///   tput cup R C           → cursor to (row, col) (0-based)
+    ///   tput sgr0 / op         → reset attributes / colors
+    ///   tput bold / smso / rmso / smul / rmul / rev / blink
+    ///                          → text attributes
+    ///   tput setaf N / setab N → fg/bg color (8/16 colors)
+    /// Many other terminfo capabilities aren't yet wired; unknown
+    /// capabilities fall through to echotc's two-letter mapping or
+    /// silently exit 1 (tput's standard error code).
+    fn builtin_tput(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("tput: missing capname");
+            return 2;
+        }
+        // Skip leading flags. Coreutils ncurses tput supports
+        // `-T TERM`, `-S` (multi-cap from stdin), `-V`/`-h`. Not
+        // yet wired; consume but ignore.
+        let mut iter = args.iter().peekable();
+        while let Some(arg) = iter.peek() {
+            match arg.as_str() {
+                "-T" => {
+                    iter.next();
+                    iter.next(); // consume term name
+                }
+                s if s.starts_with("-T") && s.len() > 2 => {
+                    iter.next();
+                }
+                "-S" => {
+                    iter.next();
+                    // -S reads cap names from stdin. Not implemented;
+                    // emit nothing and exit 0 (matches ncurses-tput
+                    // when stdin is empty).
+                    return 0;
+                }
+                "-V" | "--version" => {
+                    println!("tput (zshrs) {}", env!("CARGO_PKG_VERSION"));
+                    return 0;
+                }
+                "-h" | "--help" => {
+                    println!("Usage: tput [-T TERM] CAPNAME [PARAMS...]");
+                    return 0;
+                }
+                _ => break,
+            }
+        }
+        let cap = match iter.next() {
+            Some(c) => c.as_str(),
+            None => {
+                eprintln!("tput: missing capname");
+                return 2;
+            }
+        };
+        let rest: Vec<&str> = iter.map(|s| s.as_str()).collect();
+        // Known capabilities — emit the ANSI sequence directly.
+        match cap {
+            "cols" | "co" => {
+                let cols: i32 = std::env::var("COLUMNS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(80);
+                println!("{}", cols);
+                0
+            }
+            "lines" | "li" => {
+                let lines: i32 = std::env::var("LINES")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(24);
+                println!("{}", lines);
+                0
+            }
+            "colors" | "Co" => {
+                // Most modern terminals are 256 or truecolor; default
+                // to 256 since that's what TERM=xterm-256color reports.
+                let term = std::env::var("TERM").unwrap_or_default();
+                let n = if term.contains("256") || term.contains("direct") || term.contains("truecolor") {
+                    256
+                } else {
+                    8
+                };
+                println!("{}", n);
+                0
+            }
+            "clear" | "cl" => {
+                print!("\x1b[H\x1b[2J");
+                0
+            }
+            "cup" => {
+                if rest.len() < 2 {
+                    return 2;
+                }
+                if let (Ok(r), Ok(c)) = (rest[0].parse::<u32>(), rest[1].parse::<u32>()) {
+                    print!("\x1b[{};{}H", r + 1, c + 1);
+                }
+                0
+            }
+            "sgr0" | "me" | "op" => {
+                print!("\x1b[0m");
+                0
+            }
+            "bold" | "md" => {
+                print!("\x1b[1m");
+                0
+            }
+            "smso" | "so" | "rev" | "mr" => {
+                print!("\x1b[7m");
+                0
+            }
+            "rmso" | "se" => {
+                print!("\x1b[27m");
+                0
+            }
+            "smul" | "us" => {
+                print!("\x1b[4m");
+                0
+            }
+            "rmul" | "ue" => {
+                print!("\x1b[24m");
+                0
+            }
+            "blink" | "mb" => {
+                print!("\x1b[5m");
+                0
+            }
+            "setaf" | "AF" => {
+                if let Some(n) = rest.first().and_then(|s| s.parse::<i32>().ok()) {
+                    print!("\x1b[{}m", 30 + n);
+                }
+                0
+            }
+            "setab" | "AB" => {
+                if let Some(n) = rest.first().and_then(|s| s.parse::<i32>().ok()) {
+                    print!("\x1b[{}m", 40 + n);
+                }
+                0
+            }
+            "civis" | "vi" => {
+                print!("\x1b[?25l");
+                0
+            }
+            "cnorm" | "ve" => {
+                print!("\x1b[?25h");
+                0
+            }
+            _ => {
+                // Unknown capability — exit 1 silently per tput
+                // convention. Don't emit error for boolean-cap probes.
+                1
+            }
         }
     }
 
