@@ -13383,13 +13383,12 @@ impl ShellExecutor {
                     // `)`. The apply_history_modifiers helper
                     // tolerates a leading `:`.
                     let mut mods = String::from(":");
-                    while let Some(&pc) = chars.peek() {
+                    // Consume to end — qualifier-end already stripped
+                    // the trailing `)`, so no internal delimiter check
+                    // is needed (apply_history_modifiers tolerates the
+                    // leading `:`).
+                    while chars.peek().is_some() {
                         mods.push(chars.next().unwrap());
-                        // Stop only at end (no other delim used
-                        // for modifier termination in qualifier
-                        // lists; the parser already extracted the
-                        // qualifier body).
-                        let _ = pc;
                     }
                     let modref = mods.as_str();
                     result = result
@@ -30121,7 +30120,6 @@ impl ShellExecutor {
         // pass even if more args linger.
         let mut chars = format.chars().peekable();
         let mut prev_arg_idx = arg_idx;
-        let mut entered_loop = false;
 
         'outer: loop {
             while let Some(c) = chars.next() {
@@ -30664,11 +30662,9 @@ impl ShellExecutor {
             // After one full pass: re-loop only if at least one arg was
             // consumed AND we still have args left.
             if arg_idx <= prev_arg_idx || arg_idx >= format_args.len() {
-                let _ = entered_loop;
                 break 'outer;
             }
             prev_arg_idx = arg_idx;
-            entered_loop = true;
             chars = format.chars().peekable();
         }
 
