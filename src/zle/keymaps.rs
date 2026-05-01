@@ -177,7 +177,7 @@ pub struct ZleManager {
     /// Keymaps
     pub keymaps: HashMap<KeymapName, Keymap>,
     /// User-defined widgets
-    user_widgets: HashMap<String, String>,
+    pub user_widgets: HashMap<String, String>,
     /// Currently-active keymap — written by `bindkey -A NAME main`
     /// and `zle -K NAME`. Distinct from per-line vi-mode state on
     /// ZleState. Default Emacs to match zsh's startup state.
