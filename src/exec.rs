@@ -25049,7 +25049,7 @@ impl ShellExecutor {
                 let id: usize = match arg[1..].parse() {
                     Ok(id) => id,
                     Err(_) => {
-                        eprintln!("wait: {}: no such job", arg);
+                        eprintln!("zshrs:wait:1: {}: no such job", arg);
                         status = 127;
                         continue;
                     }
@@ -25059,7 +25059,7 @@ impl ShellExecutor {
                         match wait_for_child(child) {
                             Ok(s) => status = s,
                             Err(e) => {
-                                eprintln!("wait: {}", e);
+                                eprintln!("zshrs:wait:1: {}", e);
                                 status = 127;
                             }
                         }
@@ -25122,7 +25122,7 @@ impl ShellExecutor {
                 match wait_for_job(pid as i32) {
                     Ok(s) => status = s,
                     Err(e) => {
-                        eprintln!("wait: {}", e);
+                        eprintln!("zshrs:wait:1: {}", e);
                         status = 127;
                     }
                 }
