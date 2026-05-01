@@ -95,6 +95,7 @@ pub struct DaemonState {
     pub fs_watcher: Arc<super::fsnotify::FsWatcher>,
     pub ask_inbox: Arc<super::zask::AskInbox>,
     pub jobs: Arc<super::jobs::Supervisor>,
+    pub canonical: Arc<super::canonical::CanonicalEngine>,
     pub paths: CachePaths,
     pub started_at: Instant,
     pub start_wall: chrono::DateTime<chrono::Utc>,
@@ -108,6 +109,12 @@ impl DaemonState {
         let fs_watcher = Arc::new(super::fsnotify::FsWatcher::new());
         let ask_inbox = super::zask::AskInbox::new();
         let jobs = super::jobs::Supervisor::new(paths.clone());
+        let canonical = super::canonical::CanonicalEngine::new(paths.clone());
+        // Eagerly load persisted canonical state from rkyv shard on disk —
+        // missing shard = empty state (cold cache, first-run path).
+        if let Err(e) = canonical.load_from_disk() {
+            tracing::warn!(?e, "canonical: load_from_disk failed (continuing with empty state)");
+        }
         let state = Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
             catalog: Mutex::new(catalog),
@@ -115,6 +122,7 @@ impl DaemonState {
             fs_watcher,
             ask_inbox,
             jobs: jobs.clone(),
+            canonical,
             paths,
             started_at: Instant::now(),
             start_wall: chrono::Utc::now(),
