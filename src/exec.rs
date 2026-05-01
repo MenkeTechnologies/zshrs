@@ -41831,17 +41831,42 @@ impl ShellExecutor {
         let mut repeated = false;
         let mut unique_only = false;
         let mut ignore_case = false;
+        // -z / --zero-terminated: input/output records separated by
+        // NUL instead of \\n. coreutils extension; useful with
+        // 'find -print0 | sort -z | uniq -z'.
+        let mut zero_term = false;
+        // -f N / --skip-fields=N: skip the first N whitespace-
+        // separated fields when comparing.
+        let mut skip_fields: usize = 0;
+        // -s N / --skip-chars=N: skip N chars after the field-skip
+        // before comparing.
+        let mut skip_chars: usize = 0;
         let mut files: Vec<&str> = Vec::new();
 
-        for arg in args {
+        let mut iter = args.iter();
+        while let Some(arg) = iter.next() {
             match arg.as_str() {
-                "-c" => count = true,
-                "-d" => repeated = true,
-                // -u: print only lines that appear exactly once.
-                // Direct port of coreutils uniq(1).
-                "-u" => unique_only = true,
-                // -i: case-insensitive comparison.
-                "-i" => ignore_case = true,
+                "-c" | "--count" => count = true,
+                "-d" | "--repeated" => repeated = true,
+                "-u" | "--unique" => unique_only = true,
+                "-i" | "--ignore-case" => ignore_case = true,
+                "-z" | "--zero-terminated" => zero_term = true,
+                "-f" | "--skip-fields" => {
+                    if let Some(n) = iter.next() {
+                        skip_fields = n.parse().unwrap_or(0);
+                    }
+                }
+                "-s" | "--skip-chars" => {
+                    if let Some(n) = iter.next() {
+                        skip_chars = n.parse().unwrap_or(0);
+                    }
+                }
+                s if s.starts_with("-f") && s.len() > 2 => {
+                    skip_fields = s[2..].parse().unwrap_or(0);
+                }
+                s if s.starts_with("-s") && s.len() > 2 => {
+                    skip_chars = s[2..].parse().unwrap_or(0);
+                }
                 a if !a.starts_with('-') => files.push(a),
                 _ => {}
             }
@@ -41862,15 +41887,25 @@ impl ShellExecutor {
         let mut prev: Option<String> = None;
         let mut cnt = 0usize;
         let key = |s: &str| -> String {
+            // -f / -s: drop leading fields then leading chars before
+            // comparing. Field separator is whitespace.
+            let mut tail = s;
+            for _ in 0..skip_fields {
+                let trimmed = tail.trim_start();
+                let after_field = trimmed
+                    .find(|c: char| c.is_whitespace())
+                    .map(|i| &trimmed[i..])
+                    .unwrap_or("");
+                tail = after_field;
+            }
+            let after_chars: String = tail.chars().skip(skip_chars).collect();
             if ignore_case {
-                s.to_lowercase()
+                after_chars.to_lowercase()
             } else {
-                s.to_string()
+                after_chars
             }
         };
-        // Per coreutils, -d and -u select different subsets and -d -u
-        // together produces no output (no line is both repeated and
-        // appearing-once). Match that.
+        let term = if zero_term { '\0' } else { '\n' };
         let emit = |p: &str, cnt: usize| {
             if repeated && cnt <= 1 {
                 return;
@@ -41879,21 +41914,45 @@ impl ShellExecutor {
                 return;
             }
             if count {
-                println!("{:7} {}", cnt, p);
+                print!("{:7} {}{}", cnt, p, term);
             } else {
-                println!("{}", p);
+                print!("{}{}", p, term);
             }
         };
 
-        for line in reader.lines().flatten() {
-            if prev.as_ref().map(|p| key(p)) == Some(key(&line)) {
-                cnt += 1;
-            } else {
-                if let Some(p) = prev.take() {
-                    emit(&p, cnt);
+        // -z: treat NUL as record separator. Otherwise BufRead::lines
+        // splits on \n.
+        if zero_term {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let mut reader = reader;
+            let _ = reader.read_to_end(&mut buf);
+            for chunk in buf.split(|b| *b == 0) {
+                let line = String::from_utf8_lossy(chunk).into_owned();
+                if line.is_empty() && chunk.is_empty() {
+                    continue;
                 }
-                prev = Some(line);
-                cnt = 1;
+                if prev.as_ref().map(|p| key(p)) == Some(key(&line)) {
+                    cnt += 1;
+                } else {
+                    if let Some(p) = prev.take() {
+                        emit(&p, cnt);
+                    }
+                    prev = Some(line);
+                    cnt = 1;
+                }
+            }
+        } else {
+            for line in reader.lines().flatten() {
+                if prev.as_ref().map(|p| key(p)) == Some(key(&line)) {
+                    cnt += 1;
+                } else {
+                    if let Some(p) = prev.take() {
+                        emit(&p, cnt);
+                    }
+                    prev = Some(line);
+                    cnt = 1;
+                }
             }
         }
 
