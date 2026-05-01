@@ -37379,98 +37379,218 @@ impl ShellExecutor {
 
     /// sysread - low-level read (zsh/system module)
     fn builtin_sysread(&mut self, args: &[String]) -> i32 {
-        use std::io::Read;
+        // Direct port of zsh/Src/Modules/system.c:72 bin_sysread.
+        // Return values per system.c:61-67:
+        //   0  successful read (and write if -o)
+        //   1  bad params / non-identifier varname
+        //   2  read() error (errno set)
+        //   3  write() error (errno set, partial residue stashed in
+        //      outvar / count in countvar)
+        //   4  -t timeout expired
+        //   5  zero bytes read (EOF)
+        let mut infd: i32 = 0;
+        let mut outfd: i32 = -1;
+        let mut bufsize: usize = 8192; // SYSREAD_BUFSIZE
+        let mut countvar: Option<String> = None;
+        let mut outvar: Option<String> = None;
+        let mut timeout_ms: Option<i32> = None;
 
-        let mut fd = 0i32; // stdin
-        let mut count: Option<usize> = None;
-        let mut var_name = "REPLY".to_string();
         let mut i = 0;
-
         while i < args.len() {
             match args[i].as_str() {
-                "-c" if i + 1 < args.len() => {
-                    i += 1;
-                    count = args[i].parse().ok();
-                }
                 "-i" if i + 1 < args.len() => {
                     i += 1;
-                    fd = args[i].parse().unwrap_or(0);
+                    match args[i].parse::<i32>() {
+                        Ok(n) if n >= 0 => infd = n,
+                        _ => {
+                            eprintln!("zshrs:sysread:1: integer expected: {}", args[i]);
+                            return 1;
+                        }
+                    }
                 }
                 "-o" if i + 1 < args.len() => {
                     i += 1;
-                    var_name = args[i].clone();
+                    match args[i].parse::<i32>() {
+                        Ok(n) if n >= 0 => outfd = n,
+                        _ => {
+                            eprintln!("zshrs:sysread:1: integer expected: {}", args[i]);
+                            return 1;
+                        }
+                    }
+                }
+                "-s" if i + 1 < args.len() => {
+                    i += 1;
+                    match args[i].parse::<usize>() {
+                        Ok(n) => bufsize = n,
+                        Err(_) => {
+                            eprintln!("zshrs:sysread:1: integer expected: {}", args[i]);
+                            return 1;
+                        }
+                    }
+                }
+                "-c" if i + 1 < args.len() => {
+                    i += 1;
+                    countvar = Some(args[i].clone());
                 }
                 "-t" if i + 1 < args.len() => {
                     i += 1;
-                    // Timeout - ignored for now
+                    // Timeout in seconds (float ok). Convert to ms.
+                    match args[i].parse::<f64>() {
+                        Ok(t) => timeout_ms = Some((t * 1000.0) as i32),
+                        Err(_) => {
+                            eprintln!("zshrs:sysread:1: invalid timeout: {}", args[i]);
+                            return 1;
+                        }
+                    }
                 }
                 _ => {
-                    var_name = args[i].clone();
+                    outvar = Some(args[i].clone());
                 }
             }
             i += 1;
         }
 
-        let mut buffer = vec![0u8; count.unwrap_or(8192)];
-
-        // Only support stdin for now
-        if fd == 0 {
-            match std::io::stdin().read(&mut buffer) {
-                Ok(n) => {
-                    buffer.truncate(n);
-                    let s = String::from_utf8_lossy(&buffer).to_string();
-                    self.variables.insert(var_name, s);
-                    0
-                }
-                Err(_) => 1,
+        // -t poll(2) wait — system.c:127-186. Return 4 on timeout (poll
+        // returned 0), 2 on error.
+        if let Some(ms) = timeout_ms {
+            let mut pfd = libc::pollfd {
+                fd: infd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let ret = unsafe { libc::poll(&mut pfd, 1, ms) };
+            if ret == 0 {
+                return 4;
             }
+            if ret < 0 {
+                return 2;
+            }
+        }
+
+        let mut buf = vec![0u8; bufsize];
+        let n = unsafe {
+            libc::read(
+                infd,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                buf.len(),
+            )
+        };
+        if n < 0 {
+            if let Some(cv) = countvar {
+                self.variables.insert(cv, n.to_string());
+            }
+            return 2;
+        }
+        let count = n as usize;
+        buf.truncate(count);
+        if let Some(cv) = &countvar {
+            self.variables.insert(cv.clone(), count.to_string());
+        }
+
+        // -o: copy to outfd via write(2). On partial-write error,
+        // stash residue in outvar + count in countvar (system.c:204-212).
+        if outfd >= 0 {
+            if count == 0 {
+                return 5;
+            }
+            let mut written = 0usize;
+            while written < count {
+                let w = unsafe {
+                    libc::write(
+                        outfd,
+                        buf[written..].as_ptr() as *const libc::c_void,
+                        count - written,
+                    )
+                };
+                if w < 0 {
+                    if let Some(ov) = outvar {
+                        let s = String::from_utf8_lossy(&buf[written..]).to_string();
+                        self.variables.insert(ov, s);
+                    }
+                    if let Some(cv) = countvar {
+                        self.variables.insert(cv, (count - written).to_string());
+                    }
+                    return 3;
+                }
+                written += w as usize;
+            }
+            return 0;
+        }
+
+        // No -o: stash buffer into outvar (default REPLY).
+        let s = String::from_utf8_lossy(&buf).to_string();
+        let target = outvar.unwrap_or_else(|| "REPLY".to_string());
+        self.variables.insert(target, s);
+        if count == 0 {
+            5
         } else {
-            eprintln!("sysread: only fd 0 (stdin) supported");
-            1
+            0
         }
     }
 
-    /// syswrite - low-level write (zsh/system module)
+    /// syswrite - low-level write (zsh/system module). Direct port of
+    /// zsh/Src/Modules/system.c:238 bin_syswrite. Return values
+    /// (system.c:230-234): 0 = success, 1 = bad params, 2 = write error.
     fn builtin_syswrite(&mut self, args: &[String]) -> i32 {
-        use std::io::Write;
+        let mut outfd: i32 = 1;
+        let mut countvar: Option<String> = None;
+        let mut data: Option<String> = None;
 
-        let mut fd = 1i32; // stdout
-        let mut data = String::new();
         let mut i = 0;
-
         while i < args.len() {
             match args[i].as_str() {
                 "-o" if i + 1 < args.len() => {
                     i += 1;
-                    fd = args[i].parse().unwrap_or(1);
+                    match args[i].parse::<i32>() {
+                        Ok(n) if n >= 0 => outfd = n,
+                        _ => {
+                            eprintln!("zshrs:syswrite:1: integer expected: {}", args[i]);
+                            return 1;
+                        }
+                    }
                 }
                 "-c" if i + 1 < args.len() => {
                     i += 1;
-                    // Count - ignored
+                    countvar = Some(args[i].clone());
                 }
                 _ => {
-                    data = args[i].clone();
+                    data = Some(args[i].clone());
                 }
             }
             i += 1;
         }
 
-        match fd {
-            1 => {
-                let _ = std::io::stdout().write_all(data.as_bytes());
-                let _ = std::io::stdout().flush();
-                0
+        let payload = match data {
+            Some(d) => d,
+            None => return 1,
+        };
+        let bytes = payload.as_bytes();
+        let mut totcount = 0usize;
+        let mut len = bytes.len();
+        let mut ptr = bytes.as_ptr();
+        while len > 0 {
+            let w = unsafe { libc::write(outfd, ptr as *const libc::c_void, len) };
+            if w < 0 {
+                let err = std::io::Error::last_os_error();
+                let errno = err.raw_os_error().unwrap_or(0);
+                if errno == libc::EINTR {
+                    continue;
+                }
+                if let Some(cv) = countvar {
+                    self.variables.insert(cv, totcount.to_string());
+                }
+                return 2;
             }
-            2 => {
-                let _ = std::io::stderr().write_all(data.as_bytes());
-                let _ = std::io::stderr().flush();
-                0
+            unsafe {
+                ptr = ptr.add(w as usize);
             }
-            _ => {
-                eprintln!("syswrite: only fd 1 (stdout) and 2 (stderr) supported");
-                1
-            }
+            totcount += w as usize;
+            len -= w as usize;
         }
+        if let Some(cv) = countvar {
+            self.variables.insert(cv, totcount.to_string());
+        }
+        0
     }
 
     /// syserror - get error message (zsh/system module)
