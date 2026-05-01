@@ -31811,11 +31811,54 @@ impl ShellExecutor {
             }
         }
 
-        // builtin.c:553-558 — no args: list names. Listing isn't
-        // strictly required for shell-mode use; existing zshrs callers
-        // only need the mutation path. Keep no-args as a no-op until
-        // a script needs the listing.
+        // builtin.c:553-558 — no args: list names of disabled
+        // (`disable` builtin) or enabled (`enable` builtin) items
+        // in the chosen target table. zshrs tracks the disabled set
+        // for builtins via self.options['_disabled_<name>']; for
+        // aliases / functions / suffix_aliases the disable path
+        // removes the entry entirely so 'disabled' can't be listed
+        // post-disable. Print the available scope's set sorted.
         if names.is_empty() {
+            let mut listing: Vec<String> = match target {
+                "builtins" => {
+                    if enable {
+                        // `enable` listing = currently-enabled
+                        // builtins (BUILTIN_SET minus _disabled_*).
+                        BUILTIN_SET
+                            .iter()
+                            .filter(|n| {
+                                !self
+                                    .options
+                                    .get(&format!("_disabled_{}", n))
+                                    .copied()
+                                    .unwrap_or(false)
+                            })
+                            .map(|s| s.to_string())
+                            .collect()
+                    } else {
+                        // `disable` listing = the _disabled_<name>
+                        // set (i.e. builtins the user has turned off).
+                        self.options
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                if *v {
+                                    k.strip_prefix("_disabled_").map(|s| s.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    }
+                }
+                "aliases" => self.aliases.keys().cloned().collect(),
+                "suffix_aliases" => self.suffix_aliases.keys().cloned().collect(),
+                "functions" => self.functions_compiled.keys().cloned().collect(),
+                _ => Vec::new(),
+            };
+            listing.sort();
+            for name in listing {
+                println!("{}", name);
+            }
             return 0;
         }
 
