@@ -32102,6 +32102,7 @@ impl ShellExecutor {
         let mut command_arg: Option<String> = None;
         let mut extra_set_opts: Vec<String> = Vec::new();
         let mut extra_unset_opts: Vec<String> = Vec::new();
+        let mut extra_positional_count: usize = 0;
 
         let mut i = 0;
         while i < args.len() {
@@ -32155,8 +32156,25 @@ impl ShellExecutor {
                 }
             } else if mode.is_none() {
                 mode = Some(arg.clone());
+            } else {
+                // Extra positional past the shell name. Whether this
+                // is OK depends on whether `-c CMD` consumed the rest:
+                //   - emulate zsh -c 'echo hi'   → mode=zsh, cmd='echo hi', no extras
+                //   - emulate -l zsh extra       → list mode, only one positional allowed
+                //   - emulate zsh extra          → C path falls through to parseopts
+                //     which would emit "unknown argument extra" (builtin.c:6314).
+                extra_positional_count += 1;
             }
             i += 1;
+        }
+
+        // builtin.c:6297-6300 — `-l` rejects more than one positional
+        // argument with `too many arguments for -l`. zshrs previously
+        // silently dropped extras, so `emulate -l zsh oops` listed
+        // zsh options without diagnosing the typo.
+        if list_mode && extra_positional_count > 0 {
+            eprintln!("zshrs:emulate:1: too many arguments for -l");
+            return 1;
         }
 
         // -L and -c are mutually exclusive
@@ -32165,8 +32183,18 @@ impl ShellExecutor {
             return 1;
         }
 
-        // No argument: print current emulation mode
+        // No argument: print current emulation mode.
+        // builtin.c:6249-6253 — if `-L` or `-R` is set but no shell
+        // name was given, error "not enough arguments". zshrs's
+        // previous impl printed the current emulation in that case,
+        // silently ignoring the L/R flag and producing surprising
+        // output. The C source treats `emulate -L` standalone as a
+        // user error because there's nothing to make local.
         if mode.is_none() && !list_mode {
+            if local_mode || reset_mode {
+                eprintln!("zshrs:emulate:1: not enough arguments");
+                return 1;
+            }
             let current = self
                 .variables
                 .get("EMULATE")
