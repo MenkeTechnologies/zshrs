@@ -40994,26 +40994,59 @@ impl ShellExecutor {
 
         let mut lines = 10usize;
         // Some(N) when -c N was given — switches to byte-count mode.
-        // Was missing entirely; `tail -c 4` parsed `4` as a filename
-        // and emitted "tail: 4: No such file or directory".
         let mut bytes: Option<usize> = None;
+        // -n +N / -c +N: start at line/byte N (1-based) instead of
+        // tailing the last N. coreutils extension.
+        let mut start_line: Option<usize> = None;
+        let mut start_byte: Option<usize> = None;
         let mut force_quiet = false;
         let mut force_verbose = false;
         let mut files: Vec<&str> = Vec::new();
         let mut i = 0;
 
+        let parse_count = |s: &str| -> (usize, bool) {
+            // Returns (count, from_start_flag).
+            if let Some(rest) = s.strip_prefix('+') {
+                (rest.parse().unwrap_or(0), true)
+            } else if let Some(rest) = s.strip_prefix('-') {
+                (rest.parse().unwrap_or(0), false)
+            } else {
+                (s.parse().unwrap_or(0), false)
+            }
+        };
+
         while i < args.len() {
             let arg = &args[i];
             if arg == "-n" && i + 1 < args.len() {
                 i += 1;
-                lines = args[i].parse().unwrap_or(10);
+                let (n, from_start) = parse_count(&args[i]);
+                if from_start {
+                    start_line = Some(n);
+                } else {
+                    lines = n;
+                }
             } else if arg.starts_with("-n") {
-                lines = arg[2..].parse().unwrap_or(10);
+                let (n, from_start) = parse_count(&arg[2..]);
+                if from_start {
+                    start_line = Some(n);
+                } else {
+                    lines = n;
+                }
             } else if arg == "-c" && i + 1 < args.len() {
                 i += 1;
-                bytes = args[i].parse::<usize>().ok();
+                let (n, from_start) = parse_count(&args[i]);
+                if from_start {
+                    start_byte = Some(n);
+                } else {
+                    bytes = Some(n);
+                }
             } else if arg.starts_with("-c") && arg.len() > 2 {
-                bytes = arg[2..].parse::<usize>().ok();
+                let (n, from_start) = parse_count(&arg[2..]);
+                if from_start {
+                    start_byte = Some(n);
+                } else {
+                    bytes = Some(n);
+                }
             } else if arg == "-q" || arg == "--quiet" || arg == "--silent" {
                 force_quiet = true;
             } else if arg == "-v" || arg == "--verbose" {
@@ -41062,6 +41095,17 @@ impl ShellExecutor {
                 }
             };
 
+            if let Some(start) = start_byte {
+                // -c +N: emit from byte N (1-based) onwards.
+                let mut buf = Vec::new();
+                let _ = reader.read_to_end(&mut buf);
+                let s = start.saturating_sub(1).min(buf.len());
+                use std::io::Write;
+                let stdout = std::io::stdout();
+                let _ = stdout.lock().write_all(&buf[s..]);
+                continue;
+            }
+
             if let Some(n) = bytes {
                 // Byte-count mode: read everything into a buffer
                 // (tail needs the END), keep last n bytes. Simple
@@ -41072,6 +41116,17 @@ impl ShellExecutor {
                 use std::io::Write;
                 let stdout = std::io::stdout();
                 let _ = stdout.lock().write_all(&buf[start..]);
+                continue;
+            }
+
+            if let Some(start) = start_line {
+                // -n +N: emit from line N (1-based) onwards.
+                // Streams without buffering the whole file.
+                for (i, line) in reader.lines().flatten().enumerate() {
+                    if i + 1 >= start {
+                        println!("{}", line);
+                    }
+                }
                 continue;
             }
 
