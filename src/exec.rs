@@ -36361,8 +36361,15 @@ impl ShellExecutor {
                     interactive = false;
                 }
                 "-v" | "--verbose" => verbose = true,
-                s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                "--" => {} // end of options; rest collected in fall-through
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                s => {
+                    // coreutils mv rejects unknown flags. Old
+                    // catch-all silently dropped them, so \`mv -X a b\`
+                    // moved a → b ignoring -X.
+                    eprintln!("mv: unrecognized option: '{}'", s);
+                    return 1;
+                }
             }
         }
 
