@@ -41150,6 +41150,10 @@ impl ShellExecutor {
         // only digits (delete chars NOT in the set). Without this,
         // -c was silently ignored and the set was used as-is.
         let complement = args.iter().any(|a| a == "-c" || a == "-C");
+        // -s: squeeze runs of chars in the LAST set down to one.
+        // After translate/delete, replace 2+ consecutive chars from
+        // set with a single char. coreutils tr(1).
+        let squeeze = args.iter().any(|a| a == "-s");
         let set1_raw: &str;
         let set2_raw: &str;
 
@@ -41224,7 +41228,18 @@ impl ShellExecutor {
                 m
             }
         };
-        let output: String = if delete {
+        // Pick the squeeze set per coreutils tr semantics: with -d
+        // and -s together, squeeze uses set2 (the second arg, or
+        // empty if not given); without -d, squeeze uses set2 (the
+        // translation target), falling back to set1 when set2 is
+        // empty (the "tr -s" common form).
+        let squeeze_set: Vec<char> = if !s2.is_empty() {
+            s2.clone()
+        } else {
+            s1.clone()
+        };
+
+        let output_pre: String = if delete {
             input.chars().filter(|c| !in_set1(*c)).collect()
         } else if complement {
             // With -c (without -d), every char NOT in set1 maps to
@@ -41254,6 +41269,24 @@ impl ShellExecutor {
                     }
                 })
                 .collect()
+        };
+
+        // Squeeze pass: collapse runs of consecutive chars from
+        // squeeze_set down to one occurrence. Direct port of
+        // coreutils tr's squeeze_repeats.
+        let output: String = if squeeze {
+            let mut out = String::with_capacity(output_pre.len());
+            let mut last: Option<char> = None;
+            for c in output_pre.chars() {
+                if Some(c) == last && squeeze_set.contains(&c) {
+                    continue;
+                }
+                out.push(c);
+                last = Some(c);
+            }
+            out
+        } else {
+            output_pre
         };
 
         print!("{}", output);
