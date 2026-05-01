@@ -35939,7 +35939,7 @@ impl ShellExecutor {
                                 i += 1;
                                 if i >= args.len() {
                                     eprintln!(
-                                        "zsystem: flock: option i requires a numeric retry interval"
+                                        "zshrs:zsystem:1: flock: option i requires a numeric retry interval"
                                     );
                                     return 1;
                                 }
@@ -35950,7 +35950,7 @@ impl ShellExecutor {
                                     let us = (n * 1e6).ceil();
                                     if us < 1.0 || us > (i64::MAX as f64 * 0.999) {
                                         eprintln!(
-                                            "zsystem: flock: invalid interval value: '{}'",
+                                            "zshrs:zsystem:1: flock: invalid interval value: '{}'",
                                             val
                                         );
                                         return 1;
@@ -35959,7 +35959,7 @@ impl ShellExecutor {
                                 }
                                 _ => {
                                     eprintln!(
-                                        "zsystem: flock: invalid interval value: '{}'",
+                                        "zshrs:zsystem:1: flock: invalid interval value: '{}'",
                                         val
                                     );
                                     return 1;
@@ -35998,7 +35998,7 @@ impl ShellExecutor {
                 let r = unsafe { libc::close(fd) };
                 if r < 0 {
                     eprintln!(
-                        "zsystem: flock: file descriptor {} not in use for locking",
+                        "zshrs:zsystem:1: flock: file descriptor {} not in use for locking",
                         fd
                     );
                     return 1;
@@ -36072,7 +36072,7 @@ impl ShellExecutor {
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
                 if errno != libc::EACCES && errno != libc::EAGAIN {
                     eprintln!(
-                        "zsystem: flock: {}: {}",
+                        "zshrs:zsystem:1: flock: {}: {}",
                         filepath,
                         std::io::Error::last_os_error()
                     );
@@ -36088,7 +36088,7 @@ impl ShellExecutor {
                     std::thread::sleep(std::time::Duration::from_micros(interval_us));
                 } else {
                     eprintln!(
-                        "zsystem: flock: {}: {}",
+                        "zshrs:zsystem:1: flock: {}: {}",
                         filepath,
                         std::io::Error::last_os_error()
                     );
