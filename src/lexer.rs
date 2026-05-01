@@ -1884,7 +1884,19 @@ impl<'a> ZshLexer<'a> {
         has_ident
     }
 
-    /// Parse double-quoted string content
+    /// Parse the body of a double-quoted string (or any context that
+    /// uses double-quote tokenization — `(( ))`, `${...}`, `$( ( ) )`).
+    /// Direct port of zsh/Src/lex.c:1486-1693 `dquote_parse`. Reads
+    /// chars until `endchar` is seen at depth 0, handling escapes,
+    /// `${...}` parameter substitutions, `$(...)` and backtick command
+    /// substitutions, `$((...))` arithmetic, and inner double-quoted
+    /// strings. The `sub` flag toggles substitution-context tokens
+    /// (lex.c:1487 `int sub` argument).
+    ///
+    /// zshrs port note: the recursion guard at the top is a Rust
+    /// safety net; the C source relies on the runtime stack. Inner
+    /// logic delegates to `dquote_parse_inner` which holds the actual
+    /// per-char state machine matching lex.c:1495-1692.
     fn dquote_parse(&mut self, endchar: char, sub: bool) -> Result<(), ()> {
         self.recursion_depth += 1;
         if self.check_recursion() {
@@ -2075,6 +2087,12 @@ impl<'a> ZshLexer<'a> {
     }
 
     /// Determine if (( is arithmetic or command
+    /// Decide whether `( ... )` after a `$` is a math expression
+    /// `$((...))` or a command substitution `$(...)`. Direct port of
+    /// zsh/Src/lex.c:495-532 `cmd_or_math`. Tries dquote_parse first;
+    /// if it succeeds AND the next char is `)` (closing the second
+    /// paren of `(( ))`), it's math. Otherwise rewinds and treats as
+    /// a command substitution.
     fn cmd_or_math(&mut self) -> CmdOrMath {
         let oldlen = self.lexbuf.len();
 
@@ -2125,7 +2143,12 @@ impl<'a> ZshLexer<'a> {
         }
     }
 
-    /// Parse $(...) or $((...))
+    /// Parse `$(...)` or `$((...))` after the `$` has been consumed.
+    /// Direct port of zsh/Src/lex.c:540-573 `cmd_or_math_sub`. Reads
+    /// the next char to discriminate: a leading `(` plus successful
+    /// math parse via `cmd_or_math` → arithmetic substitution (with
+    /// the open-paren retroactively rewritten to Inparmath); else
+    /// command substitution via skip_command_sub.
     fn cmd_or_math_sub(&mut self) -> CmdOrMath {
         const MAX_CONTINUATIONS: usize = 10_000;
         let mut continuations = 0;
@@ -2197,7 +2220,18 @@ impl<'a> ZshLexer<'a> {
         }
     }
 
-    /// Skip over command substitution (...), adding chars to token
+    /// Skip over `(...)` for command-style substitutions: `$(...)`,
+    /// `<(...)`, `>(...)`. Direct port of zsh/Src/lex.c:2080-end
+    /// `skipcomm`. Per the C source comment: "we'll parse the input
+    /// until we find an unmatched closing parenthesis. However, we'll
+    /// throw away the result of the parsing and just keep the string
+    /// we've built up on the way."
+    ///
+    /// zshrs port note: the C source uses zcontext_save/restore +
+    /// strinbeg/inpush to set up an isolated lex context for the
+    /// throw-away parse. zshrs's standalone walker tracks paren
+    /// depth directly without re-entering the parser. Same
+    /// invariant: stops at the matching `)`.
     fn skip_command_sub(&mut self) -> Result<(), ()> {
         let mut pct = 1;
         let mut start = true;
@@ -2477,10 +2511,14 @@ enum CmdOrMath {
 // ============================================================================
 
 /// Check whether we're looking at valid numeric globbing syntax
-/// (/\<[0-9]*-[0-9]*\>/). Call pointing just after the opening "<".
-/// Leaves the input in the same place, returning true or false.
+/// `<N-M>` / `<N->` / `<-M>` / `<->`. Call pointing just after the
+/// opening `<`. Leaves the input position unchanged, returning true
+/// or false.
 ///
-/// Port of isnumglob() from lex.c
+/// Direct port of zsh/Src/lex.c:580-610 `isnumglob`. C source uses
+/// hgetc/hungetc against the input stream and a temp buffer to
+/// remember consumed chars; zshrs takes a `(input, pos)` slice and
+/// scans without consumption. Same predicate, different I/O model.
 pub fn isnumglob(input: &str, pos: usize) -> bool {
     let chars: Vec<char> = input[pos..].chars().collect();
     let mut i = 0;
