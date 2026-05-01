@@ -13,6 +13,10 @@ categories = ["command-line-utilities"]
 name = "zshrs_daemon"
 path = "lib.rs"
 
+[[bin]]
+name = "zshrs-daemon"
+path = "bins/zshrs-daemon.rs"
+
 [dependencies]
 atty = "0.2"
 byteorder = "1"

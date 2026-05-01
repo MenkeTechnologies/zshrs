@@ -27652,13 +27652,33 @@ impl ShellExecutor {
                         } else if optind < opt_args.len() {
                             (opt_args[optind].to_string(), 2)
                         } else {
-                            // Missing argument
-                            self.variables.insert(varname.to_string(), "?".to_string());
-                            if !optstring.starts_with(':') {
-                                eprintln!("zshrs: getopts: option requires an argument -- {}", c);
+                            // Missing argument. Direct port of
+                            // src/zsh/Src/builtin.c:5743-5763:
+                            //   - quiet (`:` prefix): var=":",
+                            //     OPTARG=opt_char (single-char form)
+                            //   - non-quiet: var="?", OPTARG="",
+                            //     warning to stderr
+                            // Previous Rust always set var="?" and
+                            // OPTARG=opt_char, diverging in both
+                            // modes.
+                            let quiet = optstring.starts_with(':');
+                            // builtin.c:5747-5750 — POSIX mode also
+                            // advances OPTIND past the bad option.
+                            self.variables
+                                .insert("OPTIND".to_string(), (optind + 1).to_string());
+                            self.variables.remove("_OPTPOS");
+                            if quiet {
+                                self.variables.insert(varname.to_string(), ":".to_string());
+                                self.variables.insert("OPTARG".to_string(), c.to_string());
+                            } else {
+                                self.variables.insert(varname.to_string(), "?".to_string());
+                                self.variables.insert("OPTARG".to_string(), String::new());
+                                eprintln!(
+                                    "zshrs:getopts:1: argument expected after -{} option",
+                                    c
+                                );
                             }
-                            self.variables.insert("OPTARG".to_string(), c.to_string());
-                            return 1;
+                            return 0;
                         };
 
                         self.variables.insert("OPTARG".to_string(), arg);
@@ -27686,13 +27706,21 @@ impl ShellExecutor {
                     0
                 }
                 None => {
-                    // Unknown option
-                    if !optstring.starts_with(':') {
-                        // zsh format: `zsh:1: bad option: -X`
+                    // Unknown option. Direct port of
+                    // src/zsh/Src/builtin.c:5723-5739:
+                    //   - quiet (`:` prefix): var="?",
+                    //     OPTARG=opt_char (single-char form)
+                    //   - non-quiet: var="?", OPTARG="", warning
+                    // Always advance OPTIND in POSIX mode
+                    // (builtin.c:5726-5729).
+                    let quiet = optstring.starts_with(':');
+                    self.variables.insert(varname.to_string(), "?".to_string());
+                    if quiet {
+                        self.variables.insert("OPTARG".to_string(), c.to_string());
+                    } else {
+                        self.variables.insert("OPTARG".to_string(), String::new());
                         eprintln!("zshrs:1: bad option: -{}", c);
                     }
-                    self.variables.insert(varname.to_string(), "?".to_string());
-                    self.variables.insert("OPTARG".to_string(), c.to_string());
 
                     // Advance to next option/arg
                     if optpos + 1 < current_arg.len() {
