@@ -562,6 +562,211 @@ fn zlog_path() -> i32 {
     }
 }
 
+// -------- zsubscribe --------
+//
+// Streaming foreground consumer. Holds the daemon connection open for the
+// lifetime of the process; on Ctrl-C / EOF the connection drops and the
+// daemon's `unregister_session` automatically removes the subscription.
+//
+// Forms:
+//   zsubscribe <pattern>             # default human format
+//   zsubscribe --json <pattern>      # one raw JSON object per event
+//   zsubscribe --count N <pattern>   # exit after N events
+//   zsubscribe --list                # this client's existing subs (then exit)
+
+fn zsubscribe(args: &[String]) -> i32 {
+    let mut json_out = false;
+    let mut list_only = false;
+    let mut count: Option<u64> = None;
+    let mut pattern: Option<String> = None;
+
+    let mut iter = args.iter().skip(1);
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--json" => json_out = true,
+            "--list" => list_only = true,
+            "--count" => match iter.next() {
+                Some(n) => match n.parse::<u64>() {
+                    Ok(v) => count = Some(v),
+                    Err(_) => return err_exit("zsubscribe", "--count requires an integer"),
+                },
+                None => return err_exit("zsubscribe", "--count requires a value"),
+            },
+            "-h" | "--help" => {
+                println!("usage: zsubscribe [--json] [--count N] <pattern>");
+                println!("       zsubscribe --list");
+                println!("pattern: <scope>.<topic>  e.g. shell:42.commands  *.chpwd  tag:prod.long_cmd_complete");
+                return 0;
+            }
+            other if other.starts_with('-') => {
+                return err_exit("zsubscribe", &format!("unknown flag `{}`", other));
+            }
+            other => {
+                if pattern.is_some() {
+                    return err_exit("zsubscribe", "expected exactly one pattern");
+                }
+                pattern = Some(other.to_string());
+            }
+        }
+    }
+
+    if list_only {
+        return zsubscribe_list();
+    }
+
+    let pattern = match pattern {
+        Some(p) => p,
+        None => return err_exit("zsubscribe", "missing <pattern>"),
+    };
+
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+
+    let sub_id = match client.call("subscribe", json!({ "pattern": pattern })) {
+        Ok(v) => v.get("subscription_id").and_then(Value::as_u64).unwrap_or(0),
+        Err(e) => return err_exit("zsubscribe", &e.to_string()),
+    };
+
+    if let Err(e) = client.set_read_timeout(None) {
+        return err_exit("zsubscribe", &format!("set timeout: {}", e));
+    }
+
+    eprintln!(
+        "zsubscribe: id={} pattern={} (Ctrl-C to exit)",
+        sub_id, pattern
+    );
+
+    let mut delivered = 0u64;
+    use super::ipc::Frame;
+    loop {
+        match client.next_frame() {
+            Ok(Frame::Event { event, payload }) => {
+                if json_out {
+                    let line = json!({ "event": event, "payload": payload });
+                    println!("{}", line);
+                } else {
+                    print_event_human(&event, &payload);
+                }
+                delivered += 1;
+                if let Some(limit) = count {
+                    if delivered >= limit {
+                        return 0;
+                    }
+                }
+            }
+            Ok(_) => continue,
+            Err(DaemonError::Io(e))
+                if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) =>
+            {
+                eprintln!("zsubscribe: daemon closed connection");
+                return 0;
+            }
+            Err(e) => return err_exit("zsubscribe", &e.to_string()),
+        }
+    }
+}
+
+fn zsubscribe_list() -> i32 {
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("subscribe", json!({ "pattern": "--list" })) {
+        Ok(v) => {
+            let subs = v.get("subscriptions").cloned().unwrap_or(Value::Null);
+            print_pretty(&subs);
+            0
+        }
+        Err(e) => err_exit("zsubscribe --list", &e.to_string()),
+    }
+}
+
+fn print_event_human(event: &str, payload: &Value) {
+    let scope = payload.get("scope").and_then(Value::as_str).unwrap_or("-");
+    let topic = payload
+        .get("topic")
+        .and_then(Value::as_str)
+        .unwrap_or(event);
+    let data = payload
+        .get("data")
+        .map(|v| {
+            if v.is_string() {
+                v.as_str().unwrap_or("").to_string()
+            } else {
+                v.to_string()
+            }
+        })
+        .unwrap_or_default();
+    let ts = chrono::Local::now().format("%H:%M:%S");
+    println!("[{} {} {}] {}", ts, scope, topic, data);
+}
+
+// -------- zunsubscribe --------
+//
+// Removes a subscription owned by THIS client. When invoked one-shot from the
+// CLI, "this client" is a fresh ephemeral session that has no subscriptions, so
+// the call is mostly useful from within a long-lived shell that maintains its
+// own daemon connection. For one-shot CLI use, exit a foreground `zsubscribe`
+// via Ctrl-C — the disconnect auto-clears the subscription.
+
+fn zunsubscribe(args: &[String]) -> i32 {
+    let mut by_id: Option<u64> = None;
+    let mut pattern: Option<String> = None;
+
+    let mut iter = args.iter().skip(1);
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--id" => match iter.next() {
+                Some(n) => match n.parse::<u64>() {
+                    Ok(v) => by_id = Some(v),
+                    Err(_) => return err_exit("zunsubscribe", "--id requires an integer"),
+                },
+                None => return err_exit("zunsubscribe", "--id requires a value"),
+            },
+            "-h" | "--help" => {
+                println!("usage: zunsubscribe <pattern>");
+                println!("       zunsubscribe --id <subscription_id>");
+                return 0;
+            }
+            other if other.starts_with('-') => {
+                return err_exit("zunsubscribe", &format!("unknown flag `{}`", other));
+            }
+            other => {
+                if pattern.is_some() {
+                    return err_exit("zunsubscribe", "expected exactly one pattern");
+                }
+                pattern = Some(other.to_string());
+            }
+        }
+    }
+
+    let payload = match (by_id, pattern) {
+        (Some(id), _) => json!({ "id": id }),
+        (None, Some(p)) => json!({ "pattern": p }),
+        (None, None) => return err_exit("zunsubscribe", "missing pattern or --id"),
+    };
+
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+
+    match client.call("unsubscribe", payload) {
+        Ok(v) => {
+            let removed = v.get("removed").and_then(Value::as_u64).unwrap_or(0);
+            println!("removed {} subscription(s)", removed);
+            if removed == 0 {
+                1
+            } else {
+                0
+            }
+        }
+        Err(e) => err_exit("zunsubscribe", &e.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -598,6 +803,36 @@ mod tests {
         let (target, msg) = parse_send_args(&args, "zsend").unwrap();
         assert_eq!(target, json!({ "tag": "prod" }));
         assert_eq!(msg, "deploy");
+    }
+
+    #[test]
+    fn try_dispatch_unknown_returns_none() {
+        assert!(try_dispatch("ls", &["ls".into()]).is_none());
+        assert!(try_dispatch("not_a_zthing", &["not_a_zthing".into()]).is_none());
+    }
+
+    #[test]
+    fn is_zshrs_builtin_recognises_full_namespace() {
+        for n in &[
+            "zcache",
+            "zls",
+            "zid",
+            "zping",
+            "ztag",
+            "zuntag",
+            "zsend",
+            "znotify",
+            "zsubscribe",
+            "zunsubscribe",
+            "zjob",
+            "zsync",
+            "zask",
+            "zlog",
+        ] {
+            assert!(is_zshrs_builtin(n), "expected {n} to be recognised");
+        }
+        assert!(!is_zshrs_builtin("ls"));
+        assert!(!is_zshrs_builtin(""));
     }
 
     #[test]

@@ -30,8 +30,11 @@ pub mod source_resolver;
 pub mod state;
 pub mod walk;
 pub mod zask;
+pub mod zask_builtin;
+pub mod zjob_builtin;
 pub mod zshrc_analysis;
 pub mod zsync;
+pub mod zsync_builtin;
 
 pub use ipc::{Event, Frame, Hello, ProtocolVersion, Welcome, PROTOCOL_VERSION};
 pub use paths::CachePaths;

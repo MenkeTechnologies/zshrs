@@ -214,94 +214,214 @@ impl StyleTable {
 }
 
 /// Format a string with specifications
-pub fn zformat(format: &str, specs: &HashMap<char, String>, _presence: bool) -> String {
-    let mut result = String::new();
-    let mut chars = format.chars().peekable();
+pub fn zformat(format: &str, specs: &HashMap<char, String>, presence: bool) -> String {
+    // Direct port of src/zsh/Src/Modules/zutil.c:814-952
+    // zformat_substring. Recursive walker that handles:
+    //   - Plain `%X` substitutions
+    //   - Optional `-` for right-align
+    //   - Optional `N` for min width
+    //   - Optional `.M` for max width
+    //   - Ternary `%(SPECTEST.true-text.false-text)` — conditional
+    //     substitution based on whether the spec exists / matches a
+    //     numeric test value. With presence=true (zformat -F) the
+    //     test compares the spec's existence/length; with
+    //     presence=false (zformat -f) the test compares against an
+    //     integer math eval of the spec value.
+    //
+    // The original C uses an output-buffer with growable backing;
+    // we use a Rust String with push_* helpers. The recursive
+    // descent + (skip || actval) pattern is the same.
+    let bytes: Vec<char> = format.chars().collect();
+    let mut out = String::with_capacity(bytes.len() + 16);
+    let mut idx = 0;
+    let _ = zformat_recurse(&bytes, &mut idx, &mut out, '\0', specs, presence, false);
+    out
+}
 
-    while let Some(ch) = chars.next() {
-        if ch == '%' {
-            let mut right = false;
-            let mut min: Option<usize> = None;
-            let mut max: Option<usize> = None;
-
-            if chars.peek() == Some(&'-') {
-                right = true;
-                chars.next();
+/// Recursive walker for zformat. Returns the index of the
+/// terminator (`endchar`). idx is mutated in place.
+/// Direct port of zformat_substring (zutil.c:814-952).
+fn zformat_recurse(
+    bytes: &[char],
+    idx: &mut usize,
+    out: &mut String,
+    endchar: char,
+    specs: &HashMap<char, String>,
+    presence: bool,
+    skip: bool,
+) -> Option<()> {
+    while *idx < bytes.len() {
+        let c = bytes[*idx];
+        // Stop at endchar (zutil.c:820 `*s != endchar`).
+        if endchar != '\0' && c == endchar {
+            return Some(());
+        }
+        if c != '%' {
+            // Plain text — emit unless skipping (zutil.c:937-948).
+            if !skip {
+                out.push(c);
             }
+            *idx += 1;
+            continue;
+        }
+        // `%` — parse the spec.
+        let start = *idx;
+        *idx += 1;
+        // Optional `-` for right-align (zutil.c:825-826).
+        let mut right = false;
+        if *idx < bytes.len() && bytes[*idx] == '-' {
+            right = true;
+            *idx += 1;
+        }
+        // Optional digit run for min (zutil.c:828-831).
+        let mut min: Option<i64> = None;
+        if *idx < bytes.len() && bytes[*idx].is_ascii_digit() {
+            let mut n: i64 = 0;
+            while *idx < bytes.len() && bytes[*idx].is_ascii_digit() {
+                n = n * 10 + bytes[*idx].to_digit(10).unwrap() as i64;
+                *idx += 1;
+            }
+            min = Some(n);
+        }
+        // Ternary detection: `(` at this position (zutil.c:834-840).
+        let testit = *idx < bytes.len() && bytes[*idx] == '(';
+        // `%(-...` allows leading `-` after the paren (zutil.c:835-840).
+        if testit && *idx + 1 < bytes.len() && bytes[*idx + 1] == '-' {
+            right = true;
+            *idx += 1;
+        }
+        // Optional `.MAX` or just `.` after (zutil.c:841-845).
+        let mut max: Option<i64> = None;
+        if *idx < bytes.len() && (bytes[*idx] == '.' || testit)
+            && *idx + 1 < bytes.len()
+            && bytes[*idx + 1].is_ascii_digit()
+        {
+            *idx += 1; // skip `.` or `(`
+            let mut n: i64 = 0;
+            while *idx < bytes.len() && bytes[*idx].is_ascii_digit() {
+                n = n * 10 + bytes[*idx].to_digit(10).unwrap() as i64;
+                *idx += 1;
+            }
+            max = Some(n);
+        } else if *idx < bytes.len() && (bytes[*idx] == '.' || testit) {
+            *idx += 1;
+        }
 
-            let mut num_str = String::new();
-            while let Some(&c) = chars.peek() {
-                if c.is_ascii_digit() {
-                    num_str.push(c);
-                    chars.next();
+        if testit && *idx < bytes.len() {
+            // Ternary expression — zutil.c:847-887.
+            let testval: i64 = min.or(max).unwrap_or(0);
+            let spec_char = bytes[*idx];
+            let actval: bool;
+            let spec_val = specs.get(&spec_char);
+            if let Some(sv) = spec_val.filter(|s| !s.is_empty()) {
+                if presence {
+                    let cmp_val: i64 = if testval != 0 {
+                        sv.chars().count() as i64
+                    } else {
+                        1
+                    };
+                    actval = if right {
+                        testval < cmp_val
+                    } else {
+                        testval >= cmp_val
+                    };
                 } else {
-                    break;
+                    let signed_test = if right { -testval } else { testval };
+                    let n: i64 = sv.parse().unwrap_or(0);
+                    actval = (n - signed_test) != 0;
                 }
+            } else {
+                actval = if presence { !right } else { testval != 0 };
             }
-            if !num_str.is_empty() {
-                min = num_str.parse().ok();
+            // Skip past the spec char to find the delimiter
+            // (zutil.c:874-876 endcharl = *++s).
+            *idx += 1;
+            if *idx >= bytes.len() {
+                return None;
             }
+            let endcharl = bytes[*idx];
+            *idx += 1;
+            // First branch (true-text) — emit only if actval is true,
+            // i.e. skip = skip || !actval. Wait, C says
+            // `skip || actval` for the FIRST sub-call meaning: if
+            // actval is true SKIP the first branch?
+            // Re-reading zutil.c:880-884 — comment says "Either skip
+            // true text and output false text, or vice versa". The
+            // pattern `skip || actval` for the first call means: if
+            // actval, skip the first text. So the FIRST text
+            // (between `(` and the delim) is the FALSE branch, the
+            // SECOND text (between delim and `)`) is the TRUE.
+            zformat_recurse(bytes, idx, out, endcharl, specs, presence, skip || actval)?;
+            // Skip the delimiter
+            if *idx < bytes.len() && bytes[*idx] == endcharl {
+                *idx += 1;
+            }
+            zformat_recurse(bytes, idx, out, ')', specs, presence, skip || !actval)?;
+            // Skip the closing `)`
+            if *idx < bytes.len() && bytes[*idx] == ')' {
+                *idx += 1;
+            }
+            continue;
+        }
 
-            if chars.peek() == Some(&'.') || chars.peek() == Some(&'(') {
-                let is_ternary = chars.peek() == Some(&'(');
-                if !is_ternary {
-                    chars.next();
-                }
+        if skip {
+            // In skip mode — advance past spec char and continue.
+            if *idx < bytes.len() {
+                *idx += 1;
+            }
+            continue;
+        }
 
-                let mut max_str = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c.is_ascii_digit() {
-                        max_str.push(c);
-                        chars.next();
-                    } else {
-                        break;
+        // Plain `%X` spec (zutil.c:890-922).
+        if *idx < bytes.len() {
+            let spec_char = bytes[*idx];
+            *idx += 1;
+            if let Some(spec_val) = specs.get(&spec_char) {
+                let mut val_chars: Vec<char> = spec_val.chars().collect();
+                let len = val_chars.len() as i64;
+                let len = match max {
+                    Some(m) if m >= 0 && len > m => {
+                        val_chars.truncate(m as usize);
+                        m
                     }
-                }
-                if !max_str.is_empty() {
-                    max = max_str.parse().ok();
-                }
-            }
-
-            if let Some(&spec_char) = chars.peek() {
-                chars.next();
-
-                if spec_char == '(' {
-                    continue;
-                }
-
-                if let Some(spec_val) = specs.get(&spec_char) {
-                    let mut val = spec_val.clone();
-
-                    if let Some(m) = max {
-                        if val.len() > m {
-                            val.truncate(m);
+                    _ => len,
+                };
+                let outl = match min {
+                    Some(m) if m >= 0 && m > len => m,
+                    _ => len,
+                };
+                if len >= outl {
+                    for &c in val_chars.iter().take(outl as usize) {
+                        out.push(c);
+                    }
+                } else {
+                    let diff = (outl - len) as usize;
+                    if right {
+                        for _ in 0..diff {
+                            out.push(' ');
+                        }
+                        for &c in val_chars.iter() {
+                            out.push(c);
+                        }
+                    } else {
+                        for &c in val_chars.iter() {
+                            out.push(c);
+                        }
+                        for _ in 0..diff {
+                            out.push(' ');
                         }
                     }
-
-                    let out_len = min.map(|m| m.max(val.len())).unwrap_or(val.len());
-
-                    if val.len() >= out_len {
-                        result.push_str(&val[..out_len]);
-                    } else {
-                        let padding = out_len - val.len();
-                        if right {
-                            result.push_str(&" ".repeat(padding));
-                            result.push_str(&val);
-                        } else {
-                            result.push_str(&val);
-                            result.push_str(&" ".repeat(padding));
-                        }
-                    }
-                } else if spec_char == '%' {
-                    result.push('%');
+                }
+            } else {
+                // Unknown spec — emit raw segment back
+                // (zutil.c:923-936).
+                for &c in &bytes[start..*idx] {
+                    out.push(c);
                 }
             }
-        } else {
-            result.push(ch);
         }
     }
-
-    result
+    Some(())
 }
 
 /// Option description for zparseopts
