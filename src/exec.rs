@@ -29516,12 +29516,20 @@ impl ShellExecutor {
                     }
                 }
                 "variable" => {
-                    for name in self.variables.keys() {
+                    // Sort for deterministic completion-candidate
+                    // order (was HashMap iteration random, so
+                    // \`compgen -v\` listings flickered).
+                    let mut names: Vec<String> = self.variables.keys().cloned().collect();
+                    names.sort();
+                    for name in names {
                         if name.starts_with(&prefix) {
-                            results.push(name.clone());
+                            results.push(name);
                         }
                     }
-                    for name in std::env::vars().map(|(k, _)| k) {
+                    let mut env_names: Vec<String> =
+                        std::env::vars().map(|(k, _)| k).collect();
+                    env_names.sort();
+                    for name in env_names {
                         if name.starts_with(&prefix) && !results.contains(&name) {
                             results.push(name);
                         }
