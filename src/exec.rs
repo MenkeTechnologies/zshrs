@@ -32547,8 +32547,176 @@ impl ShellExecutor {
         //  - not found: stderr message `name not found` (default verbose
         //    is off but `where` requests both -c and -a, so the absence
         //    of the "not found" line is a real diff vs zsh)
-        let _ = pattern_mode; // TODO: implement glob pattern matching
         let _ = tab_expand;
+
+        // `-m` glob pattern dispatch — port of bin_whence pattern branch
+        // from zsh/Src/builtin.c:4027-4083. Each arg is a glob; scan each
+        // scope (aliases / reserved / functions / builtins / PATH commands)
+        // and emit every name matching the pattern. Without -a we emit and
+        // return; with -a we collect command-name matches into `names` and
+        // fall through to the literal-name loop so each name is also
+        // checked against every scope (matching the C `allmatched`
+        // fallthrough at builtin.c:4077-4082).
+        let owned_names_storage: Vec<String>;
+        let names: Vec<&str> = if pattern_mode {
+            let patterns: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+            let mut informed: usize = 0;
+            let mut matched_cmd_names: Vec<String> = Vec::new();
+            let mut seen_cmd: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+            for pat in &patterns {
+                if !path_only {
+                    // Aliases — scanmatchtable(aliastab, ...) at builtin.c:4051.
+                    let mut alias_keys: Vec<String> = self.aliases.keys().cloned().collect();
+                    alias_keys.sort();
+                    for an in &alias_keys {
+                        if Self::glob_match_static(an, pat) {
+                            let alias_val = self.aliases.get(an).cloned().unwrap_or_default();
+                            if word_type {
+                                println!("{}: alias", an);
+                            } else if verbose {
+                                println!("{} is an alias for {}", an, alias_val);
+                            } else if csh_style {
+                                println!("{}: aliased to {}", an, alias_val);
+                            } else {
+                                println!("{}", alias_val);
+                            }
+                            informed += 1;
+                        }
+                    }
+
+                    // Reserved words — scanmatchtable(reswdtab, ...) at builtin.c:4055.
+                    const RESERVED_WORDS_M: &[&str] = &[
+                        "if", "then", "else", "elif", "fi", "case", "esac", "for", "select",
+                        "while", "until", "do", "done", "in", "function", "time", "coproc",
+                        "repeat", "foreach", "end", "nocorrect", "noglob", "local", "declare",
+                        "typeset", "readonly", "export", "integer", "float", "{", "}", "!",
+                        "[[", "]]", "((", "))",
+                    ];
+                    for &rw in RESERVED_WORDS_M {
+                        if Self::glob_match_static(rw, pat) {
+                            if word_type {
+                                println!("{}: reserved", rw);
+                            } else if verbose {
+                                println!("{} is a reserved word", rw);
+                            } else if csh_style {
+                                println!("{}: shell reserved word", rw);
+                            } else {
+                                println!("{}", rw);
+                            }
+                            informed += 1;
+                        }
+                    }
+
+                    // Functions — scanmatchshfunc(...) at builtin.c:4060.
+                    if !skip_functions {
+                        let mut fn_keys: Vec<String> =
+                            self.function_source.keys().cloned().collect();
+                        fn_keys.sort();
+                        for fnname in &fn_keys {
+                            if Self::glob_match_static(fnname, pat) {
+                                if word_type {
+                                    println!("{}: function", fnname);
+                                } else if verbose {
+                                    println!("{} is a shell function from zsh", fnname);
+                                } else if csh_style {
+                                    let body = self
+                                        .function_source
+                                        .get(fnname)
+                                        .cloned()
+                                        .unwrap_or_else(|| ":".to_string());
+                                    println!(
+                                        "{} () {{\n\t{}\n}}",
+                                        fnname,
+                                        format_function_body_zsh(&body)
+                                    );
+                                } else {
+                                    println!("{}", fnname);
+                                }
+                                informed += 1;
+                            }
+                        }
+                    }
+
+                    // Builtins — scanmatchtable(builtintab, ...) at builtin.c:4065.
+                    let mut builtin_keys: Vec<&'static str> =
+                        BUILTIN_SET.iter().copied().collect();
+                    builtin_keys.sort();
+                    for bn in &builtin_keys {
+                        if Self::glob_match_static(bn, pat) {
+                            if word_type {
+                                println!("{}: builtin", bn);
+                            } else if verbose {
+                                println!("{} is a shell builtin", bn);
+                            } else if csh_style {
+                                println!("{}: shell built-in command", bn);
+                            } else {
+                                println!("{}", bn);
+                            }
+                            informed += 1;
+                        }
+                    }
+                }
+
+                // PATH commands — scanmatchtable(cmdnamtab, ...) at builtin.c:4071.
+                // C calls cmdnamtab->filltable() to populate the hash from PATH;
+                // we walk PATH directly. With -a, collect names into
+                // matched_cmd_names for the fallthrough; without -a, emit each.
+                let path_var = env::var("PATH").unwrap_or_default();
+                let mut cmd_pairs: Vec<(String, String)> = Vec::new();
+                let mut seen_in_path: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for dir in path_var.split(':') {
+                    if dir.is_empty() {
+                        continue;
+                    }
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            if let Ok(name) = entry.file_name().into_string() {
+                                if seen_in_path.insert(name.clone()) {
+                                    let full = format!("{}/{}", dir, name);
+                                    cmd_pairs.push((name, full));
+                                }
+                            }
+                        }
+                    }
+                }
+                cmd_pairs.sort_by(|a, b| a.0.cmp(&b.0));
+
+                for (cn, cp) in &cmd_pairs {
+                    if Self::glob_match_static(cn, pat) {
+                        if show_all {
+                            // fetchcmdnamnode collects into matchednodes
+                            // (builtin.c:4072) for fallthrough.
+                            if seen_cmd.insert(cn.clone()) {
+                                matched_cmd_names.push(cn.clone());
+                            }
+                        } else {
+                            // Without -a: cmdnamtab->printnode emits each match.
+                            if word_type {
+                                println!("{}: command", cn);
+                            } else if verbose {
+                                println!("{} is {}", cn, cp);
+                            } else {
+                                println!("{}", cp);
+                            }
+                        }
+                        informed += 1;
+                    }
+                }
+            }
+
+            if !show_all {
+                // builtin.c:4082: `return returnval || !informed`.
+                return if informed == 0 { 1 } else { 0 };
+            }
+            // With -a: replace argv with the collected command names so the
+            // literal-name loop processes each across all scopes.
+            owned_names_storage = matched_cmd_names;
+            owned_names_storage.iter().map(|s| s.as_str()).collect()
+        } else {
+            names
+        };
 
         let mut status = 0;
         for name in names {
