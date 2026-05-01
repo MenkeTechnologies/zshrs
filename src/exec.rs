@@ -41364,8 +41364,22 @@ impl ShellExecutor {
                 && arg[1..].chars().all(|c| c.is_ascii_digit())
             {
                 lines = arg[1..].parse().unwrap_or(10);
-            } else if !arg.starts_with('-') {
+            } else if !arg.starts_with('-') || arg == "-" {
                 files.push(arg);
+            } else if arg == "--" {
+                // end of options — collect rest as files
+                i += 1;
+                while i < args.len() {
+                    files.push(&args[i]);
+                    i += 1;
+                }
+                break;
+            } else {
+                // coreutils head rejects unknown flags. Silent
+                // fall-through made `head -X foo` print foo's first
+                // 10 lines while losing the -X signal.
+                eprintln!("head: unrecognized option: '{}'", arg);
+                return 1;
             }
             i += 1;
         }
