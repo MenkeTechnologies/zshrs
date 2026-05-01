@@ -24047,7 +24047,14 @@ impl ShellExecutor {
                         'k' => ksh_style = false,
                         't' => trace = false,
                         'd' => use_caller_dir = false,
-                        _ => {}
+                        // BUILTIN("autoload", ...) accepts the same
+                        // letter set for + as for -. Reject unknown
+                        // +flag letters symmetric to the - parser.
+                        'X' | 'r' | 'R' | 'T' | 'W' | 'w' | 'm' => {}
+                        _ => {
+                            eprintln!("zshrs:autoload:1: bad option: +{}", c);
+                            return 1;
+                        }
                     }
                 }
             } else if arg.starts_with('-') {
