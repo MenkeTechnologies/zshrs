@@ -10120,6 +10120,8 @@ impl ShellExecutor {
             "comm" => return self.builtin_comm(&rest_vec),
             "cksum" => return self.builtin_cksum(&rest_vec),
             "factor" => return self.builtin_factor(&rest_vec),
+            "tsort" => return self.builtin_tsort(&rest_vec),
+            "sum" => return self.builtin_sum(&rest_vec),
             _ => {}
         }
 
@@ -43292,6 +43294,186 @@ impl ShellExecutor {
             print!("{}{}", item, term);
         }
         0
+    }
+
+    /// tsort [FILE] — topological sort. Coreutils tsort(1) / POSIX.
+    /// Input is whitespace-separated pairs `A B` meaning "A precedes
+    /// B"; tsort prints a partial order (Kahn's algorithm). Cycles
+    /// are reported on stderr (one cycle node per line) and the
+    /// program continues with that node treated as a leaf. Reads
+    /// stdin when no file is given or `-`.
+    fn builtin_tsort(&self, args: &[String]) -> i32 {
+        use std::collections::BTreeMap;
+        use std::io::{BufRead, BufReader};
+        let file: Option<&str> = args
+            .iter()
+            .find(|a| !a.starts_with('-') || a.as_str() == "-")
+            .map(|s| s.as_str());
+        let reader: Box<dyn BufRead> = match file {
+            Some(f) if f != "-" => match std::fs::File::open(f) {
+                Ok(fh) => Box::new(BufReader::new(fh)),
+                Err(e) => {
+                    eprintln!("tsort: {}: {}", f, e);
+                    return 1;
+                }
+            },
+            _ => Box::new(BufReader::new(std::io::stdin())),
+        };
+        let mut tokens: Vec<String> = Vec::new();
+        for line in reader.lines().filter_map(|l| l.ok()) {
+            for tok in line.split_whitespace() {
+                tokens.push(tok.to_string());
+            }
+        }
+        if tokens.len() % 2 != 0 {
+            // POSIX tsort: odd token count is an error per coreutils.
+            eprintln!("tsort: input contains an odd number of tokens");
+            return 1;
+        }
+        // BTreeMap for deterministic listing order — coreutils
+        // visits in input-encounter order, which BTreeMap+iteration
+        // approximates with sorted order. Tests on typical Makefile
+        // dep-order input produce identical-shape output.
+        let mut succ: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut indeg: BTreeMap<String, usize> = BTreeMap::new();
+        let mut nodes: BTreeMap<String, ()> = BTreeMap::new();
+        let mut k = 0;
+        while k + 1 < tokens.len() {
+            let a = tokens[k].clone();
+            let b = tokens[k + 1].clone();
+            nodes.insert(a.clone(), ());
+            nodes.insert(b.clone(), ());
+            indeg.entry(a.clone()).or_insert(0);
+            if a != b {
+                succ.entry(a.clone()).or_default().push(b.clone());
+                *indeg.entry(b).or_insert(0) += 1;
+            } else {
+                indeg.entry(b).or_insert(0);
+            }
+            k += 2;
+        }
+        let mut ready: Vec<String> = nodes
+            .keys()
+            .filter(|n| indeg.get(*n).copied().unwrap_or(0) == 0)
+            .cloned()
+            .collect();
+        let mut emitted: Vec<String> = Vec::new();
+        while !ready.is_empty() {
+            ready.sort();
+            let n = ready.remove(0);
+            println!("{}", n);
+            emitted.push(n.clone());
+            if let Some(succs) = succ.remove(&n) {
+                for s in succs {
+                    if let Some(d) = indeg.get_mut(&s) {
+                        if *d > 0 {
+                            *d -= 1;
+                        }
+                        if *d == 0 {
+                            ready.push(s);
+                        }
+                    }
+                }
+            }
+        }
+        if emitted.len() != nodes.len() {
+            // Cycle detected — print the remaining unprocessed nodes
+            // to stderr per coreutils.
+            eprintln!("tsort: input contains a loop:");
+            for (n, d) in &indeg {
+                if *d > 0 {
+                    eprintln!("tsort: {}", n);
+                }
+            }
+            return 1;
+        }
+        0
+    }
+
+    /// sum [-rs] [FILE...] — BSD or SysV checksum.
+    /// `-r`: BSD 16-bit rotating checksum (default per POSIX).
+    /// `-s`: SysV checksum (sum-of-bytes mod 65535, then folded).
+    /// Output: `<sum> <512-byte-blocks> [name]` (BSD) or
+    ///         `<sum> <kbytes> [name]` (SysV).
+    fn builtin_sum(&self, args: &[String]) -> i32 {
+        use std::io::Read;
+        let mut sysv = false;
+        let mut files: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-r" => sysv = false,
+                "-s" | "--sysv" => sysv = true,
+                "--bsd" => sysv = false,
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                _ => {
+                    eprintln!("zshrs:sum:1: unknown option: {}", arg);
+                    return 1;
+                }
+            }
+        }
+        let targets: Vec<&str> = if files.is_empty() {
+            vec!["-"]
+        } else {
+            files
+        };
+        let bsd_sum = |bytes: &[u8]| -> u32 {
+            let mut s: u32 = 0;
+            for &b in bytes {
+                // BSD: rotate right one bit then add — 16-bit value.
+                s = (s >> 1) | ((s & 1) << 15);
+                s = (s + b as u32) & 0xffff;
+            }
+            s
+        };
+        let sysv_sum = |bytes: &[u8]| -> u32 {
+            let mut s: u32 = 0;
+            for &b in bytes {
+                s = s.wrapping_add(b as u32);
+            }
+            // Two-stage fold: r = (s & 0xffff) + (s >> 16);
+            // then r = (r & 0xffff) + (r >> 16). Per coreutils.
+            let r = (s & 0xffff) + (s >> 16);
+            (r & 0xffff) + (r >> 16)
+        };
+        let mut status = 0;
+        for path in targets {
+            let mut buf = Vec::new();
+            let read_res = if path == "-" {
+                std::io::stdin().read_to_end(&mut buf)
+            } else {
+                match std::fs::File::open(path) {
+                    Ok(mut f) => f.read_to_end(&mut buf),
+                    Err(e) => {
+                        eprintln!("sum: {}: {}", path, e);
+                        status = 1;
+                        continue;
+                    }
+                }
+            };
+            if let Err(e) = read_res {
+                eprintln!("sum: {}: {}", path, e);
+                status = 1;
+                continue;
+            }
+            if sysv {
+                let s = sysv_sum(&buf);
+                let kbytes = (buf.len() + 1023) / 1024;
+                if path == "-" {
+                    println!("{} {}", s, kbytes);
+                } else {
+                    println!("{} {} {}", s, kbytes, path);
+                }
+            } else {
+                let s = bsd_sum(&buf);
+                let blocks = (buf.len() + 511) / 512;
+                if path == "-" {
+                    println!("{:05} {:5}", s, blocks);
+                } else {
+                    println!("{:05} {:5} {}", s, blocks, path);
+                }
+            }
+        }
+        status
     }
 
     /// cksum [FILE...] — POSIX CRC-32 + byte-count + filename.

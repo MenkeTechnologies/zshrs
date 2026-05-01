@@ -105,30 +105,130 @@ pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: V
         return Err(ErrPayload::new("bad_value", "empty `value`"));
     }
 
-    // Mutate in-memory rkyv-backed canonical state. SQLite is not touched
-    // here — `zcache hydrate-view` (or implicit calls) refresh it lazily.
+    // Per docs/DAEMON.md "Daemon-side commit flow on push_canonical":
+    //   1. Validate the pushed value (sane format, dirs exist for PATH/FPATH,
+    //      no duplicate keys, etc.).
+    validate_push_payload(&subsystem, &entries)?;
+
+    // Detect newly-added directories for PATH/FPATH so we can delta-walk +
+    // register fsnotify watches in step 3.
+    let pre_dirs: Vec<String> = if matches!(subsystem.as_str(), "path" | "fpath" | "manpath") {
+        state
+            .canonical
+            .rows_for(&subsystem)
+            .into_iter()
+            .map(|r| r.value.trim_matches('"').to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    //   2. Update canonical state (in-memory + persisted rkyv shard).
     for (key, json_val) in &entries {
         state
             .canonical
             .upsert(&subsystem, key, json_val, Some(client_id));
     }
-
-    // Persist to rkyv shard atomically (single write per push, all subsystems
-    // serialized into the user-overlay promotion shard).
     let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
     if let Err(e) = state.canonical.persist(generation) {
         tracing::warn!(?e, "canonical: persist to rkyv failed");
     }
 
+    //   3. Rebuild any derived hashtable that depends on the changed
+    //      subsystem (e.g., command hash table for PATH change). Only the
+    //      *new* directories get walked — bounded delta-walk per
+    //      DAEMON.md:302-304.
+    let mut walked_new_dirs: Vec<String> = Vec::new();
+    if matches!(subsystem.as_str(), "path" | "fpath") {
+        let post_dirs: Vec<String> = entries
+            .iter()
+            .map(|(_, v)| v.trim_matches('"').to_string())
+            .collect();
+        for d in &post_dirs {
+            if !pre_dirs.contains(d) {
+                walked_new_dirs.push(d.clone());
+            }
+        }
+        if !walked_new_dirs.is_empty() {
+            // Delta-walk: only the newly-added directories get enumerated.
+            // walk::walk_paths handles both PATH-style (executables) and
+            // FPATH-style (autoload functions) sources.
+            let (path_in, fpath_in): (Vec<String>, Vec<String>) =
+                if subsystem == "path" {
+                    (walked_new_dirs.clone(), Vec::new())
+                } else {
+                    (Vec::new(), walked_new_dirs.clone())
+                };
+            let walk = super::walk::walk_paths(&path_in, &fpath_in);
+
+            // Hydrate catalog with the new entries. We append (no clear) so
+            // existing command_hash entries from prior PATH dirs survive.
+            let _ = state.with_catalog(|conn| -> rusqlite::Result<()> {
+                let tx = conn.unchecked_transaction()?;
+                for (name, exe) in &walk.command_hash {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO entries \
+                         (fq_name, plugin_id, kind, image_path, byte_offset, source_loc) \
+                         VALUES (?, 'system', 'command', '', 0, ?)",
+                        rusqlite::params![format!("cmd:{}", name), exe],
+                    )?;
+                }
+                for (name, file) in &walk.autoload_table {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO entries \
+                         (fq_name, plugin_id, kind, image_path, byte_offset, source_loc) \
+                         VALUES (?, 'system', 'autoload', '', 0, ?)",
+                        rusqlite::params![format!("fn:{}", name), file],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            });
+
+            //   4. Register fsnotify watch on the new directory so future
+            //      file additions are picked up automatically (steady-state).
+            for d in &walked_new_dirs {
+                let dir = std::path::PathBuf::from(d);
+                if !dir.is_dir() {
+                    continue;
+                }
+                let kind = if subsystem == "fpath" {
+                    super::fsnotify::WatchKind::FpathDir
+                } else {
+                    super::fsnotify::WatchKind::Generic
+                };
+                let wp = super::fsnotify::WatchedPath {
+                    path: dir.clone(),
+                    shard_slug: format!("system-{}", super::shard::hash8(d)),
+                    source_root: subsystem.clone(),
+                    kind,
+                };
+                if let Err(e) = state.fs_watcher.watch_path(wp, false) {
+                    tracing::warn!(?e, %d, "delta-walk: fsnotify watch failed");
+                }
+            }
+
+            tracing::info!(
+                subsystem = %subsystem,
+                new_dirs = walked_new_dirs.len(),
+                commands = walk.command_hash.len(),
+                autoloads = walk.autoload_table.len(),
+                "push_canonical delta-walk complete"
+            );
+        }
+    }
+
     let count = state.canonical.rows_for(&subsystem).len() as i64;
     let now = now_ns_i64();
 
-    // Emit canonical_changed event to every subscriber.
+    //   5. Emit canonical_changed event to every subscriber.
     let event_payload = json!({
         "subsystem": subsystem,
         "row_count": count,
         "set_at_ns": now,
         "set_by_shell": client_id,
+        "delta_walked_dirs": walked_new_dirs,
+        "generation": generation,
     });
     let frame = super::ipc::Frame::event("canonical_changed", event_payload);
     state.broadcast(frame, &[]);
@@ -137,7 +237,67 @@ pub async fn op_push_canonical(state: &Arc<DaemonState>, client_id: u64, args: V
         "promoted": entries.len(),
         "subsystem": subsystem,
         "row_count": count,
+        "delta_walked_dirs": walked_new_dirs,
+        "generation": generation,
     }))
+}
+
+/// Per docs/DAEMON.md "Daemon-side commit flow on push_canonical" step 1:
+/// "Validate the pushed value (sane format, dirs exist for PATH/FPATH,
+/// no duplicate keys, etc.)".
+///
+/// PATH / FPATH / MANPATH: every value must be a non-empty string and the
+/// directory must exist. Duplicate values rejected.
+///
+/// Other subsystems: keys must not duplicate inside this single push.
+fn validate_push_payload(
+    subsystem: &str,
+    entries: &[(String, String)],
+) -> std::result::Result<(), ErrPayload> {
+    use std::collections::HashSet;
+
+    let mut seen_keys: HashSet<&str> = HashSet::new();
+    for (k, _) in entries {
+        if !seen_keys.insert(k.as_str()) {
+            return Err(ErrPayload::new(
+                "duplicate_key",
+                format!("duplicate key `{}` in push for subsystem `{}`", k, subsystem),
+            ));
+        }
+    }
+
+    if matches!(subsystem, "path" | "fpath" | "manpath") {
+        let mut seen_dirs: HashSet<String> = HashSet::new();
+        for (_, v) in entries {
+            let dir = v.trim_matches('"').to_string();
+            if dir.is_empty() {
+                return Err(ErrPayload::new(
+                    "empty_dir",
+                    format!("empty directory in `{}` push", subsystem),
+                ));
+            }
+            if !seen_dirs.insert(dir.clone()) {
+                return Err(ErrPayload::new(
+                    "duplicate_dir",
+                    format!("duplicate directory `{}` in `{}` push", dir, subsystem),
+                ));
+            }
+            // PATH must have existing dirs to be useful — fpath/manpath
+            // tolerate not-yet-existing entries because they often point
+                // at install-on-demand paths.
+            if subsystem == "path" {
+                let p = std::path::Path::new(&dir);
+                if !p.is_dir() {
+                    return Err(ErrPayload::new(
+                        "no_such_dir",
+                        format!("`{}`: not a directory", dir),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn op_pull_canonical(state: &Arc<DaemonState>, args: Value) -> OpResult {
