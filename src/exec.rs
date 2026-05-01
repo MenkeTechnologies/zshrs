@@ -37133,12 +37133,15 @@ impl ShellExecutor {
                 "-v" => verbose = true,
                 "-i" => {} // interactive - ignored
                 s if !s.starts_with('-') => files.push(s),
-                _ => {}
+                s => {
+                    eprintln!("zshrs:{}:1: bad option: {}", cmd, s);
+                    return 1;
+                }
             }
         }
 
         if files.len() < 2 {
-            eprintln!("{}: missing operand", cmd);
+            eprintln!("zshrs:{}:1: missing operand", cmd);
             return 1;
         }
 
