@@ -1,0 +1,34 @@
+# Cargo aliases for zshrs.
+#
+# The workspace has two parallel work tracks: src/ (the shell library +
+# binary, port-from-C) and daemon/ (the zshrs-daemon singleton). They're
+# often refactored independently, and a session working on one shouldn't
+# break the other's incremental compile cache.
+#
+# Use these aliases to scope the build:
+#
+#   cargo bsrc        # build src/ only (no daemon dep, no compsys re-resolve)
+#   cargo csrc        # check src/ only — fastest type-check
+#   cargo tsrc        # test src/ only
+#   cargo bdaemon     # build daemon/ only (independent of src/ state)
+#   cargo cdaemon     # check daemon/ only
+#   cargo tdaemon     # test daemon/ only
+#
+# `bsrc` / `csrc` pass `--no-default-features` so the optional `daemon`
+# Cargo feature stays off, which keeps zshrs-daemon out of the dep
+# resolution graph entirely. The src/lib.rs `pub mod daemon { ... }`
+# stub fills in the few call sites that reference daemon types.
+#
+# `bdaemon` / `cdaemon` build only the daemon crate via `-p zshrs-daemon`
+# (the workspace member name); resolving its own deps without touching
+# src/'s dep graph or rebuilding compsys.
+
+[alias]
+bsrc = "build -p zshrs --lib --no-default-features"
+csrc = "check -p zshrs --lib --no-default-features"
+tsrc = "test -p zshrs --lib --no-default-features"
+bsrc-bin = "build -p zshrs --bin zshrs --no-default-features"
+
+bdaemon = "build -p zshrs-daemon"
+cdaemon = "check -p zshrs-daemon"
+tdaemon = "test -p zshrs-daemon"

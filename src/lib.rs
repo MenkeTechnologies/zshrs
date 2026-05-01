@@ -33,7 +33,32 @@ pub mod curses;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
 // so existing `crate::daemon::...` (in exec.rs) and `zsh::daemon::...` (in bins,
 // integration tests) paths keep resolving without churn.
+//
+// The `daemon` feature gates the actual zshrs-daemon dep. When disabled
+// (--no-default-features), a stub module covers the call sites in exec.rs.
+// This lets the library compile in isolation while the daemon crate is
+// being refactored in a concurrent session.
+#[cfg(feature = "daemon")]
 pub use zshrs_daemon as daemon;
+
+#[cfg(not(feature = "daemon"))]
+pub mod daemon {
+    //! Stub module used when the `daemon` feature is disabled. Provides
+    //! the minimal surface that `src/exec.rs` calls — the real
+    //! implementation lives in the `zshrs-daemon` workspace crate.
+    pub mod builtins {
+        pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[];
+        pub fn is_zshrs_builtin(_name: &str) -> bool {
+            false
+        }
+        pub fn try_dispatch(_name: &str, _argv: &[String]) -> Option<i32> {
+            None
+        }
+        pub fn dispatch(_name: &str, _args: &[String]) -> Option<i32> {
+            None
+        }
+    }
+}
 pub mod datetime;
 pub mod db_gdbm;
 pub mod exec;
