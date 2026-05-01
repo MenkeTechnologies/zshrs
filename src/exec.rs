@@ -10117,6 +10117,7 @@ impl ShellExecutor {
             "paste" => return self.builtin_paste(&rest_vec),
             "fold" => return self.builtin_fold(&rest_vec),
             "shuf" => return self.builtin_shuf(&rest_vec),
+            "comm" => return self.builtin_comm(&rest_vec),
             _ => {}
         }
 
@@ -43287,6 +43288,129 @@ impl ShellExecutor {
         let term = if zero_term { '\0' } else { '\n' };
         for item in items {
             print!("{}{}", item, term);
+        }
+        0
+    }
+
+    /// comm [-123] FILE1 FILE2 — line-by-line comparison of two
+    /// sorted files. Coreutils comm(1) / POSIX. Three columns:
+    /// (1) unique to FILE1, (2) unique to FILE2, (3) common.
+    /// Flags `-1`/`-2`/`-3` suppress the respective column. Either
+    /// file may be `-` for stdin. Files MUST be sorted in the same
+    /// collation; comm performs a streaming merge-compare and is
+    /// undefined-behavior on unsorted input (matches coreutils).
+    fn builtin_comm(&self, args: &[String]) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let mut suppress1 = false;
+        let mut suppress2 = false;
+        let mut suppress3 = false;
+        let mut files: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-1" => suppress1 = true,
+                "-2" => suppress2 = true,
+                "-3" => suppress3 = true,
+                "-12" | "-21" => {
+                    suppress1 = true;
+                    suppress2 = true;
+                }
+                "-13" | "-31" => {
+                    suppress1 = true;
+                    suppress3 = true;
+                }
+                "-23" | "-32" => {
+                    suppress2 = true;
+                    suppress3 = true;
+                }
+                "-123" | "-132" | "-213" | "-231" | "-312" | "-321" => {
+                    suppress1 = true;
+                    suppress2 = true;
+                    suppress3 = true;
+                }
+                "--help" => {
+                    println!("Usage: comm [-123] FILE1 FILE2");
+                    return 0;
+                }
+                s if !s.starts_with('-') || s == "-" => files.push(s),
+                _ => {
+                    eprintln!("zshrs:comm:1: unknown option: {}", arg);
+                    return 1;
+                }
+            }
+        }
+        if files.len() != 2 {
+            eprintln!("zshrs:comm:1: expected exactly 2 file arguments");
+            return 1;
+        }
+        let read_lines = |path: &str| -> std::io::Result<Vec<String>> {
+            let reader: Box<dyn BufRead> = if path == "-" {
+                Box::new(BufReader::new(std::io::stdin()))
+            } else {
+                Box::new(BufReader::new(std::fs::File::open(path)?))
+            };
+            reader.lines().collect()
+        };
+        let lines1 = match read_lines(files[0]) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("zshrs:comm:1: {}: {}", files[0], e);
+                return 1;
+            }
+        };
+        let lines2 = match read_lines(files[1]) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("zshrs:comm:1: {}: {}", files[1], e);
+                return 1;
+            }
+        };
+        let mut i = 0usize;
+        let mut j = 0usize;
+        let emit_col1 = |s: &str| {
+            if !suppress1 {
+                println!("{}", s);
+            }
+        };
+        let emit_col2 = |s: &str| {
+            if !suppress2 {
+                let prefix = if suppress1 { "" } else { "\t" };
+                println!("{}{}", prefix, s);
+            }
+        };
+        let emit_col3 = |s: &str| {
+            if !suppress3 {
+                let prefix = match (suppress1, suppress2) {
+                    (true, true) => "",
+                    (false, true) | (true, false) => "\t",
+                    (false, false) => "\t\t",
+                };
+                println!("{}{}", prefix, s);
+            }
+        };
+        while i < lines1.len() && j < lines2.len() {
+            match lines1[i].cmp(&lines2[j]) {
+                std::cmp::Ordering::Less => {
+                    emit_col1(&lines1[i]);
+                    i += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    emit_col2(&lines2[j]);
+                    j += 1;
+                }
+                std::cmp::Ordering::Equal => {
+                    emit_col3(&lines1[i]);
+                    i += 1;
+                    j += 1;
+                }
+            }
+        }
+        while i < lines1.len() {
+            emit_col1(&lines1[i]);
+            i += 1;
+        }
+        while j < lines2.len() {
+            emit_col2(&lines2[j]);
+            j += 1;
         }
         0
     }
