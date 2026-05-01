@@ -2647,6 +2647,43 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 "patchars" => Some(Value::str("*?[]<>(){}|^&;")),
+                "widgets" => {
+                    // ${widgets[name]} → 'builtin' or 'user:func' per
+                    // zleparameter.c widgets_*. Mirrors the
+                    // magic_assoc_lookup path so both lookup sites
+                    // agree.
+                    use crate::zle::zle;
+                    let zle = zle();
+                    if let Some(target) = zle.get_widget(idx) {
+                        if target == idx {
+                            Some(Value::str("builtin"))
+                        } else {
+                            Some(Value::str(format!("user:{}", target)))
+                        }
+                    } else {
+                        Some(Value::str(""))
+                    }
+                }
+                "keymaps" => {
+                    // ${keymaps[name]} → "1" or "" per zleparameter.c
+                    // keymaps_*. Same canonical seven names as the
+                    // magic_assoc path.
+                    let known = matches!(
+                        idx,
+                        "main"
+                            | "emacs"
+                            | "viins"
+                            | "vicmd"
+                            | "isearch"
+                            | "command"
+                            | "menuselect"
+                    );
+                    if known {
+                        Some(Value::str("1"))
+                    } else {
+                        Some(Value::str(""))
+                    }
+                }
                 "mapfile" => {
                     // zsh/mapfile module: `${mapfile[/path]}` reads a
                     // file's bytes verbatim. Trailing newline is
