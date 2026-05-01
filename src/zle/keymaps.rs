@@ -213,6 +213,33 @@ impl ZleManager {
         self.user_widgets.insert(name.to_string(), func.to_string());
     }
 
+    /// Delete a user widget — port of zle -D from zsh/Src/Zle/zle_main.c
+    /// bin_zle case 'D'. Returns true iff a user widget by that name
+    /// existed; built-in widgets cannot be deleted.
+    pub fn delete_widget(&mut self, name: &str) -> bool {
+        self.user_widgets.remove(name).is_some()
+    }
+
+    /// Alias one widget to another — port of zle -A from
+    /// zsh/Src/Zle/zle_main.c bin_zle case 'A'. The new name dispatches
+    /// to the existing target's function. Returns true iff the target
+    /// resolves (built-in or already-user-defined).
+    pub fn alias_widget(&mut self, new_name: &str, target: &str) -> bool {
+        // If target is a user widget, copy its function name.
+        if let Some(func) = self.user_widgets.get(target).cloned() {
+            self.user_widgets.insert(new_name.to_string(), func);
+            return true;
+        }
+        // If target is a built-in widget, register the alias as a user
+        // widget that maps to the built-in name.
+        if BUILTIN_WIDGETS.contains(&target) {
+            self.user_widgets
+                .insert(new_name.to_string(), target.to_string());
+            return true;
+        }
+        false
+    }
+
     /// Get a widget by name (returns the function name if user-defined)
     pub fn get_widget<'a>(&'a self, name: &'a str) -> Option<&'a str> {
         // Check user widgets first
