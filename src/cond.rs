@@ -715,6 +715,14 @@ fn parse_binary_op(s: &str) -> Option<CondType> {
         "-ot" => CondType::Ot,
         "-ef" => CondType::Ef,
         "=~" => CondType::Regex,
+        // `-regex-match` from zsh/regex module per
+        // src/zsh/Src/Modules/regex.c:214 — same semantics as
+        // `=~` (POSIX extended regex, sets MATCH/MBEGIN/MEND/
+        // match/mbegin/mend on success). The full host
+        // BUILTIN_REGEX_MATCH path handles capture; cond.rs's
+        // CondType::Regex routes here for the bool test, with
+        // captures applied at the executor side.
+        "-regex-match" => CondType::Regex,
         _ => return None,
     })
 }
