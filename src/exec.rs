@@ -45540,7 +45540,15 @@ impl ShellExecutor {
                 "-d" | "--domain" => domain_only = true,
                 "-f" | "--fqdn" | "--long" => {}
                 "-i" | "--ip-address" => ip = true,
-                _ => {}
+                "--" => {}
+                s if s.starts_with('-') && s.len() > 1 => {
+                    // hostname(1) errors on unknown flags. Old impl
+                    // accepted any -X silently then printed the
+                    // hostname as-if -X were a no-op.
+                    eprintln!("hostname: invalid option: '{}'", s);
+                    return 1;
+                }
+                _ => {} // bare arg: would set hostname (root); we accept silently
             }
         }
 
