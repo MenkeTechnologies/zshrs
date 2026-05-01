@@ -38054,9 +38054,63 @@ impl ShellExecutor {
         }
     }
 
-    /// log - same as logout for login shells
-    fn builtin_log(&mut self, args: &[String]) -> i32 {
-        self.builtin_exit(args)
+    /// log — list users currently logged in via utmp.
+    /// Direct port of zsh/Src/Modules/watch.c:658-670 bin_log. Walks
+    /// the utmp database via libc's getutxent(3) loop and prints
+    /// USER_PROCESS records. The previous Rust impl confusingly
+    /// re-routed `log` to `exit`, which is wrong: `log` is the
+    /// watch-module's logged-in-user listing, not a logout
+    /// shorthand.
+    fn builtin_log(&mut self, _args: &[String]) -> i32 {
+        #[cfg(unix)]
+        unsafe {
+            use std::ffi::CStr;
+            // libc on macOS/Linux exposes setutxent / getutxent /
+            // endutxent. The struct utmpx layout differs but the
+            // ut_user / ut_line / ut_host fields are present on both.
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                libc::setutxent();
+                let mut found = false;
+                loop {
+                    let p = libc::getutxent();
+                    if p.is_null() {
+                        break;
+                    }
+                    if (*p).ut_type != libc::USER_PROCESS {
+                        continue;
+                    }
+                    let user_arr = &(*p).ut_user;
+                    let line_arr = &(*p).ut_line;
+                    let user = CStr::from_bytes_until_nul(
+                        std::slice::from_raw_parts(
+                            user_arr.as_ptr() as *const u8,
+                            user_arr.len(),
+                        ),
+                    )
+                    .ok()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                    let line = CStr::from_bytes_until_nul(
+                        std::slice::from_raw_parts(
+                            line_arr.as_ptr() as *const u8,
+                            line_arr.len(),
+                        ),
+                    )
+                    .ok()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                    if !user.is_empty() {
+                        println!("{} {}", user, line);
+                        found = true;
+                    }
+                }
+                libc::endutxent();
+                return if found { 0 } else { 1 };
+            }
+        }
+        #[allow(unreachable_code)]
+        1
     }
 
     // Completion system builtins (stubs for compsys)
