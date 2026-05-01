@@ -10098,6 +10098,9 @@ impl ShellExecutor {
             "zln" => return self.builtin_zmv(&rest_vec, "ln"),
             "zcalc" => return self.builtin_zcalc(&rest_vec),
             "zselect" => return self.builtin_zselect(&rest_vec),
+            "cap" => return self.builtin_cap(&rest_vec),
+            "getcap" => return self.builtin_getcap(&rest_vec),
+            "setcap" => return self.builtin_setcap(&rest_vec),
             _ => {}
         }
 
@@ -38566,32 +38569,77 @@ impl ShellExecutor {
         0
     }
 
-    /// cap/getcap/setcap - Linux capabilities (stub on macOS)
+    /// cap / getcap / setcap — Linux capabilities (zsh/Src/Modules/cap.c).
+    /// Routes through src/cap.rs which exposes get_proc_caps,
+    /// set_proc_caps, get_file_caps, set_file_caps. On macOS or
+    /// without the libcap feature, the underlying calls return
+    /// io::Error(Unsupported).
     fn builtin_cap(&self, args: &[String]) -> i32 {
-        // Linux capabilities are not available on macOS
-        // On Linux, these would interact with libcap
+        // No args → print current process capabilities (zsh's `cap`
+        // with no args mirrors `getcaps` of $$).
         if args.is_empty() {
-            println!("cap: display/set capabilities");
-            println!("  getcap file...  - display capabilities");
-            println!("  setcap caps file - set capabilities");
-            return 0;
+            match crate::cap::get_proc_caps() {
+                Ok(s) => {
+                    println!("{}", s);
+                    0
+                }
+                Err(e) => {
+                    eprintln!("cap: {}", e);
+                    1
+                }
+            }
+        } else {
+            // `cap STRING` sets the calling process's caps to STRING.
+            // Format: 'cap_net_admin,cap_sys_time+ep' (libcap text form).
+            match crate::cap::set_proc_caps(&args[0]) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("cap: {}", e);
+                    1
+                }
+            }
         }
+    }
 
-        #[cfg(target_os = "linux")]
-        {
-            // On Linux, we could use libcap bindings
-            // For now, just run the external commands
-            let status = std::process::Command::new(&args[0])
-                .args(&args[1..])
-                .status();
-            return status.map(|s| s.code().unwrap_or(1)).unwrap_or(1);
+    /// getcap FILE...: print file capabilities for each path.
+    /// Direct port of zsh/Src/Modules/cap.c bin_getcap.
+    fn builtin_getcap(&self, args: &[String]) -> i32 {
+        if args.is_empty() {
+            eprintln!("getcap: not enough arguments");
+            return 1;
         }
+        let mut returnval = 0;
+        for path in args {
+            match crate::cap::get_file_caps(path) {
+                Ok(s) => println!("{}: {}", path, s),
+                Err(e) => {
+                    eprintln!("getcap: {}: {}", path, e);
+                    returnval = 1;
+                }
+            }
+        }
+        returnval
+    }
 
-        #[cfg(not(target_os = "linux"))]
-        {
-            eprintln!("cap: capabilities not supported on this platform");
-            1
+    /// setcap CAPS FILE...: write the libcap-text capabilities to each
+    /// file. Direct port of zsh/Src/Modules/cap.c bin_setcap.
+    fn builtin_setcap(&self, args: &[String]) -> i32 {
+        if args.len() < 2 {
+            eprintln!("setcap: usage: setcap CAPS FILE...");
+            return 1;
         }
+        let caps = &args[0];
+        let mut returnval = 0;
+        for path in &args[1..] {
+            match crate::cap::set_file_caps(caps, path) {
+                Ok(()) => {}
+                Err(e) => {
+                    eprintln!("setcap: {}: {}", path, e);
+                    returnval = 1;
+                }
+            }
+        }
+        returnval
     }
 
     /// zcurses - curses interface (stub)
