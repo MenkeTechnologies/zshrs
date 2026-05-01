@@ -41261,15 +41261,44 @@ impl ShellExecutor {
     }
 
     fn builtin_seq(&self, args: &[String]) -> i32 {
-        let nums: Vec<i64> = args
+        // coreutils seq(1): handles floats and -s SEPARATOR. The
+        // previous impl only supported integers and emitted one per
+        // line, so `seq -s , 1 5` printed five lines instead of
+        // '1,2,3,4,5'.
+        let mut sep = "\n".to_string();
+        let mut nums_str: Vec<&str> = Vec::new();
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
+            if arg == "-s" && i + 1 < args.len() {
+                i += 1;
+                sep = args[i].clone();
+            } else if let Some(s) = arg.strip_prefix("-s") {
+                sep = s.to_string();
+            } else if arg == "-w" || arg == "-f" {
+                // -w / -f require ancillary state we don't track; skip
+                // silently.
+            } else if arg.starts_with("-w") || arg.starts_with("-f") {
+                // Glued forms: same.
+            } else {
+                nums_str.push(arg.as_str());
+            }
+            i += 1;
+        }
+
+        // Parse all-or-nothing as f64 to handle '0.5', '1e3', etc.
+        let nums: Vec<f64> = nums_str
             .iter()
-            .filter(|a| !a.starts_with('-') || a.parse::<i64>().is_ok())
             .filter_map(|a| a.parse().ok())
             .collect();
+        if nums.len() != nums_str.len() {
+            eprintln!("seq: invalid argument");
+            return 1;
+        }
 
-        let (first, inc, last) = match nums.len() {
-            1 => (1, 1, nums[0]),
-            2 => (nums[0], 1, nums[1]),
+        let (first, inc, last): (f64, f64, f64) = match nums.len() {
+            1 => (1.0, 1.0, nums[0]),
+            2 => (nums[0], 1.0, nums[1]),
             3 => (nums[0], nums[1], nums[2]),
             _ => {
                 eprintln!("seq: missing operand");
@@ -41277,21 +41306,44 @@ impl ShellExecutor {
             }
         };
 
-        if inc == 0 {
+        if inc == 0.0 {
             eprintln!("seq: zero increment");
             return 1;
         }
+        // Derive output precision from the input args so 'seq 0.1 0.1
+        // 0.5' prints '0.1\n0.2\n...'  and not the default float repr.
+        let prec = nums_str
+            .iter()
+            .map(|s| s.split('.').nth(1).map(|f| f.len()).unwrap_or(0))
+            .max()
+            .unwrap_or(0);
+        let fmt = |v: f64| -> String {
+            if prec == 0 {
+                format!("{}", v as i64)
+            } else {
+                format!("{:.prec$}", v, prec = prec)
+            }
+        };
 
-        let mut i = first;
-        if inc > 0 {
-            while i <= last {
-                println!("{}", i);
-                i += inc;
+        let mut out: Vec<String> = Vec::new();
+        let mut v = first;
+        if inc > 0.0 {
+            while v <= last + f64::EPSILON {
+                out.push(fmt(v));
+                v += inc;
             }
         } else {
-            while i >= last {
-                println!("{}", i);
-                i += inc;
+            while v >= last - f64::EPSILON {
+                out.push(fmt(v));
+                v += inc;
+            }
+        }
+        if !out.is_empty() {
+            print!("{}", out.join(&sep));
+            // Always end with a newline so the output is line-terminated
+            // (coreutils seq does this even with -s).
+            if !sep.ends_with('\n') {
+                println!();
             }
         }
         0
