@@ -40338,7 +40338,7 @@ impl ShellExecutor {
             "zgetattr" => {
                 // attr.c:98-130 bin_getattr — usage: zgetattr [-h] file attr [param]
                 if positional.len() < 2 {
-                    eprintln!("zgetattr: need file and attribute name");
+                    eprintln!("zshrs:zgetattr:1: need file and attribute name");
                     return 1;
                 }
                 let file = positional[0];
@@ -40378,7 +40378,7 @@ impl ShellExecutor {
                     return 0;
                 }
                 if val_len < 0 {
-                    eprintln!("zgetattr: {}: {}", file, std::io::Error::last_os_error());
+                    eprintln!("zshrs:zgetattr:1: {}: {}", file, std::io::Error::last_os_error());
                     return 1;
                 }
                 let mut buf = vec![0u8; val_len as usize];
@@ -40415,7 +40415,7 @@ impl ShellExecutor {
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let attr_len: isize = -1;
                 if attr_len < 0 || attr_len > val_len {
-                    eprintln!("zgetattr: {}: {}", file, std::io::Error::last_os_error());
+                    eprintln!("zshrs:zgetattr:1: {}: {}", file, std::io::Error::last_os_error());
                     return if attr_len < 0 || attr_len > val_len { 2 } else { 1 };
                 }
                 buf.truncate(attr_len as usize);
@@ -40430,7 +40430,7 @@ impl ShellExecutor {
             "zsetattr" => {
                 // attr.c:133-147 bin_setattr — usage: zsetattr [-h] file attr value
                 if positional.len() < 3 {
-                    eprintln!("zsetattr: need file, attribute name, and value");
+                    eprintln!("zshrs:zsetattr:1: need file, attribute name, and value");
                     return 1;
                 }
                 let file = positional[0];
@@ -40475,7 +40475,7 @@ impl ShellExecutor {
                 if ret == 0 {
                     0
                 } else {
-                    eprintln!("zsetattr: {}: {}", file, std::io::Error::last_os_error());
+                    eprintln!("zshrs:zsetattr:1: {}: {}", file, std::io::Error::last_os_error());
                     1
                 }
             }
@@ -40483,7 +40483,7 @@ impl ShellExecutor {
                 // attr.c:150-166 bin_delattr — usage: zdelattr [-h] file attr...
                 // (multiple attrs may be passed).
                 if positional.len() < 2 {
-                    eprintln!("zdelattr: need file and attribute name");
+                    eprintln!("zshrs:zdelattr:1: need file and attribute name");
                     return 1;
                 }
                 let file = positional[0];
@@ -40506,7 +40506,7 @@ impl ShellExecutor {
                     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                     let ret: i32 = -1;
                     if ret != 0 {
-                        eprintln!("zdelattr: {}: {}", file, std::io::Error::last_os_error());
+                        eprintln!("zshrs:zdelattr:1: {}: {}", file, std::io::Error::last_os_error());
                         return 1;
                     }
                 }
@@ -40515,7 +40515,7 @@ impl ShellExecutor {
             "zlistattr" => {
                 // attr.c:169-215 bin_listattr — usage: zlistattr [-h] file [param]
                 if positional.is_empty() {
-                    eprintln!("zlistattr: need file");
+                    eprintln!("zshrs:zlistattr:1: need file");
                     return 1;
                 }
                 let file = positional[0];
@@ -40544,7 +40544,7 @@ impl ShellExecutor {
                     return 0;
                 }
                 if val_len < 0 {
-                    eprintln!("zlistattr: {}: {}", file, std::io::Error::last_os_error());
+                    eprintln!("zshrs:zlistattr:1: {}: {}", file, std::io::Error::last_os_error());
                     return 1;
                 }
                 let mut buf = vec![0u8; val_len as usize];
@@ -40564,7 +40564,7 @@ impl ShellExecutor {
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 let list_len: isize = -1;
                 if list_len < 0 || list_len > val_len {
-                    eprintln!("zlistattr: {}: {}", file, std::io::Error::last_os_error());
+                    eprintln!("zshrs:zlistattr:1: {}: {}", file, std::io::Error::last_os_error());
                     return if list_len < 0 || list_len > val_len { 2 } else { 1 };
                 }
                 buf.truncate(list_len as usize);
