@@ -10131,6 +10131,7 @@ impl ShellExecutor {
             "nice" => return self.builtin_nice(&rest_vec),
             "logname" => return self.builtin_logname(&rest_vec),
             "tput" => return self.builtin_tput(&rest_vec),
+            "users" => return self.builtin_users(&rest_vec),
             _ => {}
         }
 
@@ -44066,6 +44067,39 @@ impl ShellExecutor {
             }
             status
         }
+    }
+
+    /// users — print logged-in usernames. Coreutils users(1) /
+    /// POSIX. Fallback minimal impl: prints \$USER (or current
+    /// effective user via getpwuid) since fully reading utmp is
+    /// platform-specific. Multi-user output not yet implemented;
+    /// shell scripts that just check `[[ $(users) ]]` still work.
+    fn builtin_users(&self, args: &[String]) -> i32 {
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
+                eprintln!("users: unrecognized option: '{}'", arg);
+                return 1;
+            }
+            // Bare arg specifies an alternate utmp file — not
+            // implemented; ignore silently.
+        }
+        // Use $USER first; fall back to effective uid lookup.
+        let name = match std::env::var("USER") {
+            Ok(u) if !u.is_empty() => u,
+            _ => {
+                use std::ffi::CStr;
+                let euid = unsafe { libc::geteuid() };
+                let pw = unsafe { libc::getpwuid(euid) };
+                if !pw.is_null() {
+                    let n = unsafe { CStr::from_ptr((*pw).pw_name) };
+                    n.to_string_lossy().into_owned()
+                } else {
+                    String::new()
+                }
+            }
+        };
+        println!("{}", name);
+        0
     }
 
     /// tput — terminfo capability query (minimal subset).
