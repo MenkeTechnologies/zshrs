@@ -10127,6 +10127,7 @@ impl ShellExecutor {
             "unlink" => return self.builtin_unlink(&rest_vec),
             "dircolors" => return self.builtin_dircolors(&rest_vec),
             "groups" => return self.builtin_groups(&rest_vec),
+            "arch" => return self.builtin_arch(&rest_vec),
             _ => {}
         }
 
@@ -43950,6 +43951,35 @@ impl ShellExecutor {
             status
         }
     }
+
+    /// arch — print machine architecture name. Coreutils arch(1)
+    /// (a synonym for `uname -m` on most systems). Useful in shell
+    /// scripts that need a quick `[[ $(arch) == arm64 ]]` check.
+    fn builtin_arch(&self, args: &[String]) -> i32 {
+        for arg in args {
+            if arg.starts_with('-') && arg.len() > 1 {
+                eprintln!("arch: unrecognized option: '{}'", arg);
+                return 1;
+            }
+        }
+        let mut uts: libc::utsname = unsafe { std::mem::zeroed() };
+        if unsafe { libc::uname(&mut uts) } != 0 {
+            eprintln!("arch: uname() failed");
+            return 1;
+        }
+        // machine[] is a fixed-size i8 (or u8) array; convert to str.
+        let machine: Vec<u8> = uts
+            .machine
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as u8)
+            .collect();
+        let machine_str = String::from_utf8_lossy(&machine);
+        println!("{}", machine_str);
+        0
+    }
+
+    /// nproc-equivalent? Already exists via builtin_nproc.
 
     /// dircolors [-bcp] [FILE] — emit shell commands to set
     /// LS_COLORS. Coreutils dircolors(1). Without args, emits the
