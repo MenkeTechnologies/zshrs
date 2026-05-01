@@ -36270,13 +36270,54 @@ impl ShellExecutor {
     }
 
     /// unfunction - remove function definitions
+    /// unfunction NAME... — remove function definitions.
+    /// `unfunction -m PATTERN...` matches names against globs.
+    /// Direct port of zsh/Src/builtin.c:127 BUILTIN("unfunction", ...,
+    /// "m", "f") which routes through bin_unhash with BIN_UNFUNCTION
+    /// + the `f` default flag and `m` for glob mode.
     fn builtin_unfunction(&mut self, args: &[String]) -> i32 {
-        for name in args {
-            if !self.remove_function(name) {
-                eprintln!("unfunction: no such function: {}", name);
+        let mut pattern_mode = false;
+        let mut names: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-m" => pattern_mode = true,
+                "--" => {} // accept end-of-options
+                s if s.starts_with('-') && s.len() > 1 => {
+                    eprintln!("unfunction: bad option: {}", s);
+                    return 1;
+                }
+                s => names.push(s),
             }
         }
-        0
+        if names.is_empty() {
+            eprintln!("unfunction: not enough arguments");
+            return 1;
+        }
+        let mut returnval = 0;
+        if pattern_mode {
+            let all: Vec<String> = self.function_names();
+            let mut matched_any = false;
+            for pat in &names {
+                for fname in &all {
+                    if Self::glob_match_static(fname, pat) {
+                        if self.remove_function(fname) {
+                            matched_any = true;
+                        }
+                    }
+                }
+            }
+            if !matched_any {
+                returnval = 1;
+            }
+        } else {
+            for name in names {
+                if !self.remove_function(name) {
+                    eprintln!("unfunction: no such function: {}", name);
+                    returnval = 1;
+                }
+            }
+        }
+        returnval
     }
 
     /// getln - read line from the editor buffer stack
