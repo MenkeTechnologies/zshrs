@@ -43315,11 +43315,26 @@ impl ShellExecutor {
         // returns 1 if any file failed.
         use std::io::{BufRead, BufReader};
 
-        let files: Vec<&str> = args
-            .iter()
-            .filter(|a| !a.starts_with('-') || *a == "-")
-            .map(|s| s.as_str())
-            .collect();
+        // util-linux rev has no flags. Reject any \`-\`-prefixed arg
+        // that isn't \`-\` (stdin) or \`--\` (end-of-options).
+        let mut files: Vec<&str> = Vec::new();
+        let mut iter = args.iter();
+        while let Some(a) = iter.next() {
+            let s: &str = a.as_str();
+            if s == "-" {
+                files.push("-");
+            } else if s == "--" {
+                for rest in iter.by_ref() {
+                    files.push(rest);
+                }
+                break;
+            } else if s.starts_with('-') && s.len() > 1 {
+                eprintln!("rev: unrecognized option: '{}'", s);
+                return 1;
+            } else {
+                files.push(s);
+            }
+        }
         let targets: Vec<&str> = if files.is_empty() {
             vec!["-"]
         } else {
