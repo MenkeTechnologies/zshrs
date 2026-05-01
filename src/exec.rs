@@ -20107,7 +20107,7 @@ impl ShellExecutor {
                         'L' => logical = true,
                         'P' => logical = false,
                         _ => {
-                            eprintln!("cd: bad option: -{}", ch);
+                            eprintln!("zshrs:cd:1: bad option: -{}", ch);
                             return 1;
                         }
                     }
@@ -20172,7 +20172,7 @@ impl ShellExecutor {
                     let dir_path = dir.to_string_lossy().to_string();
                     return self.do_cd(&dir_path, quiet, use_cdpath, logical);
                 } else {
-                    eprintln!("cd: no such entry in dir stack");
+                    eprintln!("zshrs:cd:1: no such entry in dir stack");
                     return 1;
                 }
             }
@@ -20208,7 +20208,7 @@ impl ShellExecutor {
                 }
                 PathBuf::from(oldpwd)
             } else {
-                eprintln!("cd: OLDPWD not set");
+                eprintln!("zshrs:cd:1: OLDPWD not set");
                 return 1;
             }
         } else if !path_arg.starts_with('/')
@@ -20375,7 +20375,7 @@ impl ShellExecutor {
             })
         };
         if printed.is_empty() {
-            eprintln!("pwd: cannot determine current directory");
+            eprintln!("zshrs:pwd:1: cannot determine current directory");
             1
         } else {
             println!("{}", printed);
