@@ -34936,7 +34936,14 @@ impl ShellExecutor {
                         'd' => rehash_dirs = true,
                         'f' => force = true,
                         'v' => verbose = true,
-                        _ => {}
+                        // BUILTIN("rehash", ..., "df") — only -d / -f
+                        // are valid (the man page also documents -v).
+                        // zshrs's `_ => {}` accepted unknown letters
+                        // silently, masking typos like `rehash -F`.
+                        _ => {
+                            eprintln!("zshrs:rehash:1: bad option: -{}", ch);
+                            return 1;
+                        }
                     }
                 }
             }
