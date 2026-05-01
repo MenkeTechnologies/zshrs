@@ -37502,14 +37502,14 @@ impl ShellExecutor {
                 "-m" => pattern_mode = true,
                 "--" => {} // accept end-of-options
                 s if s.starts_with('-') && s.len() > 1 => {
-                    eprintln!("unfunction: bad option: {}", s);
+                    eprintln!("zshrs:unfunction:1: bad option: {}", s);
                     return 1;
                 }
                 s => names.push(s),
             }
         }
         if names.is_empty() {
-            eprintln!("unfunction: not enough arguments");
+            eprintln!("zshrs:unfunction:1: not enough arguments");
             return 1;
         }
         let mut returnval = 0;
@@ -37531,7 +37531,7 @@ impl ShellExecutor {
         } else {
             for name in names {
                 if !self.remove_function(name) {
-                    eprintln!("unfunction: no such function: {}", name);
+                    eprintln!("zshrs:unfunction:1: no such function: {}", name);
                     returnval = 1;
                 }
             }
@@ -39590,7 +39590,7 @@ impl ShellExecutor {
                     0
                 }
                 Err(e) => {
-                    eprintln!("cap: {}", e);
+                    eprintln!("zshrs:cap:1: {}", e);
                     1
                 }
             }
@@ -39600,7 +39600,7 @@ impl ShellExecutor {
             match crate::cap::set_proc_caps(&args[0]) {
                 Ok(()) => 0,
                 Err(e) => {
-                    eprintln!("cap: {}", e);
+                    eprintln!("zshrs:cap:1: {}", e);
                     1
                 }
             }
