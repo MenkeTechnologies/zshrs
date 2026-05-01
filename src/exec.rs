@@ -16372,13 +16372,17 @@ impl ShellExecutor {
                 // Backtick command substitution
                 let cmd_str: String = chars.by_ref().take_while(|&c| c != '`').collect();
                 result.push_str(&self.run_command_substitution(&cmd_str));
-            } else if c == '<' && chars.peek() == Some(&'(') {
-                // Process substitution <(cmd)
+            } else if c == '<' && chars.peek() == Some(&'(') && self.in_dq_context == 0 {
+                // Process substitution <(cmd) — disabled inside DQ
+                // per zsh: `"<(cmd)"` is a literal string. zsh's
+                // lexer recognises Inang+Inpar tokens only outside
+                // quotes; inside DQ they're plain text.
                 chars.next(); // consume '('
                 let cmd_str = Self::collect_until_paren(&mut chars);
                 result.push_str(&self.run_process_sub_in(&cmd_str));
-            } else if c == '>' && chars.peek() == Some(&'(') {
-                // Process substitution >(cmd)
+            } else if c == '>' && chars.peek() == Some(&'(') && self.in_dq_context == 0 {
+                // Process substitution >(cmd) — disabled inside DQ
+                // (same rationale as <(cmd) above).
                 chars.next(); // consume '('
                 let cmd_str = Self::collect_until_paren(&mut chars);
                 result.push_str(&self.run_process_sub_out(&cmd_str));
