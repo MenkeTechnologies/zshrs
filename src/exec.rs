@@ -44330,61 +44330,85 @@ impl ShellExecutor {
         }
     }
 
-    /// zbuild --in A.zsh [--in B.zsh ...] --out OUT — bake one or
-    /// more shell scripts into a copy of the running zshrs binary
-    /// in input order, producing a self-contained AOT executable.
+    /// zbuild --in PATHS... --out OUT — bake one or more shell
+    /// scripts into a copy of the running zshrs binary in input
+    /// order, producing a self-contained AOT executable.
     ///
-    ///   zbuild --in lib1.zsh --in lib2.zsh --in main.zsh --out app
-    ///   ./app             # runs lib1, lib2, main sequentially under
-    ///                     # one ShellExecutor (globals/functions
-    ///                     # from earlier files visible to later ones)
+    ///   zbuild --in *.zsh --out app           # glob expansion
+    ///   zbuild --in lib1.zsh lib2.zsh main.zsh --out app
+    ///   ./app                                  # runs all three
+    ///                                          # sequentially under
+    ///                                          # one ShellExecutor
     ///
     /// zsh has no project concept, so there's no manifest, no entry
     /// point convention, no library directory walker. Order is
-    /// exactly the `--in` argv order.
+    /// exactly the order of paths given to `--in` (which honors
+    /// shell glob expansion — \`*.zsh\` expands sorted by default).
+    ///
+    /// `--in` accepts ONE OR MORE paths until the next flag-style
+    /// token (anything starting with `-`). This makes glob-driven
+    /// invocations like `--in *.zsh` work naturally — every path
+    /// the glob expanded to lands as another input file.
     ///
     /// Flags:
-    ///   --in PATH   /  -i PATH      script source (repeatable, required)
-    ///   --out PATH  /  -o PATH      output binary (required)
-    ///   --help / -h                 print usage
+    ///   --in PATHS...  / -i PATHS...   script sources (1+, required)
+    ///   --out PATH     / -o PATH       output binary (required)
+    ///   --help / -h                    print usage
     fn builtin_zbuild(&self, args: &[String]) -> i32 {
         let mut inputs: Vec<std::path::PathBuf> = Vec::new();
         let mut output: Option<String> = None;
-        let mut iter = args.iter();
-        while let Some(arg) = iter.next() {
+        let mut i = 0;
+        while i < args.len() {
+            let arg = &args[i];
             match arg.as_str() {
-                "--in" | "-i" | "--input" => match iter.next() {
-                    Some(p) => inputs.push(std::path::PathBuf::from(p)),
-                    None => {
-                        eprintln!("zshrs:zbuild:1: --in requires a path");
+                "--in" | "-i" | "--input" => {
+                    // Consume every non-flag token following --in
+                    // until we hit the next `-`-prefixed token (or
+                    // end of args). This makes `--in *.zsh` pick up
+                    // all paths the glob produced.
+                    i += 1;
+                    let start = i;
+                    while i < args.len() && !args[i].starts_with('-') {
+                        inputs.push(std::path::PathBuf::from(&args[i]));
+                        i += 1;
+                    }
+                    if i == start {
+                        eprintln!("zshrs:zbuild:1: --in requires at least one path");
                         return 1;
                     }
-                },
+                    continue;
+                }
                 s if s.starts_with("--in=") => {
                     inputs.push(std::path::PathBuf::from(&s[5..]));
                 }
                 s if s.starts_with("--input=") => {
                     inputs.push(std::path::PathBuf::from(&s[8..]));
                 }
-                "--out" | "-o" | "--output" => match iter.next() {
-                    Some(p) => output = Some(p.clone()),
-                    None => {
+                "--out" | "-o" | "--output" => {
+                    i += 1;
+                    if i >= args.len() {
                         eprintln!("zshrs:zbuild:1: --out requires a path");
                         return 1;
                     }
-                },
+                    output = Some(args[i].clone());
+                }
                 s if s.starts_with("--out=") => output = Some(s[6..].to_string()),
                 s if s.starts_with("--output=") => output = Some(s[9..].to_string()),
                 "--help" | "-h" => {
-                    println!("Usage: zbuild --in A.zsh [--in B.zsh ...] --out OUT");
+                    println!("Usage: zbuild --in PATHS... --out OUT");
                     println!();
                     println!("Bake one or more shell scripts into an AOT-compiled");
                     println!("standalone executable. Files run sequentially in input");
-                    println!("order under a single ShellExecutor.");
+                    println!("order under a single ShellExecutor (globals/functions");
+                    println!("from earlier files visible to later ones).");
+                    println!();
+                    println!("Examples:");
+                    println!("  zbuild --in *.zsh --out app");
+                    println!("  zbuild --in lib.zsh main.zsh --out app");
                     println!();
                     println!("Options:");
-                    println!("  --in / -i PATH    script source (repeatable, required)");
-                    println!("  --out / -o PATH   output binary (required)");
+                    println!("  --in / -i PATHS...  script sources (1+, required)");
+                    println!("  --out / -o PATH     output binary (required)");
                     return 0;
                 }
                 _ => {
@@ -44392,6 +44416,7 @@ impl ShellExecutor {
                     return 1;
                 }
             }
+            i += 1;
         }
         if inputs.is_empty() {
             eprintln!("zshrs:zbuild:1: at least one --in PATH required");
