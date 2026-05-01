@@ -35197,7 +35197,14 @@ impl ShellExecutor {
                 "-e" => existence_test = true,
                 "-a" | "-b" | "-c" | "-d" | "-f" | "-i" | "-p" | "-s" | "-A" | "-R"
                 | "-F" | "-I" | "-P" => {}
-                _ if arg.starts_with('-') => {}
+                _ if arg.starts_with('-') => {
+                    // BUILTIN("zmodload", ..., "AFRILP:abcfdilmpsue")
+                    // declares the valid letter set. Unknown flags
+                    // silently dropped previously, masking typos.
+                    let bad: String = arg[1..].chars().take(1).collect();
+                    eprintln!("zshrs:zmodload:1: bad option: -{}", bad);
+                    return 1;
+                }
                 _ => modules.push(arg),
             }
         }
