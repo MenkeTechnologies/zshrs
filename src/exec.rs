@@ -23929,11 +23929,20 @@ impl ShellExecutor {
 
     #[tracing::instrument(level = "debug", skip(self))]
     fn builtin_eval(&mut self, args: &[String]) -> i32 {
+        // builtin.c:6203-6213 — bin_eval joins argv with space, parses,
+        // executes; parse failure sets errflag and lastval=errflag (1).
+        // The diagnostic prefix on parse error is `zsh:N: parse error
+        // near \`...\`` (no `eval:` segment) because parser errors come
+        // from `zerr`, not `zwarnnam`. zshrs's previous format
+        // `eval: <err>` matched neither zsh nor existing zshrs error
+        // output (which uses `zshrs:N:` everywhere). Use the same
+        // shell-name prefix as the rest of the diagnostics so script
+        // consumers grepping `zshrs:` catch it.
         let code = args.join(" ");
         match self.execute_script(&code) {
             Ok(status) => status,
             Err(e) => {
-                eprintln!("eval: {}", e);
+                eprintln!("zshrs:eval:1: {}", e);
                 1
             }
         }
