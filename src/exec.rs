@@ -10106,6 +10106,7 @@ impl ShellExecutor {
             "env" => return self.builtin_env(&rest_vec),
             "printenv" => return self.builtin_printenv(&rest_vec),
             "tty" => return self.builtin_tty(&rest_vec),
+            "chgrp" => return self.builtin_chgrp(&rest_vec),
             _ => {}
         }
 
@@ -36487,6 +36488,95 @@ impl ShellExecutor {
     #[cfg(not(unix))]
     fn builtin_chown(&self, _args: &[String]) -> i32 {
         eprintln!("chown: not supported on this platform");
+        1
+    }
+
+    /// chgrp - change file group. coreutils chgrp(1). Mostly the same
+    /// as chown's group-only branch with a separate error prefix.
+    #[cfg(unix)]
+    fn builtin_chgrp(&self, args: &[String]) -> i32 {
+        use std::ffi::CStr;
+        let mut recursive = false;
+        let mut symlink = false;
+        let mut positional: Vec<&str> = Vec::new();
+        for arg in args {
+            match arg.as_str() {
+                "-R" | "--recursive" => recursive = true,
+                "-h" | "--no-dereference" => symlink = true,
+                s if !s.starts_with('-') => positional.push(s),
+                _ => {}
+            }
+        }
+        if positional.len() < 2 {
+            eprintln!("chgrp: missing operand");
+            return 1;
+        }
+        let group_spec = positional[0];
+        let files = &positional[1..];
+        let gid: u32 = if let Ok(id) = group_spec.parse() {
+            id
+        } else {
+            unsafe {
+                let c_group = std::ffi::CString::new(group_spec).unwrap();
+                let gr = libc::getgrnam(c_group.as_ptr());
+                if gr.is_null() {
+                    eprintln!("chgrp: invalid group: '{}'", group_spec);
+                    return 1;
+                }
+                let _ = CStr::from_ptr((*gr).gr_name); // touch for sanity
+                (*gr).gr_gid
+            }
+        };
+        fn do_chgrp(
+            path: &std::path::Path,
+            gid: u32,
+            recursive: bool,
+            symlink: bool,
+        ) -> i32 {
+            let c_path = match std::ffi::CString::new(path.to_string_lossy().as_bytes())
+            {
+                Ok(p) => p,
+                Err(_) => return 1,
+            };
+            // -1 (UID_MAX as u32) tells chown(2) to leave uid alone.
+            let ret = unsafe {
+                if symlink {
+                    libc::lchown(c_path.as_ptr(), u32::MAX, gid)
+                } else {
+                    libc::chown(c_path.as_ptr(), u32::MAX, gid)
+                }
+            };
+            if ret != 0 {
+                eprintln!(
+                    "chgrp: changing group of '{}': {}",
+                    path.display(),
+                    std::io::Error::last_os_error()
+                );
+                return 1;
+            }
+            if recursive && path.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        if do_chgrp(&entry.path(), gid, true, symlink) != 0 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+            0
+        }
+        let mut status = 0;
+        for file in files {
+            if do_chgrp(std::path::Path::new(file), gid, recursive, symlink) != 0 {
+                status = 1;
+            }
+        }
+        status
+    }
+
+    #[cfg(not(unix))]
+    fn builtin_chgrp(&self, _args: &[String]) -> i32 {
+        eprintln!("chgrp: not supported on this platform");
         1
     }
 
