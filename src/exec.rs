@@ -32970,7 +32970,15 @@ impl ShellExecutor {
                             't' => show_trace = true,
                             'T' => enable_trace = true,
                             'm' => pattern_match = true,
-                            _ => {}
+                            // BUILTIN("functions", ..., "ckmMstTuUWx:z")
+                            // — those are valid letters. Most are
+                            // accepted as no-op (we don't track all
+                            // attrs yet) but unknown letters error.
+                            'c' | 'k' | 'M' | 's' | 'u' | 'U' | 'W' | 'z' => {}
+                            _ => {
+                                eprintln!("zshrs:functions:1: bad option: -{}", c);
+                                return 1;
+                            }
                         }
                     }
                 }
@@ -32982,7 +32990,11 @@ impl ShellExecutor {
                     for c in arg[1..].chars() {
                         match c {
                             'l' | 't' | 'T' | 'm' => enable_trace = true,
-                            _ => {}
+                            'c' | 'k' | 'M' | 's' | 'u' | 'U' | 'W' | 'z' => {}
+                            _ => {
+                                eprintln!("zshrs:functions:1: bad option: +{}", c);
+                                return 1;
+                            }
                         }
                     }
                 }
