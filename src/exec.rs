@@ -29876,6 +29876,11 @@ impl ShellExecutor {
                 }
                 "-u" => use_insecure = true,
                 "-i" => ignore_insecure = true,
+                // -f: force re-dump even when dumpfile is current.
+                // -w: warn about old / suspicious files (man compinit).
+                // Both are real zsh flags; previously rejected by the
+                // unknown-flag arm because they weren't enumerated.
+                "-f" | "-w" => {} // accepted; semantic wiring is no-op
                 s if s.starts_with('-') && s.len() > 1 => {
                     // compinit -X errors in zsh ("bad option") rather
                     // than silently no-op'ing. Without this, typos
