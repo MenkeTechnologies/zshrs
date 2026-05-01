@@ -33628,9 +33628,17 @@ impl ShellExecutor {
             return 0;
         }
 
-        // Store in variable or print
+        // Store in variable or print. Per builtin.c:5197-5202 the
+        // `-v` path captures the SAME byte stream as stdout — so
+        // the trailing terminator (newline by default, suppressed
+        // by `-n`) ends up inside the variable. zshrs previously
+        // stored just the joined body, so:
+        //   print -v x foo
+        //   echo ${#x}
+        // printed `3` instead of `4` (foo + \n).
         if let Some(var) = store_var {
-            self.variables.insert(var, output);
+            let stored = format!("{}{}", output, terminator);
+            self.variables.insert(var, stored);
         } else {
             // Route to the requested fd. fd=1 (stdout) and fd=2
             // (stderr) get the standard io macros; other fds use
