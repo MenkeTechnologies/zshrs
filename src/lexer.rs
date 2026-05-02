@@ -316,7 +316,7 @@ impl<'a> ZshLexer<'a> {
     ///
     /// C source flow:
     ///   1. Spell-correct (lex.c:1958-1962) — disabled in zshrs.
-    ///   2. If tokstr is None: set lextext from tokstrings[tok] and
+    ///   2. If tokstr is None: set lextext from `tokstrings[tok]` and
     ///      checkalias against that (lex.c:1964-1969).
     ///   3. Otherwise: untokenize tokstr into a working copy (lex.c:
     ///      1971-1980).
