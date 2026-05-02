@@ -129,7 +129,7 @@ const BNULL: u8 = 0x9f; // \ backslash marker
 const NULARG: u8 = 0xa1; // empty argument marker
 
 /// Untokenize a zsh tokenized string back to shell syntax
-fn untokenize(bytes: &[u8]) -> String {
+pub(crate) fn untokenize(bytes: &[u8]) -> String {
     let mut result = String::new();
     let mut i = 0;
 

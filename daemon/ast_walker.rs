@@ -229,7 +229,7 @@ fn capture_funcdef(f: &ZshFuncDef, _source: &str, state: &mut CanonicalState) {
 
 /// Visit a Simple command. Words[0] is the command verb (or assignment
 /// if no words). Honor every builtin we extract canonical state from.
-fn walk_simple(s: &ZshSimple, state: &mut CanonicalState, _src_path: &Path) {
+fn walk_simple(s: &ZshSimple, state: &mut CanonicalState, src_path: &Path) {
     // Pure-assignment line: `FOO=bar BAR=baz` (no command). These count
     // as exports if `export` was earlier in the same word position, but
     // bare `FOO=bar` at toplevel = shell parameter assignment.
@@ -245,11 +245,25 @@ fn walk_simple(s: &ZshSimple, state: &mut CanonicalState, _src_path: &Path) {
     // becomes `["alias", "ll=ls -la"]` instead of
     // `["alias", "ll<Snull><Bnull>ls -la<Bnull>"]`.
     let untoked: Vec<String> = s.words.iter().map(|w| untokenize(w)).collect();
-    let verb = match untoked.first() {
+    // Strip leading `builtin` / `command` / `exec` / `nocorrect` prefixes —
+    // they bypass alias/function lookup at runtime but don't change which
+    // builtin gets called. `builtin source FOO` is semantically identical to
+    // `source FOO` for static analysis. Without this, all `builtin export`
+    // / `builtin source` lines in a typical zpwr-style .zshrc are dropped.
+    let mut start = 0usize;
+    while start < untoked.len()
+        && matches!(
+            untoked[start].as_str(),
+            "builtin" | "command" | "exec" | "nocorrect" | "noglob"
+        )
+    {
+        start += 1;
+    }
+    let verb = match untoked.get(start) {
         Some(v) => v.as_str(),
         None => return,
     };
-    let args: Vec<&str> = untoked[1..].iter().map(|s| s.as_str()).collect();
+    let args: Vec<&str> = untoked[start + 1..].iter().map(|s| s.as_str()).collect();
 
     match verb {
         "alias" => capture_alias(&args, state),
@@ -325,7 +339,24 @@ fn walk_simple(s: &ZshSimple, state: &mut CanonicalState, _src_path: &Path) {
         "source" | "." => {
             if let Some(target) = args.first() {
                 let raw = strip_quotes(target);
-                if let Some(expanded) = try_expand_path(raw) {
+                // Runtime expansion of `source PATTERN` happens in zsh's
+                // word-generation pipeline (Src/glob.c) before bin_dot
+                // (Src/builtin.c:6060) sees argv. Mirror that statically:
+                // env+tilde expand first, then glob-enumerate any wildcards
+                // against the filesystem so transitive sourcing follows
+                // chains like `source ${0:A:h}/plugins/*.zsh`.
+                if raw.contains('*') || raw.contains('?') || raw.contains('[') {
+                    let matches = glob_expand_source(raw, src_path);
+                    if matches.is_empty() && (raw.contains('$') || raw.contains('`')) {
+                        state
+                            .non_deterministic_lines
+                            .push(format!("source {}", target));
+                    } else {
+                        for m in matches {
+                            state.sourced_files.push(m);
+                        }
+                    }
+                } else if let Some(expanded) = try_expand_path(raw) {
                     state.sourced_files.push(expanded);
                 } else if !raw.contains('$') && !raw.contains('`') {
                     state.sourced_files.push(raw.to_string());
@@ -560,17 +591,11 @@ fn strip_quotes(s: &str) -> &str {
     s
 }
 
-/// Expand `$VAR`, `~`, `${VAR}` to a literal path that exists. Same logic
-/// as `zshrc_analysis::try_expand_static_path` but available locally so
-/// the AST walker doesn't depend on the regex module's helpers.
-fn try_expand_path(arg: &str) -> Option<String> {
-    let arg = arg.trim();
-    if arg.is_empty() || arg.contains('`') || arg.contains("$(") {
-        return None;
-    }
-    if arg.contains('*') || arg.contains('?') {
-        return None;
-    }
+/// Apply tilde + `$VAR`/`${VAR}` expansion. Returns `None` when expansion
+/// can't be statically resolved (unset env var, malformed reference, empty
+/// HOME). Glob metacharacters pass through untouched — the caller decides
+/// whether to glob-enumerate or treat as a literal path.
+fn expand_env_and_tilde(arg: &str) -> Option<String> {
     let tilde_expanded: String = if let Some(rest) = arg.strip_prefix("~/") {
         match std::env::var("HOME") {
             Ok(h) if !h.is_empty() => format!("{}/{}", h, rest),
@@ -616,12 +641,61 @@ fn try_expand_path(arg: &str) -> Option<String> {
             i += 1;
         }
     }
-    let p = std::path::Path::new(&out);
+    Some(out)
+}
+
+/// Expand `$VAR`, `~`, `${VAR}` to a literal path that exists. Same logic
+/// as `zshrc_analysis::try_expand_static_path` but available locally so
+/// the AST walker doesn't depend on the regex module's helpers.
+fn try_expand_path(arg: &str) -> Option<String> {
+    let arg = arg.trim();
+    if arg.is_empty() || arg.contains('`') || arg.contains("$(") {
+        return None;
+    }
+    if arg.contains('*') || arg.contains('?') {
+        return None;
+    }
+    let expanded = expand_env_and_tilde(arg)?;
+    let p = std::path::Path::new(&expanded);
     if p.exists() {
-        Some(out)
+        Some(expanded)
     } else {
         None
     }
+}
+
+/// Static glob expansion of a `source PATTERN` argument. Mirrors the
+/// runtime expansion zsh runs in its word-generation pipeline (Src/glob.c)
+/// before bin_dot (Src/builtin.c:6060) sees argv. Relative patterns resolve
+/// against the sourcing file's directory — matches the `${0:A:h}/*.zsh`
+/// idiom used by zinit/omz/prezto plugin chains. Returns the concrete
+/// matching files; empty Vec when nothing matched or expansion couldn't
+/// proceed (unset env var, command substitution).
+fn glob_expand_source(raw: &str, src_path: &Path) -> Vec<String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.contains('`') || raw.contains("$(") {
+        return Vec::new();
+    }
+    let expanded = match expand_env_and_tilde(raw) {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+    let pattern: PathBuf = if std::path::Path::new(&expanded).is_absolute() {
+        PathBuf::from(expanded)
+    } else if let Some(parent) = src_path.parent() {
+        parent.join(&expanded)
+    } else {
+        PathBuf::from(expanded)
+    };
+    let pattern_str = pattern.to_string_lossy().into_owned();
+    let iter = match glob::glob(&pattern_str) {
+        Ok(it) => it,
+        Err(_) => return Vec::new(),
+    };
+    iter.filter_map(|r| r.ok())
+        .filter(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
 }
 
 #[cfg(test)]
@@ -648,5 +722,169 @@ mod tests {
             eprintln!("WORDS: {:?}", w);
         }
         assert_eq!(words.len(), 3, "expected 3 alias lines parsed");
+    }
+
+    /// Absolute glob: `source /tmp/X/plugins/*.zsh` enumerates concrete files.
+    #[test]
+    fn glob_expand_source_absolute() {
+        use std::io::Write;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plug = tmp.path().join("plugins");
+        std::fs::create_dir(&plug).unwrap();
+        for name in ["a.zsh", "b.zsh", "c.txt"] {
+            let mut f = std::fs::File::create(plug.join(name)).unwrap();
+            writeln!(f, "# {}", name).unwrap();
+        }
+        let zshrc = tmp.path().join(".zshrc");
+        std::fs::write(&zshrc, "# placeholder").unwrap();
+
+        let pattern = format!("{}/*.zsh", plug.display());
+        let mut got = glob_expand_source(&pattern, &zshrc);
+        got.sort();
+        assert_eq!(got.len(), 2, "expected 2 .zsh matches, got {:?}", got);
+        assert!(got[0].ends_with("a.zsh"));
+        assert!(got[1].ends_with("b.zsh"));
+    }
+
+    /// Relative glob resolves against the sourcing file's parent dir —
+    /// matches the `source ${0:A:h}/plugins/*.zsh` idiom in zinit/omz chains.
+    #[test]
+    fn glob_expand_source_relative_to_src_path() {
+        use std::io::Write;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plug = tmp.path().join("plugins");
+        std::fs::create_dir(&plug).unwrap();
+        for name in ["x.zsh", "y.zsh"] {
+            let mut f = std::fs::File::create(plug.join(name)).unwrap();
+            writeln!(f, "# {}", name).unwrap();
+        }
+        let zshrc = tmp.path().join(".zshrc");
+        std::fs::write(&zshrc, "# placeholder").unwrap();
+
+        let mut got = glob_expand_source("plugins/*.zsh", &zshrc);
+        got.sort();
+        assert_eq!(got.len(), 2, "expected 2 matches via relative glob, got {:?}", got);
+    }
+
+    /// Env-var + glob composition: `${ZDOTDIR}/conf.d/*.zsh` resolves the
+    /// var first, then enumerates the directory.
+    #[test]
+    fn glob_expand_source_env_then_glob() {
+        use std::io::Write;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let conf = tmp.path().join("conf.d");
+        std::fs::create_dir(&conf).unwrap();
+        for name in ["10-aliases.zsh", "20-fns.zsh", "README"] {
+            let mut f = std::fs::File::create(conf.join(name)).unwrap();
+            writeln!(f, "# {}", name).unwrap();
+        }
+        std::env::set_var("ZSHRS_TEST_GLOB_ZDOTDIR", tmp.path());
+        let zshrc = tmp.path().join(".zshrc");
+        std::fs::write(&zshrc, "# placeholder").unwrap();
+
+        let got = glob_expand_source("${ZSHRS_TEST_GLOB_ZDOTDIR}/conf.d/*.zsh", &zshrc);
+        std::env::remove_var("ZSHRS_TEST_GLOB_ZDOTDIR");
+        assert_eq!(got.len(), 2, "expected 2 .zsh matches, got {:?}", got);
+    }
+
+    /// Unset env var = empty result (caller treats as non-deterministic).
+    #[test]
+    fn glob_expand_source_unset_var_yields_empty() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let zshrc = tmp.path().join(".zshrc");
+        std::fs::write(&zshrc, "# placeholder").unwrap();
+        std::env::remove_var("ZSHRS_DEFINITELY_UNSET_VAR_XYZ");
+        let got = glob_expand_source("${ZSHRS_DEFINITELY_UNSET_VAR_XYZ}/*.zsh", &zshrc);
+        assert!(got.is_empty(), "unset var should yield empty, got {:?}", got);
+    }
+
+    /// One-shot: walk ~/.zshrc with the AST walker and print counts in
+    /// the same format as the live-shell ground truth. `#[ignore]`d so it
+    /// doesn't run in regular suites — invoke with
+    ///   cargo test -p zshrs-daemon walk_real_zshrc_print_counts -- \
+    ///     --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn walk_real_zshrc_print_counts() {
+        let home = std::env::var("HOME").expect("HOME");
+        let zshrc = std::path::PathBuf::from(&home).join(".zshrc");
+        if !zshrc.exists() {
+            eprintln!("no ~/.zshrc, skipping");
+            return;
+        }
+        let t0 = std::time::Instant::now();
+        let state = analyze_with_ast(&zshrc).expect("analyze_with_ast");
+        let elapsed_ms = t0.elapsed().as_millis();
+
+        let funcs_total = state.functions.len();
+        let funcs_completions = state
+            .functions
+            .keys()
+            .filter(|k| k.starts_with('_'))
+            .count();
+        let funcs_non_completion = funcs_total - funcs_completions;
+
+        eprintln!("AST WALKER COUNTS (zshrs daemon)");
+        eprintln!("  Aliases:               {}", state.aliases.len());
+        eprintln!("  Global Aliases:        {}", state.global_aliases.len());
+        eprintln!("  Suffix Aliases:        {}", state.suffix_aliases.len());
+        eprintln!("  Functions (total):     {}", funcs_total);
+        eprintln!("  Functions (compl _*):  {}", funcs_completions);
+        eprintln!("  Functions (non-compl): {}", funcs_non_completion);
+        eprintln!("  Environment Exports:   {}", state.env_exports.len());
+        eprintln!("  Parameters:            {}", state.params.len());
+        eprintln!("  PATH additions:        {}", state.path_additions.len());
+        eprintln!("  FPATH additions:       {}", state.fpath_additions.len());
+        eprintln!("  MANPATH additions:     {}", state.manpath_additions.len());
+        eprintln!("  setopt:                {}", state.setopts.len());
+        eprintln!("  unsetopt:              {}", state.unsetopts.len());
+        eprintln!("  bindkey:               {}", state.bindkeys.len());
+        eprintln!("  named dirs:            {}", state.named_dirs.len());
+        eprintln!("  compdef:               {}", state.compdef.len());
+        eprintln!("  zstyle:                {}", state.zstyle.len());
+        eprintln!("  zmodload:              {}", state.zmodload.len());
+        eprintln!("  plugin decls:          {}", state.plugin_decls.len());
+        eprintln!("  sourced files:         {}", state.sourced_files.len());
+        eprintln!("  non-det lines:         {}", state.non_deterministic_lines.len());
+        eprintln!("STATS");
+        eprintln!("  files analyzed:        {}", state.stats.files_analyzed);
+        eprintln!("  lines total:           {}", state.stats.lines_total);
+        eprintln!("  lines deterministic:   {}", state.stats.lines_deterministic);
+        eprintln!("  lines non-det:         {}", state.stats.lines_non_deterministic);
+        eprintln!("  walker duration_ms:    {}", state.stats.duration_ms);
+        eprintln!("  outer elapsed_ms:      {}", elapsed_ms);
+    }
+
+    /// End-to-end through analyze_with_ast: a .zshrc that does
+    /// `source plugins/*.zsh` lands every concrete plugin in
+    /// `state.sourced_files` so transitive analysis can recurse.
+    #[test]
+    fn analyze_with_ast_follows_source_glob() {
+        use std::io::Write;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plug = tmp.path().join("plugins");
+        std::fs::create_dir(&plug).unwrap();
+        for name in ["one.zsh", "two.zsh"] {
+            let mut f = std::fs::File::create(plug.join(name)).unwrap();
+            writeln!(f, "alias from_{}=true", name.replace(".zsh", "")).unwrap();
+        }
+        let zshrc = tmp.path().join(".zshrc");
+        std::fs::write(&zshrc, "source plugins/*.zsh\n").unwrap();
+
+        let state = analyze_with_ast(&zshrc).expect("walker");
+        let sourced: Vec<&str> = state.sourced_files.iter().map(|s| s.as_str()).collect();
+        assert!(
+            sourced.iter().any(|p| p.ends_with("one.zsh")),
+            "expected one.zsh in sourced_files, got {:?}",
+            sourced
+        );
+        assert!(
+            sourced.iter().any(|p| p.ends_with("two.zsh")),
+            "expected two.zsh in sourced_files, got {:?}",
+            sourced
+        );
+        // Aliases from sourced files should round-trip via recursion.
+        assert!(state.aliases.contains_key("from_one"));
+        assert!(state.aliases.contains_key("from_two"));
     }
 }

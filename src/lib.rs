@@ -66,6 +66,7 @@ pub mod exec;
 pub mod fds;
 pub mod files;
 pub mod fish_features;
+pub mod ast_sexp;
 pub mod glob;
 pub mod hashnameddir;
 pub mod hashtable;
@@ -128,6 +129,7 @@ pub mod zpty;
 pub mod zselect;
 pub mod zutil;
 pub mod zwc;
+pub mod zwc_decode;
 
 pub use exec::ShellExecutor;
 pub use fish_features::{
