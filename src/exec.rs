@@ -36138,7 +36138,10 @@ impl ShellExecutor {
             };
 
             let mut flock = libc::flock {
-                l_type: lock_type,
+                // l_type is c_short on Linux + macOS; F_RDLCK/F_WRLCK are
+                // c_int on Linux, c_short on macOS. Cast to i16 explicitly
+                // for cross-platform builds.
+                l_type: lock_type as i16,
                 l_whence: libc::SEEK_SET as i16,
                 l_start: 0,
                 l_len: 0,
@@ -44038,7 +44041,7 @@ impl ShellExecutor {
             let r = unsafe {
                 libc::getgrouplist(
                     cn.as_ptr(),
-                    group_id as i32,
+                    group_id as _,
                     group_ids.as_mut_ptr() as *mut _,
                     &mut ngroups,
                 )
@@ -44049,7 +44052,7 @@ impl ShellExecutor {
                 unsafe {
                     libc::getgrouplist(
                         cn.as_ptr(),
-                        group_id as i32,
+                        group_id as _,
                         group_ids.as_mut_ptr() as *mut _,
                         &mut ngroups,
                     );

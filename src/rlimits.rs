@@ -29,11 +29,16 @@ pub struct ResInfo {
     pub descr: &'static str,
 }
 
-/// Known resource limits
+/// Known resource limits.
+///
+/// `RLIMIT_*` constants are typed `__rlimit_resource_t` (= u32) on glibc
+/// Linux and `c_int` (= i32) on macOS / *BSD. We store as `i32` internally
+/// and cast at definition + call sites; the underlying values fit in i32
+/// either way (max RLIMIT enum is RLIMIT_NLIMITS ≤ 16 on every platform).
 #[cfg(unix)]
 pub static KNOWN_RESOURCES: &[ResInfo] = &[
     ResInfo {
-        res: RLIMIT_CPU,
+        res: RLIMIT_CPU as i32,
         name: "cputime",
         limit_type: LimitType::Time,
         unit: 1,
@@ -41,7 +46,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "cpu time (seconds)",
     },
     ResInfo {
-        res: RLIMIT_FSIZE,
+        res: RLIMIT_FSIZE as i32,
         name: "filesize",
         limit_type: LimitType::Memory,
         unit: 512,
@@ -49,7 +54,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "file size (blocks)",
     },
     ResInfo {
-        res: RLIMIT_DATA,
+        res: RLIMIT_DATA as i32,
         name: "datasize",
         limit_type: LimitType::Memory,
         unit: 1024,
@@ -57,7 +62,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "data seg size (kbytes)",
     },
     ResInfo {
-        res: RLIMIT_STACK,
+        res: RLIMIT_STACK as i32,
         name: "stacksize",
         limit_type: LimitType::Memory,
         unit: 1024,
@@ -65,7 +70,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "stack size (kbytes)",
     },
     ResInfo {
-        res: RLIMIT_CORE,
+        res: RLIMIT_CORE as i32,
         name: "coredumpsize",
         limit_type: LimitType::Memory,
         unit: 512,
@@ -73,7 +78,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "core file size (blocks)",
     },
     ResInfo {
-        res: RLIMIT_NOFILE,
+        res: RLIMIT_NOFILE as i32,
         name: "descriptors",
         limit_type: LimitType::Number,
         unit: 1,
@@ -81,7 +86,7 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
         descr: "file descriptors",
     },
     ResInfo {
-        res: RLIMIT_AS,
+        res: RLIMIT_AS as i32,
         name: "addressspace",
         limit_type: LimitType::Memory,
         unit: 1024,
@@ -527,7 +532,10 @@ pub fn builtin_ulimit(
     }
 
     let mut i = 0;
-    let mut res = RLIMIT_FSIZE;
+    // RLIMIT_FSIZE is u32 on Linux, i32 on macOS; pin local type to i32
+    // for cross-platform call-site uniformity (find_by_res/get/set all
+    // take i32).
+    let mut res: i32 = RLIMIT_FSIZE as i32;
     let mut use_hard = hard && !soft;
 
     while i < args.len() {
@@ -716,7 +724,7 @@ mod tests {
     fn test_get_limits() {
         let limits = ResourceLimits::new();
 
-        let result = limits.get(RLIMIT_NOFILE);
+        let result = limits.get(RLIMIT_NOFILE as i32);
         assert!(result.is_ok());
 
         let (soft, hard) = result.unwrap();
