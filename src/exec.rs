@@ -2072,6 +2072,29 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 exec.variables.remove(&name);
                 exec.arrays.insert(name.clone(), values.clone());
             }
+            // PFA-SMR aspect: array assignment. `path=(...)`, `fpath=(...)`,
+            // `manpath=(...)`, `chpwd_functions=(...)`, etc. all funnel
+            // through here. Emit one path_mod / assign event per element
+            // for arrays the recorder cares about; for everything else,
+            // emit a single assign with the joined value.
+            #[cfg(feature = "recorder")]
+            if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                let ctx = exec.recorder_ctx();
+                if matches!(name.as_str(), "path" | "fpath" | "manpath" | "PATH" | "FPATH" | "MANPATH") {
+                    let kind_name = if name.eq_ignore_ascii_case("fpath") {
+                        "fpath"
+                    } else if name.eq_ignore_ascii_case("manpath") {
+                        "manpath"
+                    } else {
+                        "path"
+                    };
+                    for v in &values {
+                        crate::recorder::emit_path_mod(v, kind_name, ctx.clone());
+                    }
+                } else {
+                    crate::recorder::emit_assign(&name, &values.join(" "), ctx);
+                }
+            }
             false
         });
         Value::Status(if blocked { 1 } else { 0 })
@@ -2129,6 +2152,29 @@ fn register_builtins(vm: &mut fusevm::VM) {
             exec.variables.remove(&name);
             // `typeset -U arr` dedupes — append must respect existing
             // elements too. Skip values that are already present.
+            // PFA-SMR aspect: array append. `path+=(/foo)`, `fpath+=(...)`
+            // are the most common shapes. Emit one path_mod per appended
+            // element for path/fpath/manpath; one assign for everything
+            // else. Done before the values move into the array so we
+            // don't have to re-collect.
+            #[cfg(feature = "recorder")]
+            if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                let ctx = exec.recorder_ctx();
+                if matches!(name.as_str(), "path" | "fpath" | "manpath" | "PATH" | "FPATH" | "MANPATH") {
+                    let kind_name = if name.eq_ignore_ascii_case("fpath") {
+                        "fpath"
+                    } else if name.eq_ignore_ascii_case("manpath") {
+                        "manpath"
+                    } else {
+                        "path"
+                    };
+                    for v in &values {
+                        crate::recorder::emit_path_mod(v, kind_name, ctx.clone());
+                    }
+                } else {
+                    crate::recorder::emit_assign(&name, &values.join(" "), ctx);
+                }
+            }
             let is_unique = exec.var_attrs.get(&name).map(|a| a.unique).unwrap_or(false);
             let target = exec.arrays.entry(name).or_insert_with(Vec::new);
             if is_unique {
@@ -5080,6 +5126,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
             if allexport || already_exported {
                 std::env::set_var(&name, &stored);
             }
+            // PFA-SMR aspect: every top-level scalar assignment
+            // (`VAR=value`) compiles to BUILTIN_SET_VAR, so this is the
+            // chokepoint. Skip the recorder when inside a function scope
+            // (those are runtime locals, not config state) and skip the
+            // intrinsic specials zsh maintains itself.
+            #[cfg(feature = "recorder")]
+            if crate::recorder::is_enabled()
+                && exec.local_scope_depth == 0
+                && !matches!(
+                    name.as_str(),
+                    "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC" | "?" | "_" | "RANDOM"
+                )
+            {
+                let ctx = exec.recorder_ctx();
+                crate::recorder::emit_assign(&name, &stored, ctx);
+            }
             false
         });
         if blocked {
@@ -6587,7 +6649,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let status = match bincode::deserialize::<fusevm::Chunk>(&bytes) {
             Ok(chunk) => with_executor(|exec| {
                 if !body_source.is_empty() {
-                    exec.function_source.insert(name.clone(), body_source);
+                    exec.function_source.insert(name.clone(), body_source.clone());
+                }
+                // PFA-SMR aspect: every `name() {}` / `function name { }`
+                // funnels through here at compile time. Emit one record
+                // with the function name + raw body source.
+                #[cfg(feature = "recorder")]
+                if crate::recorder::is_enabled() {
+                    let ctx = exec.recorder_ctx();
+                    let body = if body_source.is_empty() {
+                        None
+                    } else {
+                        Some(body_source.as_str())
+                    };
+                    crate::recorder::emit_function(&name, body, ctx);
                 }
                 exec.functions_compiled.insert(name, chunk);
                 0
@@ -20509,6 +20584,22 @@ impl ShellExecutor {
     }
 
     fn builtin_export(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `export` event per `NAME[=value]` arg.
+        // Listing-only invocations (`export` / `export -p`) are skipped.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = self.recorder_ctx();
+            for a in args {
+                if a == "-p" || a.starts_with('-') {
+                    continue;
+                }
+                if let Some((k, v)) = a.split_once('=') {
+                    crate::recorder::emit_export(k, Some(v), ctx.clone());
+                } else {
+                    crate::recorder::emit_export(a, None, ctx.clone());
+                }
+            }
+        }
         // Bare `export` lists every exported var, same form as
         // `export -p`. Direct port of zsh/Src/builtin.c:bin_typeset
         // BIN_EXPORT path; POSIX requires this listing.
@@ -20587,6 +20678,20 @@ impl ShellExecutor {
         if args.is_empty() {
             eprintln!("zshrs:unset:1: not enough arguments");
             return 1;
+        }
+        // PFA-SMR aspect: emit one `unset` event per non-flag arg.
+        // RECORDER.md open question 4 says "Probably yes" for tracking
+        // removal sites — needed for `zwhere -l` lineage to show the
+        // full define→unset→redefine chain.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = self.recorder_ctx();
+            for a in args {
+                if a.starts_with('-') || a == "--" {
+                    continue;
+                }
+                crate::recorder::emit_unset(a, ctx.clone());
+            }
         }
         // `unset -f NAME...` — remove functions (mirror of `unfunction`).
         // Walk the arg list once: if we see -f, mark function-mode for
@@ -20770,6 +20875,15 @@ impl ShellExecutor {
             eprintln!("zshrs:{}:1: not enough arguments", invoked_as);
             return 1;
         }
+        // PFA-SMR aspect: emit a `source` event for the as-typed path.
+        // The resolved absolute path is computed below; emitting the raw
+        // first arg keeps the recorder's view aligned with what the user
+        // actually wrote (matters for transitive-source visualization).
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() && !args[0].is_empty() {
+            let ctx = self.recorder_ctx();
+            crate::recorder::emit_source(&args[0], ctx);
+        }
         // zsh: `. ""` (empty path) -> `.:1: no such file or
         // directory:` (with empty trailing path). zshrs's POSIX
         // path-resolver mapped "" to cwd which then opened as a
@@ -20917,7 +21031,20 @@ impl ShellExecutor {
             let file_path = std::path::Path::new(&abs_path);
 
             // Check plugin cache for side-effect replay
-            if let Some(ref cache) = self.plugin_cache {
+            // Recorder bypass: the plugin-cache replay path applies the
+            // delta directly to executor state without going through
+            // `builtin_alias` / `builtin_typeset` / etc., so the recorder
+            // aspect would never see any mutation from a cached plugin
+            // load. A recording run is opt-in and explicitly tolerates
+            // ~1.5x startup time (RECORDER.md §"Performance targets") —
+            // disabling cache replay for that run guarantees every
+            // dispatcher fires once for every state mutation.
+            #[cfg(feature = "recorder")]
+            let cache_disabled = crate::recorder::is_enabled();
+            #[cfg(not(feature = "recorder"))]
+            let cache_disabled = false;
+            if !cache_disabled {
+                if let Some(ref cache) = self.plugin_cache {
                 if let Some((mt_s, mt_ns)) = crate::plugin_cache::file_mtime(file_path) {
                     if let Some(plugin_id) = cache.check(&abs_path, mt_s, mt_ns) {
                         if let Ok(delta) = cache.load(plugin_id) {
@@ -20940,6 +21067,7 @@ impl ShellExecutor {
                             return 0;
                         }
                     }
+                }
                 }
             }
 
@@ -22232,6 +22360,30 @@ impl ShellExecutor {
     }
 
     fn builtin_typeset_named(&mut self, args: &[String], invoked_as: &str) -> i32 {
+        // PFA-SMR aspect: emit one `typeset` event per `NAME[=value]` arg.
+        // Listing-only invocations (no positional args) are skipped.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = self.recorder_ctx();
+            let mut flags: Vec<&str> = Vec::new();
+            for a in args {
+                if a.starts_with('-') || a.starts_with('+') {
+                    flags.push(a.as_str());
+                    continue;
+                }
+                let flag_blob = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!("{} ", flags.join(" "))
+                };
+                let _ = invoked_as;
+                if let Some((k, v)) = a.split_once('=') {
+                    crate::recorder::emit_typeset(k, &format!("{}{}", flag_blob, v), ctx.clone());
+                } else {
+                    crate::recorder::emit_typeset(a, flag_blob.trim_end(), ctx.clone());
+                }
+            }
+        }
         // Save old values when inside a function scope (local variable support).
         // Restored by call_function on function exit. The `-g` flag opts out
         // of localization — `declare -g x=val` from inside a function should
@@ -24086,6 +24238,22 @@ impl ShellExecutor {
     }
 
     fn builtin_autoload(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `function` event per autoload name with
+        // value=`autoload` to mark it as the lazy-load form (vs. an
+        // inline `name() {}` definition). Listing-only invocations
+        // (bare `autoload`, `autoload +X NAME`) are still recorded as a
+        // function event because they install the autoload pending
+        // table — the body just doesn't load until first call.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = self.recorder_ctx();
+            for a in args {
+                if a == "--" || a.starts_with('-') || a.starts_with('+') {
+                    continue;
+                }
+                crate::recorder::emit_function(a, Some("autoload"), ctx.clone());
+            }
+        }
         // Parse options like zsh: -U (no alias), -z (zsh style), -k (ksh style),
         // -X (execute now), -x (export), -r (resolve), -R (resolve recurse),
         // -t (trace), -T (trace local), -W (warn nested), -d (use calling dir)
@@ -25320,6 +25488,43 @@ mod tests {
     }
 }
 
+// Plugin-Framework-Agnostic State-Modification Recorder hook helpers.
+// Whole impl block is `#[cfg(feature = "recorder")]` so the default
+// build sees no recorder symbols on `ShellExecutor`.
+#[cfg(feature = "recorder")]
+impl ShellExecutor {
+    /// Snapshot the executor's current source position for an
+    /// outgoing recorder event. Phase 1 sources `$LINENO` and
+    /// `$funcstack`; current source-file tracking is wired in
+    /// Phase 2 alongside the source-stack push/pop in builtin_source.
+    pub(crate) fn recorder_ctx(&self) -> crate::recorder::RecordCtx {
+        let line = self
+            .variables
+            .get("LINENO")
+            .and_then(|s| s.parse::<u32>().ok());
+        let fn_chain = self.arrays.get("funcstack").and_then(|s| {
+            if s.is_empty() {
+                None
+            } else {
+                let mut parts: Vec<&str> = s.iter().map(String::as_str).collect();
+                parts.reverse();
+                Some(parts.join(" > "))
+            }
+        });
+        let file = self
+            .variables
+            .get("ZSH_SCRIPT")
+            .or_else(|| self.variables.get("ZSH_ARGZERO"))
+            .or_else(|| self.variables.get("0"))
+            .cloned();
+        crate::recorder::RecordCtx {
+            file,
+            line,
+            fn_chain,
+        }
+    }
+}
+
 impl ShellExecutor {
     fn builtin_history(&self, args: &[String]) -> i32 {
         let Some(ref engine) = self.history else {
@@ -26017,6 +26222,21 @@ impl ShellExecutor {
     }
 
     fn builtin_trap(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `trap` event per (signal, handler).
+        // `trap 'cmd' SIG1 SIG2` → 2 records sharing the same handler.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            // Skip listing-only forms (`trap`, `trap -l`, `trap -p`).
+            let listing = args.is_empty()
+                || (args.len() == 1 && (args[0] == "-l" || args[0] == "-p"));
+            if !listing && args.len() >= 2 {
+                let ctx = self.recorder_ctx();
+                let handler = &args[0];
+                for sig in &args[1..] {
+                    crate::recorder::emit_trap(sig, handler, ctx.clone());
+                }
+            }
+        }
         if args.is_empty() {
             // List all traps, sorted by signal name for stable
             // output across runs.
@@ -26359,6 +26579,21 @@ impl ShellExecutor {
                 } else {
                     self.aliases.insert(name.to_string(), value.to_string());
                 }
+                // PFA-SMR aspect: capture the alias definition with the
+                // subkind preserved (regular / -g / -s) so downstream
+                // queries can distinguish global expansion targets from
+                // suffix dispatch from regular command shorthands.
+                #[cfg(feature = "recorder")]
+                {
+                    let ctx = self.recorder_ctx();
+                    if is_suffix {
+                        crate::recorder::emit_salias(name, Some(value), ctx);
+                    } else if is_global {
+                        crate::recorder::emit_galias(name, Some(value), ctx);
+                    } else {
+                        crate::recorder::emit_alias(name, Some(value), ctx);
+                    }
+                }
             } else if pattern_match {
                 // -m: pattern match mode — list matching aliases.
                 // Direct port of zsh/Src/builtin.c:4396-4424 (bin_unhash
@@ -26449,6 +26684,18 @@ impl ShellExecutor {
             // pattern-matching on `unalias:1:` missed the diagnostic.
             eprintln!("zshrs:unalias:1: not enough arguments");
             return 1;
+        }
+        // PFA-SMR aspect: emit one `unalias` event per non-flag arg.
+        // Pairs with the alias hook so override chains are queryable.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = self.recorder_ctx();
+            for a in args {
+                if a.starts_with('-') && a != "-" {
+                    continue;
+                }
+                crate::recorder::emit_unalias(a, ctx.clone());
+            }
         }
 
         let mut is_global = false;
@@ -26548,6 +26795,30 @@ impl ShellExecutor {
     }
 
     fn builtin_set(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit setopt/unsetopt events for the POSIX
+        // `set -o NAME` / `set +o NAME` form. This is the third option
+        // syntax (after `setopt NAME` / `unsetopt NAME`); a recorder
+        // user expects all three to surface in `zwhere when -k setopt`.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() && !args.is_empty() {
+            let ctx = self.recorder_ctx();
+            let mut iter = args.iter().peekable();
+            while let Some(a) = iter.next() {
+                match a.as_str() {
+                    "-o" => {
+                        if let Some(name) = iter.next() {
+                            crate::recorder::emit_setopt(name, ctx.clone());
+                        }
+                    }
+                    "+o" => {
+                        if let Some(name) = iter.next() {
+                            crate::recorder::emit_unsetopt(name, ctx.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         if args.is_empty() {
             // List all variables and their values (zsh behavior)
             let mut vars: Vec<_> = self.variables.iter().collect();
@@ -28521,6 +28792,30 @@ impl ShellExecutor {
 
     /// zsh-compatible setopt builtin
     fn builtin_setopt(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `setopt` event per option name. zsh
+        // accepts `-o NAME` / bare `NAME` interchangeably; both forms
+        // turn options on. We treat any non-`-`-prefixed token as a
+        // setopt target.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() && !args.is_empty() {
+            let ctx = self.recorder_ctx();
+            let mut iter = args.iter().peekable();
+            while let Some(a) = iter.next() {
+                match a.as_str() {
+                    "-o" | "+o" => {
+                        if let Some(name) = iter.next() {
+                            crate::recorder::emit_setopt(name, ctx.clone());
+                        }
+                    }
+                    s if s.starts_with('-') || s.starts_with('+') => {
+                        // single-letter -K / +K flags toggle named options
+                        // by short name; skip in this proof — Phase 2.5
+                        // material.
+                    }
+                    _ => crate::recorder::emit_setopt(a, ctx.clone()),
+                }
+            }
+        }
         if args.is_empty() {
             // List options that differ from compiled-in defaults (zsh behavior)
             // For default-ON options: show "noOPTION" if currently OFF
@@ -28633,6 +28928,23 @@ impl ShellExecutor {
 
     /// zsh-compatible unsetopt builtin
     fn builtin_unsetopt(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `unsetopt` event per option name.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() && !args.is_empty() {
+            let ctx = self.recorder_ctx();
+            let mut iter = args.iter().peekable();
+            while let Some(a) = iter.next() {
+                match a.as_str() {
+                    "-o" | "+o" => {
+                        if let Some(name) = iter.next() {
+                            crate::recorder::emit_unsetopt(name, ctx.clone());
+                        }
+                    }
+                    s if s.starts_with('-') || s.starts_with('+') => {}
+                    _ => crate::recorder::emit_unsetopt(a, ctx.clone()),
+                }
+            }
+        }
         if args.is_empty() {
             // List all options in the format you'd pass to unsetopt to disable them
             // For default-ON options: show "noOPTION" (to turn it off)
@@ -29091,6 +29403,26 @@ impl ShellExecutor {
     }
 
     fn builtin_hash(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `hash -d` event per named-directory
+        // assignment. Plain `hash NAME=PATH` (command-hash, not named-
+        // dir) is not recorder material — runtime cache only.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let dir_mode = args.iter().any(|a| {
+                a.starts_with('-') && a.len() > 1 && a[1..].chars().any(|c| c == 'd')
+            });
+            if dir_mode {
+                let ctx = self.recorder_ctx();
+                for a in args {
+                    if a.starts_with('-') {
+                        continue;
+                    }
+                    if let Some((k, v)) = a.split_once('=') {
+                        crate::recorder::emit_hash_d(k, v, ctx.clone());
+                    }
+                }
+            }
+        }
         // hash [ -Ldfmrv ] [ name[=value] ] ...
         // hash -r clears the hash table
         // hash -d manages named directories
@@ -29933,6 +30265,25 @@ impl ShellExecutor {
     ///        compdef _docker docker docker-compose
     ///        compdef -d git  # delete
     fn builtin_compdef(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `compdef` event with the completion
+        // function name + the joined command list it's bound to.
+        // `compdef _git git gita gitb` → name="_git", value="git gita gitb".
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let mut positional: Vec<&str> = Vec::new();
+            for a in args {
+                if a.starts_with('-') || a.starts_with('+') {
+                    continue;
+                }
+                positional.push(a.as_str());
+            }
+            if positional.len() >= 2 {
+                let ctx = self.recorder_ctx();
+                let func = positional[0];
+                let cmds = positional[1..].join(" ");
+                crate::recorder::emit_compdef(func, &cmds, ctx);
+            }
+        }
         if let Some(cache) = &mut self.compsys_cache {
             compsys::compdef::compdef_execute(cache, args)
         } else {
@@ -30350,6 +30701,23 @@ impl ShellExecutor {
 
     /// zsh zstyle - configure styles for completion
     fn builtin_zstyle(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `zstyle` event per setter call. The
+        // pattern is arg[0] (or arg[1] when arg[0] is a flag like `-e`),
+        // the style+values are the rest joined.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let positional: Vec<&str> = args
+                .iter()
+                .filter(|a| !a.starts_with('-'))
+                .map(String::as_str)
+                .collect();
+            if positional.len() >= 2 {
+                let ctx = self.recorder_ctx();
+                let pattern = positional[0];
+                let rest = positional[1..].join(" ");
+                crate::recorder::emit_zstyle(pattern, &rest, ctx);
+            }
+        }
         // zsh: a single non-flag positional like `zstyle X` -> `zstyle:1:
         // not enough arguments` (need at least pattern+style or
         // flag-form). zshrs's catch-all set-style path required
@@ -32851,6 +33219,28 @@ impl ShellExecutor {
 
     /// float - declare floating point variables
     fn builtin_float(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `typeset` event per `float NAME[=val]`
+        // arg, with `-F` or `-E` prepended to mark the float subkind.
+        // builtin_float does NOT delegate to builtin_typeset_named.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = self.recorder_ctx();
+            let flag = if args.iter().any(|a| a.starts_with('-') && a.contains('F')) {
+                "-F"
+            } else {
+                "-E"
+            };
+            for a in args {
+                if a.starts_with('-') {
+                    continue;
+                }
+                if let Some((k, v)) = a.split_once('=') {
+                    crate::recorder::emit_typeset(k, &format!("{} {}", flag, v), ctx.clone());
+                } else {
+                    crate::recorder::emit_typeset(a, flag, ctx.clone());
+                }
+            }
+        }
         // zsh: bare `float NAME=VAL` defaults to `-E` (scientific
         // exponential format); `float -F` opts into fixed-decimal.
         let mut explicit_f = false;
@@ -32926,8 +33316,27 @@ impl ShellExecutor {
 
     /// integer - declare integer variables
     fn builtin_integer(&mut self, args: &[String]) -> i32 {
-        // Parse leading flags for attribute composition (-r readonly,
-        // -x export, -g global, -U unique). Without -r tracking,
+        // PFA-SMR aspect: emit one `typeset` event per `integer
+        // NAME[=val]` arg, with `-i` prepended to mark the integer
+        // attribute. builtin_integer does NOT delegate to
+        // builtin_typeset_named so the typeset hook there doesn't
+        // fire for `integer NAME=val`.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = self.recorder_ctx();
+            for a in args {
+                if a.starts_with('-') {
+                    continue;
+                }
+                if let Some((k, v)) = a.split_once('=') {
+                    crate::recorder::emit_typeset(k, &format!("-i {}", v), ctx.clone());
+                } else {
+                    crate::recorder::emit_typeset(a, "-i", ctx.clone());
+                }
+            }
+        }
+        // Parse options like zsh: -r readonly, -x export, -g global,
+        // -U unique. Without -r tracking,
         // `integer -r I=42; ${(t)I}` returned just `integer` instead
         // of `integer-readonly`.
         //
@@ -35307,6 +35716,31 @@ impl ShellExecutor {
 
     /// zmodload - load/unload zsh modules (stub)
     fn builtin_zmodload(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `zmodload` event per module name (only
+        // for load form — listing/query/unload are not state mutations
+        // we want recorded as definitions).
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let mut listing_or_query = false;
+            let mut flags: Vec<&str> = Vec::new();
+            for a in args {
+                match a.as_str() {
+                    "-l" | "-L" | "-e" | "-u" => listing_or_query = true,
+                    s if s.starts_with('-') => flags.push(s),
+                    _ => {}
+                }
+            }
+            if !listing_or_query {
+                let ctx = self.recorder_ctx();
+                let flag_blob = flags.join(" ");
+                for a in args {
+                    if a.starts_with('-') {
+                        continue;
+                    }
+                    crate::recorder::emit_zmodload(a, &flag_blob, ctx.clone());
+                }
+            }
+        }
         // Direct port of zsh/Src/module.c bin_zmodload control flow.
         // zshrs's modules are compiled-in, so load/unload simply toggle
         // a tracking flag in self.options['_module_<name>']. Listing
@@ -37625,6 +38059,24 @@ impl ShellExecutor {
 
     /// readonly - mark variables as read-only
     fn builtin_readonly(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit one `typeset` event per readonly NAME[=val]
+        // arg, with `-r` prepended to mark the readonly attribute.
+        // builtin_readonly does NOT delegate to builtin_typeset_named,
+        // so the typeset hook there doesn't fire for `readonly NAME=val`.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let ctx = self.recorder_ctx();
+            for a in args {
+                if a == "-p" || a.starts_with('-') {
+                    continue;
+                }
+                if let Some((k, v)) = a.split_once('=') {
+                    crate::recorder::emit_typeset(k, &format!("-r {}", v), ctx.clone());
+                } else {
+                    crate::recorder::emit_typeset(a, "-r", ctx.clone());
+                }
+            }
+        }
         if args.is_empty() {
             // Sorted listing for deterministic output (was iterating
             // a HashSet in random order).
@@ -37765,6 +38217,37 @@ impl ShellExecutor {
     /// bindkey - key binding management
     fn builtin_bindkey(&mut self, args: &[String]) -> i32 {
         use crate::zle::{zle, KeymapName};
+
+        // PFA-SMR aspect: emit one `bindkey` event per real binding. The
+        // last two non-flag args are (sequence, widget); -M MAP / -A NEW
+        // OLD / list flags don't bind a new key.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let mut keymap: Option<&str> = None;
+            let mut listing_only = args.is_empty();
+            let mut positional: Vec<&str> = Vec::new();
+            let mut iter = args.iter().peekable();
+            while let Some(a) = iter.next() {
+                match a.as_str() {
+                    "-M" | "-A" | "-N" | "-R" => {
+                        keymap = iter.next().map(String::as_str);
+                    }
+                    "-l" | "-L" | "-d" | "-r" | "-e" | "-v" => listing_only = true,
+                    s if s.starts_with('-') => {}
+                    _ => positional.push(a.as_str()),
+                }
+            }
+            if !listing_only && positional.len() >= 2 {
+                let ctx = self.recorder_ctx();
+                let seq = positional[positional.len() - 2];
+                let widget = positional[positional.len() - 1];
+                let value = match keymap {
+                    Some(km) => format!("[{}] {}", km, widget),
+                    None => widget.to_string(),
+                };
+                crate::recorder::emit_bindkey(seq, &value, ctx);
+            }
+        }
 
         if args.is_empty() {
             // List all bindings in main keymap
@@ -38138,6 +38621,23 @@ impl ShellExecutor {
 
     /// sched - scheduled command execution (stub)
     fn builtin_sched(&mut self, args: &[String]) -> i32 {
+        // PFA-SMR aspect: emit a `sched` event when the call schedules
+        // (not when it lists or deletes). The first non-flag arg is the
+        // time spec; the remainder is the command.
+        #[cfg(feature = "recorder")]
+        if crate::recorder::is_enabled() {
+            let positional: Vec<&str> = args
+                .iter()
+                .filter(|a| !(a.len() > 1 && a.starts_with('-')))
+                .map(String::as_str)
+                .collect();
+            if positional.len() >= 2 {
+                let ctx = self.recorder_ctx();
+                let when = positional[0];
+                let cmd = positional[1..].join(" ");
+                crate::recorder::emit_sched(when, &cmd, ctx);
+            }
+        }
         // Direct port of zsh/Src/Builtins/sched.c:150 bin_sched.
         use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

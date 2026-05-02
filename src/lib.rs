@@ -106,6 +106,11 @@ pub mod plugin_cache;
 pub mod prompt;
 pub mod random;
 pub mod random_real;
+// Plugin-Framework-Agnostic State-Modification Recorder. Entire module
+// is `#![cfg(feature = "recorder")]` so it disappears from the default
+// `zshrs` build at the rustc-expansion stage. See docs/RECORDER.md.
+#[cfg(feature = "recorder")]
+pub mod recorder;
 pub mod regex_mod;
 pub mod rlimits;
 pub mod sched;

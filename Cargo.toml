@@ -19,6 +19,15 @@ path = "src/lib.rs"
 name = "zshrs"
 path = "bins/zshrs.rs"
 
+# Plugin-Framework-Agnostic State-Modification Recorder. See docs/RECORDER.md.
+# Cargo refuses to build this bin without --features recorder, which is the
+# mechanism that keeps every recorder symbol out of the default `zshrs`
+# binary (Rule 1: zero recorder code in default build).
+[[bin]]
+name = "zshrs-recorder"
+path = "bins/zshrs-recorder.rs"
+required-features = ["recorder"]
+
 [dependencies]
 ctrlc = "3"
 atty = "0.2"
@@ -79,6 +88,14 @@ default = ["daemon"]
 # port-only lib work shouldn't depend on it. Stubs in src/lib.rs cover the
 # few `crate::daemon::*` references when this feature is off.
 daemon = ["zshrs-daemon"]
+# Plugin-Framework-Agnostic State-Modification Recorder (PFA-SMR).
+# OFF by default — every recorder symbol is `#[cfg(feature = "recorder")]`
+# gated and deleted by rustc when this feature is off, satisfying
+# docs/RECORDER.md's "zero recorder code in default `zshrs` binary" rule.
+# Built into the separate `zshrs-recorder` binary only. Implies `daemon`
+# because the recorder's whole purpose is to ship its bundle to the
+# daemon at end-of-run via IPC.
+recorder = ["daemon"]
 profiling = []
 flamegraph = ["tracing-flame"]
 prometheus = ["metrics", "metrics-exporter-prometheus"]
