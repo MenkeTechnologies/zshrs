@@ -25,33 +25,28 @@ pub mod log;
 pub mod ops;
 pub mod paths;
 pub mod pidlock;
-pub mod plugin_walk;
 pub mod pubsub;
 pub mod server;
 pub mod shard;
 pub mod source_resolver;
 pub mod state;
 pub mod ticker;
-pub mod walk;
 pub mod zask;
 pub mod zask_builtin;
 pub mod zcomplete_builtin;
 pub mod zhistory_builtin;
 pub mod zjob_builtin;
-pub mod zshrc_analysis;
 pub mod zsource_builtin;
 pub mod zsync;
 pub mod zsync_builtin;
 
-// Real zsh lexer + parser. Lives in the standalone `zshrs-parse` workspace
-// crate so this daemon and the main `zsh` runtime share one impl. The
-// older daemon-local `zsh_lexer.rs` / `zsh_parser.rs` / `zsh_tokens.rs`
-// were verbatim copies and have been removed in favour of the shared
-// crate. Per the original directive: "remove all regex bullshit, use the
-// parser to build AST of ALL CONFIG FILES, walk AST and get all data
-// into rkyv". `ast_walker` now drives `zshrs_parse::lexer::ZshLexer`
-// + `zshrs_parse::parser::ZshParser` directly.
-pub mod ast_walker;
+// The static AST-walk pipeline (`ast_walker`, `walk`, `plugin_walk`,
+// `zshrc_analysis`) was removed: state attribution comes from
+// `zshrs-recorder` (runtime AOP intercept, see docs/RECORDER.md) instead
+// of parsing user config files. The daemon still services cache ops and
+// fsnotify-driven shard-update broadcasts, but never re-derives state by
+// walking sources. New plugin installs require the user to re-run
+// `zshrs-recorder`.
 
 pub use ipc::{Event, Frame, Hello, ProtocolVersion, Welcome, PROTOCOL_VERSION};
 pub use paths::CachePaths;

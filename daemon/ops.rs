@@ -30,10 +30,13 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "notify" => op_notify(state, client_id, args).await,
         "daemon" => op_daemon(state, args).await,
 
-        "rebuild" => op_rebuild(state, args).await,
-        "zshrc_analyze" => op_zshrc_analyze(state, args).await,
-        "first_init" => op_first_init(state, args).await,
-        "plugin_discover" => op_plugin_discover(state, args).await,
+        // The static `rebuild` / `zshrc_analyze` / `first_init` /
+        // `plugin_discover` ops were the AST-walker pipeline. They are
+        // deleted: state attribution now comes from `zshrs-recorder`
+        // (runtime AOP intercept). When the user installs new plugins
+        // or edits .zshrc, they re-run `zshrs-recorder` to re-index;
+        // the daemon no longer walks anything itself.
+        "recorder_ingest" => op_recorder_ingest(state, args).await,
         "canonical_hydrate_view" => op_canonical_hydrate_view(state).await,
         "clean" => op_clean(state, args).await,
         "verify" => op_verify(state).await,
@@ -458,445 +461,17 @@ async fn op_daemon(state: &Arc<DaemonState>, args: Value) -> OpResult {
     }
 }
 
-// -------- rebuild / clean / verify / compact --------
-
-async fn op_rebuild(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    // For v1: a single 'system' shard is rebuilt from the daemon's process env $PATH +
-    // $FPATH. The shard arg is accepted for forward-compat but we always rebuild the
-    // system shard right now (per-shard partial rebuild arrives with the .zshrc
-    // analysis pass producing distinct shards per source root).
-    let _shard_filter = args.get("shard").and_then(Value::as_str);
-    let async_mode = args.get("async").and_then(Value::as_bool).unwrap_or(false);
-    // `zcache rebuild --parallel N` per DAEMON.md:684. Caps the global
-    // rayon pool size for the duration of this rebuild via a thread-pool
-    // builder. N=0 means default (let rayon decide).
-    let parallel = args.get("parallel").and_then(Value::as_u64).unwrap_or(0) as usize;
-    if parallel > 0 {
-        // Daemon's walk path is sequential today (the work is dominated by
-        // syscalls, not CPU). The flag is accepted and recorded for
-        // observability so the user gets a clear "noted, no effect at this
-        // scale" rather than `bad_args`. When walk_paths gains rayon-driven
-        // dispatch, this log line becomes the dispatch-cap setter.
-        tracing::info!(
-            parallel,
-            "rebuild: --parallel acknowledged (no-op; walk is single-threaded today)"
-        );
-    }
-
-    if async_mode {
-        // Async path: spawn a background task, return job_id immediately.
-        // rebuild_complete event fires when the walk finishes.
-        let job_id = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-        let bg_state = Arc::clone(state);
-        tokio::spawn(async move {
-            let start = std::time::Instant::now();
-            let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-            match super::walk::run_full_rebuild(&bg_state, generation) {
-                Ok((image_path, hydrated, _stats)) => {
-                    let event = json!({
-                        "job_id": job_id,
-                        "shard": "system",
-                        "generation": generation,
-                        "duration_ms": start.elapsed().as_millis() as u64,
-                        "entries_hydrated": hydrated,
-                        "image_path": image_path.display().to_string(),
-                    });
-                    let _ = bg_state
-                        .broadcast(super::ipc::Frame::event("rebuild_complete", event), &[]);
-                }
-                Err(e) => {
-                    tracing::warn!(?e, %job_id, "async rebuild failed");
-                    let event = json!({
-                        "job_id": job_id,
-                        "shard": "system",
-                        "error": e.to_string(),
-                    });
-                    let _ =
-                        bg_state.broadcast(super::ipc::Frame::event("rebuild_failed", event), &[]);
-                }
-            }
-        });
-        return Ok(json!({
-            "job_id": job_id,
-            "async": true,
-            "rebuilt": ["system"],
-        }));
-    }
-
-    let start = std::time::Instant::now();
-    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    let (image_path, hydrated, stats) = match super::walk::run_full_rebuild(state, generation) {
-        Ok(v) => v,
-        Err(e) => return Err(ErrPayload::new("rebuild_failed", e.to_string())),
-    };
-    let duration_ms = start.elapsed().as_millis() as u64;
-
-    // Broadcast rebuild_complete event so subscribers tracking shard updates
-    // can re-mmap. Per docs/DAEMON.md async event types.
-    let event = json!({
-        "shard": "system",
-        "generation": generation,
-        "duration_ms": duration_ms,
-        "entries_hydrated": hydrated,
-        "image_path": image_path.display().to_string(),
-    });
-    let _ = state.broadcast(super::ipc::Frame::event("rebuild_complete", event), &[]);
-
-    Ok(json!({
-        "rebuilt": ["system"],
-        "path": image_path.display().to_string(),
-        "generation": generation,
-        "entries_hydrated": hydrated,
-        "walk_stats": stats,
-        "duration_ms": duration_ms,
-    }))
-}
-
-/// `zshrc_analyze` — run the analysis pass on `.zshrc` (or any source-style
-/// file) plus every file transitively `source`d, capture deterministic state
-/// (aliases / functions / setopt / bindkey / hash -d / compdef / zstyle /
-/// zmodload / env / params / path+= / fpath+=), and seed the canonical table
-/// with the result. After this, `zcache export aliases`, `zcache export path`,
-/// etc. emit the discovered values directly. Per docs/DAEMON.md "Starting
-/// state served by daemon" + "Walk lifecycle — first init".
-async fn op_zshrc_analyze(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    let path_str = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path`"))?;
-    let path = std::path::Path::new(path_str);
-    if !path.exists() {
-        return Err(ErrPayload::new(
-            "no_such_file",
-            format!("`{}` not found", path.display()),
-        ));
-    }
-
-    let analysis = super::ast_walker::analyze_with_ast(path)
-        .map_err(|e| ErrPayload::new("analyze_failed", e.to_string()))?;
-
-    // Seed the rkyv-backed canonical engine. SQLite is not touched here; the
-    // hydrated `canonical` view table is refreshed lazily on `zcache hydrate-view`.
-    let mut captured = 0usize;
-    let canon = &state.canonical;
-    for (k, v) in &analysis.aliases {
-        captured += canon.upsert("alias", k, &json_string(v), None);
-    }
-    for (k, v) in &analysis.global_aliases {
-        captured += canon.upsert("galias", k, &json_string(v), None);
-    }
-    for (k, v) in &analysis.suffix_aliases {
-        captured += canon.upsert("salias", k, &json_string(v), None);
-    }
-    for (k, v) in &analysis.named_dirs {
-        captured += canon.upsert("named_dir", k, &json_string(v), None);
-    }
-    for (k, v) in &analysis.compdef {
-        captured += canon.upsert("compdef", k, &json_string(v), None);
-    }
-    for (k, v) in &analysis.bindkeys {
-        captured += canon.upsert("bindkey", k, &json_string(v), None);
-    }
-    for (k, v) in &analysis.env_exports {
-        captured += canon.upsert("env", k, &json_string(v), None);
-    }
-    for (k, v) in &analysis.params {
-        captured += canon.upsert("params", k, &json_string(v), None);
-    }
-    for opt in &analysis.setopts {
-        captured += canon.upsert("setopt", opt, "\"on\"", None);
-    }
-    for opt in &analysis.unsetopts {
-        captured += canon.upsert("setopt", opt, "\"off\"", None);
-    }
-    for module in &analysis.zmodload {
-        captured += canon.upsert("zmodload", module, "\"loaded\"", None);
-    }
-    for (i, dir) in analysis.path_additions.iter().enumerate() {
-        captured += canon.upsert("path", &i.to_string(), &json_string(dir), None);
-    }
-    for (i, dir) in analysis.fpath_additions.iter().enumerate() {
-        captured += canon.upsert("fpath", &i.to_string(), &json_string(dir), None);
-    }
-    for (i, dir) in analysis.manpath_additions.iter().enumerate() {
-        captured += canon.upsert("manpath", &i.to_string(), &json_string(dir), None);
-    }
-    for (name, body) in &analysis.functions {
-        captured += canon.upsert("function", name, &json_string(body), None);
-    }
-    for (pat, rest) in &analysis.zstyle {
-        captured += canon.upsert("zstyle", pat, &json_string(rest), None);
-    }
-
-    // Persist the seeded state to the rkyv shard AND mirror into SQLite
-    // via persist_canonical (rkyv is authoritative, SQLite is a hydrated
-    // read-only mirror — every canonical mutation refreshes both).
-    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    if let Err(e) = state.persist_canonical(generation) {
-        tracing::warn!(?e, "canonical: persist after analyze failed");
-    }
-    // Refresh the top-level index so downstream tooling sees the new
-    // canonical shard's generation. Strict-ordering guarantee per
-    // DAEMON.md:184-185 — shard always written before index update.
-    if let Err(e) = super::shard::rebuild_index(&state.paths) {
-        tracing::warn!(?e, "rebuild_index after analyze failed (non-fatal)");
-    }
-
-    // Register the .zshrc + every transitively-sourced file with the
-    // fsnotify watcher under WatchKind::ZshrcSource. Future modifications
-    // trigger re-analysis automatically (handled in fsnotify::reanalyze_zshrc).
-    let mut watch_paths = vec![path.display().to_string()];
-    for src in &analysis.sourced_files {
-        watch_paths.push(src.clone());
-    }
-    for wp_path_str in watch_paths {
-        let wp_path = std::path::PathBuf::from(&wp_path_str);
-        if !wp_path.exists() {
-            continue;
-        }
-        let wp = super::fsnotify::WatchedPath {
-            path: wp_path,
-            shard_slug: format!("zshrc-{}", super::shard::hash8(&wp_path_str)),
-            source_root: path.display().to_string(), // re-analysis target
-            kind: super::fsnotify::WatchKind::ZshrcSource,
-        };
-        if let Err(e) = state.fs_watcher.watch_path(wp, false) {
-            tracing::warn!(?e, path=%wp_path_str, "fsnotify watch failed for zshrc source");
-        }
-    }
-
-    // Per-source-root replay log: every non-deterministic line that the
-    // analyzer couldn't fold into canonical state. Per docs/DAEMON.md
-    // "Determinism boundary" (line 278). Clients fetch this on boot via
-    // op_replay_log and execute it locally — preserves correctness for
-    // .zshrc fragments that depend on $$ / $RANDOM / $(date) / etc.
-    let replay_path = write_replay_log(
-        state,
-        &path.display().to_string(),
-        &analysis.non_deterministic_lines,
-    )
-    .unwrap_or_default();
-
-    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-    let event = serde_json::json!({
-        "subsystem": "*",
-        "row_count": captured,
-        "set_at_ns": now,
-        "set_by_shell": 0,
-        "source": path.display().to_string(),
-        "replay_path": replay_path,
-    });
-    state.broadcast(super::ipc::Frame::event("canonical_changed", event), &[]);
-
-    Ok(json!({
-        "captured": captured,
-        "files_analyzed": analysis.stats.files_analyzed,
-        "lines_total": analysis.stats.lines_total,
-        "lines_deterministic": analysis.stats.lines_deterministic,
-        "lines_non_deterministic": analysis.stats.lines_non_deterministic,
-        "duration_ms": analysis.stats.duration_ms,
-        "plugins": analysis.plugin_decls.iter().map(|p| serde_json::json!({
-            "manager": p.manager, "name": p.name, "source_path": p.source_path,
-        })).collect::<Vec<_>>(),
-        "sourced_files": analysis.sourced_files,
-        "aliases": analysis.aliases.len(),
-        "functions": analysis.functions.len(),
-        "setopts": analysis.setopts.len(),
-        "env_exports": analysis.env_exports.len(),
-        "path_additions": analysis.path_additions.len(),
-        "replay_path": replay_path,
-        "fpath_additions": analysis.fpath_additions.len(),
-    }))
-}
-
-/// Emit the per-source-root replay log under `~/.cache/zshrs/replay/`. Per
-/// docs/DAEMON.md "Determinism boundary" — the small file holds the
-/// non-deterministic .zshrc fragments that the daemon can't pre-bake. The
-/// client reads it at boot via `op_replay_log` and executes it in-process.
-///
-/// Filename: `{hash8}-{slug}.zsh` where hash8 is taken from the absolute
-/// source-root path so each user's `.zshrc` (or wherever) gets a stable name.
-/// Returns the path the file was written to, or empty string on failure.
-fn write_replay_log(
-    state: &Arc<DaemonState>,
-    source_root: &str,
-    fragments: &[String],
-) -> std::io::Result<String> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-
-    let _ = std::fs::create_dir_all(&state.paths.replay_dir);
-    let hash8 = super::shard::hash8(source_root);
-    let stem = std::path::Path::new(source_root)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .map(|s| s.replace('.', "_"))
-        .unwrap_or_else(|| "anon".to_string());
-    let dest = state
-        .paths
-        .replay_dir
-        .join(format!("{}-{}.zsh", hash8, stem));
-    let tmp = dest.with_extension("zsh.tmp");
-
-    let mut body = String::new();
-    body.push_str("# zshrs replay log — non-deterministic .zshrc fragments\n");
-    body.push_str(&format!("# source: {}\n", source_root));
-    body.push_str(&format!("# fragments: {}\n", fragments.len()));
-    body.push_str(&format!(
-        "# generated: {}\n\n",
-        chrono::Utc::now().to_rfc3339()
-    ));
-    for line in fragments {
-        body.push_str(line);
-        if !line.ends_with('\n') {
-            body.push('\n');
-        }
-    }
-
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .mode(0o600)
-        .open(&tmp)?;
-    f.write_all(body.as_bytes())?;
-    f.sync_all()?;
-    drop(f);
-    std::fs::rename(&tmp, &dest)?;
-
-    tracing::info!(
-        source = source_root,
-        path = %dest.display(),
-        fragments = fragments.len(),
-        "replay log written"
-    );
-    Ok(dest.display().to_string())
-}
-
-fn json_string(s: &str) -> String {
-    serde_json::Value::String(s.to_string()).to_string()
-}
-
-/// `plugin_discover` — walks ~/.zinit/plugins + ~/.zinit/snippets, picks the
-/// init script of each, runs analyze on it, captures per-plugin state into
-/// a per-plugin rkyv shard, folds the union into the canonical engine.
-/// Per docs/DAEMON.md "Plugin discovery happens at the same time as `.zshrc`
-/// analysis: daemon walks the user's `.zshrc`, sees zinit/OMZ/source calls,
-/// descends into each referenced plugin, parses + bytecode-compiles
-/// per-plugin shards (`{hash8}-plugin-{name}.rkyv`), captures every state
-/// contribution".
-async fn op_plugin_discover(state: &Arc<DaemonState>, _args: Value) -> OpResult {
-    let (stats, records) = super::plugin_walk::run_full_discovery(&state.paths, &state.canonical)
-        .map_err(|e| ErrPayload::new("plugin_walk_failed", e.to_string()))?;
-    // Refresh SQLite hydration after plugin discoveries roll into canonical
-    // — keeps the inspection mirror fresh for `zcache view function <name>`.
-    if let Err(e) = state.canonical.hydrate_sqlite_view(state) {
-        tracing::warn!(
-            ?e,
-            "hydrate after plugin_discover failed (rkyv authoritative)"
-        );
-    }
-    Ok(json!({
-        "stats": stats,
-        "plugins": records,
-    }))
-}
-
-/// `first_init` — single-shot multi-pass walk lifecycle. Per docs/DAEMON.md
-/// "Walk lifecycle — first init" Pass 1-4:
-///   Pass 1+2: analyze_with_sources(.zshrc + transitive) → canonical state
-///   Pass 3:   walk_paths over the now-resolved $PATH/$FPATH → command_hash
-///             + autoload_table
-///   Pass 4:   serialize system shard, hydrate catalog.entries, register
-///             watches.
-///
-/// Replaces the manual `zcache rebuild --zshrc <path> && zcache rebuild`
-/// dance. Returns combined stats from both passes.
-async fn op_first_init(state: &Arc<DaemonState>, args: Value) -> OpResult {
-    let started_at = std::time::Instant::now();
-
-    // ------ Pass 1+2: .zshrc analysis ------
-    let analysis_resp = if let Some(path) = args.get("zshrc").and_then(Value::as_str) {
-        Some(op_zshrc_analyze(state, json!({ "path": path })).await?)
-    } else {
-        None
-    };
-
-    // ------ Pass 3: plugin tree discovery (must run before walk so plugin
-    // fpath_additions land in canonical before walk reads from canonical).
-    let (plugin_stats, plugin_records) =
-        super::plugin_walk::run_full_discovery(&state.paths, &state.canonical)
-            .map_err(|e| ErrPayload::new("plugin_walk_failed", e.to_string()))?;
-
-    // ------ Pass 4+5: walk $PATH + $FPATH using FULL canonical state
-    // (.zshrc analysis + plugin contributions). This is where the 18k+
-    // autoload bodies get loaded into rkyv. Order matters: plugin
-    // discovery first so its fpath additions are visible to the walk.
-    let generation = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    let (image_path, hydrated, walk_stats) = super::walk::run_full_rebuild(state, generation)
-        .map_err(|e| ErrPayload::new("rebuild_failed", e.to_string()))?;
-
-    // ------ Pass 6: hydrate SQLite mirror from rkyv-canonical. Per
-    // DAEMON.md "rkyv = source of truth, SQLite = hydrated mirror". After
-    // analyze + plugin discovery, every alias/function/compdef/path/etc
-    // captured this run lands in the catalog.canonical table so users can
-    // `zcache view function <name>` / sqlite3 it directly.
-    let hydrated_rows = state
-        .canonical
-        .hydrate_sqlite_view(state)
-        .unwrap_or_else(|e| {
-            tracing::warn!(?e, "hydrate after first_init failed (rkyv authoritative)");
-            0
-        });
-
-    // ------ Final pass: rebuild top-level index.rkyv. Per docs/DAEMON.md:
-    // 184-185 strict ordering — every shard atomic-renamed first, then
-    // index.rkyv last so a torn read is impossible.
-    if let Err(e) = super::shard::rebuild_index(&state.paths) {
-        tracing::warn!(?e, "rebuild_index after first_init failed (non-fatal)");
-    }
-
-    // Cold-build-complete notice per docs/DAEMON.md:892. Emitted as a single
-    // `notify` event (OSC-9 / status-line ready on every connected shell)
-    // with elapsed time + entry count. Per the no-banner rule everywhere else,
-    // this fires only on a true first-init (cold cache) — subsequent rebuilds
-    // emit `rebuild_complete` instead, which is silent for the user.
-    let elapsed_ms = started_at.elapsed().as_millis() as u64;
-    let elapsed_s = elapsed_ms / 1000;
-    let total_entries = hydrated + plugin_records.len();
-    let msg = format!(
-        "daemon ready — future shells <10ms cold-start (took {}s, {} entries)",
-        elapsed_s, total_entries,
-    );
-    let notify_payload = json!({
-        "from_shell": 0,
-        "message": msg,
-        "urgency": "low",
-        "kind": "first_init_complete",
-        "elapsed_ms": elapsed_ms,
-        "entries": total_entries,
-    });
-    let _ = state.broadcast(super::ipc::Frame::event("notify", notify_payload), &[]);
-    tracing::info!(elapsed_ms, total_entries, "first_init complete");
-
-    Ok(json!({
-        "passes": ["analyze", "walk", "hydrate_catalog", "plugin_walk", "hydrate_canonical_view", "rebuild_index"],
-        "analysis": analysis_resp,
-        "walk": {
-            "image_path": image_path.display().to_string(),
-            "entries_hydrated": hydrated,
-            "stats": walk_stats,
-        },
-        "plugins": {
-            "stats": plugin_stats,
-            "count": plugin_records.len(),
-        },
-        "canonical_view_rows": hydrated_rows,
-        "generation": generation,
-        "elapsed_ms": elapsed_ms,
-    }))
-}
+// The `op_rebuild`, `op_zshrc_analyze`, `op_first_init`, and
+// `op_plugin_discover` handlers (~440 lines) lived here. They drove the
+// AST-walk pipeline (`daemon/walk.rs`, `daemon/plugin_walk.rs`,
+// `daemon/ast_walker.rs`), all deleted. State attribution is now sourced
+// from `zshrs-recorder` (see docs/RECORDER.md) — runtime AOP intercept
+// during shell init pushes records to the canonical engine. The daemon
+// still hosts cache-management ops (`op_clean` / `op_verify` /
+// `op_compact` / `op_canonical_hydrate_view`) and reacts to fsnotify
+// events (broadcast `shard_updated` to subscribed shells), but never
+// re-derives state by walking sources. New plugin installs require the
+// user to re-run `zshrs-recorder`.
 
 /// `cmd_started` — shell-side hook fires this when a command crosses the
 /// long-running threshold (5s by default) without having completed. Daemon
@@ -1644,6 +1219,316 @@ async fn op_canonical_hydrate_view(state: &Arc<DaemonState>) -> OpResult {
         "rows_written": n,
         "total_in_memory": state.canonical.total_rows(),
     }))
+}
+
+/// `recorder_ingest` — single-shot end-of-recording handoff. Receives the
+/// full event bundle from `zshrs-recorder`, folds every `(kind, name,
+/// value, file, line, fn_chain, ts_ns, order_idx)` row into the canonical
+/// engine (replacing every recorder-managed subsystem so removed
+/// definitions actually disappear), writes a fresh `system` rkyv shard,
+/// hydrates the SQLite mirror, and broadcasts `recorder_ingested` so any
+/// subscribed shell re-mmaps. Per docs/RECORDER.md: only the recorder can
+/// observe state at 100% fidelity, so this is the daemon's only path for
+/// learning .zshrc state — the static-walk pipeline was deleted.
+async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    use std::collections::HashMap;
+
+    let started = std::time::Instant::now();
+
+    // Per-event view of the recorder bundle. Keep this in sync with
+    // `src/recorder/mod.rs::RecordEvent` — they share the wire format.
+    #[derive(serde::Deserialize)]
+    struct EvIn {
+        order_idx: u64,
+        ts_ns: u64,
+        kind: String,
+        name: String,
+        value: Option<String>,
+        file: Option<String>,
+        line: Option<u32>,
+        fn_chain: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct BundleIn {
+        started_at_ns: u64,
+        finished_at_ns: u64,
+        cmdline: Option<String>,
+        zdotdir: Option<String>,
+        home: Option<String>,
+        events: Vec<EvIn>,
+    }
+
+    let bundle: BundleIn = serde_json::from_value(args)
+        .map_err(|e| ErrPayload::new("bad_args", format!("recorder bundle: {e}")))?;
+    let total = bundle.events.len();
+
+    // Per-subsystem buckets for `replace_subsystem` (so a re-recorder
+    // run drops every previous row in that subsystem and replaces with
+    // the fresh capture — recorder bundle is authoritative end-state).
+    let mut aliases: HashMap<String, String> = HashMap::new();
+    let mut galias: HashMap<String, String> = HashMap::new();
+    let mut salias: HashMap<String, String> = HashMap::new();
+    let mut functions: HashMap<String, String> = HashMap::new();
+    let mut env_exports: HashMap<String, String> = HashMap::new();
+    let mut params: HashMap<String, String> = HashMap::new();
+    let mut bindkeys: HashMap<String, String> = HashMap::new();
+    let mut compdef: HashMap<String, String> = HashMap::new();
+    let mut named_dirs: HashMap<String, String> = HashMap::new();
+    let mut zstyle: Vec<(String, String)> = Vec::new();
+    let mut zmodload: Vec<String> = Vec::new();
+    let mut setopts: Vec<String> = Vec::new();
+    let mut unsetopts: Vec<String> = Vec::new();
+    let mut traps: HashMap<String, String> = HashMap::new();
+    let mut sched: HashMap<String, String> = HashMap::new();
+    let mut sourced: Vec<String> = Vec::new();
+    // path/fpath/manpath are positional; we capture in event order.
+    let mut path_acc: Vec<String> = Vec::new();
+    let mut fpath_acc: Vec<String> = Vec::new();
+
+    for ev in &bundle.events {
+        match ev.kind.as_str() {
+            "alias" => {
+                aliases.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "alias -g" | "galias" => {
+                galias.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "alias -s" | "salias" => {
+                salias.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "function" => {
+                functions.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "export" => {
+                env_exports.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "assign" | "typeset" => {
+                params.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "bindkey" => {
+                bindkeys.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "compdef" => {
+                compdef.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "hash -d" | "hash_d" => {
+                named_dirs.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "zstyle" => {
+                zstyle.push((ev.name.clone(), ev.value.clone().unwrap_or_default()));
+            }
+            "zmodload" => {
+                zmodload.push(ev.name.clone());
+            }
+            "setopt" => setopts.push(ev.name.clone()),
+            "unsetopt" => unsetopts.push(ev.name.clone()),
+            "trap" => {
+                traps.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "sched" => {
+                sched.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "source" => sourced.push(ev.name.clone()),
+            "path_mod" => {
+                let target = ev.value.as_deref().unwrap_or("");
+                if target == "fpath" {
+                    fpath_acc.push(ev.name.clone());
+                } else {
+                    path_acc.push(ev.name.clone());
+                }
+            }
+            other => {
+                tracing::debug!(other, "recorder_ingest: unknown kind, ignored");
+            }
+        }
+        let _ = (ev.order_idx, ev.ts_ns, &ev.file, ev.line, &ev.fn_chain);
+    }
+
+    // Replace subsystems wholesale — recorder bundle is end-state.
+    let canon = &state.canonical;
+    canon.replace_subsystem(
+        "alias",
+        aliases.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "galias",
+        galias.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "salias",
+        salias.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "function",
+        functions.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "env",
+        env_exports.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "params",
+        params.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "bindkey",
+        bindkeys.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "compdef",
+        compdef.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "named_dir",
+        named_dirs.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "zstyle",
+        zstyle
+            .iter()
+            .enumerate()
+            .map(|(i, (p, r))| (format!("{}:{}", i, p), json_string(r))),
+        None,
+    );
+    canon.replace_subsystem(
+        "zmodload",
+        zmodload.iter().map(|m| (m.clone(), json_string(""))),
+        None,
+    );
+    canon.replace_subsystem(
+        "setopt",
+        setopts
+            .iter()
+            .map(|o| (o.clone(), "\"on\"".to_string()))
+            .chain(unsetopts.iter().map(|o| (o.clone(), "\"off\"".to_string()))),
+        None,
+    );
+    canon.replace_subsystem(
+        "trap",
+        traps.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "sched",
+        sched.iter().map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "source",
+        sourced
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i.to_string(), json_string(p))),
+        None,
+    );
+    canon.replace_subsystem(
+        "path",
+        path_acc
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i.to_string(), json_string(d))),
+        None,
+    );
+    canon.replace_subsystem(
+        "fpath",
+        fpath_acc
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (i.to_string(), json_string(d))),
+        None,
+    );
+
+    // Build the rkyv shard from the just-folded canonical state.
+    let source_root = bundle
+        .zdotdir
+        .clone()
+        .or_else(|| bundle.home.clone())
+        .unwrap_or_else(|| "<recorder>".to_string());
+    let header = super::shard::ShardHeader {
+        magic: 0,
+        format_version: 0,
+        generation: bundle.finished_at_ns,
+        built_at_ns: bundle.finished_at_ns,
+        slug: "recorder".to_string(),
+        source_root: source_root.clone(),
+        entry_count: total as u32,
+    };
+    let shard = super::shard::CanonicalShard {
+        header,
+        aliases,
+        global_aliases: galias,
+        suffix_aliases: salias,
+        functions,
+        autoload_functions: HashMap::new(),
+        setopts,
+        unsetopts,
+        bindkeys,
+        named_dirs,
+        compdef,
+        zstyle,
+        zmodload,
+        env_exports,
+        params,
+        path: path_acc,
+        fpath: fpath_acc,
+        manpath: Vec::new(),
+        plugins: Vec::new(),
+        sourced_files: sourced,
+        extras: HashMap::new(),
+    };
+    let shard_path = match super::shard::write_canonical_shard(&state.paths, &shard) {
+        Ok(p) => p.display().to_string(),
+        Err(e) => {
+            tracing::warn!(?e, "recorder_ingest: shard write failed (canonical kept)");
+            String::new()
+        }
+    };
+
+    // Hydrate SQLite mirror so `zcache view ...` is fresh.
+    let hydrated = match canon.hydrate_sqlite_view(state) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(?e, "recorder_ingest: hydrate failed (rkyv authoritative)");
+            0
+        }
+    };
+
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let payload = json!({
+        "events_ingested": total,
+        "rows_written": hydrated,
+        "shard_path": shard_path,
+        "elapsed_ms": elapsed_ms,
+        "started_at_ns": bundle.started_at_ns,
+        "finished_at_ns": bundle.finished_at_ns,
+        "cmdline": bundle.cmdline.unwrap_or_default(),
+    });
+    let _ = state.broadcast(
+        super::ipc::Frame::event("recorder_ingested", payload.clone()),
+        &[],
+    );
+    tracing::info!(
+        events = total,
+        hydrated,
+        elapsed_ms,
+        "recorder_ingest complete"
+    );
+    Ok(payload)
+}
+
+/// Local helper: JSON-string-encode a value so canonical rows store the
+/// same shape (escaped + quoted) the legacy walker pipeline used.
+fn json_string(s: &str) -> String {
+    serde_json::Value::String(s.to_string()).to_string()
 }
 
 async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {

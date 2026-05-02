@@ -1144,6 +1144,173 @@ For users not yet on zshrs: this is one of the strongest
 parallel-completion-load and AOT-compiled startup. Faster startup
 is incremental; this is qualitatively new capability.
 
+## Shell environments as portable, version-controlled, distributable artifacts
+
+Once the recorder produces a complete end-state artifact (the rkyv shard
++ definitions table for one run), the shell environment itself becomes a
+file that can be treated like any other build output. This is the
+second-order benefit: not just faster startup, but a structural shift
+in how shell environments are shipped, versioned, audited, and
+reproduced.
+
+### What today's shell-config-as-source-tree model cannot do
+
+Today, "my shell config" is the union of:
+
+- `~/.zshrc`, `~/.zshenv`, `~/.zprofile`, `~/.zlogin`, `$ZDOTDIR/*`
+- Plugin manager state (`~/.zinit/plugins/*` clones, `~/.oh-my-zsh/`
+  install dir, `fisher`'s `fish_plugins` file)
+- `.zcompdump*` (corruptible)
+- `~/.cache/p10k-*`, `~/.zinit/abbrevs/*`, etc.
+- Possibly `/etc/zshrc`, `/etc/zprofile` from system packaging
+- Universal env vars (`fish_variables` for fish; not present in zsh)
+- Implicit dependencies on `$PATH` order, installed binaries, FS layout
+
+This is not a coherent artifact. It cannot be:
+
+- Shipped to another machine deterministically — clone the repo and
+  run zinit update, then hope versions align
+- Reproduced exactly — plugin manager pulls latest commits, `.zcompdump`
+  may corrupt, conditional load branches differ across machines
+- Diffed at the runtime level — `git diff ~/.zshrc` shows source
+  changes; says nothing about whether the resulting shell behaves
+  differently
+- Rolled back atomically — comment out plugins, restart, manually
+  bisect, repeat
+- Published as a unit — there is no unit
+- Signed for supply-chain attestation — there is nothing concrete to
+  sign
+
+### What the recorder's snapshot artifact unlocks
+
+The complete end-state for one recorder run is a small set of files
+(per `docs/DAEMON.md`'s sharded layout):
+
+- `~/.cache/zshrs/recorder-{run_id}.rkyv` — the rkyv shard with
+  every definition record, mmap-ready
+- `~/.cache/zshrs/catalog.sqlite` — the definitions table queryable
+  for inspection
+- `~/.cache/zshrs/manifest-{run_id}.json` — header (modes, source
+  files, timestamps, hash chain)
+
+Together: typically 1-10 MB for even an extreme power-user config
+(zpwr + zsh-more-completions + zinit + 50 plugins). One artifact;
+one byte-checksum-able blob.
+
+### Capability table
+
+| Capability | Source-tree model (today) | Snapshot artifact model (recorder) |
+|---|---|---|
+| Ship to another machine | rsync `~/.zshrc` + clone every plugin repo + run `zinit update` + hope | `scp recorder-{id}.rkyv user@host:~/.cache/zshrs/`; `zshrs` next launch on host has byte-identical shell |
+| Reproducible across machines | broken: plugin version drift, missing dependencies, `.zcompdump` corruption, different fpath, conditional loads | guaranteed: same shard → same state, deterministically |
+| Version control diffs | `git diff ~/.zshrc` shows source changes; says nothing about runtime result | `git diff snap-A.rkyv snap-B.rkyv` (via deserialized form) shows every state change between snapshots |
+| Atomic rollback | manually comment out plugins, restart, debug, repeat | `zwhere snapshot restore <run_id>` swaps the active shard; instant rollback |
+| Branch / experiment | duplicate dotfiles + plugin manager state, manual switch | symlink active shard to a different `recorder-{id}.rkyv` |
+| Audit (security / compliance) | trace through dotfiles → plugin manager → maybe-runs maybe-doesn't | `SELECT * FROM definitions WHERE run_id = ?` — every alias/function/binding visible |
+| Corporate "blessed" environment | dotfile bootstrap script that "works on most machines" | publish `blessed-shell-v2026-Q1.rkyv` to artifact registry; every employee pulls + loads → same shell |
+| Per-project shells | per-repo `.envrc` + direnv + ad-hoc plugin loads | per-repo `.zshrc-snapshot.rkyv`; daemon swaps on `cd` (per `docs/DAEMON.md` source-resolver layer) |
+| Time-travel | "what did my shell look like 6 months ago?" — undefined; no snapshot exists | load 6-month-old shard, diff against current |
+| Bisect a regression | manually comment out plugins until it works | `zwhere snapshot bisect <good_run_id> <bad_run_id>` — binary-search to the offending definition |
+| Ship to CI | install zsh + zinit + plugins + warm `.zcompdump` in CI image — minutes per CI job | drop `recorder-{id}.rkyv` into image; CI shell starts in 50ms vs 5s |
+| Sign for supply-chain | no unit to sign | `zwhere snapshot sign <key>` — sign the shard manifest for trust attestation |
+
+### The Docker analogy is exact
+
+Pre-Docker: deployment was a tree of source + install scripts. Same
+source produced different states across machines because of
+environment drift, package version drift, conditional logic. "Works on
+my machine" was the universal bug class.
+
+Post-Docker: deployment is a byte-identical image. The runtime is
+loading a snapshot, not rebuilding from source. Reproducibility
+becomes free; "works on my machine" becomes "works because the image
+is byte-identical."
+
+The shell ecosystem has been **pre-Docker for 50 years**. Every other
+deployment domain has the snapshot artifact primitive (Docker images,
+VM images, AMIs, Nix store paths, OCI artifacts, IDE workspace
+exports). Shells uniquely lack it. The recorder's rkyv shard is the
+shell-config equivalent of an OCI image — addressable, reproducible,
+distributable, signable.
+
+### Tooling enabled by the snapshot artifact
+
+The recorder ships the build phase. Shipping the full snapshot-artifact
+toolchain on top is straightforward, since the shard format is already
+designed for distribution:
+
+| Subcommand | Purpose | Implementation cost |
+|---|---|---|
+| `zwhere snapshot save [--tag NAME]` | Mark current shard as a named snapshot; copy to `~/.local/share/zshrs/snapshots/` | trivial; copy + manifest update |
+| `zwhere snapshot list` | List all named snapshots with metadata (date, modes, def count, signed-by) | sqlite SELECT |
+| `zwhere snapshot load NAME` | Swap the daemon's active shard atomically | one IPC op + fsync + rkyv mmap re-bind |
+| `zwhere snapshot diff A B` | Show definitions present in A but not B, vice versa, value changes | join the two `definitions` tables on `(kind, name)` |
+| `zwhere snapshot bisect GOOD BAD` | Binary-search the run-order between two snapshots to find first regression | sqlite range queries on `order_idx` |
+| `zwhere snapshot publish [--registry URL]` | Push shard + manifest to a registry (S3, OCI, GitHub releases) | http PUT + content-addressing |
+| `zwhere snapshot pull URL` | Fetch + verify + load a published shard | http GET + signature check + load |
+| `zwhere snapshot sign --key PATH` | Sign manifest with a private key (sigstore-compat) | standard ed25519 + cosign-format manifest |
+| `zwhere snapshot verify --pubkey PATH` | Verify signature against trusted public key | inverse of sign |
+| `zwhere snapshot freeze` | Mark current shard as immutable; subsequent recorder runs go to a new shard | sqlite flag + permission bit |
+
+This is a couple weeks of work on top of Phase 1-5 (the recorder
+itself). Ships as Phase 6.
+
+### Distribution scenario: zpwr as a published shell artifact
+
+Concretely for the zpwr ecosystem:
+
+```sh
+# At zpwr release time (run once on the maintainer's machine):
+zshrs-recorder --tag zpwr-v48.7.3 --env ZPWR_REMOTE=false
+zwhere snapshot save --tag zpwr-v48.7.3
+zwhere snapshot sign --key ~/.config/zshrs/release.key
+zwhere snapshot publish --registry github://MenkeTechnologies/zpwr
+
+# A user who wants zpwr (instead of cloning + running install.sh):
+zwhere snapshot pull github://MenkeTechnologies/zpwr:v48.7.3
+zwhere snapshot load zpwr-v48.7.3
+# done — every alias, function, binding, completion is loaded; cold
+# shell starts in 50ms instead of 3-5s; no zinit, no install.sh, no
+# clone needed
+```
+
+zpwr distribution stops being "clone the repo + run install + hope"
+and becomes "pull the artifact + load." This is the same shift Docker
+made for OS deployment, scoped to the shell layer. zpwr (172k LOC, 506
+subcommands, 2k aliases, 17k completions) compresses to a sub-10MB
+shard that any user can pull and load in under a second.
+
+### Patent-claim addition
+
+A third dependent claim under the global-AOP foundation:
+
+> Method for capturing the complete runtime state of a Unix shell
+> following init-script execution, serializing said state to a
+> portable, content-addressable, signable artifact, and rehydrating
+> said state into a separate shell process via memory-mapped
+> deserialization, enabling deterministic reproduction, atomic
+> rollback, version control, and registry-based distribution of shell
+> environments.
+
+The novelty surface includes:
+
+- **Portable artifact format** — rkyv shard + manifest; content-addressed;
+  signable for supply-chain attestation
+- **Deterministic reproduction across machines** — same shard produces
+  byte-identical shell state, eliminating dotfile drift / plugin version
+  drift / `.zcompdump` corruption
+- **Registry-based distribution** — shells become OCI-image-like artifacts
+  pushable/pullable from registries
+- **Diff/bisect/rollback over runtime state** — operations available on
+  filesystem trees today are extended to shell environments
+
+No existing shell tool produces a portable runtime-state artifact —
+zinit `@zinit-report` is a text report (not loadable), fish's
+universal-variables file is one component (not the full state),
+`.zcompdump` is a single subsystem's cache (corruption-prone, not
+distributable). The shard-as-artifact pattern is novel for the shell
+category.
+
 ## What this beats
 
 | Tool | What it shows | What's missing |
@@ -1372,6 +1539,15 @@ Four structural properties of the recorder:
    state mutations; no static-analysis modeling of zsh's mode matrix
    is required. Each recorder run is tagged with the modes it ran
    in, so `zwhere` queries can target any combination.
+
+5. **Shell environments as portable artifacts.** The end-state shard is a
+   small (1-10MB), content-addressable, signable file. Shells can now
+   be shipped, version-controlled, diffed, bisected, rolled back,
+   signed, and distributed via registries — the Docker model applied
+   to shell config for the first time. zpwr-as-artifact replaces
+   zpwr-as-install-script. Reproducible shells across machines
+   without dotfile drift; corporate blessed-shell publication;
+   per-project shell snapshots; CI shells in 50ms instead of 5s.
 
 15 aspects; bounded surface; existing daemon owns storage; 2-3 weeks
 to ship Phase 1-5; novel against every shell that ships today.

@@ -129,7 +129,12 @@ fn zcache(args: &[String]) -> i32 {
     match verb {
         "info" | "" => zcache_info(),
         "daemon" => zcache_daemon(args.get(2).map(|s| s.as_str()).unwrap_or("status")),
-        "rebuild" => zcache_rebuild(rest),
+        // `rebuild`, `first-init`, `plugin-discover` were the AST-walk-driven
+        // CLI verbs; their daemon ops (`rebuild` / `first_init` /
+        // `plugin_discover` / `zshrc_analyze`) were removed alongside the
+        // walker. State indexing now goes through `zshrs-recorder` — users
+        // re-run that binary after installing new plugins (see
+        // docs/RECORDER.md).
         "clean" => zcache_clean(rest),
         "verify" => zcache_simple_op("verify", json!({})),
         "compact" => zcache_simple_op("compact", json!({})),
@@ -138,8 +143,6 @@ fn zcache(args: &[String]) -> i32 {
         "view" => zcache_view(rest),
         "export" => zcache_export(rest),
         "import" => zcache_import(rest),
-        "first-init" => zcache_first_init(rest),
-        "plugin-discover" => zcache_plugin_discover(),
         "hydrate-view" => zcache_hydrate_view(),
         "watch" => zcache_watch(rest),
         "log" => super::builtins::zlog(args), // alias for `zlog ...`
@@ -410,40 +413,6 @@ fn zcache_export(args: &[String]) -> i32 {
     }
 }
 
-// `zcache first-init [--zshrc <path>]` — single-pass walk lifecycle:
-// .zshrc analyze (Pass 1+2) + $PATH/$FPATH walk (Pass 3) + system shard
-// build + entries hydrate (Pass 4). Replaces the manual
-// `zcache rebuild --zshrc PATH && zcache rebuild` dance.
-fn zcache_first_init(args: &[String]) -> i32 {
-    let mut payload = json!({});
-    let mut iter = args.iter();
-    while let Some(a) = iter.next() {
-        match a.as_str() {
-            "--zshrc" => match iter.next() {
-                Some(p) => {
-                    payload["zshrc"] = Value::String(p.clone());
-                }
-                None => return err_exit("zcache first-init", "--zshrc requires a path"),
-            },
-            other if other.starts_with('-') => {
-                return err_exit("zcache first-init", &format!("unknown flag `{}`", other));
-            }
-            _ => {}
-        }
-    }
-    let mut client = match connect_or_err() {
-        Ok(c) => c,
-        Err(()) => return 1,
-    };
-    match client.call("first_init", payload) {
-        Ok(v) => {
-            print_pretty(&v);
-            0
-        }
-        Err(e) => err_exit("zcache first-init", &e.to_string()),
-    }
-}
-
 // `zcache watch <dir>...` — register one or more directories with the
 // daemon's fsnotify watcher. Used for new fpath / source-root paths that the
 // daemon hasn't already discovered. Maps to the `fpath_changed` IPC op.
@@ -523,26 +492,6 @@ fn zcmd_result(args: &[String]) -> i32 {
             0
         }
         Err(e) => err_exit("zcmd-result", &e.to_string()),
-    }
-}
-
-// `zcache plugin-discover` — walks ~/.zinit/plugins + ~/.zinit/snippets, runs
-// the analyze pass on each plugin's init script, writes a per-plugin rkyv
-// shard, folds union state into the canonical engine. Per docs/DAEMON.md
-// "Plugin discovery happens at the same time as .zshrc analysis".
-fn zcache_plugin_discover() -> i32 {
-    let mut client = match connect_or_err() {
-        Ok(c) => c,
-        Err(()) => return 1,
-    };
-    // Discovery walks dozens of plugins; bump read timeout above the 5s default.
-    let _ = client.set_read_timeout(Some(std::time::Duration::from_secs(120)));
-    match client.call("plugin_discover", json!({})) {
-        Ok(v) => {
-            print_pretty(&v);
-            0
-        }
-        Err(e) => err_exit("zcache plugin-discover", &e.to_string()),
     }
 }
 
@@ -671,42 +620,6 @@ fn zcache_daemon(verb: &str) -> i32 {
         }
         Err(e) => err_exit("zcache daemon", &e.to_string()),
     }
-}
-
-fn zcache_rebuild(args: &[String]) -> i32 {
-    let mut shard: Option<String> = None;
-    let mut zshrc: Option<String> = None;
-    let mut async_mode = false;
-    let mut parallel: Option<u64> = None;
-    let mut iter = args.iter();
-    while let Some(a) = iter.next() {
-        match a.as_str() {
-            "shard" => shard = iter.next().cloned(),
-            "--zshrc" => zshrc = iter.next().cloned(),
-            "--async" => async_mode = true,
-            "--wait" => {} // synchronous already
-            "--parallel" => {
-                parallel = iter.next().and_then(|s| s.parse::<u64>().ok());
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(path) = zshrc {
-        return zcache_simple_op("zshrc_analyze", json!({ "path": path }));
-    }
-
-    let mut payload = match shard {
-        Some(s) => json!({ "shard": s }),
-        None => json!({}),
-    };
-    if let Some(n) = parallel {
-        payload["parallel"] = json!(n);
-    }
-    if async_mode {
-        payload["async"] = json!(true);
-    }
-    zcache_simple_op("rebuild", payload)
 }
 
 fn zcache_clean(args: &[String]) -> i32 {

@@ -90,9 +90,60 @@ jobs:
   # PTY harness designed in docs/ZTST_PTY_HARNESS.md; not CI-gated until that
   # lands. Local manual runs only via `cargo run --bin ztst-runner` once built.
 
+  recorder-harness:
+    # Plugin-Framework-Agnostic State-Modification Recorder (PFA-SMR) ——
+    # see docs/RECORDER.md. The harness in tests/recorder_harness.rs runs
+    # `zshrs-recorder --no-daemon --file PATH` against tests/recorder_corpus/
+    # (synthetic per-kind scripts + verbatim zinit upstream `bin/*.zsh`) and
+    # asserts the per-kind event counts the recorder must produce. A
+    # regression that misses a dispatcher or double-fires one fails the
+    # relevant test with a kind-by-kind diff.
+    #
+    # Hermetic: --no-daemon skips the end-of-run IPC bundle, so the
+    # zshrs-daemon never starts and ~/.cache/zshrs/ is not written.
+    name: Recorder harness
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build with --features recorder
+        run: cargo build --locked --features recorder --bin zshrs-recorder
+      - name: Verify Rule 1 — zero recorder code in default zshrs binary
+        # docs/RECORDER.md §"Zero-overhead default binary": the daily-driver
+        # `zshrs` must contain ZERO `zsh::recorder` symbols. Whitelist: the
+        # daemon-side `op_recorder_ingest` ingest endpoint always ships in
+        # the daemon (different concern; not the shell-runtime AOP layer).
+        # Whitelist: 3rd-party `sqlite3RecordError*` symbols from rusqlite.
+        run: |
+          cargo build --locked --bin zshrs
+          set -e
+          hits=$(nm target/debug/zshrs 2>/dev/null \
+            | grep -i recorder \
+            | grep -v sqlite3RecordError \
+            | grep -v zshrs_daemon \
+            | wc -l \
+            | tr -d ' ')
+          echo "shell-runtime recorder symbols in default zshrs: $hits"
+          if [ "$hits" -ne 0 ]; then
+            echo "FAIL: Rule 1 broken — recorder code leaked into default zshrs"
+            nm target/debug/zshrs 2>/dev/null | grep -i recorder \
+              | grep -v sqlite3RecordError | grep -v zshrs_daemon
+            exit 1
+          fi
+      - name: Run recorder harness
+        run: cargo test --locked --features recorder --test recorder_harness -- --nocapture
+
   release-build:
     name: Release Build
-    needs: [check, test, doc, corpus]
+    needs: [check, test, doc, corpus, recorder-harness]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
