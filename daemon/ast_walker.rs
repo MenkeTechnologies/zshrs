@@ -35,8 +35,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::zsh_lexer::{untokenize, ZshLexer};
-use super::zsh_parser::{
+use zshrs_parse::lexer::{untokenize, ZshLexer};
+use zshrs_parse::parser::{
     ZshAssign, ZshAssignValue, ZshCommand, ZshFuncDef, ZshList, ZshParser, ZshPipe, ZshProgram,
     ZshSimple, ZshSublist,
 };
