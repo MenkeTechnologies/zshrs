@@ -24,9 +24,9 @@ ctrlc = "3"
 atty = "0.2"
 reedline = "0.47.0"
 nu-ansi-term = "0.50"
-compsys = { path = "compsys", version = "0.10.6" }
-zshrs-daemon = { path = "daemon", version = "0.10.6", optional = true }
-zshrs-parse = { path = "parse", version = "0.10.6" }
+compsys.workspace = true
+zshrs-daemon = { workspace = true, optional = true }
+zshrs-parse.workspace = true
 fusevm = "0.12.1"
 regex = "1.11"
 glob = "0.3"
@@ -90,10 +90,19 @@ tempfile = "3"
 members = [".", "compsys", "daemon", "parse"]
 
 [workspace.package]
-version = "0.10.6"
+version = "0.10.7"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies"]
+
+# Single source of truth for inter-crate path-dep versions. Updated by
+# `scripts/bp.sh` together with `[workspace.package].version` above so a
+# single `bp.sh <new-version>` run touches one file. Members reference
+# these via `compsys.workspace = true` etc.
+[workspace.dependencies]
+compsys = { path = "compsys", version = "0.10.7" }
+zshrs-daemon = { path = "daemon", version = "0.10.7" }
+zshrs-parse = { path = "parse", version = "0.10.7" }
 
 [profile.release]
 opt-level = 3

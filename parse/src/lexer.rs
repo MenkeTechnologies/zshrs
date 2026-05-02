@@ -131,6 +131,13 @@ pub struct ZshLexer<'a> {
     pub incasepat: i32,
     /// In redirection
     pub inredir: bool,
+    /// Saved `incmdpos` from before a redirop / for / foreach / select
+    /// — restored on the NEXT non-redir token. Mirrors `static int oldpos`
+    /// in C zsh's `ctxtlex` (lex.c:319). Required for cases like
+    /// `for x ( ... )` where `(` after the var name should tokenize as
+    /// INPAR — that depends on incmdpos being restored to 1 from before
+    /// FOR was lexed, which in turn depends on this saved value.
+    pub oldpos: bool,
     /// After 'for' keyword
     pub infor: i32,
     /// After 'repeat' keyword
@@ -272,6 +279,7 @@ impl<'a> ZshLexer<'a> {
             incondpat: false,
             incasepat: 0,
             inredir: false,
+            oldpos: true,
             infor: 0,
             inrepeat: 0,
             intypeset: false,
@@ -983,17 +991,23 @@ impl<'a> ZshLexer<'a> {
             self.infor = if self.tok == LexTok::For { 2 } else { 0 };
         }
 
-        // Handle redirection context
-        let oldpos = self.incmdpos;
+        // Handle redirection / for-loop context. Mirrors lex.c:359-368
+        // ctxtlex `oldpos` save/restore. The saved value lives in
+        // `self.oldpos` (struct field) so it survives across zshlex
+        // calls — the previous local `let oldpos = self.incmdpos`
+        // captured the JUST-updated value (always wrong) and lost the
+        // pre-FOR incmdpos. With the field, FOR x → STRING x → INPAR
+        // sequence correctly restores incmdpos=1 before the `(`.
         if self.tok.is_redirop()
             || self.tok == LexTok::For
             || self.tok == LexTok::Foreach
             || self.tok == LexTok::Select
         {
             self.inredir = true;
+            self.oldpos = self.incmdpos;
             self.incmdpos = false;
         } else if self.inredir {
-            self.incmdpos = oldpos;
+            self.incmdpos = self.oldpos;
             self.inredir = false;
         }
     }
@@ -1360,12 +1374,15 @@ impl<'a> ZshLexer<'a> {
                             self.hungetc(d);
                         }
                         self.lexstop = false;
-                        // In pattern context (after == != =~ in [[ ]]), ( is part of pattern
-                        // In case pattern context, ( at start is optional delimiter, not pattern
-                        // incasepat == 1 means "at start of pattern", > 1 means "inside pattern"
-                        if self.incondpat || self.incasepat > 1 {
-                            self.gettokstr('(', false)
-                        } else if self.incond == 1 || self.incmdpos || self.incasepat == 1 {
+                        // Per lex.c:822 LX1_INPAR — at word boundary `(`
+                        // tokenizes as INPAR when SHGLOB || incond==1 ||
+                        // incmdpos. Otherwise falls through to gettokstr
+                        // (the `(` becomes start of a STRING — typical
+                        // for unquoted glob args like `ls (^foo)*`).
+                        // For `for x ( ... )` form, incmdpos is restored
+                        // to 1 via the oldpos-save-after-FOR mechanism,
+                        // so the next-token `(` correctly INPAR-izes.
+                        if self.incond == 1 || self.incmdpos || self.incasepat >= 1 {
                             LexTok::Inpar
                         } else {
                             self.gettokstr('(', false)
@@ -1736,6 +1753,61 @@ impl<'a> ZshLexer<'a> {
                             if in_brace_param == 0 {
                                 in_brace_param = bct;
                             }
+                        }
+                        Some('\'') => {
+                            // $'...' ANSI-C escape syntax. Inside, `\X`
+                            // sequences are escapes (`\n`, `\t`, `\x1b`,
+                            // `\'` for literal apostrophe, `\\` for
+                            // backslash). Lexer captures the raw form
+                            // wrapped in QSTRING/SNULL markers; later
+                            // expansion decodes the escapes. zsh's
+                            // analogue lives in lex.c gettokstr's
+                            // LX2_QUOTE branch when prev char was `$`.
+                            self.add(char_tokens::QSTRING);
+                            self.add(char_tokens::SNULL);
+                            loop {
+                                let ch = self.hgetc();
+                                match ch {
+                                    Some('\'') => break,
+                                    Some('\\') => {
+                                        // `\X` — store both chars literally;
+                                        // expansion handles the actual escape.
+                                        self.add(char_tokens::BNULL);
+                                        match self.hgetc() {
+                                            Some(n) => self.add(n),
+                                            None => {
+                                                self.lexstop = true;
+                                                unmatched = '\'';
+                                                peek = LexTok::Lexerr;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Some(ch) => self.add(ch),
+                                    None => {
+                                        self.lexstop = true;
+                                        unmatched = '\'';
+                                        peek = LexTok::Lexerr;
+                                        break;
+                                    }
+                                }
+                            }
+                            if unmatched != '\0' {
+                                break;
+                            }
+                            self.add(char_tokens::SNULL);
+                        }
+                        Some('"') => {
+                            // $"..." localized string. Same shape as a
+                            // plain "..." but flagged via QSTRING+DNULL
+                            // so post-lex translation can substitute.
+                            self.add(char_tokens::QSTRING);
+                            self.add(char_tokens::DNULL);
+                            if self.dquote_parse('"', sub).is_err() {
+                                peek = LexTok::Lexerr;
+                                break;
+                            }
+                            self.add(char_tokens::DNULL);
                         }
                         _ => {
                             if let Some(e) = e {
@@ -2697,17 +2769,18 @@ impl<'a> ZshLexer<'a> {
         // lex.c:361-368 — redir-target context dance. After consuming
         // a redir operator, the following token (the file path) sees
         // incmdpos=0 even when its inherent shape would put it back
-        // in cmd-pos. After the redir target, restore `oldpos`.
-        let oldpos = self.incmdpos;
+        // in cmd-pos. After the redir target, restore from oldpos
+        // (struct field — must persist across zshlex calls).
         if self.tok.is_redirop()
             || self.tok == LexTok::For
             || self.tok == LexTok::Foreach
             || self.tok == LexTok::Select
         {
             self.inredir = true;
+            self.oldpos = self.incmdpos;
             self.incmdpos = false;
         } else if self.inredir {
-            self.incmdpos = oldpos;
+            self.incmdpos = self.oldpos;
             self.inredir = false;
         }
     }
