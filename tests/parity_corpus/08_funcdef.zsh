@@ -1,0 +1,3 @@
+myfunc() {
+  echo body
+}
