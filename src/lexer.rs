@@ -823,17 +823,22 @@ impl<'a> ZshLexer<'a> {
             self.tok = LexTok::Seper;
         }
 
-        // Check for reserved words when in command position
-        // Also check for "{" and "}" which are special in many contexts
+        // Reserved-word promotion. Per lex.c:2002-2005 in `exalias`:
+        //   - `{` only promotes to INBRACE in command position
+        //   - `}` promotes to OUTBRACE either in cmdpos OR via the
+        //     special `closing-brace-special` rule (IGNOREBRACES unset
+        //     — assumed since zshrs doesn't expose that option yet)
+        //   - other reserved words: only when incmdpos (or `}` exception)
         if self.tok == LexTok::String {
             if let Some(ref s) = self.tokstr {
-                if s == "{" {
+                if s == "{" && self.incmdpos {
                     self.tok = LexTok::Inbrace;
                 } else if s == "}" {
                     self.tok = LexTok::Outbrace;
                 } else if self.incasepat == 0 {
-                    // Skip reserved word checking in case pattern context
-                    // Words like "time", "end", etc. should be patterns, not reserved words
+                    // Skip reserved word checking in case pattern context —
+                    // words like `time`, `end` should be patterns, not
+                    // keywords.
                     self.check_reserved_word();
                 }
             }
@@ -1757,6 +1762,36 @@ impl<'a> ZshLexer<'a> {
                 }
 
                 '(' => {
+                    // lex.c:1078-1135 LX2_INPAR — when `(` appears inside
+                    // a STRING and is immediately followed by `)`, the
+                    // string terminates at the `(`. The `()` is then
+                    // re-lexed as a separate INOUTPAR token. This handles
+                    // function definitions: `name()` lexes as STRING `name`
+                    // + INOUTPAR `()`, not STRING `name()`.
+                    //
+                    // Also (lex.c:1109-1112): under SHGLOB, a `(` followed
+                    // by whitespace at the start of a command-position word
+                    // (no nested brackets/braces) is a ksh function
+                    // definition signal — same break-out behavior.
+                    if in_brace_param == 0 && !sub {
+                        let e = self.hgetc();
+                        if let Some(ch) = e {
+                            self.hungetc(ch);
+                        }
+                        self.lexstop = false;
+                        if e == Some(')') {
+                            // `name()` — terminate STRING at `(` so the
+                            // following `()` re-lexes as INOUTPAR. The
+                            // loop's exit guard at line 2067 will
+                            // `hungetc(c)` to push the `(` back; we only
+                            // need to ensure `)` is also there. The
+                            // hungetc(ch) above already pushed `)`, so
+                            // breaking here yields unget_buf = [`(`, `)`]
+                            // after the guard, which the outer dispatch
+                            // reads as Inoutpar.
+                            break;
+                        }
+                    }
                     if in_brace_param == 0 {
                         pct += 1;
                     }
@@ -1870,8 +1905,14 @@ impl<'a> ZshLexer<'a> {
                             if self.is_valid_assignment_target(&tok_so_far) {
                                 let next = self.hgetc();
                                 if next == Some('(') {
-                                    // VAR=(...) array assignment - include '=' in tokstr
-                                    self.add(char_tokens::EQUALS);
+                                    // VAR=(...) array assignment. Per zsh
+                                    // (lex.c emits ENVARRAY with tokstr =
+                                    // just the variable name, NOT
+                                    // including the `=`). The `=` and
+                                    // `(` are consumed by the lexer; the
+                                    // parser knows ENVARRAY means assign-
+                                    // array and reads the body that
+                                    // follows.
                                     self.tokstr = Some(self.lexbuf.as_str().to_string());
                                     return LexTok::Envarray;
                                 }
@@ -2055,9 +2096,25 @@ impl<'a> ZshLexer<'a> {
         peek
     }
 
-    /// Check if a string is a valid assignment target (identifier or array ref)
+    /// Check if a string is a valid assignment target (identifier or array ref).
+    ///
+    /// zsh accepts identifier (`[A-Za-z_][A-Za-z0-9_]*`) optionally followed by
+    /// a `[...]` subscript. Bare digits are NOT a valid lvalue (rejected at
+    /// `if c.is_ascii_digit()` below — array index expressions like `arr[2]`
+    /// are caught by the subscript handler, not here). And the first char
+    /// must NOT be a zsh internal token byte — `$=foo` (where `$` becomes
+    /// the STRING token 0x85) is parameter substitution with the `=` flag,
+    /// NOT an envstring assignment.
     fn is_valid_assignment_target(&self, s: &str) -> bool {
         let mut chars = s.chars().peekable();
+
+        // Reject leading token byte — `$VAR=` is parameter substitution,
+        // not assignment. Same for `*=`, `?=`, etc.
+        if let Some(&c) = chars.peek() {
+            if char_tokens::is_token(c) {
+                return false;
+            }
+        }
 
         // Check for leading digit (invalid)
         if let Some(&c) = chars.peek() {
@@ -2306,9 +2363,12 @@ impl<'a> ZshLexer<'a> {
     fn cmd_or_math(&mut self) -> CmdOrMath {
         let oldlen = self.lexbuf.len();
 
-        self.add(char_tokens::INPAR);
-        self.add('(');
-
+        // Per lex.c:498-518 — `cmd_or_math` calls `dquote_parse(')')`
+        // which fills lexbuf with ONLY the inner expression, then checks
+        // for the closing `)`. The surrounding `((` / `))` are NOT added
+        // to lexbuf. zshrs previously added INPAR + '(' before dquote and
+        // ')' after, polluting DINPAR's tokstr with the literal parens.
+        // Removed to match C exactly.
         if self.dquote_parse(')', false).is_err() {
             // Back up and try as command
             while self.lexbuf.len() > oldlen {
@@ -2325,10 +2385,10 @@ impl<'a> ZshLexer<'a> {
             };
         }
 
-        // Check for closing )
+        // Check for closing ) — matches C lex.c:511-512: success-with-`)`
+        // means `((..))` was math. Don't add `)` to lexbuf.
         let c = self.hgetc();
         if c == Some(')') {
-            self.add(')');
             return CmdOrMath::Math;
         }
 
@@ -2680,7 +2740,12 @@ impl<'a> ZshLexer<'a> {
         });
     }
 
-    /// Check for reserved word
+    /// Check for reserved word — mirrors lex.c:2002-2015 in `exalias`,
+    /// but reachable from the bare `zshlex` path (without an
+    /// AliasResolver). Promotes STRING tokens to keyword tokens when:
+    ///   - incmdpos is set (or text is `}` ending a brace block)
+    ///   - text is `]]` and we're inside `[[ ]]` (incond > 0)
+    ///   - text is bare `!` and we're at the start of a cond (incond == 1)
     pub fn check_reserved_word(&mut self) -> bool {
         if let Some(ref tokstr) = self.tokstr {
             if self.incmdpos || (tokstr == "}" && self.tok == LexTok::String) {
@@ -2699,6 +2764,17 @@ impl<'a> ZshLexer<'a> {
                     self.incond = 0;
                     return true;
                 }
+            }
+            // lex.c:2010-2014 — `]]` and `!` are recognized inside `[[`
+            // regardless of incmdpos.
+            if self.incond > 0 && tokstr == "]]" {
+                self.tok = LexTok::Doutbrack;
+                self.incond = 0;
+                return true;
+            }
+            if self.incond == 1 && tokstr == "!" {
+                self.tok = LexTok::Bang;
+                return true;
             }
         }
         false
