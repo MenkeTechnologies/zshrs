@@ -359,7 +359,11 @@ pub enum LexAct2 {
     Meta = 21,
 }
 
-/// Reserved words table
+/// Reserved words table — must match `Src/hashtable.c::reswds[]` exactly
+/// (zsh hashtable.c:1076-1109). Order doesn't matter (linear scan), but
+/// every entry there must appear here. The TYPESET-family (declare,
+/// export, float, integer, local, readonly, typeset) all promote to
+/// `LexTok::Typeset` per the C table.
 pub static RESERVED_WORDS: &[(&str, LexTok)] = &[
     ("!", LexTok::Bang),
     ("[[", LexTok::Dinbrack),
@@ -367,22 +371,29 @@ pub static RESERVED_WORDS: &[(&str, LexTok)] = &[
     ("}", LexTok::Outbrace),
     ("case", LexTok::Case),
     ("coproc", LexTok::Coproc),
+    ("declare", LexTok::Typeset),
     ("do", LexTok::Doloop),
     ("done", LexTok::Done),
     ("elif", LexTok::Elif),
     ("else", LexTok::Else),
     ("end", LexTok::Zend),
     ("esac", LexTok::Esac),
+    ("export", LexTok::Typeset),
     ("fi", LexTok::Fi),
+    ("float", LexTok::Typeset),
     ("for", LexTok::For),
     ("foreach", LexTok::Foreach),
     ("function", LexTok::Func),
     ("if", LexTok::If),
+    ("integer", LexTok::Typeset),
+    ("local", LexTok::Typeset),
     ("nocorrect", LexTok::Nocorrect),
+    ("readonly", LexTok::Typeset),
     ("repeat", LexTok::Repeat),
     ("select", LexTok::Select),
     ("then", LexTok::Then),
     ("time", LexTok::Time),
+    ("typeset", LexTok::Typeset),
     ("until", LexTok::Until),
     ("while", LexTok::While),
 ];
