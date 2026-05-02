@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "compsys"
-version = "0.9.0"
+version = "0.10.6"
 dependencies = [
  "dirs",
  "libc",
@@ -2768,12 +2768,13 @@ dependencies = [
  "unicode-width",
  "walkdir",
  "zshrs-daemon",
+ "zshrs-parse",
  "zstd",
 ]
 
 [[package]]
 name = "zshrs-daemon"
-version = "0.10.1"
+version = "0.10.6"
 dependencies = [
  "atty",
  "byteorder",
@@ -2801,6 +2802,14 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "walkdir",
+ "zshrs-parse",
+]
+
+[[package]]
+name = "zshrs-parse"
+version = "0.10.6"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

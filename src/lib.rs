@@ -68,6 +68,13 @@ pub mod files;
 pub mod fish_features;
 pub mod ast_sexp;
 pub mod glob;
+// `tokens`, `lexer`, `parser` live in the standalone `zshrs-parse` crate
+// so the daemon can use them too. Re-export so existing call sites
+// (`crate::tokens::...`, `zsh::lexer::...`, etc.) keep resolving without
+// touching consumers.
+pub use zshrs_parse::lexer;
+pub use zshrs_parse::parser;
+pub use zshrs_parse::tokens;
 pub mod hashnameddir;
 pub mod hashtable;
 pub mod hist;
@@ -78,7 +85,6 @@ pub mod input;
 pub mod jobs;
 pub mod ksh93;
 pub mod langinfo;
-pub mod lexer;
 pub mod linklist;
 pub mod log;
 pub mod loop_port;
@@ -94,7 +100,6 @@ pub mod options;
 pub mod param_private;
 pub mod parameter;
 pub mod params;
-pub mod parser;
 pub mod pattern;
 pub mod pcre;
 pub mod plugin_cache;
@@ -118,7 +123,6 @@ pub mod tcp;
 pub mod termcap;
 pub mod terminfo;
 pub mod text;
-pub mod tokens;
 pub mod utils;
 pub mod watch;
 pub mod worker;

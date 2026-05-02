@@ -1,6 +1,6 @@
 [package]
 name = "zshrs-daemon"
-version = "0.10.1"
+version.workspace = true
 edition = "2021"
 description = "Singleton daemon for zshrs — owns fsnotify, rkyv shard images, catalog/history SQLite, IPC, pub/sub, and cross-shell coordination"
 license = "MIT"
@@ -46,6 +46,7 @@ tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 walkdir = "2.5"
 glob = "0.3"
+zshrs-parse = { path = "../parse", version = "0.10.6" }
 
 [dev-dependencies]
 tempfile = "3"

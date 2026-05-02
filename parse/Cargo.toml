@@ -1,0 +1,17 @@
+[package]
+name = "zshrs-parse"
+version.workspace = true
+edition = "2021"
+description = "Lexer + parser for zshrs — port of zsh's lex.c + parse.c. Shared between the zshrs runtime and zshrs-daemon."
+license = "MIT"
+authors = ["MenkeTechnologies"]
+repository = "https://github.com/MenkeTechnologies/zshrs"
+keywords = ["shell", "zsh", "lexer", "parser"]
+categories = ["parser-implementations"]
+
+[lib]
+name = "zshrs_parse"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
