@@ -543,7 +543,7 @@ impl GlobState {
             .matches
             .iter()
             .map(|m| {
-                let mut s = m.path.to_string_lossy().to_string();
+                let mut s = glob_emit_path(&m.path);
                 if mark_dirs || list_types {
                     if let Ok(meta) = fs::symlink_metadata(&m.path) {
                         let ch = file_type_char(meta.mode());
@@ -2286,6 +2286,33 @@ pub fn split_qualifier(pattern: &str) -> (&str, Option<&str>) {
     (pattern, None)
 }
 
+/// Strip redundant `.` / `CurDir` segments from relative match paths for
+/// output. Rust's `read_dir(".")` yields `entry.path()` like `./foo` while
+/// `read_dir("foo")` yields `foo/bar` — zsh prints the latter shape for both.
+fn glob_emit_path(path: &std::path::Path) -> String {
+    use std::path::Component;
+    match path.components().next() {
+        Some(Component::Prefix(_) | Component::RootDir) => path.to_string_lossy().to_string(),
+        None => ".".to_string(),
+        _ => {
+            let mut out = std::path::PathBuf::new();
+            for c in path.components() {
+                match c {
+                    Component::CurDir => {}
+                    Component::ParentDir => out.push(".."),
+                    Component::Normal(s) => out.push(s),
+                    Component::Prefix(_) | Component::RootDir => {}
+                }
+            }
+            if out.as_os_str().is_empty() {
+                ".".to_string()
+            } else {
+                out.to_string_lossy().to_string()
+            }
+        }
+    }
+}
+
 /// Glob with default options
 pub fn glob(pattern: &str) -> Vec<String> {
     let mut state = GlobState::new(GlobOptions {
@@ -3307,6 +3334,15 @@ mod tests {
         });
         let results = state.glob(&pattern);
         assert!(results.iter().any(|s| s.contains(".hidden")));
+    }
+
+    #[test]
+    fn test_glob_emit_path_strips_read_dir_dot_slash() {
+        use std::path::Path;
+        assert_eq!(glob_emit_path(Path::new("./sub")), "sub");
+        assert_eq!(glob_emit_path(Path::new("sub/deeper")), "sub/deeper");
+        assert_eq!(glob_emit_path(Path::new("././x")), "x");
+        assert_eq!(glob_emit_path(Path::new("../up")), "../up");
     }
 
     #[test]
