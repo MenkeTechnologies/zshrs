@@ -33,6 +33,33 @@ impl HistoryEngine {
             std::fs::create_dir_all(parent).ok();
         }
 
+        // One-shot migration from the pre-2026-05-03 location
+        // (`~/Library/Application Support/zshrs/history.db` on macOS,
+        // `$XDG_DATA_HOME/zshrs/history.db` on Linux). Only fires when
+        // the new file does not yet exist — never overwrites a
+        // populated `zshrs_history`. Schema is identical (same code
+        // wrote both), so a byte-copy is sufficient.
+        if !path.exists() {
+            if let Some(legacy) = legacy_db_path() {
+                if legacy.exists() {
+                    if let Err(e) = std::fs::copy(&legacy, &path) {
+                        tracing::warn!(
+                            from = %legacy.display(),
+                            to = %path.display(),
+                            error = %e,
+                            "history: migrate from legacy path failed; starting empty"
+                        );
+                    } else {
+                        tracing::info!(
+                            from = %legacy.display(),
+                            to = %path.display(),
+                            "history: migrated from legacy path"
+                        );
+                    }
+                }
+            }
+        }
+
         let conn = Connection::open(&path)?;
         let engine = Self { conn };
         engine.init_schema()?;
@@ -54,11 +81,29 @@ impl HistoryEngine {
         Ok(engine)
     }
 
+    // Helpers below are inherent associated functions; see free
+    // `legacy_db_path()` outside the impl block for the migration source.
+
+    /// Path to the shell-side history sqlite file. Lives under
+    /// `$ZSHRS_HOME` (or `~/.zshrs`) — same single-directory rule as
+    /// every other zshrs file (logs, shards, sockets, configs). Named
+    /// `zshrs_history` (not `.db`) so it sits next to `.zsh_history`
+    /// in muscle-memory if the user `ls`'s the dir, while still being
+    /// a sqlite database under the hood.
+    ///
+    /// The daemon owns its OWN history db at `~/.zshrs/history.db`
+    /// (different schema, FTS5, daemon-only writer); shells append to
+    /// it via `history_append` IPC. This shell-side file is the
+    /// fallback path used when the daemon is absent.
     fn db_path() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("zshrs")
-            .join("history.db")
+        let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+            PathBuf::from(custom)
+        } else {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".zshrs")
+        };
+        root.join("zshrs_history")
     }
 
     fn init_schema(&self) -> rusqlite::Result<()> {
@@ -336,6 +381,14 @@ impl HistoryEngine {
             Ok(None)
         }
     }
+}
+
+/// Pre-2026-05-03 history db location. Returned only when the legacy
+/// file actually exists — used by `HistoryEngine::new` to migrate
+/// once into `$ZSHRS_HOME/zshrs_history`. Returns None if `dirs::data_dir`
+/// can't resolve (no $HOME / no platform data dir).
+fn legacy_db_path() -> Option<PathBuf> {
+    Some(dirs::data_dir()?.join("zshrs").join("history.db"))
 }
 
 /// Reedline history adapter
