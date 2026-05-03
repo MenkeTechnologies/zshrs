@@ -1848,7 +1848,7 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
                 if let Ok(entry) = entry {
                     let name = entry.file_name();
                     let s = name.to_string_lossy();
-                    if s.starts_with("zshrs.log") {
+                    if super::paths::is_zshrs_log_file(&s) {
                         if dry_run {
                             would_remove.push(entry.path().display().to_string());
                         } else {
@@ -2204,7 +2204,7 @@ async fn op_log_stats(state: &Arc<DaemonState>) -> OpResult {
         for entry in dir.flatten() {
             let name = entry.file_name();
             let s = name.to_string_lossy().to_string();
-            if !s.starts_with("zshrs.log") {
+            if !super::paths::is_zshrs_log_file(&s) {
                 continue;
             }
             let path = entry.path();
@@ -3227,7 +3227,7 @@ async fn op_export_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
         for ent in rd.flatten() {
             let n = ent.file_name();
             let s = n.to_string_lossy();
-            if s.starts_with("zshrs.log") {
+            if super::paths::is_zshrs_log_file(&s) {
                 entries.push(ent.path());
             }
         }
@@ -3765,7 +3765,7 @@ fn spawn_replacement_daemon() -> std::io::Result<u32> {
     }
 
     // Detach: new session, redirect stdio to /dev/null. The new daemon writes
-    // tracing output to ~/.zshrs/zshrs.log.
+    // tracing output to ~/.zshrs/zshrs-daemon.log.
     use std::os::unix::process::CommandExt;
     unsafe {
         cmd.pre_exec(|| {

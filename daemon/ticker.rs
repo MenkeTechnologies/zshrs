@@ -9,7 +9,8 @@
 // Jobs handled here:
 //   - **tmp sweep** — orphaned `images/*.rkyv.tmp.{pid}.{tid}` left behind
 //     by an interrupted compile. Anything older than 60s is unlinkable.
-//   - **log size monitor** — warn (in-log) when zshrs.log exceeds 10 MB.
+//   - **log size monitor** — warn (in-log) when any of zshrs.log /
+//     zshrs-daemon.log / zshrs-recorder.log exceeds 10 MB.
 //     Real size-based rotation requires fd handoff with tracing-appender's
 //     worker; not v1. Daily rotation by tracing-appender's `Rotation::DAILY`
 //     is in place independently of this ticker.
@@ -91,7 +92,7 @@ pub fn force_rotate_now(state: &super::state::DaemonState) -> usize {
     for entry in dir.flatten() {
         let name = entry.file_name();
         let s = name.to_string_lossy();
-        if !s.starts_with("zshrs.log") || is_rotation_suffix(&s) {
+        if !super::paths::is_zshrs_log_file(&s) || is_rotation_suffix(&s) {
             continue;
         }
         bases.push(entry.path());
@@ -105,7 +106,8 @@ pub fn force_rotate_now(state: &super::state::DaemonState) -> usize {
     count
 }
 
-/// Walk every `zshrs.log*` file (daily-rolled by tracing-appender) and rotate
+/// Walk every active zshrs log file (`zshrs.log`, `zshrs-daemon.log`,
+/// `zshrs-recorder.log` — see `paths::is_zshrs_log_file`) and rotate
 /// any one whose size exceeds the configured cap. Rotation is in-place: the
 /// file is copied to `<basename>.1`, the original is truncated. Existing
 /// `.1..N` files shift up; `.N+1` is removed.
@@ -127,7 +129,7 @@ fn rotate_logs_if_needed(state: &super::state::DaemonState) {
         let s = name.to_string_lossy();
         // The "active" files are those NOT matching the rolled-suffix pattern
         // `<base>.<digits>` — those are our own rotation outputs.
-        if !s.starts_with("zshrs.log") {
+        if !super::paths::is_zshrs_log_file(&s) {
             continue;
         }
         let path = entry.path();
@@ -150,8 +152,10 @@ fn rotate_logs_if_needed(state: &super::state::DaemonState) {
 }
 
 fn is_rotation_suffix(file_name: &str) -> bool {
-    // Matches `zshrs.log.<base>.<N>` where N is digits — ours.
-    // Daily-rolled looks like `zshrs.log.2026-05-01` — NOT digits-only at end.
+    // Matches `<base>.<N>` where N is digits — our own rotation
+    // outputs across all three log files (zshrs.log,
+    // zshrs-daemon.log, zshrs-recorder.log). Daily-rolled looks like
+    // `zshrs.log.2026-05-01` — NOT digits-only at end.
     let last_dot = match file_name.rfind('.') {
         Some(i) => i,
         None => return false,

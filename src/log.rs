@@ -1,7 +1,11 @@
 //! zshrs logging & profiling framework
 //!
 //! **Logging** (always on):
-//!   - File: $HOME/.zshrs/zshrs.log
+//!   - File: $HOME/.zshrs/<binary>.log — three separate files so the
+//!     three processes don't interleave their tracing output:
+//!       - `zshrs.log`           (the shell — thin clients)
+//!       - `zshrs-daemon.log`    (daemon, set up via daemon/log.rs)
+//!       - `zshrs-recorder.log`  (single-shot recorder runs)
 //!   - Level: ZSHRS_LOG env var (default: info)
 //!   - Structured key=value fields, ISO timestamps, thread names, module paths
 //!
@@ -10,8 +14,10 @@
 //!   - `--features flamegraph` → folded stacks          → $HOME/.zshrs/flame-{PID}.folded
 //!   - `--features prometheus` → metrics on :9090/metrics
 //!
-//! Call `zsh::log::init()` once at startup. Use `tracing::{info,debug,trace,warn,error}!`
-//! everywhere. Use `#[tracing::instrument]` or `zsh::log::span!` for timed sections.
+//! Call `zsh::log::init()` (defaults to `zshrs.log`) or
+//! `zsh::log::init_named("…")` once at startup. Use
+//! `tracing::{info,debug,trace,warn,error}!` everywhere. Use
+//! `#[tracing::instrument]` or `zsh::log::span!` for timed sections.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -38,17 +44,29 @@ pub fn log_dir() -> PathBuf {
         .join(".zshrs")
 }
 
-/// Resolve full log path: $ZSHRS_HOME/zshrs.log or $HOME/.zshrs/zshrs.log
+/// Resolve full log path for the shell binary (zshrs.log).
 pub fn log_path() -> PathBuf {
     log_dir().join("zshrs.log")
 }
 
-/// Initialize logging + optional profiling subscribers.
+/// Initialize logging + optional profiling subscribers using the default
+/// `zshrs.log` filename. Equivalent to `init_named("zshrs.log")`.
 /// Safe to call multiple times — only the first call takes effect.
 ///
 /// Env vars:
 ///   ZSHRS_LOG=debug|trace|info|warn|error  (default: info)
 pub fn init() {
+    init_named("zshrs.log");
+}
+
+/// Initialize logging + optional profiling subscribers, writing to
+/// `$ZSHRS_HOME/<filename>` (or `$HOME/.zshrs/<filename>`). Used by
+/// `zshrs-recorder` to land tracing in `zshrs-recorder.log` instead of
+/// the shell's `zshrs.log`. The daemon owns its own subscriber via
+/// `daemon/log.rs` and uses the path from `paths.log_file_name`.
+///
+/// Safe to call multiple times — only the first call takes effect.
+pub fn init_named(filename: &str) {
     GUARDS.get_or_init(|| {
         let dir = log_dir();
         let _ = std::fs::create_dir_all(&dir);
@@ -60,12 +78,12 @@ pub fn init() {
         let log_file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(dir.join("zshrs.log"))
+            .open(dir.join(filename))
             .unwrap_or_else(|_| {
                 std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open("/tmp/zshrs.log")
+                    .open(format!("/tmp/{}", filename))
                     .expect("cannot open any log file")
             });
         let log_writer = std::sync::Mutex::new(log_file);

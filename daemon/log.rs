@@ -1,4 +1,4 @@
-// Daemon logging — tracing-subscriber → ~/.zshrs/zshrs.log via tracing-appender.
+// Daemon logging — tracing-subscriber → ~/.zshrs/zshrs-daemon.log via tracing-appender.
 //
 // Per docs/DAEMON.md "Daemon logging (every action goes to logfile)":
 //   - Default level: INFO
@@ -33,7 +33,7 @@ static FILTER_RELOAD: OnceLock<ReloadFn> = OnceLock::new();
 /// for `daemon-reset.sh` style live-debugging where you want to see every
 /// IPC op, fsnotify event, and walk pass scrolling in your terminal.
 ///
-/// Single log file at `~/.zshrs/zshrs.log`. No daily date suffix.
+/// Single log file at `~/.zshrs/zshrs-daemon.log`. No daily date suffix.
 /// Size-based rotation (10 MB → `.1`, `.1` → `.2`, … up to `.4`) is owned
 /// by `ticker::rotate_logs_if_needed`. The appender holds an `O_APPEND` fd
 /// against the active file; ticker truncates that file when it crosses
