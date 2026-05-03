@@ -92,6 +92,17 @@ EXPORT
     export TARGET FORMAT           formats: sh|json|yaml|text|csv|sql|pdf|...
     view TARGET [FORMAT]
 
+SNAPSHOT
+    snapshot save TAG [--notes N]  freeze canonical state under TAG
+    snapshot list                  enumerate saved tags
+    snapshot load TAG              restore canonical state from TAG
+    snapshot diff A B              show subsystem-by-subsystem diff
+
+CONFIG
+    config get KEY                 read a runtime knob
+    config set KEY VALUE           write/override a runtime knob
+    config list                    show every runtime override
+
 DIAGNOSTICS
     doctor [--json]                health-report sweep (perms, db
                                    integrity, shards, fsnotify,
@@ -175,6 +186,7 @@ pub fn dispatch(args: &[String], t: &mut dyn Transport) -> i32 {
         "watch" => cmd_watch(t, &rest),
         "defs" => cmd_defs(t, &rest),
         "snapshot" => cmd_snapshot(t, &rest),
+        "config" => cmd_config(t, &rest),
         "artifact" => cmd_artifact(t, &rest),
         "schedule" => cmd_schedule(t, &rest),
         "export" => cmd_export(t, &rest),
@@ -503,6 +515,29 @@ fn cmd_snapshot(t: &mut dyn Transport, rest: &[String]) -> Result<String, String
             t.post("snapshot_diff", json!({"a": rest[1], "b": rest[2]}))
         }
         other => Err(format!("unknown snapshot subcommand: {other}")),
+    }
+}
+
+/// `zd config <get|set|list>` — runtime knob plumbing. Maps 1:1 to
+/// the `config_get`, `config_set`, `config_list` daemon ops. Sets are
+/// in-memory only — writing to `zshrs-daemon.toml` is a separate
+/// (unwired) concern; today the toml seeds the initial values and
+/// `config_set` overrides them for the daemon's lifetime.
+fn cmd_config(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
+    let sub = rest.first().ok_or("usage: zd config <get|set|list> ...")?;
+    match sub.as_str() {
+        "get" => {
+            let key = rest.get(1).ok_or("usage: zd config get KEY")?;
+            t.post("config_get", json!({"key": key}))
+        }
+        "set" => {
+            if rest.len() < 3 {
+                return Err("usage: zd config set KEY VALUE".into());
+            }
+            t.post("config_set", json!({"key": rest[1], "value": rest[2]}))
+        }
+        "list" => t.post("config_list", json!({})),
+        other => Err(format!("unknown config subcommand: {other}")),
     }
 }
 
