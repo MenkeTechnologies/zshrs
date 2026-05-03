@@ -46,6 +46,8 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
         "zlog" => zlog(args),
         "zwhere" => zwhere(args),
         "zd" => zd(args),
+        "zlock" => zlock(args),
+        "zpublish" => zpublish(args),
         _ => return None,
     };
     Some(status)
@@ -92,6 +94,8 @@ pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[
     "zlog",
     "zwhere",
     "zd",
+    "zlock",
+    "zpublish",
 ];
 
 /// Helper: open a client connection (spawn-on-demand) and return it. Reports the error
@@ -1330,6 +1334,133 @@ fn log_files(paths: &CachePaths) -> Vec<std::path::PathBuf> {
     }
     out.sort_by(|a, b| b.0.cmp(&a.0));
     out.into_iter().map(|(_, p)| p).collect()
+}
+
+// -------- zlock --------
+//
+// Cross-process named-lock surface. Maps 1:1 to the lock_acquire /
+// lock_release / lock_list / lock_try_acquire daemon ops (see
+// daemon/lock.rs). Holder-pid is the calling shell's $$. Tokens are
+// daemon-issued u128s — release requires the original token, so a
+// lost shell can't accidentally release someone else's lock.
+//
+// Forms:
+//   zlock try NAME                  # acquire-or-busy, no wait
+//   zlock acquire NAME [--timeout S] # poll-wait until taken or timeout
+//   zlock release NAME TOKEN        # release a held lock
+//   zlock list                      # enumerate active locks
+
+fn zlock(args: &[String]) -> i32 {
+    // args[0] is the builtin name itself ("zlock"); positional args
+    // start at 1 — same convention every other builtin in this file
+    // uses (see parse_send_args:1066's `args.iter().skip(1)`).
+    let sub = match args.get(1) {
+        Some(s) => s.as_str(),
+        None => return err_exit("zlock", "usage: zlock <try|acquire|release|list> ..."),
+    };
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    let pid = std::process::id() as i64;
+    let result = match sub {
+        "try" => {
+            let name = match args.get(2) {
+                Some(n) => n.clone(),
+                None => return err_exit("zlock", "usage: zlock try NAME"),
+            };
+            client.call("lock_try_acquire", json!({"name": name, "caller_pid": pid}))
+        }
+        "acquire" => {
+            let name = match args.get(2) {
+                Some(n) => n.clone(),
+                None => return err_exit("zlock", "usage: zlock acquire NAME [--timeout S]"),
+            };
+            let mut body = json!({"name": name, "caller_pid": pid});
+            if let Some(idx) = args.iter().position(|a| a == "--timeout") {
+                let secs = args
+                    .get(idx + 1)
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                body["timeout_secs"] = json!(secs);
+                // Bump socket read timeout above the daemon-side wait so the
+                // client doesn't drop first.
+                let _ = client.set_read_timeout(Some(std::time::Duration::from_secs_f64(
+                    secs + 5.0,
+                )));
+            }
+            client.call("lock_acquire", body)
+        }
+        "release" => {
+            let name = match args.get(2) {
+                Some(n) => n.clone(),
+                None => return err_exit("zlock", "usage: zlock release NAME TOKEN"),
+            };
+            let token = match args.get(3) {
+                Some(t) => t.clone(),
+                None => return err_exit("zlock", "usage: zlock release NAME TOKEN"),
+            };
+            client.call("lock_release", json!({"name": name, "token": token}))
+        }
+        "list" => client.call("lock_list", json!({})),
+        other => return err_exit("zlock", &format!("unknown subcommand: {other}")),
+    };
+    match result {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zlock", &e.to_string()),
+    }
+}
+
+// -------- zpublish --------
+//
+// Producer side of the pub/sub bus. zsubscribe is the consumer that
+// holds an open connection; zpublish is one-shot — fire and exit.
+//
+// Forms:
+//   zpublish TOPIC                  # fan out a no-data event
+//   zpublish TOPIC DATA             # DATA passed verbatim as a string
+//   zpublish TOPIC --json '{"k":1}' # parse DATA as JSON for the subscriber
+
+fn zpublish(args: &[String]) -> i32 {
+    // args[0] = "zpublish"; topic + data live at 1+.
+    let topic = match args.get(1) {
+        Some(t) => t.clone(),
+        None => return err_exit("zpublish", "usage: zpublish TOPIC [DATA] [--json '...']"),
+    };
+    let mut payload = json!({"topic": topic, "data": Value::Null});
+    let mut iter = args.iter().skip(2);
+    while let Some(a) = iter.next() {
+        match a.as_str() {
+            "--json" => {
+                let raw = match iter.next() {
+                    Some(s) => s,
+                    None => return err_exit("zpublish", "--json requires a JSON value"),
+                };
+                match serde_json::from_str::<Value>(raw) {
+                    Ok(v) => payload["data"] = v,
+                    Err(e) => return err_exit("zpublish", &format!("--json parse: {e}")),
+                }
+            }
+            other => {
+                // Bare positional after the topic = string DATA.
+                payload["data"] = Value::String(other.to_string());
+            }
+        }
+    }
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    match client.call("publish", payload) {
+        Ok(v) => {
+            print_pretty(&v);
+            0
+        }
+        Err(e) => err_exit("zpublish", &e.to_string()),
+    }
 }
 
 // -------- zsubscribe --------
