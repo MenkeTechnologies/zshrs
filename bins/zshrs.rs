@@ -1755,9 +1755,14 @@ fn process_line(line: &str, executor: &mut ShellExecutor) {
 }
 
 fn setup_editor(compsys_cache: Option<(CompsysCache, PathBuf)>) -> Option<Reedline> {
-    let history_path = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".zshrs_history");
+    // Single-directory rule: the reedline history file lives inside
+    // $ZSHRS_HOME / ~/.zshrs alongside the sqlite index, NOT at
+    // ~/.zshrs_history. `HistoryEngine::text_path` is the single
+    // source of truth so renames stay coherent.
+    let history_path = HistoryEngine::text_path();
+    if let Some(parent) = history_path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
 
     let history = Box::new(FileBackedHistory::with_file(10000, history_path).ok()?);
 
