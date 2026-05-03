@@ -45,6 +45,15 @@ Options:
                              on every run (not just first). Implies
                              --log-stderr and ZSHRS_LOG=debug. For testing.
   --quiet-first-run          Suppress the 6-line first-run stderr block.
+  --print-paths              Print resolved cache / socket / config / pid /
+                             log paths as JSON, then exit. Useful for
+                             scripts that need to know where the daemon's
+                             state lives without spawning it. Honors
+                             --cache-dir.
+  --check-config             Parse ~/.config/zshrs/daemon.toml + report
+                             validation status as JSON, then exit. Lets
+                             editors / CI pre-flight a config edit
+                             without restarting the daemon.
   --version                  Print version, exit.
   -h, --help                 Print this help, exit.
 
@@ -56,6 +65,11 @@ zask, zhistory, zlog, etc.), use the zshrs shell binary.
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
+
+    // Defer-until-after-arg-parse actions so --cache-dir applied
+    // earlier in argv affects them.
+    let mut do_print_paths = false;
+    let mut do_check_config = false;
 
     let mut iter = args.iter().skip(1);
     while let Some(a) = iter.next() {
@@ -93,9 +107,76 @@ fn main() -> ExitCode {
                 }
                 env::set_var("ZSHRS_VERBOSE_INIT", "1");
             }
+            "--print-paths" => do_print_paths = true,
+            "--check-config" => do_check_config = true,
             other => {
                 eprintln!("zshrs-daemon: unknown argument `{}` (try --help)", other);
                 return ExitCode::from(2);
+            }
+        }
+    }
+
+    if do_print_paths {
+        let paths = match zshrs_daemon::paths::CachePaths::resolve() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("zshrs-daemon: --print-paths: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let cfg_file = zshrs_daemon::paths::daemon_config_file()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|e| format!("<unresolved: {e}>"));
+        // Emit as JSON one-liner so scripts can pipe through `jq` or
+        // `python -m json.tool`. Fields mirror CachePaths.
+        println!(
+            "{{\"root\":\"{}\",\"socket\":\"{}\",\"pid_file\":\"{}\",\"log\":\"{}\",\"catalog_db\":\"{}\",\"history_db\":\"{}\",\"cache_db\":\"{}\",\"images\":\"{}\",\"replay_dir\":\"{}\",\"artifacts_dir\":\"{}\",\"snapshots_dir\":\"{}\",\"index_rkyv\":\"{}\",\"config_file\":\"{}\"}}",
+            paths.root.display(),
+            paths.socket.display(),
+            paths.pid_file.display(),
+            paths.log.display(),
+            paths.catalog_db.display(),
+            paths.history_db.display(),
+            paths.cache_db.display(),
+            paths.images.display(),
+            paths.replay_dir.display(),
+            paths.artifacts_dir.display(),
+            paths.snapshots_dir.display(),
+            paths.index_rkyv.display(),
+            cfg_file,
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    if do_check_config {
+        let cfg_file = match zshrs_daemon::paths::daemon_config_file() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("zshrs-daemon: --check-config: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let exists = cfg_file.exists();
+        match zshrs_daemon::paths::load_http_config() {
+            Ok(cfg) => {
+                let listen = cfg.listen.unwrap_or_else(|| "<disabled>".to_string());
+                println!(
+                    "{{\"ok\":true,\"file\":\"{}\",\"file_exists\":{},\"http_listen\":\"{}\",\"http_token_count\":{}}}",
+                    cfg_file.display(),
+                    exists,
+                    listen,
+                    cfg.tokens.len(),
+                );
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                println!(
+                    "{{\"ok\":false,\"file\":\"{}\",\"file_exists\":{},\"error\":\"{}\"}}",
+                    cfg_file.display(),
+                    exists,
+                    e.to_string().replace('"', "\\\""),
+                );
+                return ExitCode::FAILURE;
             }
         }
     }

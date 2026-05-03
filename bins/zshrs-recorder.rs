@@ -37,10 +37,25 @@ OPTIONS
     -f, --file PATH    Source PATH instead of the user's startup chain.
                        Use this to test recorder coverage on a small
                        script without dragging in the real .zshrc.
+    -o, --output PATH  Write the captured bundle as JSON to PATH (in
+                       addition to shipping it to the daemon, or as the
+                       sole output under --no-daemon). Useful for
+                       post-mortem inspection / diffing two runs.
+        --shell-id ID  Override the bundle's shell_id (default `zshrs`).
+                       Used for federation testing — let a recorder
+                       impersonate `bash` / `fish` etc. against the
+                       same daemon. See docs/SHELL_IDS.md.
+        --quiet        Suppress the per-event `Captured KIND ...` stderr
+                       firehose. Summary footer + tracing log still fire.
+        --json         Emit the end-of-run summary as one JSON line on
+                       stdout instead of multi-line human text on stderr.
+                       Lets scripts pipe straight to `jq`.
         --no-daemon    Skip the end-of-run IPC bundle. Captured events
                        still print to stderr + log; nothing reaches the
                        daemon (no rkyv shard, no SQLite hydration). Used
                        by `tests/recorder_harness.rs` for hermetic runs.
+                       Combine with -o PATH to capture the bundle to a
+                       file with no daemon at all.
         --help         Print this message and exit.
         --version      Print version and exit.
 
@@ -61,11 +76,19 @@ OUTPUT
 struct Args {
     file: Option<PathBuf>,
     no_daemon: bool,
+    output: Option<PathBuf>,
+    shell_id: Option<String>,
+    quiet: bool,
+    json: bool,
 }
 
 fn parse_args() -> Result<Args, ExitCode> {
     let mut file: Option<PathBuf> = None;
     let mut no_daemon = false;
+    let mut output: Option<PathBuf> = None;
+    let mut shell_id: Option<String> = None;
+    let mut quiet = false;
+    let mut json = false;
     let mut iter = std::env::args().skip(1);
     while let Some(a) = iter.next() {
         match a.as_str() {
@@ -78,6 +101,22 @@ fn parse_args() -> Result<Args, ExitCode> {
                     return Err(ExitCode::from(1));
                 }
             },
+            "-o" | "--output" => match iter.next() {
+                Some(p) => output = Some(PathBuf::from(p)),
+                None => {
+                    eprintln!("zshrs-recorder: --output requires a path");
+                    return Err(ExitCode::from(1));
+                }
+            },
+            "--shell-id" => match iter.next() {
+                Some(s) => shell_id = Some(s),
+                None => {
+                    eprintln!("zshrs-recorder: --shell-id requires an identifier");
+                    return Err(ExitCode::from(1));
+                }
+            },
+            "--quiet" => quiet = true,
+            "--json" => json = true,
             "--no-daemon" => no_daemon = true,
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -95,7 +134,14 @@ fn parse_args() -> Result<Args, ExitCode> {
             }
         }
     }
-    Ok(Args { file, no_daemon })
+    Ok(Args {
+        file,
+        no_daemon,
+        output,
+        shell_id,
+        quiet,
+        json,
+    })
 }
 
 fn default_zshrc() -> PathBuf {
@@ -119,6 +165,18 @@ fn main() -> ExitCode {
     zsh::recorder::enable();
     if args.no_daemon {
         zsh::recorder::set_daemon_disabled(true);
+    }
+    if args.quiet {
+        zsh::recorder::set_quiet(true);
+    }
+    if args.json {
+        zsh::recorder::set_json_summary(true);
+    }
+    if let Some(sid) = args.shell_id {
+        zsh::recorder::set_shell_id_override(Some(sid));
+    }
+    if let Some(out) = args.output {
+        zsh::recorder::set_output_path(Some(out.display().to_string()));
     }
     // libc atexit covers the `std::process::exit` paths inside builtins
     // (`exit`, fatal error sites). Without this, summary + IPC bundle
