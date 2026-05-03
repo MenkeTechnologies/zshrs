@@ -123,6 +123,8 @@ const OUTANG: u8 = 0x95; // >
 const QUEST: u8 = 0x97; // ?
 const TILDE: u8 = 0x98; // ~
 const COMMA: u8 = 0x9a; // ,
+const DASH: u8 = 0x9b; // - (only in patterns; zsh.h:182)
+const BANG: u8 = 0x9c; // ! (only in patterns; zsh.h:183)
 const SNULL: u8 = 0x9d; // ' quote marker
 const DNULL: u8 = 0x9e; // " quote marker
 const BNULL: u8 = 0x9f; // \ backslash marker
@@ -154,6 +156,8 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
             QUEST => result.push('?'),
             TILDE => result.push('~'),
             COMMA => result.push(','),
+            DASH => result.push('-'),
+            BANG => result.push('!'),
             SNULL | DNULL | BNULL | NULARG => {
                 // Skip null markers
             }
