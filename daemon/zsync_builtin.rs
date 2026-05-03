@@ -16,10 +16,36 @@
 // All output is JSON (the canonical-state subsystem is intrinsically structured;
 // pretty-printing it makes scripted consumers' life easier).
 
+use std::sync::OnceLock;
+
 use serde_json::{json, Value};
 
 use super::client::Client;
 use super::paths::CachePaths;
+
+/// Enumeration callback the SHELL registers at startup. Returns one
+/// `(subsystem, value)` pair per snapshot-able overlay table — keys
+/// must be one of `ALL_SUBSYSTEMS` (validated daemon-side at push
+/// time). Used only by `zsync up --all`; standalone tools (e.g.
+/// the `zd` bin invoked from bash/fish) don't register one and the
+/// `--all` path errors with a clear "shell-side enumerator not
+/// registered" message.
+///
+/// The shell crate doesn't link to the daemon crate as a direct
+/// dependency for executor types, so this registration hook is the
+/// trampoline: shell-side code (which CAN reach the executor)
+/// registers its enumeration logic; the daemon-crate builtin
+/// (which CAN'T reach the executor) calls it through the static.
+pub type OverlayEnumerator = fn() -> Vec<(String, Value)>;
+static OVERLAY_ENUMERATOR: OnceLock<OverlayEnumerator> = OnceLock::new();
+
+/// Called once at shell startup (see `bins/zshrs.rs::zshrs_main`)
+/// to install the snapshot function that `zsync up --all` will
+/// consult. Idempotent — only the first registration wins, so an
+/// over-eager re-init at runtime is silent rather than panicking.
+pub fn register_overlay_enumerator(e: OverlayEnumerator) {
+    let _ = OVERLAY_ENUMERATOR.set(e);
+}
 
 fn err_exit(msg: &str) -> i32 {
     eprintln!("zshrs: zsync: {}", msg);
@@ -150,9 +176,7 @@ fn watch(args: &[String]) -> i32 {
 
 fn push(args: &[String]) -> i32 {
     if args.iter().any(|a| a == "--all") {
-        return err_exit(
-            "up --all requires shell-side overlay enumeration (alias/path/setopt/etc tables); not yet wired in v1. Use `zsync up <subsystem> ...` per subsystem for now."
-        );
+        return push_all();
     }
     let subsystem = match args.first() {
         Some(s) => s.clone(),
@@ -197,6 +221,93 @@ fn push(args: &[String]) -> i32 {
             0
         }
         Err(e) => err_exit(&format!("push: {}", e)),
+    }
+}
+
+/// `zsync up --all` — call the shell-registered enumerator,
+/// validate every emitted subsystem against `ALL_SUBSYSTEMS`, push
+/// each one with a single IPC call. Returns 0 if every subsystem
+/// pushed cleanly, non-zero with a per-subsystem error summary
+/// otherwise. The summary is JSON for scripted consumers; a
+/// human-friendly per-subsystem result line goes to stderr too.
+fn push_all() -> i32 {
+    let enumerator = match OVERLAY_ENUMERATOR.get() {
+        Some(e) => e,
+        None => {
+            return err_exit(
+                "up --all: shell-side overlay enumerator not registered \
+                 (zsync up --all only works inside `zshrs`; from `zd` use \
+                 `zd op push_canonical` per subsystem)",
+            )
+        }
+    };
+    let snapshot = enumerator();
+    if snapshot.is_empty() {
+        eprintln!("zsync: up --all: nothing to push (executor reported empty overlay set)");
+        return 0;
+    }
+    let mut client = match connect() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+    let mut results: Vec<Value> = Vec::with_capacity(snapshot.len());
+    let mut failed = 0usize;
+    for (subsystem, value) in snapshot {
+        if !ALL_SUBSYSTEMS.contains(&subsystem.as_str()) {
+            failed += 1;
+            results.push(json!({
+                "subsystem": subsystem,
+                "ok": false,
+                "error": "unknown subsystem (snapshot bug)"
+            }));
+            eprintln!(
+                "zsync: up --all: skipping unknown subsystem `{}` (snapshot bug)",
+                subsystem
+            );
+            continue;
+        }
+        match client.call(
+            "push_canonical",
+            json!({"subsystem": &subsystem, "value": value}),
+        ) {
+            Ok(v) => {
+                // op_push_canonical's response shape (daemon/zsync.rs:174):
+                //   { promoted: <N pushed this call>, row_count: <total after> }
+                let promoted = v.get("promoted").and_then(Value::as_u64).unwrap_or(0);
+                let total = v.get("row_count").and_then(Value::as_u64).unwrap_or(0);
+                eprintln!(
+                    "zsync: up --all: pushed {:<10} (+{} promoted, {} total)",
+                    subsystem, promoted, total
+                );
+                results.push(json!({
+                    "subsystem": subsystem,
+                    "ok": true,
+                    "promoted": promoted,
+                    "row_count": total,
+                }));
+            }
+            Err(e) => {
+                failed += 1;
+                let msg = e.to_string();
+                eprintln!("zsync: up --all: FAIL {:<10} ({})", subsystem, msg);
+                results.push(json!({
+                    "subsystem": subsystem,
+                    "ok": false,
+                    "error": msg,
+                }));
+            }
+        }
+    }
+    print_pretty(&json!({
+        "ok": failed == 0,
+        "subsystems_pushed": results.len() - failed,
+        "subsystems_failed": failed,
+        "results": results,
+    }));
+    if failed == 0 {
+        0
+    } else {
+        1
     }
 }
 

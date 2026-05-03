@@ -120,7 +120,7 @@ impl Drop for ExecutorContext {
 /// # Safety
 /// Only call this from within a VM execution context (after ExecutorContext::enter).
 #[inline]
-fn with_executor<F, R>(f: F) -> R
+pub(crate) fn with_executor<F, R>(f: F) -> R
 where
     F: FnOnce(&mut ShellExecutor) -> R,
 {
