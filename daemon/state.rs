@@ -112,6 +112,11 @@ pub struct DaemonState {
     /// processes that didn't get a release call were by definition
     /// crashed). PID-tied auto-release is per-acquire, not periodic.
     pub locks: super::lock::LockTable,
+    /// In-process counters surfaced by `daemon.metrics` op + the
+    /// `GET /metrics` Prometheus exposition. Bumped from
+    /// `ops::dispatch` after each call and from `http::handler_op`
+    /// after each HTTP response.
+    pub metrics: super::metrics::Metrics,
     pub paths: CachePaths,
     pub started_at: Instant,
     pub start_wall: chrono::DateTime<chrono::Utc>,
@@ -137,6 +142,7 @@ impl DaemonState {
         let state = Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
             locks: super::lock::new_table(),
+            metrics: super::metrics::Metrics::new(),
             catalog: Mutex::new(catalog),
             history_db: Mutex::new(history_db),
             fs_watcher,
@@ -364,6 +370,13 @@ impl DaemonState {
 
     pub fn session_count(&self) -> usize {
         self.inner.lock().sessions.len()
+    }
+
+    /// Total active subscriptions across all sessions. Used by the
+    /// `daemon.metrics` op + `/metrics` Prometheus exposition for
+    /// the `daemon_active_subscriptions` gauge.
+    pub fn subscription_count(&self) -> usize {
+        self.inner.lock().subscriptions.len()
     }
 
     /// Persist canonical state to its rkyv shard AND immediately mirror it

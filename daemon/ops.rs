@@ -10,6 +10,7 @@ pub const OP_NAMES: &[&str] = &[
     "cache_del", "cache_get", "cache_list", "cache_put", "cache_stats",
     "canonical_hydrate_view", "clean", "cmd_result", "cmd_started", "compact",
     "complete", "config_get", "config_list", "config_set", "daemon",
+    "definitions_diff", "definitions_emit", "definitions_kinds", "definitions_query",
     "diff_canonical", "doctor", "export", "export_all", "export_catalog",
     "export_shard", "export_zcompdump", "fpath_changed", "highlight",
     "history_append", "history_query", "import_all", "import_catalog",
@@ -17,7 +18,7 @@ pub const OP_NAMES: &[&str] = &[
     "info", "job_cancel", "job_kill", "job_list", "job_output", "job_status",
     "job_submit", "job_wait", "keys", "list_shells", "load_script",
     "lock_acquire", "lock_list", "lock_release", "lock_try_acquire",
-    "log_level", "log_rotate", "log_stats", "notify", "ping", "publish",
+    "log_level", "log_rotate", "log_stats", "metrics", "notify", "ping", "publish",
     "pull_canonical", "push_canonical", "recorder_ingest", "register",
     "replay_log", "schedule_add", "schedule_add_once", "schedule_list",
     "schedule_remove", "send", "snapshot_diff", "snapshot_list",
@@ -155,6 +156,17 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "schedule_add_once" => super::schedule::op_schedule_add_once(state, args).await,
         "schedule_remove"   => super::schedule::op_schedule_remove(state, args).await,
         "schedule_list"     => super::schedule::op_schedule_list(state, args).await,
+        // Definitions (recorder catalog: query, single-record write,
+        // cross-shell diff). `definitions_emit` is the universal
+        // shell-recorder write API per docs/DAEMON_AS_SERVICE.md +
+        // docs/SHELL_IDS.md — bash/fish/zsh users push records into
+        // the federated catalog through this op.
+        "definitions_query" => super::definitions::op_definitions_query(state, args).await,
+        "definitions_kinds" => super::definitions::op_definitions_kinds(state, args).await,
+        "definitions_emit"  => super::definitions::op_definitions_emit(state, args).await,
+        "definitions_diff"  => super::definitions::op_definitions_diff(state, args).await,
+        // Metrics (Prometheus-shaped also via GET /metrics).
+        "metrics" => super::metrics::op_metrics(state, args).await,
 
         _ => Err(ErrPayload::new(
             "unknown_op",
@@ -166,6 +178,7 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         Ok(_) => tracing::info!(ok = true, "op handled"),
         Err(e) => tracing::info!(ok = false, code = %e.code, msg = %e.msg, "op failed"),
     }
+    state.metrics.record_op(op, result.is_ok());
 
     result
 }
@@ -1329,11 +1342,21 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         zdotdir: Option<String>,
         home: Option<String>,
         events: Vec<EvIn>,
+        // Federated-catalog identity for every row in this bundle.
+        // Per-event override via EvIn.shell_id (added separately).
+        // None at both layers = "zshrs" (the historical default,
+        // preserved for backwards compat with pre-shell_id ingests).
+        #[serde(default)]
+        shell_id: Option<String>,
     }
 
     let bundle: BundleIn = serde_json::from_value(args)
         .map_err(|e| ErrPayload::new("bad_args", format!("recorder bundle: {e}")))?;
     let total = bundle.events.len();
+    let bundle_shell_id = bundle
+        .shell_id
+        .clone()
+        .unwrap_or_else(|| "zshrs".to_string());
 
     // Per-subsystem buckets for `replace_subsystem` (so a re-recorder
     // run drops every previous row in that subsystem and replaces with
@@ -1443,128 +1466,151 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     }
 
     // Replace subsystems wholesale — recorder bundle is end-state.
+    // Every row stamped with the bundle's shell_id so the canonical
+    // catalog stays federated across bash/zsh/zshrs/etc. recorders.
     let canon = &state.canonical;
-    canon.replace_subsystem(
+    let sid = || Some(bundle_shell_id.clone());
+    canon.replace_subsystem_tagged(
         "alias",
         aliases.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "galias",
         galias.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "salias",
         salias.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "function",
         functions.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "env",
         env_exports.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "params",
         params.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "bindkey",
         bindkeys.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "compdef",
         compdef.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "named_dir",
         named_dirs.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "zstyle",
         zstyle
             .iter()
             .enumerate()
             .map(|(i, (p, r))| (format!("{}:{}", i, p), json_string(r))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "zmodload",
         zmodload.iter().map(|m| (m.clone(), json_string(""))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "setopt",
         setopts
             .iter()
             .map(|o| (o.clone(), "\"on\"".to_string()))
             .chain(unsetopts.iter().map(|o| (o.clone(), "\"off\"".to_string()))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "trap",
         traps.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "sched",
         sched.iter().map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "zle",
         zle_widgets
             .iter()
             .map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "completion",
         completions
             .iter()
             .map(|(k, v)| (k.clone(), json_string(v))),
         None,
+        sid(),
     );
     // params_typed values are already JSON; pass them through verbatim
     // so the canonical row preserves the structured payload (attrs +
     // value + value_array + value_assoc) for replay.
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "params_typed",
         params_typed.iter().map(|(k, v)| (k.clone(), v.clone())),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "source",
         sourced
             .iter()
             .enumerate()
             .map(|(i, p)| (i.to_string(), json_string(p))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "path",
         path_acc
             .iter()
             .enumerate()
             .map(|(i, d)| (i.to_string(), json_string(d))),
         None,
+        sid(),
     );
-    canon.replace_subsystem(
+    canon.replace_subsystem_tagged(
         "fpath",
         fpath_acc
             .iter()
             .enumerate()
             .map(|(i, d)| (i.to_string(), json_string(d))),
         None,
+        sid(),
     );
 
     // Build the rkyv shard from the just-folded canonical state.
@@ -1658,6 +1704,7 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         elapsed_ms,
         "recorder_ingest complete"
     );
+    state.metrics.record_recorder_events(total as u64);
     Ok(payload)
 }
 

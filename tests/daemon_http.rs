@@ -388,3 +388,98 @@ fn health_remains_open_when_tokens_configured() {
     let body: serde_json::Value = resp.into_json().expect("json");
     assert_eq!(body["ok"], serde_json::json!(true));
 }
+
+#[test]
+fn definitions_federation_keeps_per_shell_rows_distinct() {
+    // Two shells emit `alias ll` with different bodies. Pre-federation
+    // (composite-key) the second emit clobbered the first; with the
+    // composite-key fix in canonical.rs both rows survive and the diff
+    // op surfaces the conflict as `changed`.
+    let d = DaemonHttp::spawn(None);
+
+    // bash: ll = ls -al
+    ureq::post(&d.url("/op/definitions_emit"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"shell_id":"bash","kind":"alias","name":"ll","value":"ls -al"}"#)
+        .expect("emit bash ll");
+    // zshrs: ll = ls -alh
+    ureq::post(&d.url("/op/definitions_emit"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"shell_id":"zshrs","kind":"alias","name":"ll","value":"ls -alh"}"#)
+        .expect("emit zshrs ll");
+    // bash-only env to test diff `removed`
+    ureq::post(&d.url("/op/definitions_emit"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"shell_id":"bash","kind":"env","name":"PAGER","value":"less"}"#)
+        .expect("emit bash PAGER");
+
+    // Query without filter: both alias rows present.
+    let r = ureq::post(&d.url("/op/definitions_query"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"kind":"alias"}"#)
+        .expect("query all");
+    let body: serde_json::Value = r.into_json().unwrap();
+    let recs = body["records"].as_array().unwrap();
+    assert_eq!(recs.len(), 2, "expected both shells' ll rows: {body}");
+    let shells: std::collections::HashSet<&str> = recs
+        .iter()
+        .filter_map(|r| r["shell_id"].as_str())
+        .collect();
+    assert!(shells.contains("bash"), "missing bash row: {body}");
+    assert!(shells.contains("zshrs"), "missing zshrs row: {body}");
+
+    // Filter to bash only.
+    let r = ureq::post(&d.url("/op/definitions_query"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"kind":"alias","shell_id":"bash"}"#)
+        .expect("query bash");
+    let body: serde_json::Value = r.into_json().unwrap();
+    assert_eq!(body["count"], serde_json::json!(1));
+    assert_eq!(body["records"][0]["shell_id"], serde_json::json!("bash"));
+    assert_eq!(body["records"][0]["value"], serde_json::json!("ls -al"));
+
+    // Diff bash vs zshrs: ll is `changed`, PAGER is `removed`.
+    let r = ureq::post(&d.url("/op/definitions_diff"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"shell_a":"bash","shell_b":"zshrs"}"#)
+        .expect("diff");
+    let body: serde_json::Value = r.into_json().unwrap();
+    let changed = body["changed"].as_array().unwrap();
+    assert!(
+        changed.iter().any(|c| c["name"] == "ll" && c["from"] == "ls -al" && c["to"] == "ls -alh"),
+        "expected ll changed entry: {body}"
+    );
+    let removed = body["removed"].as_array().unwrap();
+    assert!(
+        removed.iter().any(|r| r["name"] == "PAGER"),
+        "expected PAGER removed (only in bash): {body}"
+    );
+}
+
+#[test]
+fn definitions_emit_rejects_missing_shell_id() {
+    let d = DaemonHttp::spawn(None);
+    let resp = ureq::post(&d.url("/op/definitions_emit"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"kind":"alias","name":"ll","value":"ls"}"#);
+    let err = resp.expect_err("expected 400 missing shell_id");
+    let status = match err {
+        ureq::Error::Status(s, _) => s,
+        ureq::Error::Transport(t) => panic!("transport error: {t}"),
+    };
+    assert_eq!(status, 400);
+}
+
+#[test]
+fn definitions_emit_rejects_unknown_kind() {
+    let d = DaemonHttp::spawn(None);
+    let resp = ureq::post(&d.url("/op/definitions_emit"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"shell_id":"bash","kind":"banana","name":"x"}"#);
+    let err = resp.expect_err("expected 404 unknown kind");
+    let status = match err {
+        ureq::Error::Status(s, _) => s,
+        ureq::Error::Transport(t) => panic!("transport error: {t}"),
+    };
+    assert_eq!(status, 404);
+}
