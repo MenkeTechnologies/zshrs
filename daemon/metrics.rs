@@ -14,8 +14,8 @@
 //!   - `daemon_jobs_total{state="..."}`   (gauge)
 //!   - `daemon_canonical_rows`            (gauge)
 //!   - `daemon_recorder_events_total`     (counter — sum of all
-//!                                         events_ingested across all
-//!                                         recorder_ingest calls)
+//!     events_ingested across all
+//!     recorder_ingest calls)
 //!
 //! No external metrics crate (`metrics-rs`, `prometheus-client`) —
 //! the surface is small, hand-rolled keeps the dep graph durable.

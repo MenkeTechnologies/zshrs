@@ -159,7 +159,7 @@ pub fn tcp_connect_timeout(
                 dns_str.to_socket_addrs().map(|a| a.collect());
             let _ = tx.send(result);
         })
-        .map_err(|e| io::Error::other(e))?;
+        .map_err(io::Error::other)?;
 
     let addrs = rx
         .recv_timeout(timeout)

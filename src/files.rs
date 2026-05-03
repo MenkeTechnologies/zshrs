@@ -363,7 +363,7 @@ pub fn parse_chown_spec(spec: &str) -> Result<(Option<u32>, Option<u32>), String
     };
 
     let gid = match group_part {
-        Some(g) if g.is_empty() => {
+        Some("") => {
             if let Some(uid_val) = uid {
                 unsafe {
                     let pwd = libc::getpwuid(uid_val);

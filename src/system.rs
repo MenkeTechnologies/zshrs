@@ -554,11 +554,7 @@ pub fn funlock(fd: i32) -> Result<(), String> {
 
 /// Check if a zsystem feature is supported
 pub fn zsystem_supports(feature: &str) -> bool {
-    match feature {
-        "supports" => true,
-        "flock" => cfg!(unix),
-        _ => false,
-    }
+    feature == "supports" || (feature == "flock" && cfg!(unix))
 }
 
 /// System parameters

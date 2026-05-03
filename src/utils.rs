@@ -594,7 +594,7 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
 
     match sep {
         None => spacesplit(s, allownull),
-        Some(sep) if sep.is_empty() => {
+        Some("") => {
             // Empty separator: split into characters
             if allownull {
                 s.chars().map(|c| c.to_string()).collect()
