@@ -60,10 +60,23 @@ OPTIONS
         --version      Print version and exit.
 
 DEFAULT BEHAVIOR (no --file)
-    Sources ${ZDOTDIR:-$HOME}/.zshrc as if at login, capturing every
-    alias, function, export, path/fpath edit, hash -d, zstyle, bindkey,
-    compdef, zmodload, setopt, trap, sched, source, and assignment that
-    fires through the runtime AOP layer.
+    Sources the full zsh login + interactive startup chain as a real
+    `zsh -l -i` would (skipping any file that does not exist):
+
+       1. /etc/zshenv
+       2. ${ZDOTDIR:-$HOME}/.zshenv
+       3. /etc/zprofile
+       4. ${ZDOTDIR:-$HOME}/.zprofile
+       5. /etc/zshrc
+       6. ${ZDOTDIR:-$HOME}/.zshrc
+       7. /etc/zlogin
+       8. ${ZDOTDIR:-$HOME}/.zlogin
+
+    Captures every alias, function, export, path/fpath edit, hash -d,
+    zstyle, bindkey, compdef, zmodload, setopt, trap, sched, source,
+    and assignment that fires through the runtime AOP layer across all
+    eight files. $ZDOTDIR is re-resolved before each user-side file so
+    a /etc-side script setting it propagates correctly.
 
 OUTPUT
     Realtime stderr   `Captured KIND NAME[=value], file: PATH:LINE [(fn)]`
@@ -144,13 +157,32 @@ fn parse_args() -> Result<Args, ExitCode> {
     })
 }
 
-fn default_zshrc() -> PathBuf {
-    let zdotdir = std::env::var_os("ZDOTDIR").map(PathBuf::from);
+fn zdotdir() -> PathBuf {
+    let zd = std::env::var_os("ZDOTDIR").map(PathBuf::from);
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    zdotdir
-        .or(home)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".zshrc")
+    zd.or(home).unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// The eight-file zsh login + interactive startup chain. Mirrors the
+/// `zsh(1)` STARTUP/SHUTDOWN FILES section (and `bins/zshrs.rs ::
+/// source_startup_files`). Returned in source order; non-existent
+/// entries stay in the list — the caller skips them silently. $ZDOTDIR
+/// is resolved at the moment this function is called; in practice the
+/// recorder runs it once after it has already entered the source loop
+/// for the previous file, so /etc/zshenv gets a chance to set ZDOTDIR
+/// before $ZDOTDIR-targeting files resolve.
+fn login_chain() -> [PathBuf; 8] {
+    let zd = zdotdir();
+    [
+        PathBuf::from("/etc/zshenv"),
+        zd.join(".zshenv"),
+        PathBuf::from("/etc/zprofile"),
+        zd.join(".zprofile"),
+        PathBuf::from("/etc/zshrc"),
+        zd.join(".zshrc"),
+        PathBuf::from("/etc/zlogin"),
+        zd.join(".zlogin"),
+    ]
 }
 
 fn main() -> ExitCode {
@@ -187,36 +219,58 @@ fn main() -> ExitCode {
     // not how shell scripts usually terminate.
     zsh::recorder::install_atexit();
 
-    let target = args.file.unwrap_or_else(default_zshrc);
-    let target_display = target.display().to_string();
-
-    let content = match std::fs::read_to_string(&target) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!(
-                "zshrs-recorder: cannot read {}: {}",
-                target_display, e
-            );
-            return ExitCode::from(1);
-        }
-    };
-
-    tracing::info!(file = %target_display, "zshrs-recorder: sourcing");
-    eprintln!("zshrs-recorder: sourcing {}", target_display);
-
     let mut executor = ShellExecutor::new();
-    // Set $0 to the sourced file so any script that introspects $0
-    // (zinit / oh-my-zsh do) sees the right name.
-    executor
-        .variables
-        .insert("0".to_string(), target_display.clone());
+    let mut last_status: i32 = 0;
 
-    let status = executor.execute_script(&content).unwrap_or_else(|e| {
-        eprintln!("zshrs-recorder: {}: {}", target_display, e);
-        1
-    });
+    if let Some(path) = args.file {
+        // Single-file mode (-f / --file): source ONLY that file, no
+        // /etc/zshenv, no .zshenv chain. Used by tests + ad-hoc
+        // recorder runs against a small script.
+        let disp = path.display().to_string();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("zshrs-recorder: cannot read {}: {}", disp, e);
+                return ExitCode::from(1);
+            }
+        };
+        tracing::info!(file = %disp, "zshrs-recorder: sourcing");
+        eprintln!("zshrs-recorder: sourcing {}", disp);
+        executor.variables.insert("0".to_string(), disp.clone());
+        last_status = executor.execute_script(&content).unwrap_or_else(|e| {
+            eprintln!("zshrs-recorder: {}: {}", disp, e);
+            1
+        });
+    } else {
+        // Default mode: walk the full eight-file zsh login chain. Each
+        // existing file is sourced in order; missing files are skipped
+        // silently (matches how a real `zsh -l -i` boots when
+        // /etc/zprofile etc. don't exist on the host). $0 is set to
+        // each file as it's sourced so introspection in those scripts
+        // sees the right name.
+        for path in login_chain() {
+            if !path.exists() {
+                continue;
+            }
+            let disp = path.display().to_string();
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(file = %disp, error = %e, "skipping unreadable startup file");
+                    continue;
+                }
+            };
+            tracing::info!(file = %disp, "zshrs-recorder: sourcing");
+            eprintln!("zshrs-recorder: sourcing {}", disp);
+            executor.variables.insert("0".to_string(), disp.clone());
+            last_status = executor.execute_script(&content).unwrap_or_else(|e| {
+                eprintln!("zshrs-recorder: {}: {}", disp, e);
+                1
+            });
+        }
+    }
 
-    // Process exits with the script's last status. atexit fires on the
-    // way out; that's where summary + daemon IPC happen.
-    ExitCode::from(status as u8)
+    // Process exits with the last sourced script's status. atexit fires
+    // on the way out; that's where summary + daemon IPC happen.
+    ExitCode::from(last_status as u8)
 }
