@@ -2356,20 +2356,19 @@ impl ZshCompiler {
         let source_text = f.body_source.clone().unwrap_or_default();
 
         for raw_name in &f.names {
-            // The lexer packs `name()` into a single String token by
-            // appending INPAR+OUTPAR markers (`\u{88}\u{8a}`). Under
-            // `function name() { body }` this lands in `names` with
-            // the suffix attached. Strip it here so the registered
-            // function name is the bare identifier — the parser stays
-            // a pure port of zsh's grammar.
-            let cleaned = if raw_name.ends_with('\u{8a}') && raw_name.contains('\u{88}') {
-                let stripped = raw_name
-                    .trim_end_matches('\u{8a}')
-                    .trim_end_matches('\u{88}');
-                crate::lexer::untokenize(stripped)
-            } else {
-                raw_name.clone()
-            };
+            // Strip any trailing INPAR+OUTPAR markers (\u{88}\u{8a})
+            // that the lexer may pack into a single String token under
+            // some `function name() { body }` paths, then untokenize
+            // unconditionally so DASH/BANG/etc. bytes inside the name
+            // (e.g. `foo-bar` lexes as `foo<DASH>bar`) become literal
+            // chars before registration. Without the unconditional
+            // untokenize, hyphenated function names register under the
+            // raw tokenized form and the call site (which DOES
+            // untokenize) misses the lookup.
+            let stripped = raw_name
+                .trim_end_matches('\u{8a}')
+                .trim_end_matches('\u{88}');
+            let cleaned = crate::lexer::untokenize(stripped);
             let name_const = self.builder.add_constant(Value::str(cleaned.as_str()));
             self.builder.emit(Op::LoadConst(name_const), 0);
             let body_const = self.builder.add_constant(Value::str(body_str.as_str()));
