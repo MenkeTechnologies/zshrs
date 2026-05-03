@@ -575,7 +575,7 @@ Runtime AOP at the dispatcher level avoids all five. The aspect runs *inside the
                 │   .zshrc / ZDOTDIR   │
                 └──────────┬───────────┘
                            │
-                  zshrs --record
+                  zshrs-recorder
                            │
                   ┌────────▼─────────┐
                   │  AOP intercept   │   ← weaves before-advice on every
@@ -747,33 +747,32 @@ rkyv     = { version = "0.7", optional = true, features = [...] }
 default = []
 recorder = ["dep:rusqlite", "dep:rkyv"]
 ```
+#### Rule 3 — `zwhere` is always in default `zshrs`
 
-Default `zshrs` binary has zero rusqlite/rkyv code in its zshrs-side
-linking (the daemon crate links them; `zshrs` talks to the daemon
-over IPC and never directly touches sqlite/rkyv except in `zwhere`,
-which itself is `#[cfg(feature = "recorder")]` gated — see Rule 3).
+The recorder feature gates the **AOP write path** (the runtime
+intercepts that emit records during shell init). The **query path**
+is just an IPC client over `definitions_query` — same tier as
+`zcache`, `zls`, `zping`. zshrs already links the daemon-client
+crate, so the marginal cost of shipping `zwhere` in the default
+binary is a few hundred bytes of code, not a separate feature.
 
-#### Rule 3 — `zwhere` query is feature-gated too
-
-The query side is also recorder-gated. In a default `zshrs` build,
-typing `zwhere alias gst` produces:
+`zwhere` lives in `daemon/builtins.rs` alongside the other z*
+builtins:
 
 ```
-zshrs: zwhere: builtin not available; build with --features recorder
-       or use zshrs-recorder for queries
+zwhere KIND [NAME]              # rows for KIND [NAME] across all shells
+zwhere KIND --prefix STR        # all KIND rows whose name starts with STR
+zwhere --kinds                  # list every populated kind
+zwhere --shell-id ID …          # restrict to one shell_id
+zwhere --limit N …              # cap (default 1000)
 ```
 
-Rationale: keeping `zwhere` available in default `zshrs` would mean
-linking the IPC-decode path + format helpers, which adds binary size
-and code-execution surface. Users who want query access run
-`zshrs-recorder` (which contains both the recording AND query
-builtins) or rely on a separate command-line tool `zwhere` that
-talks to the daemon directly without going through zshrs's runtime
-at all.
+Output: tab-separated `kind\tname\tvalue\tshell_id\tfile:line`,
+script-friendly. Pipe through `column -t` for human reading.
 
-If we later decide query-side is worth shipping in default `zshrs`,
-we can split into two features: `recorder` (write path) and
-`recorder-query` (read path). For now: clean separation.
+The earlier draft of this doc claimed `zwhere` would be feature-gated;
+that was incorrect reasoning. Read-only query has no dependency on
+the recorder's write-path code, so there's nothing to gate.
 
 ### Validation
 
