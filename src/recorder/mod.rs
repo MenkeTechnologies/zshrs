@@ -1002,10 +1002,7 @@ pub fn flush_to_daemon() -> bool {
         Ok(mut b) => std::mem::take(&mut *b),
         Err(_) => return false,
     };
-    if events.is_empty() {
-        eprintln!("recorder: no events to flush");
-        return false;
-    }
+    let events_empty = events.is_empty();
     let bundle = RecorderBundle {
         started_at_ns: START_NS.load(Ordering::Relaxed),
         finished_at_ns: now_ns(),
@@ -1022,7 +1019,11 @@ pub fn flush_to_daemon() -> bool {
 
     // `-o PATH` writes the bundle to a JSON file alongside (or instead
     // of, under --no-daemon) shipping it to the daemon. Useful for
-    // post-mortem inspection without spinning a daemon up.
+    // post-mortem inspection without spinning a daemon up. Empty
+    // bundles still write — caller asked for the file, give them the
+    // file (even if it just confirms "recorder ran, captured nothing"
+    // — that itself is a useful diagnostic when a parse error caused
+    // zero events).
     if let Some(path) = output_path() {
         match serde_json::to_string(&bundle) {
             Ok(s) => {
@@ -1034,6 +1035,11 @@ pub fn flush_to_daemon() -> bool {
             }
             Err(e) => eprintln!("recorder: bundle serialize for output failed: {e}"),
         }
+    }
+
+    if events_empty {
+        eprintln!("recorder: no events to flush");
+        return false;
     }
 
     if daemon_disabled() {
