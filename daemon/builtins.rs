@@ -56,7 +56,7 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
 /// Whether `name` is a daemon-managed z* builtin. Lets the shell short-circuit to
 /// `dispatch` without baking the list into the call site.
 pub fn is_zshrs_builtin(name: &str) -> bool {
-    ZSHRS_BUILTIN_NAMES.iter().any(|n| *n == name)
+    ZSHRS_BUILTIN_NAMES.contains(&name)
 }
 
 /// Combines the name check with `dispatch`: returns the exit status if `name` is
@@ -786,8 +786,8 @@ fn print_shells_table(shells: &Value) {
         return;
     }
     println!(
-        "{:<6} {:<8} {:<14} {:<8} {:<10} {}",
-        "ID", "PID", "TTY", "UPTIME", "TAGS", "CWD"
+        "{:<6} {:<8} {:<14} {:<8} {:<10} CWD",
+        "ID", "PID", "TTY", "UPTIME", "TAGS"
     );
     for s in arr {
         let id = s.get("client_id").and_then(Value::as_u64).unwrap_or(0);

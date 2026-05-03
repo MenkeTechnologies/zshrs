@@ -248,8 +248,8 @@ fn print_jobs_table(v: &Value) {
         return;
     }
     println!(
-        "{:<6} {:<10} {:<8} {:<12} {:<10} {}",
-        "ID", "STATE", "EXIT", "STARTED", "TAGS", "COMMAND"
+        "{:<6} {:<10} {:<8} {:<12} {:<10} COMMAND",
+        "ID", "STATE", "EXIT", "STARTED", "TAGS"
     );
     for j in arr {
         let id = j.get("id").and_then(Value::as_u64).unwrap_or(0);
@@ -884,7 +884,7 @@ const B64_ALPHABET: &[u8] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode_local(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0];
         let b1 = chunk.get(1).copied().unwrap_or(0);

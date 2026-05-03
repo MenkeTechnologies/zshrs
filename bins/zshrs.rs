@@ -682,7 +682,7 @@ pub fn zshrs_main() {
         // separator-stripped). zshrs's runtime nomatch check at
         // expand_glob looks up "nomatch" directly.
         for (raw, set_val) in opts {
-            let canonical = raw.to_lowercase().replace('_', "").replace('-', "");
+            let canonical = raw.to_lowercase().replace(['_', '-'], "");
             executor.options.insert(canonical, *set_val);
         }
     }
@@ -751,7 +751,7 @@ pub fn zshrs_main() {
         #[cfg(feature = "daemon")]
         completed_c.store(true, std::sync::atomic::Ordering::SeqCst);
         let duration_ns_total = start.elapsed().as_nanos() as i64;
-        let duration = (duration_ns_total / 1_000_000) as i64;
+        let duration = duration_ns_total / 1_000_000;
 
         // Track in local history
         if let Some(ref engine) = executor.history {
@@ -1720,7 +1720,7 @@ fn run_interactive() {
                 #[cfg(feature = "daemon")]
                 completed.store(true, std::sync::atomic::Ordering::SeqCst);
                 let duration_ns_total = start.elapsed().as_nanos() as i64;
-                let duration = (duration_ns_total / 1_000_000) as i64;
+                let duration = duration_ns_total / 1_000_000;
 
                 // Ship history write to worker pool — prompt returns instantly,
                 // SQLite write happens in background.
@@ -2153,7 +2153,7 @@ impl ReedlineMenuTrait for ZshMenuSelect {
     fn menu_required_lines(&self, _terminal_columns: u16) -> u16 {
         // Estimate from item count and columns
         let cols = self.state.cols().max(1);
-        let rows = (self.values.len() + cols - 1) / cols;
+        let rows = self.values.len().div_ceil(cols);
         (rows as u16).max(3)
     }
 
@@ -2529,7 +2529,7 @@ impl Completer for ZshrsCompleter {
             // Option completion - use compsys cache to find options
             if let Some(cmd) = words.first() {
                 // Try to get options from completion function in cache
-                if let Ok(Some(func)) = self.cache.get_comp(*cmd) {
+                if let Ok(Some(func)) = self.cache.get_comp(cmd) {
                     if let Ok(Some(stub)) = self.cache.get_autoload(&func) {
                         if let Ok(content) = std::fs::read_to_string(&stub.source) {
                             let prefix_lower = current_word.to_lowercase();
@@ -2707,9 +2707,9 @@ fn parse_option_spec(spec: &str) -> Option<(String, String)> {
         return None;
     }
     let opt_end = rest
-        .find(|c| c == '[' || c == '=' || c == ':' || c == ' ')
+        .find(['[', '=', ':', ' '])
         .unwrap_or(rest.len());
-    let opt_name = rest[..opt_end].trim_end_matches(|c| c == '+' || c == '=');
+    let opt_name = rest[..opt_end].trim_end_matches(['+', '=']);
     if opt_name.is_empty() || opt_name == "-" || opt_name == "--" {
         return None;
     }

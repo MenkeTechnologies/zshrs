@@ -131,9 +131,7 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
                         }))
                     },
                 )
-                .optional()
-                .map_err(rusqlite::Error::from)
-            })
+                .optional()})
             .map_err(ErrPayload::from)?;
         let body = match row {
             Some(v) => match format.as_str() {
@@ -1545,7 +1543,7 @@ fn render_native(state: &DaemonState, target: &str) -> std::result::Result<Strin
             format!("shard `{}` not built yet", path.display()),
         ));
     }
-    let bytes = std::fs::read(&path).map_err(|e| ErrPayload::from(e))?;
+    let bytes = std::fs::read(&path).map_err(ErrPayload::from)?;
     // Emit base64 — this format is meant for programmatic consumers (e.g.
     // `curl … | base64 -d > shard.rkyv`). Not meant for terminal viewing.
     Ok(base64_encode(&bytes))
@@ -1553,7 +1551,7 @@ fn render_native(state: &DaemonState, target: &str) -> std::result::Result<Strin
 
 fn base64_encode(bytes: &[u8]) -> String {
     const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0];
         let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };

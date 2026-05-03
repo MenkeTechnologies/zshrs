@@ -778,30 +778,25 @@ impl<'a> ZshLexer<'a> {
         // Note: Do NOT reset global_iterations here - it must accumulate across all
         // zshlex calls in a parse to prevent infinite loops in the parser
 
-        // lex.c:270-276 — gettok / exalias loop. Without exalias wired,
-        // the inner body runs once and we `break` unconditionally.
-        loop {
-            // lex.c:271-272 — bump inrepeat counter for `repeat N {}`
-            // detection.
-            if self.inrepeat > 0 {
-                self.inrepeat += 1;
-            }
-            // lex.c:273-274 — at the third token after `repeat`,
-            // SHORTLOOPS / SHORTREPEAT options force back into cmd
-            // position so the loop body can start. zshrs unconditionally
-            // does this since the option-lookup lives in exec.rs.
-            if self.inrepeat == 3 {
-                self.incmdpos = true;
-            }
-
-            // lex.c:275 — `tok = gettok();`
-            self.tok = self.gettok();
-
-            // lex.c:276 — `while (tok != ENDINPUT && exalias())` —
-            // when exalias re-injects alias text it returns true and
-            // the loop iterates. Without exalias wired, we break.
-            break;
+        // lex.c:270-276 — gettok / exalias one-pass body. The C source
+        // wraps gettok in `do { ... } while (exalias())` so an alias
+        // re-injection re-enters the lex. Until exalias is wired we
+        // run the body exactly once, no loop scaffolding.
+        // lex.c:271-272 — bump inrepeat counter for `repeat N {}`
+        // detection.
+        if self.inrepeat > 0 {
+            self.inrepeat += 1;
         }
+        // lex.c:273-274 — at the third token after `repeat`,
+        // SHORTLOOPS / SHORTREPEAT options force back into cmd
+        // position so the loop body can start. zshrs unconditionally
+        // does this since the option-lookup lives in exec.rs.
+        if self.inrepeat == 3 {
+            self.incmdpos = true;
+        }
+
+        // lex.c:275 — `tok = gettok();`
+        self.tok = self.gettok();
 
         // lex.c:277 — `nocorrect &= 1;` — clear bit 1 (lookahead-only)
         // so the persistent low bit survives but the per-word bit is

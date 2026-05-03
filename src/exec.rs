@@ -38296,23 +38296,6 @@ impl ShellExecutor {
             }
             return 0;
         }
-        // Legacy fallback (unused after the consumed_indices path above) —
-        // kept to satisfy the remaining shift code below.
-        if false && remove_parsed && parsed_count > 0 {
-            for i in 1..=parsed_count {
-                self.variables.remove(&i.to_string());
-                std::env::remove_var(i.to_string());
-            }
-            // Shift remaining
-            let remaining: Vec<String> = ((parsed_count + 1)..=99)
-                .map(|i| self.get_variable(&i.to_string()))
-                .take_while(|v| !v.is_empty())
-                .collect();
-            for (i, val) in remaining.iter().enumerate() {
-                self.variables.insert((i + 1).to_string(), val.clone());
-            }
-        }
-
         0
     }
 
