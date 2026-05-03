@@ -575,19 +575,27 @@ fn zshflag_P() {
 }
 #[test]
 fn zshflag_count() {
-    ok("a=(x y z); echo ${(#)a}", "3\n");
+    // ${(#)a} evaluates each array element as an arithmetic expression
+    // (not "count of elements" — that's ${#a}). For non-numeric words
+    // like x/y/z each evaluates to 0, then `printc 0` emits NUL bytes.
+    // Real zsh: `\0 \0 \0\n`. Verified via `zsh -c 'a=(x y z); echo ${(#)a}'`.
+    ok("a=(x y z); echo ${(#)a}", "\0 \0 \0\n");
 }
 #[test]
 fn zshflag_q() {
-    ok("x=hi; echo ${(q)x}", "'hi'\n");
+    // ${(q)x} only quotes if needed. `hi` has no shell-special chars
+    // so zsh emits the bare value. Verified: `zsh -c 'x=hi; echo ${(q)x}'`.
+    ok("x=hi; echo ${(q)x}", "hi\n");
 }
 #[test]
 fn zshflag_qq() {
-    ok("x=hi; echo ${(qq)x}", "\"hi\"\n");
+    // (qq) = single-quote always. Verified: `zsh -c 'x=hi; echo ${(qq)x}'`.
+    ok("x=hi; echo ${(qq)x}", "'hi'\n");
 }
 #[test]
 fn zshflag_qqqq() {
-    ok(r#"x="has space"; echo ${(qqqq)x}"#, "has\\ space\n");
+    // (qqqq) = $'…' (ANSI-C) form. Verified: `zsh -c 'x="has space"; echo ${(qqqq)x}'`.
+    ok(r#"x="has space"; echo ${(qqqq)x}"#, "$'has space'\n");
 }
 #[test]
 fn zshflag_q_plus_safe() {
@@ -2450,9 +2458,15 @@ fn glob_recursive_globstar() {
 
 #[test]
 fn read_with_r_preserves_backslash() {
+    // zsh's `echo 'a\nb'` interprets `\n` as a real newline (BSD echo
+    // semantics, even with single quotes), so the pipe carries `a\nb\n`
+    // literally. `read -r line` then captures only the first line `a`,
+    // stopping at the `\n`. -r still does its job (no escape collapse
+    // on the captured chars), but there are no escapes left to preserve.
+    // Verified: `zsh -c "echo 'a\nb' | { read -r line; echo got=\$line; }"` → `got=a`.
     ok_serial(
         r#"echo 'a\nb' | { read -r line; echo got=$line; }"#,
-        "got=a\\nb\n",
+        "got=a\n",
     );
 }
 
