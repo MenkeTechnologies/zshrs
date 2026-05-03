@@ -1690,9 +1690,15 @@ impl<'a> ZshParser<'a> {
 
         let tokstr = self.lexer.tokstr.as_ref()?;
 
-        // Parse name=value or name+=value
-        // The '=' is encoded as char_tokens::EQUALS in the token string
-        let (name, value_str, append) = if let Some(pos) = tokstr.find(char_tokens::EQUALS) {
+        // Parse name=value or name+=value.
+        let (name, value_str, append) = if self.lexer.tok == LexTok::Envarray {
+            let (name, append) = if let Some(stripped) = tokstr.strip_suffix('+') {
+                (stripped, true)
+            } else {
+                (tokstr.as_str(), false)
+            };
+            (name.to_string(), String::new(), append)
+        } else if let Some(pos) = tokstr.find(char_tokens::EQUALS) {
             let name_part = &tokstr[..pos];
             let (name, append) = if name_part.ends_with('+') {
                 (&name_part[..name_part.len() - 1], true)
@@ -2549,12 +2555,38 @@ impl<'a> ZshParser<'a> {
         let mut names = Vec::new();
         let mut tracing = false;
 
-        // Handle options like -T and function names
+        // Handle options like -T and function names. Two subtleties:
+        //
+        //   1. Flags: zsh's lexer encodes a leading `-` as
+        //      `char_tokens::DASH` (\u{9b}) inside the String tokstr.
+        //      The previous `s.starts_with('-')` check failed for
+        //      `\u{9b}T`, so `function -T NAME { body }` slipped the
+        //      `-T` token into `names` and the function got registered
+        //      as `T` plus the intended `NAME`.
+        //
+        //   2. Body opener: zsh's lexer emits the opening `{` as a
+        //      String (not LexTok::Inbrace) when it follows the String
+        //      NAME — the preceding name token resets incmdpos to
+        //      false, and only `{` immediately followed by `}` (the
+        //      empty-body case) gets promoted to Inbrace. The funcdef
+        //      parser must recognise the bare-`{` String as the body
+        //      opener; otherwise `function NAME { body }` falls through
+        //      to `_ => break`, no body parses, and the FuncDef never
+        //      lands in the AST. This is consistent with C zsh's
+        //      par_funcdef which knows it's in funcdef-header context
+        //      and accepts the brace either way.
         loop {
             match self.lexer.tok {
                 LexTok::String => {
                     let s = self.lexer.tokstr.as_ref()?;
-                    if s.starts_with('-') {
+                    if s == "{" {
+                        // Funcdef body opener — break, body-parser branch handles it.
+                        break;
+                    }
+                    let first = s.chars().next();
+                    if matches!(first, Some('-') | Some('+'))
+                        || matches!(first, Some(c) if c == crate::tokens::char_tokens::DASH)
+                    {
                         if s.contains('T') {
                             tracing = true;
                         }
@@ -2577,8 +2609,11 @@ impl<'a> ZshParser<'a> {
 
         self.skip_separators();
 
-        // Parse body
-        if self.lexer.tok == LexTok::Inbrace {
+        // Body opener: real Inbrace OR a String("{") (the lexer emits
+        // the latter after a String NAME — see comment above).
+        let body_opener_is_string_brace = self.lexer.tok == LexTok::String
+            && self.lexer.tokstr.as_deref() == Some("{");
+        if self.lexer.tok == LexTok::Inbrace || body_opener_is_string_brace {
             // Capture body_start BEFORE the lexer advances past the
             // first body token. After the previous zshlex consumed
             // `{`, lexer.pos points just past `{` (which is where the

@@ -1280,6 +1280,8 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let mut unsetopts: Vec<String> = Vec::new();
     let mut traps: HashMap<String, String> = HashMap::new();
     let mut sched: HashMap<String, String> = HashMap::new();
+    let mut zle_widgets: HashMap<String, String> = HashMap::new();
+    let mut completions: HashMap<String, String> = HashMap::new();
     let mut sourced: Vec<String> = Vec::new();
     // path/fpath/manpath are positional; we capture in event order.
     let mut path_acc: Vec<String> = Vec::new();
@@ -1327,6 +1329,12 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
             }
             "sched" => {
                 sched.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "zle" => {
+                zle_widgets.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+            }
+            "completion" => {
+                completions.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
             }
             "source" => sourced.push(ev.name.clone()),
             "path_mod" => {
@@ -1423,6 +1431,20 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         None,
     );
     canon.replace_subsystem(
+        "zle",
+        zle_widgets
+            .iter()
+            .map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
+        "completion",
+        completions
+            .iter()
+            .map(|(k, v)| (k.clone(), json_string(v))),
+        None,
+    );
+    canon.replace_subsystem(
         "source",
         sourced
             .iter()
@@ -1483,7 +1505,20 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         manpath: Vec::new(),
         plugins: Vec::new(),
         sourced_files: sourced,
-        extras: HashMap::new(),
+        // New subsystems (zle widgets, discovered completions) ride in
+        // `extras` so the rkyv shard format doesn't need a version
+        // bump per addition. CanonicalShard readers iterate `extras`
+        // and fold into in-memory state.
+        extras: {
+            let mut e: HashMap<String, HashMap<String, String>> = HashMap::new();
+            if !zle_widgets.is_empty() {
+                e.insert("zle".to_string(), zle_widgets);
+            }
+            if !completions.is_empty() {
+                e.insert("completion".to_string(), completions);
+            }
+            e
+        },
     };
     let shard_path = match super::shard::write_canonical_shard(&state.paths, &shard) {
         Ok(p) => p.display().to_string(),

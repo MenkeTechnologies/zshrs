@@ -76,6 +76,21 @@ pub enum DefKind {
     /// redefined at C:K". Without these the override chain is invisible.
     Unalias,
     Unset,
+    /// `zle -N WIDGET [FUNC]` — define a new ZLE widget. Distinct from
+    /// `bindkey` (which binds a key sequence to a widget) and from
+    /// `function` (which defines the underlying handler). Tracked
+    /// because zinit-report lists widgets and a `zwhere` query for
+    /// widgets is the natural counterpart.
+    Zle,
+    /// `_completion-name` file discovered in an fpath directory. zinit-
+    /// report's "Completions:" section lists these per plugin; the
+    /// recorder synthesises one event per `_*` file found whenever an
+    /// fpath dir is added (set or appended). Distinct from `compdef`
+    /// (which BINDS a completion function to a command — runtime call)
+    /// and from `function` (the autoload registration that compinit
+    /// will emit when it walks fpath). value field is the absolute
+    /// path of the discovered file.
+    Completion,
 }
 
 impl DefKind {
@@ -101,13 +116,84 @@ impl DefKind {
             DefKind::Source => "source",
             DefKind::Unalias => "unalias",
             DefKind::Unset => "unset",
+            DefKind::Zle => "zle",
+            DefKind::Completion => "completion",
         }
+    }
+}
+
+/// Structured parameter-attribute bitflags. Mirrors zsh's per-param
+/// flag set (params.c PM_*) so the recorder records the full attribute
+/// vector rather than encoding flags in the value string. Only the
+/// `typeset` family populates this; other kinds set it to 0.
+///
+/// Wire-serialised as `u16` for compactness (zsh has ~12 user-visible
+/// attribute flags; one byte would also fit but u16 leaves room for
+/// PM_HASHELEM / PM_NAMEDDIR / PM_AUTOLOAD-style additions later
+/// without a wire-format bump).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParamAttrs(pub u16);
+
+impl ParamAttrs {
+    pub const NONE: Self = Self(0);
+    pub const SCALAR: u16 = 1 << 0;
+    pub const INTEGER: u16 = 1 << 1;
+    pub const FLOAT: u16 = 1 << 2;
+    pub const ASSOC: u16 = 1 << 3;
+    pub const ARRAY: u16 = 1 << 4;
+    pub const READONLY: u16 = 1 << 5;
+    pub const EXPORT: u16 = 1 << 6;
+    pub const GLOBAL: u16 = 1 << 7;
+    pub const UNIQUE: u16 = 1 << 8;
+    pub const TIED: u16 = 1 << 9;
+    pub const HIDE: u16 = 1 << 10;
+    pub const HIDE_VAL: u16 = 1 << 11;
+
+    pub fn set(&mut self, mask: u16) {
+        self.0 |= mask;
+    }
+    pub fn has(self, mask: u16) -> bool {
+        self.0 & mask != 0
+    }
+
+    /// Parse a zsh `typeset -...` flag-letter sequence ("xrigU" etc.)
+    /// into a ParamAttrs bitset. Includes letters from `typeset`,
+    /// `integer`, `float`, `readonly`, `local`, `declare`, `export`.
+    /// Letters not in the table are silently ignored.
+    pub fn from_flag_chars(letters: &str) -> Self {
+        let mut a = Self::NONE;
+        for c in letters.chars() {
+            match c {
+                'i' => a.set(Self::INTEGER),
+                'F' | 'E' => a.set(Self::FLOAT),
+                'A' => a.set(Self::ASSOC),
+                'a' => a.set(Self::ARRAY),
+                'r' => a.set(Self::READONLY),
+                'x' => a.set(Self::EXPORT),
+                'g' => a.set(Self::GLOBAL),
+                'U' => a.set(Self::UNIQUE),
+                'T' => a.set(Self::TIED),
+                'h' => a.set(Self::HIDE),
+                'H' => a.set(Self::HIDE_VAL),
+                _ => {}
+            }
+        }
+        // If no concrete shape was set, mark as scalar (typeset
+        // defaults to scalar string semantics).
+        if a.0 & (Self::INTEGER | Self::FLOAT | Self::ASSOC | Self::ARRAY) == 0 {
+            a.set(Self::SCALAR);
+        }
+        a
     }
 }
 
 /// One state-mutation event. Field set is the recorder's wire format
 /// for the daemon `recorder_ingest` op; mirrors the SQL `definitions`
 /// row in docs/RECORDER.md §Schema.
+///
+/// `attrs` is structured `ParamAttrs` for `typeset`-family events
+/// (carries scalar/integer/float/assoc/array/readonly/export/global/
+/// unique/tied bits). Set to default (zero) for all other kinds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordEvent {
     pub order_idx: u64,
@@ -118,6 +204,12 @@ pub struct RecordEvent {
     pub file: Option<String>,
     pub line: Option<u32>,
     pub fn_chain: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default_attrs")]
+    pub attrs: ParamAttrs,
+}
+
+fn is_default_attrs(a: &ParamAttrs) -> bool {
+    a.0 == 0
 }
 
 /// Bundle sent to the daemon at end-of-run.
@@ -194,6 +286,20 @@ pub fn emit(
     line: Option<u32>,
     fn_chain: Option<String>,
 ) {
+    emit_with_attrs(kind, name, value, file, line, fn_chain, ParamAttrs::NONE)
+}
+
+/// Push a record with explicit ParamAttrs. Used by typeset-family
+/// dispatchers so the structured attrs ride alongside the record.
+pub fn emit_with_attrs(
+    kind: DefKind,
+    name: impl Into<String>,
+    value: Option<String>,
+    file: Option<String>,
+    line: Option<u32>,
+    fn_chain: Option<String>,
+    attrs: ParamAttrs,
+) {
     if !is_enabled() {
         return;
     }
@@ -210,14 +316,20 @@ pub fn emit(
     let loc = loc_str(&file, line);
     let chain = fn_chain_suffix(&fn_chain);
     let kind_str = kind.as_str();
+    let attrs_part = if attrs.0 == 0 {
+        String::new()
+    } else {
+        format!(" [{}]", attrs_to_str(attrs))
+    };
     eprintln!(
-        "Captured {} {}{}, file: {}{}",
-        kind_str, name, value_part, loc, chain
+        "Captured {} {}{}{}, file: {}{}",
+        kind_str, name, attrs_part, value_part, loc, chain
     );
     tracing::info!(
         kind = kind_str,
         %name,
         value = value.as_deref().unwrap_or(""),
+        attrs = attrs.0,
         file = file.as_deref().unwrap_or(""),
         line = line.unwrap_or(0),
         fn_chain = fn_chain.as_deref().unwrap_or(""),
@@ -233,11 +345,56 @@ pub fn emit(
         file,
         line,
         fn_chain,
+        attrs,
     };
     if let Ok(mut buf) = BUFFER.lock() {
         buf.push(ev);
     }
     IN_RECORDER.store(false, Ordering::Release);
+}
+
+/// Format ParamAttrs as a comma-joined human label for the realtime
+/// stderr line (`[scalar,export,readonly]` etc.). Wire format stays
+/// the raw u16.
+fn attrs_to_str(a: ParamAttrs) -> String {
+    let mut parts: Vec<&'static str> = Vec::new();
+    if a.has(ParamAttrs::INTEGER) {
+        parts.push("integer");
+    }
+    if a.has(ParamAttrs::FLOAT) {
+        parts.push("float");
+    }
+    if a.has(ParamAttrs::ASSOC) {
+        parts.push("assoc");
+    }
+    if a.has(ParamAttrs::ARRAY) {
+        parts.push("array");
+    }
+    if a.has(ParamAttrs::SCALAR) && parts.is_empty() {
+        parts.push("scalar");
+    }
+    if a.has(ParamAttrs::READONLY) {
+        parts.push("readonly");
+    }
+    if a.has(ParamAttrs::EXPORT) {
+        parts.push("export");
+    }
+    if a.has(ParamAttrs::GLOBAL) {
+        parts.push("global");
+    }
+    if a.has(ParamAttrs::UNIQUE) {
+        parts.push("unique");
+    }
+    if a.has(ParamAttrs::TIED) {
+        parts.push("tied");
+    }
+    if a.has(ParamAttrs::HIDE) {
+        parts.push("hide");
+    }
+    if a.has(ParamAttrs::HIDE_VAL) {
+        parts.push("hideval");
+    }
+    parts.join(",")
 }
 
 /// Truncate values for the realtime stderr line. SQL/IPC store the full
@@ -305,14 +462,58 @@ pub fn emit_assign(name: &str, value: &str, ctx: RecordCtx) {
         ctx.fn_chain,
     );
 }
+/// Backwards-compat: legacy emit_typeset used by sites that haven't
+/// migrated to structured attrs yet. Parses the leading flags out of
+/// `flags_value` (everything starting with `-`) and routes to the
+/// attrs-aware emitter. New call sites should use `emit_typeset_attrs`.
 pub fn emit_typeset(name: &str, flags_value: &str, ctx: RecordCtx) {
-    emit(
+    let mut letters = String::new();
+    let mut value_part = String::new();
+    let mut iter = flags_value.split_whitespace();
+    while let Some(tok) = iter.next() {
+        if let Some(rest) = tok.strip_prefix('-') {
+            letters.push_str(rest);
+        } else if let Some(rest) = tok.strip_prefix('+') {
+            // +F means "unset float attribute"; for the recorder we
+            // don't currently distinguish set/unset of attrs — record
+            // the letters as-is.
+            letters.push_str(rest);
+        } else {
+            if !value_part.is_empty() {
+                value_part.push(' ');
+            }
+            value_part.push_str(tok);
+        }
+    }
+    let attrs = ParamAttrs::from_flag_chars(&letters);
+    let value_opt = if value_part.is_empty() {
+        None
+    } else {
+        Some(value_part)
+    };
+    emit_with_attrs(
         DefKind::Typeset,
         name,
-        Some(flags_value.to_string()),
+        value_opt,
         ctx.file,
         ctx.line,
         ctx.fn_chain,
+        attrs,
+    );
+}
+
+/// Typed typeset emitter — call sites that already have attrs in hand
+/// (e.g. `builtin_integer` knows it's emitting an integer) skip the
+/// flag-string round-trip.
+pub fn emit_typeset_attrs(name: &str, value: Option<&str>, attrs: ParamAttrs, ctx: RecordCtx) {
+    emit_with_attrs(
+        DefKind::Typeset,
+        name,
+        value.map(str::to_string),
+        ctx.file,
+        ctx.line,
+        ctx.fn_chain,
+        attrs,
     );
 }
 pub fn emit_export(name: &str, value: Option<&str>, ctx: RecordCtx) {
@@ -454,6 +655,78 @@ pub fn emit_unset(name: &str, ctx: RecordCtx) {
         ctx.line,
         ctx.fn_chain,
     );
+}
+pub fn emit_zle(widget: &str, func: Option<&str>, ctx: RecordCtx) {
+    emit(
+        DefKind::Zle,
+        widget,
+        func.map(str::to_string),
+        ctx.file,
+        ctx.line,
+        ctx.fn_chain,
+    );
+}
+pub fn emit_completion(name: &str, abs_path: &str, ctx: RecordCtx) {
+    emit(
+        DefKind::Completion,
+        name,
+        Some(abs_path.to_string()),
+        ctx.file,
+        ctx.line,
+        ctx.fn_chain,
+    );
+}
+
+/// Walk `dir` and emit one `Completion` event per `_*` file found —
+/// matches what zinit-report surfaces in its "Completions:" section.
+/// Called from the path/fpath array hook whenever an fpath dir is
+/// added (set or appended). Filesystem I/O — bounded to the directory
+/// the user just registered, so the cost is paid once per fpath edit
+/// (typically tens of files per plugin, hundreds for big completion
+/// trees like zsh-more-completions).
+///
+/// Filename rule (matches compinit/compaudit at zsh/Src/Zle/comp1.c):
+/// every entry starting with `_` and not a directory is a candidate.
+/// Symlinks are dereferenced. Hidden subdirs and `.zwc` files are
+/// skipped. Errors (unreadable dir, EACCES) are tracing-warn'd and
+/// otherwise silent — this is a best-effort surfacing layer.
+pub fn discover_completions_in_fpath_dir(dir: &str, ctx: &RecordCtx) {
+    if !is_enabled() {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            tracing::warn!(?e, dir, "recorder: completion discovery skipped");
+            return;
+        }
+    };
+    for entry in entries.flatten() {
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        if !name.starts_with('_') {
+            continue;
+        }
+        if name.ends_with(".zwc") {
+            continue;
+        }
+        let path = entry.path();
+        // file_type may need to follow a symlink to know if it's a dir.
+        let is_file = match entry.file_type() {
+            Ok(ft) if ft.is_symlink() => std::fs::metadata(&path)
+                .map(|m| m.is_file())
+                .unwrap_or(false),
+            Ok(ft) => ft.is_file(),
+            Err(_) => false,
+        };
+        if !is_file {
+            continue;
+        }
+        let abs = path.to_string_lossy().to_string();
+        emit_completion(&name, &abs, ctx.clone());
+    }
 }
 
 /// End-of-run summary printed to stderr right before the IPC bundle

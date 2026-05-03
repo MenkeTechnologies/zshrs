@@ -2055,6 +2055,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 exec.assoc_arrays.insert(name.clone(), map);
+                // PFA-SMR aspect: assoc bulk init `h=(k1 v1 k2 v2 ...)`
+                // — emit one assign event with the (key val key val)
+                // values joined. Per-key emits would be noisier than
+                // useful; the recorder bundle reflects the post-init
+                // state of the assoc. Subsequent `h[k]=v` element
+                // mutations fire individually via SET_ASSOC.
+                #[cfg(feature = "recorder")]
+                if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                    let ctx = exec.recorder_ctx();
+                    crate::recorder::emit_assign(&name, &values.join(" "), ctx);
+                }
                 return false;
             }
             // Mirror array→scalar if name is the array side of a typeset -T tie.
@@ -2072,28 +2083,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 exec.variables.remove(&name);
                 exec.arrays.insert(name.clone(), values.clone());
             }
-            // PFA-SMR aspect: array assignment. `path=(...)`, `fpath=(...)`,
-            // `manpath=(...)`, `chpwd_functions=(...)`, etc. all funnel
-            // through here. Emit one path_mod / assign event per element
-            // for arrays the recorder cares about; for everything else,
-            // emit a single assign with the joined value.
+            // PFA-SMR aspect: array assignment. `path=(...)`,
+            // `fpath=(...)`, `manpath=(...)`, etc. become path_mod
+            // events (one per element); everything else is one assign
+            // with the joined value. emit_path_or_assign centralises
+            // the path-family list so SET_ARRAY / APPEND_ARRAY /
+            // APPEND_SCALAR_OR_PUSH all route identically.
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
-                if matches!(name.as_str(), "path" | "fpath" | "manpath" | "PATH" | "FPATH" | "MANPATH") {
-                    let kind_name = if name.eq_ignore_ascii_case("fpath") {
-                        "fpath"
-                    } else if name.eq_ignore_ascii_case("manpath") {
-                        "manpath"
-                    } else {
-                        "path"
-                    };
-                    for v in &values {
-                        crate::recorder::emit_path_mod(v, kind_name, ctx.clone());
-                    }
-                } else {
-                    crate::recorder::emit_assign(&name, &values.join(" "), ctx);
-                }
+                emit_path_or_assign(&name, &values, &ctx);
             }
             false
         });
@@ -2152,28 +2151,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
             exec.variables.remove(&name);
             // `typeset -U arr` dedupes — append must respect existing
             // elements too. Skip values that are already present.
-            // PFA-SMR aspect: array append. `path+=(/foo)`, `fpath+=(...)`
-            // are the most common shapes. Emit one path_mod per appended
-            // element for path/fpath/manpath; one assign for everything
-            // else. Done before the values move into the array so we
-            // don't have to re-collect.
+            // PFA-SMR aspect: array append. Same routing as SET_ARRAY
+            // — see emit_path_or_assign helper.
             #[cfg(feature = "recorder")]
             if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
                 let ctx = exec.recorder_ctx();
-                if matches!(name.as_str(), "path" | "fpath" | "manpath" | "PATH" | "FPATH" | "MANPATH") {
-                    let kind_name = if name.eq_ignore_ascii_case("fpath") {
-                        "fpath"
-                    } else if name.eq_ignore_ascii_case("manpath") {
-                        "manpath"
-                    } else {
-                        "path"
-                    };
-                    for v in &values {
-                        crate::recorder::emit_path_mod(v, kind_name, ctx.clone());
-                    }
-                } else {
-                    crate::recorder::emit_assign(&name, &values.join(" "), ctx);
-                }
+                emit_path_or_assign(&name, &values, &ctx);
             }
             let is_unique = exec.var_attrs.get(&name).map(|a| a.unique).unwrap_or(false);
             let target = exec.arrays.entry(name).or_insert_with(Vec::new);
@@ -4405,6 +4388,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let key = vm.pop().to_str();
         let name = vm.pop().to_str();
         with_executor(|exec| {
+            // PFA-SMR aspect: subscript assignment `arr[N]=val` /
+            // `assoc[key]=val`. Both forms route through this builtin
+            // (the inner branching just disambiguates indexed vs assoc
+            // storage). Recorder emits one assign event keyed on
+            // `name[key]` with the new value — preserves the subscript
+            // form so query-side can distinguish whole-array set from
+            // element set. Path-family arrays come through SET_ARRAY /
+            // APPEND_ARRAY, never here, so no path_mod routing needed.
+            #[cfg(feature = "recorder")]
+            if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                let ctx = exec.recorder_ctx();
+                let composite = format!("{}[{}]", name, key);
+                crate::recorder::emit_assign(&composite, &value, ctx);
+            }
             // Indexed array element assign `a[N]=val`. Routes here when
             // `name` is already an indexed array. For unset names, only
             // treat as indexed if the key is unambiguously numeric (a
@@ -4741,12 +4738,27 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let name = vm.pop().to_str();
         with_executor(|exec| {
             exec.variables.remove(&name);
-            let map = exec.assoc_arrays.entry(name).or_insert_with(IndexMap::new);
+            let map = exec.assoc_arrays.entry(name.clone()).or_insert_with(IndexMap::new);
             match map.get_mut(&key) {
                 Some(existing) => existing.push_str(&tail),
                 None => {
-                    map.insert(key, tail);
+                    map.insert(key.clone(), tail.clone());
                 }
+            }
+            // PFA-SMR aspect: assoc subscript-append `m[k]+=tail`. Emit
+            // one assign event with the post-append value so the
+            // recorder bundle reflects current state.
+            #[cfg(feature = "recorder")]
+            if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                let ctx = exec.recorder_ctx();
+                let composite = format!("{}[{}]", name, key);
+                let new_val = exec
+                    .assoc_arrays
+                    .get(&name)
+                    .and_then(|m| m.get(&key))
+                    .cloned()
+                    .unwrap_or_default();
+                crate::recorder::emit_assign(&composite, &new_val, ctx);
             }
         });
         Value::Status(0)
@@ -5014,7 +5026,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let value = iter.next().unwrap_or_default();
         with_executor(|exec| {
             if let Some(arr) = exec.arrays.get_mut(&name) {
-                arr.push(value);
+                arr.push(value.clone());
+                // PFA-SMR aspect: `name+=elem` array push. Treat as a
+                // path_mod when name is a path-family array (PATH+= via
+                // tied scalar lands here too); else as a plain assign
+                // event with the appended element as the value.
+                #[cfg(feature = "recorder")]
+                if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                    let ctx = exec.recorder_ctx();
+                    emit_path_or_assign(&name, std::slice::from_ref(&value), &ctx);
+                }
                 return;
             }
             if exec.assoc_arrays.contains_key(&name) {
@@ -5032,13 +5053,28 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 let prev = exec.get_variable(&name);
                 let prev_n: i64 = prev.parse().unwrap_or(0);
                 let added = exec.eval_arith_expr(&value);
-                exec.variables.insert(name, (prev_n + added).to_string());
+                let new_val = (prev_n + added).to_string();
+                exec.variables.insert(name.clone(), new_val.clone());
+                // PFA-SMR aspect: integer-typed append is still an assign.
+                #[cfg(feature = "recorder")]
+                if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                    let ctx = exec.recorder_ctx();
+                    emit_path_or_assign(&name, std::slice::from_ref(&new_val), &ctx);
+                }
                 return;
             }
             // Scalar concat.
             let prev = exec.get_variable(&name);
             let combined = format!("{}{}", prev, value);
-            exec.variables.insert(name, combined);
+            exec.variables.insert(name.clone(), combined.clone());
+            // PFA-SMR aspect: `PATH+=":/foo"` and similar scalar-concat
+            // forms are top-level state mutations and need to surface in
+            // the recorder bundle alongside the array forms.
+            #[cfg(feature = "recorder")]
+            if crate::recorder::is_enabled() && exec.local_scope_depth == 0 {
+                let ctx = exec.recorder_ctx();
+                emit_path_or_assign(&name, std::slice::from_ref(&combined), &ctx);
+            }
         });
         Value::Status(0)
     });
@@ -22360,27 +22396,52 @@ impl ShellExecutor {
     }
 
     fn builtin_typeset_named(&mut self, args: &[String], invoked_as: &str) -> i32 {
-        // PFA-SMR aspect: emit one `typeset` event per `NAME[=value]` arg.
-        // Listing-only invocations (no positional args) are skipped.
+        // PFA-SMR aspect: emit one `typeset` event per `NAME[=value]`
+        // positional arg, with structured ParamAttrs derived from the
+        // leading flag letters. Listing-only invocations (no positional
+        // args) are skipped. `-T SCALAR ARRAY [SEP]` is special: only
+        // the first two positional args are real names; the optional
+        // separator (3rd positional) must NOT be recorded as a name.
         #[cfg(feature = "recorder")]
         if crate::recorder::is_enabled() {
             let ctx = self.recorder_ctx();
-            let mut flags: Vec<&str> = Vec::new();
+            let mut letters = String::new();
+            let mut tied_mode = false;
             for a in args {
                 if a.starts_with('-') || a.starts_with('+') {
-                    flags.push(a.as_str());
+                    let body = &a[1..];
+                    letters.push_str(body);
+                    if body.contains('T') {
+                        tied_mode = true;
+                    }
                     continue;
                 }
-                let flag_blob = if flags.is_empty() {
-                    String::new()
-                } else {
-                    format!("{} ", flags.join(" "))
-                };
-                let _ = invoked_as;
-                if let Some((k, v)) = a.split_once('=') {
-                    crate::recorder::emit_typeset(k, &format!("{}{}", flag_blob, v), ctx.clone());
-                } else {
-                    crate::recorder::emit_typeset(a, flag_blob.trim_end(), ctx.clone());
+            }
+            // builtin_typeset_named is also reachable as `local`,
+            // `declare`, `private`. Inside a function scope `local NAME`
+            // is a true local variable, NOT global state, so skip the
+            // emit. At top level (depth 0) `local` is an error and
+            // never reaches this hook anyway.
+            let is_locallike = matches!(invoked_as, "local" | "private");
+            if !is_locallike || self.local_scope_depth == 0 {
+                let attrs = crate::recorder::ParamAttrs::from_flag_chars(&letters);
+                let mut tied_seen = 0usize;
+                for a in args {
+                    if a.starts_with('-') || a.starts_with('+') {
+                        continue;
+                    }
+                    // For `typeset -T X Y [SEP]`, only X and Y are names.
+                    if tied_mode {
+                        tied_seen += 1;
+                        if tied_seen > 2 {
+                            break;
+                        }
+                    }
+                    if let Some((k, v)) = a.split_once('=') {
+                        crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
+                    } else {
+                        crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
+                    }
                 }
             }
         }
@@ -25489,6 +25550,43 @@ mod tests {
 }
 
 // Plugin-Framework-Agnostic State-Modification Recorder hook helpers.
+/// Recorder helper: emit one record for an array/scalar mutation
+/// targeting a path-family parameter (path/fpath/manpath/module_path/
+/// cdpath, lower- or upper-cased), or one `assign` record for any
+/// other name. Centralises the path-family list so `BUILTIN_SET_ARRAY`,
+/// `BUILTIN_APPEND_ARRAY`, and `BUILTIN_APPEND_SCALAR_OR_PUSH` share
+/// the same routing.
+#[cfg(feature = "recorder")]
+fn emit_path_or_assign(name: &str, values: &[String], ctx: &crate::recorder::RecordCtx) {
+    let lower = name.to_ascii_lowercase();
+    let kind_name: Option<&'static str> = match lower.as_str() {
+        "path" => Some("path"),
+        "fpath" => Some("fpath"),
+        "manpath" => Some("manpath"),
+        "module_path" => Some("module_path"),
+        "cdpath" => Some("cdpath"),
+        _ => None,
+    };
+    match kind_name {
+        Some(k) => {
+            for v in values {
+                crate::recorder::emit_path_mod(v, k, ctx.clone());
+                // Each fpath addition also surfaces every `_completion`
+                // file inside the directory — matches zinit-report's
+                // per-plugin "Completions:" listing. Only fpath dirs
+                // get this treatment; PATH dirs hold executables, not
+                // completion functions.
+                if k == "fpath" {
+                    crate::recorder::discover_completions_in_fpath_dir(v, &ctx);
+                }
+            }
+        }
+        None => {
+            crate::recorder::emit_assign(name, &values.join(" "), ctx.clone());
+        }
+    }
+}
+
 // Whole impl block is `#[cfg(feature = "recorder")]` so the default
 // build sees no recorder symbols on `ShellExecutor`.
 #[cfg(feature = "recorder")]
@@ -33220,24 +33318,21 @@ impl ShellExecutor {
     /// float - declare floating point variables
     fn builtin_float(&mut self, args: &[String]) -> i32 {
         // PFA-SMR aspect: emit one `typeset` event per `float NAME[=val]`
-        // arg, with `-F` or `-E` prepended to mark the float subkind.
-        // builtin_float does NOT delegate to builtin_typeset_named.
+        // arg, with the FLOAT attr bit set. -F/-E controls the storage
+        // format but the recorder only cares about the type-shape.
         #[cfg(feature = "recorder")]
         if crate::recorder::is_enabled() {
             let ctx = self.recorder_ctx();
-            let flag = if args.iter().any(|a| a.starts_with('-') && a.contains('F')) {
-                "-F"
-            } else {
-                "-E"
-            };
+            let mut attrs = crate::recorder::ParamAttrs::NONE;
+            attrs.set(crate::recorder::ParamAttrs::FLOAT);
             for a in args {
                 if a.starts_with('-') {
                     continue;
                 }
                 if let Some((k, v)) = a.split_once('=') {
-                    crate::recorder::emit_typeset(k, &format!("{} {}", flag, v), ctx.clone());
+                    crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
                 } else {
-                    crate::recorder::emit_typeset(a, flag, ctx.clone());
+                    crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
                 }
             }
         }
@@ -33317,21 +33412,29 @@ impl ShellExecutor {
     /// integer - declare integer variables
     fn builtin_integer(&mut self, args: &[String]) -> i32 {
         // PFA-SMR aspect: emit one `typeset` event per `integer
-        // NAME[=val]` arg, with `-i` prepended to mark the integer
-        // attribute. builtin_integer does NOT delegate to
-        // builtin_typeset_named so the typeset hook there doesn't
-        // fire for `integer NAME=val`.
+        // NAME[=val]` arg, with the INTEGER attr bit set. Other letters
+        // (-r/-x/-g/-U) compose into ParamAttrs through the same
+        // bitset so `integer -rx FOO=1` records {INTEGER|READONLY|EXPORT}.
         #[cfg(feature = "recorder")]
         if crate::recorder::is_enabled() {
             let ctx = self.recorder_ctx();
+            let mut letters = String::from("i");
+            for a in args {
+                if let Some(rest) = a.strip_prefix('-') {
+                    letters.push_str(rest);
+                } else if let Some(rest) = a.strip_prefix('+') {
+                    letters.push_str(rest);
+                }
+            }
+            let attrs = crate::recorder::ParamAttrs::from_flag_chars(&letters);
             for a in args {
                 if a.starts_with('-') {
                     continue;
                 }
                 if let Some((k, v)) = a.split_once('=') {
-                    crate::recorder::emit_typeset(k, &format!("-i {}", v), ctx.clone());
+                    crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
                 } else {
-                    crate::recorder::emit_typeset(a, "-i", ctx.clone());
+                    crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
                 }
             }
         }
@@ -38060,20 +38163,23 @@ impl ShellExecutor {
     /// readonly - mark variables as read-only
     fn builtin_readonly(&mut self, args: &[String]) -> i32 {
         // PFA-SMR aspect: emit one `typeset` event per readonly NAME[=val]
-        // arg, with `-r` prepended to mark the readonly attribute.
-        // builtin_readonly does NOT delegate to builtin_typeset_named,
-        // so the typeset hook there doesn't fire for `readonly NAME=val`.
+        // arg, with the READONLY attr bit set (plus SCALAR by default —
+        // `readonly` doesn't accept type-shape flags). builtin_readonly
+        // does not delegate to builtin_typeset_named.
         #[cfg(feature = "recorder")]
         if crate::recorder::is_enabled() {
             let ctx = self.recorder_ctx();
+            let mut attrs = crate::recorder::ParamAttrs::NONE;
+            attrs.set(crate::recorder::ParamAttrs::SCALAR);
+            attrs.set(crate::recorder::ParamAttrs::READONLY);
             for a in args {
                 if a == "-p" || a.starts_with('-') {
                     continue;
                 }
                 if let Some((k, v)) = a.split_once('=') {
-                    crate::recorder::emit_typeset(k, &format!("-r {}", v), ctx.clone());
+                    crate::recorder::emit_typeset_attrs(k, Some(v), attrs, ctx.clone());
                 } else {
-                    crate::recorder::emit_typeset(a, "-r", ctx.clone());
+                    crate::recorder::emit_typeset_attrs(a, None, attrs, ctx.clone());
                 }
             }
         }
@@ -38483,6 +38589,19 @@ impl ShellExecutor {
                             .unwrap_or(widget_name.as_str());
                         let mut zle = zle();
                         zle.define_widget(widget_name, func_name);
+                        // PFA-SMR aspect: ZLE widget definition.
+                        // zinit-report lists these (along with bindkey
+                        // and zstyle); the recorder gives them a
+                        // dedicated `zle` kind so query-side can
+                        // surface "every widget this plugin installed".
+                        // Value field carries the underlying handler
+                        // function name (defaults to the widget name
+                        // for self-bound widgets).
+                        #[cfg(feature = "recorder")]
+                        if crate::recorder::is_enabled() {
+                            let ctx = self.recorder_ctx();
+                            crate::recorder::emit_zle(widget_name, Some(func_name), ctx);
+                        }
                     }
                     return 0;
                 }
@@ -38527,6 +38646,14 @@ impl ShellExecutor {
                     if !zle.alias_widget(&new, &old) {
                         eprintln!("zshrs:zle:1: no such widget: {}", old);
                         return 1;
+                    }
+                    // PFA-SMR aspect: ZLE widget alias `zle -A old new`.
+                    // Recorder treats it as a `zle` event for `new` with
+                    // value `old` so the alias relationship is queryable.
+                    #[cfg(feature = "recorder")]
+                    if crate::recorder::is_enabled() {
+                        let ctx = self.recorder_ctx();
+                        crate::recorder::emit_zle(&new, Some(&old), ctx);
                     }
                     return 0;
                 }
