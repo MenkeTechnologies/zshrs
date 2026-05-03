@@ -269,11 +269,10 @@ fn colorize_word(
     let role = if is_command_position {
         if KEYWORDS.contains(&word) {
             HighlightRole::Keyword
-        } else if BUILTINS.contains(&word) {
-            HighlightRole::Command
-        } else if command_exists(word) {
-            HighlightRole::Command
-        } else if word.contains('/') && std::path::Path::new(word).exists() {
+        } else if BUILTINS.contains(&word)
+            || command_exists(word)
+            || (word.contains('/') && std::path::Path::new(word).exists())
+        {
             HighlightRole::Command
         } else {
             HighlightRole::Error

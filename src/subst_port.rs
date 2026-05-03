@@ -1721,17 +1721,17 @@ fn remove_suffix(s: &str, pattern: &str, greedy: bool) -> String {
     }
 
     if let Some(suffix) = pattern.strip_prefix('*') {
-        if s.ends_with(suffix) {
+        if let Some(prefix) = s.strip_suffix(suffix) {
             if greedy {
                 if let Some(i) = (0..=s.len().saturating_sub(suffix.len())).next() {
                     return s[..i].to_string();
                 }
             } else {
-                return s[..s.len() - suffix.len()].to_string();
+                return prefix.to_string();
             }
         }
-    } else if s.ends_with(pattern) {
-        return s[..s.len() - pattern.len()].to_string();
+    } else if let Some(prefix) = s.strip_suffix(pattern) {
+        return prefix.to_string();
     }
 
     s.to_string()

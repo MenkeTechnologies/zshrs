@@ -1037,7 +1037,7 @@ fn run_doctor() {
         ("/etc/zlogin", false),
         (&format!("{}/.zlogin", zdotdir), false),
     ];
-    for (path, always) in &startup_files {
+    for (path, _always) in &startup_files {
         let p = std::path::Path::new(path);
         if p.exists() {
             let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
@@ -1054,9 +1054,10 @@ fn run_doctor() {
                 dim(&format!("({})", format_bytes(size))),
                 cache_status,
             );
-        } else if *always {
-            println!("  {} {}", dim("-"), dim(path));
         } else {
+            // Both `always`-flagged and not-found render the same dim
+            // line; the distinction is meaningful only for the
+            // present/up-to-date branch above.
             println!("  {} {}", dim("-"), dim(path));
         }
     }
@@ -1414,8 +1415,8 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &PathBuf, contents: &s
         }
 
         // Check for line continuation
-        if line.ends_with('\\') {
-            buffer.push_str(&line[..line.len() - 1]);
+        if let Some(stripped) = line.strip_suffix('\\') {
+            buffer.push_str(stripped);
             buffer.push(' ');
             in_multiline = true;
             continue;
@@ -1471,8 +1472,8 @@ fn source_file(executor: &mut ShellExecutor, path: &PathBuf) {
             }
 
             // Check for line continuation
-            if line.ends_with('\\') {
-                buffer.push_str(&line[..line.len() - 1]);
+            if let Some(stripped) = line.strip_suffix('\\') {
+                buffer.push_str(stripped);
                 buffer.push(' ');
                 in_multiline = true;
                 continue;

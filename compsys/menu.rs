@@ -2310,17 +2310,7 @@ impl MenuState {
                 } else {
                     ""
                 };
-                format!(
-                    "{}{}isearch{}: {}",
-                    state,
-                    dir,
-                    if self.mode == MenuMode::BackwardSearch {
-                        ""
-                    } else {
-                        ""
-                    },
-                    self.search
-                )
+                format!("{}{}isearch: {}", state, dir, self.search)
             }
             MenuMode::Normal => {
                 if self.cached_total_rows > self.available_rows {

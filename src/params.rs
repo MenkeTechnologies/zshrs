@@ -3081,9 +3081,10 @@ impl ParamTable {
                 && (param.flags & (flags::ARRAY | flags::HASHED)) == 0
             {
                 out.push_str("export ");
-            } else if self.local_level > 0 && param.level >= self.local_level {
-                out.push_str("typeset ");
             } else {
+                // local-scope and global both print as `typeset` when no
+                // other prefix applies; the difference is in the param
+                // flags shown afterwards, not the keyword.
                 out.push_str("typeset ");
             }
         }
@@ -3582,9 +3583,9 @@ pub fn get_array_slice(arr: &[String], idx: &SubscriptIndex, ksh_arrays: bool) -
     };
     let end = if idx.end < 0 {
         ((len + idx.end + 1).max(0) as usize).min(arr.len())
-    } else if ksh_arrays {
-        (idx.end as usize).min(arr.len())
     } else {
+        // ksh_arrays vs zsh-default both clamp the same positive index
+        // to len(arr); they only differ on negatives (handled above).
         (idx.end as usize).min(arr.len())
     };
     if start >= arr.len() || start >= end {

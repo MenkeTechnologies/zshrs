@@ -123,12 +123,9 @@ pub fn format_key_sequence(seq: &[u8]) -> String {
         let b = seq[i];
         match b {
             0x1b => {
-                // Escape - check for sequences
-                if i + 1 < seq.len() {
-                    result.push_str("^[");
-                } else {
-                    result.push_str("^[");
-                }
+                // Escape — render as `^[` regardless of whether more
+                // bytes follow; downstream caller emits the rest.
+                result.push_str("^[");
             }
             0x00..=0x1f => {
                 // Control character
