@@ -8819,6 +8819,36 @@ fn normalize_logical(path: &std::path::Path) -> std::path::PathBuf {
     out
 }
 
+/// Validate an inherited `$PWD` exactly like zsh's ispwd() at
+/// src/zsh/Src/utils.c:809-829: PWD must be absolute, must stat to the
+/// same dev+inode as ".", and must contain no `.` or `..` components.
+/// When this returns false, callers should fall back to `getcwd()`.
+fn ispwd_inherited(pwd: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    if !pwd.starts_with('/') {
+        return false;
+    }
+    let pwd_meta = match std::fs::metadata(pwd) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    let dot_meta = match std::fs::metadata(".") {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if pwd_meta.dev() != dot_meta.dev() || pwd_meta.ino() != dot_meta.ino() {
+        return false;
+    }
+    // Reject any component that is exactly `.` or `..` — the same loop
+    // zsh runs after the dev/ino check.
+    for comp in pwd.split('/') {
+        if comp == "." || comp == ".." {
+            return false;
+        }
+    }
+    true
+}
+
 fn shell_quote_value(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
@@ -9739,6 +9769,31 @@ pub struct ShellExecutor {
 impl ShellExecutor {
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
+
+        // Validate the inherited $PWD against the real cwd before any
+        // builtin reads it as a logical-path base. Direct port of zsh's
+        // ispwd() at src/zsh/Src/utils.c:809-829: $PWD is honored only
+        // when it (a) is absolute, (b) stat's to the same dev+inode as
+        // ".", and (c) contains no `.`/`..` components. Otherwise zsh
+        // resets it to getcwd() (init.c:1247-1253).
+        //
+        // Without this check, a child process that inherits $PWD from
+        // a parent run in a different directory (cargo test setting
+        // current_dir(/tmp) but leaking PWD=/project/root) sees the
+        // stale PWD and `cd .` later snaps the real cwd to wherever
+        // PWD points, escaping the parent's sandbox. ztst harnesses
+        // hit this and polluted the project root with test artifacts.
+        if let Ok(pwd_env) = env::var("PWD") {
+            let valid = ispwd_inherited(&pwd_env);
+            if !valid {
+                if let Ok(real) = env::current_dir() {
+                    env::set_var("PWD", &real);
+                }
+            }
+        } else if let Ok(real) = env::current_dir() {
+            env::set_var("PWD", &real);
+        }
+
         // Initialize fpath from FPATH env var or use defaults
         let fpath = env::var("FPATH")
             .unwrap_or_default()

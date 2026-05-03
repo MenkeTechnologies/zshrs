@@ -462,7 +462,38 @@ pub fn zshrs_main() {
         "zshrs starting"
     );
 
-    let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = {
+        // Expand POSIX-style clumped short options BEFORE any flag check.
+        // `zshrs -fc 'pwd'` should behave identically to `zshrs -f -c 'pwd'`
+        // — real zsh accepts both forms (verified: `zsh -fc 'pwd'` and
+        // `zsh -cf 'pwd'` both run the command). Without expansion, our
+        // dispatch's literal `args[1] == "-c"` check missed the clumped
+        // form and the binary silently exited 0 with no command run,
+        // which broke ztst harnesses and any caller copying zsh syntax.
+        //
+        // Rule: any arg matching `-[A-Za-z]{2,}` (single dash, 2+ alpha
+        // chars, no `=`, not `--`) splits into individual `-X` tokens.
+        // Long options keep the `--` prefix; numeric/symbolic clumps
+        // are left alone. Argument-consuming flags like `-c` get their
+        // value from the next argv slot after expansion, same as zsh.
+        let raw: Vec<String> = env::args().collect();
+        let mut out: Vec<String> = Vec::with_capacity(raw.len());
+        for a in &raw {
+            let bytes = a.as_bytes();
+            let is_clumped = bytes.len() >= 3
+                && bytes[0] == b'-'
+                && bytes[1] != b'-'
+                && bytes.iter().skip(1).all(|c| c.is_ascii_alphabetic());
+            if is_clumped {
+                for c in bytes.iter().skip(1) {
+                    out.push(format!("-{}", *c as char));
+                }
+            } else {
+                out.push(a.clone());
+            }
+        }
+        out
+    };
 
     // AOT trailer probe: if this binary was produced by `zbuild`, the last
     // 32 bytes contain a magic + length pair pointing at a zstd-compressed
