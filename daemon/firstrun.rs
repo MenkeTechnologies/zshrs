@@ -19,7 +19,7 @@ pub fn maybe_print(paths: &CachePaths) -> bool {
     if !paths.is_first_run() {
         return false;
     }
-    if std::env::var_os("ZSHRS_QUIET_FIRST_RUN").map_or(false, |v| v == "1" || v == "true") {
+    if std::env::var_os("ZSHRS_QUIET_FIRST_RUN").is_some_and(|v| v == "1" || v == "true") {
         return false;
     }
 
@@ -125,7 +125,7 @@ fn compute_first_run_estimate() -> FirstRunEstimate {
         loc.to_string()
     };
     // Rough rate: 30k LOC/sec on a modern SSD daemon walk. Floor at 5s.
-    let duration_s = ((loc / 30_000) as u64).max(5);
+    let duration_s = (loc / 30_000).max(5);
 
     FirstRunEstimate {
         files,

@@ -2,6 +2,14 @@
 //!
 //! Provides standard math functions like sin, cos, sqrt, log, etc.
 
+// Numeric literals in this module are verbatim ports from
+// src/zsh/Src/Modules/mathfunc.c (Bessel function series + erf
+// coefficients). Several happen to approximate well-known constants
+// (0.636619772 ≈ 2/π, 0.785398164 ≈ π/4, etc.) but we keep the C
+// literals exactly to preserve port fidelity. Without this allow
+// clippy fails the build with deny(approx_constant) on these.
+#![allow(clippy::approx_constant)]
+
 use std::f64::consts::PI;
 
 /// Math number type - can be integer or float

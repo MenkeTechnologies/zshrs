@@ -1846,21 +1846,19 @@ async fn op_clean(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "log" => {
             // Truncate today's rolled file (don't unlink — tracing-appender holds an fd).
             for entry in
-                std::fs::read_dir(&paths.root).map_err(|e| ErrPayload::new("io", e.to_string()))?
+                std::fs::read_dir(&paths.root).map_err(|e| ErrPayload::new("io", e.to_string()))?.flatten()
             {
-                if let Ok(entry) = entry {
-                    let name = entry.file_name();
-                    let s = name.to_string_lossy();
-                    if super::paths::is_zshrs_log_file(&s) {
-                        if dry_run {
-                            would_remove.push(entry.path().display().to_string());
-                        } else {
-                            let _ = std::fs::OpenOptions::new()
-                                .write(true)
-                                .truncate(true)
-                                .open(entry.path());
-                            removed.push(entry.path().display().to_string());
-                        }
+                let name = entry.file_name();
+                let s = name.to_string_lossy();
+                if super::paths::is_zshrs_log_file(&s) {
+                    if dry_run {
+                        would_remove.push(entry.path().display().to_string());
+                    } else {
+                        let _ = std::fs::OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .open(entry.path());
+                        removed.push(entry.path().display().to_string());
                     }
                 }
             }
@@ -2543,7 +2541,7 @@ async fn op_export_catalog(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // Use sqlite's online backup API via VACUUM INTO (atomic, safe under WAL).
     let target = out_path.display().to_string();
     state.with_catalog(|conn| {
-        conn.execute(&format!("VACUUM INTO ?"), rusqlite::params![target])?;
+        conn.execute("VACUUM INTO ?", rusqlite::params![target])?;
         Ok::<_, rusqlite::Error>(())
     })?;
     Ok(json!({ "path": out_path.display().to_string() }))
@@ -2566,7 +2564,7 @@ async fn op_export_shard(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .unwrap_or_default()
         .into_iter()
         .find(|p| {
-            p.file_name().and_then(|s| s.to_str()).map_or(false, |s| {
+            p.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
                 s.contains(&format!("-{}.rkyv", name)) || s.contains(&name)
             })
         })

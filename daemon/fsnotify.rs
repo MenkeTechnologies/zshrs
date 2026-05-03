@@ -95,6 +95,12 @@ struct FsWatcherInner {
     debouncer: Option<Debouncer<RecommendedWatcher>>,
 }
 
+impl Default for FsWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FsWatcher {
     pub fn new() -> Self {
         Self {

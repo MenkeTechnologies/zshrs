@@ -717,7 +717,7 @@ async fn handler_op(
     let pid = std::process::id() as i32;
     let (client_id, _session_id) = s.daemon.register_session(
         pid,
-        Some(format!("http")),
+        Some("http".to_string()),
         None,
         Some(format!("http-op:{}", name)),
         tx,

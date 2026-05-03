@@ -214,10 +214,8 @@ pub async fn op_cache_list(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .query_map(params![ns, glob_arg, now], |r| r.get::<_, String>(0))
         .map_err(|e| ErrPayload::new("cache_list", e.to_string()))?;
     let mut keys: Vec<String> = Vec::new();
-    for r in rows {
-        if let Ok(k) = r {
-            keys.push(k);
-        }
+    for k in rows.flatten() {
+        keys.push(k);
     }
     let count = keys.len();
     Ok(json!({ "ns": ns, "keys": keys, "count": count }))

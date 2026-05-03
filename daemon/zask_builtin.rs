@@ -93,7 +93,7 @@ fn ask_with_target(args: &[String]) -> i32 {
         eprintln!("zshrs: zask: {}", e);
         json!({})
     });
-    if target.as_object().map_or(true, |m| m.is_empty()) {
+    if target.as_object().is_none_or(|m| m.is_empty()) {
         return 1;
     }
     let kind = match args.get(2) {

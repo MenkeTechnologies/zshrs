@@ -57,8 +57,8 @@ fn connect() -> Result<Client, ()> {
 pub fn zsource(args: &[String]) -> i32 {
     let mut path: Option<String> = None;
     let mut send_stat = false;
-    let mut iter = args.iter().skip(1);
-    while let Some(a) = iter.next() {
+    let iter = args.iter().skip(1);
+    for a in iter {
         match a.as_str() {
             "--stat" => send_stat = true,
             "-h" | "--help" => {
