@@ -1,7 +1,7 @@
 //! zshrs logging & profiling framework
 //!
 //! **Logging** (always on):
-//!   - File: $HOME/.zshrs/<binary>.log — three separate files so the
+//!   - File: `$HOME/.zshrs/{binary}.log` — three separate files so the
 //!     three processes don't interleave their tracing output:
 //!       - `zshrs.log`           (the shell — thin clients)
 //!       - `zshrs-daemon.log`    (daemon, set up via daemon/log.rs)

@@ -354,16 +354,18 @@ pub fn daemon_config_file() -> Result<PathBuf> {
 ///
 /// `[http.tokens]` accepts two value shapes per key:
 ///
-///     [http]
-///     listen = "127.0.0.1:7733"
+/// ```toml
+/// [http]
+/// listen = "127.0.0.1:7733"
 ///
-///     [http.tokens]
-///     # Legacy / unscoped — flat string. Token grants full access.
-///     mybox      = "0123abcd..."
-///     # Scoped — inline table. Token only grants the listed scopes.
-///     # See `daemon::auth::op_scope` for the area.verb namespace.
-///     vim-lsp    = { token = "feedface...", scopes = ["defs.read", "snapshot.read"] }
-///     ci-pipe    = { token = "deadbeef...", scopes = ["job.write", "cache.*"] }
+/// [http.tokens]
+/// # Legacy / unscoped — flat string. Token grants full access.
+/// mybox      = "0123abcd..."
+/// # Scoped — inline table. Token only grants the listed scopes.
+/// # See `daemon::auth::op_scope` for the area.verb namespace.
+/// vim-lsp    = { token = "feedface...", scopes = ["defs.read", "snapshot.read"] }
+/// ci-pipe    = { token = "deadbeef...", scopes = ["job.write", "cache.*"] }
+/// ```
 ///
 /// Wildcards in `scopes`: `*` (everything), `<area>.*` (every verb in
 /// an area), `*.<verb>` (every area's `<verb>`).

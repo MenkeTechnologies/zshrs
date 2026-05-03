@@ -74,7 +74,7 @@ impl Metrics {
 }
 
 /// Render the metrics surface as Prometheus 0.0.4 text format.
-/// Spec: https://prometheus.io/docs/instrumenting/exposition_formats/
+/// Spec: <https://prometheus.io/docs/instrumenting/exposition_formats/>
 pub fn prometheus_text(state: &DaemonState) -> String {
     let mut out = String::new();
     let m = &state.metrics;

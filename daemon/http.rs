@@ -9,19 +9,21 @@
 //!
 //! Wire format:
 //!
-//!     POST /op/<NAME>
-//!     Authorization: Bearer <token>      (optional; required if any
-//!                                         tokens are configured)
-//!     Content-Type: application/json
-//!     <args JSON object>
+//! ```text
+//! POST /op/<NAME>
+//! Authorization: Bearer <token>      (optional; required if any
+//!                                     tokens are configured)
+//! Content-Type: application/json
+//! <args JSON object>
 //!
-//!     200 OK   { "ok": true,  ...result }
-//!     4xx/5xx  { "ok": false, "code": "...", "msg": "..." }
+//! 200 OK   { "ok": true,  ...result }
+//! 4xx/5xx  { "ok": false, "code": "...", "msg": "..." }
 //!
-//!     GET /health     → { "ok": true, "version": ..., "uptime_ms": ... }
-//!     GET /ops        → { "ok": true, "ops": [...] } (op names enumerated)
-//!     GET /openapi    → OpenAPI 3.1 doc (auto-derived from OP_NAMES;
-//!                       alias /openapi.json — see handler_openapi)
+//! GET /health     -> { "ok": true, "version": ..., "uptime_ms": ... }
+//! GET /ops        -> { "ok": true, "ops": [...] } (op names enumerated)
+//! GET /openapi    -> OpenAPI 3.1 doc (auto-derived from OP_NAMES;
+//!                    alias /openapi.json -- see handler_openapi)
+//! ```
 //!
 //! Auth model:
 //!   - No tokens configured + binding to a loopback address: open access
