@@ -38,12 +38,11 @@ def _daemon_headers []: nothing -> list<string> {
     }
 }
 
-# Internal: POST /op/<name> with JSON body record.
+# Internal: POST /op/<name> with JSON body record. Single-line — nu's
+# `\` line-continuation only works after operators, not in the middle
+# of a flag list.
 def _daemon_post [op: string, body: record = {}]: nothing -> any {
-    http post --content-type application/json \
-              --headers (_daemon_headers) \
-              $"($env.DAEMON_URL)/op/($op)" \
-              $body
+    http post --content-type application/json --headers (_daemon_headers) $"($env.DAEMON_URL)/op/($op)" $body
 }
 
 # Internal: GET an endpoint (/health, /ops, /metrics).
@@ -89,10 +88,13 @@ def _daemon_emit [
         kind: $kind
         name: $name
     }
-    if (not ($value | is-empty)) { $body = ($body | upsert value $value) }
-    if ($file? | is-not-empty)   { $body = ($body | upsert file $file) }
-    if ($line? | is-not-empty)   { $body = ($body | upsert line $line) }
-    if ($fn_chain? | is-not-empty) { $body = ($body | upsert fn_chain $fn_chain) }
+    # Optional flags default to null when not supplied — `is-not-empty`
+    # treats null and "" the same, but `?` postfix only works on cell
+    # paths, not regular vars. Compare against null directly.
+    if ($value | is-not-empty) { $body = ($body | upsert value $value) }
+    if ($file != null and $file != "") { $body = ($body | upsert file $file) }
+    if ($line != null) { $body = ($body | upsert line $line) }
+    if ($fn_chain != null and $fn_chain != "") { $body = ($body | upsert fn_chain $fn_chain) }
     _daemon_post definitions_emit $body
 }
 
@@ -127,11 +129,11 @@ def "daemon defs query" [
     --limit: int,
 ]: nothing -> any {
     mut body = {}
-    if ($kind?     | is-not-empty) { $body = ($body | upsert kind $kind) }
-    if ($name?     | is-not-empty) { $body = ($body | upsert name $name) }
-    if ($prefix?   | is-not-empty) { $body = ($body | upsert prefix $prefix) }
-    if ($shell_id? | is-not-empty) { $body = ($body | upsert shell_id $shell_id) }
-    if ($limit?    | is-not-empty) { $body = ($body | upsert limit $limit) }
+    if ($kind     != null and $kind     != "") { $body = ($body | upsert kind $kind) }
+    if ($name     != null and $name     != "") { $body = ($body | upsert name $name) }
+    if ($prefix   != null and $prefix   != "") { $body = ($body | upsert prefix $prefix) }
+    if ($shell_id != null and $shell_id != "") { $body = ($body | upsert shell_id $shell_id) }
+    if ($limit    != null)                     { $body = ($body | upsert limit $limit) }
     _daemon_post definitions_query $body
 }
 
@@ -140,7 +142,7 @@ def "daemon defs kinds" []: nothing -> any { _daemon_post definitions_kinds {} }
 # `daemon defs diff SHELL_A SHELL_B [KIND]`
 def "daemon defs diff" [shell_a: string, shell_b: string, kind?: string]: nothing -> any {
     mut body = { shell_a: $shell_a, shell_b: $shell_b }
-    if ($kind | is-not-empty) { $body = ($body | upsert kind $kind) }
+    if ($kind != null and $kind != "") { $body = ($body | upsert kind $kind) }
     _daemon_post definitions_diff $body
 }
 

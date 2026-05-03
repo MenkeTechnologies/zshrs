@@ -17,7 +17,6 @@
 #     set-env DAEMON_TOKEN     <bearer-token>             # optional
 #     set-env DAEMON_SHELL_ID  elvish                     # see docs/SHELL_IDS.md
 
-use os
 use str
 
 if (not (has-env DAEMON_URL))      { set-env DAEMON_URL      'http://127.0.0.1:7733' }
@@ -47,14 +46,15 @@ fn _get {|endpoint|
 
 # JSON-string escape: backslash, quote, tab, CR, LF — anything else
 # passes through. Uses elvish's str module so we don't shell out for
-# a per-call hot path.
+# a per-call hot path. `str:replace` already replaces all occurrences
+# (the `-all` suffix is implied; there's no separate `str:replace-all`).
 fn _json-str {|s|
     var out = $s
-    set out = (str:replace-all '\' '\\' $out)
-    set out = (str:replace-all '"' '\"' $out)
-    set out = (str:replace-all "\t" '\t' $out)
-    set out = (str:replace-all "\r" '\r' $out)
-    set out = (str:replace-all "\n" '\n' $out)
+    set out = (str:replace '\' '\\' $out)
+    set out = (str:replace '"' '\"' $out)
+    set out = (str:replace "\t" '\t' $out)
+    set out = (str:replace "\r" '\r' $out)
+    set out = (str:replace "\n" '\n' $out)
     put $out
 }
 
