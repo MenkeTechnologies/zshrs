@@ -34,6 +34,27 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 /// just want stderr capture without spawning a daemon.
 static DAEMON_DISABLED: AtomicBool = AtomicBool::new(false);
 
+/// Suppress the per-event "Captured KIND NAME ..." stderr line. Set
+/// by `zshrs-recorder --quiet`. The summary footer + tracing log still
+/// fire — only the live-capture firehose is muted.
+static QUIET: AtomicBool = AtomicBool::new(false);
+
+/// Emit the end-of-run summary as a single JSON line to stdout
+/// instead of the multi-line human text on stderr. Set by
+/// `zshrs-recorder --json`.
+static JSON_SUMMARY: AtomicBool = AtomicBool::new(false);
+
+/// Optional path to write the bundle to as a JSON file (alongside
+/// the daemon ship-out, or instead of it under --no-daemon). Set by
+/// `zshrs-recorder -o PATH`. Lock contention is irrelevant — we set
+/// it once at startup and read it once at flush time.
+static OUTPUT_PATH: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+
+/// Optional override for the bundle's `shell_id`. Lets a test (or a
+/// rebrand experiment) impersonate a different shell. None = default
+/// "zshrs".
+static SHELL_ID_OVERRIDE: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+
 /// Re-entrancy guard — set during emit so any builtin a recorder hook
 /// itself triggers is not re-recorded.
 static IN_RECORDER: AtomicBool = AtomicBool::new(false);
@@ -281,6 +302,46 @@ fn daemon_disabled() -> bool {
     DAEMON_DISABLED.load(Ordering::Relaxed)
 }
 
+#[inline]
+pub fn set_quiet(v: bool) {
+    QUIET.store(v, Ordering::Relaxed);
+}
+
+#[inline]
+fn quiet() -> bool {
+    QUIET.load(Ordering::Relaxed)
+}
+
+#[inline]
+pub fn set_json_summary(v: bool) {
+    JSON_SUMMARY.store(v, Ordering::Relaxed);
+}
+
+#[inline]
+fn json_summary_enabled() -> bool {
+    JSON_SUMMARY.load(Ordering::Relaxed)
+}
+
+pub fn set_output_path(p: Option<String>) {
+    if let Ok(mut g) = OUTPUT_PATH.lock() {
+        *g = p;
+    }
+}
+
+fn output_path() -> Option<String> {
+    OUTPUT_PATH.lock().ok().and_then(|g| g.clone())
+}
+
+pub fn set_shell_id_override(s: Option<String>) {
+    if let Ok(mut g) = SHELL_ID_OVERRIDE.lock() {
+        *g = s;
+    }
+}
+
+fn shell_id_override() -> Option<String> {
+    SHELL_ID_OVERRIDE.lock().ok().and_then(|g| g.clone())
+}
+
 fn now_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -375,10 +436,12 @@ pub fn emit_full(
     } else {
         format!(" [{}]", attrs_to_str(attrs))
     };
-    eprintln!(
-        "Captured {} {}{}{}, file: {}{}",
-        kind_str, name, attrs_part, value_part, loc, chain
-    );
+    if !quiet() {
+        eprintln!(
+            "Captured {} {}{}{}, file: {}{}",
+            kind_str, name, attrs_part, value_part, loc, chain
+        );
+    }
     tracing::info!(
         kind = kind_str,
         %name,
@@ -900,25 +963,39 @@ pub fn print_summary() {
     } else {
         0
     };
-    eprintln!();
-    eprintln!("--- zshrs-recorder summary ---");
-    eprintln!("  total events: {}", total);
-    for (k, v) in &counts {
-        eprintln!("  {:<10} {}", k, v);
+    if json_summary_enabled() {
+        // Single JSON line to stdout — pipes cleanly into jq / scripts.
+        let mut counts_pairs = Vec::with_capacity(counts.len());
+        for (k, v) in &counts {
+            counts_pairs.push(format!("\"{}\":{}", k, v));
+        }
+        println!(
+            "{{\"total_events\":{},\"elapsed_ms\":{},\"counts\":{{{}}}}}",
+            total,
+            elapsed_ms,
+            counts_pairs.join(",")
+        );
+    } else {
+        eprintln!();
+        eprintln!("--- zshrs-recorder summary ---");
+        eprintln!("  total events: {}", total);
+        for (k, v) in &counts {
+            eprintln!("  {:<10} {}", k, v);
+        }
+        eprintln!("  elapsed:      {} ms", elapsed_ms);
     }
-    eprintln!("  elapsed:      {} ms", elapsed_ms);
 }
 
 /// Bundle every captured event, send a single IPC frame to
 /// `zshrs-daemon`'s `recorder_ingest` op, and clear the buffer. Returns
 /// `true` if the daemon accepted the bundle. Called from `atexit`, so
 /// avoids tracing/TLS-touching helpers (use `eprintln!` only).
+///
+/// `--no-daemon` skips the IPC step but `-o PATH` still writes the
+/// bundle to disk so post-mortem inspection works without a daemon.
 #[cfg(feature = "daemon")]
 pub fn flush_to_daemon() -> bool {
     if !is_enabled() {
-        return false;
-    }
-    if daemon_disabled() {
         return false;
     }
     let events = match BUFFER.try_lock() {
@@ -936,12 +1013,32 @@ pub fn flush_to_daemon() -> bool {
         zdotdir: std::env::var("ZDOTDIR").ok(),
         home: std::env::var("HOME").ok(),
         events,
-        // Stamp the bundle as zshrs-originated. Other shells using the
-        // `definitions_emit` op pass their own shell_id; full-bundle
-        // ingest (this code path) is exclusive to the AOP-instrumented
-        // zshrs-recorder binary, so we hardcode "zshrs" here.
-        shell_id: Some("zshrs".to_string()),
+        // `--shell-id ID` overrides this so a recorder run can
+        // impersonate a non-zshrs source (federation testing,
+        // rebrand experiments). Default = "zshrs" since this code
+        // path is exclusive to the AOP-instrumented zshrs-recorder.
+        shell_id: Some(shell_id_override().unwrap_or_else(|| "zshrs".to_string())),
     };
+
+    // `-o PATH` writes the bundle to a JSON file alongside (or instead
+    // of, under --no-daemon) shipping it to the daemon. Useful for
+    // post-mortem inspection without spinning a daemon up.
+    if let Some(path) = output_path() {
+        match serde_json::to_string(&bundle) {
+            Ok(s) => {
+                if let Err(e) = std::fs::write(&path, s.as_bytes()) {
+                    eprintln!("recorder: write {path}: {e}");
+                } else {
+                    eprintln!("recorder: bundle written to {path}");
+                }
+            }
+            Err(e) => eprintln!("recorder: bundle serialize for output failed: {e}"),
+        }
+    }
+
+    if daemon_disabled() {
+        return false;
+    }
     let event_count = bundle.events.len();
     let payload = match serde_json::to_value(&bundle) {
         Ok(v) => v,
