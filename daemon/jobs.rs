@@ -14,6 +14,7 @@
 // Replaces: nohup, disown, setsid, pueue, screen-as-job-runner.
 
 use std::collections::HashMap;
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Weak};
@@ -29,6 +30,79 @@ use super::ipc::Frame;
 use super::paths::CachePaths;
 use super::state::DaemonState;
 use super::Result;
+
+/// Per-job pty state. Present only for jobs spawned with `pty=true`.
+/// Master fd is held inside a Mutex so the reader thread + the
+/// `job_input` writer + the `job_resize` ioctl all serialize through
+/// it. Writer is held cloned via `try_clone_to_owned` from the same
+/// underlying device — pty masters can be safely shared across
+/// readers/writers (kernel serializes byte ordering per side of the
+/// stream).
+pub struct PtyHandle {
+    /// Master fd. Held in Option so close-on-job-exit can replace
+    /// with None to short-circuit late-firing input/resize ops.
+    pub master: Mutex<Option<OwnedFd>>,
+    /// Last-known winsize, returned in job_status so the client can
+    /// initialize its terminal before the first resize event.
+    pub winsize: Mutex<(u16, u16)>,
+}
+
+impl PtyHandle {
+    fn new(master: OwnedFd, rows: u16, cols: u16) -> Arc<Self> {
+        Arc::new(Self {
+            master: Mutex::new(Some(master)),
+            winsize: Mutex::new((rows, cols)),
+        })
+    }
+
+    /// Write `bytes` to the master fd. Returns the byte count written
+    /// (or an io::Error). No-op (returns 0) when master is closed.
+    pub fn write(&self, bytes: &[u8]) -> std::io::Result<usize> {
+        let g = self.master.lock();
+        let fd = match g.as_ref() {
+            Some(f) => f,
+            None => return Ok(0),
+        };
+        let raw = fd.as_raw_fd();
+        let n = unsafe { libc::write(raw, bytes.as_ptr() as *const _, bytes.len()) };
+        if n < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(n as usize)
+        }
+    }
+
+    /// Propagate a terminal resize to the child. The kernel notifies
+    /// the foreground process group with SIGWINCH so apps like vim /
+    /// less re-render at the right size.
+    pub fn resize(&self, rows: u16, cols: u16) -> std::io::Result<()> {
+        let g = self.master.lock();
+        let fd = match g.as_ref() {
+            Some(f) => f,
+            None => return Ok(()),
+        };
+        let ws = libc::winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let raw = fd.as_raw_fd();
+        let rc = unsafe { libc::ioctl(raw, libc::TIOCSWINSZ, &ws) };
+        if rc < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        *self.winsize.lock() = (rows, cols);
+        Ok(())
+    }
+
+    /// Drop the master fd. Called on job exit so file descriptors
+    /// don't leak when the supervisor outlives the child by an
+    /// unbounded amount of time.
+    fn close_master(&self) {
+        let _ = self.master.lock().take();
+    }
+}
 
 /// Public-facing job state, serialized to catalog + IPC responses.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,6 +155,18 @@ pub struct JobSnapshot {
     pub error_path: String,
     pub stdout_bytes: u64,
     pub stderr_bytes: u64,
+    /// True if this job is running under a pty (submitted with `pty=true`).
+    /// Drives `zjob attach`'s mode selection — pty jobs use the
+    /// bidirectional raw-mode pump; non-pty jobs use the read-only
+    /// file-tail follow.
+    #[serde(default)]
+    pub pty: bool,
+    /// Last-known terminal dimensions, when `pty=true`. Lets `zjob
+    /// attach` initialize its termios before the first SIGWINCH.
+    #[serde(default)]
+    pub pty_rows: Option<u16>,
+    #[serde(default)]
+    pub pty_cols: Option<u16>,
 }
 
 /// Per-job in-memory record. Output paths live on disk; state is mirrored to
@@ -101,10 +187,21 @@ struct JobMeta {
     stderr_bytes: u64,
     /// Channel to signal job_wait callers when the job hits a terminal state.
     waiters: Vec<oneshot::Sender<JobState>>,
+    /// Pty handle, present iff job spawned with `pty=true`. Holds the
+    /// master fd; lets job_input + job_resize ops reach the controlling
+    /// terminal of the running child.
+    pty: Option<Arc<PtyHandle>>,
 }
 
 impl JobMeta {
     fn snapshot(&self) -> JobSnapshot {
+        let (pty_rows, pty_cols) = match self.pty.as_ref() {
+            Some(h) => {
+                let (r, c) = *h.winsize.lock();
+                (Some(r), Some(c))
+            }
+            None => (None, None),
+        };
         JobSnapshot {
             id: self.id,
             command: self.command.clone(),
@@ -120,6 +217,9 @@ impl JobMeta {
             error_path: self.error_path.display().to_string(),
             stdout_bytes: self.stdout_bytes,
             stderr_bytes: self.stderr_bytes,
+            pty: self.pty.is_some(),
+            pty_rows,
+            pty_cols,
         }
     }
 }
@@ -212,6 +312,7 @@ impl Supervisor {
         cwd: Option<String>,
         tags: Vec<String>,
         env: HashMap<String, String>,
+        pty: bool,
     ) -> Result<u64> {
         if command.is_empty() {
             return Err(super::DaemonError::other("empty command"));
@@ -247,11 +348,73 @@ impl Supervisor {
         drop(stderr_file);
 
         let mut cmd = Command::new(&command[0]);
-        cmd.args(&command[1..])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env_clear();
+        cmd.args(&command[1..]).env_clear();
+
+        // Pty branch: openpty, dup slave to child stdin/out/err, hold
+        // master in JobMeta. Pipe branch: existing capture-to-disk
+        // path, no terminal allocated.
+        let pty_handle: Option<Arc<PtyHandle>> = if pty {
+            let ws = nix::pty::Winsize {
+                ws_row: 24,
+                ws_col: 80,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            };
+            let pair = nix::pty::openpty(Some(&ws), None)
+                .map_err(|e| super::DaemonError::other(format!("openpty: {e}")))?;
+            let master_owned: OwnedFd = pair.master;
+            let slave_owned: OwnedFd = pair.slave;
+
+            // Three Stdio handles for the child — all dup of the same
+            // slave fd. The child's pre_exec then makes that fd the
+            // controlling terminal for the new session via TIOCSCTTY.
+            let slave_in = slave_owned
+                .try_clone()
+                .map_err(|e| super::DaemonError::other(format!("dup slave: {e}")))?;
+            let slave_out = slave_owned
+                .try_clone()
+                .map_err(|e| super::DaemonError::other(format!("dup slave: {e}")))?;
+            let slave_err = slave_owned;
+
+            cmd.stdin(Stdio::from(slave_in))
+                .stdout(Stdio::from(slave_out))
+                .stderr(Stdio::from(slave_err));
+
+            // Capture master's raw fd so pre_exec can close it in the
+            // child (otherwise the master leaks across exec and the
+            // EOF semantic on master read breaks — kernel only closes
+            // when ALL refs go away).
+            let master_raw_for_child = master_owned.as_raw_fd();
+            unsafe {
+                cmd.pre_exec(move || {
+                    // New session, new process group — child becomes
+                    // session leader, eligible to acquire a controlling
+                    // tty.
+                    nix::unistd::setsid()
+                        .map_err(|e| std::io::Error::other(e.to_string()))?;
+                    // Make stdin (the slave fd, dup'd to fd 0 by the
+                    // standard library before pre_exec runs) the
+                    // controlling tty. zero arg = "I'm willing to steal
+                    // it" (only matters if the slave was already someone
+                    // else's controlling tty, which it isn't here).
+                    if libc::ioctl(0, libc::TIOCSCTTY as _, 0) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    // Close master in the child. Std-lib-spawned children
+                    // inherit every parent fd that wasn't FD_CLOEXEC.
+                    libc::close(master_raw_for_child);
+                    Ok(())
+                });
+            }
+
+            Some(PtyHandle::new(master_owned, ws.ws_row, ws.ws_col))
+        } else {
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            None
+        };
+
         // Preserve a minimal usable env (PATH at least) plus client overrides.
         if let Ok(path) = std::env::var("PATH") {
             cmd.env("PATH", path);
@@ -261,6 +424,12 @@ impl Supervisor {
         }
         if let Ok(lang) = std::env::var("LANG") {
             cmd.env("LANG", lang);
+        }
+        // Pty-mode child sees TERM=xterm-256color so apps like vim /
+        // less / fzf render colors. Client-side `zjob attach` must set
+        // its termios to match before the first output frame.
+        if pty && !env.contains_key("TERM") {
+            cmd.env("TERM", "xterm-256color");
         }
         for (k, v) in &env {
             cmd.env(k, v);
@@ -274,8 +443,20 @@ impl Supervisor {
             .map_err(|e| super::DaemonError::other(format!("spawn `{}`: {}", &command[0], e)))?;
 
         let pid = child.id().map(|p| p as i32);
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
+        // Pipe-mode jobs hand stdout/stderr to the existing line-buffered
+        // drain_stream. Pty-mode jobs have neither (the slave fd is the
+        // child's 0/1/2 but the parent only retains the master) — we
+        // pump the master fd from a dedicated thread instead.
+        let stdout = if pty_handle.is_none() {
+            child.stdout.take()
+        } else {
+            None
+        };
+        let stderr = if pty_handle.is_none() {
+            child.stderr.take()
+        } else {
+            None
+        };
         let started_at = chrono::Utc::now();
 
         let meta = JobMeta {
@@ -293,6 +474,7 @@ impl Supervisor {
             stdout_bytes: 0,
             stderr_bytes: 0,
             waiters: Vec::new(),
+            pty: pty_handle.clone(),
         };
 
         {
@@ -340,6 +522,20 @@ impl Supervisor {
             let path = error_path.clone();
             tokio::spawn(async move {
                 supe.drain_stream(id, "stderr", err, path).await;
+            });
+        }
+
+        // Pty drainer: dedicated OS thread reading raw bytes from the
+        // master fd and forwarding them as base64-chunked job:N.stdout
+        // events + appending to .out. Thread (not tokio task) because
+        // pty master reads are blocking on a char device — putting it
+        // on a worker thread keeps the tokio runtime free.
+        if let Some(handle) = pty_handle.as_ref() {
+            let supe = Arc::clone(self);
+            let handle = Arc::clone(handle);
+            let path = output_path.clone();
+            std::thread::spawn(move || {
+                supe.drain_pty(id, handle, path);
             });
         }
 
@@ -409,6 +605,95 @@ impl Supervisor {
         let _ = file.flush().await;
     }
 
+    /// Public accessor for the per-job pty handle. Returns None for
+    /// non-pty jobs and for terminated jobs whose master fd has
+    /// already been dropped via `close_master`. Consumed by the
+    /// `job_input` and `job_resize` ops.
+    pub fn pty_handle_for(&self, id: u64) -> Option<Arc<PtyHandle>> {
+        let g = self.inner.lock();
+        g.jobs.get(&id).and_then(|m| m.pty.clone())
+    }
+
+    /// Pty drainer: blocking thread that owns the master-fd reader. Pumps
+    /// raw bytes (NOT line-buffered — vt100 sequences mid-line need
+    /// to flush immediately so terminals like vim render correctly)
+    /// to:
+    ///   - the .out file on disk (so non-attached observers can tail
+    ///     after the fact via `zjob output`)
+    ///   - the `job:{id}.stdout` broadcast channel as base64-encoded
+    ///     chunks (attached `zjob attach` sessions decode + write to
+    ///     the user's terminal)
+    ///
+    /// Exits when read() returns 0 (EOF — child closed its end after
+    /// exit) or any non-EAGAIN error. The master fd ref count drops
+    /// in `handle_exit::pty_handle.close_master()`, which races us to
+    /// the EOF — either order is correct.
+    fn drain_pty(self: Arc<Self>, id: u64, handle: Arc<PtyHandle>, path: PathBuf) {
+        // Snapshot the master raw fd while holding the lock briefly,
+        // then drop the lock so the writer side (job_input) isn't
+        // blocked behind us. Raw fd remains valid for the lifetime
+        // of the OwnedFd inside the PtyHandle, which only drops in
+        // `close_master` (after the child exits).
+        let raw = match handle.master.lock().as_ref() {
+            Some(fd) => fd.as_raw_fd(),
+            None => return,
+        };
+        let mut file = match std::fs::OpenOptions::new().append(true).open(&path) {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(?e, %id, "pty: failed to open .out for append");
+                return;
+            }
+        };
+        use std::io::Write;
+        let mut buf = [0u8; 4096];
+        loop {
+            // Borrow check guard: the OwnedFd may have been dropped
+            // by handle_exit between iterations. If so, EBADF on read
+            // is the kernel's signal to bail.
+            let n = unsafe { libc::read(raw, buf.as_mut_ptr() as *mut _, buf.len()) };
+            if n == 0 {
+                break; // EOF — child closed slave or master was dropped
+            }
+            if n < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                // EIO is the typical signal once the slave side has
+                // closed (Linux quirk for pty masters). Treat as EOF.
+                if err.raw_os_error() == Some(libc::EIO)
+                    || err.raw_os_error() == Some(libc::EBADF)
+                {
+                    break;
+                }
+                tracing::warn!(?err, %id, "pty: master read failed");
+                break;
+            }
+            let chunk = &buf[..n as usize];
+            // Tee to disk: append-write, best-effort flush. A failure
+            // here doesn't kill the drainer — output to attached
+            // clients still flows.
+            if let Err(e) = file.write_all(chunk) {
+                tracing::warn!(?e, %id, "pty: .out write failed");
+            }
+            // Broadcast as base64 so the JSON IPC framing carries
+            // arbitrary bytes (vt100 escape sequences include 0x1B
+            // ESC + arbitrary high-bit bytes that don't survive raw
+            // string serialization).
+            let b64 = base64_encode(chunk);
+            self.publish(
+                id,
+                "stdout",
+                json!({
+                    "bytes_b64": b64,
+                    "len": chunk.len(),
+                }),
+            );
+        }
+        let _ = file.flush();
+    }
+
     async fn handle_exit(
         self: Arc<Self>,
         id: u64,
@@ -431,6 +716,16 @@ impl Supervisor {
 
         let finished_at = chrono::Utc::now();
         let mut waiters: Vec<oneshot::Sender<JobState>> = Vec::new();
+        let pty_handle: Option<Arc<PtyHandle>> = {
+            let mut g = self.inner.lock();
+            g.jobs.get_mut(&id).and_then(|m| m.pty.clone())
+        };
+        // Drop master fd so the pty drainer thread sees EOF and exits.
+        // Also stops late-firing job_input/job_resize ops from racing
+        // with the child's exit.
+        if let Some(h) = &pty_handle {
+            h.close_master();
+        }
         let snap = {
             let mut g = self.inner.lock();
             if let Some(m) = g.jobs.get_mut(&id) {
@@ -714,4 +1009,33 @@ pub async fn wait_with_timeout(
 #[allow(dead_code)]
 fn _keep_mpsc_alive() -> Option<mpsc::Sender<()>> {
     None
+}
+
+// Local base64 encoder so we don't pull a new crate just for the pty
+// drainer. Same alphabet as RFC 4648; padded with `=`. Used to wrap
+// raw pty bytes (vt100 escape sequences) in JSON IPC payloads. Decoder
+// lives in daemon/zd_dispatch.rs.
+const B64_ALPHABET: &[u8] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+        out.push(B64_ALPHABET[(b0 >> 2) as usize] as char);
+        out.push(B64_ALPHABET[(((b0 & 0b11) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(B64_ALPHABET[(((b1 & 0b1111) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(B64_ALPHABET[(b2 & 0b111111) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }

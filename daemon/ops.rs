@@ -16,8 +16,9 @@ pub const OP_NAMES: &[&str] = &[
     "export_shard", "export_zcompdump", "fpath_changed", "highlight",
     "history_append", "history_query", "import_all", "import_catalog",
     "import_history", "import_shard", "import_zcompdump", "import_zwc",
-    "info", "job_cancel", "job_kill", "job_list", "job_output", "job_status",
-    "job_submit", "job_wait", "keys", "list_shells", "load_script",
+    "info", "job_cancel", "job_input", "job_kill", "job_list", "job_output",
+    "job_resize", "job_status", "job_submit", "job_wait", "keys", "list_shells",
+    "load_script",
     "lock_acquire", "lock_list", "lock_release", "lock_try_acquire",
     "log_level", "log_rotate", "log_stats", "metrics", "notify", "ping", "publish",
     "pull_canonical", "push_canonical", "recorder_ingest", "register",
@@ -123,6 +124,8 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "job_kill" => op_job_kill(state, args).await,
         "job_cancel" => op_job_cancel(state, args).await,
         "job_wait" => op_job_wait(state, args).await,
+        "job_input" => op_job_input(state, args).await,
+        "job_resize" => op_job_resize(state, args).await,
 
         "complete" => op_complete(state, args).await,
         "suggest" => op_suggest(state, args).await,
@@ -3854,9 +3857,14 @@ async fn op_job_submit(state: &Arc<DaemonState>, client_id: u64, args: Value) ->
                 .collect()
         })
         .unwrap_or_default();
+    // pty=true allocates a pseudo-terminal pair: child stdin/stdout/stderr
+    // bound to the slave, master held by the daemon for `zjob attach`'s
+    // bidirectional pump. Defaults to false so non-pty submits stay
+    // unchanged (line-buffered .out/.err pipe path).
+    let pty = args.get("pty").and_then(Value::as_bool).unwrap_or(false);
 
-    match state.jobs.submit(client_id, command, cwd, tags, env) {
-        Ok(id) => Ok(json!({ "job_id": id })),
+    match state.jobs.submit(client_id, command, cwd, tags, env, pty) {
+        Ok(id) => Ok(json!({ "job_id": id, "pty": pty })),
         Err(e) => Err(ErrPayload::new("submit_failed", e.to_string())),
     }
 }
@@ -3952,6 +3960,100 @@ async fn op_job_wait(state: &Arc<DaemonState>, args: Value) -> OpResult {
         })),
         None => Ok(json!({ "job_id": id, "timed_out": true })),
     }
+}
+
+/// `job_input` — write base64-decoded bytes to the master fd of a
+/// pty-mode job. Errors with `not_pty` for jobs that weren't
+/// submitted with `pty=true`. Used by `zjob attach`'s stdin pump
+/// and by scripted "feed N keystrokes to a stuck job" callers.
+async fn op_job_input(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let id = args
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
+    let b64 = args
+        .get("bytes_b64")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `bytes_b64`"))?;
+    let bytes = base64_decode(b64)
+        .map_err(|e| ErrPayload::new("bad_args", format!("decode bytes_b64: {e}")))?;
+    let handle = state
+        .jobs
+        .pty_handle_for(id)
+        .ok_or_else(|| ErrPayload::new("not_pty", format!("job {id} is not pty-mode (resubmit with pty=true)")))?;
+    let n = handle
+        .write(&bytes)
+        .map_err(|e| ErrPayload::new("write_failed", e.to_string()))?;
+    Ok(json!({"job_id": id, "bytes_written": n}))
+}
+
+/// `job_resize` — propagate a terminal resize (TIOCSWINSZ) to the
+/// foreground process group of a pty-mode job. Errors with `not_pty`
+/// for non-pty jobs. Used by `zjob attach`'s SIGWINCH handler.
+async fn op_job_resize(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let id = args
+        .get("id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `id`"))?;
+    let rows = args
+        .get("rows")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `rows`"))?
+        as u16;
+    let cols = args
+        .get("cols")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `cols`"))?
+        as u16;
+    let handle = state
+        .jobs
+        .pty_handle_for(id)
+        .ok_or_else(|| ErrPayload::new("not_pty", format!("job {id} is not pty-mode")))?;
+    handle
+        .resize(rows, cols)
+        .map_err(|e| ErrPayload::new("ioctl_failed", e.to_string()))?;
+    Ok(json!({"job_id": id, "rows": rows, "cols": cols}))
+}
+
+/// Local base64 decoder, mirrors `base64_encode` in daemon/jobs.rs.
+/// Tolerates whitespace + padding; errors on any other non-alphabet
+/// byte.
+fn base64_decode(s: &str) -> std::result::Result<Vec<u8>, String> {
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let bytes: Vec<u8> = s
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace() && *b != b'=')
+        .collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let mut buf = [0u8; 4];
+    let mut bi = 0;
+    for &b in &bytes {
+        let v = val(b).ok_or_else(|| format!("invalid base64 byte: 0x{b:02x}"))?;
+        buf[bi] = v;
+        bi += 1;
+        if bi == 4 {
+            out.push((buf[0] << 2) | (buf[1] >> 4));
+            out.push((buf[1] << 4) | (buf[2] >> 2));
+            out.push((buf[2] << 6) | buf[3]);
+            bi = 0;
+        }
+    }
+    if bi >= 2 {
+        out.push((buf[0] << 2) | (buf[1] >> 4));
+    }
+    if bi == 3 {
+        out.push((buf[1] << 4) | (buf[2] >> 2));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
