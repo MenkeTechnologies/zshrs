@@ -222,6 +222,27 @@ impl Drop for WorkerPool {
 mod tests {
     use super::*;
 
+    /// Spin-wait helper for tests: poll `counter` until it reaches
+    /// `target` or the deadline elapses. Replaces the old "drop(pool)
+    /// implicitly waits" pattern, which broke when production Drop
+    /// switched to setting cancelled=true (so queued tasks would be
+    /// skipped on drop instead of drained).
+    fn wait_for_count(counter: &AtomicUsize, target: usize, max_wait_ms: u64) {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(max_wait_ms);
+        while counter.load(Ordering::Relaxed) < target {
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "wait_for_count timed out: counter={} target={} after {}ms",
+                    counter.load(Ordering::Relaxed),
+                    target,
+                    max_wait_ms
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
     #[test]
     fn test_pool_executes_tasks() {
         let pool = WorkerPool::new(2);
@@ -234,7 +255,11 @@ mod tests {
             });
         }
 
-        drop(pool); // waits for all tasks to finish
+        // Drain explicitly — production Drop sets cancelled=true and
+        // skips queued tasks (intentional for shell exit), so the test
+        // can't rely on `drop(pool)` to wait.
+        wait_for_count(&counter, 100, 5_000);
+        drop(pool);
         assert_eq!(counter.load(Ordering::Relaxed), 100);
     }
 
@@ -268,6 +293,7 @@ mod tests {
             });
         }
 
+        wait_for_count(&counter, 10, 5_000);
         drop(pool);
         assert_eq!(counter.load(Ordering::Relaxed), 10);
     }
@@ -276,23 +302,58 @@ mod tests {
     fn test_cancel_skips_queued_tasks() {
         let pool = WorkerPool::new(1); // single worker to control ordering
         let barrier = Arc::new(std::sync::Barrier::new(2));
+        // Signal the worker fires when it ENTERS the barrier task. Lets
+        // the main thread wait until the worker is provably blocked
+        // inside the barrier BEFORE calling cancel(). Without this, a
+        // pre-empted worker that hasn't yet pulled task #1 would see the
+        // cancel flag, skip task #1, and the main thread's barrier.wait()
+        // below would deadlock waiting for a second party that never
+        // arrives.
+        let started = Arc::new(std::sync::Mutex::new(false));
+        let started_cv = Arc::new(std::sync::Condvar::new());
         let counter = Arc::new(AtomicUsize::new(0));
 
-        // Block the worker on a barrier so tasks queue up
         let b = Arc::clone(&barrier);
+        let started_clone = Arc::clone(&started);
+        let cv_clone = Arc::clone(&started_cv);
         pool.submit(move || {
+            // Mark "task entered" + notify before blocking.
+            *started_clone.lock().unwrap() = true;
+            cv_clone.notify_one();
             b.wait();
         });
 
-        // Queue tasks that should be skipped
-        for _ in 0..5 {
+        // Wait until the worker is provably inside the task (and thus
+        // committed to calling b.wait() — no race with cancel below).
+        // 5s timeout is a safety net; in practice this fires within μs.
+        let mut g = started.lock().unwrap();
+        let timeout = std::time::Duration::from_secs(5);
+        while !*g {
+            let (gg, wait_result) = started_cv.wait_timeout(g, timeout).unwrap();
+            g = gg;
+            if wait_result.timed_out() && !*g {
+                panic!("worker never started task #1 within 5s — test scaffolding broken");
+            }
+        }
+        drop(g);
+
+        // Queue tasks that should be skipped (worker is parked at b.wait()).
+        // Cap at channel capacity (size * 4 = 4 for a 1-worker pool) MINUS 1
+        // for safety. Submitting more than the channel holds while the
+        // worker is blocked deadlocks `submit` itself, since the bounded
+        // crossbeam channel back-pressures `send()`. 3 skipped tasks is
+        // enough to prove "queued tasks get cancelled" — the count isn't
+        // load-bearing.
+        for _ in 0..3 {
             let c = Arc::clone(&counter);
             pool.submit(move || {
                 c.fetch_add(1, Ordering::Relaxed);
             });
         }
 
-        // Cancel, then unblock the worker
+        // Cancel, then unblock the worker — it'll return from b.wait(),
+        // loop, see cancelled=true, drain the 5 queued tasks without
+        // executing them.
         pool.cancel();
         barrier.wait();
 
@@ -308,6 +369,10 @@ mod tests {
         pool.submit(move || {
             c.fetch_add(1, Ordering::Relaxed);
         });
+        // Wait for the post-reset task to complete BEFORE drop, since
+        // production Drop sets cancelled=true again and would skip
+        // any not-yet-pulled task.
+        wait_for_count(&counter, 1, 5_000);
         drop(pool);
         assert_eq!(counter.load(Ordering::Relaxed), 1);
     }
@@ -328,7 +393,10 @@ mod tests {
 
     #[test]
     fn test_backpressure_bounded() {
-        // Pool of 1 with capacity 4 — 5th submit should block until one completes
+        // Pool of 1 with capacity 4 — 5th submit blocks (back-pressure)
+        // until the worker drains one. With 20 submits + 1 worker the
+        // pool's submit() call blocks naturally; by the time the loop
+        // exits, ~16 are completed and ~4 are still queued / in-flight.
         let pool = WorkerPool::new(1);
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -339,6 +407,7 @@ mod tests {
             });
         }
 
+        wait_for_count(&counter, 20, 5_000);
         drop(pool);
         assert_eq!(counter.load(Ordering::Relaxed), 20);
     }
