@@ -44,6 +44,7 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
         "zsuggest" => super::zcomplete_builtin::zsuggest(args),
         "zcmd-result" => zcmd_result(args),
         "zlog" => zlog(args),
+        "zwhere" => zwhere(args),
         _ => return None,
     };
     Some(status)
@@ -88,6 +89,7 @@ pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[
     "zsuggest",
     "zcmd-result",
     "zlog",
+    "zwhere",
 ];
 
 /// Helper: open a client connection (spawn-on-demand) and return it. Reports the error
@@ -1819,6 +1821,146 @@ mod tests {
             );
         }
     }
+}
+
+/// `zwhere` — query the daemon's federated definitions catalog from
+/// inside zshrs. Thin client over the `definitions_query` op (same
+/// thing `zd defs query` calls). Always available in default zshrs;
+/// not feature-gated on `recorder` because this is a read-only IPC
+/// path, not the AOP write path.
+///
+/// Usage:
+///   zwhere KIND NAME              # rows for `KIND NAME` across all shells
+///   zwhere KIND --prefix STR      # all KIND rows whose name starts with STR
+///   zwhere --kinds                # list every populated kind
+///   zwhere --shell-id ID …        # restrict to one shell_id
+///   zwhere --limit N …            # cap (default 1000 for tty output)
+///
+/// Output format: one row per line, `kind\tname\tvalue\tshell_id\tfile:line`.
+/// Wide-column layout via padding is left to the caller piping through
+/// `column -t` if they want it; `zwhere` stays narrow so scripts can
+/// `awk` cleanly.
+fn zwhere(args: &[String]) -> i32 {
+    let mut kind: Option<String> = None;
+    let mut name: Option<String> = None;
+    let mut prefix: Option<String> = None;
+    let mut shell_id: Option<String> = None;
+    let mut limit: u64 = 1000;
+    let mut list_kinds = false;
+    let mut positional: Vec<&str> = Vec::new();
+
+    let mut i = 1; // skip argv[0]
+    while i < args.len() {
+        match args[i].as_str() {
+            "--kinds" => list_kinds = true,
+            "--prefix" => {
+                i += 1;
+                if i >= args.len() {
+                    return err_exit("zwhere", "--prefix requires VALUE");
+                }
+                prefix = Some(args[i].clone());
+            }
+            "--shell-id" => {
+                i += 1;
+                if i >= args.len() {
+                    return err_exit("zwhere", "--shell-id requires VALUE");
+                }
+                shell_id = Some(args[i].clone());
+            }
+            "--limit" => {
+                i += 1;
+                if i >= args.len() {
+                    return err_exit("zwhere", "--limit requires N");
+                }
+                limit = match args[i].parse() {
+                    Ok(n) => n,
+                    Err(e) => return err_exit("zwhere", &format!("--limit: {e}")),
+                };
+            }
+            "-h" | "--help" => {
+                println!("usage: zwhere KIND [NAME] [--prefix STR] [--shell-id ID] [--limit N]");
+                println!("       zwhere --kinds");
+                return 0;
+            }
+            other if other.starts_with('-') => {
+                return err_exit("zwhere", &format!("unknown flag `{}`", other));
+            }
+            other => positional.push(other),
+        }
+        i += 1;
+    }
+
+    let mut client = match connect_or_err() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+
+    if list_kinds {
+        return match client.call("definitions_kinds", json!({})) {
+            Ok(v) => {
+                if let Some(ks) = v.get("kinds").and_then(Value::as_array) {
+                    for k in ks {
+                        if let Some(s) = k.as_str() {
+                            println!("{s}");
+                        }
+                    }
+                }
+                0
+            }
+            Err(e) => err_exit("zwhere", &e.to_string()),
+        };
+    }
+
+    if !positional.is_empty() {
+        kind = Some(positional[0].to_string());
+    }
+    if positional.len() >= 2 {
+        name = Some(positional[1].to_string());
+    }
+
+    let mut body = json!({ "limit": limit });
+    if let Some(k) = kind {
+        body["kind"] = json!(k);
+    }
+    if let Some(n) = name {
+        body["name"] = json!(n);
+    }
+    if let Some(p) = prefix {
+        body["prefix"] = json!(p);
+    }
+    if let Some(s) = shell_id {
+        body["shell_id"] = json!(s);
+    }
+
+    let resp = match client.call("definitions_query", body) {
+        Ok(v) => v,
+        Err(e) => return err_exit("zwhere", &e.to_string()),
+    };
+    let records = match resp.get("records").and_then(Value::as_array) {
+        Some(r) => r,
+        None => {
+            eprintln!("zwhere: no records field in response");
+            return 1;
+        }
+    };
+    if records.is_empty() {
+        return 0;
+    }
+    for r in records {
+        let kind = r.get("kind").and_then(Value::as_str).unwrap_or("");
+        let name = r.get("name").and_then(Value::as_str).unwrap_or("");
+        let value = r.get("value").and_then(Value::as_str).unwrap_or("");
+        let shell = r.get("shell_id").and_then(Value::as_str).unwrap_or("");
+        let file = r.get("file").and_then(Value::as_str).unwrap_or("");
+        let line = r.get("line").and_then(Value::as_u64);
+        let loc = match (file, line) {
+            ("", _) => String::new(),
+            (f, Some(l)) => format!("{f}:{l}"),
+            (f, None) => f.to_string(),
+        };
+        println!("{kind}\t{name}\t{value}\t{shell}\t{loc}");
+    }
+    0
 }
 
 // Used by callers that want a no-op suppress for unused-import warnings.
