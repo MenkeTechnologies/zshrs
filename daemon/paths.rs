@@ -35,6 +35,20 @@ const DEFAULT_DAEMON_TOML: &str = "\
 # (~/.zshrs/daemon.toml by default). Auto-seeded on first start;
 # edit freely — the daemon never overwrites it.
 
+[log]
+# Tracing filter directive. Same syntax as $ZSHRS_LOG (which
+# always wins when set). Accepts simple levels (info / debug /
+# trace / warn / error) or per-module overrides
+# (info,fsnotify=trace,ipc=debug). `zlog level <directive>`
+# overrides this at runtime without a daemon restart.
+#
+# Default `info` keeps the log file lean; bump to `trace` or
+# `debug,zshrs_daemon=trace` for first-pass diagnostics
+# (resolved root, shard count, db sizes, watch list, token
+# scopes, schedule rows etc — all gated to TRACE so they
+# don't flood at INFO).
+level = \"info\"
+
 [http]
 # HTTP listener for the `zd` CLI + curl + any HTTP client.
 # Loopback-only by default so no token is required. Set to
@@ -65,6 +79,17 @@ const DEFAULT_SHELL_TOML: &str = "\
 # zshrs (shell) configuration. Lives at $ZSHRS_HOME/zshrs.toml
 # (~/.zshrs/zshrs.toml by default). Auto-seeded on first
 # `zshrs-daemon` start; edit freely.
+
+[log]
+# Tracing filter directive for the SHELL side (writes to
+# zshrs.log + zshrs-recorder.log). Same syntax as $ZSHRS_LOG
+# (which always wins when set). Accepts simple levels (info /
+# debug / trace / warn / error) or per-module overrides
+# (info,zsh::exec=debug,zsh::recorder=trace).
+#
+# Default `info`. Bump to `trace` for first-pass diagnostics
+# of executor / parser / canonical_apply paths.
+level = \"info\"
 
 [daemon]
 # Whether the shell talks to zshrs-daemon at startup:
@@ -286,6 +311,44 @@ pub fn daemon_config_file() -> Result<PathBuf> {
 ///
 /// Wildcards in `scopes`: `*` (everything), `<area>.*` (every verb in
 /// an area), `*.<verb>` (every area's `<verb>`).
+/// Read `[log] level` from `$ZSHRS_HOME/daemon.toml`. Returns the
+/// directive string (e.g. `"info"`, `"debug,fsnotify=trace"`) so the
+/// caller can hand it straight to `EnvFilter::try_new`. Falls back
+/// to `"info"` on any error: missing file, missing section, missing
+/// key, parse error, non-string value. Errors aren't surfaced — the
+/// caller will hit them again via the EnvFilter parse if the
+/// directive is malformed, with a more useful "bad directive `xxx`"
+/// message at THAT layer.
+///
+/// Honors the same `$ZSHRS_HOME` override every other path resolver
+/// uses, and takes the resolved `CachePaths` so test harnesses can
+/// point at a tempdir without poking env.
+pub fn load_log_directive(paths: &CachePaths) -> String {
+    const DEFAULT: &str = "info";
+    let path = paths.daemon_config_path();
+    if !path.exists() {
+        return DEFAULT.into();
+    }
+    let body = match std::fs::read_to_string(&path) {
+        Ok(b) => b,
+        Err(_) => return DEFAULT.into(),
+    };
+    let parsed: toml::Value = match body
+        .parse::<toml::Table>()
+        .map(toml::Value::Table)
+    {
+        Ok(v) => v,
+        Err(_) => return DEFAULT.into(),
+    };
+    parsed
+        .get("log")
+        .and_then(|s| s.get("level"))
+        .and_then(toml::Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| DEFAULT.into())
+}
+
 pub fn load_http_config() -> Result<super::http::HttpConfig> {
     let path = daemon_config_file()?;
     if !path.exists() {

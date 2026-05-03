@@ -88,7 +88,13 @@ pub fn init_named(filename: &str) {
             });
         let log_writer = std::sync::Mutex::new(log_file);
 
-        let env_filter = std::env::var("ZSHRS_LOG").unwrap_or_else(|_| "info".to_string());
+        // Filter precedence:
+        //   1. $ZSHRS_LOG (env var, ad-hoc / one-shot debugging)
+        //   2. [log] level in $ZSHRS_HOME/zshrs.toml (the persistent
+        //      knob — set once, no env var needed every session)
+        //   3. "info" hard default
+        let env_filter = std::env::var("ZSHRS_LOG")
+            .unwrap_or_else(|_| crate::daemon_presence::read_log_directive());
 
         let file_layer = tracing_subscriber::fmt::layer()
             .with_writer(log_writer)
