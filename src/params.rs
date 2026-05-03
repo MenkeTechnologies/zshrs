@@ -3775,8 +3775,8 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
     }
 
     let u = underscore as usize;
-    let (sign, rest) = if s.starts_with('-') {
-        ("-", &s[1..])
+    let (sign, rest) = if let Some(after) = s.strip_prefix('-') {
+        ("-", after)
     } else {
         ("", s.as_str())
     };

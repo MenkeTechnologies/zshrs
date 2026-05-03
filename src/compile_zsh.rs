@@ -3729,7 +3729,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
         } else if let Some(b) = rest.strip_prefix("/%") {
             (3u8, b)
         } else {
-            (0u8, &rest[1..])
+            (0u8, rest.strip_prefix('/').unwrap_or(rest))
         };
         // body = "pat/repl" or "pat" (no replacement = empty repl).
         // Find the FIRST UNESCAPED `/` so `${HOME//\//_}` splits with
@@ -4339,10 +4339,10 @@ fn parse_forced_split_brace(s: &str) -> Option<(bool, &str, char)> {
     if inner_b.first()? != &b'=' {
         return None;
     }
-    let (force_split, rest) = if inner.starts_with("==") {
-        (false, &inner[2..])
+    let (force_split, rest) = if let Some(after) = inner.strip_prefix("==") {
+        (false, after)
     } else {
-        (true, &inner[1..])
+        (true, inner.strip_prefix('=').unwrap_or(inner))
     };
     if rest.is_empty() {
         return None;

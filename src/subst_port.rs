@@ -1697,18 +1697,18 @@ fn remove_prefix(s: &str, pattern: &str, greedy: bool) -> String {
     }
 
     if let Some(prefix) = pattern.strip_suffix('*') {
-        if s.starts_with(prefix) {
+        if let Some(rest) = s.strip_prefix(prefix) {
             if greedy {
                 // Find longest match
                 if let Some(i) = (prefix.len()..=s.len()).rev().next() {
                     return s[i..].to_string();
                 }
             } else {
-                return s[prefix.len()..].to_string();
+                return rest.to_string();
             }
         }
-    } else if s.starts_with(pattern) {
-        return s[pattern.len()..].to_string();
+    } else if let Some(rest) = s.strip_prefix(pattern) {
+        return rest.to_string();
     }
 
     s.to_string()
