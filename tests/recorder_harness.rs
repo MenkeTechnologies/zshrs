@@ -324,6 +324,68 @@ fn set_o_form_dispatches_setopt() {
 }
 
 #[test]
+fn replay_types_full_matrix() {
+    // Replay-grade type tracking: every assign/typeset event must
+    // carry structured ParamAttrs + value_array/value_assoc payloads
+    // so the daemon can reconstruct the EXACT typed declaration on
+    // a future replay.
+    //
+    //   assign×4:
+    //     PROJECT=zshrs              [scalar]
+    //     arr=(alpha beta gamma)     [array] + value_array
+    //     arr+=(delta)               [array,append] + value_array
+    //     h[k3]=v3                   [assoc,append] + value_assoc
+    //   typeset×5:
+    //     EDITOR=vim                 [scalar,export,global]
+    //     h=(k1 v1 k2 v2)            [assoc]
+    //     count=42                   [integer]
+    //     pi=3.14                    [float]
+    //     RO=ro_val                  [scalar,readonly]
+    assert_counts(
+        "24_replay_types.zsh",
+        &[("assign", 4), ("typeset", 5)],
+    );
+}
+
+/// Beyond bare counts: this test inspects the realtime stderr to
+/// verify the structured `[attrs]` label fires for each event. If the
+/// recorder ever drops the attrs population, this catches it
+/// immediately — without it, replay would lose the integer/float/
+/// assoc/readonly distinctions.
+#[test]
+fn replay_types_attrs_visible() {
+    use std::process::Command;
+    let bin = env!("CARGO_BIN_EXE_zshrs-recorder");
+    let path = std::path::Path::new(CORPUS_DIR).join("24_replay_types.zsh");
+    let out = Command::new(bin)
+        .arg("--no-daemon")
+        .arg("--file")
+        .arg(&path)
+        .output()
+        .expect("spawn recorder");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let must_contain: &[&str] = &[
+        "PROJECT [scalar]",
+        "EDITOR [scalar,export,global]",
+        "arr [array]",
+        "arr [array,append]",
+        "h [assoc]",
+        "h [assoc,append]",
+        "count [integer]",
+        "pi [float]",
+        "RO [scalar,readonly]",
+    ];
+    for needle in must_contain {
+        assert!(
+            stderr.contains(needle),
+            "replay attrs missing: {:?} not found in recorder stderr.\n--- stderr ---\n{}\n",
+            needle,
+            stderr,
+        );
+    }
+}
+
+#[test]
 fn assignment_forms_all_capture() {
     // Recorder's chokepoint contract: every assignment / reassignment
     // shape on a non-local shell variable surfaces as an event. Per
