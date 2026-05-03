@@ -1575,7 +1575,25 @@ fn run_interactive() {
     executor.options.insert("rcs".to_string(), true);
     executor.options.insert("globalrcs".to_string(), true);
 
-    // Source startup files in correct zsh order per zshall(1)
+    // Source startup files in correct zsh order per zshall(1).
+    // OR — if the daemon is up and serving zshrs canonical state, AND
+    // the user opted in via `[shell] skip_configs`, skip every dotfile
+    // (including /etc/zshenv) and apply canonical state from the
+    // daemon instead. This is the ~10ms cold-start path: no parse,
+    // no .zshrc evaluation, no plugin discovery.
+    #[cfg(feature = "daemon")]
+    {
+        if zsh::daemon_presence::should_skip_configs() {
+            let applied = zsh::canonical_apply::apply_all(&mut executor);
+            tracing::info!(
+                rows = applied,
+                "skip_configs: dotfile chain bypassed, canonical state applied from daemon"
+            );
+        } else {
+            source_startup_files(&mut executor, is_login, is_interactive, no_rcs);
+        }
+    }
+    #[cfg(not(feature = "daemon"))]
     source_startup_files(&mut executor, is_login, is_interactive, no_rcs);
 
     // Banner goes to the log, not the user's terminal. A shell prompt should
