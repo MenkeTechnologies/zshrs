@@ -30,6 +30,7 @@ pub mod completion;
 pub mod cond;
 pub mod config;
 pub mod context;
+pub mod canonical_apply;
 pub mod curses;
 pub mod daemon_presence;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
