@@ -9316,8 +9316,8 @@ fn zsh_pattern_replace(val: &str, pattern: &str, repl: &str, op: u8) -> String {
         0 => val.replacen(pattern, repl, 1),
         1 => val.replace(pattern, repl),
         2 => {
-            if val.starts_with(pattern) {
-                format!("{}{}", repl, &val[pattern.len()..])
+            if let Some(suffix) = val.strip_prefix(pattern) {
+                format!("{}{}", repl, suffix)
             } else {
                 val
             }
@@ -15184,7 +15184,7 @@ impl ShellExecutor {
                     let (global, body) = if let Some(b) = rest.strip_prefix("//") {
                         (true, b)
                     } else {
-                        (false, &rest[1..])
+                        (false, rest.strip_prefix('/').unwrap_or(rest))
                     };
                     // Find the unescaped delimiter `/` separating
                     // pattern and replacement.
@@ -15533,9 +15533,9 @@ impl ShellExecutor {
                 // rest could be ":-%n" or ":-default" or "var:-default" or just "var"
                 // Also supports `${(flags)var-default}` (no colon → default
                 // only when var is unset; zsh distinguishes from `:-`).
-                let (var_name, default_val, default_unset_only) = if rest.starts_with(":-") {
+                let (var_name, default_val, default_unset_only) = if let Some(after) = rest.strip_prefix(":-") {
                     // Empty variable name with default: ${(%):-default}
-                    ("", Some(&rest[2..]), false)
+                    ("", Some(after), false)
                 } else if let Some(pos) = rest.find(":-") {
                     // Variable with default: ${(%)var:-default}
                     (&rest[..pos], Some(&rest[pos + 2..]), false)
@@ -16238,36 +16238,36 @@ impl ShellExecutor {
                 Some(val.clone())
             };
 
-            if rest.starts_with('-') {
+            if let Some(default) = rest.strip_prefix('-') {
                 // ${var:-default}
                 return match val_opt {
                     Some(v) if !v.is_empty() => v,
-                    _ => self.expand_string(&rest[1..]),
+                    _ => self.expand_string(default),
                 };
-            } else if rest.starts_with('=') {
+            } else if let Some(default_expr) = rest.strip_prefix('=') {
                 // ${var:=default}
                 return match val_opt {
                     Some(v) if !v.is_empty() => v,
                     _ => {
-                        let default = self.expand_string(&rest[1..]);
+                        let default = self.expand_string(default_expr);
                         self.variables.insert(var_name.to_string(), default.clone());
                         default
                     }
                 };
-            } else if rest.starts_with('?') {
+            } else if let Some(msg_expr) = rest.strip_prefix('?') {
                 // ${var:?error}
                 return match val_opt {
                     Some(v) if !v.is_empty() => v,
                     _ => {
-                        let msg = self.expand_string(&rest[1..]);
+                        let msg = self.expand_string(msg_expr);
                         eprintln!("zshrs: {}: {}", var_name, msg);
                         String::new()
                     }
                 };
-            } else if rest.starts_with('+') {
+            } else if let Some(alt_expr) = rest.strip_prefix('+') {
                 // ${var:+alternate}
                 return match val_opt {
-                    Some(v) if !v.is_empty() => self.expand_string(&rest[1..]),
+                    Some(v) if !v.is_empty() => self.expand_string(alt_expr),
                     _ => String::new(),
                 };
             } else if let Some(pattern) = rest.strip_prefix('#') {
@@ -16542,15 +16542,15 @@ impl ShellExecutor {
                 // distinction collapses for anchors (an anchor matches at
                 // most once), so `replace_all` doesn't change behavior.
                 if let Some(rest) = pattern.strip_prefix('#') {
-                    return if val.starts_with(rest) {
-                        format!("{}{}", replacement, &val[rest.len()..])
+                    return if let Some(suffix) = val.strip_prefix(rest) {
+                        format!("{}{}", replacement, suffix)
                     } else {
                         val
                     };
                 }
                 if let Some(rest) = pattern.strip_prefix('%') {
-                    return if val.ends_with(rest) {
-                        format!("{}{}", &val[..val.len() - rest.len()], replacement)
+                    return if let Some(prefix) = val.strip_suffix(rest) {
+                        format!("{}{}", prefix, replacement)
                     } else {
                         val
                     };
@@ -18582,11 +18582,7 @@ impl ShellExecutor {
                             }
                         }
                     }
-                    if v.starts_with(pat) {
-                        v[pat.len()..].to_string()
-                    } else {
-                        v.to_string()
-                    }
+                    v.strip_prefix(pat).map(str::to_string).unwrap_or_else(|| v.to_string())
                 };
                 if name == "@" || name == "*" {
                     return self
@@ -18710,14 +18706,14 @@ impl ShellExecutor {
                 // `${v/%suffix/repl}` — anchor at end.
                 // Otherwise: first occurrence anywhere.
                 if let Some(rest) = pat.strip_prefix('#') {
-                    if v.starts_with(rest) {
-                        format!("{}{}", repl, &v[rest.len()..])
+                    if let Some(suffix) = v.strip_prefix(rest) {
+                        format!("{}{}", repl, suffix)
                     } else {
                         v
                     }
                 } else if let Some(rest) = pat.strip_prefix('%') {
-                    if v.ends_with(rest) {
-                        format!("{}{}", &v[..v.len() - rest.len()], repl)
+                    if let Some(prefix) = v.strip_suffix(rest) {
+                        format!("{}{}", prefix, repl)
                     } else {
                         v
                     }
@@ -18734,14 +18730,14 @@ impl ShellExecutor {
                 // Anchored forms behave the same as single-replace under `//`
                 // — anchor by definition matches once.
                 if let Some(rest) = pat.strip_prefix('#') {
-                    if v.starts_with(rest) {
-                        format!("{}{}", repl, &v[rest.len()..])
+                    if let Some(suffix) = v.strip_prefix(rest) {
+                        format!("{}{}", repl, suffix)
                     } else {
                         v
                     }
                 } else if let Some(rest) = pat.strip_prefix('%') {
-                    if v.ends_with(rest) {
-                        format!("{}{}", &v[..v.len() - rest.len()], repl)
+                    if let Some(prefix) = v.strip_suffix(rest) {
+                        format!("{}{}", prefix, repl)
                     } else {
                         v
                     }
@@ -20491,8 +20487,8 @@ impl ShellExecutor {
         };
         let path = if path_arg == "~" || path_arg.is_empty() {
             home_dir()
-        } else if path_arg.starts_with("~/") {
-            home_dir().join(&path_arg[2..])
+        } else if let Some(after) = path_arg.strip_prefix("~/") {
+            home_dir().join(after)
         } else if path_arg == "-" {
             if let Ok(oldpwd) = env::var("OLDPWD") {
                 // zsh only prints the new dir in interactive mode.
@@ -21059,9 +21055,9 @@ impl ShellExecutor {
         // CWD happened to contain the file.
         let abs_path = if path.starts_with('/') {
             path.clone()
-        } else if path.starts_with("~/") {
+        } else if let Some(after) = path.strip_prefix("~/") {
             if let Some(home) = dirs::home_dir() {
-                home.join(&path[2..]).to_string_lossy().to_string()
+                home.join(after).to_string_lossy().to_string()
             } else {
                 path.clone()
             }
@@ -23303,10 +23299,10 @@ impl ShellExecutor {
                     std::process::exit(1);
                 }
 
-                if rest.starts_with('(') {
+                if let Some(after_paren) = rest.strip_prefix('(') {
                     // Array assignment - collect all elements until we find ')'
                     let mut elements = Vec::new();
-                    let current = rest[1..].to_string(); // skip '('
+                    let current = after_paren.to_string();
 
                     // Quote-aware split: walk the body honoring
                     // `"..."` and `'...'` so that DQ-quoted
@@ -23445,10 +23441,10 @@ impl ShellExecutor {
                                 if let Some(epos) = raw.rfind('e') {
                                     let (mantissa, exp) = raw.split_at(epos);
                                     let exp_body = &exp[1..];
-                                    let (sign, digits) = if exp_body.starts_with('-') {
-                                        ("-", &exp_body[1..])
-                                    } else if exp_body.starts_with('+') {
-                                        ("+", &exp_body[1..])
+                                    let (sign, digits) = if let Some(d) = exp_body.strip_prefix('-') {
+                                        ("-", d)
+                                    } else if let Some(d) = exp_body.strip_prefix('+') {
+                                        ("+", d)
                                     } else {
                                         ("+", exp_body)
                                     };
@@ -24846,8 +24842,8 @@ impl ShellExecutor {
         let mut job_ids: Vec<usize> = Vec::new();
 
         for arg in args {
-            if arg.starts_with('-') {
-                for c in arg[1..].chars() {
+            if let Some(after) = arg.strip_prefix('-') {
+                for c in after.chars() {
                     match c {
                         'l' => long_format = true,
                         'p' => pids_only = true,
@@ -24873,8 +24869,8 @@ impl ShellExecutor {
                         }
                     }
                 }
-            } else if arg.starts_with('%') {
-                if let Ok(id) = arg[1..].parse::<usize>() {
+            } else if let Some(after_pct) = arg.strip_prefix('%') {
+                if let Ok(id) = after_pct.parse::<usize>() {
                     job_ids.push(id);
                 }
             } else if let Ok(id) = arg.parse::<usize>() {
@@ -25311,14 +25307,14 @@ impl ShellExecutor {
         let mut status = 0;
         for arg in &pids {
             // Handle %job syntax
-            if arg.starts_with('%') {
-                let id: usize = match arg[1..].parse() {
+            if let Some(spec) = arg.strip_prefix('%') {
+                let id: usize = match spec.parse() {
                     Ok(id) => id,
                     Err(_) => {
                         // zsh format: `kill:1: job not found:
                         // <name-without-%>`. zshrs's `%abc: no such
                         // job` had the % AND wrong wording.
-                        eprintln!("zshrs:kill:1: job not found: {}", &arg[1..]);
+                        eprintln!("zshrs:kill:1: job not found: {}", spec);
                         status = 1;
                         continue;
                     }
@@ -25449,8 +25445,8 @@ impl ShellExecutor {
 
         let mut status = 0;
         for arg in args {
-            if arg.starts_with('%') {
-                let id: usize = match arg[1..].parse() {
+            if let Some(spec) = arg.strip_prefix('%') {
+                let id: usize = match spec.parse() {
                     Ok(id) => id,
                     Err(_) => {
                         eprintln!("zshrs:wait:1: {}: no such job", arg);
@@ -26569,8 +26565,8 @@ impl ShellExecutor {
                 } else {
                     name.to_string()
                 }
-            } else if sig_upper.starts_with("SIG") {
-                sig_upper[3..].to_string()
+            } else if let Some(after) = sig_upper.strip_prefix("SIG") {
+                after.to_string()
             } else {
                 sig_upper
             };
@@ -32325,10 +32321,10 @@ impl ShellExecutor {
                             let formatted = if let Some(epos) = raw.rfind(exp_marker) {
                                 let (mantissa, exp) = raw.split_at(epos);
                                 let exp_body = &exp[1..];
-                                let (sign, digits) = if exp_body.starts_with('-') {
-                                    ("-", &exp_body[1..])
-                                } else if exp_body.starts_with('+') {
-                                    ("+", &exp_body[1..])
+                                let (sign, digits) = if let Some(d) = exp_body.strip_prefix('-') {
+                                    ("-", d)
+                                } else if let Some(d) = exp_body.strip_prefix('+') {
+                                    ("+", d)
                                 } else {
                                     ("+", exp_body)
                                 };
@@ -33514,10 +33510,10 @@ impl ShellExecutor {
                     if let Some(epos) = raw.rfind('e') {
                         let (mantissa, exp) = raw.split_at(epos);
                         let exp_body = &exp[1..];
-                        let (sign, digits) = if exp_body.starts_with('-') {
-                            ("-", &exp_body[1..])
-                        } else if exp_body.starts_with('+') {
-                            ("+", &exp_body[1..])
+                        let (sign, digits) = if let Some(d) = exp_body.strip_prefix('-') {
+                            ("-", d)
+                        } else if let Some(d) = exp_body.strip_prefix('+') {
+                            ("+", d)
                         } else {
                             ("+", exp_body)
                         };
@@ -34701,10 +34697,10 @@ impl ShellExecutor {
                                 if let Some(epos) = v.rfind('e') {
                                     let (mantissa, exp) = v.split_at(epos);
                                     let exp_body = &exp[1..]; // skip 'e'
-                                    let (sign, digits) = if exp_body.starts_with('-') {
-                                        ("-", &exp_body[1..])
-                                    } else if exp_body.starts_with('+') {
-                                        ("+", &exp_body[1..])
+                                    let (sign, digits) = if let Some(d) = exp_body.strip_prefix('-') {
+                                        ("-", d)
+                                    } else if let Some(d) = exp_body.strip_prefix('+') {
+                                        ("+", d)
                                     } else {
                                         ("+", exp_body)
                                     };
@@ -35750,8 +35746,8 @@ impl ShellExecutor {
         let mut verbose = false;
 
         for arg in args {
-            if arg.starts_with('-') {
-                for ch in arg[1..].chars() {
+            if let Some(after) = arg.strip_prefix('-') {
+                for ch in after.chars() {
                     match ch {
                         'd' => rehash_dirs = true,
                         'f' => force = true,
@@ -42295,8 +42291,8 @@ impl ShellExecutor {
                 } else {
                     lines = n;
                 }
-            } else if arg.starts_with("-n") {
-                let (n, neg) = parse_count(&arg[2..]);
+            } else if let Some(after) = arg.strip_prefix("-n") {
+                let (n, neg) = parse_count(after);
                 if neg {
                     skip_last_lines = Some(n);
                 } else {
@@ -42486,8 +42482,8 @@ impl ShellExecutor {
                 } else {
                     lines = n;
                 }
-            } else if arg.starts_with("-n") {
-                let (n, from_start) = parse_count(&arg[2..]);
+            } else if let Some(after) = arg.strip_prefix("-n") {
+                let (n, from_start) = parse_count(after);
                 if from_start {
                     start_line = Some(n);
                 } else {

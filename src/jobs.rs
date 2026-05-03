@@ -1079,11 +1079,7 @@ pub fn getjob(spec: &str, table: &JobTable, ptrs: &JobPointers) -> Option<usize>
         return ptrs.cur_job;
     }
 
-    let spec = if spec.starts_with('%') {
-        &spec[1..]
-    } else {
-        spec
-    };
+    let spec = spec.strip_prefix('%').unwrap_or(spec);
 
     match spec {
         "+" | "%" | "" => ptrs.cur_job,
