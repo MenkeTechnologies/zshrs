@@ -63,9 +63,7 @@ pub fn zjob(args: &[String]) -> i32 {
         "output" | "out" => output(rest),
         "kill" => kill(rest),
         "cancel" => cancel(rest),
-        "attach" => err_exit(
-            "attach: foreground attach not yet wired (planned: ptmx + stdin/stdout pump for v2)",
-        ),
+        "attach" => attach(rest),
         "wait" => wait_for(rest),
         "" | "-h" | "--help" => {
             println!(
@@ -76,6 +74,7 @@ pub fn zjob(args: &[String]) -> i32 {
             );
             println!("       zjob status <id>");
             println!("       zjob output <id> [--follow] [--stderr] [--lines N]");
+            println!("       zjob attach <id>                              # follow stdout+stderr until exit");
             println!("       zjob kill   <id> [--signal NAME]              # immediate signal, configurable");
             println!("       zjob cancel <id> [--grace SECS]                # SIGTERM, wait grace, SIGKILL");
             println!("       zjob wait   <id> [--timeout SECS]");
@@ -412,6 +411,165 @@ fn output(args: &[String]) -> i32 {
             Err(e) => return err_exit(&format!("output --follow: {}", e)),
         }
     }
+}
+
+/// `zjob attach <id>` — follow the job's combined stdout+stderr until
+/// it exits, then print the final state. Read-only attach: like
+/// `tail -f` over both streams interleaved, plus auto-stop when the
+/// job terminates.
+///
+/// Implementation: direct filesystem tail of `~/.zshrs/jobs/{id}.{out,err}`
+/// instead of `subscribe job:N.stdout` (which has a race — see
+/// `output --follow` above where the subscription registers after
+/// the daemon may already have published `job:N.complete`). The
+/// daemon writes both files under user-owned 0600 perms, so reading
+/// them from the same user's shell is safe.
+///
+/// True bidirectional `screen -r`-style attach (stdin pumped from
+/// the client back into the running job) requires the supervisor to
+/// spawn jobs under a ptmx instead of `Stdio::null()` for stdin
+/// (daemon/jobs.rs:251). That rewrite is its own design pass — pty
+/// pool, streaming `job_input` op, SIGWINCH propagation — and out
+/// of scope for this commit. For now attach is the read-only
+/// subset that covers the most common "what is this long-running
+/// job doing right now" use case.
+fn attach(args: &[String]) -> i32 {
+    use std::io::{Read, Write};
+
+    let id = match args.first().and_then(|s| s.parse::<u64>().ok()) {
+        Some(n) => n,
+        None => return err_exit("attach: missing or non-integer <id>"),
+    };
+
+    // Single client across the entire attach lifetime — reused for
+    // the initial state probe, every status poll, and the final
+    // status read. Reconnecting per poll piles up sessions on the
+    // daemon side and racks up ~5ms each on the connect handshake.
+    let mut client = match connect() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+
+    // Refuse to attach to an already-finished job — the user almost
+    // certainly wants `zjob output <id>` instead, and dumping the
+    // entire output here without explicit consent is surprising.
+    let snap = match client.call("job_status", json!({"id": id})) {
+        Ok(v) => v,
+        Err(e) => return err_exit(&format!("attach: {}", e)),
+    };
+    // `job_status` wraps the snapshot under a `job` key (see
+    // op_job_status in daemon/ops.rs). Reach through it for state.
+    let state = snap
+        .get("job")
+        .and_then(|j| j.get("state"))
+        .and_then(Value::as_str)
+        .unwrap_or("?");
+    if matches!(state, "exited" | "killed" | "failed" | "cancelled") {
+        eprintln!(
+            "zjob: attach: job {} is {} (use `zjob output {} --lines N` to read its output)",
+            id, state, id
+        );
+        return 1;
+    }
+
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => return err_exit(&format!("attach: {}", e)),
+    };
+    let out_path = paths.root.join("jobs").join(format!("{}.out", id));
+    let err_path = paths.root.join("jobs").join(format!("{}.err", id));
+
+    // Open the two output files for tailing. Both must exist —
+    // supervisor creates them at submit time (jobs.rs:234-243).
+    let mut out_file = match std::fs::File::open(&out_path) {
+        Ok(f) => f,
+        Err(e) => return err_exit(&format!("attach: open {}: {}", out_path.display(), e)),
+    };
+    let mut err_file = match std::fs::File::open(&err_path) {
+        Ok(f) => f,
+        Err(e) => return err_exit(&format!("attach: open {}: {}", err_path.display(), e)),
+    };
+
+    // Stream from the start — same posture as `tail -f -n +1`. If the
+    // job already produced output before we attached, the user sees it.
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let mut buf = [0u8; 8192];
+    let poll_interval = std::time::Duration::from_millis(50);
+    let status_check_interval = std::time::Duration::from_millis(250);
+    let mut last_status_check = std::time::Instant::now();
+    let mut terminal_seen = false;
+    let mut final_state: String = "running".to_string();
+    let mut final_exit: Option<i64> = None;
+    let mut grace_drain_until: Option<std::time::Instant> = None;
+
+    loop {
+        // Drain whatever's ready on both files this tick.
+        let mut any_bytes = false;
+        loop {
+            match out_file.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    any_bytes = true;
+                    let _ = stdout.lock().write_all(&buf[..n]);
+                }
+                Err(_) => break,
+            }
+        }
+        loop {
+            match err_file.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    any_bytes = true;
+                    let _ = stderr.lock().write_all(&buf[..n]);
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = stdout.lock().flush();
+        let _ = stderr.lock().flush();
+
+        // Status check on a slower cadence than the byte-drain so we
+        // don't hammer the daemon. After the job goes terminal, give
+        // a 500ms grace window to drain any final buffered bytes the
+        // OS hasn't flushed to the file yet. Cache the final state
+        // here so we don't need a second IPC round-trip after the
+        // loop exits.
+        if !terminal_seen && last_status_check.elapsed() >= status_check_interval {
+            last_status_check = std::time::Instant::now();
+            if let Ok(v) = client.call("job_status", json!({"id": id})) {
+                let job = v.get("job");
+                let st = job
+                    .and_then(|j| j.get("state"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("?");
+                if matches!(st, "exited" | "killed" | "failed" | "cancelled") {
+                    terminal_seen = true;
+                    final_state = st.to_string();
+                    final_exit = job
+                        .and_then(|j| j.get("exit_code"))
+                        .and_then(Value::as_i64);
+                    grace_drain_until =
+                        Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+                }
+            }
+        }
+
+        if let Some(deadline) = grace_drain_until {
+            if std::time::Instant::now() >= deadline && !any_bytes {
+                break;
+            }
+        }
+        if !any_bytes {
+            std::thread::sleep(poll_interval);
+        }
+    }
+
+    let exit_str = final_exit
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    eprintln!("[zjob {} {}, exit={}]", id, final_state, exit_str);
+    final_exit.map(|c| c as i32).unwrap_or(0)
 }
 
 fn kill(args: &[String]) -> i32 {
