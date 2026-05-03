@@ -2129,9 +2129,19 @@ impl<'a> ZshLexer<'a> {
                     self.add(char_tokens::BANG);
                 }
 
-                // Terminators
-                '\n' | ';' | '&' => {
+                // Terminators — but only when we're at the top level of
+                // the current word. Inside a brace parameter expansion
+                // `${...}`, parenthesized flag block `(@s.;.)`, or
+                // bracketed subscript `[...]`, `;` is just a delimiter
+                // character (e.g. the field separator in `(@s.;.)`),
+                // not a statement terminator. Real zsh handles this
+                // via gettokstr's incmdpos / bct / pct accounting; we
+                // gate on the same counters.
+                '\n' | ';' | '&' if in_brace_param == 0 && pct == 0 && brct == 0 => {
                     break;
+                }
+                '\n' | ';' | '&' => {
+                    self.add(c);
                 }
 
                 _ => {
