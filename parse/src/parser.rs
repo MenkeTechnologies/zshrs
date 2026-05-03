@@ -2945,19 +2945,31 @@ impl<'a> ZshParser<'a> {
             return Some(ZshCond::Unary(s1, s2));
         }
 
-        // Check for binary operator
+        // Check for binary operator. Direct port of zsh/Src/parse.c:2601-2603:
+        //   incond++;  /* parentheses do globbing */
+        //   do condlex(); while (COND_SEP());
+        //   incond--;  /* parentheses do grouping */
+        // The bump makes the lexer treat `(` as a literal character inside
+        // the RHS word (e.g. `[[ x =~ (foo) ]]`) instead of returning INPAR
+        // and splitting the regex into multiple tokens.
         let op = match self.lexer.tok {
             LexTok::String => {
                 let s = self.lexer.tokstr.clone().unwrap_or_default();
+                self.lexer.incond += 1;
                 self.lexer.zshlex();
+                self.lexer.incond -= 1;
                 s
             }
             LexTok::Inang => {
+                self.lexer.incond += 1;
                 self.lexer.zshlex();
+                self.lexer.incond -= 1;
                 "<".to_string()
             }
             LexTok::Outang => {
+                self.lexer.incond += 1;
                 self.lexer.zshlex();
+                self.lexer.incond -= 1;
                 ">".to_string()
             }
             _ => return Some(ZshCond::Unary("-n".to_string(), s1)),
