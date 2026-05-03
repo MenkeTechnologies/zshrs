@@ -40,7 +40,7 @@ GET  {DAEMON_URL}/stream/definitions    # SSE — fired on every ingest
 
 Default `DAEMON_URL` = `http://127.0.0.1:7733`. Auth: bearer token in
 `Authorization: Bearer <tok>` if `[http.tokens]` is set in
-`~/.config/zshrs/daemon.toml`. See `docs/DAEMON_AS_SERVICE.md` §"Authentication".
+`~/.cache/zshrs/daemon.toml`. See `docs/DAEMON_AS_SERVICE.md` §"Authentication".
 
 ## Bundle wire format (`recorder_ingest`)
 

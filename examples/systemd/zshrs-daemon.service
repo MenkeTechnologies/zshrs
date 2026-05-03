@@ -15,7 +15,7 @@
 # Adjust ExecStart if you installed via cargo install --path .
 # (defaults to ~/.cargo/bin/zshrs-daemon) or to a system path.
 #
-# HTTP listener: enable in ~/.config/zshrs/daemon.toml:
+# HTTP listener: enable in ~/.cache/zshrs/daemon.toml:
 #   [http]
 #   listen = "127.0.0.1:7733"
 #   tokens = ["<bearer-token>"]   # required for non-loopback binds

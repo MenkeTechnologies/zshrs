@@ -6,7 +6,7 @@ shell-function wrappers in [`daemon-shell.zsh`](./daemon-shell.zsh).
 
 ## Setup
 
-`~/.config/zshrs/daemon.toml`:
+`~/.cache/zshrs/daemon.toml`:
 
 ```toml
 [http]

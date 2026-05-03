@@ -12,7 +12,7 @@
 # bash 3.2+ compatible (the macOS system bash). No bash-4-only features
 # so this works on stock macOS too.
 #
-# Setup ($HOME/.config/zshrs/daemon.toml):
+# Setup ($HOME/.cache/zshrs/daemon.toml):
 #     [http]
 #     listen = "127.0.0.1:7733"
 #     # Optional — required if listening on a non-loopback interface:

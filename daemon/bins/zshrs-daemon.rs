@@ -50,7 +50,7 @@ Options:
                              scripts that need to know where the daemon's
                              state lives without spawning it. Honors
                              --cache-dir.
-  --check-config             Parse ~/.config/zshrs/daemon.toml + report
+  --check-config             Parse ~/.cache/zshrs/daemon.toml + report
                              validation status as JSON, then exit. Lets
                              editors / CI pre-flight a config edit
                              without restarting the daemon.

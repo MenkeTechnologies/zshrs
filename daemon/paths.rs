@@ -141,18 +141,20 @@ fn ensure_dir_700(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Resolve `~/.config/zshrs/daemon.toml` (respecting `$XDG_CONFIG_HOME`).
-/// Returns the path even if the file does not exist; callers handle the
-/// not-present case as "no overrides" rather than as an error.
+/// Resolve `~/.cache/zshrs/daemon.toml` (respecting `$XDG_CACHE_HOME`).
+/// Single-directory rule: every zshrs file — config, cache, sockets,
+/// rkyv shards, log — lives under `~/.cache/zshrs/`. Returns the path
+/// even if the file does not exist; callers handle the not-present
+/// case as "no overrides" rather than as an error.
 pub fn daemon_config_file() -> Result<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+    let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
-        .ok_or_else(|| DaemonError::other("no $HOME / $XDG_CONFIG_HOME for daemon.toml"))?;
+        .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
+        .ok_or_else(|| DaemonError::other("no $HOME / $XDG_CACHE_HOME for daemon.toml"))?;
     Ok(base.join("zshrs").join("daemon.toml"))
 }
 
-/// Load `[http]` section from `~/.config/zshrs/daemon.toml` into the
+/// Load `[http]` section from `~/.cache/zshrs/daemon.toml` into the
 /// `HttpConfig` consumed by `daemon::http::serve_http`. The file is
 /// optional; a missing file or a missing `[http]` section both produce
 /// the default (HTTP listener disabled).

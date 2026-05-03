@@ -19,13 +19,20 @@
 //! `is_present()` before calling into the daemon client; on absent,
 //! they noop or fall back to source-interp behavior.
 //!
-//! Config (`~/.config/zshrs/zshrs.toml`, all optional):
+//! Config (`~/.cache/zshrs/zshrs.toml`, all optional):
 //!
 //!     [daemon]
 //!     # "auto" (default) = probe at startup, use if alive
 //!     # "off"            = never probe; pure vanilla zsh mode
 //!     # "require"        = probe and warn if absent (no spawn either way)
 //!     enabled = "auto"
+//!
+//! Lives in `~/.cache/zshrs/` alongside everything else (rkyv shards,
+//! catalog.db, daemon.sock, daemon.toml, log, …) — single directory
+//! rule for all zshrs files. Survives normal cache eviction by virtue
+//! of being the user's own config; if the user `rm -rf ~/.cache/zshrs/`
+//! they're explicitly resetting both cache + config together, which
+//! is the intent.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -117,14 +124,15 @@ pub fn read_config() -> ConfigSetting {
     }
 }
 
-/// Resolve `~/.config/zshrs/zshrs.toml` (respecting `$XDG_CONFIG_HOME`).
-/// Returns None if neither $XDG_CONFIG_HOME nor $HOME is set, which is
-/// rare enough to treat as "no config file".
+/// Resolve `~/.cache/zshrs/zshrs.toml` (respecting `$XDG_CACHE_HOME`).
+/// Single-directory rule: every zshrs file lives under
+/// `~/.cache/zshrs/`. Returns None if neither $XDG_CACHE_HOME nor
+/// $HOME is set, which is rare enough to treat as "no config file".
 fn config_file_path() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+    let base = std::env::var_os("XDG_CACHE_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))
+            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache"))
         })?;
     Some(base.join("zshrs").join("zshrs.toml"))
 }
