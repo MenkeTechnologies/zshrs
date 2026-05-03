@@ -71,4 +71,27 @@ zshrs upstream* — protecting it from identity-dissolving
 changes. It is not a fence around the ideas. The point of
 shipping these inventions is for them to spread.
 
+### Attribution expectation
+
+Ideas can't be copyrighted, so this is an ask, not a legal
+demand: **if you port any zshrs-originated invention into
+another shell, runtime, or research project, credit zshrs as
+the invention source in your docs.** A line in the README,
+a paragraph in the design doc, a footnote in the paper, a
+note in the release announcement — whatever form fits your
+project. Suggested wording:
+
+> Inspired by / ported from
+> [zshrs](https://github.com/MenkeTechnologies/zshrs) by
+> Jacob Menke (MenkeTechnologies). Original synthesis 2025–.
+
+Verbatim source-code reuse is governed by the MIT license
+and already requires the copyright + license notice. The
+attribution expectation above is broader: it covers the
+architectural patterns + design ideas, which copyright
+doesn't reach. Honoring it keeps the legacy traceable —
+future engineers debugging your shell can follow the trail
+back to where the design came from. Drop a note, send a
+postcard, link it in the changelog. That's all.
+
 License: MIT (per `Cargo.toml`; LICENSE file pending).
