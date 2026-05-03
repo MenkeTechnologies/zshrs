@@ -37,6 +37,13 @@ pub struct Session {
     /// Outbound channel — daemon writes async events / responses here, the connection
     /// handler task drains and sends them on the wire.
     pub outbound: mpsc::UnboundedSender<Frame>,
+    /// Per-session opt-in flag for `recorder_ingested` (DEFINITIONS) events.
+    /// Off by default so silent IPC clients don't receive every recorder
+    /// bundle's summary frame. Toggled by `definitions_subscribe` /
+    /// `definitions_unsubscribe`. The HTTP `/stream/definitions` handler
+    /// auto-subscribes its synthetic session for SSE delivery. See
+    /// docs/DAEMON_AS_SERVICE.md §"Definitions" subscribe path.
+    pub definitions_subscribed: bool,
 }
 
 impl Session {
@@ -229,6 +236,7 @@ impl DaemonState {
             connected_at: Instant::now(),
             login_time: chrono::Utc::now(),
             outbound,
+            definitions_subscribed: false,
         };
         g.sessions.insert(client_id, session);
 
@@ -529,6 +537,32 @@ impl DaemonState {
             }
         }
         count
+    }
+
+    /// Targeted broadcast — only sessions that called `definitions_subscribe`
+    /// receive this frame. Used by `op_recorder_ingest` so silent IPC
+    /// clients (the common case) don't see every recorder bundle's
+    /// summary frame on their socket.
+    pub fn broadcast_to_definitions_subscribers(&self, frame: Frame) -> usize {
+        let g = self.inner.lock();
+        let mut count = 0;
+        for s in g.sessions.values() {
+            if s.definitions_subscribed && s.outbound.send(frame.clone()).is_ok() {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Toggle the per-session opt-in flag for DEFINITIONS events. Returns
+    /// the prior value so the op handler can report whether anything
+    /// actually changed.
+    pub fn set_definitions_subscribed(&self, client_id: u64, subscribed: bool) -> Option<bool> {
+        let mut g = self.inner.lock();
+        let s = g.sessions.get_mut(&client_id)?;
+        let prev = s.definitions_subscribed;
+        s.definitions_subscribed = subscribed;
+        Some(prev)
     }
 
     /// Broadcast to every session matching a tag. Returns the recipient ids.

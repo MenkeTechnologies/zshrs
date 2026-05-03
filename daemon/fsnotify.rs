@@ -70,6 +70,19 @@ struct FsWatcherInner {
     /// Map: absolute path → registration. We use a flat HashMap (small N — fpath dirs +
     /// .zshrc + .tokens.sh + plugin trees ≈ low hundreds).
     registered: HashMap<PathBuf, WatchedPath>,
+    /// Refcount per canonical path — incremented by `subscribe`, decremented
+    /// by `unsubscribe`. The notify::Watcher is unwatched only when the
+    /// count returns to 0 so two SSE clients on the same path don't have
+    /// the first disconnect's drop break the second's stream. The legacy
+    /// `watch_path` / `unwatch_path` callers (daemon-internal fpath setup)
+    /// don't refcount — they're idempotent over the same path key in
+    /// `registered`.
+    sub_refcount: HashMap<PathBuf, usize>,
+    /// Map: subscription_id → canonical path. `unsubscribe(sub_id)` looks
+    /// up the path here, decrements `sub_refcount`, and unwatches if the
+    /// count hits 0. IDs are dense u64 starting at 1 (0 reserved).
+    subscriptions: HashMap<u64, PathBuf>,
+    next_subscription_id: u64,
     stats: WatcherStats,
     debouncer: Option<Debouncer<RecommendedWatcher>>,
 }
@@ -79,6 +92,9 @@ impl FsWatcher {
         Self {
             inner: Mutex::new(FsWatcherInner {
                 registered: HashMap::new(),
+                sub_refcount: HashMap::new(),
+                subscriptions: HashMap::new(),
+                next_subscription_id: 1,
                 stats: WatcherStats::default(),
                 debouncer: None,
             }),
@@ -173,6 +189,84 @@ impl FsWatcher {
     pub fn registered_paths(&self) -> Vec<WatchedPath> {
         let g = self.inner.lock();
         g.registered.values().cloned().collect()
+    }
+
+    /// Refcounted subscription. Each `subscribe` returns a fresh
+    /// subscription id; the underlying `notify::Watcher` is registered
+    /// once per unique path (the first subscriber) and unregistered
+    /// only when the last subscriber calls `unsubscribe`. Used by
+    /// the IPC `watch_subscribe` op + the HTTP `/stream/watch` handler
+    /// so SSE-disconnect-without-explicit-unsubscribe still cleans up
+    /// (HTTP handler unsubscribes in the SseGuardStream Drop).
+    pub fn subscribe(&self, mut wp: WatchedPath, recursive: bool) -> Result<u64> {
+        let canonical = std::fs::canonicalize(&wp.path).unwrap_or(wp.path.clone());
+        wp.path = canonical.clone();
+
+        let mut g = self.inner.lock();
+        let count = g.sub_refcount.entry(canonical.clone()).or_insert(0);
+        *count += 1;
+        let first_subscriber = *count == 1;
+
+        if first_subscriber {
+            let mode = if recursive {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
+            if let Some(deb) = g.debouncer.as_mut() {
+                deb.watcher().watch(&canonical, mode).map_err(|e| {
+                    super::DaemonError::other(format!("fsnotify watch: {e}"))
+                })?;
+            }
+            g.registered.insert(canonical.clone(), wp);
+        }
+
+        let sub_id = g.next_subscription_id;
+        g.next_subscription_id += 1;
+        g.subscriptions.insert(sub_id, canonical);
+        g.stats.watched_path_count = g.registered.len();
+        Ok(sub_id)
+    }
+
+    /// Drop one subscription. Returns true if the id existed. When the
+    /// subscription was the last reference to its path, the
+    /// `notify::Watcher` is also unwatched and the registration is
+    /// removed from `registered`.
+    pub fn unsubscribe(&self, sub_id: u64) -> bool {
+        let mut g = self.inner.lock();
+        let Some(path) = g.subscriptions.remove(&sub_id) else {
+            return false;
+        };
+        let still_referenced = match g.sub_refcount.get_mut(&path) {
+            Some(count) => {
+                *count = count.saturating_sub(1);
+                *count > 0
+            }
+            None => false,
+        };
+        if !still_referenced {
+            g.sub_refcount.remove(&path);
+            if let Some(deb) = g.debouncer.as_mut() {
+                let _ = deb.watcher().unwatch(&path);
+            }
+            g.registered.remove(&path);
+            g.stats.watched_path_count = g.registered.len();
+        }
+        true
+    }
+
+    /// Snapshot of every active subscription. Returns (sub_id, path,
+    /// remaining_refcount) tuples. Used by `op_watch_list` to expose
+    /// the watch table to ops callers.
+    pub fn list_subscriptions(&self) -> Vec<(u64, String, usize)> {
+        let g = self.inner.lock();
+        g.subscriptions
+            .iter()
+            .map(|(id, path)| {
+                let count = g.sub_refcount.get(path).copied().unwrap_or(0);
+                (*id, path.display().to_string(), count)
+            })
+            .collect()
     }
 
     fn handle_debounced(&self, res: DebouncedResult, state: &Arc<DaemonState>) {

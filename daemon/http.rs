@@ -202,23 +202,32 @@ async fn handler_stream_watch(
     if let Err(code) = authorize(&headers, &s.tokens) {
         return code.into_response();
     }
-    if let Some(p) = q.path.as_deref() {
+    // Refcounted subscribe so two SSE clients on the same path don't
+    // have the first disconnect's drop break the second's stream. The
+    // returned watch_id is captured by the SseGuardStream Drop so the
+    // subscription is released when the TCP connection closes.
+    let watch_id = if let Some(p) = q.path.as_deref() {
         let wp = super::fsnotify::WatchedPath {
             path: std::path::PathBuf::from(p),
             shard_slug: format!("http-watch-{}", super::shard::hash8(p)),
             source_root: p.to_string(),
             kind: super::fsnotify::WatchKind::Generic,
         };
-        if let Err(e) = s.daemon.fs_watcher.watch_path(wp, q.recursive.unwrap_or(false)) {
-            tracing::warn!(?e, "stream/watch: registration failed");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "ok": false, "code": "watch_register", "msg": e.to_string() })),
-            )
-                .into_response();
+        match s.daemon.fs_watcher.subscribe(wp, q.recursive.unwrap_or(false)) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!(?e, "stream/watch: registration failed");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "ok": false, "code": "watch_register", "msg": e.to_string() })),
+                )
+                    .into_response();
+            }
         }
-    }
-    let stream = sse_event_stream(&s.daemon, |frame| {
+    } else {
+        None
+    };
+    let stream = sse_event_stream_with_watch(&s.daemon, watch_id, |frame| {
         // Forward only fs-shaped events. The fsnotify side emits
         // `shard_updated` per debounced change; map that to SSE event=fs
         // for clarity.
@@ -304,7 +313,8 @@ async fn handler_stream_events(
     let guarded = SseGuardStream {
         inner: Box::pin(stream),
         state: state_for_drop,
-        client_id,
+        client_id: Some(client_id),
+        watch_id: None,
     };
     Sse::new(guarded)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
@@ -315,6 +325,11 @@ async fn handler_stream_events(
 /// time a `recorder_ingest` lands. Payload is the ingest summary
 /// (events_ingested, rows_written, elapsed_ms, ...). Lets editor
 /// plugins / dashboards refresh their view without polling.
+///
+/// `recorder_ingest` only broadcasts to sessions that opted in via
+/// `definitions_subscribe`, so this handler flips the per-session
+/// flag immediately after registering. The session's flag is dropped
+/// alongside the session itself in SseGuardStream::Drop on TCP close.
 async fn handler_stream_definitions(
     State(s): State<AppState>,
     headers: HeaderMap,
@@ -322,7 +337,7 @@ async fn handler_stream_definitions(
     if let Err(code) = authorize(&headers, &s.tokens) {
         return code.into_response();
     }
-    let stream = sse_event_stream(&s.daemon, |frame| {
+    let stream = sse_event_stream_with_watch(&s.daemon, None, |frame| {
         if let Frame::Event { event, payload } = frame {
             // recorder_ingest emits broadcast Frame::Event { event:
             // "recorder_ingested", payload: { events_ingested, ... } }.
@@ -332,6 +347,12 @@ async fn handler_stream_definitions(
         }
         None
     });
+    // Auto-subscribe the synthetic session created by
+    // sse_event_stream_with_watch. The Drop tears the session down so
+    // the flag dies with it; no explicit unsubscribe needed.
+    if let Some(client_id) = stream.client_id() {
+        let _ = s.daemon.set_definitions_subscribed(client_id, true);
+    }
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response()
@@ -340,12 +361,14 @@ async fn handler_stream_definitions(
 /// Build an SSE-event stream from the daemon's broadcast bus. Registers
 /// a synthetic session, hooks an UnboundedReceiver of Frames, and maps
 /// each frame through `pick` — `Some((event_name, payload))` becomes
-/// one SSE record, `None` is dropped silently. The session
-/// auto-deregisters on stream drop (TCP close).
-fn sse_event_stream<F>(
+/// one SSE record, `None` is dropped silently. On stream drop (TCP
+/// close) the session auto-deregisters AND, if `watch_id` is `Some`,
+/// the corresponding fsnotify subscription is released too.
+fn sse_event_stream_with_watch<F>(
     state: &Arc<DaemonState>,
+    watch_id: Option<u64>,
     pick: F,
-) -> impl Stream<Item = std::result::Result<Event, Infallible>>
+) -> SseGuardStream<impl Stream<Item = std::result::Result<Event, Infallible>>>
 where
     F: Fn(&Frame) -> Option<(String, Value)> + Send + 'static,
 {
@@ -368,19 +391,33 @@ where
                     .data(payload.to_string()))
             })
         });
-    // Wrap in a guard stream so the synthetic session is unregistered
-    // when the SSE connection drops.
     SseGuardStream {
         inner: Box::pin(stream),
         state: state_for_drop,
-        client_id,
+        client_id: Some(client_id),
+        watch_id,
     }
 }
 
 struct SseGuardStream<S> {
     inner: std::pin::Pin<Box<S>>,
     state: Arc<DaemonState>,
-    client_id: u64,
+    client_id: Option<u64>,
+    /// Set when this SSE stream owns a refcounted fsnotify
+    /// subscription (currently only `/stream/watch`). The Drop releases
+    /// it via `fs_watcher.unsubscribe(id)` so SSE TCP-close cleans up
+    /// the watch automatically — no leaked fsnotify registration when
+    /// the client disconnects without an explicit `watch_unsubscribe`.
+    watch_id: Option<u64>,
+}
+
+impl<S> SseGuardStream<S> {
+    /// Synthetic-session id this stream is bound to. Lets handlers
+    /// (`/stream/definitions`) call `state.set_definitions_subscribed`
+    /// on the right session before returning the stream.
+    fn client_id(&self) -> Option<u64> {
+        self.client_id
+    }
 }
 
 impl<S> Stream for SseGuardStream<S>
@@ -398,8 +435,14 @@ where
 
 impl<S> Drop for SseGuardStream<S> {
     fn drop(&mut self) {
-        self.state.unregister_session(self.client_id);
-        tracing::info!(client_id = self.client_id, "sse session unregistered");
+        if let Some(id) = self.watch_id.take() {
+            let removed = self.state.fs_watcher.unsubscribe(id);
+            tracing::info!(watch_id = id, removed, "sse fsnotify subscription released");
+        }
+        if let Some(cid) = self.client_id.take() {
+            self.state.unregister_session(cid);
+            tracing::info!(client_id = cid, "sse session unregistered");
+        }
     }
 }
 
