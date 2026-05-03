@@ -611,33 +611,52 @@ fn cmd_schedule(t: &mut dyn Transport, rest: &[String]) -> Result<String, String
 
 fn cmd_export(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
     if rest.len() < 2 {
-        return Err("usage: zd export TARGET FORMAT".into());
+        return Err("usage: zd export TARGET FORMAT [--json]".into());
     }
     let target = &rest[0];
     let format = &rest[1];
+    // `--json` opt-in restores the JSON envelope; default unwraps
+    // straight to the requested payload so:
+    //   zd export aliases sh   > aliases.sh
+    //   zd export aliases csv  > aliases.csv
+    //   zd export aliases pdf  > aliases.pdf
+    // all produce the right file directly without `jq -r` gymnastics.
+    let envelope = rest.iter().any(|a| a == "--json" || a == "--envelope");
     let response = t.post("export", json!({"target": target, "format": format}))?;
 
-    // For binary formats the daemon returns a JSON envelope with the
-    // payload base64-encoded under `body_base64` (see
-    // `daemon/export.rs::op_view_or_export`). The user almost always
-    // wants the raw bytes — `zd export aliases pdf > out.pdf` should
-    // produce a valid PDF file, not a JSON wrapper they have to
-    // unpack with `jq -r .body_base64 | base64 -d`. Detect those
-    // responses, decode, write raw to stdout, and exit immediately
-    // so the dispatcher's trailing `println!` doesn't append a
-    // newline that would corrupt the output.
-    if let Ok(parsed) = serde_json::from_str::<Value>(&response) {
-        if let Some(b64) = parsed.get("body_base64").and_then(Value::as_str) {
-            let bytes = base64_decode(b64)
-                .map_err(|e| format!("decode body_base64: {e}"))?;
-            use std::io::Write;
-            let mut out = std::io::stdout().lock();
-            out.write_all(&bytes)
-                .map_err(|e| format!("write stdout: {e}"))?;
-            out.flush().ok();
-            std::process::exit(0);
-        }
+    if envelope {
+        return Ok(response);
     }
+
+    // Daemon's export response shape (see
+    // `daemon/export.rs::op_view_or_export`):
+    //   text formats  → { "body": "..." }
+    //   binary (pdf)  → { "body_base64": "..." }
+    // Extract the payload and stream it to stdout. For binary we
+    // exit early to avoid the dispatcher's trailing newline; text
+    // returns through the normal path which adds the newline (matches
+    // every shell tool — `echo`, `cat`, etc.).
+    let parsed: Value = serde_json::from_str(&response)
+        .map_err(|e| format!("export response: {e}\nbody: {response}"))?;
+    if let Some(b64) = parsed.get("body_base64").and_then(Value::as_str) {
+        let bytes = base64_decode(b64)
+            .map_err(|e| format!("decode body_base64: {e}"))?;
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        out.write_all(&bytes).map_err(|e| format!("write stdout: {e}"))?;
+        out.flush().ok();
+        std::process::exit(0);
+    }
+    if let Some(body) = parsed.get("body").and_then(Value::as_str) {
+        // Strip a single trailing newline so we don't double up with
+        // dispatch's `println!`. Most exporters end the body with
+        // `\n` already; a second one creates a blank trailing line
+        // in redirected files.
+        let trimmed = body.strip_suffix('\n').unwrap_or(body);
+        return Ok(trimmed.to_string());
+    }
+    // Daemon returned an envelope shape we don't know — surface the
+    // raw response rather than swallowing it.
     Ok(response)
 }
 
