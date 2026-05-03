@@ -282,7 +282,13 @@ uname  date  mktemp</div>
         <p>Persistent pool of warm threads. Bounded crossbeam channel with backpressure.
         Panic recovery keeps workers alive. Task cancellation on Ctrl-C. Instant shutdown on exit.</p>
 
-        <div class="code-block"><span class="comment"># ~/.config/zshrs/config.toml</span>
+        <div class="code-block"><span class="comment"># ~/.zshrs/zshrs.toml  (seeded on first run; idempotent)</span>
+[log]
+<span class="var">level</span> = <span class="string">"info"</span>      <span class="comment"># env $ZSHRS_LOG overrides; "trace" prints startup diagnostics</span>
+
+[shell]
+<span class="var">skip_configs</span> = <span class="string">"auto"</span>  <span class="comment"># when daemon up + canonical shard recorded, skip /etc/zsh{env,rc} + ~/.{zshenv,zprofile,zshrc,zlogin}</span>
+
 [worker_pool]
 <span class="var">size</span> = <span class="string">8</span>            <span class="comment"># 0 = auto (num_cpus clamped [2, 18])</span>
 
@@ -290,7 +296,7 @@ uname  date  mktemp</div>
 <span class="var">bytecode_cache</span> = <span class="keyword">true</span>  <span class="comment"># compile autoload functions to fusevm bytecodes</span>
 
 [history]
-<span class="var">async_writes</span> = <span class="keyword">true</span> <span class="comment"># write history on worker pool</span>
+<span class="var">async_writes</span> = <span class="keyword">true</span> <span class="comment"># daemon-side writes via IPC; prompt never blocks</span>
 
 [glob]
 <span class="var">parallel_threshold</span> = <span class="string">32</span>   <span class="comment"># min files before parallel metadata prefetch</span>
@@ -374,7 +380,10 @@ uname  date  mktemp</div>
             <h4>catalog.db (SQLite mirror)</h4>
             <p>Daemon-hydrated FTS5-indexed mirror of all rkyv contents. Used ONLY by
             <code>dbview</code> and <code>zcache</code> introspection &mdash; never read on the
-            hot path. Clients have ZERO SQLite handles. <code>history.db</code> sits next to it.</p>
+            hot path. Clients have ZERO SQLite handles. The daemon's own FTS5 history
+            (<code>history.db</code>) sits next to it; the shell's user-facing history is
+            <code>zshrs_history</code> (flat zsh-extended-history-format text) plus a sibling
+            FTS5 index <code>zshrs_history.db</code>, both in <code>$ZSHRS_HOME</code>.</p>
           </div>
         </div>
 
@@ -387,6 +396,199 @@ uname  date  mktemp</div>
 <span class="keyword">dbview</span> history docker        <span class="comment"># search history</span>
 <span class="keyword">zcache</span> rebuild               <span class="comment"># force daemon to recompile every shard</span>
 <span class="keyword">zcache</span> verify                <span class="comment"># bytecheck every rkyv archive</span></div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x04b]</span> FILE LAYOUT &amp; BINARIES</h2>
+
+        <p>One directory holds every zshrs file: <code>$ZSHRS_HOME</code> (defaults to
+        <code>~/.zshrs/</code>). All four binaries — <code>zshrs</code>, <code>zshrs-daemon</code>,
+        <code>zshrs-recorder</code>, <code>zd</code> — seed the directory and three default configs
+        on first run via <code>CachePaths::ensure_default_configs</code>. Idempotent — never
+        overwrites user edits. Auto-migrates legacy <code>daemon.toml</code> &rarr;
+        <code>zshrs-daemon.toml</code> and the legacy macOS history at
+        <code>~/Library/Application Support/zshrs/history.db</code> &rarr;
+        <code>~/.zshrs/zshrs_history.db</code>.</p>
+
+        <div class="diagram">
+~/.zshrs/
+├── zshrs.toml              # shell config         [log] [daemon] [shell.skip_configs]
+├── zshrs-daemon.toml       # daemon config        [log] [http] [http.tokens]
+├── zshrs-recorder.toml     # recorder config      [log]
+├── zshrs.log               # shell tracing
+├── zshrs-daemon.log        # daemon tracing
+├── zshrs-recorder.log      # recorder tracing
+├── zshrs_history           # flat zsh-extended-history-format text
+├── zshrs_history.db        # FTS5 index sibling
+├── catalog.db              # daemon canonical-state mirror (FTS5)
+├── history.db              # daemon's own FTS5 history
+├── cache.db                # daemon KV cache
+├── plugins.db
+├── images/                 # rkyv canonical shards (per source root)
+├── replay/                 # non-deterministic .zshrc fragments
+├── artifacts/              # content-addressed artifact cache
+├── snapshots/              # tag-based canonical-state snapshots
+├── jobs/                   # supervisor stdout/stderr captures
+├── daemon.sock             # Unix domain socket
+├── daemon.pid              # singleton flock
+└── index.rkyv              # shard registry
+        </div>
+
+        <h3>Three log files (one per binary)</h3>
+        <table class="arch-table">
+          <tr><th>File</th><th>Owner</th><th>Level source</th></tr>
+          <tr><td><code>zshrs.log</code></td><td>shell</td><td><code>[log] level</code> in <code>zshrs.toml</code> (env <code>$ZSHRS_LOG</code> wins)</td></tr>
+          <tr><td><code>zshrs-daemon.log</code></td><td>daemon</td><td><code>[log] level</code> in <code>zshrs-daemon.toml</code></td></tr>
+          <tr><td><code>zshrs-recorder.log</code></td><td>recorder</td><td><code>[log] level</code> in <code>zshrs-recorder.toml</code></td></tr>
+        </table>
+        <p>Helper <code>paths::is_zshrs_log_file</code> matches all three for rotation, tail, and
+        clear. Default daemon startup emits 7 INFO lines; with <code>level = "trace"</code> an
+        additional ~5 startup diagnostics print (resolved env, pidlock, db sizes, ticker spawn,
+        schedule spawn, http listener address).</p>
+
+        <h3><code>[shell] skip_configs = "auto"</code></h3>
+        <p>When the daemon is up AND has a recorded zshrs canonical shard, the shell SKIPS
+        sourcing <code>/etc/zshenv</code> + <code>~/.{zshenv,zprofile,zshrc,zlogin}</code> entirely
+        and rebuilds executor state from the rkyv shard. <code>canonical_apply</code> wires
+        alias/galias/salias/env/params/setopt/path/fpath/named_dirs/autoload_functions/zstyle/bindkey/compdef/zle&nbsp;widgets.
+        Inline functions are deferred until the recorder ships bytecode in the shard.</p>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x04c]</span> RECORDER (<code>zshrs-recorder</code>)</h2>
+
+        <p>Separate binary — <em>not</em> a flag on <code>zshrs</code>. Sources the full zsh login
+        chain in order, skipping any missing file silently:</p>
+        <div class="code-block">1. /etc/zshenv
+2. ${ZDOTDIR:-$HOME}/.zshenv
+3. /etc/zprofile
+4. ${ZDOTDIR:-$HOME}/.zprofile
+5. /etc/zshrc
+6. ${ZDOTDIR:-$HOME}/.zshrc
+7. /etc/zlogin
+8. ${ZDOTDIR:-$HOME}/.zlogin</div>
+        <p><code>-f PATH</code> overrides the chain to source one file. End-of-run ships a
+        <code>recorder_ingest</code> IPC bundle to the daemon, which folds it into the canonical
+        shard for the matching source root.</p>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x04d]</span> <code>zd</code> &mdash; TWO SURFACES</h2>
+
+        <table class="arch-table">
+          <tr><th>Surface</th><th>Transport</th><th>Latency</th><th>Use case</th></tr>
+          <tr><td><code>zd</code> binary</td><td>HTTP via <code>ureq</code> to <code>[http].listen</code></td><td>2.64 ms (fork+exec)</td><td>bash, fish, CI, anything outside zshrs</td></tr>
+          <tr><td><code>zd</code> builtin (in-process)</td><td>local Unix socket via <code>Client</code></td><td>0.48 ms (5.5&times; faster)</td><td>inside zshrs &mdash; same arg surface</td></tr>
+        </table>
+
+        <p>Default HTTP listener: <code>127.0.0.1:7733</code>, seeded into
+        <code>zshrs-daemon.toml</code> on first run so <code>zd health</code> works out of the
+        box. Default token comes from <code>$DAEMON_TOKEN</code>. Loopback bind requires no
+        token; non-loopback bind refuses to start until <code>[http.tokens]</code> is populated.
+        <code>GET /openapi</code> (alias <code>/openapi.json</code>) returns an OpenAPI 3.1
+        document auto-derived from <code>OP_NAMES</code> &mdash; 106 paths today (4 meta + 99 ops
+        + 3 streams), with <code>ErrPayload</code> in components and <code>bearerAuth</code>
+        declared only when tokens are configured.</p>
+
+        <h3><code>zd</code> subcommands</h3>
+        <div class="code-block"><span class="keyword">zd health</span>                          <span class="comment"># liveness probe</span>
+<span class="keyword">zd ops</span>                             <span class="comment"># enumerate every op</span>
+<span class="keyword">zd metrics</span>                         <span class="comment"># Prometheus exposition</span>
+<span class="keyword">zd ping</span> [echo...]
+<span class="keyword">zd info</span>
+<span class="keyword">zd call</span> OP [JSON_BODY]             <span class="comment"># raw op invocation</span>
+
+<span class="keyword">zd doctor</span> [--json]                 <span class="comment"># pretty health table: perms, db integrity, shards,</span>
+                                   <span class="comment"># fsnotify, pidlock, jobs, legacy litter; exit 1 on any fail</span>
+
+<span class="keyword">zd config</span> get KEY                  <span class="comment"># runtime knob plumbing</span>
+<span class="keyword">zd config</span> set KEY VALUE
+<span class="keyword">zd config</span> list
+
+<span class="keyword">zd snapshot</span> save TAG [--notes N]   <span class="comment"># canonical-state freeze</span>
+<span class="keyword">zd snapshot</span> list
+<span class="keyword">zd snapshot</span> load TAG
+<span class="keyword">zd snapshot</span> diff A B
+
+<span class="keyword">zd cache</span>     &lt;put|get|del|list|stats&gt;
+<span class="keyword">zd job</span>       &lt;submit|list|status|output|kill|cancel|wait&gt;
+<span class="keyword">zd lock</span>      &lt;try|acquire|release|list&gt;
+<span class="keyword">zd publish</span>   TOPIC [DATA] [--json '...']
+<span class="keyword">zd events</span> / <span class="keyword">zd watch</span> / <span class="keyword">zd defs</span>
+<span class="keyword">zd artifact</span>  &lt;put|get|list|gc&gt;
+<span class="keyword">zd schedule</span>  &lt;add|add-once|list|remove&gt;
+<span class="keyword">zd export</span>    TARGET FORMAT [--json]   <span class="comment"># raw export &mdash; NO json envelope by default</span>
+<span class="keyword">zd view</span>      TARGET [FORMAT]</div>
+        <p><code>zd export aliases pdf &gt; out.pdf</code> produces a real PDF — payload is
+        streamed direct for <code>sh / csv / json / yaml / text / pdf</code>. <code>--json</code>
+        opt-in restores the JSON envelope.</p>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
+        <h2><span class="section-num">[0x04e]</span> NEW <code>z*</code> BUILTINS</h2>
+
+        <table class="arch-table">
+          <tr><th>Builtin</th><th>Description</th></tr>
+          <tr><td><code>zlock try NAME</code></td><td>Cross-process named lock &mdash; non-blocking try</td></tr>
+          <tr><td><code>zlock acquire NAME [--timeout S]</code></td><td>Poll-wait acquire with optional timeout</td></tr>
+          <tr><td><code>zlock release NAME TOKEN</code></td><td>Release by token</td></tr>
+          <tr><td><code>zlock list</code></td><td>List all held locks</td></tr>
+          <tr><td><code>zpublish TOPIC</code> / <code>TOPIC DATA</code> / <code>TOPIC --json '{...}'</code></td><td>Producer side of the pub/sub bus (consumer is <code>zsubscribe</code>)</td></tr>
+          <tr><td><code>zwhere SUBSYS NAME</code></td><td>Query daemon canonical state for "where did this alias / function / zstyle come from" with <code>file:line</code> attribution</td></tr>
+        </table>
+
+        <p>Full builtin family: <code>zcache</code>, <code>zls</code>, <code>zid</code>,
+        <code>zping</code>, <code>ztag</code>, <code>zuntag</code>, <code>zsend</code>,
+        <code>znotify</code>, <code>zsubscribe</code>, <code>zunsubscribe</code>,
+        <code>zjob</code>, <code>zsync</code>, <code>zask</code>, <code>zhistory</code>,
+        <code>zsource</code>, <code>zcomplete</code>, <code>zsuggest</code>,
+        <code>zcmd-result</code>, <code>zlog</code>, <code>zwhere</code>, <code>zd</code>,
+        <code>zlock</code>, <code>zpublish</code>.</p>
+
+        <h3><code>zjob</code> &mdash; bidirectional ptmx attach</h3>
+        <div class="code-block"><span class="keyword">zjob submit</span> [--pty] [--cwd DIR] [--tag T...] [--env K=V...] -- CMD ARGS...
+<span class="keyword">zjob list</span>   [--state running|exited|killed|failed] [--tag T] [--limit N]
+<span class="keyword">zjob status</span> &lt;id&gt;
+<span class="keyword">zjob output</span> &lt;id&gt; [--follow] [--stderr] [--lines N]
+<span class="keyword">zjob attach</span> &lt;id&gt;                     <span class="comment"># read-only file-tail for non-pty;</span>
+                                       <span class="comment"># bidirectional raw-mode pump for --pty</span>
+<span class="keyword">zjob kill</span>   &lt;id&gt; [--signal NAME]
+<span class="keyword">zjob cancel</span> &lt;id&gt; [--grace SECS]
+<span class="keyword">zjob wait</span>   &lt;id&gt; [--timeout SECS]</div>
+        <p>With <code>--pty</code> the daemon calls <code>nix::pty::openpty()</code> and the
+        child runs with the slave on 0/1/2 via <code>pre_exec</code> <code>dup2</code>; the
+        master fd lives in <code>JobMeta</code>. Two new IPC ops drive it:</p>
+        <ul>
+          <li><code>job_input  {id, bytes_b64}</code> &mdash; base64-decode, write to master</li>
+          <li><code>job_resize {id, rows, cols}</code> &mdash; <code>TIOCSWINSZ</code> for SIGWINCH propagation</li>
+        </ul>
+        <p>On <code>zjob attach</code> against a pty job: <code>termios cfmakeraw</code> on
+        stdin, a stdin reader thread batches keystrokes and fires <code>job_input</code>, output
+        is broadcast as <code>job:N.stdout</code> events with <code>bytes_b64</code> payload
+        (decoded back to the user's tty), and <code>SIGWINCH</code> is forwarded as
+        <code>job_resize</code>. <code>Ctrl-]</code> is the detach key. Termios is restored on
+        exit via a Drop guard. Use case: background jobs that block on stdin (deploy scripts
+        asking y/n, REPLs in background) — submit with <code>--pty</code>, attach later, type,
+        detach, attach again.</p>
+
+        <h3><code>zsync up --all</code></h3>
+        <p>Now wired (was a stub). The shell-side enumerator
+        (<code>src/overlay_snapshot.rs</code>) snapshots every overlay table and ships
+        <code>push_canonical</code> per subsystem. Covers
+        alias/galias/salias, setopt, params (vars+arrays+assoc unioned), env, path, manpath,
+        fpath, named_dir, compdef, zstyle. Skipped: <code>function</code> (needs source-text
+        round-trip), <code>bindkey</code> (lives in <code>ZleManager</code>),
+        <code>zmodload</code> (no canonical "currently loaded" list).</p>
+        <div class="code-block"><span class="keyword">zsync up</span> --all                  <span class="comment"># promote every overlay subsystem</span>
+<span class="keyword">zsync up</span> &lt;subsystem&gt; KEY VALUE
+<span class="keyword">zsync up</span> &lt;subsystem&gt; --json '&lt;obj&gt;'
+<span class="keyword">zsync pull</span> &lt;subsystem&gt;
+<span class="keyword">zsync diff</span> &lt;subsystem&gt; --overlay '&lt;obj&gt;'
+<span class="keyword">zsync watch</span> &lt;subsystem&gt;...</div>
       </section>
 
       <!-- ════════════════════════════════════════════════════════════ -->
