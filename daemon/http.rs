@@ -105,6 +105,7 @@ pub async fn serve_http(cfg: HttpConfig, daemon: Arc<DaemonState>) -> Result<()>
     let app = Router::new()
         .route("/health", get(handler_health))
         .route("/ops", get(handler_ops))
+        .route("/metrics", get(handler_metrics))
         .route("/op/:name", post(handler_op))
         // Server-Sent Events streams for push-style ops. Each connection
         // registers a synthetic session on the daemon's broadcast bus,
@@ -113,6 +114,7 @@ pub async fn serve_http(cfg: HttpConfig, daemon: Arc<DaemonState>) -> Result<()>
         // §"WATCH" + §"EVENT".
         .route("/stream/watch", get(handler_stream_watch))
         .route("/stream/events", get(handler_stream_events))
+        .route("/stream/definitions", get(handler_stream_definitions))
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
@@ -160,6 +162,19 @@ async fn handler_ops(State(_s): State<AppState>) -> impl IntoResponse {
         "ok": true,
         "ops": super::ops::OP_NAMES,
     }))
+}
+
+/// Prometheus 0.0.4 text-format exposition. Always-open (Prometheus
+/// scrapers historically don't carry credentials; tunnel through a
+/// reverse proxy if the daemon is reachable from outside the host).
+async fn handler_metrics(State(s): State<AppState>) -> impl IntoResponse {
+    s.daemon.metrics.record_http("/metrics", 200);
+    let body = super::metrics::prometheus_text(&s.daemon);
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        body,
+    )
 }
 
 /// `GET /stream/watch?path=DIR&recursive=BOOL` — subscribes the
@@ -296,6 +311,32 @@ async fn handler_stream_events(
         .into_response()
 }
 
+/// `GET /stream/definitions` — pushes one `event: defs` record every
+/// time a `recorder_ingest` lands. Payload is the ingest summary
+/// (events_ingested, rows_written, elapsed_ms, ...). Lets editor
+/// plugins / dashboards refresh their view without polling.
+async fn handler_stream_definitions(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(code) = authorize(&headers, &s.tokens) {
+        return code.into_response();
+    }
+    let stream = sse_event_stream(&s.daemon, |frame| {
+        if let Frame::Event { event, payload } = frame {
+            // recorder_ingest emits broadcast Frame::Event { event:
+            // "recorder_ingested", payload: { events_ingested, ... } }.
+            if event == "recorder_ingested" {
+                return Some(("defs".to_string(), payload.clone()));
+            }
+        }
+        None
+    });
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
+}
+
 /// Build an SSE-event stream from the daemon's broadcast bus. Registers
 /// a synthetic session, hooks an UnboundedReceiver of Frames, and maps
 /// each frame through `pick` — `Some((event_name, payload))` becomes
@@ -393,8 +434,10 @@ async fn handler_op(
     let dispatch_result = super::ops::dispatch(&s.daemon, client_id, &name, args).await;
     s.daemon.unregister_session(client_id);
 
+    let path_label = format!("/op/{name}");
     match dispatch_result {
         Ok(payload) => {
+            s.daemon.metrics.record_http(&path_label, 200);
             // Merge {ok:true} with the op's payload so HTTP shape matches
             // the existing socket response shape.
             let mut out = match payload {
@@ -410,11 +453,20 @@ async fn handler_op(
         }
         Err(err) => {
             let status = match err.code.as_str() {
-                "bad_args" | "no_such_file" => StatusCode::BAD_REQUEST,
+                "bad_args" | "bad_cron" | "bad_format" | "bad_pattern" => {
+                    StatusCode::BAD_REQUEST
+                }
                 "unauthorized" => StatusCode::UNAUTHORIZED,
-                "unknown_op" => StatusCode::NOT_FOUND,
+                "no_such_file"
+                | "no_such_kind"
+                | "no_such_function"
+                | "unknown_op" => StatusCode::NOT_FOUND,
+                "busy" => StatusCode::CONFLICT,
+                "wrong_token" => StatusCode::FORBIDDEN,
+                "timeout" => StatusCode::REQUEST_TIMEOUT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             };
+            s.daemon.metrics.record_http(&path_label, status.as_u16());
             (
                 status,
                 Json(json!({

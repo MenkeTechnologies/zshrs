@@ -27,11 +27,19 @@
 : ${DAEMON_URL:=http://127.0.0.1:7733}
 : ${DAEMON_TOKEN:=}
 
-# Internal: emit `Authorization: Bearer ...` only when DAEMON_TOKEN set.
-# Echos a curl-`-H`-friendly arg list (one per line) so callers splice via
-# `$(_daemon_auth_args)` without quoting hazards on empty token case.
-_daemon_auth_args() {
-    [[ -n "$DAEMON_TOKEN" ]] && printf -- '-H\nAuthorization: Bearer %s\n' "$DAEMON_TOKEN"
+# Internal: invoke curl with the right auth/content headers. Branching
+# on DAEMON_TOKEN here keeps quoting safe in BOTH bash and zsh — the
+# previous `$(_daemon_auth_args)` splice trick word-split
+# `Authorization: Bearer <tok>` into three URL args under bash's
+# default IFS, which made every wrapper print a "Could not resolve
+# host: Bearer" warning before the real curl call ran. Using two
+# direct `-H` args dodges that entirely.
+_daemon_curl() {
+    if [[ -n "$DAEMON_TOKEN" ]]; then
+        curl -sS -f -H "Authorization: Bearer $DAEMON_TOKEN" "$@"
+    else
+        curl -sS -f "$@"
+    fi
 }
 
 # Internal: POST to /op/<name> with JSON body. First arg = op name.
@@ -39,10 +47,8 @@ _daemon_auth_args() {
 _daemon_post() {
     local op="$1"; shift
     local body="${1:-{\}}"
-    # shellcheck disable=SC2046
-    curl -sS -f \
+    _daemon_curl \
         -H 'Content-Type: application/json' \
-        $(_daemon_auth_args) \
         --data-raw "$body" \
         "$DAEMON_URL/op/$op"
 }
@@ -54,8 +60,7 @@ _daemon_post() {
 # "command not found: curl". Use `endpoint` instead.
 _daemon_get() {
     local endpoint="$1"
-    # shellcheck disable=SC2046
-    curl -sS -f $(_daemon_auth_args) "$DAEMON_URL$endpoint"
+    _daemon_curl "$DAEMON_URL$endpoint"
 }
 
 # ---- Public commands ------------------------------------------------------
@@ -459,9 +464,7 @@ daemon-watch() {
     local dir="$1"
     local recursive='false'
     [[ "${2:-}" == "--recursive" ]] && recursive='true'
-    # shellcheck disable=SC2046
-    curl -sN $(_daemon_auth_args) \
-        "$DAEMON_URL/stream/watch?path=$dir&recursive=$recursive"
+    _daemon_curl -N "$DAEMON_URL/stream/watch?path=$dir&recursive=$recursive"
 }
 
 # `daemon-events [PATTERN]` — stream pubsub messages matching PATTERN
@@ -469,9 +472,7 @@ daemon-watch() {
 #     daemon-events 'shell:*.build_done' | sed -n '/^data:/s/^data: //p' | jq
 daemon-events() {
     local pat="${1:-*.*}"
-    # shellcheck disable=SC2046
-    curl -sN $(_daemon_auth_args) \
-        "$DAEMON_URL/stream/events?channel=$pat"
+    _daemon_curl -N "$DAEMON_URL/stream/events?channel=$pat"
 }
 
 # `daemon-publish TOPIC JSON_DATA` — publish a pubsub event.
@@ -480,4 +481,94 @@ daemon-publish() {
     local topic="$1"
     local data="$2"
     _daemon_post publish "{\"topic\":\"$topic\",\"data\":$data}"
+}
+
+# ---- Federated recorder (definitions.*) ----------------------------------
+# These wrappers let bash/zsh/fish/etc. shells push state-modification
+# records into the same canonical catalog `zshrs-recorder` writes to.
+# Set DAEMON_SHELL_ID once (per docs/SHELL_IDS.md), then any record-* call
+# stamps the bundle's federated identity onto the row.
+#
+# Example: in bash
+#   export DAEMON_SHELL_ID=bash
+#   daemon-record-alias ll 'ls -al'
+#   daemon-record-export EDITOR vim
+#   daemon-record-set    -o vi
+#   daemon-record-bindkey '^R' history-incremental-search-backward
+#
+# Then query/diff cross-shell:
+#   daemon-defs-query  --kind alias --shell-id bash
+#   daemon-defs-diff   bash zshrs
+
+: "${DAEMON_SHELL_ID:=zshrs}"
+
+_daemon_emit() {
+    # _daemon_emit KIND NAME [VALUE] [FILE] [LINE] [FN_CHAIN]
+    local kind="$1" name="$2" value="${3:-}" file="${4:-}" line="${5:-}" chain="${6:-}"
+    local body="{\"shell_id\":\"$DAEMON_SHELL_ID\",\"kind\":\"$kind\""
+    body+=",\"name\":\"$(_json_str "$name")\""
+    [[ -n "$value" ]] && body+=",\"value\":\"$(_json_str "$value")\""
+    [[ -n "$file"  ]] && body+=",\"file\":\"$(_json_str "$file")\""
+    [[ -n "$line"  ]] && body+=",\"line\":$line"
+    [[ -n "$chain" ]] && body+=",\"fn_chain\":\"$(_json_str "$chain")\""
+    body+='}'
+    _daemon_post definitions_emit "$body"
+}
+
+daemon-record-alias()    { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-alias NAME BODY' >&2; return 2; }; _daemon_emit alias "$1" "$2"; }
+daemon-record-galias()   { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-galias NAME BODY' >&2; return 2; }; _daemon_emit galias "$1" "$2"; }
+daemon-record-salias()   { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-salias NAME BODY' >&2; return 2; }; _daemon_emit salias "$1" "$2"; }
+daemon-record-function() { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-function NAME BODY' >&2; return 2; }; _daemon_emit function "$1" "$2"; }
+daemon-record-export()   { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-export NAME VALUE' >&2; return 2; }; _daemon_emit env "$1" "$2"; }
+daemon-record-param()    { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-param NAME VALUE' >&2; return 2; }; _daemon_emit params "$1" "$2"; }
+daemon-record-bindkey()  { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-bindkey SEQ WIDGET' >&2; return 2; }; _daemon_emit bindkey "$1" "$2"; }
+daemon-record-compdef()  { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-compdef CMD COMPLETER' >&2; return 2; }; _daemon_emit compdef "$1" "$2"; }
+daemon-record-zstyle()   { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-zstyle PATTERN STYLE' >&2; return 2; }; _daemon_emit zstyle "$1" "$2"; }
+daemon-record-zmodload() { [[ $# -lt 1 ]] && { echo 'usage: daemon-record-zmodload MODULE' >&2; return 2; }; _daemon_emit zmodload "$1"; }
+daemon-record-setopt()   { [[ $# -lt 1 ]] && { echo 'usage: daemon-record-setopt OPT' >&2; return 2; }; _daemon_emit setopt "$1" on; }
+daemon-record-unsetopt() { [[ $# -lt 1 ]] && { echo 'usage: daemon-record-unsetopt OPT' >&2; return 2; }; _daemon_emit setopt "$1" off; }
+daemon-record-source()   { [[ $# -lt 1 ]] && { echo 'usage: daemon-record-source PATH' >&2; return 2; }; _daemon_emit source "$1"; }
+daemon-record-path()     { [[ $# -lt 1 ]] && { echo 'usage: daemon-record-path DIR' >&2; return 2; }; _daemon_emit path "$1"; }
+daemon-record-fpath()    { [[ $# -lt 1 ]] && { echo 'usage: daemon-record-fpath DIR' >&2; return 2; }; _daemon_emit fpath "$1"; }
+daemon-record-zle()      { [[ $# -lt 1 ]] && { echo 'usage: daemon-record-zle WIDGET [BODY]' >&2; return 2; }; _daemon_emit zle "$1" "${2:-}"; }
+daemon-record-trap()     { [[ $# -lt 2 ]] && { echo 'usage: daemon-record-trap SIGNAL HANDLER' >&2; return 2; }; _daemon_emit trap "$1" "$2"; }
+daemon-record-named-dir(){ [[ $# -lt 2 ]] && { echo 'usage: daemon-record-named-dir NAME PATH' >&2; return 2; }; _daemon_emit named_dir "$1" "$2"; }
+daemon-record-completion(){ [[ $# -lt 1 ]] && { echo 'usage: daemon-record-completion CMD [PATH]' >&2; return 2; }; _daemon_emit completion "$1" "${2:-}"; }
+
+# ---- Federated catalog query / diff --------------------------------------
+
+# `daemon-defs-query [--kind K] [--name N] [--prefix P] [--shell-id S] [--limit N]`
+daemon-defs-query() {
+    local kind name prefix shell limit
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --kind)     kind="$2";   shift 2;;
+            --name)     name="$2";   shift 2;;
+            --prefix)   prefix="$2"; shift 2;;
+            --shell-id) shell="$2";  shift 2;;
+            --limit)    limit="$2";  shift 2;;
+            *) echo "unknown arg: $1" >&2; return 2;;
+        esac
+    done
+    local body='{'
+    local sep=''
+    [[ -n "$kind"   ]] && { body+="${sep}\"kind\":\"$kind\"";       sep=','; }
+    [[ -n "$name"   ]] && { body+="${sep}\"name\":\"$name\"";       sep=','; }
+    [[ -n "$prefix" ]] && { body+="${sep}\"prefix\":\"$prefix\"";   sep=','; }
+    [[ -n "$shell"  ]] && { body+="${sep}\"shell_id\":\"$shell\""; sep=','; }
+    [[ -n "$limit"  ]] && { body+="${sep}\"limit\":$limit";         sep=','; }
+    body+='}'
+    _daemon_post definitions_query "$body"
+}
+
+# `daemon-defs-kinds` — list kinds that have at least one row.
+daemon-defs-kinds() { _daemon_post definitions_kinds '{}'; }
+
+# `daemon-defs-diff SHELL_A SHELL_B [KIND]` — cross-shell diff.
+daemon-defs-diff() {
+    [[ $# -lt 2 ]] && { echo 'usage: daemon-defs-diff SHELL_A SHELL_B [KIND]' >&2; return 2; }
+    local body="{\"shell_a\":\"$1\",\"shell_b\":\"$2\""
+    [[ -n "${3:-}" ]] && body+=",\"kind\":\"$3\""
+    body+='}'
+    _daemon_post definitions_diff "$body"
 }

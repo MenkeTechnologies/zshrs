@@ -229,6 +229,14 @@ pub struct RecordEvent {
     pub value_array: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_assoc: Option<Vec<(String, String)>>,
+    /// Recording-shell identity for the federated catalog (per
+    /// docs/DAEMON_AS_SERVICE.md §"Third-party shell recorders" +
+    /// `docs/SHELL_IDS.md`). Distinguishes records from different
+    /// shells writing to the same daemon. None = inherit from the
+    /// enclosing `RecorderBundle.shell_id` (defaults to "zshrs"
+    /// at ingest time when neither is set).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_id: Option<String>,
 }
 
 fn is_default_attrs(a: &ParamAttrs) -> bool {
@@ -244,6 +252,11 @@ pub struct RecorderBundle {
     pub zdotdir: Option<String>,
     pub home: Option<String>,
     pub events: Vec<RecordEvent>,
+    /// Federated-catalog shell identity. Falls back to "zshrs" if not
+    /// supplied. Per-event `shell_id` overrides this top-level value
+    /// for individual records (lets one bundle carry mixed sources).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_id: Option<String>,
 }
 
 #[inline]
@@ -389,6 +402,11 @@ pub fn emit_full(
         attrs,
         value_array,
         value_assoc,
+        // Per-event shell_id stays None — the bundle's top-level
+        // shell_id at flush time tells the daemon which shell these
+        // events came from. Shaving N bytes per event matters at
+        // recorder scale (zpwr ingest = ~20k events).
+        shell_id: None,
     };
     if let Ok(mut buf) = BUFFER.lock() {
         buf.push(ev);
@@ -918,6 +936,11 @@ pub fn flush_to_daemon() -> bool {
         zdotdir: std::env::var("ZDOTDIR").ok(),
         home: std::env::var("HOME").ok(),
         events,
+        // Stamp the bundle as zshrs-originated. Other shells using the
+        // `definitions_emit` op pass their own shell_id; full-bundle
+        // ingest (this code path) is exclusive to the AOP-instrumented
+        // zshrs-recorder binary, so we hardcode "zshrs" here.
+        shell_id: Some("zshrs".to_string()),
     };
     let event_count = bundle.events.len();
     let payload = match serde_json::to_value(&bundle) {

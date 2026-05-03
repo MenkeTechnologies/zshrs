@@ -219,85 +219,142 @@ for a minimum 12-month deprecation window.
 
 ### Op surface (initial v1.0 — public stable)
 
+Op names are flat snake_case (the dotted `daemon.cache.put` form in
+the table below is a logical grouping; the wire op is `cache_put`).
+HTTP route: `POST /op/<NAME>` for every op below. SSE streaming
+endpoints listed under §"Streaming endpoints" further down.
+
+Status legend:
+- ✅ shipped (live in the daemon today, exercised by `tests/daemon_http.rs`
+  + the `examples/daemon-shell.zsh` wrappers)
+- ⏳ deferred (named here for forward compatibility; not yet implemented)
+
 ```
-HEALTH
-  daemon.health()                         → { version, uptime_ns, sessions, protocol_versions[] }
-  daemon.metrics(reset?)                  → metrics map (counters, histograms)
+HEALTH                                                                       Status
+  GET  /health                            → { ok, version, uptime_ms }                   ✅
+  GET  /metrics  (Prometheus 0.0.4 text)  → daemon_uptime_seconds, daemon_op_total{op}…  ✅
+  metrics                                 → JSON: { uptime_seconds, op_total{}, … }      ✅
 
 CACHE — persistent KV per client namespace, sqlite-backed
-  daemon.cache.put(ns, key, value, ttl?)  → ack
-  daemon.cache.get(ns, key)               → value | NotFound
-  daemon.cache.del(ns, key)               → ack
-  daemon.cache.list(ns, prefix?)          → keys[]
-  daemon.cache.stats(ns)                  → { hit_count, miss_count, byte_count, key_count }
+  cache_put         {ns, key, value, ttl_secs?}      → {bytes, expires_at}               ✅
+  cache_get         {ns, key}                        → {value, bytes, …} | 404           ✅
+  cache_del         {ns, key}                        → {deleted: bool}                   ✅
+  cache_list        {ns, prefix?}                    → {keys[], count}                   ✅
+  cache_stats       {ns?}                            → {key_count, byte_count, …}        ✅
 
-ARTIFACT — content-addressed cache, rkyv-backed for zero-copy reads
-  daemon.artifact.put(name, blob)         → digest (sha256)
-  daemon.artifact.get(name)               → blob | NotFound
-  daemon.artifact.get_by_digest(digest)   → blob
-  daemon.artifact.gc(max_age, max_size)   → bytes_freed
-  daemon.artifact.list()                  → entries[]
+ARTIFACT — content-addressed cache (sha256 + names.db index)
+  artifact_put              {name, value | value_base64}  → {digest, bytes}              ✅
+  artifact_get              {name}                        → {digest, value_base64} | 404 ✅
+  artifact_get_by_digest    {digest}                      → {digest, value_base64} | 404 ✅
+  artifact_gc               {max_age_secs?, max_bytes?}   → {removed, freed_bytes}       ✅
+  artifact_list             {prefix?}                     → {entries[], count}           ✅
 
 JOB — tokio-backed task queue with persistent state
-  daemon.job.submit(spec)                 → job_id
-                                            spec: { argv, env, cwd, timeout?, retries?, depends_on? }
-  daemon.job.poll(job_id)                 → { status: pending|running|completed|failed,
-                                              exit?, started_at?, finished_at?, output_size? }
-  daemon.job.cancel(job_id)               → ack
-  daemon.job.list(filter?)                → job[]
-  daemon.job.logs(job_id, offset?)        → stream
+  job_submit  {command[], cwd?, env?, tags?}    → {job_id}                                ✅
+  job_status  {id}                              → {job: { state, exit_code, … }}          ✅
+  job_output  {id, stderr?}                     → {content, stderr: bool}                 ✅
+  job_list    {state?, tag?, limit?}            → {jobs[], count}                         ✅
+  job_kill    {id}                              → {killed: bool}                          ✅
+  job_cancel  {id}                              → {cancelled: bool}                       ✅
+  job_wait    {id}                              → {state, exit_code}                      ✅
 
-SCHEDULE — cron-equivalent with persistent state
-  daemon.schedule.add(spec)               → schedule_id
-                                            spec: { cron_expr, argv, env?, max_concurrent? }
-  daemon.schedule.add_once(timestamp, spec) → schedule_id (one-shot)
-  daemon.schedule.remove(schedule_id)     → ack
-  daemon.schedule.list()                  → schedule[]
+SCHEDULE — cron-equivalent with persistent state (cache.db / table `schedule`)
+  schedule_add        {cron_expr, command[], cwd?, env?, notes?}  → {schedule_id}         ✅
+  schedule_add_once   {fire_at_unix_secs, command[], …}            → {schedule_id}        ✅
+  schedule_remove     {id}                                          → {removed: bool}     ✅
+  schedule_list       {enabled_only?}                               → {schedules[]}       ✅
+  // tick driver runs once / second; due rows fire job_submit with tag `scheduled`.
 
 WATCH — fsnotify push stream
-  daemon.watch.subscribe(glob, events?)   → stream of { path, event_kind, ts_ns }
-                                            events: create, modify, delete, rename
-  daemon.watch.unsubscribe(sub_id)        → ack
+  GET /stream/watch?path=DIR&recursive=BOOL  → SSE `event: fs`                            ✅
+                                               data: { trigger_path, source_root, … }
+  watch_unsubscribe                                                                      ⏳ (close TCP)
 
 EVENT — user-defined pubsub bus
-  daemon.event.publish(channel, payload)  → ack (fanout count)
-  daemon.event.subscribe(channel_glob)    → stream of { channel, payload, sender, ts_ns }
-  daemon.event.unsubscribe(sub_id)        → ack
+  publish      {topic, data}                  → {delivered_to: N}                         ✅
+  subscribe    {pattern}                      → {subscription_id, pattern}                ✅ (socket)
+  unsubscribe  {id}                           → {removed: bool}                           ✅
+  GET /stream/events?channel=PATTERN          → SSE `event: pub`                          ✅
+                                                data: { topic, data, scope, … }
+  // Pattern is `<scope>.<topic>` (e.g. `*.*`, `shell:5.build_done`).
 
-LOCK — named cross-process mutual exclusion
-  daemon.lock.acquire(name, timeout?)     → lock_token | Timeout
-  daemon.lock.try_acquire(name)           → lock_token | Busy
-  daemon.lock.release(lock_token)         → ack
-  daemon.lock.list()                      → { name, holder_pid, age }[]
+LOCK — named cross-process mutual exclusion (PID-tied auto-release)
+  lock_acquire     {name, pid, timeout_secs?}   → {token} | timeout                       ✅
+  lock_try_acquire {name, pid}                  → {token} | busy                          ✅
+  lock_release     {name, token}                → {released: bool}                        ✅
+  lock_list        {}                           → {locks[{name, holder_pid, alive, …}]}   ✅
 
-DEFINITIONS — shell-state catalog (recorder-fed)
-  daemon.definitions.query(filter)        → record[]
-                                            filter: { kind?, name?, run_id?, mode? }
-  daemon.definitions.diff(run_a, run_b)   → { added, removed, changed }
-  daemon.definitions.subscribe(filter)    → stream of new records (live recording)
+DEFINITIONS — shell-state catalog (recorder-fed, federated by shell_id)
+  definitions_kinds   {}                                  → {kinds[], all_known[]}        ✅
+  definitions_query   {kind?, name?, prefix?, shell_id?, limit?}                          ✅
+                                                          → {records[], count}
+  definitions_emit    {shell_id, kind, name, value?, file?, line?, fn_chain?}             ✅
+                                                          → {wrote_rows, …}
+  definitions_diff    {shell_a, shell_b, kind?}           → {added[], removed[], changed[]} ✅
+  GET /stream/definitions                                  → SSE `event: defs`            ✅
+                                                            (fired on every recorder_ingest)
 
-SNAPSHOT — portable shell-state artifacts
-  daemon.snapshot.save(tag)               → snapshot_id
-  daemon.snapshot.list()                  → snapshot[]
-  daemon.snapshot.load(id_or_tag)         → ack (atomic swap)
-  daemon.snapshot.diff(a, b)              → { added, removed, changed }
-  daemon.snapshot.bisect(good, bad)       → first_diverging_record
-  daemon.snapshot.publish(registry_url)   → published_url
-  daemon.snapshot.pull(url)               → snapshot_id
-  daemon.snapshot.sign(key_path)          → signature
-  daemon.snapshot.verify(pubkey_path)     → valid|invalid
+SNAPSHOT — portable canonical-state artifacts
+  snapshot_save  {tag, notes?}     → {tag, path, bytes, generation, total_rows}           ✅
+  snapshot_list  {}                → {snapshots[{tag, path, bytes}]}                      ✅
+  snapshot_load  {tag}             → {rows_restored} (atomic replace_subsystem)           ✅
+  snapshot_diff  {a, b}            → {added[], removed[], changed[]}                      ✅
+  snapshot_bisect / publish / pull / sign / verify                                       ⏳
 
 SHELL — cross-shell coordination (extends zsend/znotify/zsubscribe)
-  daemon.shell.list()                     → shell[]
-                                            shell: { id, pid, started_at, tty, mode, label? }
-  daemon.shell.send(target_id, msg)       → ack
-  daemon.shell.broadcast(msg)             → fanout count
-  daemon.shell.tag(self, label)           → ack
+  list_shells   {}                            → {shells[{id, pid, tty, …}]}               ✅
+  send          {target_id, msg, …}           → {delivered}                               ✅
+  notify        {message, urgency, …}         → {fanout}                                  ✅
+  tag / untag   {label}                       → {tags}                                    ✅
+
+EXPORT — universal cache dump in any format including PDF
+  export        {target, format}              → {body | body_base64}                      ✅
+  view          {target, format?}             → human-readable dump                       ✅
+  // format ∈ sh|json|yaml|text|csv|sql|native|disasm|zcompdump|zsh-histfile|pdf
 ```
 
-Every op is JSON-Schema-documented; the schema ships with the
-daemon source tree and is generated into `OpenAPI`/`protobuf`/
-`cddl` for client-library generation.
+Most ops mirror the IPC surface; the daemon dispatches HTTP and
+unix-socket calls through the same `ops::dispatch` function so wire
+formats are transport-only differences.
+
+### Streaming endpoints (Server-Sent Events)
+
+| Endpoint | Event kind | Payload | Source op |
+|---|---|---|---|
+| `GET /stream/watch?path=DIR&recursive=BOOL` | `fs` | `{trigger_path, source_root, shard, …}` | fsnotify debouncer |
+| `GET /stream/events?channel=PATTERN` | `pub` | `{topic, data, scope, subscription_id}` | `publish` |
+| `GET /stream/definitions` | `defs` | `{events_ingested, rows_written, elapsed_ms, …}` | `recorder_ingest` |
+
+Each connection registers a synthetic IPC session for its lifetime;
+disconnect (TCP close) auto-deregisters. Keep-alive comments are
+emitted every 15 seconds so HTTP intermediaries don't drop idle
+connections. CORS is **not** enabled in v1 (same-origin tooling only;
+add a reverse proxy for browser pages).
+
+### Implementation status snapshot (this document, real time)
+
+| Surface | Done | Notes |
+|---|---|---|
+| HEALTH | ✅ | `/health`, `/metrics` (Prom text), `metrics` op (JSON) |
+| CACHE | ✅ | sqlite-backed, TTL-aware, namespaced |
+| ARTIFACT | ✅ | sha256 dedup, base64 wire encoding, GC by age + size cap |
+| JOB | ✅ | tokio supervisor, per-job stdout/stderr files, terminal states `exited`/`failed`/`killed`/`cancelled` |
+| SCHEDULE | ✅ | cron 6-field format, sqlite-persisted, 1Hz tick, fires `job_submit` with `tags:["scheduled"]` |
+| WATCH | ✅ | per-connection fsnotify registration, SSE delivery |
+| EVENT | ✅ | scope.topic patterns, `publish` requires session (HTTP `handler_op` registers per request) |
+| LOCK | ✅ | named mutex, u128 token, PID liveness probe |
+| DEFINITIONS | ✅ (subscribe deferred) | `kinds`, `query`, `emit`, `diff`; federated by `shell_id` (composite-key store keeps per-shell rows distinct); SSE pushes recorder ingests; see `docs/SHELL_IDS.md` for identifier registry |
+| SNAPSHOT | ✅ (publish/sign deferred) | save/list/load/diff via rkyv `CanonicalShard` |
+| SHELL | ✅ | pre-existing IPC ops surfaced over HTTP |
+| EXPORT (PDF) | ✅ | `printpdf`-rendered, base64-wire |
+| AUTH | ✅ | bearer tokens in `daemon.toml`, refuses non-loopback bind without tokens |
+| METRICS | ✅ | Prom 0.0.4 text + JSON op |
+
+Deferred to a follow-up round, named here for forward compatibility:
+- `snapshot_bisect / publish / pull / sign / verify`
+- per-namespace cache quotas, daemon-wide rate limits
+- artifact streaming for large blobs (octet-stream response)
+- OpenAPI / protobuf / cddl schema generation
 
 ### Authentication / authorization
 

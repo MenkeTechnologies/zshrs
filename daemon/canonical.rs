@@ -36,6 +36,26 @@ use super::Result;
 const PROMOTIONS_SLUG: &str = "promotions";
 const PROMOTIONS_SOURCE_ROOT: &str = "user-overlay";
 
+/// Federation separator embedded in the in-memory storage key when a
+/// row is tagged with a non-default `shell_id`. ASCII Unit Separator
+/// (0x1f) — illegal in any reserved shell_id (see docs/SHELL_IDS.md
+/// identifier rules: lowercase alphanumerics + `-_:`) and in any
+/// realistic recorder key (alias names, function names, env vars).
+/// Storage layout:
+///   shell_id None  / Some("zshrs")  → stored under bare `key`
+///   shell_id Some(other)            → stored under `key\x1fshell_id`
+/// This keeps legacy on-disk shards (which carry no shell_id) and
+/// every existing zshrs row in their original slot, while letting
+/// federated rows from bash/fish/etc. coexist without overwrite.
+const SHELL_ID_SEP: char = '\x1f';
+
+fn composite_storage_key(key: &str, shell_id: Option<&str>) -> String {
+    match shell_id {
+        None | Some("zshrs") => key.to_string(),
+        Some(sid) => format!("{key}{SHELL_ID_SEP}{sid}"),
+    }
+}
+
 /// One row in the canonical table. Stores the JSON-encoded value (so list /
 /// scalar / map values all round-trip cleanly through `unjson` in export.rs).
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -44,6 +64,14 @@ pub struct CanonicalRow {
     pub value: String, // already JSON-encoded
     pub set_at_ns: i64,
     pub set_by_shell: Option<i64>,
+    /// Federated-catalog recording-shell identity. Filled by the
+    /// recorder ingest path (zshrs_recorder bundle's top-level
+    /// shell_id, or per-record override) and by `definitions_emit`
+    /// from non-zshrs shells. None on legacy / pre-shell_id rows is
+    /// treated as "zshrs" by query callers. See
+    /// docs/SHELL_IDS.md for the reserved-identifier registry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_id: Option<String>,
 }
 
 /// In-memory canonical state, keyed first by subsystem, then by key. Values
@@ -111,6 +139,12 @@ impl CanonicalEngine {
                     value: v,
                     set_at_ns: now,
                     set_by_shell: None,
+                    // Reload from disk: shell_id is None — the shard's
+                    // header doesn't carry a per-row shell_id today.
+                    // Future: persist shell_id alongside rkyv shard
+                    // (`extras["row_shell_ids"]` map) so this round-
+                    // trips. v1 keeps None and treats as "zshrs".
+                    shell_id: None,
                 },
             );
         };
@@ -185,42 +219,97 @@ impl CanonicalEngine {
         json_value: &str,
         set_by_shell: Option<u64>,
     ) -> usize {
+        self.upsert_tagged(subsystem, key, json_value, set_by_shell, None)
+    }
+
+    /// `upsert` + structured `shell_id` for federated-catalog rows.
+    /// Used by `definitions_emit` (single-record write from non-zshrs
+    /// shells) and by `recorder_ingest` when the bundle's `shell_id`
+    /// is something other than the implicit "zshrs". Federation key
+    /// is `(subsystem, key, shell_id)` — see `composite_storage_key`
+    /// below — so two shells emitting `alias gst` keep both rows
+    /// distinct in the catalog (the diff op compares them by shell_id).
+    /// Legacy and `"zshrs"` rows share the bare-key slot for
+    /// backward compatibility with pre-federation on-disk shards.
+    pub fn upsert_tagged(
+        &self,
+        subsystem: &str,
+        key: &str,
+        json_value: &str,
+        set_by_shell: Option<u64>,
+        shell_id: Option<String>,
+    ) -> usize {
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let ckey = composite_storage_key(key, shell_id.as_deref());
         let mut g = self.inner.write();
         g.rows.entry(subsystem.to_string()).or_default().insert(
-            key.to_string(),
+            ckey,
             CanonicalRow {
                 key: key.to_string(),
                 value: json_value.to_string(),
                 set_at_ns: now,
                 set_by_shell: set_by_shell.map(|n| n as i64),
+                shell_id,
             },
         );
         1
     }
 
     /// Bulk-replace one subsystem's rows from a (key, json_value) iterator.
-    /// Returns the number of rows after the replace.
+    /// Returns the number of rows inserted by this call.
     pub fn replace_subsystem<I: IntoIterator<Item = (String, String)>>(
         &self,
         subsystem: &str,
         rows: I,
         set_by_shell: Option<u64>,
     ) -> usize {
+        self.replace_subsystem_tagged(subsystem, rows, set_by_shell, None)
+    }
+
+    /// `replace_subsystem` + structured `shell_id` stamped on every
+    /// row. Used by `recorder_ingest` so all rows from a single
+    /// recorder bundle carry the bundle's federated shell identity.
+    /// Scope-clears: only rows tagged with the same `shell_id` get
+    /// dropped before the re-insert; rows from other shells stay put
+    /// so a bash recorder ingest doesn't wipe out a parallel zshrs
+    /// recorder ingest in the same subsystem. Returns the number of
+    /// rows inserted by this call.
+    pub fn replace_subsystem_tagged<I: IntoIterator<Item = (String, String)>>(
+        &self,
+        subsystem: &str,
+        rows: I,
+        set_by_shell: Option<u64>,
+        shell_id: Option<String>,
+    ) -> usize {
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let mut g = self.inner.write();
         let map = g.rows.entry(subsystem.to_string()).or_default();
-        map.clear();
+        // Scope-clear: drop only rows for this shell_id slot. Bare
+        // keys belong to the None / "zshrs" scope; suffixed keys
+        // belong to other shells.
+        match shell_id.as_deref() {
+            None | Some("zshrs") => {
+                map.retain(|k, _| k.contains(SHELL_ID_SEP));
+            }
+            Some(sid) => {
+                let suffix = format!("{SHELL_ID_SEP}{sid}");
+                map.retain(|k, _| !k.ends_with(suffix.as_str()));
+            }
+        }
+        let mut inserted = 0;
         for (k, v) in rows {
+            let ckey = composite_storage_key(&k, shell_id.as_deref());
             let r = CanonicalRow {
-                key: k.clone(),
+                key: k,
                 value: v,
                 set_at_ns: now,
                 set_by_shell: set_by_shell.map(|n| n as i64),
+                shell_id: shell_id.clone(),
             };
-            map.insert(k, r);
+            map.insert(ckey, r);
+            inserted += 1;
         }
-        map.len()
+        inserted
     }
 
     /// Read every row in a subsystem, ordered by key.
