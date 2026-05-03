@@ -54,7 +54,7 @@ use super::ipc::Frame;
 use super::state::DaemonState;
 use super::Result;
 
-/// Per-listener config materialised from `~/.cache/zshrs/daemon.toml`
+/// Per-listener config materialised from `~/.zshrs/daemon.toml`
 /// `[http]` section by `paths::load_http_config()`.
 #[derive(Debug, Clone, Default)]
 pub struct HttpConfig {

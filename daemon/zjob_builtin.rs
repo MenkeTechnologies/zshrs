@@ -7,7 +7,7 @@
 //   (3) native cross-shell pub/sub + dispatch
 //
 // Replaces nohup/disown/setsid/pueue/screen-as-job-runner. Jobs survive shell
-// exit; output is captured to ~/.cache/zshrs/jobs/{id}.{out,err}; status is
+// exit; output is captured to ~/.zshrs/jobs/{id}.{out,err}; status is
 // persisted in catalog.db so even daemon restarts don't lose history.
 //
 // CLI shape:

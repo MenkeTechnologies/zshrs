@@ -147,7 +147,7 @@
   <td class="cite">DAEMON.md:565-572</td>
   <td><code>zcache import catalog</code> / <code>shard</code> / <code>--all</code></td>
   <td class="status-cell"><span class="st-missing">GAP</span></td>
-  <td class="cite">ops.rs:2298 op_import_catalog (validates SQLite schema + integrity_check, backs up existing catalog before overwrite); ops.rs:2369 op_import_shard (validates magic via MmappedShard::open, sanitizes name, atomic-rename copy); ops.rs:2528 op_import_all (parses ustar, restores every entry into ~/.cache/zshrs/, *.preimport-&lt;ts&gt; backups for collisions)</td>
+  <td class="cite">ops.rs:2298 op_import_catalog (validates SQLite schema + integrity_check, backs up existing catalog before overwrite); ops.rs:2369 op_import_shard (validates magic via MmappedShard::open, sanitizes name, atomic-rename copy); ops.rs:2528 op_import_all (parses ustar, restores every entry into ~/.zshrs/, *.preimport-&lt;ts&gt; backups for collisions)</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md:562</td>
@@ -177,7 +177,7 @@
   <td class="cite">DAEMON.md:278</td>
   <td>Per-shell replay log for non-deterministic fragments</td>
   <td class="status-cell"><span class="st-partial">PARTIAL</span></td>
-  <td class="cite">paths.rs added <code>replay_dir</code> at <code>~/.cache/zshrs/replay/</code>. ops.rs:write_replay_log emits <code>{hash8}-{stem}.zsh</code> per source root with non_deterministic_lines body. New op <code>replay_log</code> (ops.rs:op_replay_log) returns body for client to <code>eval</code> at boot.</td>
+  <td class="cite">paths.rs added <code>replay_dir</code> at <code>~/.zshrs/replay/</code>. ops.rs:write_replay_log emits <code>{hash8}-{stem}.zsh</code> per source root with non_deterministic_lines body. New op <code>replay_log</code> (ops.rs:op_replay_log) returns body for client to <code>eval</code> at boot.</td>
 </tr>
 <tr>
   <td class="cite">DAEMON.md acceptance criteria (line 1071+)</td>

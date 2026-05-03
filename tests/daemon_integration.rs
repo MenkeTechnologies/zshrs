@@ -1,7 +1,7 @@
 // Integration tests for the zshrs-daemon foundation (see docs/DAEMON.md, src/daemon/).
 //
 // Each test:
-//   1. Creates an isolated XDG_CACHE_HOME via tempdir.
+//   1. Creates an isolated $ZSHRS_HOME via tempdir.
 //   2. Spawns `zshrs --daemon` with that cache home.
 //   3. Drives the daemon via the sync IPC client (zsh::daemon::client::Client).
 //   4. Tears the daemon down by invoking the `daemon stop` op (or kills it).
@@ -44,10 +44,10 @@ struct DaemonHandle {
 impl DaemonHandle {
     fn spawn() -> Self {
         let tmp = tempfile::TempDir::new().expect("tempdir");
-        let cache_home = tmp.path().to_path_buf();
+        let zshrs_home = tmp.path().to_path_buf();
 
         let child = Command::new(zshrs_daemon_binary())
-            .env("XDG_CACHE_HOME", &cache_home)
+            .env("ZSHRS_HOME", &zshrs_home)
             .env("ZSHRS_QUIET_FIRST_RUN", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -55,7 +55,7 @@ impl DaemonHandle {
             .spawn()
             .expect("daemon spawn");
 
-        let paths = CachePaths::with_root(cache_home.join("zshrs"));
+        let paths = CachePaths::with_root(zshrs_home);
 
         // Wait for the socket to appear.
         let start = Instant::now();
@@ -242,11 +242,10 @@ fn singleton_pid_lock() {
     assert!(pid > 0);
     assert!(pidlock::pid_alive(pid));
 
-    // Try to spawn a second daemon against the same cache; it should detect the lock
+    // Try to spawn a second daemon against the same root; it should detect the lock
     // and exit cleanly (status 0, per docs/DAEMON.md daemon lifecycle).
-    let cache_home = d.paths.root.parent().unwrap().to_path_buf();
     let status = Command::new(zshrs_daemon_binary())
-        .env("XDG_CACHE_HOME", &cache_home)
+        .env("ZSHRS_HOME", &d.paths.root)
         .env("ZSHRS_QUIET_FIRST_RUN", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())

@@ -1,13 +1,13 @@
 //! zshrs logging & profiling framework
 //!
 //! **Logging** (always on):
-//!   - File: $HOME/.cache/zshrs/zshrs.log
+//!   - File: $HOME/.zshrs/zshrs.log
 //!   - Level: ZSHRS_LOG env var (default: info)
 //!   - Structured key=value fields, ISO timestamps, thread names, module paths
 //!
 //! **Profiling** (feature-gated, zero cost when off):
-//!   - `--features profiling`  → chrome://tracing JSON  → $HOME/.cache/zshrs/trace-{PID}.json
-//!   - `--features flamegraph` → folded stacks          → $HOME/.cache/zshrs/flame-{PID}.folded
+//!   - `--features profiling`  → chrome://tracing JSON  → $HOME/.zshrs/trace-{PID}.json
+//!   - `--features flamegraph` → folded stacks          → $HOME/.zshrs/flame-{PID}.folded
 //!   - `--features prometheus` → metrics on :9090/metrics
 //!
 //! Call `zsh::log::init()` once at startup. Use `tracing::{info,debug,trace,warn,error}!`
@@ -28,14 +28,17 @@ struct Guards {
 
 static GUARDS: OnceLock<Guards> = OnceLock::new();
 
-/// Resolve log/profile output directory: $HOME/.cache/zshrs/
+/// Resolve log/profile output directory: $ZSHRS_HOME or $HOME/.zshrs
 pub fn log_dir() -> PathBuf {
+    if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+        return PathBuf::from(custom);
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".cache/zshrs")
+        .join(".zshrs")
 }
 
-/// Resolve full log path: $HOME/.cache/zshrs/zshrs.log
+/// Resolve full log path: $ZSHRS_HOME/zshrs.log or $HOME/.zshrs/zshrs.log
 pub fn log_path() -> PathBuf {
     log_dir().join("zshrs.log")
 }

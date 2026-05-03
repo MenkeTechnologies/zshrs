@@ -6,7 +6,7 @@ shell-function wrappers in [`daemon-shell.zsh`](./daemon-shell.zsh).
 
 ## Setup
 
-`~/.cache/zshrs/daemon.toml`:
+`~/.zshrs/daemon.toml`:
 
 ```toml
 [http]
@@ -239,7 +239,7 @@ Caddy) if you need browser access.
 
 ## KV cache (`daemon.cache.*`)
 
-Persistent namespaced KV, sqlite-backed at `~/.cache/zshrs/cache.db`.
+Persistent namespaced KV, sqlite-backed at `~/.zshrs/cache.db`.
 Replaces single-user Redis. Namespaces (`ns`) are arbitrary strings.
 
 ```sh
@@ -332,7 +332,7 @@ curl -s -X POST http://127.0.0.1:7733/op/artifact_gc \
 
 Tag-based canonical-state capture/restore. Same on-disk format as the
 recorder bundle — rkyv `CanonicalShard` files under
-`~/.cache/zshrs/snapshots/<tag>.rkyv`.
+`~/.zshrs/snapshots/<tag>.rkyv`.
 
 ```sh
 # Save state under a tag:

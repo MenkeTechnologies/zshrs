@@ -1,7 +1,7 @@
-// ~/.cache/zshrs/* path resolution + permission enforcement.
+// ~/.zshrs/* path resolution + permission enforcement.
 //
 // Layout (matches docs/DAEMON.md):
-//   ~/.cache/zshrs/
+//   ~/.zshrs/
 //   ├── index.rkyv
 //   ├── images/                  ← 0700 dir, 0600 files
 //   ├── catalog.db               ← 0600 (daemon-only writer)
@@ -48,20 +48,24 @@ pub struct CachePaths {
 }
 
 impl CachePaths {
-    /// Resolve cache paths from `XDG_CACHE_HOME` or `~/.cache/zshrs`.
+    /// Resolve to `$ZSHRS_HOME` or `$HOME/.zshrs`.
     ///
-    /// **Not** `dirs::cache_dir()`, which on macOS returns
-    /// `~/Library/Caches/`. The spec (docs/DAEMON.md) says `~/.cache/zshrs/`
-    /// on every platform, and so do every doc, script, and example. Cross-
-    /// platform consistency wins over Apple's HIG.
+    /// Single top-level directory holds everything: rkyv shards, sqlite
+    /// caches, sockets, pid file, logs, AND config (`daemon.toml`,
+    /// `zshrs.toml`). The directory is NOT cache-semantic — it survives
+    /// OS cache eviction; that's why we don't use `XDG_CACHE_HOME`.
+    /// Matches the convention of `~/.zinit/`, `~/.zpwr/`, `~/.oh-my-zsh/`.
+    ///
+    /// Override via `$ZSHRS_HOME` for tests / hermetic harnesses /
+    /// users who want a non-default location.
     pub fn resolve() -> Result<Self> {
-        let root = if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
-            PathBuf::from(xdg).join("zshrs")
+        let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+            PathBuf::from(custom)
         } else {
             let home = std::env::var_os("HOME")
                 .or_else(|| dirs::home_dir().map(|p| p.into_os_string()))
                 .ok_or_else(|| DaemonError::other("could not resolve $HOME"))?;
-            PathBuf::from(home).join(".cache").join("zshrs")
+            PathBuf::from(home).join(".zshrs")
         };
         Ok(Self::with_root(root))
     }
@@ -141,20 +145,23 @@ fn ensure_dir_700(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Resolve `~/.cache/zshrs/daemon.toml` (respecting `$XDG_CACHE_HOME`).
+/// Resolve `$ZSHRS_HOME/daemon.toml` or `~/.zshrs/daemon.toml`.
 /// Single-directory rule: every zshrs file — config, cache, sockets,
-/// rkyv shards, log — lives under `~/.cache/zshrs/`. Returns the path
-/// even if the file does not exist; callers handle the not-present
-/// case as "no overrides" rather than as an error.
+/// rkyv shards, log — lives under one root. Returns the path even if
+/// the file does not exist; callers handle the not-present case as
+/// "no overrides" rather than as an error.
 pub fn daemon_config_file() -> Result<PathBuf> {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
-        .ok_or_else(|| DaemonError::other("no $HOME / $XDG_CACHE_HOME for daemon.toml"))?;
-    Ok(base.join("zshrs").join("daemon.toml"))
+    let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+        PathBuf::from(custom)
+    } else {
+        dirs::home_dir()
+            .map(|h| h.join(".zshrs"))
+            .ok_or_else(|| DaemonError::other("no $HOME / $ZSHRS_HOME for daemon.toml"))?
+    };
+    Ok(root.join("daemon.toml"))
 }
 
-/// Load `[http]` section from `~/.cache/zshrs/daemon.toml` into the
+/// Load `[http]` section from `~/.zshrs/daemon.toml` into the
 /// `HttpConfig` consumed by `daemon::http::serve_http`. The file is
 /// optional; a missing file or a missing `[http]` section both produce
 /// the default (HTTP listener disabled).

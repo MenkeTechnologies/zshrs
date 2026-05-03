@@ -4,7 +4,7 @@
 //! timers / launchd for personal jobs. State persists across daemon
 //! restarts (sqlite-backed); a single tokio task drives the tick loop.
 //!
-//! State table (sibling to cache.db at `~/.cache/zshrs/cache.db`,
+//! State table (sibling to cache.db at `~/.zshrs/cache.db`,
 //! shared file but separate table — same SQLite handle for free):
 //!
 //! ```sql

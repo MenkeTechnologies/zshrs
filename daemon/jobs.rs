@@ -4,7 +4,7 @@
 // One Supervisor instance lives for daemon lifetime. Clients submit a command
 // via the `job_submit` op; the daemon spawns it as a child of the daemon
 // process (so it survives the originating shell's exit, in `nohup`-style),
-// captures stdout/stderr to per-job files in ~/.cache/zshrs/jobs/, and
+// captures stdout/stderr to per-job files in ~/.zshrs/jobs/, and
 // publishes `job:{id}.{stdout,stderr,complete}` pubsub events so subscribers
 // (`zjob output --follow`) get streaming live output.
 //

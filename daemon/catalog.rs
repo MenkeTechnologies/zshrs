@@ -12,7 +12,7 @@
 //                   parent_paths)
 //
 // SQLite is the read-only inspection mirror per DAEMON.md. Bytecode lives in
-// rkyv shards (~/.cache/zshrs/images/), NOT in SQLite BLOBs. The schema-v2
+// rkyv shards (~/.zshrs/images/), NOT in SQLite BLOBs. The schema-v2
 // migration drops the bytecode columns that v1 carried — they were redundant
 // disk + memory pressure for zero query value.
 //
@@ -36,7 +36,7 @@ use super::{paths::CachePaths, Result};
 ///   v1 — initial schema (had bytecode BLOB columns on entries + compiled_files)
 ///   v2 — drop bytecode BLOBs. SQLite is a read-only inspection mirror per
 ///        DAEMON.md; the actual bytecode lives in rkyv shards in
-///        ~/.cache/zshrs/images/. SQLite blob storage was redundant disk +
+///        ~/.zshrs/images/. SQLite blob storage was redundant disk +
 ///        memory pressure for zero query value (nobody queries bytecode by
 ///        content).
 pub const SCHEMA_VERSION: i64 = 2;

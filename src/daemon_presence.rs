@@ -19,7 +19,7 @@
 //! `is_present()` before calling into the daemon client; on absent,
 //! they noop or fall back to source-interp behavior.
 //!
-//! Config (`~/.cache/zshrs/zshrs.toml`, all optional):
+//! Config (`$ZSHRS_HOME/zshrs.toml` or `~/.zshrs/zshrs.toml`, all optional):
 //!
 //!     [daemon]
 //!     # "auto" (default) = probe at startup, use if alive
@@ -36,12 +36,11 @@
 //!     #                    don't even check for zshrs rows. Strict mode.
 //!     skip_configs = "off"
 //!
-//! Lives in `~/.cache/zshrs/` alongside everything else (rkyv shards,
+//! Lives in `~/.zshrs/` alongside everything else (rkyv shards,
 //! catalog.db, daemon.sock, daemon.toml, log, …) — single directory
-//! rule for all zshrs files. Survives normal cache eviction by virtue
-//! of being the user's own config; if the user `rm -rf ~/.cache/zshrs/`
-//! they're explicitly resetting both cache + config together, which
-//! is the intent.
+//! rule for all zshrs files. Survives OS cache eviction (this is NOT
+//! cache-semantic state). `rm -rf ~/.zshrs/` is the one-verb total
+//! reset.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -124,7 +123,7 @@ impl SkipConfigs {
     }
 }
 
-/// Both knobs from `~/.cache/zshrs/zshrs.toml`. Missing file / section
+/// Both knobs from `~/.zshrs/zshrs.toml`. Missing file / section
 /// / key returns the safe defaults (`daemon=auto`, `skip_configs=off`).
 /// Unrecognized values fall back with a log warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,17 +196,17 @@ static SKIP_CONFIGS: AtomicU8 = AtomicU8::new(0);
 /// load on the hot path.
 static SHOULD_SKIP_CONFIGS: AtomicU8 = AtomicU8::new(0);
 
-/// Resolve `~/.cache/zshrs/zshrs.toml` (respecting `$XDG_CACHE_HOME`).
-/// Single-directory rule: every zshrs file lives under
-/// `~/.cache/zshrs/`. Returns None if neither $XDG_CACHE_HOME nor
-/// $HOME is set, which is rare enough to treat as "no config file".
+/// Resolve `$ZSHRS_HOME/zshrs.toml` or `~/.zshrs/zshrs.toml`.
+/// Single-directory rule: every zshrs file lives under one root.
+/// Returns None if neither $ZSHRS_HOME nor $HOME is set, which is
+/// rare enough to treat as "no config file".
 fn config_file_path() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache"))
-        })?;
-    Some(base.join("zshrs").join("zshrs.toml"))
+    let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+        std::path::PathBuf::from(custom)
+    } else {
+        std::path::PathBuf::from(std::env::var_os("HOME")?).join(".zshrs")
+    };
+    Some(root.join("zshrs.toml"))
 }
 
 /// Cheap probe — connect-only, no handshake — does the daemon socket
@@ -287,7 +286,7 @@ pub fn probe() -> Mode {
 }
 
 /// Cheap probe: does the daemon have a recorder shard on disk for
-/// shell_id "zshrs"? A `*-recorder.rkyv` file in `~/.cache/zshrs/images/`
+/// shell_id "zshrs"? A `*-recorder.rkyv` file in `~/.zshrs/images/`
 /// means the recorder ran at least once and we have canonical state to
 /// apply. **No IPC** — this is a directory listing + filename match,
 /// because the shell cold-start path can afford zero IPC roundtrips

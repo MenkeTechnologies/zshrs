@@ -15,7 +15,7 @@
 # Adjust ExecStart if you installed via cargo install --path .
 # (defaults to ~/.cargo/bin/zshrs-daemon) or to a system path.
 #
-# HTTP listener: enable in ~/.cache/zshrs/daemon.toml:
+# HTTP listener: enable in ~/.zshrs/daemon.toml:
 #   [http]
 #   listen = "127.0.0.1:7733"
 #   tokens = ["<bearer-token>"]   # required for non-loopback binds
@@ -23,7 +23,7 @@
 [Unit]
 Description=zshrs daemon (singleton cache + recorder + HTTP service)
 Documentation=https://github.com/MenkeTechnologies/zshrs
-Documentation=file://%h/.cache/zshrs/zshrs.log
+Documentation=file://%h/.zshrs/zshrs.log
 After=network.target
 
 [Service]
@@ -32,7 +32,7 @@ ExecStart=%h/.cargo/bin/zshrs-daemon
 Restart=on-failure
 RestartSec=2s
 
-# Tracing: send everything to ~/.cache/zshrs/zshrs.log already; journal
+# Tracing: send everything to ~/.zshrs/zshrs.log already; journal
 # captures stderr too via --log-stderr if you want one stream.
 Environment=ZSHRS_QUIET_FIRST_RUN=1
 
@@ -44,7 +44,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 # Re-allow writes to the daemon's own dirs:
-ReadWritePaths=%h/.cache/zshrs
+ReadWritePaths=%h/.zshrs
 ReadWritePaths=%h/.config/zshrs
 
 # Resource bounds — generous defaults; tune if you compile heavy

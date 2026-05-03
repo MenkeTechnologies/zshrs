@@ -1948,7 +1948,7 @@ fn legacy_scope_dirs(state: &Arc<DaemonState>) -> Vec<std::path::PathBuf> {
         }
     };
 
-    // Cache root (catches anything inside ~/.cache/zshrs/).
+    // Cache root (catches anything inside ~/.zshrs/).
     push(state.paths.root.clone());
 
     // HOME + ZDOTDIR + XDG_CACHE_HOME + ZPWR_LOCAL.
@@ -3223,7 +3223,7 @@ async fn op_export_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    // Collect candidate file list (relative paths within ~/.cache/zshrs/).
+    // Collect candidate file list (relative paths within ~/.zshrs/).
     let root = &state.paths.root;
     let mut entries: Vec<std::path::PathBuf> = Vec::new();
     if state.paths.index_rkyv.exists() {
@@ -3318,7 +3318,7 @@ async fn op_export_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
 }
 
 /// `import_all` — unpack a tar archive produced by `export_all` back into
-/// ~/.cache/zshrs/. Per docs/DAEMON.md:571. Existing files are renamed to
+/// ~/.zshrs/. Per docs/DAEMON.md:571. Existing files are renamed to
 /// `*.preimport-<ts>` so the import is reversible.
 async fn op_import_all(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let path = args
@@ -3780,7 +3780,7 @@ fn spawn_replacement_daemon() -> std::io::Result<u32> {
     }
 
     // Detach: new session, redirect stdio to /dev/null. The new daemon writes
-    // tracing output to ~/.cache/zshrs/zshrs.log.
+    // tracing output to ~/.zshrs/zshrs.log.
     use std::os::unix::process::CommandExt;
     unsafe {
         cmd.pre_exec(|| {

@@ -1,7 +1,7 @@
 // Daemon accept loop + per-connection handler.
 //
 // Per docs/DAEMON.md "Daemon = sole writer" + "90/10 work split":
-//   - tokio UnixListener on ~/.cache/zshrs/daemon.sock
+//   - tokio UnixListener on ~/.zshrs/daemon.sock
 //   - one async task per connected client; reads frames, dispatches to ops::dispatch,
 //     writes responses + async events back through a per-session mpsc::UnboundedSender
 //   - graceful shutdown via state.shutdown signal (set by `daemon stop` op or SIGTERM)
@@ -54,7 +54,7 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
     super::schedule::spawn_tick(Arc::clone(&state));
 
     // HTTP listener (off by default; opt-in via [http].listen in
-    // ~/.cache/zshrs/daemon.toml). Surfaces the same op set as the
+    // ~/.zshrs/daemon.toml). Surfaces the same op set as the
     // unix-socket IPC path so curl/httpie/any HTTP client can talk
     // to the daemon. See daemon/http.rs + docs/DAEMON_AS_SERVICE.md.
     let http_cfg = match super::paths::load_http_config() {
@@ -148,7 +148,7 @@ async fn handle_connection(
     _shutdown: Arc<tokio::sync::Notify>,
 ) -> Result<()> {
     // Peer-credential check FIRST — before reading any frame. Daemon-owned
-    // ~/.cache/zshrs/ is mode 0700, so the socket itself is unreachable from
+    // ~/.zshrs/ is mode 0700, so the socket itself is unreachable from
     // other UIDs unless the directory perms drift. Defense-in-depth: we
     // explicitly verify peer UID and refuse cross-UID connections (unless we
     // ARE root, in which case cross-uid is allowed for fleet-wide
@@ -373,7 +373,7 @@ fn peer_uid(stream: &UnixStream) -> std::io::Result<u32> {
     )))]
     {
         // Unknown platform: fall back to "trust the directory perms" — the
-        // ~/.cache/zshrs/ being 0700 already gates this.
+        // ~/.zshrs/ being 0700 already gates this.
         Ok(nix::unistd::Uid::current().as_raw())
     }
 }

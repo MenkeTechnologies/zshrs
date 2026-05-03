@@ -151,7 +151,7 @@ Library files (`lib/foo.zsh`, `lib/bar.zsh`) get packed and made resolvable via 
 
 **Strategy: pre-shipped target stubs.**
 
-- `cargo install zshrs` ships with `libzshrs_runtime-{x86_64-linux-musl, x86_64-linux-gnu, aarch64-linux-musl, aarch64-linux-gnu, aarch64-darwin}.a` blobs in `~/.cache/zshrs/runtime/`.
+- `cargo install zshrs` ships with `libzshrs_runtime-{x86_64-linux-musl, x86_64-linux-gnu, aarch64-linux-musl, aarch64-linux-gnu, aarch64-darwin}.a` blobs in `~/.zshrs/runtime/`.
 - `zshrs build --target X` picks the matching stub.
 - ~50-100 MB additional install size. One-shot install does it.
 - CI cross-builds (`cross` or `cargo-zigbuild`) populate the stubs at release time.
@@ -262,7 +262,7 @@ These are the load-bearing decisions to lock down before any code is written.
 | 5 | Cross-arch via pre-shipped stubs or on-demand build? | **Pre-shipped for v1, on-demand for v1.1** | Ship the deployment-story winner first. |
 | 6 | Multi-script dispatch: argv[0] (busybox) or argv[1] (subcommand)? | **Both, argv[0] takes precedence** | Match user framing + ergonomics. |
 | 7 | `zshrs build .` entry-point heuristic? | **`main.zsh` → `__main__.zsh` → single non-lib → error** | Predictable, configurable via `--entry`. |
-| 8 | What goes in `~/.cache/zshrs/runtime/`? | **Pre-built stubs per target triple** | One-time install cost, zero per-build cost. |
+| 8 | What goes in `~/.zshrs/runtime/`? | **Pre-built stubs per target triple** | One-time install cost, zero per-build cost. |
 | 9 | DWARF in v1 binaries? | **Yes, --strip removes** | Cheap to include, expensive to add later. |
 | 10 | First implementation language for runtime stub? | **Rust (existing zshrs code as `staticlib`)** | Reuse 100% of current implementation. No rewrite. |
 
@@ -470,10 +470,10 @@ The earlier "binary IS the database" framing — bake every plugin and every com
 
 ### Decision
 
-The daily-driver bytecode lives in a **sharded layout** under a single directory `~/.cache/zshrs/`. One image file per source root, plus a top-level index, plus the SQLite catalog, history, and tracing log — all colocated. No XDG split, no second persistent-data directory. User curates via filesystem ops (`cd ~/.cache/zshrs && rm <whatever>`); no `--clean-cache` subcommand — `rm` is the API.
+The daily-driver bytecode lives in a **sharded layout** under a single directory `~/.zshrs/`. One image file per source root, plus a top-level index, plus the SQLite catalog, history, and tracing log — all colocated. No XDG split, no second persistent-data directory. User curates via filesystem ops (`cd ~/.zshrs && rm <whatever>`); no `--clean-cache` subcommand — `rm` is the API.
 
 ```
-~/.cache/zshrs/
+~/.zshrs/
 ├── index.rkyv                              ← top-level fq_name → (shard_id, generation, byte_offset)
 ├── images/
 │   ├── {hash8}-system.rkyv                 ← /usr/share/zsh, dist completions
@@ -493,18 +493,18 @@ The daily-driver bytecode lives in a **sharded layout** under a single directory
 
 The cache directory has bounded litter (one image per plugin, capped naturally at install count). That's an explicit trade — bounded litter for per-shard rebuild and parallelism. The user's iterate-on-zpwr loop is the load-bearing constraint that drove this trade.
 
-**Why one directory, not split by durability:** previous draft proposed splitting persistent data (history.db, entry_stats) into `~/.local/share/zshrs/` so `rm -rf ~/.cache/zshrs/` would be safe. User overruled — single dir wins on simplicity. Trade is explicit: `rm -rf ~/.cache/zshrs/` nukes everything including history + accumulated stats. User responsibility, same as `rm -rf ~/.zsh_history` today. Surgical resets via per-file `rm` (see table below). Matches the global "user is root, no friction, no safety prompts" rule — `rm` is the user's tool, not zshrs's responsibility to wrap.
+**Why one directory, not split by durability:** previous draft proposed splitting persistent data (history.db, entry_stats) into `~/.local/share/zshrs/` so `rm -rf ~/.zshrs/` would be safe. User overruled — single dir wins on simplicity. Trade is explicit: `rm -rf ~/.zshrs/` nukes everything including history + accumulated stats. User responsibility, same as `rm -rf ~/.zsh_history` today. Surgical resets via per-file `rm` (see table below). Matches the global "user is root, no friction, no safety prompts" rule — `rm` is the user's tool, not zshrs's responsibility to wrap.
 
 **Reset tiers via filesystem ops** (always available — `rm` is a valid path):
 
 | Goal | Operation |
 |------|-----------|
-| Force one shard to rebuild | `rm ~/.cache/zshrs/images/plugin-foo.rkyv` |
-| Force all shards to rebuild | `rm -rf ~/.cache/zshrs/images/` |
-| Re-derive catalog (loses entry_stats — they live in catalog.db) | `rm ~/.cache/zshrs/catalog.db` |
-| Force re-link without re-shard | `rm ~/.cache/zshrs/index.rkyv` |
-| Full nuke including history + stats | `rm -rf ~/.cache/zshrs/` |
-| Truncate log | `rm ~/.cache/zshrs/zshrs.log` (or `: > zshrs.log` for in-place) |
+| Force one shard to rebuild | `rm ~/.zshrs/images/plugin-foo.rkyv` |
+| Force all shards to rebuild | `rm -rf ~/.zshrs/images/` |
+| Re-derive catalog (loses entry_stats — they live in catalog.db) | `rm ~/.zshrs/catalog.db` |
+| Force re-link without re-shard | `rm ~/.zshrs/index.rkyv` |
+| Full nuke including history + stats | `rm -rf ~/.zshrs/` |
+| Truncate log | `rm ~/.zshrs/zshrs.log` (or `: > zshrs.log` for in-place) |
 
 ### Cache management builtins (`zcache <verb>`)
 
@@ -540,7 +540,7 @@ zcache verify                   # SYNC — integrity scan: shard hashes vs catal
 zcache compact [--wait]         # ASYNC — SQLite VACUUM on catalog.db + history.db
 ```
 
-Default behavior of every async verb: enqueue job(s) into the worker pool, print job ID(s) to stdout, return immediately. Subsequent `zcache jobs` shows progress; `tail -f ~/.cache/zshrs/zshrs.log` shows worker output. `--wait` is the explicit opt-in for blocking semantics (useful in scripts that need ordering guarantees).
+Default behavior of every async verb: enqueue job(s) into the worker pool, print job ID(s) to stdout, return immediately. Subsequent `zcache jobs` shows progress; `tail -f ~/.zshrs/zshrs.log` shows worker output. `--wait` is the explicit opt-in for blocking semantics (useful in scripts that need ordering guarantees).
 
 **Custom-builtin namespace convention:** all zshrs-introduced builtins use the `z` prefix to match zsh's existing `z*` family (`zmv`, `zparseopts`, etc.) but never overlap a name already used by upstream zsh. Anti-collision check is part of the build: if upstream zsh adds a `z*` builtin in a future release that we shadow, our build fails until we rename. Current zshrs `z*` additions: `zcache`. Future zshrs additions follow the same rule.
 
@@ -561,7 +561,7 @@ Default behavior of every async verb: enqueue job(s) into the worker pool, print
 
 ```
 $ cache
-Cache: ~/.cache/zshrs/                           total: 612 MB
+Cache: ~/.zshrs/                           total: 612 MB
   index.rkyv                  1.2 MB    50,234 entries  (mmap: hot)
   images/                   247.0 MB       143 shards
     system.rkyv              12.0 MB     2,341 entries
@@ -599,13 +599,13 @@ zshrs is **one codebase** that ships **three personality modes**, selected at st
 
 - No image lookup. No `index.rkyv` mmap.
 - No catalog.db open. No `entry_stats` writes.
-- No `~/.cache/zshrs/` directory created or touched.
+- No `~/.zshrs/` directory created or touched.
 - No `zcache <verb>` builtins available — `zcache` resolves as a normal command name.
 - Worker pool may still exist for other things (background command pipelines) but no cache jobs scheduled.
 
 **Why this matters operationally:**
 
-- `/bin/sh → zshrs` symlink in a fleet of containers: POSIX mode kicks in via argv[0]; no `~/.cache/zshrs/` created in `/root`, no cache machinery running per process. Pure POSIX shell, just faster than dash.
+- `/bin/sh → zshrs` symlink in a fleet of containers: POSIX mode kicks in via argv[0]; no `~/.zshrs/` created in `/root`, no cache machinery running per process. Pure POSIX shell, just faster than dash.
 - `/bin/zsh → zshrs` symlink for users who want "fast vanilla zsh" without committing to the full turbocharged stack: vanilla mode kicks in; full zsh feature set, no zshrs extensions or cache surprises.
 - Daily driver (`exec zshrs`): turbocharged mode kicks in; full feature surface, cache layer active.
 
@@ -653,12 +653,12 @@ This decoupling — image as accelerator, source as ground truth — is what mak
 │       ↑              ↑                       ↓                   │
 │  ┌──────────┐   ┌──────────┐         ┌──────────────────┐       │
 │  │ accept() │   │ ticker   │         │ atomic writes to │       │
-│  │ Unix sock│   │ (compact,│         │ ~/.cache/zshrs/  │       │
+│  │ Unix sock│   │ (compact,│         │ ~/.zshrs/  │       │
 │  │ thread   │   │  rotate) │         │ images/, index,  │       │
 │  └────┬─────┘   └──────────┘         │ catalog.db       │       │
 │       │                              └──────────────────┘       │
 └───────┼─────────────────────────────────────────────────────────┘
-        │ ~/.cache/zshrs/daemon.sock
+        │ ~/.zshrs/daemon.sock
         │
    ┌────┴───┬────────┬────────┬──────────── … 60 ─────────┐
    ↓        ↓        ↓        ↓                            ↓
@@ -714,13 +714,13 @@ Daemon model wins by ~3× RAM, ~10× fd, and ~40× thread count vs the per-clien
 
 **Daemon lifecycle:**
 
-- **Spawn on demand by the first client:** first zshrs client to launch checks for `~/.cache/zshrs/daemon.sock`; if absent or unresponsive, fork-spawns the daemon (same binary, `--daemon` flag), waits ~50ms, retries the connect. Subsequent clients (the other 99 in the tmux scenario) just connect to the already-running daemon — no spawn race, no second daemon, no per-client startup cost beyond the connect. **First zshrs spawns it; the next N use it.**
-- **Singleton enforcement:** daemon takes `flock(LOCK_EX)` on `~/.cache/zshrs/daemon.pid` at startup. Second daemon instance sees the lock held, logs "daemon already running", exits. Race-safe.
+- **Spawn on demand by the first client:** first zshrs client to launch checks for `~/.zshrs/daemon.sock`; if absent or unresponsive, fork-spawns the daemon (same binary, `--daemon` flag), waits ~50ms, retries the connect. Subsequent clients (the other 99 in the tmux scenario) just connect to the already-running daemon — no spawn race, no second daemon, no per-client startup cost beyond the connect. **First zshrs spawns it; the next N use it.**
+- **Singleton enforcement:** daemon takes `flock(LOCK_EX)` on `~/.zshrs/daemon.pid` at startup. Second daemon instance sees the lock held, logs "daemon already running", exits. Race-safe.
 - **Lifetime:** persists across shell sessions. Survives logout. Killed only by explicit `zcache daemon stop` or `pkill zshrs-daemon` or system shutdown.
 - **Crash recovery:** if daemon dies (crash, SIGKILL, OOM), next client to fail socket connect kills the stale pidfile and respawns. No state loss — daemon owns no in-memory data that isn't reproducible from sources + on-disk shards.
 - **Degraded mode (no daemon):** clients fall back to source-interp for everything. Cache stops updating but shells stay functional. Per the source-truth fallback rule. Edge case for users who explicitly disable the daemon.
 
-**IPC protocol** (Unix domain socket at `~/.cache/zshrs/daemon.sock`):
+**IPC protocol** (Unix domain socket at `~/.zshrs/daemon.sock`):
 
 Length-prefixed JSON messages (small volume, easy debug, fits the message rate). Client → daemon:
 
@@ -888,9 +888,9 @@ This is the **second world-first that the daemon model unlocks** — beyond "she
 
 | Method | Effect |
 |---|---|
-| `rm -rf ~/.cache/zshrs/` | nukes everything including history + stats |
-| `rm -rf ~/.cache/zshrs/images/` | nukes all shards; index goes stale until rebuild |
-| `rm ~/.cache/zshrs/images/foo.rkyv` | surgical: nukes one shard |
+| `rm -rf ~/.zshrs/` | nukes everything including history + stats |
+| `rm -rf ~/.zshrs/images/` | nukes all shards; index goes stale until rebuild |
+| `rm ~/.zshrs/images/foo.rkyv` | surgical: nukes one shard |
 | `cache clean --all` | builtin equivalent of full `rm -rf` |
 | `cache clean shards` | builtin equivalent of `rm -rf images/` |
 | `cache clean shard <name>` | builtin equivalent of single-shard `rm` |
@@ -964,7 +964,7 @@ After any shard rebuild, the worker pool enqueues a hydrate job scoped to that s
 1. Worker thread mmap's `images/{shard}.rkyv`, walks its entries.
 2. `DELETE FROM entries WHERE plugin_id = '{shard}'` then INSERT the new rows. Same for `hooks`. Plugin metadata in `plugins` table is untouched (orchestrator manages that directly).
 3. SQLite WAL absorbs the per-shard rewrite without blocking concurrent dbview readers.
-4. All steps log to `~/.cache/zshrs/zshrs.log` via `tracing::info!` — `hydrate_shard_start { shard, entries: N }`, `hydrate_shard_complete { shard, duration_ms }`. Never to terminal (per `DESIGN_GOALS.md` "informational chatter goes to log only").
+4. All steps log to `~/.zshrs/zshrs.log` via `tracing::info!` — `hydrate_shard_start { shard, entries: N }`, `hydrate_shard_complete { shard, duration_ms }`. Never to terminal (per `DESIGN_GOALS.md` "informational chatter goes to log only").
 
 Per-shard hydrate cost: ~10-100ms typical (single zinit plugin) vs 100-500ms for a large shard like `completions-corpus`. 17 other worker threads remain available; multiple shard rebuilds parallelize naturally.
 
@@ -1032,7 +1032,7 @@ These were red-team findings on earlier drafts; specifying them here so they can
 
 **Orphaned `.tmp` cleanup at startup.** Worker writes `images/{name}.rkyv.tmp.{pid}.{tid}` then atomic-renames. If a worker is killed mid-write (SIGKILL, OOM, power loss), the `.tmp.*` file orphans. On every shell startup, a worker job scans `images/` for `.tmp.*` files older than 1 minute and unlinks them. Also surfaced via `zcache verify` ("3 orphaned tmp files; run `zcache clean shards` or wait for next cleanup pass").
 
-**Log rotation — built-in size cap.** `~/.cache/zshrs/zshrs.log` is capped at 10 MB by default. On reaching the cap, current log rotates to `zshrs.log.1`, oldest is dropped. Configurable via `ZSHRS_LOG_MAX_SIZE` and `ZSHRS_LOG_MAX_FILES` env vars. Avoids needing external `logrotate` config and prevents unbounded growth.
+**Log rotation — built-in size cap.** `~/.zshrs/zshrs.log` is capped at 10 MB by default. On reaching the cap, current log rotates to `zshrs.log.1`, oldest is dropped. Configurable via `ZSHRS_LOG_MAX_SIZE` and `ZSHRS_LOG_MAX_FILES` env vars. Avoids needing external `logrotate` config and prevents unbounded growth.
 
 **Worker pool partitioning.** Two logical pools sharing the underlying worker threads:
 - **General pool** — handles user command pipelines (`xargs -P 16`, async commands, etc.). High-priority, sized to `nproc - 1` by default.
@@ -1092,16 +1092,16 @@ This doc is the source of truth for AOT design. Changes require an entry below.
 | 2026-04-28 | §0x09 sharpened — verified stryke has no AOP runtime today. Plan revised: stryke gets parallel `intercepts: Vec<Intercept>` runtime added alongside the AOT work, both projects ship the full AOT + AOP + profile stack. | initial draft |
 | 2026-04-28 | §0x10 Memory model added — no GC, ever. Hard rule. Inherited from Rust ownership for free; verified against bash/zsh/dash/fish/nu/Perl5/Raku as world-first GC-free shell. Closed-world AOT lets escape analysis prove allocations stay scope-local. Locked in feedback memory: any future proposal that introduces GC is wrong by construction. | initial draft |
 | 2026-04-28 | §0x13 Unified AOT pivot — collapsed source-mode shell + AOT deploy into one product. Daily shell is the AOT binary; plugins/compsys/zstyle/bindkeys/intercepts all bake in at build time; SQLite caches die (`plugin_cache.db`, `compsys.db`, `.zcompdump`); only `history.db` remains external. Image-as-binary persistence model (Pharo/Smalltalk lineage). Acceptance criterion supersedes §0x0B perf targets — one binary, <5ms cold launch, sub-µs Tab, byte-identical between daily-driver and deploy use cases. Estimated 5-10k LOC eliminated. Five additional world-firsts stack on this pivot. §0x0C "interactive shell out of scope" bullet reversed. Memory rule "AOT-deploy vs JIT-source-mode are separate products" superseded — they are now one product. | initial draft |
-| 2026-04-28 | §0x13 corrected — "binary IS the database" reversed for the daily-driver layer. AOT-into-binary for plugins/compsys fails the working-set test at zpwr scale (200-400 MB bytecode → 50-100 MB pinned `.text` per shell, kernel can't evict `PROT_EXEC` pages). Replaced with rkyv-mmap'd `image.rkyv` + worker-hydrated `catalog.db` mirror. Three-file cache layout (`image.rkyv`, `catalog.db`, `history.db`); zero per-plugin litter; ~10-30 MB RSS in normal use; 16 parallel shells share via page cache. `entry_stats` table tracks call counts + ns timing for always-on profiling queryable via dbview. Hydration runs on idle worker thread, logs to `~/.cache/zshrs/zshrs.log` via `tracing::info!`. Script-AOT (§0x00–§0x12) capability unchanged — that's a different workload (deploy individual scripts as static binaries) where bounded code size makes AOT-into-binary correct. | correction |
-| 2026-04-28 | §0x13 sharded — monolithic `image.rkyv` reversed in favor of one-image-per-source-root layout under `~/.cache/zshrs/images/`. Reason: monolithic image forces full-corpus rebuild on any source change, killing the iterate-on-zpwr loop (~30s per `git pull` even for a one-line change). Sharded layout reduces rebuild blast radius to the touched root: `git pull` in zpwr → ~3-5s `zpwr.rkyv` only; `zinit update foo` → ~100-500ms `plugin-foo.rkyv` only; `zinit update-all` parallelizes across the worker pool. New top-level `index.rkyv` provides fq_name → (shard_id, byte_offset) lookup; per-shard mmap with LRU shard-handle cache. Lookup cost ~150-200ns vs the monolithic ~100ns (extra index dereference, negligible). Cache directory now has bounded litter (one image per plugin) — explicit trade for rebuild speed and parallelism. Per-shard worker hydration keys catalog `entries`/`hooks` by `plugin_id` partition; `entry_stats` survives rebuilds via `ON CONFLICT DO UPDATE`. fsnotify schedules per-shard rebuilds. | correction |
-| 2026-04-28 | §0x13 single-dir layout locked — earlier draft proposed splitting persistent data (`history.db`, `entry_stats`) into `~/.local/share/zshrs/` so `rm -rf ~/.cache/zshrs/` would be nuke-safe. User overruled — single dir wins on simplicity ("litter is fine but only in 1 dir that is easily rm" / "user can cd into dir and delete individual subfolders, fine"). All cache + persistent data colocated under `~/.cache/zshrs/`. Trade explicit: full `rm -rf` nukes history + accumulated stats; user responsibility. Surgical resets via per-file `rm` (table added in §0x13). Matches the global "user is root, no friction" rule. | correction |
+| 2026-04-28 | §0x13 corrected — "binary IS the database" reversed for the daily-driver layer. AOT-into-binary for plugins/compsys fails the working-set test at zpwr scale (200-400 MB bytecode → 50-100 MB pinned `.text` per shell, kernel can't evict `PROT_EXEC` pages). Replaced with rkyv-mmap'd `image.rkyv` + worker-hydrated `catalog.db` mirror. Three-file cache layout (`image.rkyv`, `catalog.db`, `history.db`); zero per-plugin litter; ~10-30 MB RSS in normal use; 16 parallel shells share via page cache. `entry_stats` table tracks call counts + ns timing for always-on profiling queryable via dbview. Hydration runs on idle worker thread, logs to `~/.zshrs/zshrs.log` via `tracing::info!`. Script-AOT (§0x00–§0x12) capability unchanged — that's a different workload (deploy individual scripts as static binaries) where bounded code size makes AOT-into-binary correct. | correction |
+| 2026-04-28 | §0x13 sharded — monolithic `image.rkyv` reversed in favor of one-image-per-source-root layout under `~/.zshrs/images/`. Reason: monolithic image forces full-corpus rebuild on any source change, killing the iterate-on-zpwr loop (~30s per `git pull` even for a one-line change). Sharded layout reduces rebuild blast radius to the touched root: `git pull` in zpwr → ~3-5s `zpwr.rkyv` only; `zinit update foo` → ~100-500ms `plugin-foo.rkyv` only; `zinit update-all` parallelizes across the worker pool. New top-level `index.rkyv` provides fq_name → (shard_id, byte_offset) lookup; per-shard mmap with LRU shard-handle cache. Lookup cost ~150-200ns vs the monolithic ~100ns (extra index dereference, negligible). Cache directory now has bounded litter (one image per plugin) — explicit trade for rebuild speed and parallelism. Per-shard worker hydration keys catalog `entries`/`hooks` by `plugin_id` partition; `entry_stats` survives rebuilds via `ON CONFLICT DO UPDATE`. fsnotify schedules per-shard rebuilds. | correction |
+| 2026-04-28 | §0x13 single-dir layout locked — earlier draft proposed splitting persistent data (`history.db`, `entry_stats`) into `~/.local/share/zshrs/` so `rm -rf ~/.zshrs/` would be nuke-safe. User overruled — single dir wins on simplicity ("litter is fine but only in 1 dir that is easily rm" / "user can cd into dir and delete individual subfolders, fine"). All cache + persistent data colocated under `~/.zshrs/`. Trade explicit: full `rm -rf` nukes history + accumulated stats; user responsibility. Surgical resets via per-file `rm` (table added in §0x13). Matches the global "user is root, no friction" rule. | correction |
 | 2026-04-28 | §0x13 `zcache <verb>` builtins added — supervised counterparts to raw `rm`/manual rebuild. User: "yeah, we should add builtins to cover the cache clean as well". Verbs: info / jobs / clean / rebuild / verify / compact, with sub-verbs and `--all` / `--no-stats` / `--wait` flags. Builtins release running shell's mmap handles before unlink (raw `rm` doesn't), trigger worker re-hydrate after clean, preserve `entry_stats` across catalog reset by default. Operations log to `zshrs.log` via `tracing::info!`. Raw `rm` remains valid bypass path. | addition |
 | 2026-04-28 | §0x13 non-blocking invariant locked — user: "nothing can block the shell, rykv blob building must all occur in worker pool" + "yes, if blob not built/misshaped then we are forced to use source code, until blob built". All rkyv shard compilation, image writes, `index.rkyv` rewrites, catalog hydration, fsnotify-triggered rebuilds run in the worker pool. Main shell thread only does mmap reads and falls through to existing source-interp path on any image miss / malformed shard / version mismatch / cache corruption. Source files are source of truth; image is opportunistic accelerator. Cold-install case: first shell uses source interp for everything (slow but not blocked); workers fill in image; subsequent shells fast. All `cache` write verbs are async (return immediately); `--wait` is the explicit opt-in for blocking. fsnotify runs on its own thread, dispatches into worker queue lock-free. This decoupling is what makes "nothing blocks" achievable — alternative (image required for execution) would force cold-start blocking and crash on any cache corruption. | architectural rule |
-| 2026-04-28 | §0x13 fsnotify default + force-wipe semantics — user: "fsnotify is cool concept tho, no need to explicitly recache, but user should always be able to forcewipe the cache at any time." Earlier draft had `cache_auto_rebuild` defaulting OFF for muscle-memory parity with `zpwr regen`. Reversed — fsnotify auto-rebuild ON by default, no explicit recache for routine edits. Users who want manual control opt out via `unsetopt cache_auto_rebuild`. Force-wipe is always available regardless of the setting: raw `rm -rf ~/.cache/zshrs/` (full nuke), `rm -rf ~/.cache/zshrs/images/` (shards only), per-file `rm`, or `cache clean --all` / `cache clean shards` / `cache clean shard <name>` builtins. First-time cache build remains "part of the game" — same upfront cost as zpwr regen recompiling .zwc/.zcompdump today. | refinement |
-| 2026-04-28 | §0x13 POSIX-mode gating — user: "oh yeah b/c targetting replacement of all shells even sh, all of this must be gated behind --posix etc." Entire cache layer (image lookup, catalog open, fsnotify daemon, worker cache jobs, `zcache <verb>` builtins, even creation of `~/.cache/zshrs/`) is gated behind zsh-mode. Under `--posix` / `emulate sh` / argv[0] basename of `sh`/`dash`/`bash`, zshrs runs `parse → bytecode → interp/JIT` straight-through with no cache machinery. Drop-in `/bin/sh` replacement: no surprise daemon threads, no watch fds, no cache dirs created in containers / cron / init scripts. Cache-layer activation lives only in default zsh mode where the daily-driver workload (zinit + 17k completions + zpwr) lives. Non-negotiable per zshrs's "drop-in for sh/bash/dash" positioning. | constraint |
+| 2026-04-28 | §0x13 fsnotify default + force-wipe semantics — user: "fsnotify is cool concept tho, no need to explicitly recache, but user should always be able to forcewipe the cache at any time." Earlier draft had `cache_auto_rebuild` defaulting OFF for muscle-memory parity with `zpwr regen`. Reversed — fsnotify auto-rebuild ON by default, no explicit recache for routine edits. Users who want manual control opt out via `unsetopt cache_auto_rebuild`. Force-wipe is always available regardless of the setting: raw `rm -rf ~/.zshrs/` (full nuke), `rm -rf ~/.zshrs/images/` (shards only), per-file `rm`, or `cache clean --all` / `cache clean shards` / `cache clean shard <name>` builtins. First-time cache build remains "part of the game" — same upfront cost as zpwr regen recompiling .zwc/.zcompdump today. | refinement |
+| 2026-04-28 | §0x13 POSIX-mode gating — user: "oh yeah b/c targetting replacement of all shells even sh, all of this must be gated behind --posix etc." Entire cache layer (image lookup, catalog open, fsnotify daemon, worker cache jobs, `zcache <verb>` builtins, even creation of `~/.zshrs/`) is gated behind zsh-mode. Under `--posix` / `emulate sh` / argv[0] basename of `sh`/`dash`/`bash`, zshrs runs `parse → bytecode → interp/JIT` straight-through with no cache machinery. Drop-in `/bin/sh` replacement: no surprise daemon threads, no watch fds, no cache dirs created in containers / cron / init scripts. Cache-layer activation lives only in default zsh mode where the daily-driver workload (zinit + 17k completions + zpwr) lives. Non-negotiable per zshrs's "drop-in for sh/bash/dash" positioning. | constraint |
 | 2026-04-28 | §0x13 generalized to three personality modes — user: "the idea is 1 codebase for all different shell variants, sh vs vanilla zsh vs turbocharged zshrs, etc". POSIX gating expanded into a three-tier scheme: POSIX (strict `/bin/sh`, no extensions, no cache), Vanilla zsh (mainline-zsh-compatible, zsh extensions on, cache OFF — no surprise daemons/dirs for users who just want "fast zsh"), Turbocharged zshrs (default, full extensions + cache + fsnotify + AOP + async). Mode selected at startup via argv[0] basename or flag; immutable for process lifetime. One binary, three personalities — ship targets and code reuse collapse, while marketed personalities have non-negotiable contracts (sh basename = POSIX-only; zsh basename = vanilla zsh; zshrs basename = turbocharged). Cross-contamination between modes is a regression. | constraint |
 | 2026-04-28 | §0x13 fsnotify REMOVED — user runs 60+ parallel zshrs (Cursor workflow); fsnotify daemon per process = 60+ watchers, all firing on every source edit, all enqueueing rebuild jobs. Even with debounce + per-shard flock, the thundering-herd cost is fatal (59 wasted compiles per edit). Single-process fsnotify with cross-process election (DBus / lockfile) adds moving parts not worth the convenience. Cache rebuild reverts to **explicit-only** via `zcache rebuild [shard <name>]` — matches the existing `zpwr regen` muscle memory. Per-shard flock still required to coordinate multiple shells doing concurrent explicit rebuilds. Quotes: "remove the whole fsnotify, too much conflict with 60x zshrs" / "i run 60x zsh regularly" / "we cant have 60x fs notify running". | correction (superseded by daemon model below) |
-| 2026-04-28 | §0x13 zshrs-daemon client/server model — user: "best idea, have a zshrs-daemon process that runs on loop, 1x for N zshrs regular shells, it runs on minimal loop to update all rykv blobs and hydrates sql ite, zshrs clients can send messages to update on updates to configuration like fpath changes" + "yep, like a client server model, the zshrs-daemon handles all cache management, client push changes to it if needed". Singleton daemon owns ALL cache mutation: fsnotify (one watcher across the machine), compile workers, image writes, index rewrites, catalog hydration, log rotation, orphaned-tmp cleanup, integrity scans. Clients are paper-thin readers that mmap daemon outputs + send IPC over `~/.cache/zshrs/daemon.sock`. Daemon spawned on demand by first client; `flock` on `daemon.pid` enforces singleton; survives shell-session boundaries. `zcache <verb>` builtins become thin clients sending JSON over the socket. Restores fsnotify-driven auto-rebuild without 60×-watcher thundering herd. Resolves runtime fpath-change propagation (`fpath_changed` IPC). Centralizes stats aggregation, dbview, verify, compact. Two new files in cache dir: `daemon.sock`, `daemon.pid`. | architecture |
+| 2026-04-28 | §0x13 zshrs-daemon client/server model — user: "best idea, have a zshrs-daemon process that runs on loop, 1x for N zshrs regular shells, it runs on minimal loop to update all rykv blobs and hydrates sql ite, zshrs clients can send messages to update on updates to configuration like fpath changes" + "yep, like a client server model, the zshrs-daemon handles all cache management, client push changes to it if needed". Singleton daemon owns ALL cache mutation: fsnotify (one watcher across the machine), compile workers, image writes, index rewrites, catalog hydration, log rotation, orphaned-tmp cleanup, integrity scans. Clients are paper-thin readers that mmap daemon outputs + send IPC over `~/.zshrs/daemon.sock`. Daemon spawned on demand by first client; `flock` on `daemon.pid` enforces singleton; survives shell-session boundaries. `zcache <verb>` builtins become thin clients sending JSON over the socket. Restores fsnotify-driven auto-rebuild without 60×-watcher thundering herd. Resolves runtime fpath-change propagation (`fpath_changed` IPC). Centralizes stats aggregation, dbview, verify, compact. Two new files in cache dir: `daemon.sock`, `daemon.pid`. | architecture |
 | 2026-04-28 | §0x13 strict thin-client rule — user: "we have to keep clients light, I usually ran 100x zsh inside tmux. we cant been doing heavy work in clients. it will kill CPU/MEM" + "no worker pool polling or whatever in thin clients". Per-client cost cap: <5 MB beyond zsh interpreter, ZERO cache-related background threads / polling loops / timers / SQLite handles. Stats flush is event-driven (piggybacks on existing shell events, no separate flush thread). IPC subscribe uses epoll-able fd in existing event loop. Anything cache-related requiring a thread or timer in a client = daemon's job. 100-shell projection: daemon model uses ~530 MB total vs ~1-1.5 GB for per-client-fsnotify alternatives — ~3× RAM, ~10× fd, ~40× thread savings. Scale of 100 in tmux is the load-bearing constraint, not 60. | refinement |
 | 2026-04-28 | §0x13 client worker-pool clarification — user: "they need worker pool tho, but only for concurrent primitives, we cant be polling, fsnotify etc in thin client worker pool. first zshrs will spawn the daemon, N zshrs will not, only 1 daemon, it will monitor all plugins/completions etc, update caches, hydrate sqlite for viewing etc.". Clients DO have a worker pool — the existing general pool for `async`/`await`/`pmap` and other concurrent primitives. What they don't have is a CACHE-related pool, fsnotify watcher, or any background polling/timer. First zshrs spawns daemon; subsequent N just connect. Daemon monitors plugins/completions, updates caches, hydrates SQLite for dbview. | clarification |
 | 2026-04-28 | §0x13 daemon = world-first AND foundation for session-persistent jobs — user: "its a world first, just another, a shell with a dedicated daemon process" + "we can expand that concept in the future, the clients and daemon concept. clients can push long running jobs to server etc. you can exit your shell and your job is still running, like tmux really but at shell level". No mainstream shell (bash/zsh/fish/nu/elvish/dash/ksh/tcsh) ships with a dedicated companion daemon. Closest analogs are non-shell (tmux, emacs --daemon, ssh-agent). zshrs is the first. Beyond cache management (v1 use), daemon is the substrate for `zjob submit/status/attach/output/kill` — long-running detached jobs that survive shell exit ("tmux at shell level", but at process granularity not terminal granularity, native to the shell, cross-platform). Two stacked world-firsts on the same daemon: (1) shell with dedicated daemon, (2) shell with native session-persistent job supervision. v1 ships cache-management role only; architecture must not preclude the future job-supervisor expansion. | architecture + world-first |

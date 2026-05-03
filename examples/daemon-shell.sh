@@ -19,7 +19,7 @@
 # old AT&T ksh) silently mis-evaluates this file — use bash, mksh,
 # or a real ksh93 build there.
 #
-# Setup ($HOME/.cache/zshrs/daemon.toml):
+# Setup ($HOME/.zshrs/daemon.toml):
 #     [http]
 #     listen = "127.0.0.1:7733"
 #     # tokens = ["..."]    # required for non-loopback binds

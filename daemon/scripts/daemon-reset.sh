@@ -5,7 +5,7 @@
 # Per docs/DAEMON.md "Daemon lifecycle" + "Walk lifecycle — first init":
 #
 #   1. Stop any running daemon (singleton flock + graceful shutdown).
-#   2. Wipe ~/.cache/zshrs/ entirely (nuclear, but explicit).
+#   2. Wipe ~/.zshrs/ entirely (nuclear, but explicit).
 #   3. Spawn a fresh daemon in the foreground with TRACE-level logging
 #      streaming to stderr.
 #   4. Wait for the singleton socket to come up.
@@ -24,7 +24,7 @@
 #   daemon/scripts/daemon-reset.sh --keep-cache          # don't wipe
 #
 # Output: every daemon log line (ANSI-coloured) to your terminal until you
-# Ctrl-C. The actual log file at ~/.cache/zshrs/zshrs.log is also written.
+# Ctrl-C. The actual log file at ~/.zshrs/zshrs.log is also written.
 
 set -euo pipefail
 
@@ -32,9 +32,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DAEMON_BIN="${REPO_ROOT}/target/debug/zshrs-daemon"
 SHELL_BIN="${REPO_ROOT}/target/debug/zshrs"
 
-# Daemon hard-codes ~/.cache/zshrs (XDG override only). Same on every
-# platform per docs/DAEMON.md — no macOS Library/Caches detour.
-CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/zshrs"
+# Daemon resolves $ZSHRS_HOME, falling back to ~/.zshrs. Single
+# top-level dir holding everything; per docs/DAEMON.md.
+CACHE_ROOT="${ZSHRS_HOME:-$HOME/.zshrs}"
 LOG_LEVEL="${ZSHRS_LOG:-debug}"
 
 ZSHRC="$HOME/.zshrc"

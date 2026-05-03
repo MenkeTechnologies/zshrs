@@ -1,7 +1,7 @@
 // Daemon for zshrs — see docs/DAEMON.md.
 //
 // Module layout:
-//   paths.rs   — ~/.cache/zshrs/* paths + 0700/0600 permissions
+//   paths.rs   — ~/.zshrs/* paths + 0700/0600 permissions
 //   log.rs     — tracing-subscriber setup, rolling file at zshrs.log
 //   ipc.rs     — u32-BE-length-prefixed JSON framing + message types
 //   pidlock.rs — singleton flock on daemon.pid + spawn-on-demand

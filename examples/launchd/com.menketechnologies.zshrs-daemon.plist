@@ -12,7 +12,7 @@
   Verify:
 
     launchctl list | grep zshrs
-    tail -f ~/.cache/zshrs/zshrs.log
+    tail -f ~/.zshrs/zshrs.log
 
   Reload after edits:
 
@@ -23,7 +23,7 @@
   assume `cargo install --path .` (~/.cargo/bin) — edit to /opt/homebrew/bin
   or /usr/local/bin if installed via brew.
 
-  HTTP listener: enable in ~/.cache/zshrs/daemon.toml (see comments
+  HTTP listener: enable in ~/.zshrs/daemon.toml (see comments
   in examples/systemd/zshrs-daemon.service for the schema).
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -62,14 +62,14 @@
     </dict>
 
     <!--
-      Daemon writes its own log to ~/.cache/zshrs/zshrs.log via
+      Daemon writes its own log to ~/.zshrs/zshrs.log via
       tracing. These StandardOut/Err paths catch any stderr that
       escapes the tracing layer (panics, early-init bail-outs).
     -->
     <key>StandardOutPath</key>
-    <string>/Users/__USER__/.cache/zshrs/launchd.out.log</string>
+    <string>/Users/__USER__/.zshrs/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/__USER__/.cache/zshrs/launchd.err.log</string>
+    <string>/Users/__USER__/.zshrs/launchd.err.log</string>
 
     <key>WorkingDirectory</key>
     <string>/Users/__USER__</string>

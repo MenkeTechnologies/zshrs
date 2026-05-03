@@ -68,7 +68,7 @@ These are load-bearing numerical commitments, not aspirations.
 2. mmap-based SQLite access, not cold open.
 3. Lazy worker pool init — don't spawn N threads at startup.
 4. Zero synchronous external commands at startup (no git, kubectl, aws, slow PROMPT subprocess calls).
-5. Bytecode-of-`.zshrc` mmap'd from `~/.cache/zshrs/init.bc` on every startup after first compile.
+5. Bytecode-of-`.zshrc` mmap'd from `~/.zshrs/init.bc` on every startup after first compile.
 6. No DNS at startup, ever.
 7. No directory scans at startup (fpath, PATH executables — all baked into **rkyv** shards at install time; SQLite mirrors are read-side copies only).
 8. Startup is single-threaded fast path; multicore matters at runtime not init.
@@ -86,7 +86,7 @@ zshrs targets the foremost CLI power users on Earth (its maintainer's audience).
 Hard rules:
 
 - **No startup banner.** No version stripe, no "Type exit to quit," no welcome message. Prompt appears immediately on launch.
-- **No init progress to terminal.** Indexing, autoload pre-warm, fpath scan, plugin compile — all go to `~/.cache/zshrs/zshrs.log` via `tracing::*`. Operator never sees them.
+- **No init progress to terminal.** Indexing, autoload pre-warm, fpath scan, plugin compile — all go to `~/.zshrs/zshrs.log` via `tracing::*`. Operator never sees them.
 - **No deprecation nags.** Deprecated builtins (compctl, etc.) silently no-op for compat. Operator already knows.
 - **No "did you mean" / typo suggestions / spell correction.** Operator typed what they meant.
 - **No safety prompts on destructive ops.** No "are you sure?" for `rm`, no confirmation on overwrite.
@@ -130,7 +130,7 @@ Locked 2026-04-28: zshrs's runtime is a **client/server architecture**. A single
 
 1. **Nothing blocks the shell** — all rkyv shard compilation, image writes, catalog hydration, log rotation, integrity scans run in the daemon's worker pool. Main client thread NEVER calls compile pass synchronously.
 2. **Thin clients only** — clients have ZERO cache-related background threads, polling loops, timers, or SQLite handles. Per-client cache overhead <5 MB beyond the zsh interpreter footprint. (Clients DO have a general worker pool for concurrent primitives — `async`/`await`/`pmap` — but never for cache work.)
-3. **Single cache directory** — `~/.cache/zshrs/` holds index.rkyv + images/{hash8}-{slug}.rkyv shards + catalog.db + history.db + zshrs.log + daemon.sock + daemon.pid. Trade explicit: full `rm -rf ~/.cache/zshrs/` nukes everything; user accepts the loss.
+3. **Single cache directory** — `~/.zshrs/` holds index.rkyv + images/{hash8}-{slug}.rkyv shards + catalog.db + history.db + zshrs.log + daemon.sock + daemon.pid. Trade explicit: full `rm -rf ~/.zshrs/` nukes everything; user accepts the loss.
 4. **POSIX mode gates the entire layer off** — `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash` → no daemon spawn, no cache dir created, no `z*` builtins available. Critical for `/bin/sh → zshrs` symlink in containers / cron / init.
 5. **Custom builtin namespace = `z*` prefix, no clash with upstream zsh `z*`** — `zcache`, `zls`, `zid`, `zping`, `ztag`, `zsend`, `znotify`, `zsubscribe`, `zjob` (planned). Build-time anti-collision check vs upstream zsh's z-namespace.
 6. **Shard rebuild ordering is strict** — atomic-rename shard FIRST, then rewrite index. Generation counter on each shard header drives client re-mmap on stale handles. Reverse order = corrupt reads.

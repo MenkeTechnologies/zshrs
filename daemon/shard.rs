@@ -1,7 +1,7 @@
 // rkyv shard layer — daemon-prepared, mmap-ready bytecode storage.
 //
 // Per docs/DAEMON.md "Cache layout (locked)":
-//   ~/.cache/zshrs/images/{hash8}-{slug}.rkyv
+//   ~/.zshrs/images/{hash8}-{slug}.rkyv
 //
 // Per "NO WALKING IN CLIENTS" + "Atomic-rename per shard":
 //   - Shards use rkyv's ArchivedHashMap (O(1) lookup, zero-copy).
@@ -50,7 +50,7 @@ pub struct IndexEntry {
     pub path: String,
 }
 
-/// Top-level index file (`~/.cache/zshrs/index.rkyv`). Written LAST in the
+/// Top-level index file (`~/.zshrs/index.rkyv`). Written LAST in the
 /// rebuild ordering — every shard atomic-renames into place, then this file
 /// gets a fresh generation. Clients mmap this first to discover what shards
 /// exist + their generations. Per DAEMON.md:184-185: "atomic-rename per
@@ -486,7 +486,7 @@ pub fn sweep_tmp_files(paths: &CachePaths, max_age: std::time::Duration) -> Resu
 /// Build an IndexShard from every existing shard in `paths.images/`. Walks
 /// the dir, opens each shard via mmap to read its header (slug, source_root,
 /// generation, entry_count), populates an IndexEntry, then writes
-/// `~/.cache/zshrs/index.rkyv` atomically. Per DAEMON.md:184-185: shard
+/// `~/.zshrs/index.rkyv` atomically. Per DAEMON.md:184-185: shard
 /// rename FIRST, index.rkyv update LAST.
 ///
 /// Returns the path the index was written to + the entry count.

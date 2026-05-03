@@ -881,7 +881,7 @@ CREATE TABLE current_defs (
 
 ### rkyv shard (read path)
 
-`~/.cache/zshrs/recorder-{run_id}.rkyv`: serialized
+`~/.zshrs/recorder-{run_id}.rkyv`: serialized
 `Vec<DefinitionRecord>` with byte-aligned layout suitable for `mmap`
 + zero-copy access. Each record is the same data as a SQLite row but
 in a fixed-shape struct.
@@ -1186,11 +1186,11 @@ This is not a coherent artifact. It cannot be:
 The complete end-state for one recorder run is a small set of files
 (per `docs/DAEMON.md`'s sharded layout):
 
-- `~/.cache/zshrs/recorder-{run_id}.rkyv` — the rkyv shard with
+- `~/.zshrs/recorder-{run_id}.rkyv` — the rkyv shard with
   every definition record, mmap-ready
-- `~/.cache/zshrs/catalog.sqlite` — the definitions table queryable
+- `~/.zshrs/catalog.sqlite` — the definitions table queryable
   for inspection
-- `~/.cache/zshrs/manifest-{run_id}.json` — header (modes, source
+- `~/.zshrs/manifest-{run_id}.json` — header (modes, source
   files, timestamps, hash chain)
 
 Together: typically 1-10 MB for even an extreme power-user config
@@ -1201,7 +1201,7 @@ one byte-checksum-able blob.
 
 | Capability | Source-tree model (today) | Snapshot artifact model (recorder) |
 |---|---|---|
-| Ship to another machine | rsync `~/.zshrc` + clone every plugin repo + run `zinit update` + hope | `scp recorder-{id}.rkyv user@host:~/.cache/zshrs/`; `zshrs` next launch on host has byte-identical shell |
+| Ship to another machine | rsync `~/.zshrc` + clone every plugin repo + run `zinit update` + hope | `scp recorder-{id}.rkyv user@host:~/.zshrs/`; `zshrs` next launch on host has byte-identical shell |
 | Reproducible across machines | broken: plugin version drift, missing dependencies, `.zcompdump` corruption, different fpath, conditional loads | guaranteed: same shard → same state, deterministically |
 | Version control diffs | `git diff ~/.zshrc` shows source changes; says nothing about runtime result | `git diff snap-A.rkyv snap-B.rkyv` (via deserialized form) shows every state change between snapshots |
 | Atomic rollback | manually comment out plugins, restart, debug, repeat | `zwhere snapshot restore <run_id>` swaps the active shard; instant rollback |
@@ -1263,7 +1263,7 @@ Concretely for the zpwr ecosystem:
 # At zpwr release time (run once on the maintainer's machine):
 zshrs-recorder --tag zpwr-v48.7.3 --env ZPWR_REMOTE=false
 zwhere snapshot save --tag zpwr-v48.7.3
-zwhere snapshot sign --key ~/.cache/zshrs/release.key
+zwhere snapshot sign --key ~/.zshrs/release.key
 zwhere snapshot publish --registry github://MenkeTechnologies/zpwr
 
 # A user who wants zpwr (instead of cloning + running install.sh):
@@ -1442,7 +1442,7 @@ shipped by any shell.
   `op_*` naming)
 - SQLite table: `definitions` (canonical), `runs` (per-run header),
   `current_defs` (denormalized cache)
-- rkyv shard: `~/.cache/zshrs/recorder-{run_id}.rkyv`
+- rkyv shard: `~/.zshrs/recorder-{run_id}.rkyv`
 
 ## Open questions
 

@@ -16,7 +16,7 @@
 //! interface for the shell's own cold-start hot path.
 //!
 //! The recorder writes one `*-recorder.rkyv` shard per ingest into
-//! `~/.cache/zshrs/images/`. We pick the latest by mtime, deserialize,
+//! `~/.zshrs/images/`. We pick the latest by mtime, deserialize,
 //! and copy fields straight into the executor's pub HashMaps.
 //!
 //! Failure mode: any I/O error → return 0; caller falls back to
@@ -74,7 +74,7 @@ pub fn apply_all(executor: &mut ShellExecutor) -> usize {
     total
 }
 
-/// Walk `~/.cache/zshrs/images/` for `*-recorder.rkyv` and return the
+/// Walk `~/.zshrs/images/` for `*-recorder.rkyv` and return the
 /// newest by mtime. None if the dir doesn't exist or has no recorder
 /// shard.
 fn latest_recorder_shard(paths: &CachePaths) -> Option<PathBuf> {

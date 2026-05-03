@@ -17,7 +17,7 @@ pub struct CompsysCache {
     conn: Connection,
 }
 
-/// Returns the default cache path: ~/.cache/zshrs/compsys.db
+/// Returns the default cache path: ~/.zshrs/compsys.db
 pub fn default_cache_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home).join(".cache/zshrs/compsys.db")
