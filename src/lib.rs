@@ -31,6 +31,7 @@ pub mod cond;
 pub mod config;
 pub mod context;
 pub mod curses;
+pub mod daemon_presence;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
 // so existing `crate::daemon::...` (in exec.rs) and `zsh::daemon::...` (in bins,
 // integration tests) paths keep resolving without churn.

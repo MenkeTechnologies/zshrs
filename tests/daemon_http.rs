@@ -8,7 +8,7 @@
 //!   3. Sets up an isolated `$XDG_CACHE_HOME` so the spawned daemon
 //!      doesn't collide with any developer-machine daemon already
 //!      running.
-//!   4. Spawns `target/debug/zshrs --daemon`.
+//!   4. Spawns `target/debug/zshrs-daemon`.
 //!   5. Polls `GET /health` until the listener is up.
 //!   6. Drives the listener via `ureq` and asserts response shapes.
 //!   7. Kills the daemon on Drop.
@@ -22,12 +22,12 @@ use std::time::{Duration, Instant};
 const SPAWN_GRACE: Duration = Duration::from_secs(8);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-fn zshrs_binary() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+fn zshrs_daemon_binary() -> PathBuf {
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs-daemon") {
         return PathBuf::from(p);
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest.join("target").join("debug").join("zshrs")
+    manifest.join("target").join("debug").join("zshrs-daemon")
 }
 
 /// Allocate a kernel-assigned free TCP port by binding 127.0.0.1:0
@@ -75,8 +75,7 @@ impl DaemonHttp {
         }
         drop(f);
 
-        let child = Command::new(zshrs_binary())
-            .arg("--daemon")
+        let child = Command::new(zshrs_daemon_binary())
             .env("XDG_CACHE_HOME", cache.path())
             .env("XDG_CONFIG_HOME", config.path())
             .env("ZSHRS_QUIET_FIRST_RUN", "1")
