@@ -49,6 +49,25 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
     // catalog vacuum, zask timeouts). One minute cadence, weak-ref to state.
     super::ticker::spawn(Arc::clone(&state));
 
+    // Spawn the schedule tick driver (daemon.schedule.* ops). Wakes once
+    // a second, dispatches `job_submit` for any due cron / one-shot rows.
+    super::schedule::spawn_tick(Arc::clone(&state));
+
+    // HTTP listener (off by default; opt-in via [http].listen in
+    // ~/.config/zshrs/daemon.toml). Surfaces the same op set as the
+    // unix-socket IPC path so curl/httpie/any HTTP client can talk
+    // to the daemon. See daemon/http.rs + docs/DAEMON_AS_SERVICE.md.
+    let http_cfg = match super::paths::load_http_config() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(?e, "load_http_config failed; http listener disabled");
+            super::http::HttpConfig::default()
+        }
+    };
+    if let Err(e) = super::http::serve_http(http_cfg, Arc::clone(&state)).await {
+        tracing::warn!(?e, "http listener init failed; continuing without http");
+    }
+
     let shutdown = tokio::sync::Notify::new();
     let shutdown = Arc::new(shutdown);
 

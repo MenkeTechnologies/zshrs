@@ -11,7 +11,9 @@
 //   client.rs  — client-side IPC helpers used by z* builtins
 //   firstrun.rs — first-run detection + 6-line stderr notice
 
+pub mod artifact;
 pub mod builtins;
+pub mod cache;
 pub mod canonical;
 pub mod catalog;
 pub mod client;
@@ -19,15 +21,19 @@ pub mod export;
 pub mod firstrun;
 pub mod fsnotify;
 pub mod history;
+pub mod http;
 pub mod ipc;
 pub mod jobs;
+pub mod lock;
 pub mod log;
 pub mod ops;
 pub mod paths;
 pub mod pidlock;
 pub mod pubsub;
+pub mod schedule;
 pub mod server;
 pub mod shard;
+pub mod snapshot;
 pub mod source_resolver;
 pub mod state;
 pub mod ticker;

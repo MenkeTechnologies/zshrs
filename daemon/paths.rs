@@ -35,6 +35,16 @@ pub struct CachePaths {
     /// fragments of `.zshrc` that the daemon couldn't bake into canonical
     /// state. Per docs/DAEMON.md "Determinism boundary" (line 278).
     pub replay_dir: PathBuf,
+    /// `cache.db` — daemon-as-service KV cache, namespaced. See
+    /// docs/DAEMON_AS_SERVICE.md `daemon.cache.*` ops + daemon/cache.rs.
+    pub cache_db: PathBuf,
+    /// `artifacts/` — content-addressed artifact cache. Files live at
+    /// `artifacts/<sha256_prefix>/<sha256_hex>`. See
+    /// docs/DAEMON_AS_SERVICE.md `daemon.artifact.*` ops.
+    pub artifacts_dir: PathBuf,
+    /// `snapshots/` — tag-based canonical-state snapshots. See
+    /// docs/DAEMON_AS_SERVICE.md `daemon.snapshot.*` ops.
+    pub snapshots_dir: PathBuf,
 }
 
 impl CachePaths {
@@ -69,6 +79,9 @@ impl CachePaths {
         let pid_file = root.join("daemon.pid");
         let index_rkyv = root.join("index.rkyv");
         let replay_dir = root.join("replay");
+        let cache_db = root.join("cache.db");
+        let artifacts_dir = root.join("artifacts");
+        let snapshots_dir = root.join("snapshots");
 
         Self {
             root,
@@ -82,6 +95,9 @@ impl CachePaths {
             pid_file,
             index_rkyv,
             replay_dir,
+            cache_db,
+            artifacts_dir,
+            snapshots_dir,
         }
     }
 
@@ -90,6 +106,8 @@ impl CachePaths {
         ensure_dir_700(&self.root)?;
         ensure_dir_700(&self.images)?;
         ensure_dir_700(&self.replay_dir)?;
+        ensure_dir_700(&self.artifacts_dir)?;
+        ensure_dir_700(&self.snapshots_dir)?;
         Ok(())
     }
 
@@ -121,6 +139,63 @@ fn ensure_dir_700(path: &Path) -> Result<()> {
         std::fs::set_permissions(path, perms)?;
     }
     Ok(())
+}
+
+/// Resolve `~/.config/zshrs/daemon.toml` (respecting `$XDG_CONFIG_HOME`).
+/// Returns the path even if the file does not exist; callers handle the
+/// not-present case as "no overrides" rather than as an error.
+pub fn daemon_config_file() -> Result<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .ok_or_else(|| DaemonError::other("no $HOME / $XDG_CONFIG_HOME for daemon.toml"))?;
+    Ok(base.join("zshrs").join("daemon.toml"))
+}
+
+/// Load `[http]` section from `~/.config/zshrs/daemon.toml` into the
+/// `HttpConfig` consumed by `daemon::http::serve_http`. The file is
+/// optional; a missing file or a missing `[http]` section both produce
+/// the default (HTTP listener disabled). Schema:
+///
+///     [http]
+///     listen = "127.0.0.1:7733"        # required to enable
+///
+///     [http.tokens]
+///     ci-pipeline = "0123abcd..."       # bearer-token map; values are
+///     vim-lsp     = "feedface..."       # the literal token strings
+pub fn load_http_config() -> Result<super::http::HttpConfig> {
+    let path = daemon_config_file()?;
+    if !path.exists() {
+        return Ok(super::http::HttpConfig::default());
+    }
+    let body = std::fs::read_to_string(&path)?;
+    // toml v1 reserves the FromStr impl on `Value` for SCALARS only;
+    // documents must go through `Table::from_str`. Routing through
+    // Value::from_str produces "unexpected content, expected nothing"
+    // the moment the parser sees a table header.
+    let parsed: toml::Value = body
+        .parse::<toml::Table>()
+        .map(toml::Value::Table)
+        .map_err(|e| DaemonError::other(format!("daemon.toml parse: {e}")))?;
+    let http_section = match parsed.get("http") {
+        Some(v) => v,
+        None => return Ok(super::http::HttpConfig::default()),
+    };
+    let listen = http_section
+        .get("listen")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
+    let mut tokens = std::collections::HashSet::new();
+    if let Some(tok_table) = http_section.get("tokens").and_then(toml::Value::as_table) {
+        for (_label, val) in tok_table {
+            if let Some(s) = val.as_str() {
+                if !s.is_empty() {
+                    tokens.insert(s.to_string());
+                }
+            }
+        }
+    }
+    Ok(super::http::HttpConfig { listen, tokens })
 }
 
 /// Set 0600 on a file path that already exists. Logs a warning on drift detection.

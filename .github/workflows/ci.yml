@@ -141,9 +141,43 @@ jobs:
       - name: Run recorder harness
         run: cargo test --locked --features recorder --test recorder_harness -- --nocapture
 
+  daemon-http:
+    # zshrs-daemon HTTP listener — see daemon/http.rs and
+    # docs/DAEMON_AS_SERVICE.md. Spawns the daemon with an isolated
+    # XDG_CACHE_HOME + XDG_CONFIG_HOME (so each test owns its own
+    # cache / socket / config), points it at a kernel-allocated free
+    # port (127.0.0.1:0 → real port via TcpListener probe), and drives
+    # `GET /health`, `GET /ops`, `POST /op/ping`, `POST /op/<unknown>`,
+    # plus the bearer-token auth path. Hermetic: every test owns a
+    # tempdir, no shared state across tests, no external network.
+    name: Daemon HTTP
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The integration test spawns `target/debug/zshrs --daemon`;
+      # ensure that bin is built first so each test's spawn isn't
+      # racing the test framework's `cargo build`.
+      - name: Build zshrs binary the test will spawn
+        run: cargo build --locked --bin zshrs
+      - name: Run daemon HTTP integration tests
+        # --test-threads=1 because each test binds its own port + spawns
+        # its own daemon; sequential gives clearer per-test diagnostics
+        # and avoids the chance of two daemons racing the same XDG_CACHE
+        # tempdir cleanup on slow CI runners.
+        run: cargo test --locked --test daemon_http -- --test-threads=1 --nocapture
+
   release-build:
     name: Release Build
-    needs: [check, test, doc, corpus, recorder-harness]
+    needs: [check, test, doc, corpus, recorder-harness, daemon-http]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:

@@ -107,6 +107,11 @@ pub struct DaemonState {
     pub ask_inbox: Arc<super::zask::AskInbox>,
     pub jobs: Arc<super::jobs::Supervisor>,
     pub canonical: Arc<super::canonical::CanonicalEngine>,
+    /// Named cross-process locks (daemon.lock.* ops). In-memory only;
+    /// daemon restart releases everything (intentional — locks held by
+    /// processes that didn't get a release call were by definition
+    /// crashed). PID-tied auto-release is per-acquire, not periodic.
+    pub locks: super::lock::LockTable,
     pub paths: CachePaths,
     pub started_at: Instant,
     pub start_wall: chrono::DateTime<chrono::Utc>,
@@ -131,6 +136,7 @@ impl DaemonState {
         }
         let state = Arc::new(Self {
             inner: Mutex::new(DaemonStateInner::new()),
+            locks: super::lock::new_table(),
             catalog: Mutex::new(catalog),
             history_db: Mutex::new(history_db),
             fs_watcher,
