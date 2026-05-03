@@ -6,7 +6,7 @@
 //! # Architecture
 //!
 //! ## Default Mode (SQLite-backed)
-//! - Cache: `~/.cache/zshrs/compsys.db` (55MB with 16,872 function bodies)
+//! - Cache: `~/.zshrs/compsys.db` (55MB with 16,872 function bodies)
 //! - `compinit`: Parallel fpath scan with rayon, stores bodies in SQLite
 //! - `autoload -Xz`: Instant lookup from SQLite (~2.7µs)
 //! - No .zcompdump file created

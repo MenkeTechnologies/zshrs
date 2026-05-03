@@ -7,7 +7,7 @@
 //! script, language runtime can drop key/value pairs in here and read
 //! them back across process restarts.
 //!
-//! Schema (single SQLite file at `~/.cache/zshrs/cache.db`):
+//! Schema (single SQLite file at `~/.zshrs/cache.db`):
 //!
 //! ```sql
 //! CREATE TABLE kv (

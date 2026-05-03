@@ -7,7 +7,7 @@
 //! Implementation uses the existing rkyv `CanonicalShard` as the
 //! on-disk format — same scheme as the recorder bundle, so snapshots
 //! are byte-identical to what `recorder_ingest` produces. Tag-based
-//! naming: `~/.cache/zshrs/snapshots/<tag>.rkyv`. Tag is any
+//! naming: `~/.zshrs/snapshots/<tag>.rkyv`. Tag is any
 //! shell-safe string (matched against `[A-Za-z0-9._-]+` at op time).
 //!
 //! Op surface (v1 — publish/sign/verify deferred to a follow-up

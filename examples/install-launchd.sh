@@ -10,7 +10,7 @@
 #
 # Verify:
 #   launchctl list | grep zshrs
-#   tail -f ~/.cache/zshrs/zshrs.log
+#   tail -f ~/.zshrs/zshrs.log
 
 set -euo pipefail
 
@@ -26,7 +26,7 @@ BIN="${ZSHRS_DAEMON_BIN:-$HOME/.cargo/bin/zshrs-daemon}"
 [[ -f "$SRC" ]] || { echo "missing source plist: $SRC" >&2; exit 1; }
 [[ -x "$BIN" ]] || { echo "zshrs-daemon binary not found / not executable: $BIN" >&2; exit 1; }
 
-mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.cache/zshrs"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.zshrs"
 
 # Template the placeholders. Use a temp file then atomic-rename so a
 # failed sed never leaves a half-written plist that launchctl might
@@ -53,4 +53,4 @@ launchctl load -w "$DST"
 printf 'installed: %s\n' "$DST"
 printf 'binary:    %s\n' "$BIN"
 printf 'verify:    launchctl list | grep zshrs\n'
-printf 'logs:      tail -f $HOME/.cache/zshrs/zshrs.log\n'
+printf 'logs:      tail -f $HOME/.zshrs/zshrs.log\n'

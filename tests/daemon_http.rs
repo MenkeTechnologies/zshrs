@@ -3,9 +3,9 @@
 //!
 //! Each test:
 //!   1. Allocates a free TCP port.
-//!   2. Writes `$XDG_CACHE_HOME/zshrs/daemon.toml` (single-dir rule)
+//!   2. Writes `$ZSHRS_HOME/zshrs/daemon.toml` (single-dir rule)
 //!      enables the HTTP listener on that port.
-//!   3. Sets up an isolated `$XDG_CACHE_HOME` so the spawned daemon
+//!   3. Sets up an isolated `$ZSHRS_HOME` so the spawned daemon
 //!      doesn't collide with any developer-machine daemon already
 //!      running.
 //!   4. Spawns `target/debug/zshrs-daemon`.
@@ -41,7 +41,7 @@ fn pick_free_port() -> u16 {
 }
 
 struct DaemonHttp {
-    _cache: tempfile::TempDir,
+    _zshrs_home: tempfile::TempDir,
     port: u16,
     child: Option<Child>,
 }
@@ -58,14 +58,14 @@ impl DaemonHttp {
     /// (or alone if `token` is None) and should already include the
     /// `[http.tokens.NAME]` headers it needs.
     fn spawn_with_extra_toml(token: Option<&str>, extra_toml: &str) -> Self {
-        let cache = tempfile::TempDir::new().expect("cache tempdir");
+        let zshrs_home = tempfile::TempDir::new().expect("zshrs home tempdir");
         let port = pick_free_port();
 
-        // Single-directory rule: daemon.toml lives in XDG_CACHE_HOME
+        // Single-directory rule: daemon.toml lives in $ZSHRS_HOME
         // alongside everything else (rkyv shards, sockets, log).
-        let cfg_dir = cache.path().join("zshrs");
-        std::fs::create_dir_all(&cfg_dir).expect("mk cache dir");
-        let mut f = std::fs::File::create(cfg_dir.join("daemon.toml")).expect("create toml");
+        std::fs::create_dir_all(zshrs_home.path()).expect("mk zshrs home");
+        let mut f = std::fs::File::create(zshrs_home.path().join("daemon.toml"))
+            .expect("create toml");
         write!(f, "[http]\nlisten = \"127.0.0.1:{port}\"\n").unwrap();
         if let Some(tok) = token {
             write!(f, "\n[http.tokens]\ntest-tok = \"{tok}\"\n").unwrap();
@@ -76,7 +76,7 @@ impl DaemonHttp {
         drop(f);
 
         let child = Command::new(zshrs_daemon_binary())
-            .env("XDG_CACHE_HOME", cache.path())
+            .env("ZSHRS_HOME", zshrs_home.path())
             .env("ZSHRS_QUIET_FIRST_RUN", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -85,7 +85,7 @@ impl DaemonHttp {
             .expect("daemon spawn");
 
         let me = Self {
-            _cache: cache,
+            _zshrs_home: zshrs_home,
             port,
             child: Some(child),
         };

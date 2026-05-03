@@ -59,7 +59,7 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 `zshrs` eliminates these costs through a fundamentally different architecture:
 
 1. **Bytecode compilation** — Scripts compile to register-based bytecode (fusevm, 129 opcodes)
-2. **Sharded rkyv image cache** — `~/.cache/zshrs/images/{shard}.rkyv` per source root (zpwr, each zinit plugin, completions corpus, etc.) plus a top-level `index.rkyv` for two-level lookup (~150-200ns); per-shard rebuild keeps `git pull` blast radius bounded (e.g. 3-5s for zpwr alone vs 30s full corpus); sibling `catalog.db` (worker-hydrated, per-shard) provides SQL-queryable view + entry stats that survive rebuilds
+2. **Sharded rkyv image cache** — `~/.zshrs/images/{shard}.rkyv` per source root (zpwr, each zinit plugin, completions corpus, etc.) plus a top-level `index.rkyv` for two-level lookup (~150-200ns); per-shard rebuild keeps `git pull` blast radius bounded (e.g. 3-5s for zpwr alone vs 30s full corpus); sibling `catalog.db` (worker-hydrated, per-shard) provides SQL-queryable view + entry stats that survive rebuilds
 3. **Tiered JIT** — Linear JIT for straight-line code, Block JIT for loops/conditionals, native x86-64/aarch64 via Cranelift
 4. **Anti-fork builtins** — 180+ commands execute in-process, zero fork (23 coreutils, 4 xattr, 6 parallel primitives)
 5. **Megafat binary** — Optional Stryke integration adds 3200+ additional builtins
@@ -117,7 +117,7 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 
       ↑ data plane: direct mmap, ~150-200ns, NO IPC per call
       │
-~/.cache/zshrs/
+~/.zshrs/
 ├── index.rkyv          ← clients mmap this (small, ~1-2 MB)
 ├── images/             ← clients lazy-mmap shards on demand
 │   ├── {hash8}-zpwr.rkyv
@@ -153,7 +153,7 @@ Current default shells (`bash`, `zsh`, `dash`) share fundamental architectural l
 
 - **Client/server with data-plane / control-plane split.** Clients (the N zshrs interpreter processes) read bytecode via direct mmap — sub-µs lookups, no IPC per call. The daemon never sits in the lookup path. IPC is reserved for cache mutation, configuration changes, cross-shell coordination, and job supervision.
 - **Singleton daemon, N thin clients.** First zshrs to launch spawns the daemon (`flock` on `daemon.pid` enforces singleton). 99 subsequent clients just connect to the running daemon. Tested at 100x scale (user's typical tmux workload).
-- **POSIX mode gates entire layer off.** `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash` → no daemon spawn, no `~/.cache/zshrs/` created, no `z*` builtins. Pure POSIX shell, lean drop-in for `/bin/sh`.
+- **POSIX mode gates entire layer off.** `--posix` / `emulate sh` / argv[0] basename `sh`/`dash`/`bash` → no daemon spawn, no `~/.zshrs/` created, no `z*` builtins. Pure POSIX shell, lean drop-in for `/bin/sh`.
 - **Three personality modes share one binary:** POSIX, Vanilla zsh, Turbocharged zshrs. Cache + daemon active only in turbocharged mode.
 
 ### World-first capabilities (verified prior-art survey)
@@ -185,7 +185,7 @@ The combination of all four in one shell is what's defended in the patent strate
 ### Bytecode Cache
 
 ```
-Location: ~/.cache/zshrs/bytecode.db (XDG compliant)
+Location: ~/.zshrs/bytecode.db (XDG compliant)
 
 Schema:
   script_bytecode (

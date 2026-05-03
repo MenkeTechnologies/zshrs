@@ -342,9 +342,9 @@ static mut SHELL_MODE: ShellMode = ShellMode::Zshrs;
 
 /// Global log file path for zshrs background operations (compinit, etc.)
 pub fn zshrs_log_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".cache/zshrs/zshrs.log")
+    // Single source of truth: zsh::log::log_path() honors $ZSHRS_HOME
+    // and falls back to ~/.zshrs/zshrs.log.
+    zsh::log::log_path()
 }
 
 pub fn shell_mode() -> ShellMode {

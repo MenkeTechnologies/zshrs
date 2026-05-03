@@ -391,7 +391,7 @@ unless at least one bearer token is configured (see
 loopback HTTP needs no auth.
 
 **Multi-client opt-in.** Configure bearer tokens in
-`~/.cache/zshrs/daemon.toml`. Two value shapes per token:
+`~/.zshrs/daemon.toml`. Two value shapes per token:
 
 ```toml
 [http]
@@ -1015,7 +1015,7 @@ primitives; they must ship the full surface to compete.
 
 ### Phase 5 — auth / authz hardening (1 week)
 
-- Per-client tokens in `~/.cache/zshrs/daemon.toml`
+- Per-client tokens in `~/.zshrs/daemon.toml`
 - Scope enforcement (read-only vs write, per-namespace)
 - Optional TCP listener with mutual TLS for cross-machine
 - Per-client request quotas + rate limits

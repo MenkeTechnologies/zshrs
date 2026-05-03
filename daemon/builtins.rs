@@ -1101,7 +1101,7 @@ fn parse_send_args(args: &[String], cmd: &str) -> Result<(Value, String), i32> {
 // -------- zlog --------
 //
 // Most zlog verbs are pure client-side file operations against the daemon's
-// log files in ~/.cache/zshrs/. Daemon-side ops would require dynamic
+// log files in ~/.zshrs/. Daemon-side ops would require dynamic
 // EnvFilter reload (level) or appender fd handoff (rotate), neither of which
 // is wired in v1; those two verbs surface a clear "restart-required" error.
 
@@ -1302,7 +1302,7 @@ fn zlog_stats() -> i32 {
     0
 }
 
-/// Enumerate `~/.cache/zshrs/zshrs.log*` files, newest first by mtime. Used by
+/// Enumerate `~/.zshrs/zshrs.log*` files, newest first by mtime. Used by
 /// the read-only zlog verbs (tail, grep, stats) and by `zlog clear`.
 fn log_files(paths: &CachePaths) -> Vec<std::path::PathBuf> {
     let dir = match std::fs::read_dir(&paths.root) {

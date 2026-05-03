@@ -13,8 +13,10 @@
 //   zshrs-daemon                           # run with defaults
 //   zshrs-daemon --version                 # print version, exit
 //   zshrs-daemon --help                    # print help, exit
-//   zshrs-daemon --cache-dir <PATH>        # override XDG_CACHE_HOME (this
-//                                            session only)
+//   zshrs-daemon --home <PATH>             # override $ZSHRS_HOME (this
+//                                            session only); single-dir
+//                                            holding sockets / shards /
+//                                            sqlite / config / log
 //   zshrs-daemon --log-level <DIRECTIVE>   # override ZSHRS_LOG (this session
 //                                            only); same syntax as `zlog level`
 //   zshrs-daemon --quiet-first-run         # suppress the 6-line first-run
@@ -31,26 +33,26 @@ use std::process::ExitCode;
 const HELP: &str = "\
 Usage: zshrs-daemon [OPTIONS]
 
-Run the zshrs daemon (singleton, owns ~/.cache/zshrs/).
+Run the zshrs daemon (singleton, owns ~/.zshrs/).
 
 Options:
-  --cache-dir <DIR>          Override the cache root for this session
-                             (sets XDG_CACHE_HOME).
+  --home <DIR>               Override $ZSHRS_HOME for this session.
+                             Default = ~/.zshrs/. One root directory
+                             holds sockets, rkyv shards, sqlite
+                             databases, config (daemon.toml,
+                             zshrs.toml), and the log.
   --log-level <DIRECTIVE>    Override ZSHRS_LOG for this session
                              (e.g. info | debug | info,fsnotify=trace).
   --log-stderr               Stream tracing output to stderr in addition to
-                             ~/.cache/zshrs/zshrs.log. For live debugging /
-                             `daemon-reset.sh`. Same as ZSHRS_LOG_STDERR=1.
-  --verbose-init             Per docs/DAEMON.md:899: show daemon work to stderr
+                             ~/.zshrs/zshrs.log. For live debugging.
+                             Same as ZSHRS_LOG_STDERR=1.
+  --verbose-init             Per docs/DAEMON.md: show daemon work to stderr
                              on every run (not just first). Implies
                              --log-stderr and ZSHRS_LOG=debug. For testing.
   --quiet-first-run          Suppress the 6-line first-run stderr block.
-  --print-paths              Print resolved cache / socket / config / pid /
-                             log paths as JSON, then exit. Useful for
-                             scripts that need to know where the daemon's
-                             state lives without spawning it. Honors
-                             --cache-dir.
-  --check-config             Parse ~/.cache/zshrs/daemon.toml + report
+  --print-paths              Print resolved root / socket / config / pid /
+                             log paths as JSON, then exit. Honors --home.
+  --check-config             Parse ~/.zshrs/daemon.toml + report
                              validation status as JSON, then exit. Lets
                              editors / CI pre-flight a config edit
                              without restarting the daemon.
@@ -66,8 +68,8 @@ zask, zhistory, zlog, etc.), use the zshrs shell binary.
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
 
-    // Defer-until-after-arg-parse actions so --cache-dir applied
-    // earlier in argv affects them.
+    // Defer-until-after-arg-parse actions so --home applied earlier
+    // in argv affects them.
     let mut do_print_paths = false;
     let mut do_check_config = false;
 
@@ -82,10 +84,10 @@ fn main() -> ExitCode {
                 print!("{}", HELP);
                 return ExitCode::SUCCESS;
             }
-            "--cache-dir" => match iter.next() {
-                Some(d) => env::set_var("XDG_CACHE_HOME", d),
+            "--home" => match iter.next() {
+                Some(d) => env::set_var("ZSHRS_HOME", d),
                 None => {
-                    eprintln!("zshrs-daemon: --cache-dir requires a path");
+                    eprintln!("zshrs-daemon: --home requires a path");
                     return ExitCode::from(2);
                 }
             },

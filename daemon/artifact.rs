@@ -8,7 +8,7 @@
 //! Filesystem layout:
 //!
 //! ```
-//! ~/.cache/zshrs/artifacts/
+//! ~/.zshrs/artifacts/
 //!   ab/                      ← first 2 hex chars of digest as shard dir
 //!     abcdef0123…ff          ← full sha256 as filename, content == bytes
 //!   cd/

@@ -187,7 +187,7 @@ Atomic-rename per shard with strict ordering — shard rename FIRST, then `index
 ### Cache layout (locked)
 
 ```
-~/.cache/zshrs/
+~/.zshrs/
 ├── index.rkyv                          ← top-level fq_name → (shard_id, generation, byte_offset)
 ├── images/
 │   ├── {hash8}-system.rkyv             ← system / shipped completions
@@ -334,7 +334,7 @@ re-validation when a watched file changes.
 **Sensitive content.** Some sourced files contain secrets (API keys,
 passwords, `export AWS_SECRET_ACCESS_KEY=…`). Two enforcement points:
 
-1. `~/.cache/zshrs/` is `0700` (user-only); files inside `0600`. Set
+1. `~/.zshrs/` is `0700` (user-only); files inside `0600`. Set
    at daemon startup, verified by `zcache verify`. Drift → `WARN` in
    log + refusal to attach for non-owner clients.
 2. `compiled_files.sensitive` flag set by `daemon/source_resolver.rs`
@@ -407,7 +407,7 @@ zcache verify                       # already exists; reports .zwc/.zcompdump pr
 
 Out-of-scope dirs are never touched (no recursive `find ~ -name '*.zwc'`). Daemon walks only the directories it already knows about from the user's `.zshrc` analysis. `--dry-run` shows the full list before commit. No confirmation prompt at delete time (per CLAUDE.md "no friction"). `zcache verify` runs as part of `zcache info` and flags litter every time the user looks at cache state, gently surfacing the cleanup verb without nagging.
 
-Once cleaned, the user's daily-driver disk footprint for shell artifacts is just `~/.cache/zshrs/` — single directory, daemon-owned, queryable, exportable. No more 40 `.zwc` files scattered through `~/.zpwr`, no more 1.8 MB `.zcompdump.zwc` orphan, no more `~/.zcompdump*` accumulating across versions.
+Once cleaned, the user's daily-driver disk footprint for shell artifacts is just `~/.zshrs/` — single directory, daemon-owned, queryable, exportable. No more 40 `.zwc` files scattered through `~/.zpwr`, no more 1.8 MB `.zcompdump.zwc` orphan, no more `~/.zcompdump*` accumulating across versions.
 
 **Why no auto-import:** `.zwc` (and `.zcompdump`) files can be arbitrarily stale relative to the source they were compiled from. Picking them up automatically would let stale bytecode bleed into the daemon's canonical view, masking real source changes and producing the same "completion is stale, restart shell, still stale" failure mode that motivates the daemon architecture in the first place. The daemon's source-file-is-authoritative rule means it always parses fresh from `.zsh` / `.sh` and never trusts a pre-compiled artifact unless the user explicitly says so.
 
@@ -583,11 +583,11 @@ zcache import --all ~/zshrs-backup.tar.zst  # restore from full snapshot
 
 Imports validate format + version before merging. Conflicts (incoming entry differs from current canonical) report a merge plan and require `--force` to override.
 
-This makes `~/.cache/zshrs/` fully introspectable and portable. Every byte of canonical state can be exported in a format suited to the consumer — text for humans, JSON for scripts, sh for replayable backups, zcompdump for legacy compat, native rkyv for binary-fast portability. Diagnosing a misbehaving completion, comparing two users' caches, sharing a daemon-built fpath with a colleague, and migrating from zsh+zinit are all `zcache export` + `zcache import` operations.
+This makes `~/.zshrs/` fully introspectable and portable. Every byte of canonical state can be exported in a format suited to the consumer — text for humans, JSON for scripts, sh for replayable backups, zcompdump for legacy compat, native rkyv for binary-fast portability. Diagnosing a misbehaving completion, comparing two users' caches, sharing a daemon-built fpath with a colleague, and migrating from zsh+zinit are all `zcache export` + `zcache import` operations.
 
 ### IPC wire format
 
-Length-prefixed JSON over `~/.cache/zshrs/daemon.sock`. Each frame:
+Length-prefixed JSON over `~/.zshrs/daemon.sock`. Each frame:
 
 ```
 [4 bytes: u32 BE length] [length bytes: UTF-8 JSON]
@@ -860,7 +860,7 @@ zsync watch <subsystem…>            # subscribe to canonical_changed events
 zsync pull <subsystem>              # opt-in mid-session refresh from canonical (breaks snapshot rule on user request)
 
 # Daemon log inspection
-zlog                                # default: live tail of ~/.cache/zshrs/zshrs.log
+zlog                                # default: live tail of ~/.zshrs/zshrs.log
 zlog tail [-n N] [--follow]
 zlog grep <pattern> [--rotated]
 zlog level [<new_level>] [<module=level>…]
@@ -912,7 +912,7 @@ in O(1).
 The probe never spawns the daemon. If the user wants the daemon
 running, they start it themselves via one of the install paths.
 
-#### Config knob: `~/.cache/zshrs/zshrs.toml`
+#### Config knob: `~/.zshrs/zshrs.toml`
 
 ```toml
 [daemon]
@@ -949,7 +949,7 @@ under `examples/`:
 Once running:
 
 - **Singleton enforcement:** daemon takes `flock(LOCK_EX)` on
-  `~/.cache/zshrs/daemon.pid` at startup. Second instance sees lock
+  `~/.zshrs/daemon.pid` at startup. Second instance sees lock
   held, exits cleanly.
 - **Lifetime:** persists across shell sessions; survives logout
   (loginctl-linger on systemd). Stopped via `zcache daemon stop`,
@@ -970,8 +970,8 @@ is a multi-second-to-multi-minute operation depending on corpus size;
 running it silently would be confusing and potentially indistinguishable
 from a hung process.
 
-**Detection:** "first-ever run" = no `~/.cache/zshrs/index.rkyv` AND
-no `~/.cache/zshrs/images/` shards on disk. After the first run
+**Detection:** "first-ever run" = no `~/.zshrs/index.rkyv` AND
+no `~/.zshrs/images/` shards on disk. After the first run
 completes, this branch is never taken again on this machine for this
 user.
 
@@ -983,9 +983,9 @@ zshrs first-run init — daemon spawning, cold cache building.
   scope: ~/.zshrc + transitive sources + $PATH + $FPATH + plugins
   estimated: 579 files, ~1.6M LOC, ~60s on this machine
   background: shells work via source-interp until cache is warm
-  log:        ~/.cache/zshrs/zshrs.log
+  log:        ~/.zshrs/zshrs.log
   inspect:    zcache info | zcache jobs | zcache view <target>
-  reset:      zcache clean | rm -rf ~/.cache/zshrs/
+  reset:      zcache clean | rm -rf ~/.zshrs/
 ```
 
 Six lines, factual, no welcome / no congratulations / no emoji / no version stripe. After this block prints, the prompt appears immediately. Daemon continues building in the background; clients run via source-interp fallback until shards atomic-rename in.
@@ -1096,11 +1096,11 @@ zask inbox-clear                              # dismiss every pending request in
 
 **Timeouts:** every queued UI request has a default 60-minute timeout. Originator gets `ask:timeout` event if user never engages. Configurable per-request via `--timeout <seconds>` or `--no-timeout`.
 
-**Visibility model:** `zask pending` shows this shell's queue. `zls --ask-pending` shows pending requests across all of the user's registered shells. Every push, take, dismiss, timeout logged to `~/.cache/zshrs/zshrs.log`.
+**Visibility model:** `zask pending` shows this shell's queue. `zls --ask-pending` shows pending requests across all of the user's registered shells. Every push, take, dismiss, timeout logged to `~/.zshrs/zshrs.log`.
 
 ### Daemon logging (every action goes to logfile)
 
-Daemon is fully observable via `~/.cache/zshrs/zshrs.log`. Every action it takes — every cache build, every fsnotify event, every IPC op handled, every shard rename, every error, every plugin discovery, every cross-shell dispatch — is logged. The log is the canonical record of "what did the daemon do" for debugging, post-mortem analysis, and behavior verification.
+Daemon is fully observable via `~/.zshrs/zshrs.log`. Every action it takes — every cache build, every fsnotify event, every IPC op handled, every shard rename, every error, every plugin discovery, every cross-shell dispatch — is logged. The log is the canonical record of "what did the daemon do" for debugging, post-mortem analysis, and behavior verification.
 
 **What gets logged at INFO level (default):**
 
@@ -1163,7 +1163,7 @@ zlog stats                          # daemon log self-stats: line counts, size, 
 - ANY daemon spawn under POSIX mode — REJECT.
 - ANY z\* builtin without `z` prefix or that shadows upstream zsh — REJECT.
 - ANY hydration progress on stderr/stdout — REJECT (`tracing::info!` to log file only).
-- ANY scattered per-plugin cache files outside `~/.cache/zshrs/images/` — REJECT.
+- ANY scattered per-plugin cache files outside `~/.zshrs/images/` — REJECT.
 - ANY removal of `entry_stats` to "simplify" — REJECT.
 - ANY auto-consumption of `.zwc` / `.zcompdump` files on daemon scans, fpath walks, fsnotify watches, or plugin-tree enumeration — REJECT. They're invisible to all automatic discovery; only `zcache import zwc|zcompdump <path>` (user-explicit, freshness-validated) may ingest them.
 - ANY periodic re-walk of `$PATH` / `$FPATH` / plugin trees / source-statement targets by the daemon — REJECT. Walks happen exactly twice in daemon's life: first init (cold cache) and explicit cache bust (`zcache clean` / `rebuild`). Steady state is fsnotify-driven incremental updates only. No polling, no cron, no "every 5 minutes refresh."

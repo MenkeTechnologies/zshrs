@@ -755,11 +755,15 @@ pub fn file_mtime(path: &Path) -> Option<(i64, i64)> {
     Some((meta.mtime(), meta.mtime_nsec()))
 }
 
-/// Default path for the plugin cache db.
+/// Default path for the plugin cache db. Honors $ZSHRS_HOME so the
+/// shell agrees with the daemon on where state lives.
 pub fn default_cache_path() -> PathBuf {
+    if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+        return PathBuf::from(custom).join("plugins.db");
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".cache/zshrs/plugins.db")
+        .join(".zshrs/plugins.db")
 }
 
 #[cfg(test)]
