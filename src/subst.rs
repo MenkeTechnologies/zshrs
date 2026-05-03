@@ -911,8 +911,10 @@ pub fn singsub(s: &str, params: &HashMap<String, String>) -> Result<String, Stri
 /// Perform multiple substitution with word splitting
 /// Port from multsub() in zsh/Src/subst.c
 pub fn multsub(s: &str, params: &HashMap<String, String>) -> Result<Vec<String>, String> {
-    let mut opts = SubstOptions::default();
-    opts.word_split = true;
+    let opts = SubstOptions {
+        word_split: true,
+        ..SubstOptions::default()
+    };
 
     let expanded = subst_string(s, params, &opts)?;
 

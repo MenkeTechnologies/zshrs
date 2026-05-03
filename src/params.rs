@@ -3853,8 +3853,10 @@ pub fn strgetfn(table: &ParamTable, name: &str, lower: bool, upper: bool) -> Opt
 
 /// Parse subscription flags from (flags) prefix
 pub fn parse_subscription_flags(s: &str) -> (SubscriptFlags, &str) {
-    let mut flags = SubscriptFlags::default();
-    flags.num = 1;
+    let mut flags = SubscriptFlags {
+        num: 1,
+        ..SubscriptFlags::default()
+    };
 
     if !s.starts_with('(') {
         return (flags, s);

@@ -274,6 +274,7 @@ impl CanonicalEngine {
     /// captures file/line via `RecordCtx`). file/line live in the
     /// in-memory `CanonicalRow` and survive until daemon restart;
     /// they are not yet persisted in the rkyv shard format.
+    #[allow(clippy::too_many_arguments)]
     pub fn upsert_tagged_with_attrs(
         &self,
         subsystem: &str,

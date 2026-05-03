@@ -902,6 +902,7 @@ impl Supervisor {
         Ok(rx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn persist_initial(
         &self,
         state: &DaemonState,

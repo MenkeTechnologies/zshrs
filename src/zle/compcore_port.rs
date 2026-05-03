@@ -98,9 +98,11 @@ impl CompMatch {
 
 /// Initialize completion for a line (from compcore.c do_completion)
 pub fn init_completion(buffer: &str, cursor: usize) -> CompState {
-    let mut state = CompState::default();
-    state.buffer = buffer.to_string();
-    state.active = true;
+    let mut state = CompState {
+        buffer: buffer.to_string(),
+        active: true,
+        ..CompState::default()
+    };
 
     // Split into words
     let mut words = Vec::new();

@@ -456,6 +456,7 @@ pub enum KeymapName {
 }
 
 impl KeymapName {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "emacs" => Some(Self::Emacs),

@@ -555,6 +555,7 @@ pub fn build_cache_from_fpath(
 ///
 /// This is the equivalent of `compinit -C` with a valid zcompdump - it skips
 /// the fpath scan entirely and just loads from cache.
+#[allow(clippy::field_reassign_with_default)] // result is mutated across many subsequent statements; struct-literal init not practical
 pub fn load_from_cache(cache: &crate::cache::CompsysCache) -> std::io::Result<CompInitResult> {
     use std::time::Instant;
     let start = Instant::now();

@@ -101,6 +101,7 @@ pub struct HistoryRow {
     pub shell_id: Option<i64>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn append(
     conn: &Connection,
     line: &str,
@@ -129,6 +130,7 @@ pub fn count(conn: &Connection) -> rusqlite::Result<i64> {
 ///  - `like`:     LIKE pattern (`%...%`)
 ///  - `prefix`:   prefix LIKE (`%...`)
 ///  - none of the above: raw recent listing
+#[allow(clippy::too_many_arguments)]
 pub fn query(
     conn: &Connection,
     filter: Option<&str>,

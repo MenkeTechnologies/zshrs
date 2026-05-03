@@ -59,6 +59,7 @@ impl CompTags {
 
     /// Move to next set of tags (comptags -N)
     /// Returns true if there are more tags to try
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> bool {
         self.current_try += 1;
         self.current_tags.clear();

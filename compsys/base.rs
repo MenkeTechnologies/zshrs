@@ -109,6 +109,7 @@ impl TagManager {
 
     /// Move to next tag set (_tags with no arguments)
     /// Returns true if there are more tags
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> bool {
         self.current_try += 1;
         self.load_current_set();
