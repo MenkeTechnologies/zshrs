@@ -30,8 +30,7 @@ pub struct CloneOutcome {
 ///      a. setsid() (clone.c:60), warn if failed.
 ///      b. dup2 ttyfd onto fds 0/1/2 (clone.c:67-69).
 ///      c. close ttyfd if > 2 (clone.c:70-71).
-///      d. open tty again to acquire it as ctty + TIOCSCTTY
-///         (clone.c:75-84).
+///      d. open tty again to acquire it as ctty + TIOCSCTTY (clone.c:75-84).
 ///      e. open /dev/tty to verify ctty acquisition (clone.c:85-91).
 #[cfg(unix)]
 pub fn clone_shell(tty_path: &str) -> io::Result<CloneOutcome> {

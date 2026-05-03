@@ -3509,7 +3509,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             while let Some(c) = chars.next() {
                                 if c == '\\' {
                                     match chars.peek() {
-                                        Some(&n) if matches!(n, '"' | '\\' | '$' | '`') => {
+                                        Some(&('"' | '\\' | '$' | '`')) => {
                                             out.push(chars.next().unwrap());
                                         }
                                         _ => out.push(c),
@@ -10839,9 +10839,9 @@ impl ShellExecutor {
         false
     }
 
-    /// Load a specific function from a ZWC file. Populates `functions_compiled`
-    /// + `function_source` as side effects; returns true iff the function
-    /// landed in those tables.
+    /// Load a specific function from a ZWC file. Populates
+    /// `functions_compiled` and `function_source` as side effects;
+    /// returns true iff the function landed in those tables.
     fn load_function_from_zwc(&mut self, path: &Path, name: &str) -> bool {
         // Check cache
         let zwc = if let Some(cached) = self.zwc_cache.get(path) {

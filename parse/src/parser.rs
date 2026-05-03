@@ -916,10 +916,10 @@ impl<'a> ZshParser<'a> {
         Some(parsed)
     }
 
-    /// Emit a parser-level error. Direct port of zsh/Src/parse.c:
-    ///   2733-2766 `yyerror`. C version fills a per-event error buffer
-    ///   + sets errflag. zshrs pushes onto self.errors which the
-    ///   caller drains via parse()'s Result return.
+    /// Emit a parser-level error. Direct port of zsh/Src/parse.c
+    /// 2733-2766 `yyerror`. C version fills a per-event error buffer
+    /// and sets errflag. zshrs pushes onto self.errors which the
+    /// caller drains via parse()'s Result return.
     pub fn yyerror(&mut self, msg: &str) {
         // parse.c:2735-2765 — zsh's yyerror collects the offending
         // token's literal text + line number. zshrs already does
@@ -2518,10 +2518,10 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Parse {...} cursh
-    /// Parse a current-shell brace block `{ BODY }`. C source:
+    /// Parse a current-shell brace block `{ BODY }`. C source
     /// par_cmd at parse.c:958-1085 handles INBRACE → emit WC_CURSH
-    /// + recurse into list. zshrs's parse_cursh extracts that arm
-    /// into a dedicated method.
+    /// and recurses into the list. zshrs's parse_cursh extracts that
+    /// arm into a dedicated method.
     fn parse_cursh(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip {
         let prog = self.parse_program();
@@ -2787,7 +2787,7 @@ impl<'a> ZshParser<'a> {
     /// par_cond_2, par_cond_double, par_cond_triple, par_cond_multi
     /// at parse.c:2434-2731). Expression operators: `||` `&&` `!`
     /// + unary tests (-f, -d, -n, -z, etc.) + binary tests (=, !=,
-    /// <, >, ==, =~, -eq, -ne, -lt, -le, -gt, -ge, -nt, -ot, -ef).
+    ///   <, >, ==, =~, -eq, -ne, -lt, -le, -gt, -ge, -nt, -ot, -ef).
     fn parse_cond(&mut self) -> Option<ZshCommand> {
         self.lexer.zshlex(); // skip [[
                              // Empty cond `[[ ]]` is a parse error in zsh — emit the

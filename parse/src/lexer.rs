@@ -1404,10 +1404,7 @@ impl<'a> ZshLexer<'a> {
                 let next = self.hgetc();
                 let next_is_close = matches!(next, Some('}'));
                 if self.incmdpos {
-                    let is_brace_group = match next {
-                        Some(' ') | Some('\t') | Some('\n') | Some('}') | None => true,
-                        _ => false,
-                    };
+                    let is_brace_group = matches!(next, Some(' ' | '\t' | '\n' | '}') | None);
                     if let Some(ch) = next {
                         self.hungetc(ch);
                     }

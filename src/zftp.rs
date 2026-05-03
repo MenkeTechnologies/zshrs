@@ -172,7 +172,7 @@ impl FtpSession {
             .spawn(move || {
                 let _ = tx.send(dns.to_socket_addrs().map(|a| a.collect::<Vec<_>>()));
             })
-            .map_err(|e| io::Error::other(e))?;
+            .map_err(io::Error::other)?;
 
         let addrs = rx
             .recv_timeout(dns_timeout)

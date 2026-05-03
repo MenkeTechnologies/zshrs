@@ -100,19 +100,17 @@ fn compare_strings(
 /// Numeric comparison — direct port of src/zsh/Src/sort.c:137-172
 /// (the `if (sortnumeric)` branch of eltpcmp).
 ///
-/// Algorithm:
-///   1. Walk both strings until they diverge (or both end). `ao`
-///      records the start so we can rewind into a digit run.
-///   2. On divergence, the C source distinguishes:
-///      a. Signed mode + one side starts with `-DIGIT` and the other
-///         starts with `DIGIT` → negative side is less.
-///      b. Either side is a digit at the divergence point → walk back
-///         to the start of the digit run on both sides (they share a
-///         common prefix up to `as`), skip leading zeros, find the
-///         first different digit, then count remaining digits to
-///         decide which number is longer (longer number wins for
-///         positive; reversed for negative via `mul`).
-///   3. Otherwise plain byte-wise compare from `as`.
+/// Algorithm: walk both strings until they diverge (or both end);
+/// `ao` records the start so we can rewind into a digit run. On
+/// divergence the C source distinguishes two sub-cases. First,
+/// signed-mode where one side starts with `-DIGIT` and the other
+/// starts with `DIGIT` — the negative side is less. Second, either
+/// side is a digit at the divergence point — walk back to the start
+/// of the digit run on both sides (they share a common prefix up to
+/// `as`), skip leading zeros, find the first different digit, then
+/// count remaining digits to decide which number is longer (longer
+/// wins for positive; reversed for negative via `mul`). Otherwise
+/// plain byte-wise compare from `as`.
 fn compare_numeric(a: &str, b: &str, signed_mode: bool) -> Ordering {
     let ab = a.as_bytes();
     let bb = b.as_bytes();
