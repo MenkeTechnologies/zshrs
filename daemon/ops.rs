@@ -1247,6 +1247,21 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         file: Option<String>,
         line: Option<u32>,
         fn_chain: Option<String>,
+        // Replay-grade type info — `attrs` is a ParamAttrs bitset
+        // (scalar/integer/float/assoc/array/readonly/export/global/
+        // unique/tied/append). Populated by the recorder on every
+        // assign event so the daemon can reconstruct typed
+        // declarations during `recorder_replay` without guessing.
+        #[serde(default)]
+        attrs: u16,
+        // Structured payloads — Some when the event represents an
+        // array or assoc mutation. Replay reconstructs `name=(...)`
+        // / `name=(k1 v1 k2 v2)` directly from these instead of
+        // splitting the joined `value` string. Empty for scalars.
+        #[serde(default)]
+        value_array: Option<Vec<String>>,
+        #[serde(default)]
+        value_assoc: Option<Vec<(String, String)>>,
     }
     #[derive(serde::Deserialize)]
     struct BundleIn {
@@ -1271,6 +1286,14 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     let mut functions: HashMap<String, String> = HashMap::new();
     let mut env_exports: HashMap<String, String> = HashMap::new();
     let mut params: HashMap<String, String> = HashMap::new();
+    // Replay-grade typed snapshot per parameter name. Value is the
+    // JSON-serialised event payload (attrs + value + value_array +
+    // value_assoc), so replay can read this back and emit
+    // `typeset -<flags> NAME=val` / `name=(elem ...)` / `name=(k1 v1 ...)`
+    // verbatim. Latest-wins per name (the recorder bundle is end-state
+    // for the run; the most recent event per name reflects current
+    // value).
+    let mut params_typed: HashMap<String, String> = HashMap::new();
     let mut bindkeys: HashMap<String, String> = HashMap::new();
     let mut compdef: HashMap<String, String> = HashMap::new();
     let mut named_dirs: HashMap<String, String> = HashMap::new();
@@ -1306,6 +1329,15 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
             }
             "assign" | "typeset" => {
                 params.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                // Stash the full structured payload so replay can
+                // reconstruct typed declarations exactly.
+                let payload = serde_json::json!({
+                    "attrs": ev.attrs,
+                    "value": ev.value,
+                    "value_array": ev.value_array,
+                    "value_assoc": ev.value_assoc,
+                });
+                params_typed.insert(ev.name.clone(), payload.to_string());
             }
             "bindkey" => {
                 bindkeys.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
@@ -1444,6 +1476,14 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
             .map(|(k, v)| (k.clone(), json_string(v))),
         None,
     );
+    // params_typed values are already JSON; pass them through verbatim
+    // so the canonical row preserves the structured payload (attrs +
+    // value + value_array + value_assoc) for replay.
+    canon.replace_subsystem(
+        "params_typed",
+        params_typed.iter().map(|(k, v)| (k.clone(), v.clone())),
+        None,
+    );
     canon.replace_subsystem(
         "source",
         sourced
@@ -1516,6 +1556,9 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
             }
             if !completions.is_empty() {
                 e.insert("completion".to_string(), completions);
+            }
+            if !params_typed.is_empty() {
+                e.insert("params_typed".to_string(), params_typed.clone());
             }
             e
         },

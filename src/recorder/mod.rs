@@ -148,6 +148,10 @@ impl ParamAttrs {
     pub const TIED: u16 = 1 << 9;
     pub const HIDE: u16 = 1 << 10;
     pub const HIDE_VAL: u16 = 1 << 11;
+    /// `+=` operation marker. Distinguishes `arr=(a b)` (replace) from
+    /// `arr+=(c)` (extend). Replay needs this to drive the right
+    /// codepath when reconstructing array state from the bundle.
+    pub const APPEND: u16 = 1 << 12;
 
     pub fn set(&mut self, mask: u16) {
         self.0 |= mask;
@@ -191,9 +195,24 @@ impl ParamAttrs {
 /// for the daemon `recorder_ingest` op; mirrors the SQL `definitions`
 /// row in docs/RECORDER.md §Schema.
 ///
-/// `attrs` is structured `ParamAttrs` for `typeset`-family events
-/// (carries scalar/integer/float/assoc/array/readonly/export/global/
-/// unique/tied bits). Set to default (zero) for all other kinds.
+/// REPLAY-GRADE TYPE INFO. Every assign event carries enough structure
+/// to round-trip the parameter exactly:
+///
+///   - `attrs`: `ParamAttrs` bitset — scalar/integer/float/assoc/array/
+///     readonly/export/global/unique/tied. Populated on every emit_*
+///     by inspecting the executor's current type for `name` (or the
+///     declared type for typeset-family). Without this, replay can't
+///     tell whether `EDITOR=vim` should restore as scalar or as a
+///     previously-tied array.
+///   - `value`: scalar form. Set for scalar / integer / float and as
+///     a fallback for arrays/assocs (joined string).
+///   - `value_array`: ORDERED element list for indexed-array events.
+///     Empty for scalars/assocs. Lets replay reconstruct
+///     `arr=(elem1 elem2 elem3)` exactly — the order is preserved
+///     even when zsh's `typeset -U` would dedupe.
+///   - `value_assoc`: ORDERED (key, value) pairs for assoc events.
+///     Empty for scalars/arrays. Insertion order matters for replay
+///     determinism (zsh assocs are insertion-ordered).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordEvent {
     pub order_idx: u64,
@@ -206,6 +225,10 @@ pub struct RecordEvent {
     pub fn_chain: Option<String>,
     #[serde(default, skip_serializing_if = "is_default_attrs")]
     pub attrs: ParamAttrs,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_array: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_assoc: Option<Vec<(String, String)>>,
 }
 
 fn is_default_attrs(a: &ParamAttrs) -> bool {
@@ -300,6 +323,24 @@ pub fn emit_with_attrs(
     fn_chain: Option<String>,
     attrs: ParamAttrs,
 ) {
+    emit_full(kind, name, value, file, line, fn_chain, attrs, None, None)
+}
+
+/// Full emit with replay-grade structured payload. Array and assoc
+/// hooks call this directly so element ordering / key-value pairs
+/// survive the wire trip to the daemon for exact reconstruction.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_full(
+    kind: DefKind,
+    name: impl Into<String>,
+    value: Option<String>,
+    file: Option<String>,
+    line: Option<u32>,
+    fn_chain: Option<String>,
+    attrs: ParamAttrs,
+    value_array: Option<Vec<String>>,
+    value_assoc: Option<Vec<(String, String)>>,
+) {
     if !is_enabled() {
         return;
     }
@@ -346,6 +387,8 @@ pub fn emit_with_attrs(
         line,
         fn_chain,
         attrs,
+        value_array,
+        value_assoc,
     };
     if let Ok(mut buf) = BUFFER.lock() {
         buf.push(ev);
@@ -393,6 +436,9 @@ fn attrs_to_str(a: ParamAttrs) -> String {
     }
     if a.has(ParamAttrs::HIDE_VAL) {
         parts.push("hideval");
+    }
+    if a.has(ParamAttrs::APPEND) {
+        parts.push("append");
     }
     parts.join(",")
 }
@@ -460,6 +506,88 @@ pub fn emit_assign(name: &str, value: &str, ctx: RecordCtx) {
         ctx.file,
         ctx.line,
         ctx.fn_chain,
+    );
+}
+
+/// Scalar-assign with structured attrs. Call sites that have already
+/// inspected the executor for the parameter's declared type
+/// (`var_attrs.kind`, `readonly`, `export`) pass a populated
+/// `ParamAttrs` here so the recorded event tells replay exactly how
+/// to declare the variable. Without populated attrs, replay would
+/// have to guess scalar vs array vs integer from the value string —
+/// guesses break when `EDITOR=vim` was previously declared `typeset
+/// -gx EDITOR`, since plain replay loses the export/global bits.
+pub fn emit_assign_typed(name: &str, value: &str, attrs: ParamAttrs, ctx: RecordCtx) {
+    emit_with_attrs(
+        DefKind::Assign,
+        name,
+        Some(value.to_string()),
+        ctx.file,
+        ctx.line,
+        ctx.fn_chain,
+        attrs,
+    );
+}
+
+/// Indexed-array assign with the ordered element list preserved.
+/// `is_append` controls a SET vs APPEND attribute bit so replay knows
+/// whether to start the array fresh or extend an existing one.
+pub fn emit_array_assign(
+    name: &str,
+    elements: Vec<String>,
+    mut attrs: ParamAttrs,
+    is_append: bool,
+    ctx: RecordCtx,
+) {
+    attrs.set(ParamAttrs::ARRAY);
+    if is_append {
+        attrs.set(ParamAttrs::APPEND);
+    }
+    let joined = elements.join(" ");
+    emit_full(
+        DefKind::Assign,
+        name,
+        Some(joined),
+        ctx.file,
+        ctx.line,
+        ctx.fn_chain,
+        attrs,
+        Some(elements),
+        None,
+    );
+}
+
+/// Assoc-array assign with insertion-ordered (key, value) pairs.
+/// `is_append` distinguishes `h=(...)` (replace) from `h+=(...)`
+/// / `h[k]=v` element-add semantics.
+pub fn emit_assoc_assign(
+    name: &str,
+    pairs: Vec<(String, String)>,
+    mut attrs: ParamAttrs,
+    is_append: bool,
+    ctx: RecordCtx,
+) {
+    attrs.set(ParamAttrs::ASSOC);
+    if is_append {
+        attrs.set(ParamAttrs::APPEND);
+    }
+    // Joined key/value pairs as the scalar fallback for clients that
+    // only read `value`.
+    let joined = pairs
+        .iter()
+        .flat_map(|(k, v)| [k.as_str(), v.as_str()])
+        .collect::<Vec<_>>()
+        .join(" ");
+    emit_full(
+        DefKind::Assign,
+        name,
+        Some(joined),
+        ctx.file,
+        ctx.line,
+        ctx.fn_chain,
+        attrs,
+        None,
+        Some(pairs),
     );
 }
 /// Backwards-compat: legacy emit_typeset used by sites that haven't
