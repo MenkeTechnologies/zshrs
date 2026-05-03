@@ -74,7 +74,7 @@ impl ZstyleColors {
         colors.add_default_file_colors();
 
         // Parse ZPWR env file for header colors and separator
-        if let Some(home) = std::env::var("HOME").ok() {
+        if let Ok(home) = std::env::var("HOME") {
             let env_file = PathBuf::from(&home).join(".zpwr/env/.zpwr_env.sh");
             if let Ok(content) = std::fs::read_to_string(&env_file) {
                 colors.parse_env_file(&content);
@@ -275,8 +275,8 @@ impl ZstyleColors {
         // Format: =(#b)(*)=PREFIX_COLOR=COMPLETION_COLOR
         // or just: ma=COLOR for menu selection
 
-        if value.starts_with("=(#b)(*)=") {
-            let rest = &value[9..]; // Skip "=(#b)(*)="
+        if let Some(rest) = value.strip_prefix("=(#b)(*)=") {
+            // Skip "=(#b)(*)="
             let parts: Vec<&str> = rest.splitn(2, '=').collect();
             if parts.len() == 2 {
                 return Some((parts[0].to_string(), parts[1].to_string()));
@@ -771,7 +771,7 @@ fn parse_ansi_c_string(s: &str) -> String {
                 Some('0') => {
                     // Octal escape \0xxx
                     let mut octal = String::new();
-                    while octal.len() < 3 && chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+                    while octal.len() < 3 && chars.peek().is_some_and(|c| c.is_ascii_digit()) {
                         octal.push(chars.next().unwrap());
                     }
                     if let Ok(n) = u8::from_str_radix(&octal, 8) {

@@ -495,7 +495,7 @@ pub fn build_cache_from_fpath(
         .collect();
     cache
         .set_comps_bulk(&comps)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     // Populate services table (_services hash)
     let services: Vec<(String, String)> = result
@@ -505,13 +505,13 @@ pub fn build_cache_from_fpath(
         .collect();
     cache
         .set_services_bulk(&services)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     // Populate patcomps table (_patcomps hash)
     for (pattern, function) in &result.patcomps {
         cache
             .set_patcomp(pattern, function)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
     }
 
     // Populate postpatcomps (stored in patcomps with a marker, or separate table if needed)
@@ -519,7 +519,7 @@ pub fn build_cache_from_fpath(
     for (pattern, function) in &result.postpatcomps {
         cache
             .set_patcomp(pattern, function)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
     }
 
     let comps_time = t1.elapsed();
@@ -539,7 +539,7 @@ pub fn build_cache_from_fpath(
         .collect();
     cache
         .add_autoloads_with_bodies_bulk(&autoloads)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     let autoloads_time = t2.elapsed();
 
@@ -564,12 +564,12 @@ pub fn load_from_cache(cache: &crate::cache::CompsysCache) -> std::io::Result<Co
     // Load comps - single query
     result.comps = cache
         .get_all_comps()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     // Load patcomps - single query
     for (pat, func) in cache
         .patcomps_kv()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?
+        .map_err(|e| std::io::Error::other(e.to_string()))?
     {
         result.patcomps.insert(pat, func);
     }
@@ -674,12 +674,11 @@ impl CompInitOpts {
 
         while i < args.len() {
             match args[i].as_str() {
-                "-d" => {
-                    if i + 1 < args.len() && !args[i + 1].starts_with('-') {
+                "-d"
+                    if i + 1 < args.len() && !args[i + 1].starts_with('-') => {
                         opts.dump_file = Some(PathBuf::from(&args[i + 1]));
                         i += 1;
                     }
-                }
                 "-D" => opts.no_dump = true,
                 "-C" => opts.no_check = true,
                 "-i" => opts.ignore_insecure = true,

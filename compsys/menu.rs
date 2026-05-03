@@ -1842,7 +1842,7 @@ impl MenuState {
                 display_row += 1;
             }
 
-            let group_rows = (group.count + cols - 1) / cols;
+            let group_rows = group.count.div_ceil(cols);
             let group_start_item_row = items_so_far / cols;
             let group_end_item_row = group_start_item_row + group_rows;
 
@@ -1913,7 +1913,7 @@ impl MenuState {
                 group.comp_col_width = max_comp_width + 2;
                 group.cols = cols;
                 group.col_widths = vec![entry_width; cols];
-                group.row_count = (n + cols - 1) / cols;
+                group.row_count = n.div_ceil(cols);
             } else {
                 // Multi-column layout for items without descriptions
                 let max_cols = n.min(tw / 2); // At least 2 chars per item
@@ -1944,7 +1944,7 @@ impl MenuState {
 
                 group.cols = best_cols;
                 group.col_widths = best_widths;
-                group.row_count = (n + best_cols - 1) / best_cols;
+                group.row_count = n.div_ceil(best_cols);
                 group.comp_col_width = 0;
             }
 
@@ -2582,7 +2582,7 @@ impl MenuState {
         // Separator from zstyle (ZPWR_CHAR_LOGO)
         let separator = &self.list_separator;
         line.content.push_str("\x1b[2m");
-        line.content.push_str(&separator);
+        line.content.push_str(separator);
         line.content.push_str(ansi::RESET);
         line.content.push(' ');
         line.width += UnicodeWidthStr::width(separator.as_str()) + 1;
@@ -3351,7 +3351,7 @@ impl KeySequence {
                         chars.next();
                     } else {
                         let ctrl = next.to_ascii_uppercase();
-                        if ctrl >= 'A' && ctrl <= '_' {
+                        if ('A'..='_').contains(&ctrl) {
                             bytes.push((ctrl as u8) - b'A' + 1);
                         } else {
                             bytes.push(ctrl as u8);

@@ -340,8 +340,7 @@ pub fn call_program(
     let output = Command::new(command).args(args).output()?;
 
     if !output.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(std::io::Error::other(
             format!("{} failed with status {}", command, output.status),
         ));
     }

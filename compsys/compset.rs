@@ -261,8 +261,7 @@ fn match_prefix_pattern(text: &str, pattern: &str) -> Option<String> {
     }
 
     // Pattern with # at end means match one or more
-    if pattern.ends_with('#') {
-        let base = &pattern[..pattern.len() - 1];
+    if let Some(base) = pattern.strip_suffix('#') {
         // For [^x] patterns
         if base.starts_with("[^") && base.ends_with(']') {
             let exclude_char = base.chars().nth(2)?;
@@ -280,11 +279,10 @@ fn match_prefix_pattern(text: &str, pattern: &str) -> Option<String> {
     }
 
     // Literal prefix match
-    if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[') {
-        if text.starts_with(pattern) {
+    if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[')
+        && text.starts_with(pattern) {
             return Some(pattern.to_string());
         }
-    }
 
     // Full glob match
     if glob_match(text, pattern) {
@@ -305,11 +303,10 @@ fn match_suffix_pattern(text: &str, pattern: &str) -> Option<String> {
         }
     }
 
-    if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[') {
-        if text.ends_with(pattern) {
+    if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[')
+        && text.ends_with(pattern) {
             return Some(pattern.to_string());
         }
-    }
 
     if glob_match(text, pattern) {
         return Some(text.to_string());
