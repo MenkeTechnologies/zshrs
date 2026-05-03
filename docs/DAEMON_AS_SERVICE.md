@@ -495,7 +495,7 @@ Month 2:  Snapshot bash environment via introspection (names+values, no file:lin
           Use snapshot for cross-machine sync via daemon.snapshot.publish
 
 Month 4:  Install zshrs shell binary alongside bash
-          Run `zshrs --record` to capture full per-definition catalog
+          Run `zshrs-recorder` to capture full per-definition catalog
           (file:line + fn_chain now available)
           
 Month 6:  Make zshrs the login shell. Existing daemon ops continue working.
@@ -521,7 +521,7 @@ table, queryable across shells via the public API.
 The public ops `daemon.definitions.{query,subscribe}` and `daemon.snapshot.*`
 take records keyed by `(kind, name, file, line, fn_chain, ts_ns,
 shell_id)`. The `shell_id` field carries the recording shell's
-identity (zshrs, fish-recorder, bash-recorder, etc.) so queries can
+identity (zshrs-recorder, fish-recorder, bash-recorder, etc.) so queries can
 filter by shell or aggregate across:
 
 ```
@@ -573,7 +573,7 @@ end
 ```
 
 Fish ships this as `~/.config/fish/conf.d/zshrs-recorder.fish` (only
-loaded when `--record` mode is active via env var).
+loaded when `fish-recorder` mode is active via env var).
 
 ### Fidelity tier across shells
 

@@ -48,6 +48,27 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
         .unwrap_or(false);
     let name = args.get("name").and_then(Value::as_str).map(str::to_string);
 
+    // `format=pdf` — render the canonical state of `target` as a paginated
+    // PDF document. We delegate the data-dump to the existing `text`
+    // renderer (one line per row, human-readable), then lay that text
+    // into a PDF via printpdf. Response carries the bytes base64-encoded
+    // so the existing JSON envelope stays uniform across formats; HTTP
+    // clients decode with `base64 -d`. No native deps; printpdf is
+    // pure-Rust.
+    if format == "pdf" {
+        let body = render(state, &target, "text", additive)?;
+        let pdf_bytes = pdf_render(&target, &body)
+            .map_err(|e| ErrPayload::new("pdf_render", e.to_string()))?;
+        use base64::Engine as _;
+        let body_base64 = base64::engine::general_purpose::STANDARD.encode(&pdf_bytes);
+        return Ok(json!({
+            "target": target,
+            "format": "pdf",
+            "body_base64": body_base64,
+            "byte_count": pdf_bytes.len(),
+        }));
+    }
+
     // `functions <name>` — single named function, in the requested format.
     // sh: emit `function <name> { <body> }`; disasm: stub until the bytecode
     // emitter lands. Per docs/DAEMON.md "functions [<name>] All function
@@ -1797,6 +1818,121 @@ fn normalize_subsystem(target: &str) -> std::result::Result<String, ErrPayload> 
         // Fall-through: treat target as the subsystem name.
         other => other.to_string(),
     })
+}
+
+/// Render a daemon-state text dump as a paginated PDF document. Used by
+/// `op_view_or_export` when `format=pdf`. The text body is the same one
+/// the existing `text` renderer produces (one line per row), so the PDF
+/// is "the data, paginated" rather than a designed report layout.
+///
+/// Page model: US Letter, 0.5-inch margins, monospace 10pt
+/// (Helvetica because that's what built-in printpdf fonts cover; the
+/// monospace look comes from fixed line height, not the glyph
+/// metrics — fine for the dump-style content).
+fn pdf_render(target: &str, body: &str) -> std::result::Result<Vec<u8>, String> {
+    use printpdf::{BuiltinFont, Mm, PdfDocument};
+
+    // Letter: 215.9mm × 279.4mm. Margins: 12.7mm (~0.5in). printpdf
+    // 0.7's `Mm` is `f32`, so all geometry constants are f32 to avoid
+    // a sea of `as f32` at every call site.
+    const PAGE_W: f32 = 215.9;
+    const PAGE_H: f32 = 279.4;
+    const MARGIN: f32 = 12.7;
+    const FONT_PT: f32 = 10.0;
+    // 1pt ≈ 0.3528mm; 12pt line height for 10pt font.
+    const LINE_H: f32 = 4.23;
+    const HEADER_LINES: usize = 3;
+    const MAX_LINE_CHARS: usize = 110;
+
+    let usable_h = PAGE_H - 2.0 * MARGIN;
+    let lines_per_page = ((usable_h / LINE_H) as usize).saturating_sub(HEADER_LINES);
+    if lines_per_page == 0 {
+        return Err("page geometry too small for content".to_string());
+    }
+
+    let title = format!("zshrs-daemon export — {target}");
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let footer_template = format!(
+        "Generated {timestamp} • daemon v{version}",
+        version = env!("CARGO_PKG_VERSION")
+    );
+
+    // Pre-wrap content into display lines so paging is deterministic.
+    let mut display_lines: Vec<String> = Vec::new();
+    for raw in body.lines() {
+        if raw.chars().count() <= MAX_LINE_CHARS {
+            display_lines.push(raw.to_string());
+        } else {
+            // Hard wrap at MAX_LINE_CHARS; preserves all content even on
+            // pathologically long lines (long function bodies, etc.).
+            let mut buf = String::new();
+            for c in raw.chars() {
+                buf.push(c);
+                if buf.chars().count() >= MAX_LINE_CHARS {
+                    display_lines.push(buf.clone());
+                    buf.clear();
+                }
+            }
+            if !buf.is_empty() {
+                display_lines.push(buf);
+            }
+        }
+    }
+    if display_lines.is_empty() {
+        display_lines.push(String::from("(empty)"));
+    }
+
+    let total_pages = display_lines.len().div_ceil(lines_per_page).max(1);
+    let (doc, first_page, first_layer) =
+        PdfDocument::new(&title, Mm(PAGE_W), Mm(PAGE_H), "page-1");
+    let font = doc
+        .add_builtin_font(BuiltinFont::Helvetica)
+        .map_err(|e| format!("printpdf font: {e}"))?;
+    let bold = doc
+        .add_builtin_font(BuiltinFont::HelveticaBold)
+        .map_err(|e| format!("printpdf bold font: {e}"))?;
+
+    for (page_idx, chunk) in display_lines.chunks(lines_per_page).enumerate() {
+        let layer = if page_idx == 0 {
+            doc.get_page(first_page).get_layer(first_layer)
+        } else {
+            let (p, l) = doc.add_page(Mm(PAGE_W), Mm(PAGE_H), format!("page-{}", page_idx + 1));
+            doc.get_page(p).get_layer(l)
+        };
+
+        // Header (title + page number).
+        let mut y = PAGE_H - MARGIN;
+        layer.use_text(&title, FONT_PT + 2.0, Mm(MARGIN), Mm(y), &bold);
+        let pageno = format!("page {} / {}", page_idx + 1, total_pages);
+        layer.use_text(
+            &pageno,
+            FONT_PT,
+            Mm(PAGE_W - MARGIN - 30.0),
+            Mm(y),
+            &font,
+        );
+        y -= LINE_H * 2.0;
+
+        // Body lines.
+        for line in chunk {
+            layer.use_text(line.as_str(), FONT_PT, Mm(MARGIN), Mm(y), &font);
+            y -= LINE_H;
+        }
+
+        // Footer.
+        layer.use_text(
+            &footer_template,
+            FONT_PT - 2.0,
+            Mm(MARGIN),
+            Mm(MARGIN / 2.0),
+            &font,
+        );
+    }
+
+    let mut buf: Vec<u8> = Vec::new();
+    doc.save(&mut std::io::BufWriter::new(&mut buf))
+        .map_err(|e| format!("printpdf save: {e}"))?;
+    Ok(buf)
 }
 
 #[cfg(test)]

@@ -1,3 +1,32 @@
+/// Public surface — every op name the daemon accepts. Single source of
+/// truth: keep in sync with the `match op` arms in `dispatch()` below.
+/// Surfaced via `GET /ops` over HTTP and used by `daemon.health` clients
+/// to validate availability before issuing requests. Kept alphabetically
+/// sorted so the wire output is stable.
+pub const OP_NAMES: &[&str] = &[
+    "artifact_gc", "artifact_get", "artifact_get_by_digest", "artifact_list",
+    "artifact_put",
+    "ask_ask", "ask_dismiss", "ask_pending", "ask_response", "ask_take",
+    "cache_del", "cache_get", "cache_list", "cache_put", "cache_stats",
+    "canonical_hydrate_view", "clean", "cmd_result", "cmd_started", "compact",
+    "complete", "config_get", "config_list", "config_set", "daemon",
+    "diff_canonical", "doctor", "export", "export_all", "export_catalog",
+    "export_shard", "export_zcompdump", "fpath_changed", "highlight",
+    "history_append", "history_query", "import_all", "import_catalog",
+    "import_history", "import_shard", "import_zcompdump", "import_zwc",
+    "info", "job_cancel", "job_kill", "job_list", "job_output", "job_status",
+    "job_submit", "job_wait", "keys", "list_shells", "load_script",
+    "lock_acquire", "lock_list", "lock_release", "lock_try_acquire",
+    "log_level", "log_rotate", "log_stats", "notify", "ping", "publish",
+    "pull_canonical", "push_canonical", "recorder_ingest", "register",
+    "replay_log", "schedule_add", "schedule_add_once", "schedule_list",
+    "schedule_remove", "send", "snapshot_diff", "snapshot_list",
+    "snapshot_load", "snapshot_save", "source_resolve", "stats_flush",
+    "subscribe",
+    "subscribe_shard", "subscription_set_paused", "suggest", "tag", "untag",
+    "unsubscribe", "verify", "view", "watcher_stats",
+];
+
 // IPC operation dispatch + handlers.
 //
 // Per docs/DAEMON.md "Operation table (client → daemon)". Every named op
@@ -97,6 +126,35 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "highlight" => op_highlight(state, args).await,
         "register" => op_register(state, client_id, args).await,
         "doctor" => op_doctor(state).await,
+
+        // ---- daemon-as-service ops (docs/DAEMON_AS_SERVICE.md) ----
+        // Cache (sqlite-backed namespaced KV).
+        "cache_put"   => super::cache::op_cache_put(state, args).await,
+        "cache_get"   => super::cache::op_cache_get(state, args).await,
+        "cache_del"   => super::cache::op_cache_del(state, args).await,
+        "cache_list"  => super::cache::op_cache_list(state, args).await,
+        "cache_stats" => super::cache::op_cache_stats(state, args).await,
+        // Lock (named cross-process mutex with PID-tied auto-release).
+        "lock_acquire"     => super::lock::op_lock_acquire(state, args).await,
+        "lock_try_acquire" => super::lock::op_lock_try_acquire(state, args).await,
+        "lock_release"     => super::lock::op_lock_release(state, args).await,
+        "lock_list"        => super::lock::op_lock_list(state, args).await,
+        // Artifact (content-addressed cache).
+        "artifact_put"            => super::artifact::op_artifact_put(state, args).await,
+        "artifact_get"            => super::artifact::op_artifact_get(state, args).await,
+        "artifact_get_by_digest"  => super::artifact::op_artifact_get_by_digest(state, args).await,
+        "artifact_gc"             => super::artifact::op_artifact_gc(state, args).await,
+        "artifact_list"           => super::artifact::op_artifact_list(state, args).await,
+        // Snapshot (tag-based canonical-state save/load/diff).
+        "snapshot_save" => super::snapshot::op_snapshot_save(state, args).await,
+        "snapshot_list" => super::snapshot::op_snapshot_list(state, args).await,
+        "snapshot_load" => super::snapshot::op_snapshot_load(state, args).await,
+        "snapshot_diff" => super::snapshot::op_snapshot_diff(state, args).await,
+        // Schedule (cron-equivalent).
+        "schedule_add"      => super::schedule::op_schedule_add(state, args).await,
+        "schedule_add_once" => super::schedule::op_schedule_add_once(state, args).await,
+        "schedule_remove"   => super::schedule::op_schedule_remove(state, args).await,
+        "schedule_list"     => super::schedule::op_schedule_list(state, args).await,
 
         _ => Err(ErrPayload::new(
             "unknown_op",

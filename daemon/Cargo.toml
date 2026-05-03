@@ -41,6 +41,30 @@ serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "fs", "io-util", "signal", "time", "sync", "macros", "process"] }
+# tokio-stream wraps tokio channels as `futures::Stream` impls. Used by
+# axum SSE handlers (daemon/http.rs `handler_stream_*`) to forward
+# broadcast frames to HTTP `text/event-stream` clients without rolling
+# our own poll loop.
+tokio-stream = { version = "0.1", default-features = false, features = ["sync"] }
+toml = "1"
+# PDF generation for op_export `format=pdf`. printpdf is pure-Rust (no
+# native deps), foundational layer of the Rust PDF ecosystem (genpdf
+# and friends build on it). Used to render canonical state snapshots
+# as paginated documents — see daemon/export.rs::pdf_render.
+printpdf = { version = "0.7", default-features = false }
+base64 = "0.22"
+# Cron-expression parsing for daemon.schedule.* ops. The `cron` crate
+# is the foundational Rust cron parser — small, no native deps, used
+# by tokio-cron-scheduler and most downstream schedulers. We drive
+# the tokio interval ourselves rather than pulling tokio-cron-scheduler
+# (extra layer; more decisions to inherit). See daemon/schedule.rs.
+cron = "0.12"
+# HTTP listener — see daemon/http.rs and docs/DAEMON_AS_SERVICE.md.
+# axum is the tokio team's framework on top of hyper + tower; all three
+# crates live in the foundational layer of the Rust async stack and meet
+# the "still builds in 2035" durability bar in CLAUDE.md.
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio", "query"] }
+tower = { version = "0.4", default-features = false }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }

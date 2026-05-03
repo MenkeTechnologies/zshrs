@@ -102,6 +102,13 @@ prometheus = ["metrics", "metrics-exporter-prometheus"]
 
 [dev-dependencies]
 tempfile = "3"
+# Minimal sync HTTP client used by tests/daemon_http.rs to exercise the
+# daemon's HTTP listener (POST /op/<name>, GET /health, GET /ops). ureq
+# is the foundational sync client in the Rust ecosystem; one crate, no
+# tokio runtime needed in the test.
+ureq = { version = "2", default-features = false, features = ["json"] }
+# base64 for decoding artifact_get response bodies in the harness.
+base64 = "0.22"
 
 [workspace]
 members = [".", "compsys", "daemon", "parse"]
