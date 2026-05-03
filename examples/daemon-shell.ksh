@@ -18,7 +18,7 @@
 # function names. Use ksh93u+m (`brew install ksh93`), mksh, or
 # daemon-shell.bash on macOS.
 #
-# Setup ($HOME/.config/zshrs/daemon.toml):
+# Setup ($HOME/.cache/zshrs/daemon.toml):
 #     [http]
 #     listen = "127.0.0.1:7733"
 #     # tokens = ["..."]

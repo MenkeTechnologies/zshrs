@@ -23,7 +23,7 @@
   assume `cargo install --path .` (~/.cargo/bin) — edit to /opt/homebrew/bin
   or /usr/local/bin if installed via brew.
 
-  HTTP listener: enable in ~/.config/zshrs/daemon.toml (see comments
+  HTTP listener: enable in ~/.cache/zshrs/daemon.toml (see comments
   in examples/systemd/zshrs-daemon.service for the schema).
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"

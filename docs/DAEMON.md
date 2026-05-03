@@ -912,7 +912,7 @@ in O(1).
 The probe never spawns the daemon. If the user wants the daemon
 running, they start it themselves via one of the install paths.
 
-#### Config knob: `~/.config/zshrs/zshrs.toml`
+#### Config knob: `~/.cache/zshrs/zshrs.toml`
 
 ```toml
 [daemon]

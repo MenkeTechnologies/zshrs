@@ -3,7 +3,7 @@
 //!
 //! Each test:
 //!   1. Allocates a free TCP port.
-//!   2. Sets up an isolated `$XDG_CONFIG_HOME` with a `daemon.toml` that
+//!   2. Writes `$XDG_CACHE_HOME/zshrs/daemon.toml` (single-dir rule)
 //!      enables the HTTP listener on that port.
 //!   3. Sets up an isolated `$XDG_CACHE_HOME` so the spawned daemon
 //!      doesn't collide with any developer-machine daemon already
@@ -42,7 +42,6 @@ fn pick_free_port() -> u16 {
 
 struct DaemonHttp {
     _cache: tempfile::TempDir,
-    _config: tempfile::TempDir,
     port: u16,
     child: Option<Child>,
 }
@@ -60,11 +59,12 @@ impl DaemonHttp {
     /// `[http.tokens.NAME]` headers it needs.
     fn spawn_with_extra_toml(token: Option<&str>, extra_toml: &str) -> Self {
         let cache = tempfile::TempDir::new().expect("cache tempdir");
-        let config = tempfile::TempDir::new().expect("config tempdir");
         let port = pick_free_port();
 
-        let cfg_dir = config.path().join("zshrs");
-        std::fs::create_dir_all(&cfg_dir).expect("mk config dir");
+        // Single-directory rule: daemon.toml lives in XDG_CACHE_HOME
+        // alongside everything else (rkyv shards, sockets, log).
+        let cfg_dir = cache.path().join("zshrs");
+        std::fs::create_dir_all(&cfg_dir).expect("mk cache dir");
         let mut f = std::fs::File::create(cfg_dir.join("daemon.toml")).expect("create toml");
         write!(f, "[http]\nlisten = \"127.0.0.1:{port}\"\n").unwrap();
         if let Some(tok) = token {
@@ -77,7 +77,6 @@ impl DaemonHttp {
 
         let child = Command::new(zshrs_daemon_binary())
             .env("XDG_CACHE_HOME", cache.path())
-            .env("XDG_CONFIG_HOME", config.path())
             .env("ZSHRS_QUIET_FIRST_RUN", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -87,7 +86,6 @@ impl DaemonHttp {
 
         let me = Self {
             _cache: cache,
-            _config: config,
             port,
             child: Some(child),
         };

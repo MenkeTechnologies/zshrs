@@ -54,7 +54,7 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
     super::schedule::spawn_tick(Arc::clone(&state));
 
     // HTTP listener (off by default; opt-in via [http].listen in
-    // ~/.config/zshrs/daemon.toml). Surfaces the same op set as the
+    // ~/.cache/zshrs/daemon.toml). Surfaces the same op set as the
     // unix-socket IPC path so curl/httpie/any HTTP client can talk
     // to the daemon. See daemon/http.rs + docs/DAEMON_AS_SERVICE.md.
     let http_cfg = match super::paths::load_http_config() {

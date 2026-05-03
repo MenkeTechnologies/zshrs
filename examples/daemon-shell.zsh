@@ -9,7 +9,7 @@
 #     daemon-job-status "$id"
 #     daemon-job-output "$id"
 #
-# Setup ($HOME/.config/zshrs/daemon.toml):
+# Setup ($HOME/.cache/zshrs/daemon.toml):
 #     [http]
 #     listen = "127.0.0.1:7733"
 #     # Optional — required if listening on a non-loopback interface:

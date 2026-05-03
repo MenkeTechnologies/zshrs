@@ -108,13 +108,13 @@ Per `AOT_DESIGN.md` §0x13 "Daemon as cross-shell coordinator". Adds the `z*` bu
 
 ### G2c — Cross-host federation (daemon-to-daemon over SSH multiplex)
 Per `AOT_DESIGN.md` §0x13 — federation as forward-looking but architecturally enabled.
-- Daemon-to-daemon protocol over SSH ControlMaster multiplexed connection. Local daemon discovers peer daemons via per-user known-hosts list (`~/.config/zshrs/peers`).
+- Daemon-to-daemon protocol over SSH ControlMaster multiplexed connection. Local daemon discovers peer daemons via per-user known-hosts list (`~/.cache/zshrs/peers`).
 - New `zsend laptop:shell1 'open ~/notes.md'` — cross-host shell dispatch routes through local daemon → remote daemon → remote client.
 - Cross-host history federation: remote daemon streams history events to local; local merges into history.db with origin tagging.
 - Cross-host secret vending: local daemon holds secret; remote command requests via remote daemon → local daemon roundtrip; secret vended once to specific command, never written to disk on remote.
 - `zls --all-hosts` lists shells across all federated daemons.
 - **Tests:** SSH from laptop to server; spawn zshrs on server; verify local daemon sees remote shell in `zls --all-hosts`; dispatch command across hosts; secret vending works without disk write on remote; federation degrades gracefully when peer daemon unreachable.
-- **Acceptance:** cross-host dispatch latency <100ms over LAN; secret vending leaves zero disk trace on remote; federation off by default (opt-in via `~/.config/zshrs/peers`).
+- **Acceptance:** cross-host dispatch latency <100ms over LAN; secret vending leaves zero disk trace on remote; federation off by default (opt-in via `~/.cache/zshrs/peers`).
 - **Effort:** 7 days (peer discovery + daemon-to-daemon protocol + SSH multiplex integration + history federation + secret vending + auth/trust model).
 
 ### G2d — Session-persistent supervised jobs (zjob)

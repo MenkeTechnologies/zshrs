@@ -1263,7 +1263,7 @@ Concretely for the zpwr ecosystem:
 # At zpwr release time (run once on the maintainer's machine):
 zshrs-recorder --tag zpwr-v48.7.3 --env ZPWR_REMOTE=false
 zwhere snapshot save --tag zpwr-v48.7.3
-zwhere snapshot sign --key ~/.config/zshrs/release.key
+zwhere snapshot sign --key ~/.cache/zshrs/release.key
 zwhere snapshot publish --registry github://MenkeTechnologies/zpwr
 
 # A user who wants zpwr (instead of cloning + running install.sh):
