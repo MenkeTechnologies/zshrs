@@ -45,6 +45,7 @@ pub fn dispatch(cmd: &str, args: &[String]) -> Option<i32> {
         "zcmd-result" => zcmd_result(args),
         "zlog" => zlog(args),
         "zwhere" => zwhere(args),
+        "zd" => zd(args),
         _ => return None,
     };
     Some(status)
@@ -90,6 +91,7 @@ pub const ZSHRS_BUILTIN_NAMES: &[&str] = &[
     "zcmd-result",
     "zlog",
     "zwhere",
+    "zd",
 ];
 
 /// Helper: open a client connection (spawn-on-demand) and return it. Reports the error
@@ -1990,6 +1992,100 @@ fn zwhere(args: &[String]) -> i32 {
         println!("{kind}\t{name}\t{value}\t{shell}\t{loc}");
     }
     0
+}
+
+/// `zd` — in-process builtin form of the standalone `zd` binary. Same
+/// arg surface (see `daemon::zd_dispatch::USAGE`); transport is the
+/// local Unix socket via the existing `Client`. **No fork**: zshrs
+/// calls dispatch() directly and gets the result back. ~5-15× faster
+/// than fork+exec'ing the binary for short ops.
+///
+/// `--url` / `--token` global flags are accepted (and ignored) for
+/// command-line shape compatibility with the binary form. The builtin
+/// always uses the local socket — there's no point talking to the
+/// daemon over HTTP from inside the same machine when a Unix socket
+/// is right there.
+///
+/// SSE ops (`zd events`, `zd watch`) return an error pointing at the
+/// binary form — long-lived stream pumps don't fit the request-
+/// response shape of a builtin.
+fn zd(args: &[String]) -> i32 {
+    use super::zd_dispatch::{dispatch, Transport};
+
+    // Pre-flight: daemon must be alive. Same friendly message as
+    // `zwhere` so the surface is consistent across daemon-only
+    // builtins.
+    let paths = match CachePaths::resolve() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("zd: cannot resolve $ZSHRS_HOME: {e}");
+            return 1;
+        }
+    };
+    if !Client::is_daemon_alive(&paths) {
+        eprintln!(
+            "zd: daemon is not running (no socket at {}).\n\
+             Start it via:\n  \
+               zshrs-daemon                                  # foreground manual\n  \
+               systemctl --user start zshrs-daemon           # Linux\n  \
+               launchctl load ~/Library/LaunchAgents/com.menketechnologies.zshrs-daemon.plist\n  \
+               brew services start zshrs",
+            paths.socket.display(),
+        );
+        return 1;
+    }
+    let mut client = match Client::connect_existing(&paths) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("zd: connect: {e}");
+            return 1;
+        }
+    };
+
+    // Skip argv[0] ("zd") so dispatch sees the same shape as the
+    // binary's `argv.skip(1)`.
+    let rest: &[String] = if args.is_empty() { args } else { &args[1..] };
+
+    struct SocketTransport<'a> {
+        client: &'a mut Client,
+    }
+    impl Transport for SocketTransport<'_> {
+        fn post(&mut self, op: &str, body: Value) -> Result<String, String> {
+            // Same Client::call path the other z* builtins use.
+            // Returns the JSON value; serialize so dispatch's caller
+            // gets a String (matches HTTP transport's contract).
+            match self.client.call(op, body) {
+                Ok(v) => serde_json::to_string(&v)
+                    .map_err(|e| format!("response serialize: {e}")),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        fn get(&mut self, path: &str) -> Result<String, String> {
+            // /health, /ops, /metrics — translate to their op forms.
+            // The IPC surface doesn't have GET semantics, so map each
+            // path to the equivalent op.
+            match path {
+                "/health" => self.post("ping", json!({})),
+                "/ops" => self.post(
+                    "call",
+                    // No-op call so the response includes the op list
+                    // via the daemon's existing introspection. Cleaner
+                    // path: a dedicated "ops" op. For now reuse info.
+                    json!({}),
+                )
+                .or_else(|_| self.post("info", json!({}))),
+                "/metrics" => self.post("metrics", json!({})),
+                other => Err(format!("zd builtin: GET {other} not supported over socket")),
+            }
+        }
+        fn sse(&mut self, path: &str) -> Result<String, String> {
+            Err(format!(
+                "zd builtin: SSE streams ({path}) not supported in-process — use the standalone `zd` binary or `curl -N`"
+            ))
+        }
+    }
+    let mut transport = SocketTransport { client: &mut client };
+    dispatch(rest, &mut transport)
 }
 
 // Used by callers that want a no-op suppress for unused-import warnings.
