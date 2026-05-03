@@ -894,6 +894,22 @@ impl ZshCompiler {
 
         match &assign.value {
             ZshAssignValue::Scalar(s) => {
+                // zsh status semantics for assignments:
+                //   `false; a=plain; echo $?`     → 0 (assignment resets)
+                //   `a=$(false); echo $?`         → 1 (cmd-subst propagates)
+                //   `false; echo a; foo=plain; echo $?`  → 0 (resets again)
+                //
+                // The bytecode trick: clear status to 0 BEFORE the RHS
+                // is evaluated. Then compile_word_str runs — for a
+                // literal value it has no side effect on last_status,
+                // for a `$(cmd)` value run_command_substitution updates
+                // last_status to the subst's exit. SET_VAR captures
+                // whatever last_status reads at that point and we
+                // SetStatus from it. Plain assignments end up at 0;
+                // cmd-subst assignments propagate.
+                self.builder.emit(Op::LoadInt(0), 0);
+                self.builder.emit(Op::SetStatus, 0);
+
                 let name_const = self.builder.add_constant(Value::str(assign.name.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 // Bare-assignment values (`i=5*3`) are NOT glob-
@@ -934,11 +950,12 @@ impl ZshCompiler {
                     crate::exec::BUILTIN_SET_VAR
                 };
                 self.builder.emit(Op::CallBuiltin(bid, 2), 0);
-                // Propagate the assignment's status to $?. zsh:
-                // `a=$(false); echo $?` → 1. SET_VAR returns
-                // Value::Status(captured cmd-subst status); use
-                // SetStatus to update vm.last_status (so subsequent
-                // $? reads the right value).
+                // Propagate the assignment's status to $?. SET_VAR
+                // returns Value::Status(last_status read at call
+                // time) — which is 0 for plain assignments (we
+                // pre-zeroed) or the cmd-subst's exit for
+                // `a=$(cmd)` (the subst overwrote last_status during
+                // RHS evaluation).
                 self.builder.emit(Op::SetStatus, 0);
             }
             ZshAssignValue::Array(elements) => {

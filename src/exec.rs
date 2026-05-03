@@ -5227,7 +5227,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // echo $?` → 1. run_command_substitution sets last_status
         // before returning; we pick it up here so the assignment's
         // status reflects the cmd-subst result.
-        let captured = with_executor(|exec| exec.last_status);
+        //
+        // CRITICAL: read `vm.last_status` (live), NOT
+        // `exec.last_status` (stale — only synced at statement
+        // boundaries; see the BUILTIN_RETURN handler ~line 1003).
+        // compile_assign emits LoadInt(0) + SetStatus BEFORE the
+        // RHS is evaluated specifically to clear the live status,
+        // so a plain assignment (no cmd-subst) reads back 0 and a
+        // `$(...)` value reads back the subst's exit. Reading the
+        // stale exec field here would always propagate the previous
+        // command's status, breaking `false; a=plain; echo $?` → 1
+        // (should be 0).
+        let captured = vm.last_status;
         Value::Status(captured)
     });
 
@@ -6282,6 +6293,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_CMD_SUBST_TEXT, |vm, _argc| {
         let cmd = vm.pop().to_str();
         let result = with_executor(|exec| exec.run_command_substitution(&cmd));
+        // Mirror run_command_substitution's exec.last_status side
+        // effect into the VM's live counter so a containing
+        // assignment's BUILTIN_SET_VAR — which reads vm.last_status
+        // — sees the cmd-subst's exit. Without this, `a=$(false);
+        // echo $?` reads stale 0 (vm.last_status was zeroed by
+        // compile_assign's prelude SetStatus, and run_cmd_subst only
+        // updated exec.last_status). Pull the value back through
+        // exec since it owns the canonical post-subst record.
+        let cs_status = with_executor(|exec| exec.last_status);
+        vm.last_status = cs_status;
         fusevm::Value::str(result)
     });
 
