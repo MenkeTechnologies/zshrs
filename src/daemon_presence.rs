@@ -286,23 +286,33 @@ pub fn probe() -> Mode {
     mode
 }
 
-/// Cheap probe: does the daemon have any canonical rows for shell_id
-/// "zshrs"? Calls `definitions_query --shell-id zshrs --limit 1` and
-/// checks `count > 0`. Returns false on any IPC error (treat as
-/// "no rows" so we fall through to vanilla mode safely).
+/// Cheap probe: does the daemon have a recorder shard on disk for
+/// shell_id "zshrs"? A `*-recorder.rkyv` file in `~/.cache/zshrs/images/`
+/// means the recorder ran at least once and we have canonical state to
+/// apply. **No IPC** — this is a directory listing + filename match,
+/// because the shell cold-start path can afford zero IPC roundtrips
+/// (the architecture's whole speed thesis).
+///
+/// Returns false on any I/O error → caller falls through to vanilla
+/// `source_startup_files()`.
 #[cfg(feature = "daemon")]
 fn daemon_has_zshrs_rows() -> bool {
-    let body = serde_json::json!({
-        "shell_id": "zshrs",
-        "limit": 1,
-    });
-    match crate::daemon::client::call_once_no_spawn("definitions_query", body) {
-        Ok(v) => v.get("count").and_then(|c| c.as_u64()).unwrap_or(0) > 0,
-        Err(e) => {
-            tracing::debug!(error = %e, "definitions_query probe failed; treating as no rows");
-            false
+    let paths = match crate::daemon::paths::CachePaths::resolve() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let entries = match std::fs::read_dir(&paths.images) {
+        Ok(it) => it,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        if let Some(s) = entry.file_name().to_str() {
+            if s.ends_with("-recorder.rkyv") {
+                return true;
+            }
         }
     }
+    false
 }
 
 #[cfg(not(feature = "daemon"))]
