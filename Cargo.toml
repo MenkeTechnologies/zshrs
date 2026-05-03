@@ -28,6 +28,16 @@ name = "zshrs-recorder"
 path = "bins/zshrs-recorder.rs"
 required-features = ["recorder"]
 
+# `zd` — standalone HTTP client for zshrs-daemon (see docs/DAEMON_AS_SERVICE.md).
+# Same separation principle as zshrs-recorder: NOT a `zshrs --client` mode;
+# a separate binary so non-zshrs shells can `cargo install --bin zd` without
+# pulling in the shell. required-features gate keeps ureq+base64 out of the
+# default zshrs build.
+[[bin]]
+name = "zd"
+path = "bins/zd.rs"
+required-features = ["zd"]
+
 [dependencies]
 ctrlc = "3"
 atty = "0.2"
@@ -79,6 +89,11 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 crossterm = "0.27"
 zstd = "0.13"
+# Optional — enabled together by the `zd` feature for the bins/zd.rs
+# HTTP client. Also re-used by tests/daemon_http.rs (which always
+# enables them via dev-dependencies below).
+ureq = { version = "2", default-features = false, features = ["json"], optional = true }
+base64 = { version = "0.22", optional = true }
 
 [features]
 default = ["daemon"]
@@ -96,18 +111,22 @@ daemon = ["zshrs-daemon"]
 # because the recorder's whole purpose is to ship its bundle to the
 # daemon at end-of-run via IPC.
 recorder = ["daemon"]
+# `zd` — standalone HTTP CLI for zshrs-daemon. OFF by default so the
+# main `zshrs` build doesn't drag in ureq+base64. Enable via
+# `cargo install --bin zd --features zd` (Cargo's required-features
+# mechanism enforces the gate).
+zd = ["dep:ureq", "dep:base64"]
 profiling = []
 flamegraph = ["tracing-flame"]
 prometheus = ["metrics", "metrics-exporter-prometheus"]
 
 [dev-dependencies]
 tempfile = "3"
-# Minimal sync HTTP client used by tests/daemon_http.rs to exercise the
-# daemon's HTTP listener (POST /op/<name>, GET /health, GET /ops). ureq
-# is the foundational sync client in the Rust ecosystem; one crate, no
-# tokio runtime needed in the test.
+# ureq + base64 are normal optional deps above (gated by `zd` feature
+# for bins/zd.rs); dev-deps re-list them so tests/daemon_http.rs gets
+# them unconditionally without forcing every `cargo test` to enable
+# the `zd` feature flag.
 ureq = { version = "2", default-features = false, features = ["json"] }
-# base64 for decoding artifact_get response bodies in the harness.
 base64 = "0.22"
 
 [workspace]

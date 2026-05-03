@@ -91,7 +91,7 @@ subset right now. Concrete capability matrix per shell:
 
 | Capability | bash | vanilla zsh | fish | nushell | zshrs |
 |---|---|---|---|---|---|
-| `daemon.cache.*` (persistent local KV) | ✅ via `zshrs-cli` | ✅ | ✅ | ✅ | ✅ |
+| `daemon.cache.*` (persistent local KV) | ✅ via `zd` | ✅ | ✅ | ✅ | ✅ |
 | `daemon.artifact.*` (build artifact cache, sccache replacement) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `daemon.job.*` (background task queue) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `daemon.schedule.*` (cron replacement) | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -106,6 +106,19 @@ subset right now. Concrete capability matrix per shell:
 **The 8 capabilities marked ✅ across all shells are universally
 available the day the daemon ships its public API.** No new shell
 needed.
+
+### Two ways to drive the daemon from any shell
+
+| Surface | Install | Best for |
+|---|---|---|
+| `zd` binary (`bins/zd.rs`) | `cargo install --path . --bin zd --features zd` | Power users, scripts, editor integrations — single-purpose ~3MB binary, no shell dependency, structured arg parsing, exit codes |
+| `daemon-shell.<shell>` wrappers (`examples/daemon-shell.{sh,bash,zsh,fish,nu,elv,ksh,ps1}`) | `source examples/daemon-shell.bash` (or your shell) | Shell users — zero install, idiomatic per shell (`daemon-cache-put` / `daemon record alias` / `Daemon-RecordAlias`), 8 shells covered |
+
+Both target the same HTTP listener and accept identical env vars:
+`DAEMON_URL`, `DAEMON_TOKEN`, `DAEMON_SHELL_ID`. Pick whichever fits
+the use site — they're interchangeable. The doc below uses `zd` in
+examples; substitute `daemon-cache-get` / `daemon record alias` /
+etc. if you're going wrapper-only.
 
 The recorder + per-definition file:line attribution is the only
 capability that requires the zshrs shell, because it's the only
@@ -122,38 +135,38 @@ socket. From bash:
 
 ```bash
 # Persistent KV
-zshrs-cli cache put build-config "$(cat config.json)"
-zshrs-cli cache get build-config
+zd cache put build-config "$(cat config.json)"
+zd cache get build-config
 
 # Job submission
-job_id=$(zshrs-cli job submit "long-running-task.sh")
-zshrs-cli job poll "$job_id"
+job_id=$(zd job submit "long-running-task.sh")
+zd job poll "$job_id"
 
 # Cross-process lock around critical section
-zshrs-cli lock acquire deploy-mutex --timeout 30s
-trap 'zshrs-cli lock release deploy-mutex' EXIT
+zd lock acquire deploy-mutex --timeout 30s
+trap 'zd lock release deploy-mutex' EXIT
 # ... critical section ...
 
 # fsnotify-driven trigger
-zshrs-cli watch subscribe ~/src/myproject/**/*.rs |
+zd watch subscribe ~/src/myproject/**/*.rs |
     while read changed; do cargo check; done
 
 # Cross-shell pub/sub
-zshrs-cli event publish build-complete '{"target":"prod"}'
+zd event publish build-complete '{"target":"prod"}'
 
 # Build artifact cache (sccache-equivalent for arbitrary tools)
 hash=$(sha256sum input.c | cut -d' ' -f1)
-if ! zshrs-cli artifact get "compile-$hash" -o output.o; then
+if ! zd artifact get "compile-$hash" -o output.o; then
     gcc -c input.c -o output.o
-    zshrs-cli artifact put "compile-$hash" output.o
+    zd artifact put "compile-$hash" output.o
 fi
 ```
 
 Same operations from fish:
 
 ```fish
-zshrs-cli cache put env-snapshot (env)
-set job_id (zshrs-cli job submit "deploy.sh")
+zd cache put env-snapshot (env)
+set job_id (zd job submit "deploy.sh")
 ```
 
 Same from Python:
@@ -184,7 +197,7 @@ Same from a vim plugin (rust-mode embedding LSP):
 nnoremap gd :call ZshrsGotoDefinition(expand('<cword>'))<CR>
 
 function! ZshrsGotoDefinition(name)
-    let result = system('zshrs-cli definitions query alias '..a:name..' --json')
+    let result = system('zd definitions query alias '..a:name..' --json')
     let r = json_decode(result)
     if !empty(r)
         execute 'edit ' .. r.file
@@ -446,36 +459,36 @@ on macOS, systemd-user on Linux) so one command works on both.
 
 ```bash
 # .bashrc additions
-export PATH=$HOME/.cargo/bin:$PATH      # zshrs-cli installed via cargo
+export PATH=$HOME/.cargo/bin:$PATH      # zd installed via cargo
 
 # Replace ~/.local/bin/sccache with daemon-backed cache
-export RUSTC_WRAPPER=zshrs-cli-rustc-wrapper
+export RUSTC_WRAPPER=zd-rustc-wrapper
 
 # Replace cron + anacron for personal jobs
-zshrs-cli schedule add "0 */1 * * *" "backup-photos.sh"
-zshrs-cli schedule add "0 3 * * *" "git-pull-all-repos.sh"
+zd schedule add "0 */1 * * *" "backup-photos.sh"
+zd schedule add "0 3 * * *" "git-pull-all-repos.sh"
 
 # Replace per-script flock for deploy mutex
 deploy() {
-    zshrs-cli lock acquire prod-deploy --timeout 60s || return 1
-    trap 'zshrs-cli lock release prod-deploy' EXIT
+    zd lock acquire prod-deploy --timeout 60s || return 1
+    trap 'zd lock release prod-deploy' EXIT
     # ... actual deploy ...
 }
 
 # Cross-shell notifications without external service
 build-and-notify() {
     if cargo build; then
-        zshrs-cli event publish build "{ \"status\": \"ok\", \"target\": \"$1\" }"
+        zd event publish build "{ \"status\": \"ok\", \"target\": \"$1\" }"
     fi
 }
 
 # Listen in another shell
-zshrs-cli event subscribe build | while read msg; do
+zd event subscribe build | while read msg; do
     notify-send "build" "$msg"
 done
 
 # Capture current bash state for diffing later
-zshrs-cli snapshot save --tag laptop-bash-2026-05-02
+zd snapshot save --tag laptop-bash-2026-05-02
 ```
 
 User has not changed shells. Has gained 5 capabilities that
@@ -487,7 +500,7 @@ notification setup.
 ```fish
 # fish-flavored config
 function on-rust-change
-    zshrs-cli watch subscribe '~/src/**/*.rs' | while read changed
+    zd watch subscribe '~/src/**/*.rs' | while read changed
         echo "rebuild on $changed"
         cargo check
     end
@@ -497,7 +510,7 @@ end
 set -U DAEMON_NS my-fish-env
 
 # Save fish env state
-zshrs-cli snapshot save --tag fish-baseline
+zd snapshot save --tag fish-baseline
 ```
 
 ### Scenario 3: vim editing a shell script, jump-to-definition
@@ -509,7 +522,7 @@ nnoremap gd :ZshrsGotoDef<CR>
 command! ZshrsGotoDef call s:goto_def()
 function! s:goto_def() abort
     let name = expand('<cword>')
-    let json = system('zshrs-cli definitions query --any --name '..shellescape(name)..' --json')
+    let json = system('zd definitions query --any --name '..shellescape(name)..' --json')
     let recs = json_decode(json)
     if empty(recs) | echo 'no definition' | return | endif
     " Pick most-recent record
@@ -548,7 +561,7 @@ which is slow, fragile, and gives strings, not structured data.
 # .github/workflows/deploy.yaml
 - name: Verify deploy environment
   run: |
-    zshrs-cli expect 'alias deploy exists' \
+    zd expect 'alias deploy exists' \
                      'PATH contains /opt/homebrew/bin' \
                      'export NODE_ENV=production' \
                      --snapshot blessed-deploy-shell-v3.rkyv
@@ -560,10 +573,10 @@ snapshot. Today: Bash + grep + custom assertion scripts; brittle.
 ### Scenario 6: Migration from bash → zshrs over months
 
 ```
-Month 0:  Install daemon + zshrs-cli. Keep using bash. Adopt:
-            - zshrs-cli cache (replaces in-house Redis usage)
-            - zshrs-cli schedule (replaces cron)
-            - zshrs-cli lock (replaces flock per-script)
+Month 0:  Install daemon + zd. Keep using bash. Adopt:
+            - zd cache (replaces in-house Redis usage)
+            - zd schedule (replaces cron)
+            - zd lock (replaces flock per-script)
 
 Month 2:  Snapshot bash environment via introspection (names+values, no file:line)
           Use snapshot for cross-machine sync via daemon.snapshot.publish
@@ -600,19 +613,19 @@ filter by shell or aggregate across:
 
 ```
 # All aliases defined anywhere across all shells:
-zshrs-cli definitions query --kind alias
+zd definitions query --kind alias
 
 # Just fish-recorder records:
-zshrs-cli definitions query --kind alias --shell-id fish
+zd definitions query --kind alias --shell-id fish
 
 # Cross-shell diff: aliases in fish but not in zshrs:
-zshrs-cli definitions diff --kind alias --shell-a fish --shell-b zshrs
+zd definitions diff --kind alias --shell-a fish --shell-b zshrs
 ```
 
 The schema explicitly accommodates third-party recorders. The op
 surface does not require any zshrs-specific knowledge to emit a
 record; any shell with file:line introspection + a way to call
-into the daemon (via `zshrs-cli` or HTTP-bridge) can contribute.
+into the daemon (via `zd` or HTTP-bridge) can contribute.
 
 ### What fish-recorder would look like
 
@@ -631,7 +644,7 @@ function alias --no-scope-shadowing
     set -l rec_chain (status stack-trace | string trim)
 
     # Emit to daemon
-    zshrs-cli definitions emit \
+    zd definitions emit \
         --shell-id fish \
         --kind alias \
         --name $argv[1] \
@@ -717,7 +730,7 @@ ship their recorder by:
 
 1. Reading `RECORDER_PROTOCOL.md`
 2. Implementing the intercept layer in their shell's idiomatic style
-3. Emitting records via `zshrs-cli definitions emit` (or directly
+3. Emitting records via `zd definitions emit` (or directly
    via the language client crate)
 4. Reserving a `shell_id` if not already in the registry
 5. Running the conformance tests
@@ -941,7 +954,7 @@ primitives; they must ship the full surface to compete.
 - Split out `zshrs-client` from existing daemon-internal client code
 - Publish to crates.io as `zshrs-client`
 - Doc + examples + integration tests
-- `zshrs-cli` binary built on top of the client crate
+- `zd` binary built on top of the client crate
 
 ### Phase 4 — first foreign-language client (Python, 2 weeks)
 
