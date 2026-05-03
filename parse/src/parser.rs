@@ -1881,18 +1881,13 @@ impl<'a> ZshParser<'a> {
         // We store the names space-joined since variable identifiers
         // can't contain whitespace.
         let mut names: Vec<String> = Vec::new();
-        loop {
-            match self.lexer.tok {
-                LexTok::String => {
-                    let v = self.lexer.tokstr.clone().unwrap_or_default();
-                    if v == "in" {
-                        break;
-                    }
-                    names.push(v);
-                    self.lexer.zshlex();
-                }
-                _ => break,
+        while self.lexer.tok == LexTok::String {
+            let v = self.lexer.tokstr.clone().unwrap_or_default();
+            if v == "in" {
+                break;
             }
+            names.push(v);
+            self.lexer.zshlex();
         }
         if names.is_empty() {
             self.error("expected variable name in for");

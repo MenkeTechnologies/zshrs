@@ -430,11 +430,7 @@ impl Zle {
             code,
             self.zlecs,
             self.zlell,
-            if self.zlell == 0 {
-                0
-            } else {
-                self.zlecs * 100 / self.zlell
-            }
+            (self.zlecs * 100).checked_div(self.zlell).unwrap_or(0)
         )
     }
 

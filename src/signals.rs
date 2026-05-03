@@ -138,6 +138,10 @@ struct SignalQueue {
 
 impl SignalQueue {
     const fn new() -> Self {
+        // INIT is intentionally a `const` here so each array slot
+        // construct-copies a fresh AtomicI32(0). A `static` would
+        // share one atomic across all slots, which is wrong.
+        #[allow(clippy::declare_interior_mutable_const)]
         const INIT: AtomicI32 = AtomicI32::new(0);
         SignalQueue {
             enabled: AtomicBool::new(false),

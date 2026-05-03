@@ -271,10 +271,8 @@ impl TextFormatter {
             self.format_command(cmd);
 
             // Handle trailing operator for last command
-            if i == list.len() - 1 {
-                if op == &ListOp::Amp {
-                    self.add_str(" &")
-                }
+            if i == list.len() - 1 && op == &ListOp::Amp {
+                self.add_str(" &")
             }
         }
     }

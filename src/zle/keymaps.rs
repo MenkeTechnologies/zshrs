@@ -439,7 +439,12 @@ impl<'a> std::ops::DerefMut for ZleGuard<'a> {
 pub fn zle() -> ZleGuard<'static> {
     ZLE_MANAGER.with(|m| {
         // SAFETY: The RefCell is thread-local so this is safe
-        ZleGuard(unsafe { std::mem::transmute(m.borrow_mut()) })
+        ZleGuard(unsafe {
+            std::mem::transmute::<
+                std::cell::RefMut<'_, ZleManager>,
+                std::cell::RefMut<'static, ZleManager>,
+            >(m.borrow_mut())
+        })
     })
 }
 
