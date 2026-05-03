@@ -14,6 +14,7 @@
 pub mod artifact;
 pub mod auth;
 pub mod builtins;
+pub mod zd_dispatch;
 pub mod cache;
 pub mod canonical;
 pub mod catalog;
