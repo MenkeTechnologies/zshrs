@@ -882,31 +882,49 @@ Examples:
 - `zsubscribe tag:prod.chpwd` — track cwd of all prod shells
 - `zsubscribe shell:1.chpwd` — mirror cwd from shell #1 in this shell
 
-### Three personality modes (cache layer gated by mode)
-
-| Mode | Trigger | Cache | Daemon |
-|------|---------|-------|--------|
-| POSIX | `--posix`, `emulate sh`, argv[0] = `sh`/`dash`/`bash` | OFF | NEVER spawned |
-| Vanilla zsh | argv[0] = `zsh`, `--zsh-compat` | OFF | NEVER spawned |
-| Turbocharged zshrs | argv[0] = `zshrs`, default | ON | spawned by first client |
-
-POSIX mode never spawns the daemon, never creates `~/.cache/zshrs/`. Required for `/bin/sh → zshrs` symlink in containers / cron / init / shebang.
-
 ### Daemon lifecycle
 
-- **Spawn-on-demand:** first client checks for `daemon.sock`; if absent or unresponsive, fork-spawns `zshrs --daemon`, waits ~50ms, retries connect.
-- **Singleton enforcement:** daemon takes `flock(LOCK_EX)` on `daemon.pid` at startup. Second instance sees lock held, exits.
-- **Lifetime:** persists across shell sessions; survives logout. Killed only by explicit `zcache daemon stop` or `pkill zshrs-daemon`.
-- **Crash recovery:** if daemon dies, next client to fail socket connect kills stale pidfile and respawns. No state loss — rkyv shards and `catalog.db` are durable on disk.
-- **Degraded mode:** if daemon disabled or unreachable, clients fall back to source-interp for everything. Cache stops updating but shells stay functional. User never blocked.
+The daemon is a standalone binary (`zshrs-daemon`) — never spawned by
+the zshrs shell. Users start it via one of the install paths shipped
+under `examples/`:
 
-### First-run user notification (the one-time exception to no-banner)
+- `examples/systemd/zshrs-daemon.service` (Linux, per-user systemd)
+- `examples/launchd/com.menketechnologies.zshrs-daemon.plist` (macOS;
+  installer at `examples/install-launchd.sh`)
+- `examples/brew/zshrs.rb` (`brew services start zshrs` on macOS / Linux)
+- Manual: `zshrs-daemon` from the command line
 
-The global "no startup banner / no init progress to terminal" rule has exactly **one** exception: the first-ever zshrs invocation on a machine, when the daemon is being spawned for the first time and the cold-cache build is starting from zero. This is a multi-second-to-multi-minute operation depending on corpus size; running it silently would be confusing and potentially indistinguishable from a hung shell.
+Once running:
 
-**Detection:** "first-ever run" = no `~/.cache/zshrs/daemon.pid` AND no `~/.cache/zshrs/index.rkyv` AND no `~/.cache/zshrs/images/` shards on disk. After the first run completes, this branch is never taken again on this machine for this user.
+- **Singleton enforcement:** daemon takes `flock(LOCK_EX)` on
+  `~/.cache/zshrs/daemon.pid` at startup. Second instance sees lock
+  held, exits cleanly.
+- **Lifetime:** persists across shell sessions; survives logout
+  (loginctl-linger on systemd). Stopped via `zcache daemon stop`,
+  `systemctl --user stop zshrs-daemon`, `launchctl unload ...plist`,
+  `brew services stop zshrs`, or SIGTERM.
+- **Crash recovery:** rkyv shards + `catalog.db` are durable on disk.
+  After the daemon restarts, clients reconnect and resume from cache.
+- **Degraded mode:** if the daemon is not running, zshrs clients fall
+  back to source-interp for everything. Cache features become no-ops;
+  the shell stays functional. User never blocked. No auto-respawn.
 
-**What gets printed (stderr, single block, before first prompt):**
+### First-run notification (the one-time exception to no-banner)
+
+The global "no startup banner / no init progress to terminal" rule
+has exactly **one** exception: the first-ever `zshrs-daemon` startup
+on a machine, when the cold-cache build is starting from zero. This
+is a multi-second-to-multi-minute operation depending on corpus size;
+running it silently would be confusing and potentially indistinguishable
+from a hung process.
+
+**Detection:** "first-ever run" = no `~/.cache/zshrs/index.rkyv` AND
+no `~/.cache/zshrs/images/` shards on disk. After the first run
+completes, this branch is never taken again on this machine for this
+user.
+
+**What gets printed (stderr, single block, on the daemon's controlling
+terminal if any — typically empty under systemd / launchd):**
 
 ```
 zshrs first-run init — daemon spawning, cold cache building.
@@ -1105,13 +1123,11 @@ Targets — measured by `daemon/bins/zshrs-daemon-bench.rs` for IPC RTT,
 unmeasured otherwise (see TODO list at end of this section).
 
 - Cold client launch (daemon already running): <5ms (mmap + connect + handshake).
-- Cold client launch (daemon spawn-on-demand): <50ms (spawn + connect + handshake).
 - Tab completion lookup: ~150-200ns end-to-end (perfect-hash mmap dereference).
 - Inline autosuggest: <2ms IPC roundtrip including FTS query.
 - Syntax highlight per keystroke: <2ms IPC roundtrip including parse.
 - 100 parallel clients share <30 MB RSS attributable to images (page-cache shared across mmaps).
 - Per-client cache overhead: <5 MB.
-- POSIX mode: never spawns daemon, never creates `~/.cache/zshrs/`.
 - `~/.zshrc` cold-source: <50ms with cache hit (mmap + replay env log), regardless of file size.
 - `zshrs FILE` cold-launch with cache hit: <10ms.
 - Recorder ingest: <1s for a 17k-completion zpwr-scale bundle (recorder
@@ -1122,11 +1138,17 @@ unmeasured otherwise (see TODO list at end of this section).
 **TODO — none of these are CI-asserted yet.** Per-criterion enforcement
 hasn't shipped. `zshrs-daemon-bench` measures the IPC RTT criteria but
 doesn't compare against thresholds; an `--assert-acceptance` mode that
-fails when p50 > target would close the loop. RSS / cold-source /
-spawn-on-demand criteria need separate harnesses.
+fails when p50 > target would close the loop. RSS + cold-source
+criteria need separate harnesses.
 
 Removed acceptance criteria (no longer applicable):
 - `zcache rebuild` <30s — `rebuild` op was deleted with the AST-walk
   pipeline; recorder runs replace this.
 - Per-shard rebuild ~100-500ms — same.
+- Daemon spawn-on-demand <50ms — daemon is no longer spawned by the
+  zshrs shell. Started independently by user / systemd / launchd /
+  brew services. There is no "client cold-start without daemon"
+  measurement to make; if the daemon isn't running, clients run in
+  degraded mode (source-interp, no cache).
+- POSIX mode never spawns daemon — moot for the same reason.
 
