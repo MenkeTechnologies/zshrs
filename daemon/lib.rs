@@ -123,7 +123,7 @@ pub fn run() -> Result<()> {
     let paths = paths::CachePaths::resolve()?;
     paths.ensure_dirs()?;
 
-    // Seed daemon.toml + zshrs.toml with defaults BEFORE log::init so
+    // Seed zshrs.toml + zshrs-daemon.toml + zshrs-recorder.toml with defaults BEFORE log::init so
     // the new [log] level directive can be picked up on first run.
     // Idempotent — never overwrites user edits.
     if let Err(e) = paths.ensure_default_configs() {
@@ -137,7 +137,7 @@ pub fn run() -> Result<()> {
 
     // First-pass diagnostics — gated to TRACE so they don't flood
     // the log at default INFO. Bump `[log] level = "trace"` in
-    // daemon.toml (or `ZSHRS_LOG=trace`) to see them.
+    // zshrs-daemon.toml (or `ZSHRS_LOG=trace`) to see them.
     let pid = std::process::id();
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())

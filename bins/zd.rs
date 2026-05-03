@@ -109,6 +109,16 @@ impl Transport for HttpTransport {
 }
 
 fn main() -> ExitCode {
+    // Make sure ~/.zshrs exists with the default config files. Same
+    // idempotent call every binary makes — `zd` is often the first
+    // contact a non-zsh user (bash / fish / CI script) has with the
+    // zshrs stack, so seeding here means they get the dir + configs
+    // even if they never run `zshrs` or `zshrs-daemon` directly.
+    if let Ok(paths) = zshrs_daemon::paths::CachePaths::resolve() {
+        let _ = paths.ensure_dirs();
+        let _ = paths.ensure_default_configs();
+    }
+
     let argv: Vec<String> = std::env::args().skip(1).collect();
     // Honor --url / --token on the bin (the builtin always uses the
     // local Unix socket). Strip them here, leave the rest for dispatch.

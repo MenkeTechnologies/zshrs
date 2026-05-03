@@ -48,7 +48,7 @@ pub fn init(paths: &CachePaths) -> Result<tracing_appender::non_blocking::Worker
 
     // Filter precedence:
     //   1. $ZSHRS_LOG (env var, ad-hoc / one-shot debugging)
-    //   2. [log] level in $ZSHRS_HOME/daemon.toml (the persistent
+    //   2. [log] level in $ZSHRS_HOME/zshrs-daemon.toml (the persistent
     //      knob — set once, no env var needed every session)
     //   3. "info" hard default
     // Same syntax everywhere — accepts EnvFilter directives like
