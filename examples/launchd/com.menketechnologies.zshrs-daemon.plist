@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.menketechnologies.zshrs-daemon.plist — launchd LaunchAgent for
+  macOS users running zshrs-daemon. Per-user agent (no root).
+
+  Install:
+
+    cp examples/launchd/com.menketechnologies.zshrs-daemon.plist \
+       ~/Library/LaunchAgents/
+    launchctl load -w ~/Library/LaunchAgents/com.menketechnologies.zshrs-daemon.plist
+
+  Verify:
+
+    launchctl list | grep zshrs
+    tail -f ~/.cache/zshrs/zshrs.log
+
+  Reload after edits:
+
+    launchctl unload ~/Library/LaunchAgents/com.menketechnologies.zshrs-daemon.plist
+    launchctl load -w ~/Library/LaunchAgents/com.menketechnologies.zshrs-daemon.plist
+
+  Adjust ProgramArguments[0] to wherever the binary lives. Defaults
+  assume `cargo install --path .` (~/.cargo/bin) — edit to /opt/homebrew/bin
+  or /usr/local/bin if installed via brew.
+
+  HTTP listener: enable in ~/.config/zshrs/daemon.toml (see comments
+  in examples/systemd/zshrs-daemon.service for the schema).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.menketechnologies.zshrs-daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/__USER__/.cargo/bin/zshrs-daemon</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>ZSHRS_QUIET_FIRST_RUN</key>
+        <string>1</string>
+    </dict>
+
+    <!--
+      Daemon writes its own log to ~/.cache/zshrs/zshrs.log via
+      tracing. These StandardOut/Err paths catch any stderr that
+      escapes the tracing layer (panics, early-init bail-outs).
+    -->
+    <key>StandardOutPath</key>
+    <string>/Users/__USER__/.cache/zshrs/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/__USER__/.cache/zshrs/launchd.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/__USER__</string>
+
+    <!--
+      Soft resource limits. macOS defaults are stingy on file
+      descriptors; bump for heavy fsnotify watchers + many client
+      sockets.
+    -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+</dict>
+</plist>
