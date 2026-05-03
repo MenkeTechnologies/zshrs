@@ -366,9 +366,10 @@ fn strip_quotes(word: &str, cursor_offset: usize) -> (String, String, Option<cha
     // Check for quotes
     let quote = match first {
         '\'' | '"' => {
-            if chars.len() > 1 && last == first {
-                Some(first)
-            } else if chars.len() > 1 {
+            // Either matched-pair (`'foo'`) or open-quote (`'foo`) —
+            // both signal that completion is happening inside a
+            // quoted region.
+            if chars.len() > 1 {
                 Some(first)
             } else {
                 None

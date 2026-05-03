@@ -1700,8 +1700,8 @@ impl<'a> ZshParser<'a> {
             (name.to_string(), String::new(), append)
         } else if let Some(pos) = tokstr.find(char_tokens::EQUALS) {
             let name_part = &tokstr[..pos];
-            let (name, append) = if name_part.ends_with('+') {
-                (&name_part[..name_part.len() - 1], true)
+            let (name, append) = if let Some(stripped) = name_part.strip_suffix('+') {
+                (stripped, true)
             } else {
                 (name_part, false)
             };
@@ -1713,8 +1713,8 @@ impl<'a> ZshParser<'a> {
         } else if let Some(pos) = tokstr.find('=') {
             // Fallback to literal '=' for compatibility
             let name_part = &tokstr[..pos];
-            let (name, append) = if name_part.ends_with('+') {
-                (&name_part[..name_part.len() - 1], true)
+            let (name, append) = if let Some(stripped) = name_part.strip_suffix('+') {
+                (stripped, true)
             } else {
                 (name_part, false)
             };

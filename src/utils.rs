@@ -2105,12 +2105,11 @@ pub fn wordcount_sep_mul(s: &str, sep: Option<&str>, mul: bool) -> usize {
             r
         }
         _ => {
-            // utils.c:3889-3911 — IFS-based count.
-            if mul {
-                s.split_whitespace().count()
-            } else {
-                s.split_whitespace().count()
-            }
+            // utils.c:3889-3911 — IFS-based count. mul / non-mul both
+            // currently fall through to plain whitespace split until we
+            // wire the multibyte locale path.
+            let _ = mul;
+            s.split_whitespace().count()
         }
     }
 }

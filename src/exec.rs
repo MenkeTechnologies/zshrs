@@ -2676,18 +2676,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         "zsh/terminfo",
                         "zsh/profiler",
                     ];
-                    if ALWAYS_LOADED.contains(&idx) {
-                        Some(Value::str("loaded"))
-                    } else if exec
-                        .options
-                        .get(&format!("_module_{}", idx))
-                        .copied()
-                        .unwrap_or(false)
-                    {
-                        Some(Value::str("loaded"))
-                    } else {
-                        Some(Value::str(""))
-                    }
+                    let loaded = ALWAYS_LOADED.contains(&idx)
+                        || exec
+                            .options
+                            .get(&format!("_module_{}", idx))
+                            .copied()
+                            .unwrap_or(false);
+                    Some(Value::str(if loaded { "loaded" } else { "" }))
                 }
                 "patchars" => Some(Value::str("*?[]<>(){}|^&;")),
                 "widgets" => {
@@ -18643,8 +18638,8 @@ impl ShellExecutor {
                                 return v[..i].to_string();
                             }
                         }
-                    } else if v.ends_with(pat) {
-                        return v[..v.len() - pat.len()].to_string();
+                    } else if let Some(prefix) = v.strip_suffix(pat) {
+                        return prefix.to_string();
                     }
                     v.to_string()
                 };
@@ -29762,9 +29757,8 @@ impl ShellExecutor {
                 for (name, path) in sorted {
                     if list_form {
                         println!("hash -d {}={}", name, path.display());
-                    } else if verbose {
-                        println!("{}={}", name, path.display());
                     } else {
+                        // verbose and default both emit `name=path`.
                         println!("{}={}", name, path.display());
                     }
                 }
@@ -31380,9 +31374,10 @@ impl ShellExecutor {
                         }
                     }
                 }
-            } else if arg.starts_with('+') {
-                positional_args.push(arg.clone());
             } else {
+                // `+N` stack indices and bare names alike — both go in
+                // positional_args; the dispatcher below distinguishes
+                // them by leading `+` later.
                 positional_args.push(arg.clone());
             }
         }
@@ -42236,9 +42231,9 @@ impl ShellExecutor {
                     if number_all || (number_nonempty && !is_blank) {
                         writeln!(stdout, "{:6}\t{}{}", line_num, decorated, suffix)?;
                         line_num += 1;
-                    } else if number_nonempty && is_blank {
-                        writeln!(stdout, "{}{}", decorated, suffix)?;
                     } else {
+                        // -b skips blank-line numbering; both that and the
+                        // unnumbered branch print the decorated text only.
                         writeln!(stdout, "{}{}", decorated, suffix)?;
                     }
                 }

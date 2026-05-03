@@ -3641,8 +3641,8 @@ fn parse_zcompdump(content: &str) -> ZcompdumpParsed {
             loop {
                 let l = lines[j];
                 let trimmed_end = l.trim_end();
-                let (body, more) = if trimmed_end.ends_with('\\') {
-                    (&trimmed_end[..trimmed_end.len() - 1], true)
+                let (body, more) = if let Some(stripped) = trimmed_end.strip_suffix('\\') {
+                    (stripped, true)
                 } else {
                     (trimmed_end, false)
                 };
