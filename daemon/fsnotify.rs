@@ -11,9 +11,17 @@
 //   - Watcher started in a dedicated tokio task.
 //   - Maintains a registry of watched paths → (shard_slug, source_root).
 //   - On event: log it, emit a `shard_updated` event to subscribers tracking that shard,
-//     and (for completeness — not yet wired into a rebuild pipeline) record the
-//     event in a per-watcher counter accessible via `info`.
-//   - Real rebuild dispatch arrives with the walk-lifecycle evaluator (task 24).
+//     and record the event in a per-watcher counter accessible via `info`.
+//
+// In-daemon rebuild dispatch is intentionally NOT wired here. Per the
+// recorder-owns-rebuild architecture (see docs/RECORDER.md): the daemon
+// never re-derives state by walking sources; it ingests the recorder's
+// runtime AOP capture instead. fsnotify's job here is therefore
+// notification-only — surface the change to subscribed shells via
+// `shard_updated`, let the user (or the shell's auto-recorder hook,
+// when wired) trigger `zshrs-recorder` for a fresh canonical pass.
+// Polling-based re-walk is explicitly rejected per docs/DAEMON.md
+// "ANY periodic re-walk ... REJECT".
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

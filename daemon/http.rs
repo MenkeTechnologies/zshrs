@@ -20,7 +20,8 @@
 //!
 //!     GET /health     → { "ok": true, "version": ..., "uptime_ms": ... }
 //!     GET /ops        → { "ok": true, "ops": [...] } (op names enumerated)
-//!     GET /openapi    → JSON schema (TODO)
+//!     GET /openapi    → OpenAPI 3.1 doc (auto-derived from OP_NAMES;
+//!                       alias /openapi.json — see handler_openapi)
 //!
 //! Auth model:
 //!   - No tokens configured + binding to a loopback address: open access
