@@ -24,6 +24,67 @@ use std::path::{Path, PathBuf};
 
 use super::{DaemonError, Result};
 
+/// Default `daemon.toml` written on first daemon startup. HTTP is
+/// enabled on loopback so `zd health` / `zd ops` / `zd op …` work
+/// without the user having to edit anything. Loopback bind requires
+/// no auth (per `http::serve_http`); switching `listen` to a non-
+/// loopback address WILL refuse to start until `[http.tokens]` is
+/// populated.
+const DEFAULT_DAEMON_TOML: &str = "\
+# zshrs-daemon configuration. Lives at $ZSHRS_HOME/daemon.toml
+# (~/.zshrs/daemon.toml by default). Auto-seeded on first start;
+# edit freely — the daemon never overwrites it.
+
+[http]
+# HTTP listener for the `zd` CLI + curl + any HTTP client.
+# Loopback-only by default so no token is required. Set to
+# 0.0.0.0:7733 (or a non-loopback IP) to expose to your network —
+# the daemon will refuse that bind unless [http.tokens] has at
+# least one entry below.
+listen = \"127.0.0.1:7733\"
+
+# Bearer-token registry. Required for non-loopback listeners.
+# Two value shapes per key:
+#
+#   [http.tokens]
+#   # Legacy / unscoped — flat string. Token grants full access.
+#   mybox    = \"replace-with-32-byte-random-hex\"
+#
+#   # Scoped — only grants the listed scopes.
+#   # Wildcards: `*` (everything), `<area>.*`, `*.<verb>`.
+#   vim-lsp  = { token = \"…\", scopes = [\"defs.read\", \"snapshot.read\"] }
+#   ci-pipe  = { token = \"…\", scopes = [\"job.write\", \"cache.*\"] }
+[http.tokens]
+";
+
+/// Default `zshrs.toml` written on first daemon startup. The daemon
+/// owns the cache root, so seeding the shell-side file here too
+/// means a single `zshrs-daemon` invocation leaves both knobs
+/// discoverable + editable.
+const DEFAULT_SHELL_TOML: &str = "\
+# zshrs (shell) configuration. Lives at $ZSHRS_HOME/zshrs.toml
+# (~/.zshrs/zshrs.toml by default). Auto-seeded on first
+# `zshrs-daemon` start; edit freely.
+
+[daemon]
+# Whether the shell talks to zshrs-daemon at startup:
+#   auto     — connect if the socket is reachable, else go vanilla
+#   on       — require a daemon, fail loudly if missing
+#   off      — never connect, even if the daemon is running
+enabled = \"auto\"
+
+[shell]
+# Whether to skip sourcing /etc/zshenv + ~/.{zshenv,zprofile,zshrc,
+# zlogin} and rebuild executor state from the daemon's canonical
+# rkyv shard instead. Saves ~150ms on shells with heavy plugin
+# loads.
+#   auto — skip iff daemon is up AND has a recorded zshrs shard
+#   on   — always skip (config files become inert; recorder owns
+#          all state)
+#   off  — never skip (canonical state ignored even when present)
+skip_configs = \"auto\"
+";
+
 /// All cache-related paths for the running user.
 #[derive(Clone, Debug)]
 pub struct CachePaths {
@@ -118,6 +179,44 @@ impl CachePaths {
         ensure_dir_700(&self.replay_dir)?;
         ensure_dir_700(&self.artifacts_dir)?;
         ensure_dir_700(&self.snapshots_dir)?;
+        Ok(())
+    }
+
+    /// Path to `daemon.toml` (the daemon's HTTP/auth/cache config).
+    pub fn daemon_config_path(&self) -> std::path::PathBuf {
+        self.root.join("daemon.toml")
+    }
+
+    /// Path to `zshrs.toml` (the shell-side daemon-presence + skip-configs knobs).
+    pub fn shell_config_path(&self) -> std::path::PathBuf {
+        self.root.join("zshrs.toml")
+    }
+
+    /// Seed `daemon.toml` and `zshrs.toml` with documented defaults if
+    /// the files are absent. Both ship enabled-by-default so a fresh
+    /// `zshrs-daemon` start gets:
+    ///   * an HTTP listener on `127.0.0.1:7733` so `zd health` works
+    ///     out of the box (loopback, no token required — see the auth
+    ///     gate in `http::serve_http`)
+    ///   * `[daemon] enabled = "auto"` + `[shell] skip_configs = "auto"`
+    ///     so the shell auto-detects the daemon and bypasses the dot-
+    ///     file chain when canonical state is available
+    /// Idempotent — never overwrites a user-edited file. Files are
+    /// chmod'd 0600 because the same root holds secrets-bearing tokens
+    /// once the user opts in.
+    pub fn ensure_default_configs(&self) -> Result<()> {
+        let daemon_cfg = self.daemon_config_path();
+        if !daemon_cfg.exists() {
+            std::fs::write(&daemon_cfg, DEFAULT_DAEMON_TOML)?;
+            ensure_file_600(&daemon_cfg)?;
+            tracing::info!(path = %daemon_cfg.display(), "seeded default daemon.toml");
+        }
+        let shell_cfg = self.shell_config_path();
+        if !shell_cfg.exists() {
+            std::fs::write(&shell_cfg, DEFAULT_SHELL_TOML)?;
+            ensure_file_600(&shell_cfg)?;
+            tracing::info!(path = %shell_cfg.display(), "seeded default zshrs.toml");
+        }
         Ok(())
     }
 

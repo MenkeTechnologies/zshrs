@@ -128,6 +128,14 @@ pub fn run() -> Result<()> {
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "zshrs-daemon starting");
 
+    // Seed daemon.toml + zshrs.toml with documented defaults if absent.
+    // Idempotent — the user's edits are never overwritten. Has to land
+    // BEFORE load_http_config / DaemonState::new since both consume the
+    // newly-seeded values.
+    if let Err(e) = paths.ensure_default_configs() {
+        tracing::warn!(?e, "failed to seed default configs; continuing with built-in defaults");
+    }
+
     // Singleton enforcement. Holds the lock for daemon lifetime.
     let _pid_lock = pidlock::acquire(&paths)?;
 
