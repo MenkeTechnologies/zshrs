@@ -556,9 +556,9 @@ fn parse_option_spec(spec: &str) -> Option<(String, String)> {
         return None;
     }
     let opt_end = rest
-        .find(|c| c == '[' || c == '=' || c == ':' || c == ' ')
+        .find(['[', '=', ':', ' '])
         .unwrap_or(rest.len());
-    let opt_name = rest[..opt_end].trim_end_matches(|c| c == '+' || c == '=');
+    let opt_name = rest[..opt_end].trim_end_matches(['+', '=']);
     if opt_name.is_empty() || opt_name == "-" || opt_name == "--" {
         return None;
     }

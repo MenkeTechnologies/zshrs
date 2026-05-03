@@ -215,8 +215,10 @@ pub fn files_execute(state: &mut CompletionState, opts: &FilesOpts) -> bool {
             }
         }
 
-        // Build completion string
-        let mut comp_str = if base_dir == PathBuf::from(".") {
+        // Build completion string. Note: PathBuf doesn't impl
+        // PartialEq<&str>, so compare via to_str() (a clippy --fix
+        // pass over-aggressively rewrote this and broke the build).
+        let mut comp_str = if base_dir.to_str() == Some(".") {
             name_str.to_string()
         } else {
             format!("{}{}", base_dir.display(), name_str)

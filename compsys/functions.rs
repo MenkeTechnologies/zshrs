@@ -637,7 +637,7 @@ pub fn expand(state: &mut CompletionState) -> bool {
 
     // Tilde expansion
     if expanded.starts_with('~') {
-        if let Some(home) = std::env::var("HOME").ok() {
+        if let Ok(home) = std::env::var("HOME") {
             if expanded == "~" || expanded.starts_with("~/") {
                 expanded = expanded.replacen("~", &home, 1);
                 did_expand = true;

@@ -123,7 +123,7 @@ impl ArgumentsSpec {
         if chars.peek() == Some(&'(') {
             chars.next(); // consume '('
             let mut excl = String::new();
-            while let Some(c) = chars.next() {
+            for c in chars.by_ref() {
                 if c == ')' {
                     if !excl.is_empty() {
                         excludes.push(excl);
@@ -195,7 +195,7 @@ impl ArgumentsSpec {
         // Find where the option name ends
         let opt_part = &opt_str[name_start..];
         let name_end = opt_part
-            .find(|c: char| c == '[' || c == '=' || c == ':' || c == '+' || c == '-')
+            .find(['[', '=', ':', '+', '-'])
             .unwrap_or(opt_part.len());
         let name = opt_part[..name_end].to_string();
 
@@ -500,11 +500,10 @@ impl<'a> ArgumentsState<'a> {
 
         // Check if previous word was an option that takes an argument
         for opt in &self.spec.options {
-            if opt.arg_req != ArgRequirement::None {
-                if opt.full_name() == *prev_word {
+            if opt.arg_req != ArgRequirement::None
+                && opt.full_name() == *prev_word {
                     return Some(opt);
                 }
-            }
         }
 
         // Check for --opt=value form
@@ -589,11 +588,10 @@ pub fn arguments_execute(
     }
 
     // Complete options if prefix starts with - or +
-    if analysis.prefix.is_empty()
+    if (analysis.prefix.is_empty()
         || analysis.prefix.starts_with('-')
-        || analysis.prefix.starts_with('+')
-    {
-        if !analysis.seen_ddash || !spec.no_opts_after_ddash {
+        || analysis.prefix.starts_with('+'))
+        && (!analysis.seen_ddash || !spec.no_opts_after_ddash) {
             state.begin_group("options", true);
 
             for opt in &analysis.available_opts {
@@ -618,7 +616,6 @@ pub fn arguments_execute(
 
             state.end_group();
         }
-    }
 
     added
 }

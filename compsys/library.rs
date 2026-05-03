@@ -365,7 +365,7 @@ pub fn parameters(state: &mut CompletionState, params: &HashMap<String, String>)
 
     state.begin_group("parameters", true);
 
-    for (name, _value) in params {
+    for name in params.keys() {
         if name.starts_with(&prefix) {
             state.add_match(Completion::new(name.clone()), Some("parameters"));
         }

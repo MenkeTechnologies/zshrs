@@ -109,65 +109,65 @@ impl CompadOpts {
 
                 match ch {
                     'P' => {
-                        opts.prefix = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.prefix = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'S' => {
-                        opts.suffix = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.suffix = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'p' => {
-                        opts.path_prefix = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.path_prefix = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     's' => {
-                        opts.path_suffix = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.path_suffix = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'i' => {
-                        opts.ignored_prefix = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.ignored_prefix = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'I' => {
-                        opts.ignored_suffix = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.ignored_suffix = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'W' => {
-                        opts.real_path_prefix = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.real_path_prefix = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'd' => {
-                        opts.display_array = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.display_array = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'J' => {
-                        opts.group_sorted = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.group_sorted = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'V' => {
-                        opts.group_unsorted = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.group_unsorted = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'X' => {
-                        opts.explanation = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.explanation = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'x' => {
-                        opts.message = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.message = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'M' => {
-                        opts.match_spec = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.match_spec = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'F' => {
-                        opts.ignore_array = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.ignore_array = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'r' => {
-                        opts.remove_suffix = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.remove_suffix = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'R' => {
-                        opts.remove_func = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.remove_func = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'A' => {
-                        opts.array_param = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.array_param = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'O' => {
-                        opts.orig_param = Some(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                        opts.orig_param = Some(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'D' => {
                         opts.filter_arrays
-                            .push(get_opt_arg(&chars, &mut j, &args, &mut i)?);
+                            .push(get_opt_arg(&chars, &mut j, args, &mut i)?);
                     }
                     'E' => {
-                        let val = get_opt_arg(&chars, &mut j, &args, &mut i)?;
+                        let val = get_opt_arg(&chars, &mut j, args, &mut i)?;
                         opts.dummies = val.parse().map_err(|_| "invalid number for -E")?;
                     }
                     'o' => {
@@ -299,11 +299,10 @@ pub fn compadd_execute(
     // Process each match
     for (idx, m) in match_strings.iter().enumerate() {
         // Check against PREFIX unless -U
-        if !opts.no_match {
-            if !matches_prefix(m, &params.prefix, opts.match_spec.as_deref()) {
+        if !opts.no_match
+            && !matches_prefix(m, &params.prefix, opts.match_spec.as_deref()) {
                 continue;
             }
-        }
 
         // Check against ignore patterns
         if let Some(ref igns) = ignores {
@@ -373,9 +372,8 @@ fn matches_prefix(match_str: &str, prefix: &str, _match_spec: Option<&str>) -> b
 /// Check if match should be ignored based on fignore patterns
 fn should_ignore(match_str: &str, ignores: &[String]) -> bool {
     for pattern in ignores {
-        if pattern.starts_with("?*") {
+        if let Some(suffix) = pattern.strip_prefix("?*") {
             // ?*.ext means any file ending in .ext
-            let suffix = &pattern[2..];
             if match_str.ends_with(suffix) {
                 return true;
             }

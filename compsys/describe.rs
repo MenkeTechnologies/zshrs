@@ -43,62 +43,55 @@ impl DescribeOpts {
         // Parse options
         while i < args.len() {
             match args[i].as_str() {
-                "-t" => {
-                    if i + 1 < args.len() {
+                "-t"
+                    if i + 1 < args.len() => {
                         opts.tag = Some(args[i + 1].clone());
                         i += 2;
                         continue;
                     }
-                }
-                "-M" => {
-                    if i + 1 < args.len() {
+                "-M"
+                    if i + 1 < args.len() => {
                         opts.matcher = Some(args[i + 1].clone());
                         i += 2;
                         continue;
                     }
-                }
-                "-V" => {
-                    if i + 1 < args.len() {
+                "-V"
+                    if i + 1 < args.len() => {
                         opts.group = Some(args[i + 1].clone());
                         opts.sorted = false;
                         i += 2;
                         continue;
                     }
-                }
-                "-J" => {
-                    if i + 1 < args.len() {
+                "-J"
+                    if i + 1 < args.len() => {
                         opts.group = Some(args[i + 1].clone());
                         opts.sorted = true;
                         i += 2;
                         continue;
                     }
-                }
-                "-P" => {
-                    if i + 1 < args.len() {
+                "-P"
+                    if i + 1 < args.len() => {
                         opts.prefix = Some(args[i + 1].clone());
                         i += 2;
                         continue;
                     }
-                }
-                "-S" => {
-                    if i + 1 < args.len() {
+                "-S"
+                    if i + 1 < args.len() => {
                         opts.suffix = Some(args[i + 1].clone());
                         i += 2;
                         continue;
                     }
-                }
                 "-Q" => {
                     opts.no_quote = true;
                     i += 1;
                     continue;
                 }
-                "-r" => {
-                    if i + 1 < args.len() {
+                "-r"
+                    if i + 1 < args.len() => {
                         opts.remove_suffix = Some(args[i + 1].clone());
                         i += 2;
                         continue;
                     }
-                }
                 arg if !arg.starts_with('-') => {
                     // First non-option is description
                     if description.is_empty() {

@@ -455,7 +455,7 @@ pub fn signals(receiver: &mut CompletionReceiver) -> bool {
 
     for (name, num, desc) in signals {
         receiver.add(Completion::new(name).with_description(desc));
-        receiver.add(Completion::new(num).with_description(&format!("SIG{}", name)));
+        receiver.add(Completion::new(num).with_description(format!("SIG{}", name)));
     }
 
     true
