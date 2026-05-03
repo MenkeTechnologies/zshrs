@@ -17,7 +17,7 @@ pub fn users(receiver: &mut CompletionReceiver) -> bool {
     // Try /etc/passwd first
     if let Ok(file) = File::open("/etc/passwd") {
         let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if let Some(user) = line.split(':').next() {
                 if !user.starts_with('#') && !user.is_empty() {
                     receiver.add(Completion::new(user));
@@ -59,7 +59,7 @@ pub fn groups(receiver: &mut CompletionReceiver) -> bool {
     // Try /etc/group first
     if let Ok(file) = File::open("/etc/group") {
         let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if let Some(group) = line.split(':').next() {
                 if !group.starts_with('#') && !group.is_empty() {
                     receiver.add(Completion::new(group));
@@ -110,7 +110,7 @@ pub fn hosts(receiver: &mut CompletionReceiver) -> bool {
     // /etc/hosts
     if let Ok(file) = File::open("/etc/hosts") {
         let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -133,7 +133,7 @@ pub fn hosts(receiver: &mut CompletionReceiver) -> bool {
     let known_hosts = Path::new(&home).join(".ssh/known_hosts");
     if let Ok(file) = File::open(known_hosts) {
         let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') || line.starts_with('@') {
                 continue;
@@ -164,7 +164,7 @@ pub fn hosts(receiver: &mut CompletionReceiver) -> bool {
     let ssh_config = Path::new(&home).join(".ssh/config");
     if let Ok(file) = File::open(ssh_config) {
         let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             let line = line.trim();
             if line.to_lowercase().starts_with("host ") {
                 for host in line[5..].split_whitespace() {
@@ -260,7 +260,7 @@ pub fn ports(receiver: &mut CompletionReceiver) -> bool {
 
     if let Ok(file) = File::open("/etc/services") {
         let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -387,7 +387,7 @@ pub fn urls(receiver: &mut CompletionReceiver, prefix: &str) -> bool {
         let known_hosts = Path::new(&home).join(".ssh/known_hosts");
         if let Ok(file) = File::open(known_hosts) {
             let reader = BufReader::new(file);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if let Some(host) = line.split_whitespace().next() {
                     for h in host.split(',') {
                         if h.starts_with('|') {

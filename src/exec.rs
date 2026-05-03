@@ -42430,7 +42430,7 @@ impl ShellExecutor {
             if let Some(skip) = skip_last_lines {
                 // -n -N: collect all lines, emit all except the last
                 // N. Direct port of coreutils head -n -N.
-                let all: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+                let all: Vec<String> = reader.lines().map_while(Result::ok).collect();
                 let end = all.len().saturating_sub(skip);
                 for line in &all[..end] {
                     let _ = writeln!(out, "{}", line);
@@ -42597,7 +42597,7 @@ impl ShellExecutor {
             if let Some(start) = start_line {
                 // -n +N: emit from line N (1-based) onwards.
                 // Streams without buffering the whole file.
-                for (i, line) in reader.lines().flatten().enumerate() {
+                for (i, line) in reader.lines().map_while(Result::ok).enumerate() {
                     if i + 1 >= start {
                         println!("{}", line);
                     }
@@ -42606,7 +42606,7 @@ impl ShellExecutor {
             }
 
             let mut ring: VecDeque<String> = VecDeque::with_capacity(lines);
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if ring.len() == lines {
                     ring.pop_front();
                 }
@@ -42698,7 +42698,7 @@ impl ShellExecutor {
             let mut chars = 0usize;
             let mut max_line: usize = 0;
 
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 lines += 1;
                 words += line.split_whitespace().count();
                 bytes += line.len() + 1; // +1 for the trailing \n
@@ -43203,14 +43203,14 @@ impl ShellExecutor {
             }
         } else if files.is_empty() {
             let stdin = std::io::stdin();
-            for line in stdin.lock().lines().flatten() {
+            for line in stdin.lock().lines().map_while(Result::ok) {
                 lines.push(line);
             }
         } else {
             for file in files {
                 match std::fs::File::open(file) {
                     Ok(f) => {
-                        for line in BufReader::new(f).lines().flatten() {
+                        for line in BufReader::new(f).lines().map_while(Result::ok) {
                             lines.push(line);
                         }
                     }
@@ -43648,7 +43648,7 @@ impl ShellExecutor {
                 }
             }
         } else {
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if prev.as_ref().map(|p| key(p)) == Some(key(&line)) {
                     cnt += 1;
                 } else {
@@ -43857,7 +43857,7 @@ impl ShellExecutor {
                 process_line(String::from_utf8_lossy(chunk).into_owned());
             }
         } else {
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 process_line(line);
             }
         }
@@ -44333,7 +44333,7 @@ impl ShellExecutor {
                     }
                 }
             };
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 println!("{}", line.chars().rev().collect::<String>());
             }
         }
@@ -44530,7 +44530,7 @@ impl ShellExecutor {
         if serial {
             // -s: each file's lines on a single output line.
             for r in readers.iter_mut() {
-                let lines: Vec<String> = r.lines().filter_map(|l| l.ok()).collect();
+                let lines: Vec<String> = r.lines().map_while(Result::ok).collect();
                 let mut out = String::new();
                 for (i, l) in lines.iter().enumerate() {
                     out.push_str(l);
@@ -44616,7 +44616,7 @@ impl ShellExecutor {
                     }
                 }
             };
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 let mut chunk = String::new();
                 let walker: Box<dyn Iterator<Item = char>> = if count_bytes {
                     // Treat each byte as a char (lossy for UTF-8).
@@ -44721,7 +44721,7 @@ impl ShellExecutor {
                 },
                 _ => Box::new(BufReader::new(std::io::stdin())),
             };
-            reader.lines().filter_map(|l| l.ok()).collect()
+            reader.lines().map_while(Result::ok).collect()
         };
         let mut rng = rand::thread_rng();
         items.shuffle(&mut rng);
@@ -45585,7 +45585,7 @@ impl ShellExecutor {
             _ => Box::new(BufReader::new(std::io::stdin())),
         };
         let mut tokens: Vec<String> = Vec::new();
-        for line in reader.lines().filter_map(|l| l.ok()) {
+        for line in reader.lines().map_while(Result::ok) {
             for tok in line.split_whitespace() {
                 tokens.push(tok.to_string());
             }
@@ -45859,7 +45859,7 @@ impl ShellExecutor {
             .collect();
         if nums.is_empty() {
             let stdin = std::io::stdin();
-            for line in stdin.lock().lines().filter_map(|l| l.ok()) {
+            for line in stdin.lock().lines().map_while(Result::ok) {
                 factor_line(&line);
             }
         } else {
@@ -46037,7 +46037,7 @@ impl ShellExecutor {
                     }
                 }
             };
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 all.push(line);
             }
         }
@@ -46116,7 +46116,7 @@ impl ShellExecutor {
                     }
                 }
             };
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 let mut col = 0usize;
                 let mut out = String::with_capacity(line.len());
                 for c in line.chars() {
@@ -46191,7 +46191,7 @@ impl ShellExecutor {
                     }
                 }
             };
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 let mut out = String::with_capacity(line.len());
                 let mut col = 0usize;
                 let chars: Vec<char> = line.chars().collect();
@@ -46810,7 +46810,7 @@ impl ShellExecutor {
                     }
                 }
             };
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 let blank = line.is_empty();
                 let do_number = match style {
                     'a' => true,
