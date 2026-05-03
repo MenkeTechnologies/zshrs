@@ -126,6 +126,8 @@ pub async fn op_definitions_query(state: &Arc<DaemonState>, args: Value) -> OpRe
                 "set_at_ns": row.set_at_ns,
                 "set_by_shell": row.set_by_shell,
                 "shell_id": row.shell_id.clone().unwrap_or_else(|| "zshrs".to_string()),
+                "file": row.file,
+                "line": row.line,
             }));
             if records.len() >= limit {
                 break 'outer;
@@ -198,21 +200,31 @@ pub async fn op_definitions_emit(state: &Arc<DaemonState>, args: Value) -> OpRes
     // JSON-string-encoded so canonical rows stay shape-uniform with
     // existing zshrs-recorder ingests.
     let json_value = serde_json::Value::String(value).to_string();
-    let n = state
-        .canonical
-        .upsert_tagged(kind, &name, &json_value, None, Some(shell_id.clone()));
+    let file = args
+        .get("file")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let line = args
+        .get("line")
+        .and_then(Value::as_u64)
+        .and_then(|n| u32::try_from(n).ok());
+    let n = state.canonical.upsert_tagged_with_attrs(
+        kind,
+        &name,
+        &json_value,
+        None,
+        Some(shell_id.clone()),
+        file.clone(),
+        line,
+    );
 
-    // Echo file/line/fn_chain back if supplied — they're not stored
-    // on CanonicalRow today (file:line attribution lives in the rkyv
-    // shard's `definitions` table per RECORDER.md schema), but the
-    // response surface acknowledges the caller's intent.
     Ok(json!({
         "kind": kind,
         "name": name,
         "shell_id": shell_id,
         "wrote_rows": n,
-        "file": args.get("file"),
-        "line": args.get("line"),
+        "file": file,
+        "line": line,
         "fn_chain": args.get("fn_chain"),
     }))
 }

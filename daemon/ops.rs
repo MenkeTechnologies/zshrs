@@ -1370,12 +1370,17 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // Per-subsystem buckets for `replace_subsystem` (so a re-recorder
     // run drops every previous row in that subsystem and replaces with
     // the fresh capture — recorder bundle is authoritative end-state).
-    let mut aliases: HashMap<String, String> = HashMap::new();
-    let mut galias: HashMap<String, String> = HashMap::new();
-    let mut salias: HashMap<String, String> = HashMap::new();
-    let mut functions: HashMap<String, String> = HashMap::new();
-    let mut env_exports: HashMap<String, String> = HashMap::new();
-    let mut params: HashMap<String, String> = HashMap::new();
+    //
+    // Each value is `(value_string, file, line)` so file/line
+    // attribution flows through to canonical rows for `zwhere`'s
+    // "where was this defined?" answer.
+    type AttrRow = (String, Option<String>, Option<u32>);
+    let mut aliases: HashMap<String, AttrRow> = HashMap::new();
+    let mut galias: HashMap<String, AttrRow> = HashMap::new();
+    let mut salias: HashMap<String, AttrRow> = HashMap::new();
+    let mut functions: HashMap<String, AttrRow> = HashMap::new();
+    let mut env_exports: HashMap<String, AttrRow> = HashMap::new();
+    let mut params: HashMap<String, AttrRow> = HashMap::new();
     // Replay-grade typed snapshot per parameter name. Value is the
     // JSON-serialised event payload (attrs + value + value_array +
     // value_assoc), so replay can read this back and emit
@@ -1383,42 +1388,45 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
     // verbatim. Latest-wins per name (the recorder bundle is end-state
     // for the run; the most recent event per name reflects current
     // value).
-    let mut params_typed: HashMap<String, String> = HashMap::new();
-    let mut bindkeys: HashMap<String, String> = HashMap::new();
-    let mut compdef: HashMap<String, String> = HashMap::new();
-    let mut named_dirs: HashMap<String, String> = HashMap::new();
-    let mut zstyle: Vec<(String, String)> = Vec::new();
-    let mut zmodload: Vec<String> = Vec::new();
-    let mut setopts: Vec<String> = Vec::new();
-    let mut unsetopts: Vec<String> = Vec::new();
-    let mut traps: HashMap<String, String> = HashMap::new();
-    let mut sched: HashMap<String, String> = HashMap::new();
-    let mut zle_widgets: HashMap<String, String> = HashMap::new();
-    let mut completions: HashMap<String, String> = HashMap::new();
-    let mut sourced: Vec<String> = Vec::new();
+    let mut params_typed: HashMap<String, AttrRow> = HashMap::new();
+    let mut bindkeys: HashMap<String, AttrRow> = HashMap::new();
+    let mut compdef: HashMap<String, AttrRow> = HashMap::new();
+    let mut named_dirs: HashMap<String, AttrRow> = HashMap::new();
+    let mut zstyle: Vec<(String, AttrRow)> = Vec::new();
+    let mut zmodload: Vec<(String, AttrRow)> = Vec::new();
+    let mut setopts: Vec<(String, AttrRow)> = Vec::new();
+    let mut unsetopts: Vec<(String, AttrRow)> = Vec::new();
+    let mut traps: HashMap<String, AttrRow> = HashMap::new();
+    let mut sched: HashMap<String, AttrRow> = HashMap::new();
+    let mut zle_widgets: HashMap<String, AttrRow> = HashMap::new();
+    let mut completions: HashMap<String, AttrRow> = HashMap::new();
+    let mut sourced: Vec<(String, AttrRow)> = Vec::new();
     // path/fpath/manpath are positional; we capture in event order.
-    let mut path_acc: Vec<String> = Vec::new();
-    let mut fpath_acc: Vec<String> = Vec::new();
+    let mut path_acc: Vec<(String, AttrRow)> = Vec::new();
+    let mut fpath_acc: Vec<(String, AttrRow)> = Vec::new();
 
     for ev in &bundle.events {
+        // Per-event attribution tuple — stamped on every record's
+        // canonical row. Surfaces via `zwhere`'s file:line column.
+        let attr = |val: String| -> AttrRow { (val, ev.file.clone(), ev.line) };
         match ev.kind.as_str() {
             "alias" => {
-                aliases.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                aliases.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "alias -g" | "galias" => {
-                galias.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                galias.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "alias -s" | "salias" => {
-                salias.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                salias.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "function" => {
-                functions.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                functions.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "export" => {
-                env_exports.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                env_exports.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "assign" | "typeset" => {
-                params.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                params.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
                 // Stash the full structured payload so replay can
                 // reconstruct typed declarations exactly.
                 let payload = serde_json::json!({
@@ -1427,197 +1435,160 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
                     "value_array": ev.value_array,
                     "value_assoc": ev.value_assoc,
                 });
-                params_typed.insert(ev.name.clone(), payload.to_string());
+                params_typed.insert(ev.name.clone(), attr(payload.to_string()));
             }
             "bindkey" => {
-                bindkeys.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                bindkeys.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "compdef" => {
-                compdef.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                compdef.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "hash -d" | "hash_d" => {
-                named_dirs.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                named_dirs.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "zstyle" => {
-                zstyle.push((ev.name.clone(), ev.value.clone().unwrap_or_default()));
+                zstyle.push((ev.name.clone(), attr(ev.value.clone().unwrap_or_default())));
             }
             "zmodload" => {
-                zmodload.push(ev.name.clone());
+                zmodload.push((ev.name.clone(), attr(String::new())));
             }
-            "setopt" => setopts.push(ev.name.clone()),
-            "unsetopt" => unsetopts.push(ev.name.clone()),
+            "setopt" => setopts.push((ev.name.clone(), attr("on".to_string()))),
+            "unsetopt" => unsetopts.push((ev.name.clone(), attr("off".to_string()))),
             "trap" => {
-                traps.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                traps.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "sched" => {
-                sched.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                sched.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "zle" => {
-                zle_widgets.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                zle_widgets.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
             "completion" => {
-                completions.insert(ev.name.clone(), ev.value.clone().unwrap_or_default());
+                completions.insert(ev.name.clone(), attr(ev.value.clone().unwrap_or_default()));
             }
-            "source" => sourced.push(ev.name.clone()),
+            "source" => sourced.push((ev.name.clone(), attr(String::new()))),
             "path_mod" => {
                 let target = ev.value.as_deref().unwrap_or("");
+                let row = (ev.name.clone(), attr(String::new()));
                 if target == "fpath" {
-                    fpath_acc.push(ev.name.clone());
+                    fpath_acc.push(row);
                 } else {
-                    path_acc.push(ev.name.clone());
+                    path_acc.push(row);
                 }
             }
             other => {
                 tracing::debug!(other, "recorder_ingest: unknown kind, ignored");
             }
         }
-        let _ = (ev.order_idx, ev.ts_ns, &ev.file, ev.line, &ev.fn_chain);
+        let _ = (ev.order_idx, ev.ts_ns, &ev.fn_chain);
     }
 
     // Replace subsystems wholesale — recorder bundle is end-state.
     // Every row stamped with the bundle's shell_id so the canonical
     // catalog stays federated across bash/zsh/zshrs/etc. recorders.
+    // file/line carried through via replace_subsystem_with_attrs so
+    // `zwhere alias gst` shows where it was defined.
     let canon = &state.canonical;
     let sid = || Some(bundle_shell_id.clone());
-    canon.replace_subsystem_tagged(
-        "alias",
-        aliases.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "galias",
-        galias.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "salias",
-        salias.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "function",
-        functions.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "env",
-        env_exports.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "params",
-        params.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "bindkey",
-        bindkeys.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "compdef",
-        compdef.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "named_dir",
-        named_dirs.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
+    // map4 borrows + clones so the source HashMap stays available for
+    // the rkyv shard build below. Per-kind clone is microseconds even
+    // at zpwr scale.
+    let map4 = |m: &HashMap<String, AttrRow>| -> Vec<(String, String, Option<String>, Option<u32>)> {
+        m.iter()
+            .map(|(k, (v, file, line))| (k.clone(), json_string(v), file.clone(), *line))
+            .collect()
+    };
+    canon.replace_subsystem_with_attrs("alias", map4(&aliases), None, sid());
+    canon.replace_subsystem_with_attrs("galias", map4(&galias), None, sid());
+    canon.replace_subsystem_with_attrs("salias", map4(&salias), None, sid());
+    canon.replace_subsystem_with_attrs("function", map4(&functions), None, sid());
+    canon.replace_subsystem_with_attrs("env", map4(&env_exports), None, sid());
+    canon.replace_subsystem_with_attrs("params", map4(&params), None, sid());
+    canon.replace_subsystem_with_attrs("bindkey", map4(&bindkeys), None, sid());
+    canon.replace_subsystem_with_attrs("compdef", map4(&compdef), None, sid());
+    canon.replace_subsystem_with_attrs("named_dir", map4(&named_dirs), None, sid());
+    canon.replace_subsystem_with_attrs(
         "zstyle",
         zstyle
             .iter()
             .enumerate()
-            .map(|(i, (p, r))| (format!("{}:{}", i, p), json_string(r))),
+            .map(|(i, (p, (r, file, line)))| {
+                (format!("{}:{}", i, p), json_string(r), file.clone(), *line)
+            })
+            .collect::<Vec<_>>(),
         None,
         sid(),
     );
-    canon.replace_subsystem_tagged(
+    canon.replace_subsystem_with_attrs(
         "zmodload",
-        zmodload.iter().map(|m| (m.clone(), json_string(""))),
+        zmodload
+            .iter()
+            .map(|(m, (_v, file, line))| (m.clone(), json_string(""), file.clone(), *line))
+            .collect::<Vec<_>>(),
         None,
         sid(),
     );
-    canon.replace_subsystem_tagged(
+    canon.replace_subsystem_with_attrs(
         "setopt",
         setopts
             .iter()
-            .map(|o| (o.clone(), "\"on\"".to_string()))
-            .chain(unsetopts.iter().map(|o| (o.clone(), "\"off\"".to_string()))),
+            .map(|(o, (_v, file, line))| (o.clone(), "\"on\"".to_string(), file.clone(), *line))
+            .chain(unsetopts.iter().map(|(o, (_v, file, line))| {
+                (o.clone(), "\"off\"".to_string(), file.clone(), *line)
+            }))
+            .collect::<Vec<_>>(),
         None,
         sid(),
     );
-    canon.replace_subsystem_tagged(
-        "trap",
-        traps.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "sched",
-        sched.iter().map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "zle",
-        zle_widgets
-            .iter()
-            .map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
-    canon.replace_subsystem_tagged(
-        "completion",
-        completions
-            .iter()
-            .map(|(k, v)| (k.clone(), json_string(v))),
-        None,
-        sid(),
-    );
+    canon.replace_subsystem_with_attrs("trap", map4(&traps), None, sid());
+    canon.replace_subsystem_with_attrs("sched", map4(&sched), None, sid());
+    canon.replace_subsystem_with_attrs("zle", map4(&zle_widgets), None, sid());
+    canon.replace_subsystem_with_attrs("completion", map4(&completions), None, sid());
     // params_typed values are already JSON; pass them through verbatim
     // so the canonical row preserves the structured payload (attrs +
     // value + value_array + value_assoc) for replay.
-    canon.replace_subsystem_tagged(
+    canon.replace_subsystem_with_attrs(
         "params_typed",
-        params_typed.iter().map(|(k, v)| (k.clone(), v.clone())),
+        params_typed
+            .iter()
+            .map(|(k, (v, file, line))| (k.clone(), v.clone(), file.clone(), *line))
+            .collect::<Vec<_>>(),
         None,
         sid(),
     );
-    canon.replace_subsystem_tagged(
+    canon.replace_subsystem_with_attrs(
         "source",
         sourced
             .iter()
             .enumerate()
-            .map(|(i, p)| (i.to_string(), json_string(p))),
+            .map(|(i, (p, (_v, file, line)))| {
+                (i.to_string(), json_string(p), file.clone(), *line)
+            })
+            .collect::<Vec<_>>(),
         None,
         sid(),
     );
-    canon.replace_subsystem_tagged(
+    canon.replace_subsystem_with_attrs(
         "path",
         path_acc
             .iter()
             .enumerate()
-            .map(|(i, d)| (i.to_string(), json_string(d))),
+            .map(|(i, (d, (_v, file, line)))| {
+                (i.to_string(), json_string(d), file.clone(), *line)
+            })
+            .collect::<Vec<_>>(),
         None,
         sid(),
     );
-    canon.replace_subsystem_tagged(
+    canon.replace_subsystem_with_attrs(
         "fpath",
         fpath_acc
             .iter()
             .enumerate()
-            .map(|(i, d)| (i.to_string(), json_string(d))),
+            .map(|(i, (d, (_v, file, line)))| {
+                (i.to_string(), json_string(d), file.clone(), *line)
+            })
+            .collect::<Vec<_>>(),
         None,
         sid(),
     );
@@ -1637,27 +1608,41 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         source_root: source_root.clone(),
         entry_count: total as u32,
     };
+    // Helpers: project the AttrRow-carrying maps/vecs into the
+    // value-only shapes the shard format expects. The shard format
+    // does not yet store per-row file/line attribution; that lives
+    // only in the in-memory canonical state for `zwhere` queries
+    // (survives until daemon restart, then needs a recorder re-run).
+    let flatten_map = |m: &HashMap<String, AttrRow>| -> HashMap<String, String> {
+        m.iter().map(|(k, (v, _, _))| (k.clone(), v.clone())).collect()
+    };
+    let flatten_vec_kv = |v: &Vec<(String, AttrRow)>| -> Vec<(String, String)> {
+        v.iter().map(|(k, (val, _, _))| (k.clone(), val.clone())).collect()
+    };
+    let flatten_vec_v = |v: &Vec<(String, AttrRow)>| -> Vec<String> {
+        v.iter().map(|(k, _)| k.clone()).collect()
+    };
     let shard = super::shard::CanonicalShard {
         header,
-        aliases,
-        global_aliases: galias,
-        suffix_aliases: salias,
-        functions,
+        aliases: flatten_map(&aliases),
+        global_aliases: flatten_map(&galias),
+        suffix_aliases: flatten_map(&salias),
+        functions: flatten_map(&functions),
         autoload_functions: HashMap::new(),
-        setopts,
-        unsetopts,
-        bindkeys,
-        named_dirs,
-        compdef,
-        zstyle,
-        zmodload,
-        env_exports,
-        params,
-        path: path_acc,
-        fpath: fpath_acc,
+        setopts: flatten_vec_v(&setopts),
+        unsetopts: flatten_vec_v(&unsetopts),
+        bindkeys: flatten_map(&bindkeys),
+        named_dirs: flatten_map(&named_dirs),
+        compdef: flatten_map(&compdef),
+        zstyle: flatten_vec_kv(&zstyle),
+        zmodload: flatten_vec_v(&zmodload),
+        env_exports: flatten_map(&env_exports),
+        params: flatten_map(&params),
+        path: flatten_vec_v(&path_acc),
+        fpath: flatten_vec_v(&fpath_acc),
         manpath: Vec::new(),
         plugins: Vec::new(),
-        sourced_files: sourced,
+        sourced_files: flatten_vec_v(&sourced),
         // New subsystems (zle widgets, discovered completions) ride in
         // `extras` so the rkyv shard format doesn't need a version
         // bump per addition. CanonicalShard readers iterate `extras`
@@ -1665,13 +1650,13 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         extras: {
             let mut e: HashMap<String, HashMap<String, String>> = HashMap::new();
             if !zle_widgets.is_empty() {
-                e.insert("zle".to_string(), zle_widgets);
+                e.insert("zle".to_string(), flatten_map(&zle_widgets));
             }
             if !completions.is_empty() {
-                e.insert("completion".to_string(), completions);
+                e.insert("completion".to_string(), flatten_map(&completions));
             }
             if !params_typed.is_empty() {
-                e.insert("params_typed".to_string(), params_typed.clone());
+                e.insert("params_typed".to_string(), flatten_map(&params_typed));
             }
             e
         },
