@@ -423,6 +423,23 @@ selection beyond the handshake.
 
 **The unique combination is "all of the above + shell-state catalog + portable shell snapshots, in one ~50MB process, behind a single versioned API, single-user-machine optimized."** No prior art ships this combination.
 
+## Boot-time autostart
+
+The daemon is single-user and stateless across restarts (cache rehydrates
+from on-disk shards). Three install paths ship in `examples/`:
+
+| Platform | Mechanism | File | Install command |
+|---|---|---|---|
+| Linux | systemd user unit | `examples/systemd/zshrs-daemon.service` | `cp …/zshrs-daemon.service ~/.config/systemd/user/ && systemctl --user enable --now zshrs-daemon` |
+| macOS | launchd LaunchAgent | `examples/launchd/com.menketechnologies.zshrs-daemon.plist` | `examples/install-launchd.sh` (templates `$HOME` + loads with launchctl) |
+| Both | Homebrew formula service stanza | `examples/brew/zshrs.rb` | `brew tap MenkeTechnologies/tap && brew install zshrs && brew services start zshrs` |
+
+The systemd unit needs `loginctl enable-linger $USER` for the daemon to
+survive logout. The launchd LaunchAgent runs at user-login automatically
+(`RunAtLoad=true`), no extra flag needed. `brew services` materializes
+the formula's `service` block into the platform's native unit (launchd
+on macOS, systemd-user on Linux) so one command works on both.
+
 ## What this enables — usage scenarios across shells
 
 ### Scenario 1: bash user, no zshrs shell, daemon adopted today

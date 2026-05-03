@@ -1,0 +1,56 @@
+# zshrs-daemon.service — systemd user unit for the zshrs daemon.
+#
+# Install (per-user, no root needed):
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp zshrs-daemon.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now zshrs-daemon.service
+#
+# Logs: journalctl --user -u zshrs-daemon -f
+# Stop: systemctl --user stop zshrs-daemon
+# Boot persistence (sessions linger after logout, daemon survives):
+#   loginctl enable-linger $USER
+#
+# Adjust ExecStart if you installed via cargo install --path .
+# (defaults to ~/.cargo/bin/zshrs-daemon) or to a system path.
+#
+# HTTP listener: enable in ~/.config/zshrs/daemon.toml:
+#   [http]
+#   listen = "127.0.0.1:7733"
+#   tokens = ["<bearer-token>"]   # required for non-loopback binds
+
+[Unit]
+Description=zshrs daemon (singleton cache + recorder + HTTP service)
+Documentation=https://github.com/MenkeTechnologies/zshrs
+Documentation=file://%h/.cache/zshrs/zshrs.log
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/zshrs-daemon
+Restart=on-failure
+RestartSec=2s
+
+# Tracing: send everything to ~/.cache/zshrs/zshrs.log already; journal
+# captures stderr too via --log-stderr if you want one stream.
+Environment=ZSHRS_QUIET_FIRST_RUN=1
+
+# Hardening: daemon only needs its own cache dir + ~/.config/zshrs.
+# Comment any of these out if your recorder / fsnotify watches need
+# wider read access.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Re-allow writes to the daemon's own dirs:
+ReadWritePaths=%h/.cache/zshrs
+ReadWritePaths=%h/.config/zshrs
+
+# Resource bounds — generous defaults; tune if you compile heavy
+# completion catalogs.
+MemoryMax=2G
+TasksMax=512
+
+[Install]
+WantedBy=default.target
