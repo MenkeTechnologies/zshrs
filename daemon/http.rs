@@ -106,6 +106,8 @@ pub async fn serve_http(cfg: HttpConfig, daemon: Arc<DaemonState>) -> Result<()>
     let app = Router::new()
         .route("/health", get(handler_health))
         .route("/ops", get(handler_ops))
+        .route("/openapi", get(handler_openapi))
+        .route("/openapi.json", get(handler_openapi))
         .route("/metrics", get(handler_metrics))
         .route("/op/:name", post(handler_op))
         // Server-Sent Events streams for push-style ops. Each connection
@@ -167,6 +169,208 @@ async fn handler_ops(State(_s): State<AppState>) -> impl IntoResponse {
         "ok": true,
         "ops": super::ops::OP_NAMES,
     }))
+}
+
+/// `GET /openapi` (alias `/openapi.json`) — auto-generated OpenAPI 3.1
+/// document derived from `super::ops::OP_NAMES`. Each op gets one
+/// `POST /op/{name}` entry; the meta endpoints (/health, /ops,
+/// /metrics, /openapi, /stream/*) get their own paths.
+///
+/// We don't have per-op argument schemas (op handlers all accept a
+/// generic `serde_json::Value`), so request/response bodies are typed
+/// as the open `object`. That keeps the doc spec-compliant + useful
+/// for SDK generation, curl examples, and Swagger-UI rendering even
+/// without the deeper schemas.
+///
+/// Always-open (no auth gate) — same posture as `/health` + `/ops`,
+/// so external tooling can discover the surface without a token.
+async fn handler_openapi(State(s): State<AppState>) -> impl IntoResponse {
+    let mut paths = serde_json::Map::new();
+
+    // Meta endpoints first.
+    paths.insert(
+        "/health".to_string(),
+        json!({
+            "get": {
+                "summary": "Liveness probe",
+                "tags": ["meta"],
+                "responses": {
+                    "200": {
+                        "description": "Daemon alive",
+                        "content": {"application/json": {"schema": {
+                            "type": "object",
+                            "properties": {
+                                "ok": {"type": "boolean"},
+                                "version": {"type": "string"},
+                                "uptime_ms": {"type": "integer", "format": "int64"},
+                            },
+                        }}},
+                    }
+                },
+            }
+        }),
+    );
+    paths.insert(
+        "/ops".to_string(),
+        json!({
+            "get": {
+                "summary": "List every op the daemon accepts",
+                "tags": ["meta"],
+                "responses": {
+                    "200": {
+                        "description": "Op list",
+                        "content": {"application/json": {"schema": {
+                            "type": "object",
+                            "properties": {
+                                "ok": {"type": "boolean"},
+                                "ops": {"type": "array", "items": {"type": "string"}},
+                            },
+                        }}},
+                    }
+                },
+            }
+        }),
+    );
+    paths.insert(
+        "/metrics".to_string(),
+        json!({
+            "get": {
+                "summary": "Prometheus 0.0.4 metrics exposition",
+                "tags": ["meta"],
+                "responses": {
+                    "200": {
+                        "description": "Plain-text Prometheus exposition",
+                        "content": {"text/plain": {"schema": {"type": "string"}}},
+                    }
+                },
+            }
+        }),
+    );
+    paths.insert(
+        "/openapi".to_string(),
+        json!({
+            "get": {
+                "summary": "This document",
+                "tags": ["meta"],
+                "responses": {
+                    "200": {
+                        "description": "OpenAPI 3.1 schema",
+                        "content": {"application/json": {"schema": {"type": "object"}}},
+                    }
+                },
+            }
+        }),
+    );
+
+    // SSE streams. OpenAPI 3.1 doesn't have a dedicated SSE type, but
+    // `text/event-stream` content with a string schema is the
+    // pragmatic encoding most tooling understands.
+    for (path, summary) in [
+        (
+            "/stream/watch",
+            "fsnotify SSE: subscribe to filesystem-change events for a path",
+        ),
+        (
+            "/stream/events",
+            "Pub/sub SSE: subscribe to fanout events by topic pattern",
+        ),
+        (
+            "/stream/definitions",
+            "Definitions SSE: stream every recorder_ingest summary as it lands",
+        ),
+    ] {
+        paths.insert(
+            path.to_string(),
+            json!({
+                "get": {
+                    "summary": summary,
+                    "tags": ["streams"],
+                    "responses": {
+                        "200": {
+                            "description": "Server-Sent Events stream",
+                            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+                        }
+                    },
+                }
+            }),
+        );
+    }
+
+    // Per-op endpoints. Every op accepts and returns a generic JSON
+    // object; auth requirement (when the bearer-token registry is
+    // populated) is encoded once via the global security scheme below.
+    for op in super::ops::OP_NAMES {
+        let key = format!("/op/{}", op);
+        paths.insert(
+            key,
+            json!({
+                "post": {
+                    "summary": format!("Invoke op `{}`", op),
+                    "tags": ["ops"],
+                    "requestBody": {
+                        "required": false,
+                        "content": {"application/json": {"schema": {"type": "object"}}},
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Op result envelope",
+                            "content": {"application/json": {"schema": {"type": "object"}}},
+                        },
+                        "400": {
+                            "description": "Bad arguments",
+                            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrPayload"}}},
+                        },
+                        "401": {"description": "Bearer token required or invalid"},
+                        "403": {"description": "Bearer token lacks scope for this op"},
+                        "404": {"description": "Unknown op"},
+                        "500": {
+                            "description": "Op failed",
+                            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ErrPayload"}}},
+                        },
+                    },
+                }
+            }),
+        );
+    }
+
+    // Auth: only declare the security requirement when the token
+    // registry is populated. On loopback-only deployments (the
+    // default) we leave it off so the OpenAPI doc reflects reality —
+    // the daemon won't actually require a token.
+    let security_scheme = json!({
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Bearer token configured under [http.tokens] in zshrs-daemon.toml.",
+    });
+    let mut components = json!({
+        "schemas": {
+            "ErrPayload": {
+                "type": "object",
+                "required": ["ok", "code", "message"],
+                "properties": {
+                    "ok": {"type": "boolean", "enum": [false]},
+                    "code": {"type": "string"},
+                    "message": {"type": "string"},
+                },
+            }
+        }
+    });
+    let mut top = json!({
+        "openapi": "3.1.0",
+        "info": {
+            "title": "zshrs-daemon",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "Single-host daemon backing the zshrs shell. Every op accepts JSON in, returns JSON out. See docs/DAEMON.md + docs/DAEMON_AS_SERVICE.md.",
+        },
+        "paths": paths,
+    });
+    if !s.tokens.is_empty() {
+        components["securitySchemes"] = json!({"bearerAuth": security_scheme});
+        top["security"] = json!([{"bearerAuth": []}]);
+    }
+    top["components"] = components;
+
+    Json(top)
 }
 
 /// Prometheus 0.0.4 text-format exposition. Always-open (Prometheus
