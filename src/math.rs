@@ -2097,7 +2097,12 @@ mod tests {
     fn test_errors() {
         assert!(matheval("1 / 0").is_err());
         assert!(matheval("1 +").is_err());
-        assert!(matheval("()").is_ok()); // Empty parens are valid
+        // Empty arith expression is a parse error in zsh:
+        //   $ zsh -c '(( ))'; echo $?   →   1
+        // The previous comment claimed "Empty parens are valid" — that
+        // was wrong. Real zsh aborts with `bad math expression: empty
+        // parentheses`; our matheval matches.
+        assert!(matheval("()").is_err());
     }
 
     #[test]

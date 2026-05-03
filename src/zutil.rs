@@ -287,10 +287,20 @@ pub fn zformat(format: &str, specs: &HashMap<char, String>, presence: bool) -> S
     // The original C uses an output-buffer with growable backing;
     // we use a Rust String with push_* helpers. The recursive
     // descent + (skip || actval) pattern is the same.
+    // Per zsh/Src/Modules/zutil.c::bin_zformat lines 975-976:
+    // `specs['%']` and `specs[')']` are pre-populated to literal "%" and ")"
+    // BEFORE the recursive walk, which is why `%%` produces `%` and
+    // `%)` produces `)` even though no caller registers them. Rebuild
+    // a private copy of the specs map with those defaults injected,
+    // unless the caller explicitly overrode them.
+    let mut effective: HashMap<char, String> = specs.clone();
+    effective.entry('%').or_insert_with(|| "%".to_string());
+    effective.entry(')').or_insert_with(|| ")".to_string());
+
     let bytes: Vec<char> = format.chars().collect();
     let mut out = String::with_capacity(bytes.len() + 16);
     let mut idx = 0;
-    let _ = zformat_recurse(&bytes, &mut idx, &mut out, '\0', specs, presence, false);
+    let _ = zformat_recurse(&bytes, &mut idx, &mut out, '\0', &effective, presence, false);
     out
 }
 
