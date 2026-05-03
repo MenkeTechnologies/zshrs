@@ -24,16 +24,16 @@ use std::path::{Path, PathBuf};
 
 use super::{DaemonError, Result};
 
-/// Default `daemon.toml` written on first daemon startup. HTTP is
-/// enabled on loopback so `zd health` / `zd ops` / `zd op …` work
+/// Default `zshrs-daemon.toml` written on first daemon startup. HTTP
+/// is enabled on loopback so `zd health` / `zd ops` / `zd op …` work
 /// without the user having to edit anything. Loopback bind requires
 /// no auth (per `http::serve_http`); switching `listen` to a non-
 /// loopback address WILL refuse to start until `[http.tokens]` is
 /// populated.
 const DEFAULT_DAEMON_TOML: &str = "\
-# zshrs-daemon configuration. Lives at $ZSHRS_HOME/daemon.toml
-# (~/.zshrs/daemon.toml by default). Auto-seeded on first start;
-# edit freely — the daemon never overwrites it.
+# zshrs-daemon configuration. Lives at $ZSHRS_HOME/zshrs-daemon.toml
+# (~/.zshrs/zshrs-daemon.toml by default). Auto-seeded on first
+# start; edit freely — the daemon never overwrites it.
 
 [log]
 # Tracing filter directive. Same syntax as $ZSHRS_LOG (which
@@ -77,8 +77,9 @@ listen = \"127.0.0.1:7733\"
 /// discoverable + editable.
 const DEFAULT_SHELL_TOML: &str = "\
 # zshrs (shell) configuration. Lives at $ZSHRS_HOME/zshrs.toml
-# (~/.zshrs/zshrs.toml by default). Auto-seeded on first
-# `zshrs-daemon` start; edit freely.
+# (~/.zshrs/zshrs.toml by default). Auto-seeded on first run of
+# any zshrs binary (zshrs / zshrs-daemon / zshrs-recorder / zd);
+# edit freely.
 
 [log]
 # Tracing filter directive for the SHELL side (writes to
@@ -108,6 +109,27 @@ enabled = \"auto\"
 #          all state)
 #   off  — never skip (canonical state ignored even when present)
 skip_configs = \"auto\"
+";
+
+/// Default `zshrs-recorder.toml` written on first start. The recorder
+/// today reads only `[log] level` from this file; future runtime
+/// defaults (default `--shell-id`, default `--quiet`, default
+/// `--no-daemon`) land here as the surface grows.
+const DEFAULT_RECORDER_TOML: &str = "\
+# zshrs-recorder configuration. Lives at
+# $ZSHRS_HOME/zshrs-recorder.toml (~/.zshrs/zshrs-recorder.toml by
+# default). Auto-seeded on first run of any zshrs binary; edit freely.
+
+[log]
+# Tracing filter directive for the RECORDER log
+# (zshrs-recorder.log). Same syntax as $ZSHRS_LOG (which always
+# wins when set). Accepts simple levels (info / debug / trace /
+# warn / error) or per-module overrides
+# (info,zsh::recorder=trace).
+#
+# Default `info`. Bump to `trace` to see every captured event +
+# the source-resolver decisions for each captured file:line.
+level = \"info\"
 ";
 
 /// All cache-related paths for the running user.
@@ -143,8 +165,9 @@ impl CachePaths {
     /// Resolve to `$ZSHRS_HOME` or `$HOME/.zshrs`.
     ///
     /// Single top-level directory holds everything: rkyv shards, sqlite
-    /// caches, sockets, pid file, logs, AND config (`daemon.toml`,
-    /// `zshrs.toml`). The directory is NOT cache-semantic — it survives
+    /// caches, sockets, pid file, logs, AND config
+    /// (`zshrs.toml`, `zshrs-daemon.toml`, `zshrs-recorder.toml`).
+    /// The directory is NOT cache-semantic — it survives
     /// OS cache eviction; that's why we don't use `XDG_CACHE_HOME`.
     /// Matches the convention of `~/.zinit/`, `~/.zpwr/`, `~/.oh-my-zsh/`.
     ///
@@ -207,40 +230,72 @@ impl CachePaths {
         Ok(())
     }
 
-    /// Path to `daemon.toml` (the daemon's HTTP/auth/cache config).
+    /// Path to `zshrs-daemon.toml` — the daemon's HTTP/auth/log/cache
+    /// config. Renamed from the bare `daemon.toml` (briefly used during
+    /// the initial seeding work) so every config file in the dir
+    /// shares the `zshrs[-binary].toml` naming convention. Migration
+    /// from the old name is in `ensure_default_configs`.
     pub fn daemon_config_path(&self) -> std::path::PathBuf {
-        self.root.join("daemon.toml")
+        self.root.join("zshrs-daemon.toml")
     }
 
-    /// Path to `zshrs.toml` (the shell-side daemon-presence + skip-configs knobs).
+    /// Path to `zshrs.toml` — shell-side daemon-presence + skip-configs
+    /// + log-level knobs (consumed by the `zshrs` binary).
     pub fn shell_config_path(&self) -> std::path::PathBuf {
         self.root.join("zshrs.toml")
     }
 
-    /// Seed `daemon.toml` and `zshrs.toml` with documented defaults if
-    /// the files are absent. Both ship enabled-by-default so a fresh
-    /// `zshrs-daemon` start gets:
-    ///   * an HTTP listener on `127.0.0.1:7733` so `zd health` works
-    ///     out of the box (loopback, no token required — see the auth
-    ///     gate in `http::serve_http`)
-    ///   * `[daemon] enabled = "auto"` + `[shell] skip_configs = "auto"`
-    ///     so the shell auto-detects the daemon and bypasses the dot-
-    ///     file chain when canonical state is available
+    /// Path to `zshrs-recorder.toml` — recorder-side log level + future
+    /// runtime knobs (e.g. default --shell-id, default --quiet, etc.).
+    pub fn recorder_config_path(&self) -> std::path::PathBuf {
+        self.root.join("zshrs-recorder.toml")
+    }
+
+    /// Seed every default config file under `~/.zshrs/` if absent:
+    ///   * `zshrs.toml`            — shell knobs
+    ///   * `zshrs-daemon.toml`     — daemon knobs (auto-migrates from
+    ///                                 the legacy `daemon.toml`)
+    ///   * `zshrs-recorder.toml`   — recorder knobs
     /// Idempotent — never overwrites a user-edited file. Files are
     /// chmod'd 0600 because the same root holds secrets-bearing tokens
-    /// once the user opts in.
+    /// once the user opts in. Called by every binary
+    /// (`zshrs` / `zshrs-daemon` / `zshrs-recorder` / `zd`) at startup
+    /// so whichever runs first gets the user a fully-populated
+    /// `~/.zshrs/` tree without manual intervention.
     pub fn ensure_default_configs(&self) -> Result<()> {
+        // Step 1: rename the legacy `daemon.toml` if present + the new
+        // path doesn't exist yet. Single-shot, never overwrites the new
+        // file. After this, the rest of the function treats the new
+        // path as authoritative.
+        let legacy_daemon = self.root.join("daemon.toml");
         let daemon_cfg = self.daemon_config_path();
+        if legacy_daemon.exists() && !daemon_cfg.exists() {
+            match std::fs::rename(&legacy_daemon, &daemon_cfg) {
+                Ok(()) => tracing::info!(
+                    from = %legacy_daemon.display(),
+                    to = %daemon_cfg.display(),
+                    "renamed legacy daemon.toml -> zshrs-daemon.toml"
+                ),
+                Err(e) => tracing::warn!(?e, "rename legacy daemon.toml failed"),
+            }
+        }
+
         if !daemon_cfg.exists() {
             std::fs::write(&daemon_cfg, DEFAULT_DAEMON_TOML)?;
             ensure_file_600(&daemon_cfg)?;
-            tracing::info!(path = %daemon_cfg.display(), "seeded default daemon.toml");
+            tracing::info!(path = %daemon_cfg.display(), "seeded default zshrs-daemon.toml");
         }
         let shell_cfg = self.shell_config_path();
         if !shell_cfg.exists() {
             std::fs::write(&shell_cfg, DEFAULT_SHELL_TOML)?;
             ensure_file_600(&shell_cfg)?;
             tracing::info!(path = %shell_cfg.display(), "seeded default zshrs.toml");
+        }
+        let recorder_cfg = self.recorder_config_path();
+        if !recorder_cfg.exists() {
+            std::fs::write(&recorder_cfg, DEFAULT_RECORDER_TOML)?;
+            ensure_file_600(&recorder_cfg)?;
+            tracing::info!(path = %recorder_cfg.display(), "seeded default zshrs-recorder.toml");
         }
         Ok(())
     }
@@ -275,23 +330,24 @@ fn ensure_dir_700(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Resolve `$ZSHRS_HOME/daemon.toml` or `~/.zshrs/daemon.toml`.
-/// Single-directory rule: every zshrs file — config, cache, sockets,
-/// rkyv shards, log — lives under one root. Returns the path even if
-/// the file does not exist; callers handle the not-present case as
-/// "no overrides" rather than as an error.
+/// Resolve `$ZSHRS_HOME/zshrs-daemon.toml` (or
+/// `~/.zshrs/zshrs-daemon.toml`). Single-directory rule: every zshrs
+/// file — config, cache, sockets, rkyv shards, log — lives under one
+/// root. Returns the path even if the file does not exist; callers
+/// handle the not-present case as "no overrides" rather than as an
+/// error.
 pub fn daemon_config_file() -> Result<PathBuf> {
     let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
         PathBuf::from(custom)
     } else {
         dirs::home_dir()
             .map(|h| h.join(".zshrs"))
-            .ok_or_else(|| DaemonError::other("no $HOME / $ZSHRS_HOME for daemon.toml"))?
+            .ok_or_else(|| DaemonError::other("no $HOME / $ZSHRS_HOME for zshrs-daemon.toml"))?
     };
-    Ok(root.join("daemon.toml"))
+    Ok(root.join("zshrs-daemon.toml"))
 }
 
-/// Load `[http]` section from `~/.zshrs/daemon.toml` into the
+/// Load `[http]` section from `~/.zshrs/zshrs-daemon.toml` into the
 /// `HttpConfig` consumed by `daemon::http::serve_http`. The file is
 /// optional; a missing file or a missing `[http]` section both produce
 /// the default (HTTP listener disabled).
@@ -311,7 +367,7 @@ pub fn daemon_config_file() -> Result<PathBuf> {
 ///
 /// Wildcards in `scopes`: `*` (everything), `<area>.*` (every verb in
 /// an area), `*.<verb>` (every area's `<verb>`).
-/// Read `[log] level` from `$ZSHRS_HOME/daemon.toml`. Returns the
+/// Read `[log] level` from `$ZSHRS_HOME/zshrs-daemon.toml`. Returns the
 /// directive string (e.g. `"info"`, `"debug,fsnotify=trace"`) so the
 /// caller can hand it straight to `EnvFilter::try_new`. Falls back
 /// to `"info"` on any error: missing file, missing section, missing

@@ -191,6 +191,16 @@ fn main() -> ExitCode {
         Err(code) => return code,
     };
 
+    // Make sure ~/.zshrs exists with the default config files BEFORE
+    // log init so the just-seeded `[log] level` in zshrs-recorder.toml
+    // can be picked up on first run. Idempotent — never overwrites a
+    // user-edited file. Same call every binary makes, so whichever
+    // runs first does the seeding for the rest.
+    if let Ok(paths) = zshrs_daemon::paths::CachePaths::resolve() {
+        let _ = paths.ensure_dirs();
+        let _ = paths.ensure_default_configs();
+    }
+
     // Init logging FIRST so every recorder event reaches the recorder
     // log file. Separate from `zshrs.log` (shell) and
     // `zshrs-daemon.log` (daemon) — three processes, three logs, no

@@ -398,6 +398,17 @@ pub fn zshrs_main() {
     // Initialize logging first — everything after this can use tracing macros.
     let startup_t0 = Instant::now();
 
+    // Make sure ~/.zshrs exists with the default config files. Every
+    // binary (zshrs / zshrs-daemon / zshrs-recorder / zd) does this,
+    // so whoever runs first gets the user a fully-populated
+    // `~/.zshrs/` tree without manual intervention. Idempotent —
+    // never overwrites a user-edited file.
+    #[cfg(feature = "daemon")]
+    if let Ok(paths) = zshrs_daemon::paths::CachePaths::resolve() {
+        let _ = paths.ensure_dirs();
+        let _ = paths.ensure_default_configs();
+    }
+
     // Default level: info. Override with ZSHRS_LOG=debug or ZSHRS_LOG=trace.
     zsh::log::init();
 
