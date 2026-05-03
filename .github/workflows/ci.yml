@@ -118,23 +118,35 @@ jobs:
         run: cargo build --locked --features recorder --bin zshrs-recorder
       - name: Verify Rule 1 — zero recorder code in default zshrs binary
         # docs/RECORDER.md §"Zero-overhead default binary": the daily-driver
-        # `zshrs` must contain ZERO `zsh::recorder` symbols. Whitelist: the
-        # daemon-side `op_recorder_ingest` ingest endpoint always ships in
-        # the daemon (different concern; not the shell-runtime AOP layer).
-        # Whitelist: 3rd-party `sqlite3RecordError*` symbols from rusqlite.
+        # `zshrs` must contain ZERO `zsh::recorder::*` module symbols.
+        #
+        # Match shape: Rust mangles module paths as <byte-length><name>, so
+        # the recorder module appears in symbols as `8recorder` (the 8 = byte
+        # length of "recorder"). This is precise — it matches the AOP
+        # runtime module specifically, not arbitrary functions whose names
+        # happen to contain the substring "recorder" (e.g. shell-side
+        # `latest_recorder_shard()` which only WALKS THE FILESYSTEM for
+        # `*-recorder.rkyv` shards the daemon's recorder produced — not
+        # recorder runtime code).
+        #
+        # Whitelist: the daemon-side `op_recorder_ingest` ingest endpoint
+        # always ships in the daemon (different concern; not the
+        # shell-runtime AOP layer); `sqlite3RecordError*` from rusqlite is
+        # not affected by the precise grep but kept in the whitelist for
+        # belt-and-suspenders robustness.
         run: |
           cargo build --locked --bin zshrs
           set -e
           hits=$(nm target/debug/zshrs 2>/dev/null \
-            | grep -i recorder \
+            | grep -E '\b8recorder[0-9a-zA-Z_]' \
             | grep -v sqlite3RecordError \
             | grep -v zshrs_daemon \
             | wc -l \
             | tr -d ' ')
-          echo "shell-runtime recorder symbols in default zshrs: $hits"
+          echo "shell-runtime zsh::recorder module symbols in default zshrs: $hits"
           if [ "$hits" -ne 0 ]; then
-            echo "FAIL: Rule 1 broken — recorder code leaked into default zshrs"
-            nm target/debug/zshrs 2>/dev/null | grep -i recorder \
+            echo "FAIL: Rule 1 broken — zsh::recorder code leaked into default zshrs"
+            nm target/debug/zshrs 2>/dev/null | grep -E '\b8recorder[0-9a-zA-Z_]' \
               | grep -v sqlite3RecordError | grep -v zshrs_daemon
             exit 1
           fi
@@ -163,11 +175,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # The integration test spawns `target/debug/zshrs --daemon`;
-      # ensure that bin is built first so each test's spawn isn't
-      # racing the test framework's `cargo build`.
-      - name: Build zshrs binary the test will spawn
-        run: cargo build --locked --bin zshrs
+      # The integration test spawns `target/debug/zshrs-daemon` (per
+      # tests/daemon_http.rs::zshrs_daemon_binary which falls back from
+      # CARGO_BIN_EXE_zshrs-daemon to manifest/target/debug). The daemon
+      # binary lives in the workspace's `daemon` crate (separate package
+      # from `zsh`), so `cargo test -p zsh` does NOT auto-build it. Build
+      # it explicitly here so each test's spawn isn't racing.
+      - name: Build zshrs-daemon binary the test will spawn
+        run: cargo build --locked -p zshrs-daemon --bin zshrs-daemon
       - name: Run daemon HTTP integration tests
         # --test-threads=1 because each test binds its own port + spawns
         # its own daemon; sequential gives clearer per-test diagnostics
