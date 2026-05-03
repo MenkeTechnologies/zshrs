@@ -23,14 +23,16 @@ use zsh::daemon::pidlock;
 const SPAWN_GRACE: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
-/// Path to the built zshrs binary. Falls back to walking the workspace target
-/// directory if the standard CARGO_BIN_EXE_zshrs env isn't set (older cargo).
-fn zshrs_binary() -> PathBuf {
-    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs") {
+/// Path to the built zshrs-daemon binary. The daemon is now its own
+/// binary (the `--daemon` arg on the shell was removed); spawn it
+/// directly. Fallback to walking the workspace target dir if the
+/// standard `CARGO_BIN_EXE_zshrs-daemon` env isn't set.
+fn zshrs_daemon_binary() -> PathBuf {
+    if let Ok(p) = std::env::var("CARGO_BIN_EXE_zshrs-daemon") {
         return PathBuf::from(p);
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest.join("target").join("debug").join("zshrs")
+    manifest.join("target").join("debug").join("zshrs-daemon")
 }
 
 struct DaemonHandle {
@@ -44,8 +46,7 @@ impl DaemonHandle {
         let tmp = tempfile::TempDir::new().expect("tempdir");
         let cache_home = tmp.path().to_path_buf();
 
-        let child = Command::new(zshrs_binary())
-            .arg("--daemon")
+        let child = Command::new(zshrs_daemon_binary())
             .env("XDG_CACHE_HOME", &cache_home)
             .env("ZSHRS_QUIET_FIRST_RUN", "1")
             .stdin(Stdio::null())
@@ -244,8 +245,7 @@ fn singleton_pid_lock() {
     // Try to spawn a second daemon against the same cache; it should detect the lock
     // and exit cleanly (status 0, per docs/DAEMON.md daemon lifecycle).
     let cache_home = d.paths.root.parent().unwrap().to_path_buf();
-    let status = Command::new(zshrs_binary())
-        .arg("--daemon")
+    let status = Command::new(zshrs_daemon_binary())
         .env("XDG_CACHE_HOME", &cache_home)
         .env("ZSHRS_QUIET_FIRST_RUN", "1")
         .stdin(Stdio::null())

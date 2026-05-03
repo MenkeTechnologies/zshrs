@@ -375,38 +375,23 @@ fn main() {
 /// Main entry point — extracted so the fat binary can call it after
 /// registering the stryke handler.
 pub fn zshrs_main() {
-    // --daemon must run BEFORE the shell's tracing setup, otherwise the
-    // shell installs a global subscriber and the daemon's log::init returns
-    // Err — that breaks the runtime EnvFilter reload handle (`zlog level`).
-    // Short-circuit early; the daemon installs its own tracing subscriber.
-    #[cfg(feature = "daemon")]
+    // The `--daemon` flag is gone — the daemon is its own binary
+    // (`zshrs-daemon`), never invoked through the shell. Catch the
+    // legacy invocation and point users at the right install path
+    // instead of silently mis-parsing it.
     {
         let early_args: Vec<String> = env::args().collect();
         if early_args.iter().any(|a| a == "--daemon") {
-            // Personality check still applies (POSIX never spawns the daemon),
-            // but the shell-mode init we'd otherwise rely on for that check
-            // hasn't run yet. Re-derive directly from argv0 + flags.
-            let posix = early_args.iter().any(|a| a == "--posix");
-            let argv0_basename = early_args
-                .first()
-                .and_then(|p| std::path::Path::new(p).file_name())
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-            let zsh_compat_argv = matches!(argv0_basename.as_str(), "zsh");
-            let posix_argv = matches!(argv0_basename.as_str(), "sh" | "dash" | "bash") || posix;
-            if posix_argv || zsh_compat_argv {
-                eprintln!("zshrs: --daemon is only available in zshrs mode");
-                std::process::exit(1);
-            }
-            match zsh::daemon::run() {
-                Ok(()) => return,
-                Err(zsh::daemon::DaemonError::AlreadyRunning(_)) => return,
-                Err(e) => {
-                    eprintln!("zshrs: --daemon: {}", e);
-                    std::process::exit(1);
-                }
-            }
+            eprintln!(
+                "zshrs: `--daemon` is no longer supported.\n\
+                 The daemon is a separate binary; install + run via one of:\n  \
+                   zshrs-daemon                                  # foreground manual run\n  \
+                   systemctl --user enable --now zshrs-daemon    # Linux (per-user systemd)\n  \
+                   launchctl load ~/Library/LaunchAgents/...     # macOS (see examples/install-launchd.sh)\n  \
+                   brew services start zshrs                     # macOS / Linux brew\n\
+                 See examples/{{systemd,launchd,brew}}/ for unit files."
+            );
+            std::process::exit(2);
         }
     }
 
@@ -415,6 +400,14 @@ pub fn zshrs_main() {
 
     // Default level: info. Override with ZSHRS_LOG=debug or ZSHRS_LOG=trace.
     zsh::log::init();
+
+    // Single-shot daemon-presence probe. Honors `[daemon].enabled` in
+    // ~/.config/zshrs/zshrs.toml (auto / off / require). After this,
+    // call sites use `zsh::daemon_presence::is_present()` for an
+    // O(1) atomic check before issuing IPC. Daemon absent = the
+    // shell runs in vanilla mode (re-evaluate every config per launch
+    // — "rebuilding your house every morning").
+    let _ = zsh::daemon_presence::probe();
 
     // Capture the main shell pid so signals::is_forked_child() can
     // detect pipeline children (POSIX: only the calling thread
@@ -510,25 +503,8 @@ pub fn zshrs_main() {
         return;
     }
 
-    // Handle --daemon: become the singleton zshrs-daemon process.
-    // POSIX mode never spawns the daemon (per docs/DAEMON.md "Three personality modes").
-    if args.iter().any(|a| a == "--daemon") {
-        if !is_zshrs_mode() {
-            eprintln!("zshrs: --daemon is only available in zshrs mode");
-            std::process::exit(1);
-        }
-        match zsh::daemon::run() {
-            Ok(()) => return,
-            Err(zsh::daemon::DaemonError::AlreadyRunning(pid)) => {
-                tracing::info!(pid, "another daemon is running; exiting cleanly");
-                return;
-            }
-            Err(e) => {
-                eprintln!("zshrs: --daemon: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
+    // (the `--daemon` arg is intercepted earlier in zshrs_main with a
+    // pointer at the install paths; no second handler here.)
 
     // Handle --doctor (zshrs-exclusive, not available in --zsh or --posix)
     if args.iter().any(|a| a == "--doctor") {

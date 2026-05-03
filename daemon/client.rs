@@ -1,26 +1,22 @@
 // Client-side IPC helpers used by z* builtins (which run in the synchronous shell process,
 // not the async daemon). All operations: connect → handshake → request/response → close.
 //
-// Per docs/DAEMON.md "Daemon lifecycle":
-//   - first client checks for daemon.sock; if absent or unresponsive, fork-spawns
-//     `zshrs --daemon` then retries connect
-//   - clients are read-only data-plane consumers; here we only handle the control-plane
-//     IPC (op requests + responses)
+// **Connect-only model.** This client never spawns the daemon. The
+// daemon is a standalone binary (`zshrs-daemon`) started independently
+// by the user via systemd, launchd, brew services, or manually.
+// Callers must handle "daemon not running" as a normal degraded-mode
+// condition — see `Client::is_daemon_alive` for a cheap probe.
 
 use std::os::unix::net::UnixStream;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
 use super::ipc::{self, ErrPayload, Frame, Hello, Welcome, PROTOCOL_VERSION};
 use super::paths::CachePaths;
-use super::pidlock;
 use super::{DaemonError, Result};
 
-const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const SPAWN_GRACE: Duration = Duration::from_millis(500);
 
 /// A live connection to the daemon, post-handshake.
 pub struct Client {
@@ -30,25 +26,29 @@ pub struct Client {
 }
 
 impl Client {
-    /// Connect to the daemon, spawn-on-demand if necessary, complete the handshake.
+    /// Connect to an already-running daemon and complete the handshake.
+    /// Errors with `DaemonError::NotConnected` (or transport error) if
+    /// the daemon isn't running. Callers should treat that as the
+    /// normal degraded-mode signal.
     pub fn connect(paths: &CachePaths) -> Result<Self> {
-        match connect_existing(paths) {
-            Ok(stream) => Self::handshake(stream),
-            Err(_) => {
-                // First-run notice (one-time, stderr): the only exception to the
-                // no-banner rule. Per docs/DAEMON.md "First-run user notification".
-                let _ = super::firstrun::maybe_print(paths);
-                spawn_daemon(paths)?;
-                let stream = wait_for_socket(paths, SPAWN_GRACE * 4)?;
-                Self::handshake(stream)
-            }
-        }
+        Self::connect_existing(paths)
     }
 
-    /// Connect to an already-running daemon. No spawn-on-demand.
+    /// Same as `connect` — kept as the explicit-no-spawn name so older
+    /// call sites keep compiling.
     pub fn connect_existing(paths: &CachePaths) -> Result<Self> {
         let stream = connect_existing(paths)?;
         Self::handshake(stream)
+    }
+
+    /// Cheap "is the daemon alive?" probe. Connects to the socket but
+    /// does NOT complete the handshake — saves a roundtrip per startup
+    /// when the answer is just "is anything listening?".
+    pub fn is_daemon_alive(paths: &CachePaths) -> bool {
+        if !paths.socket.exists() {
+            return false;
+        }
+        UnixStream::connect(&paths.socket).is_ok()
     }
 
     fn handshake(mut stream: UnixStream) -> Result<Self> {
@@ -198,42 +198,6 @@ fn connect_existing(paths: &CachePaths) -> Result<UnixStream> {
     Ok(stream)
 }
 
-/// Spawn `zshrs --daemon` as a detached process so we can reconnect once it binds.
-fn spawn_daemon(paths: &CachePaths) -> Result<()> {
-    // Don't spawn if a live daemon process is already in pidfile (race-narrow case).
-    if let Some(pid) = pidlock::read_pid(paths) {
-        if pidlock::pid_alive(pid) {
-            return Ok(());
-        }
-    }
-
-    let exe = std::env::current_exe()?;
-    let mut cmd = Command::new(exe);
-    cmd.arg("--daemon");
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
-    // Detach: a quick double-fork via the runtime would be cleaner, but for v1 we
-    // rely on the daemon process not inheriting the controlling terminal because
-    // its fds are all /dev/null and the parent doesn't wait().
-    cmd.spawn()?;
-
-    Ok(())
-}
-
-fn wait_for_socket(paths: &CachePaths, max_wait: Duration) -> Result<UnixStream> {
-    let start = Instant::now();
-    while start.elapsed() < max_wait {
-        if paths.socket.exists() {
-            if let Ok(s) = UnixStream::connect(&paths.socket) {
-                return Ok(s);
-            }
-        }
-        std::thread::sleep(CONNECT_RETRY_DELAY);
-    }
-    Err(DaemonError::Timeout(max_wait))
-}
-
 fn tty_name() -> Option<String> {
     use std::os::unix::io::AsRawFd;
     let stdin = std::io::stdin();
@@ -252,15 +216,16 @@ fn tty_name() -> Option<String> {
 }
 
 /// Convenience: connect, run one op, return the response payload.
+/// Errors with `DaemonError::NotConnected` if the daemon isn't running.
 pub fn call_once(op: &str, args: Value) -> Result<Value> {
     let paths = CachePaths::resolve()?;
     let mut client = Client::connect(&paths)?;
     client.call(op, args)
 }
 
-/// Convenience: connect to existing daemon only (no spawn), run one op.
+/// Alias for `call_once` — kept for older call sites that explicitly
+/// requested no-spawn semantics. The base `call_once` is now also
+/// connect-only, so the two are equivalent.
 pub fn call_once_no_spawn(op: &str, args: Value) -> Result<Value> {
-    let paths = CachePaths::resolve()?;
-    let mut client = Client::connect_existing(&paths)?;
-    client.call(op, args)
+    call_once(op, args)
 }

@@ -882,7 +882,59 @@ Examples:
 - `zsubscribe tag:prod.chpwd` — track cwd of all prod shells
 - `zsubscribe shell:1.chpwd` — mirror cwd from shell #1 in this shell
 
-### Daemon lifecycle
+### zshrs ↔ zshrs-daemon: independent processes
+
+The shell and the daemon are **decoupled binaries**. The shell never
+runs daemon server code in its own process. The two interact only
+over the Unix socket / HTTP listener as a normal client/server.
+
+- `zshrs` — the shell. Talks to the daemon when present, runs in
+  vanilla mode when absent.
+- `zshrs-daemon` — the daemon. Standalone binary. Started by the user
+  via systemd / launchd / brew services / manual.
+
+Vanilla mode = no canonical-state cache, no recorder, no rkyv shards.
+Every `.zshrc` invocation re-evaluates from scratch — Rust-fast vanilla
+zsh, but rebuilding your house every morning. The daemon is what makes
+the cache+canonical-state architecture work; if it's not running, you
+get the speed of zshrs's compiled engine but none of the cross-shell
+caching wins.
+
+#### Detect-at-startup probe
+
+zshrs probes the daemon socket once at process startup (see
+`src/daemon_presence.rs`). The probe is connect-only — no handshake,
+no spawn — so it costs ~tens-of-microseconds when the daemon is up
+and a single `stat()` failure when it's down. Result is cached in an
+atomic; subsequent IPC sites read it via `daemon_presence::is_present()`
+in O(1).
+
+The probe never spawns the daemon. If the user wants the daemon
+running, they start it themselves via one of the install paths.
+
+#### Config knob: `~/.config/zshrs/zshrs.toml`
+
+```toml
+[daemon]
+# "auto" (default) = probe at startup; use the daemon if alive
+# "off"            = skip the probe entirely; pure vanilla zsh mode
+# "require"        = probe and WARN if absent (still doesn't spawn)
+enabled = "auto"
+```
+
+Three modes captured by `daemon_presence::Mode`:
+
+| Mode      | When                                              | Behavior                              |
+|-----------|---------------------------------------------------|---------------------------------------|
+| Present   | Probe succeeded                                   | All daemon-backed features available  |
+| Absent    | Probe failed (auto/require)                       | Degraded — vanilla zsh mode           |
+| Disabled  | `[daemon] enabled = "off"`                        | No probe attempted; vanilla forever   |
+
+`require` exists for users who *want* a hard "did I forget to start
+the daemon?" signal at every shell launch — it logs a WARN when
+absent so the install-and-forget path is loud about misconfiguration.
+
+### Daemon lifecycle (the daemon-binary side)
 
 The daemon is a standalone binary (`zshrs-daemon`) — never spawned by
 the zshrs shell. Users start it via one of the install paths shipped
