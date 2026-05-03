@@ -159,8 +159,11 @@ fn main() -> ExitCode {
         Err(code) => return code,
     };
 
-    // Init logging FIRST so every recorder event reaches the zshrs log.
-    zsh::log::init();
+    // Init logging FIRST so every recorder event reaches the recorder
+    // log file. Separate from `zshrs.log` (shell) and
+    // `zshrs-daemon.log` (daemon) — three processes, three logs, no
+    // interleaved tracing output.
+    zsh::log::init_named("zshrs-recorder.log");
 
     zsh::recorder::enable();
     if args.no_daemon {

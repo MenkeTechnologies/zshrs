@@ -44,7 +44,7 @@ Options:
   --log-level <DIRECTIVE>    Override ZSHRS_LOG for this session
                              (e.g. info | debug | info,fsnotify=trace).
   --log-stderr               Stream tracing output to stderr in addition to
-                             ~/.zshrs/zshrs.log. For live debugging.
+                             ~/.zshrs/zshrs-daemon.log. For live debugging.
                              Same as ZSHRS_LOG_STDERR=1.
   --verbose-init             Per docs/DAEMON.md: show daemon work to stderr
                              on every run (not just first). Implies

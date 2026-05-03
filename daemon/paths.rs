@@ -6,12 +6,18 @@
 //   ├── images/                  ← 0700 dir, 0600 files
 //   ├── catalog.db               ← 0600 (daemon-only writer)
 //   ├── history.db               ← 0600
-//   ├── zshrs.log                ← 0600 (10MB rotation)
+//   ├── zshrs.log                ← 0600 — shell (thin client) tracing
+//   ├── zshrs-daemon.log         ← 0600 — daemon tracing
+//   ├── zshrs-recorder.log       ← 0600 — recorder tracing
 //   ├── daemon.sock              ← 0600 Unix domain socket
 //   └── daemon.pid               ← 0600 singleton flock
 //
 // Cache directory is 0700 (user-only). Files inside are 0600. Verified by
-// `zcache verify` on every integrity scan; drift triggers WARN in zshrs.log.
+// `zcache verify` on every integrity scan; drift triggers WARN in
+// zshrs-daemon.log. All three log files are size-rotated together by the
+// daemon's ticker via `is_zshrs_log_file` — adding a fourth log file
+// (e.g. for a future `zshrs-test-runner` binary) only needs editing
+// that one helper.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -76,9 +82,9 @@ impl CachePaths {
         let images = root.join("images");
         let catalog_db = root.join("catalog.db");
         let history_db = root.join("history.db");
-        let log = root.join("zshrs.log");
+        let log = root.join("zshrs-daemon.log");
         let log_dir = root.clone();
-        let log_file_name = "zshrs.log".to_string();
+        let log_file_name = "zshrs-daemon.log".to_string();
         let socket = root.join("daemon.sock");
         let pid_file = root.join("daemon.pid");
         let index_rkyv = root.join("index.rkyv");
@@ -248,6 +254,23 @@ pub fn load_http_config() -> Result<super::http::HttpConfig> {
         listen,
         tokens: super::auth::TokenRegistry::new(tokens),
     })
+}
+
+/// True if `name` is the prefix of one of the three zshrs log files,
+/// or any of their `.N` rotation siblings:
+///
+///   * `zshrs.log` / `zshrs.log.1` / `zshrs.log.2` …  (shell)
+///   * `zshrs-daemon.log{,.N}`                       (daemon)
+///   * `zshrs-recorder.log{,.N}`                     (recorder)
+///
+/// Used by ticker rotation, `zlog` builtin scanners, and snapshot
+/// bundling. Centralized here so adding a fourth log file (e.g. for a
+/// future `zshrs-test-runner` binary) only needs editing this one
+/// function.
+pub fn is_zshrs_log_file(name: &str) -> bool {
+    name.starts_with("zshrs.log")
+        || name.starts_with("zshrs-daemon.log")
+        || name.starts_with("zshrs-recorder.log")
 }
 
 /// Set 0600 on a file path that already exists. Logs a warning on drift detection.

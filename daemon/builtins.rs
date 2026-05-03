@@ -1306,8 +1306,11 @@ fn zlog_stats() -> i32 {
     0
 }
 
-/// Enumerate `~/.zshrs/zshrs.log*` files, newest first by mtime. Used by
-/// the read-only zlog verbs (tail, grep, stats) and by `zlog clear`.
+/// Enumerate every zshrs log file (`zshrs.log*`, `zshrs-daemon.log*`,
+/// `zshrs-recorder.log*`) under `~/.zshrs/`, newest first by mtime.
+/// Used by the read-only zlog verbs (tail, grep, stats) and by `zlog
+/// clear`. The single-prefix matcher lives in `paths::is_zshrs_log_file`
+/// so adding a fourth log file only touches that one helper.
 fn log_files(paths: &CachePaths) -> Vec<std::path::PathBuf> {
     let dir = match std::fs::read_dir(&paths.root) {
         Ok(d) => d,
@@ -1317,7 +1320,7 @@ fn log_files(paths: &CachePaths) -> Vec<std::path::PathBuf> {
     for entry in dir.flatten() {
         let name = entry.file_name();
         let s = name.to_string_lossy();
-        if s.starts_with("zshrs.log") {
+        if super::paths::is_zshrs_log_file(&s) {
             let mtime = entry
                 .metadata()
                 .and_then(|m| m.modified())

@@ -2,7 +2,7 @@
 //
 // Module layout:
 //   paths.rs   — ~/.zshrs/* paths + 0700/0600 permissions
-//   log.rs     — tracing-subscriber setup, rolling file at zshrs.log
+//   log.rs     — tracing-subscriber setup, rolling file at zshrs-daemon.log
 //   ipc.rs     — u32-BE-length-prefixed JSON framing + message types
 //   pidlock.rs — singleton flock on daemon.pid + spawn-on-demand
 //   server.rs  — tokio accept loop + per-session connection handler
