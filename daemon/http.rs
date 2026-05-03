@@ -34,7 +34,6 @@
 //! Dependencies: axum / tower / hyper, all under the tokio team. See
 //! daemon/Cargo.toml for the durability rationale.
 
-use std::collections::HashSet;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -62,15 +61,17 @@ pub struct HttpConfig {
     /// Address to bind, e.g. "127.0.0.1:7733". Empty / None disables the
     /// listener entirely (the default).
     pub listen: Option<String>,
-    /// Set of valid bearer tokens. Empty means "no auth required" (only
-    /// allowed when binding to a loopback address — see auth model above).
-    pub tokens: HashSet<String>,
+    /// Bearer-token registry. Empty means "no auth required" (only
+    /// allowed when binding to a loopback address — see auth model
+    /// above). Each token may carry a scope set; see `daemon::auth`
+    /// for the full op→scope table and matcher rules.
+    pub tokens: super::auth::TokenRegistry,
 }
 
 #[derive(Clone)]
 struct AppState {
     daemon: Arc<DaemonState>,
-    tokens: Arc<HashSet<String>>,
+    tokens: super::auth::TokenRegistry,
     started_at: std::time::Instant,
 }
 
@@ -98,7 +99,7 @@ pub async fn serve_http(cfg: HttpConfig, daemon: Arc<DaemonState>) -> Result<()>
     let token_count = cfg.tokens.len();
     let app_state = AppState {
         daemon,
-        tokens: Arc::new(cfg.tokens),
+        tokens: cfg.tokens,
         started_at: std::time::Instant::now(),
     };
 
@@ -130,22 +131,26 @@ pub async fn serve_http(cfg: HttpConfig, daemon: Arc<DaemonState>) -> Result<()>
     Ok(())
 }
 
-/// Authorization: Bearer <token> check. Returns the bearer token string
-/// if it matches; returns `None` if auth is open (no tokens configured).
-/// Returns an error response if a token is required and missing/wrong.
-fn authorize(headers: &HeaderMap, tokens: &HashSet<String>) -> std::result::Result<(), StatusCode> {
-    if tokens.is_empty() {
-        return Ok(());
+/// Authorization: Bearer <token> check. Returns:
+///   - `Ok(None)`        — registry is empty (no auth required)
+///   - `Ok(Some(token))` — bearer matched a configured token
+///   - `Err(401)`        — token required and missing or wrong
+fn authorize<'a>(
+    headers: &HeaderMap,
+    registry: &'a super::auth::TokenRegistry,
+) -> std::result::Result<Option<&'a super::auth::Token>, StatusCode> {
+    if registry.is_empty() {
+        return Ok(None);
     }
     let header = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let token = header.strip_prefix("Bearer ").unwrap_or("").trim();
-    if token.is_empty() || !tokens.contains(token) {
+    let secret = header.strip_prefix("Bearer ").unwrap_or("").trim();
+    if secret.is_empty() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    Ok(())
+    registry.lookup(secret).map(Some).ok_or(StatusCode::UNAUTHORIZED)
 }
 
 async fn handler_health(State(s): State<AppState>) -> impl IntoResponse {
@@ -202,6 +207,9 @@ async fn handler_stream_watch(
     if let Err(code) = authorize(&headers, &s.tokens) {
         return code.into_response();
     }
+    // SSE streams currently bypass scope checks — every authenticated
+    // token can subscribe to every stream. Tighten if cross-tenant
+    // dashboards become a real use case.
     // Refcounted subscribe so two SSE clients on the same path don't
     // have the first disconnect's drop break the second's stream. The
     // returned watch_id is captured by the SseGuardStream Drop so the
@@ -267,6 +275,9 @@ async fn handler_stream_events(
     if let Err(code) = authorize(&headers, &s.tokens) {
         return code.into_response();
     }
+    // SSE streams currently bypass scope checks — every authenticated
+    // token can subscribe to every stream. Tighten if cross-tenant
+    // dashboards become a real use case.
     // Pubsub patterns are `<scope>.<topic>` (see daemon/pubsub.rs).
     // Default `*.*` = every scope, every topic.
     // Caller-supplied `?channel=PATTERN` is passed through verbatim
@@ -337,6 +348,9 @@ async fn handler_stream_definitions(
     if let Err(code) = authorize(&headers, &s.tokens) {
         return code.into_response();
     }
+    // SSE streams currently bypass scope checks — every authenticated
+    // token can subscribe to every stream. Tighten if cross-tenant
+    // dashboards become a real use case.
     let stream = sse_event_stream_with_watch(&s.daemon, None, |frame| {
         if let Frame::Event { event, payload } = frame {
             // recorder_ingest emits broadcast Frame::Event { event:
@@ -452,11 +466,38 @@ async fn handler_op(
     headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> impl IntoResponse {
-    if let Err(code) = authorize(&headers, &s.tokens) {
-        return (
-            code,
-            Json(json!({ "ok": false, "code": "unauthorized", "msg": "missing or invalid bearer token" })),
-        );
+    let token = match authorize(&headers, &s.tokens) {
+        Ok(t) => t,
+        Err(code) => {
+            return (
+                code,
+                Json(json!({
+                    "ok": false,
+                    "code": "unauthorized",
+                    "msg": "missing or invalid bearer token",
+                })),
+            );
+        }
+    };
+    // Scope check — only enforced when a token is configured AND the
+    // token has a non-empty scope set. Unscoped (legacy) tokens grant
+    // full access via Token::allows. Op→required-scope mapping lives
+    // in daemon/auth.rs:op_scope; unmapped ops fall back to
+    // `meta.admin` (deny-by-default for any new op until added).
+    if let Some(t) = token {
+        let required = super::auth::op_scope(&name);
+        if !t.allows(required) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "ok": false,
+                    "code": "scope_denied",
+                    "msg": format!("token `{}` lacks scope `{required}` for op `{name}`", t.label),
+                    "required_scope": required,
+                    "granted_scopes": t.granted_scopes(),
+                })),
+            );
+        }
     }
     let args = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
 

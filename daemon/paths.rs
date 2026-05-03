@@ -155,14 +155,23 @@ pub fn daemon_config_file() -> Result<PathBuf> {
 /// Load `[http]` section from `~/.config/zshrs/daemon.toml` into the
 /// `HttpConfig` consumed by `daemon::http::serve_http`. The file is
 /// optional; a missing file or a missing `[http]` section both produce
-/// the default (HTTP listener disabled). Schema:
+/// the default (HTTP listener disabled).
+///
+/// `[http.tokens]` accepts two value shapes per key:
 ///
 ///     [http]
-///     listen = "127.0.0.1:7733"        # required to enable
+///     listen = "127.0.0.1:7733"
 ///
 ///     [http.tokens]
-///     ci-pipeline = "0123abcd..."       # bearer-token map; values are
-///     vim-lsp     = "feedface..."       # the literal token strings
+///     # Legacy / unscoped — flat string. Token grants full access.
+///     mybox      = "0123abcd..."
+///     # Scoped — inline table. Token only grants the listed scopes.
+///     # See `daemon::auth::op_scope` for the area.verb namespace.
+///     vim-lsp    = { token = "feedface...", scopes = ["defs.read", "snapshot.read"] }
+///     ci-pipe    = { token = "deadbeef...", scopes = ["job.write", "cache.*"] }
+///
+/// Wildcards in `scopes`: `*` (everything), `<area>.*` (every verb in
+/// an area), `*.<verb>` (every area's `<verb>`).
 pub fn load_http_config() -> Result<super::http::HttpConfig> {
     let path = daemon_config_file()?;
     if !path.exists() {
@@ -185,17 +194,51 @@ pub fn load_http_config() -> Result<super::http::HttpConfig> {
         .get("listen")
         .and_then(toml::Value::as_str)
         .map(str::to_string);
-    let mut tokens = std::collections::HashSet::new();
+    let mut tokens: Vec<super::auth::Token> = Vec::new();
     if let Some(tok_table) = http_section.get("tokens").and_then(toml::Value::as_table) {
-        for (_label, val) in tok_table {
-            if let Some(s) = val.as_str() {
-                if !s.is_empty() {
-                    tokens.insert(s.to_string());
+        for (label, val) in tok_table {
+            // Legacy form: `name = "secret"` (full access).
+            if let Some(secret) = val.as_str() {
+                if !secret.is_empty() {
+                    tokens.push(super::auth::Token {
+                        label: label.clone(),
+                        secret: secret.to_string(),
+                        scopes: super::auth::ScopeMatcher::default(),
+                    });
                 }
+                continue;
+            }
+            // Scoped form: `name = { token = "secret", scopes = [...] }`.
+            if let Some(inner) = val.as_table() {
+                let secret = match inner.get("token").and_then(toml::Value::as_str) {
+                    Some(s) if !s.is_empty() => s.to_string(),
+                    _ => {
+                        return Err(DaemonError::other(format!(
+                            "daemon.toml: [http.tokens].{label} missing or empty `token` field"
+                        )));
+                    }
+                };
+                let scopes = inner
+                    .get("scopes")
+                    .and_then(toml::Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                tokens.push(super::auth::Token {
+                    label: label.clone(),
+                    secret,
+                    scopes: super::auth::ScopeMatcher::from_strings(scopes),
+                });
             }
         }
     }
-    Ok(super::http::HttpConfig { listen, tokens })
+    Ok(super::http::HttpConfig {
+        listen,
+        tokens: super::auth::TokenRegistry::new(tokens),
+    })
 }
 
 /// Set 0600 on a file path that already exists. Logs a warning on drift detection.

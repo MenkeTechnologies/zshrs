@@ -12,6 +12,7 @@
 //   firstrun.rs — first-run detection + 6-line stderr notice
 
 pub mod artifact;
+pub mod auth;
 pub mod builtins;
 pub mod cache;
 pub mod canonical;

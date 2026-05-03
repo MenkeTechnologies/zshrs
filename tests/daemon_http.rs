@@ -49,17 +49,29 @@ struct DaemonHttp {
 
 impl DaemonHttp {
     fn spawn(token: Option<&str>) -> Self {
+        Self::spawn_with_extra_toml(token, "")
+    }
+
+    /// Spawn variant that injects extra `[http.tokens]` lines beyond
+    /// the optional default token. Lets scope tests configure scoped
+    /// tokens without re-implementing the whole spawn dance.
+    /// `extra_toml` is appended verbatim AFTER the default token line
+    /// (or alone if `token` is None) and should already include the
+    /// `[http.tokens.NAME]` headers it needs.
+    fn spawn_with_extra_toml(token: Option<&str>, extra_toml: &str) -> Self {
         let cache = tempfile::TempDir::new().expect("cache tempdir");
         let config = tempfile::TempDir::new().expect("config tempdir");
         let port = pick_free_port();
 
-        // Write daemon.toml.
         let cfg_dir = config.path().join("zshrs");
         std::fs::create_dir_all(&cfg_dir).expect("mk config dir");
         let mut f = std::fs::File::create(cfg_dir.join("daemon.toml")).expect("create toml");
         write!(f, "[http]\nlisten = \"127.0.0.1:{port}\"\n").unwrap();
         if let Some(tok) = token {
             write!(f, "\n[http.tokens]\ntest-tok = \"{tok}\"\n").unwrap();
+        }
+        if !extra_toml.is_empty() {
+            write!(f, "\n{extra_toml}\n").unwrap();
         }
         drop(f);
 
@@ -584,4 +596,146 @@ fn watch_unsubscribe_unknown_id_is_idempotent() {
         .expect("watch_unsubscribe missing id");
     let body: serde_json::Value = r.into_json().unwrap();
     assert_eq!(body["removed"], serde_json::json!(false));
+}
+
+// ---- Per-token scope authorization (audit item #9) ------------------
+
+/// Pull the HTTP status from a ureq error, panicking on transport
+/// failures (which would mask scope-test bugs as test infrastructure
+/// problems).
+fn status_of(err: ureq::Error) -> u16 {
+    match err {
+        ureq::Error::Status(s, _) => s,
+        ureq::Error::Transport(t) => panic!("transport error: {t}"),
+    }
+}
+
+#[test]
+fn legacy_unscoped_token_grants_full_access() {
+    // `name = "secret"` flat string form. Pre-scope-feature configs
+    // must keep working unchanged: any op the legacy token presents
+    // is allowed.
+    let d = DaemonHttp::spawn(Some("legacy-secret"));
+
+    // Touch ops from multiple scope namespaces.
+    for op in ["info", "cache_stats", "definitions_kinds", "snapshot_list"] {
+        let r = ureq::post(&d.url(&format!("/op/{op}")))
+            .set("Authorization", "Bearer legacy-secret")
+            .set("Content-Type", "application/json")
+            .send_string("{}")
+            .unwrap_or_else(|e| panic!("{op}: {e}"));
+        assert_eq!(r.status(), 200, "{op}");
+    }
+}
+
+#[test]
+fn scoped_token_allows_listed_scope_only() {
+    // Scoped token may only `cache.*`. Other namespaces → 403
+    // scope_denied. Verifies the table-form parser AND the dispatcher
+    // scope check together.
+    let extra = r#"
+[http.tokens.cache-only]
+token = "cache-secret"
+scopes = ["cache.*"]
+"#;
+    let d = DaemonHttp::spawn_with_extra_toml(None, extra);
+
+    // cache_stats is `cache.read` → allowed.
+    let r = ureq::post(&d.url("/op/cache_stats"))
+        .set("Authorization", "Bearer cache-secret")
+        .set("Content-Type", "application/json")
+        .send_string("{}")
+        .expect("cache_stats");
+    assert_eq!(r.status(), 200);
+
+    // snapshot_save is `snapshot.write` → denied.
+    let err = ureq::post(&d.url("/op/snapshot_save"))
+        .set("Authorization", "Bearer cache-secret")
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"tag":"x"}"#)
+        .expect_err("snapshot_save must 403");
+    assert_eq!(status_of(err), 403);
+}
+
+#[test]
+fn scope_denied_response_carries_required_and_granted() {
+    let extra = r#"
+[http.tokens.read-only]
+token = "ro-secret"
+scopes = ["*.read"]
+"#;
+    let d = DaemonHttp::spawn_with_extra_toml(None, extra);
+
+    // cache_put is `cache.write` → denied for *.read token.
+    let err = ureq::post(&d.url("/op/cache_put"))
+        .set("Authorization", "Bearer ro-secret")
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"ns":"a","key":"b","value":"c"}"#)
+        .expect_err("cache_put must 403");
+    let (status, resp) = match err {
+        ureq::Error::Status(s, r) => (s, r),
+        ureq::Error::Transport(t) => panic!("transport error: {t}"),
+    };
+    assert_eq!(status, 403);
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["code"], serde_json::json!("scope_denied"));
+    assert_eq!(body["required_scope"], serde_json::json!("cache.write"));
+    let granted = body["granted_scopes"].as_array().unwrap();
+    assert!(granted.iter().any(|v| v == "*.read"));
+}
+
+#[test]
+fn verb_wildcard_grants_read_across_areas() {
+    // `*.read` should match every `<area>.read` op AND `defs.read`,
+    // `cache.read`, `snapshot.read`, etc.
+    let extra = r#"
+[http.tokens.dashboard]
+token = "dash-secret"
+scopes = ["*.read"]
+"#;
+    let d = DaemonHttp::spawn_with_extra_toml(None, extra);
+
+    for op in ["cache_stats", "definitions_kinds", "snapshot_list", "lock_list"] {
+        let r = ureq::post(&d.url(&format!("/op/{op}")))
+            .set("Authorization", "Bearer dash-secret")
+            .set("Content-Type", "application/json")
+            .send_string("{}")
+            .unwrap_or_else(|e| panic!("{op}: {e}"));
+        assert_eq!(r.status(), 200, "{op} (scope = {})", auth_scope(op));
+    }
+}
+
+#[test]
+fn unknown_op_falls_through_to_meta_admin_scope() {
+    // Unmapped ops in auth.rs:op_scope return `meta.admin` so a
+    // tightly-scoped token can't smuggle calls to ops the table
+    // doesn't know about. The test op itself doesn't exist so we
+    // expect 403 (scope_denied) FIRST, before the dispatcher's
+    // unknown-op 404 has a chance to fire.
+    let extra = r#"
+[http.tokens.cache-only]
+token = "co-secret"
+scopes = ["cache.read"]
+"#;
+    let d = DaemonHttp::spawn_with_extra_toml(None, extra);
+
+    let err = ureq::post(&d.url("/op/zzz_definitely_not_a_real_op"))
+        .set("Authorization", "Bearer co-secret")
+        .set("Content-Type", "application/json")
+        .send_string("{}")
+        .expect_err("must reject");
+    let (status, resp) = match err {
+        ureq::Error::Status(s, r) => (s, r),
+        ureq::Error::Transport(t) => panic!("transport error: {t}"),
+    };
+    assert_eq!(status, 403, "scope check fires before unknown-op 404");
+    let body: serde_json::Value = resp.into_json().unwrap();
+    assert_eq!(body["required_scope"], serde_json::json!("meta.admin"));
+}
+
+// Helper used by the verb-wildcard test for clearer panic messages —
+// surfaces what op→scope mapping was being asserted when an
+// allowed-but-failed op was rejected.
+fn auth_scope(op: &str) -> &'static str {
+    zsh::daemon::auth::op_scope(op)
 }
