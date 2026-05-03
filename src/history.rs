@@ -136,7 +136,9 @@ impl HistoryEngine {
     /// `$ZSHRS_HOME/zshrs_history` — flat text mirror, one line per
     /// command in zsh extended-history format:
     ///
-    ///     : <unix_ts>:<duration>;<command>
+    /// ```text
+    /// : <unix_ts>:<duration>;<command>
+    /// ```
     ///
     /// Newlines inside multi-line commands are escaped as the literal
     /// two-character sequence `\\n` (matches `setopt EXTENDED_HISTORY`
@@ -541,7 +543,9 @@ fn is_sqlite_file(path: &std::path::Path) -> bool {
 
 /// Format one zsh-extended-history line:
 ///
-///     : <unix_ts>:<duration>;<command>\n
+/// ```text
+/// : <unix_ts>:<duration>;<command>\n
+/// ```
 ///
 /// Multi-line commands escape literal `\n` to the two-character
 /// sequence `\\n` so each entry stays on a single line; the unescape

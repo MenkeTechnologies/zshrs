@@ -392,7 +392,7 @@ async fn handler_metrics(State(s): State<AppState>) -> impl IntoResponse {
 /// `GET /stream/watch?path=DIR&recursive=BOOL` — subscribes the
 /// caller to fsnotify events. Each event arrives as one SSE record:
 ///
-/// ```
+/// ```text
 /// event: fs
 /// data: {"path":"/path/that/changed", "shard":"...", "trigger_path":"...", ...}
 /// ```
@@ -461,7 +461,7 @@ async fn handler_stream_watch(
 /// `GET /stream/events?channel=GLOB` — subscribes to the daemon's
 /// pubsub bus. Each `daemon.event.publish` matching the GLOB arrives as:
 ///
-/// ```
+/// ```text
 /// event: pub
 /// data: {"channel":"build", "payload":{...}, "sender":..., "ts_ns":...}
 /// ```
