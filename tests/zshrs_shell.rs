@@ -5716,7 +5716,12 @@ fn test_glob_om_sort_newest_first() {
     // sort clobbered the qualifier-driven order, AND `O` wasn't
     // in the looks_like_glob_qualifiers char set so `*(Om)` parsed
     // as a literal pattern.
-    let dir = std::env::temp_dir().join("zshrs_test_om_sort");
+    //
+    // Use a per-PID tmpdir so parallel test runs don't trample one
+    // another's dir contents (the previous fixed name `zshrs_test_om_sort`
+    // produced flaky failures when this test ran alongside its `Om` twin).
+    let dir = std::env::temp_dir().join(format!("zshrs_test_om_lower_sort_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     for name in ["a", "b", "c"] {
         std::fs::File::create(dir.join(name)).unwrap();
@@ -5730,7 +5735,8 @@ fn test_glob_om_sort_newest_first() {
 
 #[test]
 fn test_glob_Om_sort_oldest_first() {
-    let dir = std::env::temp_dir().join("zshrs_test_Om_sort");
+    let dir = std::env::temp_dir().join(format!("zshrs_test_Om_upper_sort_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::create_dir_all(&dir);
     for name in ["a", "b", "c"] {
         std::fs::File::create(dir.join(name)).unwrap();

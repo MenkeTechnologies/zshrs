@@ -25100,40 +25100,6 @@ impl ShellExecutor {
                 // Remaining args are signal numbers to translate
                 list_args = args[i + 1..].to_vec();
                 break;
-            } else if arg == "-L" {
-                // `kill -L`: tabular signal listing with numbers + names.
-                // Direct port of jobs.c:2881-2909. Width is 2 for <100
-                // signals, 3 otherwise; columns derive from terminal width
-                // (cols = zterm_columns/15 when 30..90, capped at 6).
-                let mut by_num: Vec<&(&str, i32, _)> = signal_map.iter().collect();
-                by_num.sort_by_key(|(_, n, _)| *n);
-                let max_num = by_num.iter().map(|(_, n, _)| *n).max().unwrap_or(0);
-                let width = if max_num >= 100 { 3 } else { 2 };
-                let zterm_columns = env::var("COLUMNS")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(80usize);
-                let cols: usize = if zterm_columns >= 30 {
-                    if zterm_columns < 90 {
-                        std::cmp::max(1, zterm_columns / 15)
-                    } else {
-                        6
-                    }
-                } else {
-                    1
-                };
-                for (idx, (name, num, _)) in by_num.iter().enumerate() {
-                    let sig1 = idx + 1; // 1-based per jobs.c sig counter
-                    let sep = if sig1 % cols != 0 { ' ' } else { '\n' };
-                    print!("{:>width$} {:<10}{}", num, name, sep, width = width);
-                }
-                // jobs.c:2876 ends with putchar('\n') only when no -L; -L
-                // path's loop already terminates the last group with `\n`
-                // when sig1 % cols == 0. If it didn't, force a newline.
-                if by_num.len() % cols != 0 {
-                    println!();
-                }
-                return 0;
             } else if arg == "-s" {
                 // -s signal_name (or numeric signal-by-name)
                 i += 1;
@@ -30183,19 +30149,21 @@ impl ShellExecutor {
     }
 
     fn builtin_let(&mut self, args: &[String]) -> i32 {
-        // Direct port of src/zsh/Src/builtin.c:7469-7482 bin_let.
+        // Port of src/zsh/Src/builtin.c:7469-7482 bin_let, plus the
+        // BUILTIN-table arity check from src/zsh/Src/builtin.c:90:
         //
-        // Algorithm:
-        //   val = zero_mnumber       // 0 (integer)
-        //   for each arg: val = matheval(arg)  // evaluate, last
-        //                                       // wins
-        //   if errflag: return 2     // math errors non-fatal
-        //   return val == 0 ? 1 : 0  // 1 = false, 0 = true
+        //     BUILTIN("let", 0, bin_let, 1, -1, 0, NULL, NULL),
         //
-        // No arg case: val stays 0, returns 1 (false). zsh does NOT
-        // emit a "not enough arguments" diagnostic for bare `let` —
-        // zshrs's previous impl invented one. POSIX/zsh treat the
-        // empty case as a valid no-op-with-status-1.
+        // The `1` is min_args. zsh's builtin dispatcher enforces this
+        // BEFORE bin_let runs and prints `let: not enough arguments`
+        // exit 1. A previous comment here claimed zsh did not emit
+        // this — that was wrong; the diagnostic comes from the table
+        // arity check, not bin_let itself. Mirror the dispatcher
+        // behaviour here so call sites see the same failure mode.
+        if args.is_empty() {
+            eprintln!("zshrs:let:1: not enough arguments");
+            return 1;
+        }
         let mut result: i64 = 0;
         for expr in args {
             result = self.evaluate_arithmetic_expr(expr);

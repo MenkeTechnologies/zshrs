@@ -2526,14 +2526,24 @@ impl<'a> ZshParser<'a> {
         self.lexer.zshlex(); // skip {
         let prog = self.parse_program();
 
-        // Check for { ... } always { ... }
+        // Check for { ... } always { ... }. Direct port of zsh's
+        // par_subsh at parse.c:1612-1660 — note the two `incmdpos = 1`
+        // forces (parse.c:1632, 1637): after consuming the closing
+        // OUTBRACE AND after matching the `always` keyword, the parser
+        // explicitly resets command position so the next `{` lexes as
+        // INBRACE. Without these resets the lexer's String-clears-cmdpos
+        // rule (lex.rs:976-983) leaves the second `{` in word position,
+        // turning `always { ... }` into a Simple `{` `echo` … and the
+        // try/always pairing is silently lost.
         if self.lexer.tok == LexTok::Outbrace {
+            self.lexer.incmdpos = true; // parse.c:1632 incmdpos = !zsh_construct
             self.lexer.zshlex();
 
             // Check for 'always'
             if self.lexer.tok == LexTok::String {
                 let s = self.lexer.tokstr.as_ref();
                 if s.map(|s| s == "always").unwrap_or(false) {
+                    self.lexer.incmdpos = true; // parse.c:1637 incmdpos = 1
                     self.lexer.zshlex();
                     self.skip_separators();
 
