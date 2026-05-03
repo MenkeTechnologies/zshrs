@@ -753,8 +753,8 @@ pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> Stri
         return s.to_string();
     }
     if anchor_start {
-        if s.starts_with(pat) {
-            return format!("{}{}", out_expanded, &s[pat.len()..]);
+        if let Some(rest) = s.strip_prefix(pat) {
+            return format!("{}{}", out_expanded, rest);
         }
         return s.to_string();
     }

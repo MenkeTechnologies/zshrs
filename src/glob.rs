@@ -602,8 +602,8 @@ impl GlobState {
 
         // Check for (#q...) explicit qualifier syntax
         let qual_str = &pattern[start + 1..pattern.len() - 1];
-        let (is_explicit, qual_content) = if qual_str.starts_with("#q") {
-            (true, &qual_str[2..])
+        let (is_explicit, qual_content) = if let Some(after) = qual_str.strip_prefix("#q") {
+            (true, after)
         } else if self.options.bare_glob_qual {
             (false, qual_str)
         } else {

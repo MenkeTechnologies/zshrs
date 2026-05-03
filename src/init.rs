@@ -394,11 +394,7 @@ pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<PathBuf> {
 
     // Fallback to the argv[0]/cwd/$PATH walk (init.c:956-1004).
     let name = name?;
-    let name = if name.starts_with('-') {
-        &name[1..]
-    } else {
-        name
-    };
+    let name = name.strip_prefix('-').unwrap_or(name);
     if name.is_empty() {
         return None;
     }

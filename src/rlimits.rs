@@ -541,8 +541,8 @@ pub fn builtin_ulimit(
     while i < args.len() {
         let arg = args[i];
 
-        if arg.starts_with('-') {
-            for c in arg[1..].chars() {
+        if let Some(after_dash) = arg.strip_prefix('-') {
+            for c in after_dash.chars() {
                 match c {
                     'H' => use_hard = true,
                     'S' => use_hard = false,

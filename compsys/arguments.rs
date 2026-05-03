@@ -273,8 +273,8 @@ impl ArgumentsSpec {
         }
 
         // Check for *: (rest arguments)
-        let (rest, remaining) = if spec.starts_with('*') {
-            (true, &spec[1..])
+        let (rest, remaining) = if let Some(after_star) = spec.strip_prefix('*') {
+            (true, after_star)
         } else {
             (false, spec)
         };
@@ -652,9 +652,9 @@ pub fn parse_action(action: &str) -> ActionType {
     } else if action.starts_with('{') && action.ends_with('}') {
         // {eval code}
         ActionType::Eval(action[1..action.len() - 1].to_string())
-    } else if action.starts_with("->") {
+    } else if let Some(state_name) = action.strip_prefix("->") {
         // ->state
-        ActionType::State(action[2..].trim().to_string())
+        ActionType::State(state_name.trim().to_string())
     } else if action.starts_with('_') {
         // _function
         ActionType::Function(action.to_string())

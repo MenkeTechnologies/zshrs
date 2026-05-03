@@ -232,13 +232,13 @@ impl ZstyleColors {
     /// Extract a quoted string from input, returns (content, rest)
     fn extract_quoted(s: &str) -> (Option<String>, &str) {
         let s = s.trim_start();
-        if s.starts_with('\'') {
-            if let Some(end) = s[1..].find('\'') {
-                return (Some(s[1..end + 1].to_string()), &s[end + 2..]);
+        if let Some(after_q) = s.strip_prefix('\'') {
+            if let Some(end) = after_q.find('\'') {
+                return (Some(after_q[..end].to_string()), &after_q[end + 1..]);
             }
-        } else if s.starts_with('"') {
-            if let Some(end) = s[1..].find('"') {
-                return (Some(s[1..end + 1].to_string()), &s[end + 2..]);
+        } else if let Some(after_q) = s.strip_prefix('"') {
+            if let Some(end) = after_q.find('"') {
+                return (Some(after_q[..end].to_string()), &after_q[end + 1..]);
             }
         }
         (None, s)
@@ -647,8 +647,8 @@ pub fn parse_zstyles_from_content(content: &str) -> Vec<ParsedZstyle> {
         let rest = &line[7..].trim_start(); // Skip "zstyle "
 
         // Check for -e (eval) flag
-        let (eval, rest) = if rest.starts_with("-e ") {
-            (true, rest[3..].trim_start())
+        let (eval, rest) = if let Some(after_e) = rest.strip_prefix("-e ") {
+            (true, after_e.trim_start())
         } else {
             (false, *rest)
         };
@@ -735,12 +735,12 @@ fn extract_zstyle_arg(s: &str) -> (Option<String>, &str) {
     }
 
     // $'...' ANSI-C quoting
-    if s.starts_with("$'") {
-        if let Some(end) = s[2..].find('\'') {
-            let content = &s[2..end + 2];
+    if let Some(after_dq) = s.strip_prefix("$'") {
+        if let Some(end) = after_dq.find('\'') {
+            let content = &after_dq[..end];
             // Parse ANSI-C escape sequences
             let content = parse_ansi_c_string(content);
-            return (Some(content), &s[end + 3..]);
+            return (Some(content), &after_dq[end + 1..]);
         }
         return (None, s);
     }

@@ -515,8 +515,8 @@ pub fn tilde_files(state: &mut CompletionState) -> bool {
         if let Ok(home) = std::env::var("HOME") {
             let expanded = if prefix == "~" {
                 home.clone()
-            } else if prefix.starts_with("~/") {
-                format!("{}{}", home, &prefix[1..])
+            } else if let Some(after_tilde) = prefix.strip_prefix("~/") {
+                format!("{}/{}", home, after_tilde)
             } else {
                 // ~user form - would need to look up user
                 return false;

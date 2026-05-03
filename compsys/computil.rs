@@ -125,8 +125,8 @@ impl ArgSpec {
         };
 
         // Check for repeated prefix
-        let (repeated, rest) = if rest.starts_with('*') {
-            (true, &rest[1..])
+        let (repeated, rest) = if let Some(after_star) = rest.strip_prefix('*') {
+            (true, after_star)
         } else {
             (false, rest)
         };
@@ -281,16 +281,16 @@ impl ValueSpec {
             if let Some(bracket_end) = rest.find(']') {
                 let desc = rest[1..bracket_end].to_string();
                 let remaining = &rest[bracket_end + 1..];
-                if remaining.starts_with(':') {
-                    (desc, remaining[1..].to_string(), true)
+                if let Some(after_colon) = remaining.strip_prefix(':') {
+                    (desc, after_colon.to_string(), true)
                 } else {
                     (desc, String::new(), false)
                 }
             } else {
                 (String::new(), String::new(), false)
             }
-        } else if rest.starts_with(':') {
-            (String::new(), rest[1..].to_string(), true)
+        } else if let Some(after_colon) = rest.strip_prefix(':') {
+            (String::new(), after_colon.to_string(), true)
         } else {
             (String::new(), String::new(), false)
         };

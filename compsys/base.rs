@@ -484,8 +484,8 @@ impl Value {
         let (description, rest) = rest;
 
         // Parse :arg-desc:action
-        let (has_arg, arg_description, action) = if rest.starts_with(':') {
-            let parts: Vec<&str> = rest[1..].splitn(2, ':').collect();
+        let (has_arg, arg_description, action) = if let Some(after_colon) = rest.strip_prefix(':') {
+            let parts: Vec<&str> = after_colon.splitn(2, ':').collect();
             (
                 true,
                 parts.first().unwrap_or(&"").to_string(),

@@ -254,8 +254,9 @@ impl CachePaths {
     /// Seed every default config file under `~/.zshrs/` if absent:
     ///   * `zshrs.toml`            — shell knobs
     ///   * `zshrs-daemon.toml`     — daemon knobs (auto-migrates from
-    ///                                 the legacy `daemon.toml`)
+    ///     the legacy `daemon.toml`)
     ///   * `zshrs-recorder.toml`   — recorder knobs
+    ///
     /// Idempotent — never overwrites a user-edited file. Files are
     /// chmod'd 0600 because the same root holds secrets-bearing tokens
     /// once the user opts in. Called by every binary

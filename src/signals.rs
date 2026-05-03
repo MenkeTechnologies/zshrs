@@ -106,11 +106,7 @@ pub static SIGNAL_NAMES: &[(&str, i32)] = &[
 /// Get signal number from name
 pub fn sig_by_name(name: &str) -> Option<i32> {
     let name_upper = name.to_uppercase();
-    let lookup = if name_upper.starts_with("SIG") {
-        &name_upper[3..]
-    } else {
-        &name_upper
-    };
+    let lookup = name_upper.strip_prefix("SIG").unwrap_or(&name_upper);
 
     for (sig_name, sig_num) in SIGNAL_NAMES {
         if *sig_name == lookup {

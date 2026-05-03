@@ -917,9 +917,9 @@ impl<'a> ZshParser<'a> {
     }
 
     /// Emit a parser-level error. Direct port of zsh/Src/parse.c:
-    /// 2733-2766 `yyerror`. C version fills a per-event error buffer
-    /// + sets errflag. zshrs pushes onto self.errors which the
-    /// caller drains via parse()'s Result return.
+    ///   2733-2766 `yyerror`. C version fills a per-event error buffer
+    ///   + sets errflag. zshrs pushes onto self.errors which the
+    ///   caller drains via parse()'s Result return.
     pub fn yyerror(&mut self, msg: &str) {
         // parse.c:2735-2765 — zsh's yyerror collects the offending
         // token's literal text + line number. zshrs already does
