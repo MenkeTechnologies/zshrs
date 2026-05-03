@@ -119,7 +119,9 @@ fn handshake_and_info() {
     assert_eq!(info["protocol_version"].as_u64(), Some(1));
     assert_eq!(info["session_count"].as_u64(), Some(1));
     assert!(info["catalog"].is_object());
-    assert_eq!(info["catalog"]["schema_version"].as_u64(), Some(1));
+    // catalog/SCHEMA_VERSION lives in daemon/catalog.rs:42 — bump
+    // here in lockstep with that constant.
+    assert_eq!(info["catalog"]["schema_version"].as_u64(), Some(2));
 }
 
 #[test]
@@ -284,14 +286,20 @@ fn daemon_status_op() {
 }
 
 #[test]
-fn unimplemented_op_returns_unimplemented_code() {
+fn unknown_op_returns_unknown_op_code() {
     let d = DaemonHandle::spawn();
     let mut c = d.connect();
-    // `complete` (Tab completion enumeration) isn't implemented in v1 foundation
-    // — pick any op known to be in the unimplemented bucket in src/daemon/ops.rs.
-    let res = c.call("complete", json!({}));
+    // Pin the unknown-op fall-through arm in daemon/ops.rs:171. The
+    // op set has grown (recorder_ingest, definitions_*, metrics, …)
+    // so picking a real-but-unimplemented op is unstable; use a
+    // syntactically valid name that's guaranteed to never exist.
+    let res = c.call("zzz_definitely_not_a_real_op_xyz", json!({}));
     assert!(res.is_err());
-    assert!(format!("{}", res.unwrap_err()).contains("unimplemented"));
+    let msg = format!("{}", res.unwrap_err());
+    assert!(
+        msg.contains("unknown_op") || msg.contains("unsupported op"),
+        "unexpected error shape: {msg}"
+    );
 }
 
 #[test]
@@ -312,25 +320,18 @@ fn catalog_db_created() {
     let mut c = d.connect();
     let r = c.call("info", json!({})).expect("info");
     let catalog = &r["catalog"];
-    assert_eq!(catalog["schema_version"].as_u64(), Some(1));
+    // SCHEMA_VERSION lives in daemon/catalog.rs:42.
+    assert_eq!(catalog["schema_version"].as_u64(), Some(2));
     assert!(catalog["size_bytes"].as_u64().unwrap() > 0);
     assert!(d.paths.catalog_db.exists());
 }
 
-#[test]
-fn rebuild_creates_shard() {
-    let d = DaemonHandle::spawn();
-    let mut c = d.connect();
-
-    let r = c.call("rebuild", json!({})).expect("rebuild");
-    assert_eq!(r["rebuilt"].as_array().unwrap().len(), 1);
-    let path = r["path"].as_str().unwrap();
-    assert!(std::path::Path::new(path).exists());
-
-    let info = c.call("info", json!({})).expect("info");
-    let shards = info["shards"].as_array().unwrap();
-    assert_eq!(shards.len(), 1);
-}
+// `rebuild_creates_shard` was removed: the `rebuild` op + the AST-walk
+// pipeline it drove (daemon/walk.rs, daemon/plugin_walk.rs,
+// daemon/ast_walker.rs) are gone. Per daemon/ops.rs:535 — state
+// attribution is now sourced from `zshrs-recorder` via
+// `recorder_ingest` (see docs/RECORDER.md). Shard creation is now
+// covered by the recorder_harness corpus tests.
 
 #[test]
 fn verify_passes_on_fresh_daemon() {
@@ -342,15 +343,21 @@ fn verify_passes_on_fresh_daemon() {
 }
 
 #[test]
-fn clean_shards_removes_them() {
+fn clean_shards_op_works_on_empty_cache() {
+    // Pin the `clean target=shards` op shape on a fresh daemon. The
+    // pre-recorder version of this test seeded a shard via the now-
+    // removed `rebuild` op then asserted clean removed it; today the
+    // shard population path is `recorder_ingest`, which is exercised
+    // separately by the recorder corpus harness. This test just
+    // verifies the clean op surface stays stable.
     let d = DaemonHandle::spawn();
     let mut c = d.connect();
-    c.call("rebuild", json!({})).unwrap();
 
     let r = c
         .call("clean", json!({ "target": "shards" }))
         .expect("clean");
-    assert_eq!(r["removed_count"].as_u64(), Some(1));
+    assert_eq!(r["removed_count"].as_u64(), Some(0));
+    assert!(r["removed"].as_array().unwrap().is_empty());
 
     let info = c.call("info", json!({})).expect("info");
     assert_eq!(info["shards"].as_array().unwrap().len(), 0);
