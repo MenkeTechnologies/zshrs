@@ -390,7 +390,6 @@ pub fn builtin_echoti(args: &[&str]) -> (i32, String) {
     let chars: Vec<char> = cap_str.chars().collect();
     let mut k = 0;
     let mut stack: Vec<TParmArg> = Vec::new();
-    let mut params = params;
     let mut incremented = false;
     while k < chars.len() {
         if chars[k] != '%' || k + 1 >= chars.len() {

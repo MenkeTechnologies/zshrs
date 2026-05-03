@@ -1700,7 +1700,7 @@ fn remove_prefix(s: &str, pattern: &str, greedy: bool) -> String {
         if let Some(rest) = s.strip_prefix(prefix) {
             if greedy {
                 // Find longest match
-                if let Some(i) = (prefix.len()..=s.len()).rev().next() {
+                if let Some(i) = (prefix.len()..=s.len()).next_back() {
                     return s[i..].to_string();
                 }
             } else {
@@ -3655,13 +3655,16 @@ pub enum MathResult {
     Float(f64),
 }
 
-impl MathResult {
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for MathResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MathResult::Integer(n) => n.to_string(),
-            MathResult::Float(n) => n.to_string(),
+            MathResult::Integer(n) => write!(f, "{}", n),
+            MathResult::Float(n) => write!(f, "{}", n),
         }
     }
+}
+
+impl MathResult {
 
     pub fn to_i64(&self) -> i64 {
         match self {
@@ -3824,13 +3827,16 @@ impl Default for ParamValue {
     }
 }
 
-impl ParamValue {
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for ParamValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParamValue::Scalar(s) => s.clone(),
-            ParamValue::Array(arr) => arr.join(" "),
+            ParamValue::Scalar(s) => f.write_str(s),
+            ParamValue::Array(arr) => f.write_str(&arr.join(" ")),
         }
     }
+}
+
+impl ParamValue {
 
     pub fn to_array(&self) -> Vec<String> {
         match self {

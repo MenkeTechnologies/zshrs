@@ -2297,14 +2297,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
             // loop.c:369-373 — fct = (cols - 1) / (longest + 3); if
             // 0, fct = 1; else fw = (cols - 1) / fct.
-            let mut fct = (term_width.saturating_sub(1)) / (longest + 3);
-            let fw;
-            if fct == 0 {
-                fct = 1;
-                fw = longest + 3;
+            let raw_fct = (term_width.saturating_sub(1)) / (longest + 3);
+            let (fct, fw) = if raw_fct == 0 {
+                (1, longest + 3)
             } else {
-                fw = (term_width.saturating_sub(1)) / fct;
-            }
+                (raw_fct, (term_width.saturating_sub(1)) / raw_fct)
+            };
             // loop.c:374 — colsz = (ct + fct - 1) / fct.
             let colsz = ct.div_ceil(fct);
             // loop.c:375-395 — for each row t1, walk down columns.
@@ -5508,14 +5506,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // bound clamps to len; low bound below 1 clamps to 1.
             if let Some((s_str, e_str)) = key.split_once(',') {
                 let len = arr.len() as i64;
-                let resolve = |s: &str| -> i64 {
-                    let t = s.trim();
-                    if let Ok(i) = t.parse::<i64>() {
-                        i
-                    } else {
-                        0
-                    }
-                };
+                let resolve = |s: &str| -> i64 { s.trim().parse::<i64>().unwrap_or_default() };
                 let s_raw = resolve(s_str);
                 let e_raw = resolve(e_str);
                 let lo = if s_raw < 0 {
@@ -14994,6 +14985,16 @@ impl ShellExecutor {
     }
 
     fn expand_braced_variable(&mut self, content: &str) -> String {
+        // Helper for the negative-offset disambiguator inside the
+        // ${var:...} branch ladder below — pulled out so the if-else
+        // chain doesn't hide a multi-statement closure inside its
+        // condition (clippy::blocks_in_conditions).
+        fn is_substring_form_disambig(rest: &str) -> bool {
+            let stripped = rest.trim_start_matches(' ');
+            let next = stripped.chars().next();
+            stripped.starts_with(':')
+                || next.is_some_and(|c| c.is_ascii_digit() || c == '-')
+        }
         // `${a:|b}` (subtract) and `${a:*b}` (intersect) — array set
         // operators. Direct port of src/zsh/Src/subst.c:3522-3584.
         // zsh's flow:
@@ -16322,21 +16323,7 @@ impl ShellExecutor {
                 let bad = rest.chars().next().unwrap();
                 eprintln!("zshrs:1: unrecognized modifier `{}'", bad);
                 return String::new();
-            } else if {
-                // Negative offset disambiguator: `${v: -3}` (leading
-                // space) means substring with offset -3, NOT default-if-
-                // unset (`${v:-3}`). Detect leading whitespace and
-                // skip past it before the digit-or-dash check.
-                // Also fire on `${v::N}` (empty offset, length N) so
-                // the substring path runs with offset=0. Without that,
-                // `${a::1}` returned empty.
-                let stripped = rest.trim_start_matches(' ');
-                let next = stripped.chars().next();
-                let is_empty_offset = stripped.starts_with(':');
-                next.map(|c| c.is_ascii_digit() || c == '-')
-                    .unwrap_or(false)
-                    || is_empty_offset
-            } {
+            } else if is_substring_form_disambig(rest) {
                 // ${var:offset} or ${var:offset:length} — also accepts
                 // ${var::length} (empty offset → 0).
                 let rest_trimmed = rest.trim_start_matches(' ');
@@ -20926,7 +20913,6 @@ impl ShellExecutor {
             return if matched { 0 } else { 1 };
         }
         for arg in &names {
-            let arg = arg;
             // `unset 'arr[i]'` / `unset 'm[k]'` — element delete. Detect
             // the subscript form and dispatch instead of nuking the
             // whole variable. zsh treats indexed elements as delete-by-
@@ -34359,7 +34345,6 @@ impl ShellExecutor {
         //   per_col = max_item + 2  (zsh separates with 2 spaces)
         //   cols = max(1, width / per_col)
         // If -C N was also given, the explicit N wins.
-        let mut columns = columns;
         if auto_columns && columns == 0 && !processed.is_empty() {
             let term_width: usize = std::env::var("COLUMNS")
                 .ok()
@@ -36544,7 +36529,7 @@ impl ShellExecutor {
                     .format(&pre_format)
                     .to_string()
             })
-            .unwrap_or_else(String::new);
+            .unwrap_or_default();
 
         // datetime.c:174-180 — store in scalar OR write to stdout
         // with optional newline suppression via -n.
@@ -39220,7 +39205,7 @@ impl ShellExecutor {
                     Ok(entries) => {
                         for entry in entries.flatten() {
                             let p = entry.path();
-                            if p.is_file() && !p.extension().is_some_and(|e| e == "zwc") {
+                            if p.is_file() && p.extension().is_none_or(|e| e != "zwc") {
                                 if let Err(e) = builder.add_file(&p) {
                                     eprintln!("zshrs:zcompile:1: can't read {:?}: {}", p, e);
                                 }
@@ -44830,13 +44815,13 @@ impl ShellExecutor {
             group_ids.truncate(ngroups as usize);
             let names: Vec<String> = group_ids
                 .iter()
-                .filter_map(|&g| unsafe {
+                .map(|&g| unsafe {
                     let gr = libc::getgrgid(g);
                     if gr.is_null() {
-                        Some(g.to_string())
+                        g.to_string()
                     } else {
                         let n = CStr::from_ptr((*gr).gr_name);
-                        Some(n.to_string_lossy().into_owned())
+                        n.to_string_lossy().into_owned()
                     }
                 })
                 .collect();
@@ -47181,14 +47166,11 @@ impl ShellExecutor {
             // first IPv4/IPv6 result. Same approach as
             // hostname(1)'s -i.
             use std::net::ToSocketAddrs;
-            match (host.as_str(), 0u16).to_socket_addrs() {
-                Ok(mut addrs) => {
-                    if let Some(a) = addrs.next() {
-                        println!("{}", a.ip());
-                        return 0;
-                    }
+            if let Ok(mut addrs) = (host.as_str(), 0u16).to_socket_addrs() {
+                if let Some(a) = addrs.next() {
+                    println!("{}", a.ip());
+                    return 0;
                 }
-                Err(_) => {}
             }
             // Fall through to printing the host if resolution failed.
         }

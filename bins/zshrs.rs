@@ -10,7 +10,7 @@
 
 use std::env;
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -1292,10 +1292,8 @@ fn source_startup_files(
     // --- Sequential execution phase: execute in correct order with RCS checks ---
 
     // Phase 0: /etc/zshenv — always
-    if let Some((path, contents)) = preloaded.first() {
-        if let Some(ref text) = contents {
-            source_from_memory(executor, path, text);
-        }
+    if let Some((path, Some(text))) = preloaded.first() {
+        source_from_memory(executor, path, text);
     }
 
     if no_rcs {
@@ -1401,7 +1399,7 @@ fn source_startup_files(
 
 /// Execute a startup file from pre-read memory contents.
 /// Mirrors source_file() logic but skips the fs::read_to_string.
-fn source_from_memory(executor: &mut ShellExecutor, path: &PathBuf, contents: &str) {
+fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str) {
     tracing::trace!(path = %path.display(), "sourcing startup file from memory");
     let mut buffer = String::new();
     let mut in_multiline = false;

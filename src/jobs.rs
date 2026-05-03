@@ -238,12 +238,7 @@ impl JobTable {
     }
 
     fn get_mut_internal(&mut self, id: usize) -> Option<&mut JobInfo> {
-        for job in self.jobs.iter_mut().flatten() {
-            if job.id == id {
-                return Some(job);
-            }
-        }
-        None
+        self.jobs.iter_mut().flatten().find(|job| job.id == id)
     }
 
     /// Get a job by ID
@@ -305,22 +300,20 @@ impl JobTable {
     pub fn reap_finished(&mut self) -> Vec<JobInfo> {
         let mut finished = Vec::new();
 
-        for slot in self.jobs.iter_mut() {
-            if let Some(job) = slot {
-                if let Some(ref mut child) = job.child {
-                    // Try to check if child has finished without blocking
-                    match child.try_wait() {
-                        Ok(Some(_status)) => {
-                            // Child finished
-                            job.state = JobState::Done;
-                        }
-                        Ok(None) => {
-                            // Still running
-                        }
-                        Err(_) => {
-                            // Error checking, assume done
-                            job.state = JobState::Done;
-                        }
+        for job in self.jobs.iter_mut().flatten() {
+            if let Some(ref mut child) = job.child {
+                // Try to check if child has finished without blocking
+                match child.try_wait() {
+                    Ok(Some(_status)) => {
+                        // Child finished
+                        job.state = JobState::Done;
+                    }
+                    Ok(None) => {
+                        // Still running
+                    }
+                    Err(_) => {
+                        // Error checking, assume done
+                        job.state = JobState::Done;
                     }
                 }
             }

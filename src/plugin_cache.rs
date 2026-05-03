@@ -545,13 +545,11 @@ impl PluginCache {
             Err(_) => return 0,
         };
         let mut count = 0;
-        for row in rows {
-            if let Ok((path, cached_s, cached_ns)) = row {
-                match file_mtime(std::path::Path::new(&path)) {
-                    Some((s, ns)) if s != cached_s || ns != cached_ns => count += 1,
-                    None => count += 1, // file deleted
-                    _ => {}
-                }
+        for (path, cached_s, cached_ns) in rows.flatten() {
+            match file_mtime(std::path::Path::new(&path)) {
+                Some((s, ns)) if s != cached_s || ns != cached_ns => count += 1,
+                None => count += 1, // file deleted
+                _ => {}
             }
         }
         count

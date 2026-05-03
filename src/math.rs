@@ -150,7 +150,7 @@ fn format_zsh_float(f: f64) -> String {
         libc::snprintf(
             buf.as_mut_ptr() as *mut libc::c_char,
             buf_len,
-            b"%.*g\0".as_ptr() as *const libc::c_char,
+            c"%.*g".as_ptr(),
             17 as libc::c_int,
             f,
         )

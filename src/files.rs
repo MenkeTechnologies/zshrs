@@ -206,6 +206,7 @@ pub fn rm(path: &Path, options: &RemoveOptions) -> Result<(), String> {
     }
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn rm_recursive(path: &Path, options: &RemoveOptions) -> Result<(), String> {
     if path.is_dir() {
         for entry in fs::read_dir(path)

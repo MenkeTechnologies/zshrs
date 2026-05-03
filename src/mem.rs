@@ -126,7 +126,13 @@ where
     v.resize(new_size, T::default());
 }
 
-/// Free memory (no-op in Rust, drop handles it)
+/// Free memory (no-op in Rust, drop handles it).
+///
+/// Takes a `Box<T>` rather than `T` so the C-port call sites read
+/// the same as the original `zfree(ptr)` (an explicit allocator
+/// release on a heap pointer). Without the Box wrapper, callers
+/// would need a syntactically different `drop(value)` call.
+#[allow(clippy::boxed_local)]
 pub fn zfree<T>(_ptr: Box<T>) {
     // Drop happens automatically
 }

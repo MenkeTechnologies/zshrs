@@ -2970,8 +2970,7 @@ fn expand_text_mode(raw: &str, preserved: &str) -> u8 {
         let inner = &raw[raw.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0)
             ..raw
                 .char_indices()
-                .rev()
-                .next()
+                .next_back()
                 .map(|(i, _)| i)
                 .unwrap_or(raw.len())];
         if !inner.contains('\u{9e}') {
