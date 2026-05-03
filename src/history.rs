@@ -33,12 +33,37 @@ impl HistoryEngine {
             std::fs::create_dir_all(parent).ok();
         }
 
-        // One-shot migration from the pre-2026-05-03 location
-        // (`~/Library/Application Support/zshrs/history.db` on macOS,
-        // `$XDG_DATA_HOME/zshrs/history.db` on Linux). Only fires when
-        // the new file does not yet exist — never overwrites a
-        // populated `zshrs_history`. Schema is identical (same code
-        // wrote both), so a byte-copy is sufficient.
+        // One-shot migration. Two legacy sources, in priority order:
+        //   1. The previous shell-side path at
+        //      `$ZSHRS_HOME/zshrs_history` — was a sqlite db, briefly
+        //      named without the `.db` suffix. Move it into place.
+        //   2. The pre-2026-05-03 location at
+        //      `~/Library/Application Support/zshrs/history.db`
+        //      (macOS) / `$XDG_DATA_HOME/zshrs/history.db` (Linux).
+        //      Copy (don't move) so users who roll back keep the old
+        //      file readable.
+        // Both fire only when zshrs_history.db does not yet exist —
+        // never overwrites populated state. Schema is identical (same
+        // writer at every age), so byte-level copy is sufficient.
+        if !path.exists() {
+            let prev_inplace = Self::root().join("zshrs_history");
+            // Only move-rename if the file is actually a sqlite db —
+            // protects users who already created a flat-text
+            // `zshrs_history` by hand.
+            if prev_inplace.exists() && is_sqlite_file(&prev_inplace) {
+                match std::fs::rename(&prev_inplace, &path) {
+                    Ok(()) => tracing::info!(
+                        from = %prev_inplace.display(),
+                        to = %path.display(),
+                        "history: renamed legacy zshrs_history -> zshrs_history.db"
+                    ),
+                    Err(e) => tracing::warn!(
+                        ?e,
+                        "history: rename legacy zshrs_history failed"
+                    ),
+                }
+            }
+        }
         if !path.exists() {
             if let Some(legacy) = legacy_db_path() {
                 if legacy.exists() {
@@ -71,6 +96,15 @@ impl HistoryEngine {
             path = %path.display(),
             "history: sqlite opened"
         );
+
+        // Rehydrate the flat text mirror from the sqlite index when
+        // the text file is missing or stale (size 0 with a populated
+        // db — happens after the rename migration above moves the
+        // user's old `zshrs_history` to `.db`). Cheap: one-shot
+        // chronological dump, no FTS / no joins.
+        if let Err(e) = engine.rehydrate_text_if_stale() {
+            tracing::warn!(?e, "history: failed to rehydrate text mirror; continuing");
+        }
         Ok(engine)
     }
 
@@ -84,26 +118,46 @@ impl HistoryEngine {
     // Helpers below are inherent associated functions; see free
     // `legacy_db_path()` outside the impl block for the migration source.
 
-    /// Path to the shell-side history sqlite file. Lives under
-    /// `$ZSHRS_HOME` (or `~/.zshrs`) — same single-directory rule as
-    /// every other zshrs file (logs, shards, sockets, configs). Named
-    /// `zshrs_history` (not `.db`) so it sits next to `.zsh_history`
-    /// in muscle-memory if the user `ls`'s the dir, while still being
-    /// a sqlite database under the hood.
+    /// `$ZSHRS_HOME/zshrs_history.db` — sqlite index that powers FTS5
+    /// search, frequency tracking, dedup. Hidden under `.db` so the
+    /// user-facing artifact is the flat-text mirror at
+    /// `zshrs_history` (see `text_path`), zsh-compatible so muscle
+    /// memory + `cat` / `grep` / external history tools all keep
+    /// working.
     ///
     /// The daemon owns its OWN history db at `~/.zshrs/history.db`
-    /// (different schema, FTS5, daemon-only writer); shells append to
-    /// it via `history_append` IPC. This shell-side file is the
-    /// fallback path used when the daemon is absent.
+    /// (different schema, daemon-only writer); shells append to it via
+    /// `history_append` IPC. This shell-side db is the fallback path
+    /// used when the daemon is absent.
     fn db_path() -> PathBuf {
-        let root = if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
+        Self::root().join("zshrs_history.db")
+    }
+
+    /// `$ZSHRS_HOME/zshrs_history` — flat text mirror, one line per
+    /// command in zsh extended-history format:
+    ///
+    ///     : <unix_ts>:<duration>;<command>
+    ///
+    /// Newlines inside multi-line commands are escaped as the literal
+    /// two-character sequence `\\n` (matches `setopt EXTENDED_HISTORY`
+    /// — `zsh/Src/hist.c:gethistent`). Every `add` appends one line;
+    /// `update_last` rewrites the trailing line in place when the
+    /// duration becomes known. The sqlite index at `zshrs_history.db`
+    /// is the query-side mirror of this file — they're kept in lockstep
+    /// by the writer, and a divergence-repair pass on open re-reads
+    /// the text file if the sqlite is missing or older.
+    pub fn text_path() -> PathBuf {
+        Self::root().join("zshrs_history")
+    }
+
+    fn root() -> PathBuf {
+        if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
             PathBuf::from(custom)
         } else {
             dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".zshrs")
-        };
-        root.join("zshrs_history")
+        }
     }
 
     fn init_schema(&self) -> rusqlite::Result<()> {
@@ -184,7 +238,18 @@ impl HistoryEngine {
             params![command, now, cwd],
         )?;
 
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+
+        // Mirror to the flat zsh-extended-history file. Best-effort —
+        // a write failure here doesn't fail the sqlite insert (e.g.
+        // disk full mid-write should still let the shell record state
+        // in the index). The duration is unknown at this point;
+        // `update_last` rewrites the trailing line once it knows.
+        if let Err(e) = append_text_line(now, 0, command) {
+            tracing::warn!(?e, "history: text mirror append failed");
+        }
+
+        Ok(id)
     }
 
     /// Update the duration and exit code of the last command
@@ -193,6 +258,71 @@ impl HistoryEngine {
             "UPDATE history SET duration_ms = ?1, exit_code = ?2 WHERE id = ?3",
             params![duration_ms, exit_code, id],
         )?;
+
+        // Update the trailing line of the text mirror with the now-known
+        // duration. Look up the command by id so the rewrite stays
+        // consistent even if `add` deduped to an earlier entry.
+        if let Ok((ts, command)) = self.conn.query_row(
+            "SELECT timestamp, command FROM history WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        ) {
+            let duration_secs = (duration_ms / 1000).max(0);
+            if let Err(e) = rewrite_last_text_line(ts, duration_secs, &command) {
+                tracing::warn!(?e, "history: text mirror update failed");
+            }
+        }
+        Ok(())
+    }
+
+    /// If the text mirror is missing or empty but the sqlite db has
+    /// entries, dump the db chronologically into the text file. Used
+    /// by `new()` after the first-time rename migration so users get
+    /// the full backlog in the user-facing text file from day one.
+    fn rehydrate_text_if_stale(&self) -> rusqlite::Result<()> {
+        let text = Self::text_path();
+        let text_size = std::fs::metadata(&text).map(|m| m.len()).unwrap_or(0);
+        if text_size > 0 {
+            return Ok(());
+        }
+        let count: i64 = self.conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))?;
+        if count == 0 {
+            return Ok(());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT timestamp, COALESCE(duration_ms, 0), command \
+             FROM history ORDER BY timestamp ASC, id ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        use std::io::Write as _;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&text)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        let mut w = std::io::BufWriter::new(file);
+        let mut written: u64 = 0;
+        for row in rows {
+            let (ts, dur_ms, cmd) = row?;
+            let line = format_text_line(ts, (dur_ms / 1000).max(0), &cmd);
+            w.write_all(line.as_bytes())
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            written += 1;
+        }
+        w.flush()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        tracing::info!(
+            entries = written,
+            path = %text.display(),
+            "history: rehydrated text mirror from sqlite index"
+        );
         Ok(())
     }
 
@@ -385,10 +515,100 @@ impl HistoryEngine {
 
 /// Pre-2026-05-03 history db location. Returned only when the legacy
 /// file actually exists — used by `HistoryEngine::new` to migrate
-/// once into `$ZSHRS_HOME/zshrs_history`. Returns None if `dirs::data_dir`
-/// can't resolve (no $HOME / no platform data dir).
+/// once into `$ZSHRS_HOME/zshrs_history.db`. Returns None if
+/// `dirs::data_dir` can't resolve (no $HOME / no platform data dir).
 fn legacy_db_path() -> Option<PathBuf> {
     Some(dirs::data_dir()?.join("zshrs").join("history.db"))
+}
+
+/// Detect whether `path` is a sqlite database by sniffing the magic
+/// header (first 16 bytes start with `SQLite format 3\0`). Used by
+/// the rename-migration to avoid clobbering a user's hand-written
+/// flat text file. Errors / short files / unknown content all return
+/// false (safe default — leave unknown content alone).
+fn is_sqlite_file(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let mut f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut header = [0u8; 16];
+    if f.read_exact(&mut header).is_err() {
+        return false;
+    }
+    &header == b"SQLite format 3\0"
+}
+
+/// Format one zsh-extended-history line:
+///
+///     : <unix_ts>:<duration>;<command>\n
+///
+/// Multi-line commands escape literal `\n` to the two-character
+/// sequence `\\n` so each entry stays on a single line; the unescape
+/// is the inverse done at read time. Matches what zsh writes when
+/// `EXTENDED_HISTORY` is set (zsh/Src/hist.c:savehistfile).
+fn format_text_line(ts: i64, duration_secs: i64, command: &str) -> String {
+    let escaped = command.replace('\\', "\\\\").replace('\n', "\\\n");
+    format!(": {}:{};{}\n", ts, duration_secs, escaped)
+}
+
+/// Append one line to `$ZSHRS_HOME/zshrs_history`.
+fn append_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let path = HistoryEngine::text_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let line = format_text_line(ts, duration_secs, command);
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    f.write_all(line.as_bytes())
+}
+
+/// Rewrite the trailing entry of the text file in place — used by
+/// `update_last` once the duration is known. Strategy: read the file
+/// to the last newline-delimited record, replace it with a freshly
+/// formatted line. For multi-MB history files we only buffer the
+/// trailing record's tail bytes (`max_tail` cap) — anything older
+/// stays untouched on disk.
+fn rewrite_last_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let path = HistoryEngine::text_path();
+    let mut f = std::fs::OpenOptions::new().read(true).write(true).open(&path)?;
+    let len = f.metadata()?.len();
+    // 64 KiB is enough for any realistic single-command record (zsh
+    // commands top out at ~1-4 KiB). Beyond that, give up and append
+    // a corrected line rather than risk truncating the file.
+    let max_tail = 65_536u64.min(len);
+    let read_from = len - max_tail;
+    f.seek(SeekFrom::Start(read_from))?;
+    let mut tail = Vec::with_capacity(max_tail as usize);
+    f.read_to_end(&mut tail)?;
+    // Find the offset (within `tail`) where the last record begins.
+    // A record begins at the byte AFTER the second-to-last newline,
+    // or at offset 0 if there is none.
+    let mut last_record_start = 0usize;
+    let mut nl_count = 0;
+    for (i, b) in tail.iter().enumerate().rev() {
+        if *b == b'\n' {
+            nl_count += 1;
+            if nl_count == 2 {
+                last_record_start = i + 1;
+                break;
+            }
+        }
+    }
+    let new_record = format_text_line(ts, duration_secs, command);
+    let new_abs = read_from + last_record_start as u64;
+    f.seek(SeekFrom::Start(new_abs))?;
+    f.write_all(new_record.as_bytes())?;
+    let new_len = new_abs + new_record.len() as u64;
+    if new_len < len {
+        f.set_len(new_len)?;
+    }
+    Ok(())
 }
 
 /// Reedline history adapter
