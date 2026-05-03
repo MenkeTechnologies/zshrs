@@ -2329,6 +2329,7 @@ impl MenuState {
     }
 
     /// Render a single item into a line
+    #[allow(clippy::too_many_arguments)]
     fn render_item(
         &self,
         line: &mut MenuLine,

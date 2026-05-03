@@ -633,6 +633,7 @@ impl<'a> WordcodeDecoder<'a> {
         self.code.get(self.pos).copied()
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<u32> {
         let val = self.code.get(self.pos).copied();
         if val.is_some() {

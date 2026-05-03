@@ -10172,6 +10172,7 @@ impl ShellExecutor {
             r::READ_WRITE => {
                 if let Ok(file) = std::fs::OpenOptions::new()
                     .create(true)
+                    .truncate(false) // <> opens existing-or-new without truncating
                     .read(true)
                     .write(true)
                     .open(target)
@@ -42965,7 +42966,12 @@ impl ShellExecutor {
                 if no_create {
                     continue;
                 }
-                if let Err(e) = OpenOptions::new().create(true).write(true).open(path) {
+                if let Err(e) = OpenOptions::new()
+                    .create(true)
+                    .truncate(false) // touch only updates mtime; never truncates
+                    .write(true)
+                    .open(path)
+                {
                     eprintln!("touch: {}: {}", file, e);
                     status = 1;
                     continue;
@@ -45373,7 +45379,7 @@ impl ShellExecutor {
         0
     }
 
-    /// nproc-equivalent? Already exists via builtin_nproc.
+    // nproc-equivalent already exists via builtin_nproc.
 
     /// dircolors [-bcp] [FILE] — emit shell commands to set
     /// LS_COLORS. Coreutils dircolors(1). Without args, emits the

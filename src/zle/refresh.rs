@@ -473,9 +473,7 @@ impl HighlightManager {
     }
 }
 
-/// Terminal output functions
-/// Port of tcout() family from zle_refresh.c
-
+/// Terminal output functions. Port of tcout() family from zle_refresh.c.
 pub fn tcout(cap: &str) {
     print!("{}", cap);
 }
