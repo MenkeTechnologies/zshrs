@@ -4437,8 +4437,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 key_literal_int.is_some()
             };
-            if route_indexed && key_int_for_indexed.is_some() {
-                let i = key_int_for_indexed.unwrap();
+            if let (true, Some(i)) = (route_indexed, key_int_for_indexed) {
                 let len = exec.arrays.get(&name).map(|a| a.len() as i64).unwrap_or(0);
                 let idx = if i > 0 {
                     (i - 1) as usize
@@ -34155,7 +34154,7 @@ impl ShellExecutor {
             }
         } else if sort_desc {
             if sort_ignore_case {
-                output_args.sort_by(|a, b| b.to_lowercase().cmp(&a.to_lowercase()));
+                output_args.sort_by_key(|b| std::cmp::Reverse(b.to_lowercase()));
             } else {
                 output_args.sort_by(|a, b| b.cmp(a));
             }
@@ -36821,10 +36820,12 @@ impl ShellExecutor {
                 libc::F_WRLCK
             };
 
+            // l_type is c_short on Linux + macOS; F_RDLCK/F_WRLCK are
+            // c_int on Linux, c_short on macOS. Cast to i16 explicitly
+            // for cross-platform builds — clippy fires unnecessary_cast
+            // on whichever platform already matches.
+            #[allow(clippy::unnecessary_cast)]
             let mut flock = libc::flock {
-                // l_type is c_short on Linux + macOS; F_RDLCK/F_WRLCK are
-                // c_int on Linux, c_short on macOS. Cast to i16 explicitly
-                // for cross-platform builds.
                 l_type: lock_type as i16,
                 l_whence: libc::SEEK_SET as i16,
                 l_start: 0,

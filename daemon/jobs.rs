@@ -793,7 +793,7 @@ impl Supervisor {
             })
             .map(JobMeta::snapshot)
             .collect();
-        out.sort_by(|a, b| b.id.cmp(&a.id));
+        out.sort_by_key(|b| std::cmp::Reverse(b.id));
         if let Some(n) = limit {
             out.truncate(n as usize);
         }

@@ -456,9 +456,12 @@ pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
         libc::F_WRLCK
     };
 
+    // l_type is c_short on Linux + macOS; F_RDLCK/F_WRLCK are c_int on
+    // Linux, c_short on macOS. Cast to i16 explicitly for cross-build —
+    // clippy's unnecessary_cast fires on whichever platform already
+    // matches but silently fails on the other if removed.
+    #[allow(clippy::unnecessary_cast)]
     let lck = libc::flock {
-        // l_type is c_short on Linux + macOS; F_RDLCK/F_WRLCK are c_int on
-        // Linux, c_short on macOS. Cast to i16 explicitly for cross-build.
         l_type: lock_type as i16,
         l_whence: libc::SEEK_SET as i16,
         l_start: 0,
@@ -533,6 +536,8 @@ pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
 /// Unlock a file descriptor
 #[cfg(unix)]
 pub fn funlock(fd: i32) -> Result<(), String> {
+    // See cross-platform note above flock construction in flock_with_options.
+    #[allow(clippy::unnecessary_cast)]
     let lck = libc::flock {
         l_type: libc::F_UNLCK as i16,
         l_whence: libc::SEEK_SET as i16,
