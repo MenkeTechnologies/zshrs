@@ -246,102 +246,104 @@ Plugin compat falls out: zinit's `_comps[foo]=_my_handler` direct assignment lan
 
 For legacy tooling that introspects `.zcompdump` directly (some plugin patterns, backup scripts, p10k cache-staleness probes, parallel zsh sessions sharing the cache), the daemon can synthesize a valid `.zcompdump` file on demand from its canonical state. Triggered by `zcache export zcompdump [path]` or the `export_zcompdump` IPC op. The synthesized file is byte-compatible with what `compinit` would have produced, so legacy consumers don't notice the difference. Not generated automatically — opt-in only, on user request. (`.zcompdump.zwc` is not emitted; legacy tooling will regenerate it if it wants it.)
 
-### Starting state served by daemon (PATH, FPATH, hash tables, etc.)
+### Starting state captured by recorder, stored by daemon
 
-Daemon parses the user's `.zshrc` AND every plugin it sources (zinit-loaded plugins, oh-my-zsh-loaded plugins, manually-sourced files), evaluates them in an analysis pass, and consolidates the resulting state effects into starting-point caches that all clients consume. The no-walking rule is total: anything the daemon can pre-walk and serve, it does. Clients never `find`, never `glob` over fpath, never enumerate PATH directories, never scan plugin trees.
+**Architecture pivot from v0 spec:** the original design had the daemon
+parse `.zshrc` + every plugin in a multi-pass analysis pass and derive
+starting state automatically. That code was deleted. State attribution
+now flows through `zshrs-recorder` — a separate one-shot binary
+(`bins/zshrs-recorder.rs`, `--features recorder`) that runs the user's
+init under runtime AOP and ships the captured bundle to the daemon via
+`recorder_ingest`. The user re-runs the recorder when `.zshrc` /
+plugins change. See `docs/RECORDER.md` for the recorder design and
+`daemon/ops.rs:535` for the deletion comment.
 
-Plugin discovery happens at the same time as `.zshrc` analysis: daemon walks the user's `.zshrc`, sees zinit/OMZ/source calls, descends into each referenced plugin, parses + bytecode-compiles per-plugin shards (`{hash8}-plugin-{name}.rkyv`), captures every state contribution (alias declarations, function definitions, fpath additions, `compdef` calls, `zstyle` declarations, `bindkey` calls, `setopt` calls, env exports), and folds them into the consolidated starting-point caches below. Each plugin's compiled bytecode lives in its own shard for cache-locality and per-plugin invalidation; the *state effects* of all plugins fold into the unified per-user boot-state image.
+The daemon's role narrowed from "active analyzer" to "passive
+canonical store + queryable catalog":
 
-Pre-walked state delivered at boot:
+- **Recorder ingest** (`recorder_ingest` op) folds a `RecorderBundle`
+  into the canonical engine, replaces every subsystem's row set
+  for the bundle's `shell_id`, hydrates the SQLite mirror, and
+  broadcasts `recorder_ingested` to opted-in subscribers.
+- **fsnotify** still watches files the recorder registered through
+  `source_resolve`. When a watched file changes, the daemon emits
+  `shard_updated` so subscribed clients know to re-mmap, but does
+  NOT re-derive state — the user must re-run the recorder.
+- **Source resolver** (`source_resolve` op) is the only on-demand
+  parse path the daemon still owns: client requests "give me the
+  bytecode for FILE@(mtime, inode)", daemon hits or compiles + caches.
+  No transitive auto-walk; whatever the user explicitly sources gets
+  registered, nothing else.
 
-| State | Mechanism |
-|-------|-----------|
-| `$PATH` | Daemon evaluates user dotfiles, resolves `PATH=` / `path+=` / plugin contributions, serves final string |
-| Command hash table | Daemon walks every directory in `$PATH`, builds perfect-hash `command_name → absolute_path` table in rkyv. Client `which`/`command -v` = single lookup. `hash -r` = IPC to daemon |
-| `$FPATH` | Resolved list of autoload directories, served as a flat array |
-| Autoload function table | Daemon walks every `$FPATH` directory, populates `function_name → (shard_id, byte_offset)` in `index.rkyv`. Client `autoload` = hash lookup, never `find`/`glob` |
-| `$MANPATH`, `$INFOPATH`, `$CDPATH`, `$LD_LIBRARY_PATH` | Same model — resolved values served at boot |
-| **Named-directory hash (`hash -d`)** | Daemon parses all `hash -d name=/path` from `.zshrc` and plugins, serves resolved `name → path` perfect-hash table. `~name` expansion = single lookup. Interactive `hash -d` writes to overlay; `zsync up named_dir` promotes |
-| Completion staleness metadata | Daemon scans completion file mtimes; results live in `entries.source_loc` + `entry_stats` |
-| Theme initial state | Daemon resolves PROMPT segments, RPROMPT, color palette once; serves the final templates |
-| Initial alias table | Daemon parses user `.zshrc` alias declarations, serves resolved table. Interactive `alias foo=bar` writes go to overlay |
-| Global aliases (`alias -g`) and suffix aliases (`alias -s`) | Pre-resolved by daemon, served as separate perfect-hash tables |
-| Initial shell-options state | `setopt`/`unsetopt` calls in `.zshrc` pre-resolved; client boots with final option mask |
-| Initial keybinding table | `bindkey` declarations pre-resolved; client boots with final binding map |
-| Loaded modules state | `zmodload` declarations pre-resolved; daemon ensures required modules are available, serves initial loaded-module set |
-| Initial environment (`env`) | Exported vars (`export FOO=bar`) from `.zshrc` and plugins pre-resolved; client boots with canonical env, mutations go to overlay |
-| Initial shell parameters (`params`) | Non-exported shell-level vars (`FOO=bar`, `typeset -A MAP=(...)`, `typeset -a ARR=(...)`) pre-resolved by daemon into a typed table (scalar / array / assoc); same overlay + `zsync up` / `eval $(zcache export params)` machinery as everything else |
-| `zstyle` registry | All `zstyle` declarations from `.zshrc` and plugins pre-resolved into a daemon-served context-pattern → key-value table |
+Captured-state coverage (per `daemon/definitions.rs:KNOWN_KINDS`):
 
-The mechanism is uniform: daemon parses and evaluates user dotfiles in an analysis pass, captures deterministic state effects, serializes into the user's boot-state shard. Client at boot mmaps the shard, applies state to its process, and is fully initialized. No client-side filesystem walks for shell-internal purposes.
+| Subsystem | Recorded | Queried via |
+|---|---|---|
+| `alias` / `galias` / `salias` | recorder AOP on the alias dispatcher | `definitions_query` |
+| `function` / `function_autoload` | recorder AOP on function-define + `autoload` | `definitions_query` |
+| `env` / `params` / `params_typed` | recorder AOP on assign + typeset, with `ParamAttrs` bitset | `definitions_query` |
+| `bindkey` / `compdef` / `zle` | recorder AOP on each builtin | `definitions_query` |
+| `zstyle` / `zmodload` / `setopt` | same | `definitions_query` |
+| `path` / `fpath` / `manpath` | path edits captured + ordered | `definitions_query` |
+| `named_dir` (`hash -d`) | recorder AOP on `hash -d` | `definitions_query` |
+| `trap` / `sched` / `source` | recorder AOP | `definitions_query` |
+| `completion` files in fpath | recorder synthesizes one `completion` event per `_*` file when an fpath dir is added | `definitions_query` |
 
-**Determinism boundary:** non-deterministic `.zshrc` fragments — anything that calls `$(date)`, reads `/dev/urandom`, conditionally branches on `$$` or `$RANDOM`, depends on per-shell state — are detected during the analysis pass and emitted as a small per-shell replay log. Client executes those fragments locally at boot. The vast majority of `.zshrc` content is deterministic and gets pre-resolved on the daemon side.
+`shell_id` federation lets bash/fish/ksh/etc. recorders write to the
+same catalog with their own identity; cross-shell `definitions_diff`
+compares any two. See `docs/SHELL_IDS.md` and
+`docs/DAEMON_AS_SERVICE.md` §"Third-party shell recorders".
 
-**What's NOT covered by this rule:** `fork+exec`'d user commands (`find`, `ls`, `rg`, `grep`, etc.) are user code, not shell-internal walks. Those run normally in the client. The no-walking rule applies only to shell-internal directory enumeration (PATH/FPATH scans, completion file lookups, autoload resolution, plugin discovery, `hash` table population, theme file reads).
+**Special parameters served by daemon** (`_comps` / `_services` /
+`_patcomps` / `_describe_handlers`) come from recorder-captured
+`compdef` rows folded into the canonical engine. `eval $(zcache
+export _comps)` rebuilds them in a new shell. The four-table set is
+listed at `daemon/builtins.rs:696` + `daemon/export.rs:477`.
 
-Result: a 172k-line `zpwr` `.zshrc` should cost client cold-start no more than the IPC + mmap + state-apply pass — measured in milliseconds, not seconds. Per-client init cost is independent of `.zshrc` size or fpath cardinality.
-
-**Walk lifecycle — first init + cache bust only.** The daemon walks `$PATH` / `$FPATH` / plugin trees / source-statement targets exactly twice in its life:
-
-1. **First init.** Cold cache, no rkyv shards present (or daemon spawning into an empty `~/.cache/zshrs/`). Init is multi-pass and order-sensitive — `$PATH` and `$FPATH` don't exist as final values until the user's dotfiles are parsed:
-   - **Pass 1 — parse system + user dotfiles.** `/etc/zshenv` → `~/.zshenv` → `/etc/zprofile` → `~/.zprofile` → `/etc/zshrc` → `~/.zshrc` → `/etc/zlogin` → `~/.zlogin`, in zsh's standard order. Follow `source` / `.` statements transitively into plugins, env files, tokens.sh, anything reachable. Compile each parsed file into `compiled_files`.
-   - **Pass 2 — evaluate state mutations deterministically.** Replay every `path+=`, `fpath+=`, `PATH=`, `FPATH=`, `export VAR=`, `alias`, `setopt`, `bindkey`, `compdef`, `zstyle`, `hash -d`, `zmodload`, `typeset` declaration in source-order against an in-memory state model. Captures the resolved final value of every shell parameter that boots into a new shell.
-   - **Pass 3 — walk now-resolved $PATH / $FPATH / plugin tree directories.** With `$PATH` and `$FPATH` finalized, daemon walks each directory to build the command-hash table (`command_name → executable_path`) and the autoload-table (`function_name → file_path`). Plugin trees referenced from `.zshrc` get walked here too.
-   - **Pass 4 — serialize.** Build perfect-hash tables, write rkyv shards, atomic-rename, write `index.rkyv`, hydrate `catalog.db` `entries` + `compiled_files` + `entry_stats`. Register fsnotify watches on every directory and file involved.
-
-   One-time cost. Runs in the background while clients fall back to source-interp until the first shard atomic-renames.
-
-2. **Cache bust.** User-explicit `zcache clean` / `zcache clean shards` / `zcache rebuild` / version-migration / corruption-recovery triggers a re-walk of the affected scope. Same multi-pass ordering applies whenever the bust changes a source file that contributes to `$PATH` / `$FPATH` resolution: parse first, evaluate, then walk. `zcache clean shard <name>` re-walks just that shard's source root (no need to re-parse dotfiles if `$PATH` / `$FPATH` haven't changed); `zcache rebuild` walks everything from Pass 1.
-
-**Steady state: fsnotify only, with delta-walks for newly-introduced directories.** Between first init and cache bust, the daemon never re-enumerates a directory it already knows about. fsnotify watches every directory and file the daemon registered during the last walk; events fire on create / modify / delete / rename and the daemon updates exactly the affected entries. The only walks that happen in steady state are walks of *newly-introduced* directories — when a parsed dotfile change adds a new path to `$PATH` / `$FPATH` that wasn't watched before:
-
-- File created in a watched `$FPATH` dir → daemon parses + bytecode-compiles → inserts into autoload-table → atomic-renames the affected shard → bumps generation → optional push to subscribers.
-- File deleted → daemon removes the entry from `entries` + autoload-table + relevant shard → atomic-rename → bump.
-- File modified → daemon re-parses just that one file → updates one row in `entries` → updates one slot in the affected shard's perfect-hash table → atomic-rename → bump.
-- File renamed → treated as delete-old + create-new in the same atomic update.
-- **`.zshrc` modified to add `path+=(/opt/foo/bin)`** → daemon detects `$PATH` resolution changed → walks ONLY `/opt/foo/bin` (the delta), inserts new commands into command-hash → registers fsnotify watch on `/opt/foo/bin` → atomic-rename → bump. Same for `fpath+=`. The delta-walk is bounded to the new directory; existing directories are not re-enumerated.
-- **`.zshrc` modified to remove a path entry** → daemon detects removal → drops command-hash entries that came from the removed directory → unregisters its fsnotify watch → atomic-rename → bump. No full rewalk.
-- **Client `zsync up path`** with new directory → same delta-walk path: daemon walks just the new directory, updates canonical, registers watch.
-
-**No polling, no periodic rescan, no cron.** Per the hard invariants. fsnotify is the source of truth for "what changed since the last walk." If fsnotify drops an event (kernel queue overflow on Linux, FSEvents coalescing on macOS), `zcache verify` catches the drift on next user invocation and recommends `zcache rebuild` for the affected shard. Drift is rare; recovery is one verb.
-
-**Why this matters at zpwr scale.** Walking 1.6 M LOC across 579 files takes seconds, not milliseconds, even on fast SSDs. Doing this on every shell launch (zsh's status quo) is a non-starter. Doing it once at first init and incrementally thereafter via fsnotify means cold-start cost is paid in full only once — first daemon spawn ever — and amortizes to zero across the next 478 k commands the user types.
+**`fork+exec`'d user commands** (`find`, `ls`, `rg`, `grep`, etc.)
+are user code, not shell-internal state — they run normally in the
+client and are out of scope for the recorder.
 
 ### Source / dot interception and file registry
 
-The `source` and `.` builtins are daemon-aware. Every call routes through the daemon's `compiled_files` registry:
+The `source` / `.` builtins are daemon-aware. Each call routes through
+`source_resolve`:
 
 ```
 client: source /Users/wizard/.zpwr/local/.tokens.sh
     │
-    ↓  IPC: {"op":"source_resolve","path":"/Users/wizard/.zpwr/local/.tokens.sh","mtime":N,"inode":M}
+    ↓  IPC: {"op":"source_resolve","path":"…/.tokens.sh","mtime":N,"inode":M}
     │
 daemon: lookup compiled_files WHERE path = …
-    HIT (mtime+inode match):    return shard_path + generation
-    MISS:                        parse + bytecode-compile + insert + return
-    STALE (mtime/inode differ):  rebuild + atomic-rename + return new generation
+    HIT  (mtime+inode match):  return cached shard_path + generation
+    MISS:                      parse + bytecode-compile + insert + return
+    STALE (mtime/inode differ): rebuild + atomic-rename + return new generation
     │
     ↓
-client: mmap shard, replay env-mutation log + execute function definitions in current process
+client: mmap shard, execute in current process
 ```
 
-**Effect:** every file ever sourced from any zshrs shell ends up in the daemon's registry, fsnotify-watched, bytecode-cached. Subsequent `source` of the same file is mmap + replay, not parse. The `.zshrc` analysis pass follows `source` / `.` calls transitively at compile-time, so the entire transitive-closure of files reachable from `.zshrc` is registered before the first interactive shell boots — `parent_paths` records the inclusion chain so an edit to a deeply-nested sourced file invalidates all the bytecode that depended on it.
+`source_resolve` is **on-demand only** — daemon does not transitively
+auto-walk the closure reachable from `.zshrc`. (The original spec did;
+that pass was removed with the AST-walk pipeline. Recorder runs cover
+the transitive-closure observation by recording every `source`
+event during init.) The compiled_files registry still serves cache-hit
+fast-path for any file the user explicitly sources, plus fsnotify
+re-validation when a watched file changes.
 
-**Concrete example.** User has in `.zshrc`:
-```sh
-source ~/.zpwr/local/.tokens.sh    # API keys, passwords, env exports
-source ~/.zpwr/init.sh             # main zpwr init (172k LOC across sourced submodules)
-source ~/.config/work/aliases.sh   # work-specific aliases
-```
+**Sensitive content.** Some sourced files contain secrets (API keys,
+passwords, `export AWS_SECRET_ACCESS_KEY=…`). Two enforcement points:
 
-Daemon analysis pass walks all three transitively, parses each, bytecode-compiles each, registers them in `compiled_files` as `kind='source'`. fsnotify watches each. Edit `.tokens.sh` → daemon rebuilds just that one entry → next shell boot sees the change. Edit `~/.zpwr/init.sh` → daemon rebuilds it and any submodule it transitively sources.
-
-**Sensitive content.** Files like `.tokens.sh` typically contain secrets (API keys, passwords, `export AWS_SECRET_ACCESS_KEY=…`). The daemon caches their bytecode, which means the bytecode shard contains the secret in plaintext-equivalent form. Two enforcement points:
-
-1. `~/.cache/zshrs/` directory permission is `0700` (user-only). Files inside are `0600`. Set at daemon startup, verified by `zcache verify` on every integrity scan. Any drift triggers a `WARN` in `zshrs.log` and a refusal to attach for non-owner clients.
-2. `compiled_files.sensitive` flag is set when daemon detects likely-secret content (heuristic: file path matches `*tokens*`, `*secret*`, `*credentials*`, `*.env*`, or content contains `AWS_SECRET`, `API_KEY=`, `PASSWORD=`, etc.). When set: the file's bytecode shard is written with `O_NOFOLLOW`, mmap'd `MAP_PRIVATE` only, and excluded from `zcache export --all` archive output unless `--include-sensitive` is passed. `zcache view` and `zcache export` for these targets refuse to print contents to terminal unless `--show-sensitive` is passed (just a one-flag opt-in; no friction).
-
-User opts into this caching by sourcing the file from `.zshrc` — the assumption is the user already trusts `~/.cache/zshrs/` with the same threat model as `~/.zpwr/local/.tokens.sh` itself. If they don't, the workaround is `[[ -o interactive ]] && source …` guarded so daemon analysis skips it (see "Determinism boundary" — daemon emits per-shell replay for conditional sources rather than baking them).
+1. `~/.cache/zshrs/` is `0700` (user-only); files inside `0600`. Set
+   at daemon startup, verified by `zcache verify`. Drift → `WARN` in
+   log + refusal to attach for non-owner clients.
+2. `compiled_files.sensitive` flag set by `daemon/source_resolver.rs`
+   `is_sensitive` heuristic: file path matches
+   `*tokens*` / `*secret*` / `*credentials*` / `*.env*`, or content
+   matches `AWS_SECRET` / `API_KEY=` / `PASSWORD=` /
+   `SECRET_ACCESS_KEY` / `PRIVATE_KEY`. Sensitive shards are
+   `O_NOFOLLOW`-opened + `MAP_PRIVATE`-mmap'd + excluded from
+   `zcache export --all` unless `--include-sensitive` is passed.
 
 ### Compat surface and zpwr-scale validation target
 
@@ -359,24 +361,32 @@ Daemon design is validated against the `~/.zpwr` codebase as the bedrock real-wo
 | `~/.zpwr/local/.tokens.sh` (sensitive, pre-zwc'd) | 12 KB |
 | `~/.zpwr/local/.common_aliases` | 92 KB |
 
-The daemon must absorb all of this on first cold start (one-shot, then incremental on fsnotify-detected changes). Subsequent shell boots see <10 ms client cold-start regardless of zpwr scale.
+The recorder must absorb all of this on a recorder run (one-shot per
+`.zshrc`/plugin change). Subsequent shell boots see fast cold-start
+because the canonical state is already in the daemon's rkyv shards.
 
-**Plugin manager interop.** zpwr's `.zshrc` switches between plugin managers via `$ZPWR_PLUGIN_MANAGER` and ships with built-in support for zinit, antigen, zplug, antibody, oh-my-zsh, and direct git-clone. zshrs daemon supersedes all of these architecturally — the daemon IS the plugin manager (parses, caches, lifecycle, dependency graph). But for `.zshrc` files in the wild, the daemon supports the syntax of the major managers as input to its analysis pass:
+**Plugin manager interop.** zpwr's `.zshrc` switches between plugin
+managers via `$ZPWR_PLUGIN_MANAGER` (zinit, antigen, zplug, antibody,
+oh-my-zsh, sheldon, znap, zgenom, zcomet, zr, direct git-clone). The
+daemon does not parse any of these managers' syntax — the recorder
+runs the user's actual `.zshrc` under their actual plugin manager and
+captures whatever runtime state mutations result. So the compat
+surface is whatever the user's chosen manager actually does at
+runtime, end-state-equivalent to what the recorder observed.
 
-| Manager | Compat surface | Status |
-|---|---|---|
-| **zinit** | `zinit ice …; zinit load|light|snippet …; zinit cdreplay; zinit creinstall` — full ice-modifier grammar; turbo-mode hints recognized but no longer needed (daemon has zero cold-start cost so deferral is meaningless) | Required — primary daily-driver target |
-| **oh-my-zsh** | `ZSH_THEME=…; plugins=(…); source $ZSH/oh-my-zsh.sh; antigen-bundle …` — recognize plugin array, apply plugins from `$ZSH_CUSTOM/plugins/` and OMZ tree | Required — zpwr uses OMZ libs/plugins/comps as fallback |
-| **antigen** | `antigen bundle …; antigen apply` | Best-effort |
-| **zplug** | `zplug "user/repo"; zplug load` | Best-effort |
-| **antibody** | `antibody bundle <<<…` | Best-effort |
-| **sheldon** | TOML-config-driven | Best-effort |
-| **znap / zgenom / zcomet / zr** | various | Best-effort |
-| **direct `git clone` + `source`** | base case | Always works (handled by source-interception) |
+zinit-turbo-style deferral is irrelevant under recorder ingest —
+deferred subshells flush their state through the same dispatchers,
+which are AOP-instrumented, so end-state captured by the recorder
+matches the post-defer steady state. See `docs/RECORDER.md` §"Why
+this beats AST analysis at zinit scale".
 
-Daemon doesn't *run* zinit's Ruby/zsh code. It parses zinit declarations to extract: which plugins to load, which ice modifiers (lazy-load, install-time hooks, alternate paths) to honor, what lifecycle behavior the user expects. The daemon then implements that behavior natively. zinit-the-zsh-plugin can be removed from the user's `.zshrc` once daemon-handled compat is verified, but doesn't have to be — having it source unmodified is fine; daemon analysis just notices the work has already been done.
-
-**`.zwc` files: invisible to scans, importable on demand, encouraged to delete.** During every automatic discovery pass the daemon performs — `$FPATH` enumeration, plugin tree walks, source-statement following, fsnotify watches, autoload table population — `.zwc` files are filtered out and treated as if they don't exist. The daemon only sees the source files (`.zsh`, `.sh`). `.zwc` files in `~/.zpwr` (or anywhere else) sit on disk untouched and unread by any auto-driven code path. They never feed into the cold-start, never participate in fsnotify, never count toward "what's in fpath."
+**`.zwc` files: invisible to recorder, importable on demand, encouraged
+to delete.** The recorder, the source resolver, and fsnotify all
+filter out `.zwc` files and treat them as if they don't exist. The
+recorder only ever observes source-file sources (`.zsh`, `.sh`). `.zwc`
+files in `~/.zpwr` (or anywhere else) sit on disk untouched and unread
+by any auto-driven code path. They never feed into cold-start, never
+participate in fsnotify, never count toward "what's in fpath."
 
 Once a user is on zshrs, every `.zwc` and `.zcompdump-*` file is **dead disk litter that contributes zero speed** — no longer doing any work, just consuming bytes and confusing future debugging.
 
@@ -604,39 +614,60 @@ Hot-path escape hatch: if JSON parse cost shows up in flamegraphs for `highlight
 
 ### Operation table (client → daemon)
 
-| Op | Purpose |
-|-----|---------|
-| `info` | Daemon stats, shard info, in-flight jobs |
-| `rebuild` | Enqueue compile job (full corpus or per-shard) |
-| `clean` | Unlink + re-derive (per shard or whole corpus) |
-| `verify` | Integrity scan on shards + catalog |
-| `compact` | Vacuum catalog.db, dedup shards |
-| `fpath_changed` | New paths added in user `.zshrc` |
-| `stats_flush` | Batched runtime stats deltas merged into `entry_stats` |
-| `subscribe_shard` | Push notification on shard update |
-| `history_append` | Add command to `history.db` |
-| `history_query` | FTS search; powers Ctrl-R, fc -l |
-| `complete` | Tab completion enumeration (daemon eval, client paint) |
-| `suggest` | Inline autosuggest from history frecency |
-| `highlight` | Syntax-highlight current buffer |
-| `keys` | Get key list for daemon-served special parameter (`_comps`, `_services`, etc.) |
-| `load_script` | Cold-load `zshrs FILE`; returns shard path or inline bytecode |
-| `source_resolve` | Resolve `source FILE` / `. FILE` to cached bytecode; daemon parses + caches on miss, returns shard path + generation |
-| `push_canonical` | Promote client overlay state for a subsystem (path/fpath/alias/named_dir/etc.) into daemon canonical for future shells |
-| `pull_canonical` | Client opt-in: re-fetch canonical state for a subsystem mid-session |
-| `diff_canonical` | Get overlay-vs-canonical diff for inspection |
-| `export_zcompdump` | Emit a synthetic `.zcompdump` from canonical state for legacy tooling (no `.zwc` emission) |
-| `export_catalog` | Dump `catalog.db` to a portable file |
-| `export_shard` | Dump a specific rkyv shard to a portable file |
-| `import_zcompdump` | Ingest a legacy `.zcompdump` for migration assist |
-| `register` | Implicit on connect; also tag/cwd updates |
-| `list_shells` | Powers `zls` |
-| `ping` | Liveness + roundtrip latency probe |
-| `tag` / `untag` | Self-tag for routing |
-| `send` | `zsend` dispatch (single, broadcast, by tag, by user) |
-| `notify` | `znotify` OSC-9 / status-line message |
-| `subscribe` / `unsubscribe` | `zsubscribe` glob pub/sub |
-| `daemon` | Daemon control (status, stop, restart) |
+Authoritative source: `daemon/ops.rs:OP_NAMES`. The
+`tests/daemon_doc_drift.rs` test asserts this table stays in lockstep
+— add a row here when adding an op there. See
+`docs/DAEMON_AS_SERVICE.md` for the full HTTP-surfaced contract per op.
+
+| Area | Op | Purpose |
+|---|---|---|
+| meta     | `info` | daemon stats, catalog stats, uptime, paths |
+| meta     | `ping` | round-trip latency + pong |
+| meta     | `daemon` | status/stop/restart control verb |
+| meta     | `register` | session register (tag/cwd/argv0); implicit on connect |
+| meta     | `doctor` | full diagnostic report |
+| meta     | `verify` | integrity scan on shards + catalog |
+| meta     | `compact` | vacuum catalog.db, dedup shards |
+| meta     | `clean` | unlink shards / index / cache by `target` |
+| meta     | `metrics` | Prometheus-shaped metrics as JSON |
+| meta     | `log_level` / `log_rotate` / `log_stats` | tracing controls |
+| meta     | `config_get` / `config_set` / `config_list` | runtime config knobs |
+| meta     | `stats_flush` | merge batched per-call stats into `entry_stats` |
+| meta     | `replay_log` | per-shell replay log read-back |
+| recorder | `recorder_ingest` | ingest a `RecorderBundle`; replaces all rows for the bundle's `shell_id`; broadcasts `recorder_ingested` |
+| canon    | `canonical_hydrate_view` | rebuild SQLite mirror of canonical |
+| canon    | `push_canonical` / `pull_canonical` / `diff_canonical` | per-shell overlay promote / fetch / diff |
+| defs     | `definitions_query` | federated catalog query (filter by kind/name/prefix/shell_id) |
+| defs     | `definitions_kinds` | list every populated kind |
+| defs     | `definitions_emit` | single-record write (third-party shell recorders) |
+| defs     | `definitions_diff` | cross-shell diff between two shell_ids |
+| defs     | `definitions_subscribe` / `definitions_unsubscribe` | opt in/out of `recorder_ingested` events |
+| watch    | `watch_subscribe` / `watch_unsubscribe` / `watch_list` | refcounted fsnotify subscriptions |
+| watch    | `watcher_stats` | fsnotify watcher counts + state |
+| watch    | `fpath_changed` | client tells daemon a new fpath dir was added |
+| event    | `subscribe` / `unsubscribe` | pubsub pattern subscription |
+| event    | `subscription_set_paused` | pause/resume a subscription |
+| event    | `publish` | publish a pubsub event |
+| event    | `subscribe_shard` | per-shard update push |
+| shell    | `list_shells` | every registered session (powers `zls`) |
+| shell    | `tag` / `untag` | self-tag for routing |
+| shell    | `send` | `zsend` dispatch (single / broadcast / by tag / by user) |
+| shell    | `cmd_started` / `cmd_result` | long-cmd tracking + result event |
+| shell    | `notify` | `znotify` OSC-9 / status-line message |
+| ask      | `ask_ask` / `ask_pending` / `ask_take` / `ask_dismiss` / `ask_response` | pull-mode UI queue (see `zask` section) |
+| cache    | `cache_put` / `cache_get` / `cache_del` / `cache_list` / `cache_stats` | persistent KV store |
+| artifact | `artifact_put` / `artifact_get` / `artifact_get_by_digest` / `artifact_list` / `artifact_gc` | sha256-content-addressed cache |
+| job      | `job_submit` / `job_status` / `job_output` / `job_list` / `job_kill` / `job_cancel` / `job_wait` | tokio task queue |
+| schedule | `schedule_add` / `schedule_add_once` / `schedule_remove` / `schedule_list` | cron-equivalent |
+| lock     | `lock_acquire` / `lock_try_acquire` / `lock_release` / `lock_list` | named cross-process mutex |
+| snapshot | `snapshot_save` / `snapshot_list` / `snapshot_load` / `snapshot_diff` | tag-based canonical state captures |
+| source   | `source_resolve` | bytecode-cache lookup for `source FILE` / `. FILE` |
+| source   | `load_script` | cold-load `zshrs FILE` |
+| source   | `import_zwc` / `import_zcompdump` / `import_history` / `import_catalog` / `import_shard` / `import_all` | user-explicit legacy / backup ingest |
+| source   | `export` / `view` / `export_all` / `export_catalog` / `export_shard` / `export_zcompdump` | catalog dump / human view |
+| history  | `history_query` / `history_append` | FTS search + write |
+| compsys  | `complete` / `suggest` / `highlight` | per-keystroke ops (tab completion enumeration / autosuggest / syntax highlight) |
+| compsys  | `keys` | iterate keys for a daemon-served special parameter |
 
 ### Async event types (daemon → client)
 
@@ -1070,6 +1101,9 @@ zlog stats                          # daemon log self-stats: line counts, size, 
 
 ### Acceptance criteria
 
+Targets — measured by `daemon/bins/zshrs-daemon-bench.rs` for IPC RTT,
+unmeasured otherwise (see TODO list at end of this section).
+
 - Cold client launch (daemon already running): <5ms (mmap + connect + handshake).
 - Cold client launch (daemon spawn-on-demand): <50ms (spawn + connect + handshake).
 - Tab completion lookup: ~150-200ns end-to-end (perfect-hash mmap dereference).
@@ -1077,9 +1111,22 @@ zlog stats                          # daemon log self-stats: line counts, size, 
 - Syntax highlight per keystroke: <2ms IPC roundtrip including parse.
 - 100 parallel clients share <30 MB RSS attributable to images (page-cache shared across mmaps).
 - Per-client cache overhead: <5 MB.
-- Full-corpus rebuild via `zcache rebuild`: <30s clean.
-- Per-shard rebuild: ~100-500ms small, ~3-5s large.
 - POSIX mode: never spawns daemon, never creates `~/.cache/zshrs/`.
 - `~/.zshrc` cold-source: <50ms with cache hit (mmap + replay env log), regardless of file size.
 - `zshrs FILE` cold-launch with cache hit: <10ms.
+- Recorder ingest: <1s for a 17k-completion zpwr-scale bundle (recorder
+  runtime cost is separate; this is daemon-side ingest only).
+- Recorder corpus coverage: 100% of `test_data/zsh_functions/` (1200
+  functions) captured per `tests/recorder_zsh_functions.rs`.
+
+**TODO — none of these are CI-asserted yet.** Per-criterion enforcement
+hasn't shipped. `zshrs-daemon-bench` measures the IPC RTT criteria but
+doesn't compare against thresholds; an `--assert-acceptance` mode that
+fails when p50 > target would close the loop. RSS / cold-source /
+spawn-on-demand criteria need separate harnesses.
+
+Removed acceptance criteria (no longer applicable):
+- `zcache rebuild` <30s — `rebuild` op was deleted with the AST-walk
+  pipeline; recorder runs replace this.
+- Per-shard rebuild ~100-500ms — same.
 
