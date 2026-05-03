@@ -991,6 +991,7 @@ impl<'a> ZshLexer<'a> {
             self.infor = if self.tok == LexTok::For { 2 } else { 0 };
         }
 
+
         // Handle redirection / for-loop context. Mirrors lex.c:359-368
         // ctxtlex `oldpos` save/restore. The saved value lives in
         // `self.oldpos` (struct field) so it survives across zshlex
