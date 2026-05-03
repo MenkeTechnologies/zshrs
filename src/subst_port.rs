@@ -2418,7 +2418,7 @@ pub struct SortOptions {
 
 /// Sort array according to options
 /// Port of strmetasort() logic
-pub fn sort_array(arr: &mut Vec<String>, opts: &SortOptions) {
+pub fn sort_array(arr: &mut [String], opts: &SortOptions) {
     if !opts.somehow {
         return;
     }
@@ -3139,7 +3139,7 @@ fn glob_to_regex(pattern: &str) -> String {
 /// Match pattern against array elements
 /// Port of getmatcharr() logic
 pub fn getmatcharr(
-    aval: &mut Vec<String>,
+    aval: &mut [String],
     pattern: &str,
     flags: u32,
     flnum: i32,
@@ -4379,7 +4379,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool) -> String {
 
 /// String metadata sort
 /// Port of strmetasort() from utils.c (used in subst.c)
-pub fn strmetasort(arr: &mut Vec<String>, sortit: u32) {
+pub fn strmetasort(arr: &mut [String], sortit: u32) {
     if sortit == sortit_flags::ANYOLDHOW {
         return;
     }

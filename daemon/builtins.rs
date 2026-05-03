@@ -1332,7 +1332,7 @@ fn log_files(paths: &CachePaths) -> Vec<std::path::PathBuf> {
             out.push((mtime, entry.path()));
         }
     }
-    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out.sort_by_key(|b| std::cmp::Reverse(b.0));
     out.into_iter().map(|(_, p)| p).collect()
 }
 

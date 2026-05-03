@@ -110,7 +110,7 @@ impl ZStyleStore {
 
         // Insert and sort by weight descending
         entries.push(style);
-        entries.sort_by(|a, b| b.weight.cmp(&a.weight));
+        entries.sort_by_key(|b| std::cmp::Reverse(b.weight));
     }
 
     /// Delete a style

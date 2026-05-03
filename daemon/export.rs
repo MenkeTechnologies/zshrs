@@ -73,8 +73,7 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
     // sh: emit `function <name> { <body> }`; disasm: stub until the bytecode
     // emitter lands. Per docs/DAEMON.md "functions [<name>] All function
     // bytecode, or one named function (+ disassembly with --format disasm)".
-    if target == "functions" && name.is_some() {
-        let n = name.unwrap();
+    if let (Some(n), "functions") = (name.as_deref(), target.as_str()) {
         // Unified function namespace per zsh semantics: inline-defined
         // (subsystem `function`) and fpath-autoload (subsystem
         // `function_autoload`) are queryable by the same name. Inline
@@ -109,8 +108,7 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
     // `script <path>` / `sourced <path>` — single compiled-file row by exact
     // path. Per docs/DAEMON.md "script <path>: bytecode for a cached `zshrs
     // FILE` script; sourced <path>: bytecode for a sourced file (single)".
-    if (target == "script" || target == "sourced") && name.is_some() {
-        let path = name.unwrap();
+    if let (Some(path), "script" | "sourced") = (name.as_deref(), target.as_str()) {
         let row = state
             .with_catalog(|conn| {
                 conn.query_row(

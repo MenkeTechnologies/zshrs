@@ -2,6 +2,12 @@
 //!
 //! Provides `limit`, `ulimit`, and `unlimit` builtins for managing resource limits.
 
+// `RLIMIT_*` constants are typed `__rlimit_resource_t` (= u32) on glibc
+// Linux and `c_int` (= i32) on macOS / *BSD. The `as i32` casts are
+// portable but redundant on whichever platform the type already matches —
+// silence clippy's per-platform unnecessary_cast firing.
+#![allow(clippy::unnecessary_cast)]
+
 #[cfg(unix)]
 use libc::{
     getrlimit, rlimit, setrlimit, RLIMIT_AS, RLIMIT_CORE, RLIMIT_CPU, RLIMIT_DATA, RLIMIT_FSIZE,

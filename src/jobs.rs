@@ -1407,7 +1407,7 @@ pub fn dumptime(job: &Job, format: &str) -> Option<String> {
 }
 
 /// Wait for all foreground jobs to finish (from jobs.c waitjobs)
-pub fn waitjobs(jobtab: &mut Vec<Job>, thisjob: usize) {
+pub fn waitjobs(jobtab: &mut [Job], thisjob: usize) {
     if thisjob < jobtab.len() {
         while !jobtab[thisjob].is_done() && !jobtab[thisjob].is_stopped() {
             #[cfg(unix)]

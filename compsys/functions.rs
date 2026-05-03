@@ -1168,7 +1168,7 @@ pub fn most_recent_file(state: &mut CompletionState, dir: &str, pattern: Option<
         })
         .collect();
 
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     if let Some((entry, _)) = files.first() {
         let name = entry.file_name();
