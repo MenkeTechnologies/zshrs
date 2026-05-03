@@ -687,9 +687,11 @@ fn np_concat_var_var() {
 // Escape sequences in echo
 #[test]
 fn np_echo_escape_n() {
-    // zsh's echo by default interprets escapes when -e isn't passed in
-    // some cases; here we just check no flag interference.
-    ok("echo 'a\\nb'", "a\\nb\n");
+    // zsh's echo defaults to BSD semantics: backslash escapes are
+    // interpreted EVEN inside single quotes (the option BSD_ECHO is on
+    // by default). So `echo 'a\nb'` emits `a<NL>b<NL>`, NOT a literal
+    // backslash. Verified: `zsh -c "echo 'a\nb'" | xxd` → `61 0a 62 0a`.
+    ok("echo 'a\\nb'", "a\nb\n");
 }
 
 // printf
