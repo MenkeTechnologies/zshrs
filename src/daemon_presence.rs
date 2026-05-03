@@ -21,26 +21,28 @@
 //!
 //! Config (`$ZSHRS_HOME/zshrs.toml` or `~/.zshrs/zshrs.toml`, all optional):
 //!
-//!     [daemon]
-//!     # "auto" (default) = probe at startup, use if alive
-//!     # "off"            = never probe; pure vanilla zsh mode
-//!     # "require"        = probe and warn if absent (no spawn either way)
-//!     enabled = "auto"
+//! ```toml
+//! [daemon]
+//! # "auto" (default) = probe at startup, use if alive
+//! # "off"            = never probe; pure vanilla zsh mode
+//! # "require"        = probe and warn if absent (no spawn either way)
+//! enabled = "auto"
 //!
-//!     [shell]
-//!     # "off"  (default) = always source .zshenv/.zprofile/.zshrc/.zlogin
-//!     # "auto"           = if daemon is present + has zshrs rows, skip
-//!     #                    every dotfile and apply canonical state
-//!     #                    from the daemon instead. ~10ms cold-start.
-//!     # "on"             = always skip dotfiles when the daemon is up;
-//!     #                    don't even check for zshrs rows. Strict mode.
-//!     skip_configs = "off"
+//! [shell]
+//! # "off"  (default) = always source .zshenv/.zprofile/.zshrc/.zlogin
+//! # "auto"           = if daemon is present + has zshrs rows, skip
+//! #                    every dotfile and apply canonical state
+//! #                    from the daemon instead. ~10ms cold-start.
+//! # "on"             = always skip dotfiles when the daemon is up;
+//! #                    don't even check for zshrs rows. Strict mode.
+//! skip_configs = "off"
+//! ```
 //!
 //! Lives in `~/.zshrs/` alongside everything else (rkyv shards,
-//! catalog.db, daemon.sock, daemon.toml, log, …) — single directory
-//! rule for all zshrs files. Survives OS cache eviction (this is NOT
-//! cache-semantic state). `rm -rf ~/.zshrs/` is the one-verb total
-//! reset.
+//! catalog.db, daemon.sock, zshrs-daemon.toml, log, …) — single
+//! directory rule for all zshrs files. Survives OS cache eviction
+//! (this is NOT cache-semantic state). `rm -rf ~/.zshrs/` is the
+//! one-verb total reset.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 

@@ -79,9 +79,19 @@ fn pid_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
     }
-    // SAFETY: kill(pid, 0) is read-only — kernel returns -1/ESRCH when
-    // the pid is dead and 0/EPERM when alive (perm denied = exists).
-    unsafe { libc::kill(pid, 0) == 0 || *libc::__error() == libc::EPERM }
+    // SAFETY: kill(pid, 0) is read-only — kernel returns 0 when the
+    // pid exists and we have permission, -1/ESRCH when dead, -1/EPERM
+    // when alive but owned by another user. Read errno via
+    // std::io::Error::last_os_error() so we stay portable across
+    // macOS (libc::__error) and Linux (libc::__errno_location).
+    let rc = unsafe { libc::kill(pid, 0) };
+    if rc == 0 {
+        return true;
+    }
+    matches!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EPERM)
+    )
 }
 
 fn now_ns() -> i64 {

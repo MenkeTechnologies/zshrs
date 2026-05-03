@@ -7,13 +7,13 @@
 //!
 //! Filesystem layout:
 //!
-//! ```
+//! ```text
 //! ~/.zshrs/artifacts/
-//!   ab/                      ← first 2 hex chars of digest as shard dir
-//!     abcdef0123…ff          ← full sha256 as filename, content == bytes
+//!   ab/                      <- first 2 hex chars of digest as shard dir
+//!     abcdef0123...ff        <- full sha256 as filename, content == bytes
 //!   cd/
-//!     cd1234…
-//!   names.db                 ← sqlite mapping name → digest + metadata
+//!     cd1234...
+//!   names.db                 <- sqlite mapping name -> digest + metadata
 //! ```
 //!
 //! Storage is dedup'd: putting the same content under two different
