@@ -409,6 +409,16 @@ pub fn zshrs_main() {
         let _ = paths.ensure_default_configs();
     }
 
+    // Hand the daemon-crate `zsync up --all` builtin a snapshot
+    // function it can call into the executor with. The shell crate
+    // owns ShellExecutor; the daemon crate (where the zsync builtin
+    // lives) doesn't link against it — this trampoline is the
+    // bridge. Idempotent — only the first registration sticks.
+    #[cfg(feature = "daemon")]
+    zshrs_daemon::zsync_builtin::register_overlay_enumerator(
+        zsh::overlay_snapshot::enumerate_all_overlays,
+    );
+
     // Default level: info. Override with ZSHRS_LOG=debug or ZSHRS_LOG=trace.
     zsh::log::init();
 
