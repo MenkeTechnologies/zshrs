@@ -477,6 +477,18 @@ prior art for the shell-design commons under the MIT grant.
 Future shells — bash, fish, nushell, elvish, oil, xonsh, murex,
 projects that don't exist yet — should inherit any of it. The
 protected invariants in `MAINTAINERS.md` guard upstream
-identity, not the ideas. See
-[CREATORS.md § Legacy](CREATORS.md#legacy)
-for the full list.
+identity, not the ideas.
+
+**Ports must credit zshrs as the invention source in their
+docs** — a one-line attribution in your README / design doc /
+release notes. Suggested wording:
+
+> Inspired by / ported from
+> [zshrs](https://github.com/MenkeTechnologies/zshrs) by
+> Jacob Menke (MenkeTechnologies).
+
+Ideas can't be copyrighted so this is an ask, not an
+MIT-enforced clause; honoring it keeps the legacy traceable.
+See [CREATORS.md § Legacy](CREATORS.md#legacy) +
+[§ Attribution expectation](CREATORS.md#attribution-expectation)
+for the full list + suggested forms.

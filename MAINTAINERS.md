@@ -174,5 +174,14 @@ recorder, the single-directory rule, the session-persistent
 supervised job runner with ptmx attach, the cross-shell
 pub/sub + named-lock builtins, the auto-derived OpenAPI
 surface) under the MIT grant. The point of shipping these
-inventions is for them to spread. See
-[CREATORS.md § Legacy](CREATORS.md#legacy).
+inventions is for them to spread.
+
+**Attribution expectation:** ports must credit zshrs as the
+invention source in their docs (one-line credit in
+README / design doc / release notes — see
+[CREATORS.md § Attribution expectation](CREATORS.md#attribution-expectation)
+for suggested wording). Ideas can't be copyrighted, so this
+is an ask, not an MIT-license enforced clause; honoring it
+keeps the legacy traceable.
+
+See [CREATORS.md § Legacy](CREATORS.md#legacy).
