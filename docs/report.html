@@ -103,6 +103,16 @@
       <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>EXECUTIVE SUMMARY</h2>
       <p class="tutorial-subtitle">Complete port of the entire zsh codebase from C to Rust. All 88 C source files (31 core, 24 ZLE, 33 modules) have corresponding Rust modules. Every C function has a Rust equivalent &mdash; 2,100+ with the same name, ~460 restructured into idiomatic Rust (struct methods, enum variants, pattern matching). Zero missing functionality.</p>
 
+      <p class="tutorial-subtitle" style="margin-top:0.5rem;color:var(--accent-light);">
+        <strong style="color:var(--accent);">Scope note:</strong> this report covers the <em>C-to-Rust port</em> &mdash; what was translated from upstream zsh.
+        It does <em>not</em> cover the new Rust infrastructure layered on top
+        (<code>zshrs-daemon</code> singleton, <code>zshrs-recorder</code> AOP intercept, IPC + HTTP + OpenAPI surface,
+        canonical-state rkyv shards, the <code>z*</code> builtin family, session-persistent supervised jobs with
+        bidirectional ptmx attach, the parser crate). That work has no C ancestor and is reported separately in
+        <a href="daemon-report.html"><code>daemon-report.html</code></a>. See &ldquo;BEYOND THE C PORT&rdquo; section
+        below for the cross-link.
+      </p>
+
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-val green">801</div><div class="stat-label">Tests Passing</div></div>
         <div class="stat-card"><div class="stat-val">88</div><div class="stat-label">C Files Ported</div></div>
@@ -1540,6 +1550,69 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <hr class="section-rule">
 
       <!-- ═════════════════════════════════════════════════ -->
+      <!-- SECTION: BEYOND THE C PORT — RUNTIME INFRASTRUCTURE -->
+      <!-- ═════════════════════════════════════════════════ -->
+      <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x25CF;</span>BEYOND THE C PORT &mdash; RUNTIME INFRASTRUCTURE</h2>
+      <p class="tutorial-subtitle">The C-to-Rust port covered above (87 source files, 88 C files mapped, 859 C functions) is what zshrs <em>inherits</em> from zsh. The numbers below count what zshrs <em>adds</em> &mdash; new Rust code with no C ancestor. This is the layer that takes zshrs from &ldquo;zsh in Rust&rdquo; to &ldquo;the first compiled Unix shell with a session-persistent daemon, AOP-intercept recorder, and bidirectional ptmx-attach job supervisor.&rdquo;</p>
+
+      <table class="file-table">
+        <thead><tr><th>Crate / Layer</th><th class="num">Files</th><th class="num">Lines</th><th class="num">Pub Fns</th><th class="num">Tests</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr>
+            <td style="color:var(--cyan);"><code>daemon/</code></td>
+            <td class="num">41</td>
+            <td class="num">23,873</td>
+            <td class="num">106</td>
+            <td class="num">109</td>
+            <td>Singleton daemon: IPC server, HTTP listener (auto-derived OpenAPI 3.1), canonical-state engine, fsnotify, schedule, supervisor (jobs + bidirectional ptmx attach), pub/sub bus, named locks, ask-inbox, snapshots, artifacts, cache. Hosts every <code>z*</code> builtin.</td>
+          </tr>
+          <tr>
+            <td style="color:var(--magenta);"><code>parse/</code></td>
+            <td class="num">4</td>
+            <td class="num">7,471</td>
+            <td class="num">12</td>
+            <td class="num">33</td>
+            <td>Standalone lexer + parser crate. Direct port of zsh/Src/lex.c + parse.c, but factored out so the recorder + daemon can re-tokenize without pulling the executor.</td>
+          </tr>
+          <tr>
+            <td style="color:var(--cyan);">recorder (in <code>src/</code>)</td>
+            <td class="num">~5</td>
+            <td class="num">~3,500</td>
+            <td class="num">&mdash;</td>
+            <td class="num">&mdash;</td>
+            <td>AOP intercept: every state-mutating dispatcher fires a record event with <code>(kind, name, value, file, line, fn_chain)</code>. Replaces the static-walker approach every other shell uses for completion/fpath scanning.</td>
+          </tr>
+          <tr>
+            <td style="color:var(--cyan);">canonical_apply, overlay_snapshot (in <code>src/</code>)</td>
+            <td class="num">2</td>
+            <td class="num">~1,200</td>
+            <td class="num">&mdash;</td>
+            <td class="num">&mdash;</td>
+            <td>Shell-side glue between recorder + daemon: snapshot every overlay table for <code>zsync up --all</code>; rebuild executor state from rkyv shards on cold start (skip <code>~/.zshenv</code>/etc when daemon has canonical state).</td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">NEW INFRASTRUCTURE</td><td class="num">~36,000</td><td class="num">&nbsp;</td><td class="num">&nbsp;</td><td>~36k lines of new Rust on top of the port</td></tr>
+        </tfoot>
+      </table>
+
+      <p style="font-size:11.5px;color:var(--text-dim);margin-top:0.6rem;line-height:1.6;">
+        Architectural moves with no zsh equivalent: the <strong>90/10 daemon/shell work split</strong> (singleton daemon owns every mutation; thin shell clients are stateless and forkable);
+        the <strong>recorder-owns-rebuild</strong> stance (no in-daemon walker; <code>zshrs-recorder</code> is the sole producer of recorder-managed canonical subsystems);
+        the <strong>single <code>~/.zshrs/</code> directory rule</strong> (every config + log + sqlite + rkyv shard + socket under one root, configurable via <code>$ZSHRS_HOME</code>);
+        the <strong><code>z*</code> builtin family</strong> (<code>zcache</code> / <code>zls</code> / <code>zsend</code> / <code>znotify</code> / <code>zsubscribe</code> / <code>zjob</code> / <code>zsync</code> / <code>zask</code> / <code>zlock</code> / <code>zpublish</code> / <code>zwhere</code> / <code>zd</code>);
+        <strong>session-persistent supervised jobs with bidirectional ptmx attach</strong> (replaces nohup + screen + pueue + disown);
+        the <strong>auto-derived OpenAPI 3.1 surface</strong> at <code>GET /openapi</code> from the daemon op registry;
+        the <strong>flat zsh-extended-history text file</strong> + sibling FTS5 sqlite index.
+        Full list + governance in
+        <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/CREATORS.md"><code>CREATORS.md</code></a>;
+        op-by-op detail in
+        <a href="daemon-report.html"><code>daemon-report.html</code></a>.
+      </p>
+
+      <hr class="section-rule">
+
+      <!-- ═════════════════════════════════════════════════ -->
       <!-- SECTION: GRAND TOTAL — ALL THREE CRATES          -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
@@ -1577,7 +1650,7 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
     </main>
 
     <footer style="text-align:center;padding:2rem;font-size:10px;color:var(--text-muted);font-family:'Orbitron',sans-serif;letter-spacing:2px;">
-      STRYKELANG WORKSPACE REPORT &middot; 406,483 LINES &middot; GENERATED 2026-04-23 &middot; UPDATED &middot; MENKETECHNOLOGIES
+      ZSHRS PORT-COVERAGE REPORT &middot; +36K LINES NEW INFRASTRUCTURE BEYOND THE PORT &middot; UPDATED 2026-05-03 &middot; MENKETECHNOLOGIES
     </footer>
   </div>
 
