@@ -67,7 +67,7 @@ pub fn zjob(args: &[String]) -> i32 {
         "wait" => wait_for(rest),
         "" | "-h" | "--help" => {
             println!(
-                "usage: zjob submit <cmd> [<args>...] [--cwd DIR] [--tag T...] [--env K=V...]"
+                "usage: zjob submit <cmd> [<args>...] [--cwd DIR] [--tag T...] [--env K=V...] [--pty]"
             );
             println!(
                 "       zjob list   [--state running|exited|killed|failed] [--tag T] [--limit N]"
@@ -120,6 +120,7 @@ fn submit(args: &[String]) -> i32 {
     let mut tags: Vec<String> = Vec::new();
     let mut env: Vec<(String, String)> = Vec::new();
     let mut command: Vec<String> = Vec::new();
+    let mut pty = false;
 
     let mut iter = args.iter();
     let mut in_command = false;
@@ -144,6 +145,7 @@ fn submit(args: &[String]) -> i32 {
                 },
                 None => return err_exit("submit: --env requires KEY=VALUE"),
             },
+            "--pty" => pty = true,
             "--" => {
                 in_command = true;
             }
@@ -171,6 +173,7 @@ fn submit(args: &[String]) -> i32 {
         "cwd": cwd,
         "tags": tags,
         "env": env_obj,
+        "pty": pty,
     });
 
     let mut client = match connect() {
@@ -463,8 +466,6 @@ fn output(args: &[String]) -> i32 {
 /// that work — it ships value (live tail of long-running jobs)
 /// without the protocol surface expansion.
 fn attach(args: &[String]) -> i32 {
-    use std::io::{Read, Write};
-
     let id = match args.first().and_then(|s| s.parse::<u64>().ok()) {
         Some(n) => n,
         None => return err_exit("attach: missing or non-integer <id>"),
@@ -488,8 +489,8 @@ fn attach(args: &[String]) -> i32 {
     };
     // `job_status` wraps the snapshot under a `job` key (see
     // op_job_status in daemon/ops.rs). Reach through it for state.
-    let state = snap
-        .get("job")
+    let job = snap.get("job");
+    let state = job
         .and_then(|j| j.get("state"))
         .and_then(Value::as_str)
         .unwrap_or("?");
@@ -500,6 +501,24 @@ fn attach(args: &[String]) -> i32 {
         );
         return 1;
     }
+
+    // Pty mode dispatches to the bidirectional pump (raw stdin
+    // forwarded as job_input, daemon stdout broadcast decoded back
+    // to the user's tty, SIGWINCH propagated as job_resize). Non-pty
+    // mode keeps the read-only file-tail path.
+    let pty = job
+        .and_then(|j| j.get("pty"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if pty {
+        return attach_pty(id, client);
+    }
+
+    attach_filetail(id, client)
+}
+
+fn attach_filetail(id: u64, mut client: Client) -> i32 {
+    use std::io::{Read, Write};
 
     let paths = match CachePaths::resolve() {
         Ok(p) => p,
@@ -599,6 +618,329 @@ fn attach(args: &[String]) -> i32 {
         .unwrap_or_else(|| "-".to_string());
     eprintln!("[zjob {} {}, exit={}]", id, final_state, exit_str);
     final_exit.map(|c| c as i32).unwrap_or(0)
+}
+
+/// Bidirectional pty attach. Pipeline:
+///
+///   stdin (raw)  ->  job_input  (base64 frames per ~16ms batch)
+///   job:N.stdout  ->  stdout    (base64-decode, write to user's tty)
+///   SIGWINCH      ->  job_resize (TIOCSWINSZ on master)
+///   Ctrl-]        ->  detach (clean exit, job keeps running)
+///
+/// Termios is switched to raw mode for the duration so keystrokes
+/// reach the daemon byte-for-byte (no line-buffering, no local
+/// echo). Restored on exit via Drop guard.
+///
+/// Output ordering: stdin pump uses non-blocking reads with a 16ms
+/// batching window so a flurry of typed bytes ships as one IPC call
+/// instead of one-per-key. Output frames arrive on the broadcast
+/// channel and are written to stdout immediately (no batching) so
+/// the user sees prompts the moment the daemon delivers them.
+fn attach_pty(id: u64, mut client: Client) -> i32 {
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    // Subscribe to the job's output broadcast BEFORE doing anything
+    // else — race-free against output that the child may emit during
+    // our termios setup.
+    let pattern_stdout = format!("job:{}.stdout", id);
+    let pattern_complete = format!("job:{}.complete", id);
+    if let Err(e) = client.call("subscribe", json!({"pattern": &pattern_stdout})) {
+        return err_exit(&format!("attach: subscribe stdout: {}", e));
+    }
+    if let Err(e) = client.call("subscribe", json!({"pattern": &pattern_complete})) {
+        return err_exit(&format!("attach: subscribe complete: {}", e));
+    }
+    if let Err(e) = client.set_read_timeout(None) {
+        return err_exit(&format!("attach: set_read_timeout: {}", e));
+    }
+
+    // Switch our terminal to raw mode + propagate the initial size.
+    let stdin_fd = std::io::stdin().as_raw_fd();
+    let saved_termios = match unsafe { read_termios(stdin_fd) } {
+        Ok(t) => t,
+        Err(e) => return err_exit(&format!("attach: read termios: {e}")),
+    };
+    if let Err(e) = unsafe { set_raw(stdin_fd) } {
+        return err_exit(&format!("attach: set raw: {e}"));
+    }
+    let _termios_guard = TermiosGuard {
+        fd: stdin_fd,
+        saved: saved_termios,
+    };
+
+    let (rows, cols) = current_winsize(stdin_fd);
+    if rows > 0 && cols > 0 {
+        let mut sizer = match connect() {
+            Ok(c) => c,
+            Err(()) => {
+                eprintln!("zjob: attach: warn: couldn't open size-update client");
+                return 1;
+            }
+        };
+        let _ = sizer.call(
+            "job_resize",
+            json!({"id": id, "rows": rows, "cols": cols}),
+        );
+    }
+    eprintln!("[zjob {} attached — Ctrl-] to detach]", id);
+
+    // Spawn a stdin reader thread. Reads non-blocking via poll(2),
+    // batches up to 16ms or 4KB before firing a job_input IPC. Uses
+    // its OWN client connection so the main thread's IPC reader
+    // (waiting on event frames) isn't multiplexed with writes.
+    let detach_signal = Arc::new(AtomicBool::new(false));
+    let stdin_thread = {
+        let detach_signal = Arc::clone(&detach_signal);
+        std::thread::spawn(move || stdin_pump(id, stdin_fd, detach_signal))
+    };
+
+    // Main loop: read event frames from the daemon, decode + write
+    // to stdout. Exit on `complete` event OR detach signal from
+    // stdin pump.
+    use super::ipc::Frame;
+    use super::DaemonError;
+    let stdout = std::io::stdout();
+    let mut final_state = "running".to_string();
+    let mut final_exit: Option<i64> = None;
+    loop {
+        if detach_signal.load(Ordering::SeqCst) {
+            eprintln!("\r\n[zjob {} detached]", id);
+            // Don't wait on the thread — it owns the detach_signal it
+            // just set; it'll exit on its own poll iteration.
+            break;
+        }
+        match client.next_frame() {
+            Ok(Frame::Event { event, payload }) => {
+                let topic = payload.get("topic").and_then(Value::as_str).unwrap_or("");
+                if event == "job" && topic == "stdout" {
+                    if let Some(b64) = payload
+                        .get("data")
+                        .and_then(|d| d.get("bytes_b64"))
+                        .and_then(Value::as_str)
+                    {
+                        if let Ok(bytes) = base64_decode_local(b64) {
+                            let _ = stdout.lock().write_all(&bytes);
+                            let _ = stdout.lock().flush();
+                        }
+                    }
+                } else if event == "job" && topic == "complete" {
+                    final_state = payload
+                        .get("data")
+                        .and_then(|d| d.get("state"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("?")
+                        .to_string();
+                    final_exit = payload
+                        .get("data")
+                        .and_then(|d| d.get("exit_code"))
+                        .and_then(Value::as_i64);
+                    break;
+                }
+            }
+            Ok(_) => continue,
+            Err(DaemonError::Io(e)) if matches!(e.kind(), std::io::ErrorKind::UnexpectedEof) => {
+                break;
+            }
+            Err(e) => {
+                eprintln!("\r\nzjob: attach: read frame: {e}");
+                break;
+            }
+        }
+    }
+
+    // Tell the stdin pump to stop. It checks the flag between poll
+    // iterations (poll timeout = 100ms so it converges quickly).
+    detach_signal.store(true, Ordering::SeqCst);
+    let _ = stdin_thread.join();
+
+    let exit_str = final_exit
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    eprintln!("[zjob {} {}, exit={}]", id, final_state, exit_str);
+    final_exit.map(|c| c as i32).unwrap_or(0)
+}
+
+/// Stdin reader loop running on a dedicated thread. poll(2)'s the
+/// stdin fd with a 100ms timeout; on each readable cycle, drains
+/// available bytes (batched, non-blocking) and ships them as one
+/// `job_input` IPC. Detects Ctrl-] (0x1D) as the detach key and
+/// flips the shared atomic so the main loop exits cleanly.
+fn stdin_pump(
+    id: u64,
+    stdin_fd: std::os::fd::RawFd,
+    detach_signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> i32 {
+    use std::sync::atomic::Ordering;
+
+    // Dedicated client — see attach_pty's note on why the input pump
+    // doesn't share the main loop's reader connection.
+    let mut client = match connect() {
+        Ok(c) => c,
+        Err(()) => return 1,
+    };
+
+    let mut buf = [0u8; 4096];
+    let mut pollfd = libc::pollfd {
+        fd: stdin_fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        if detach_signal.load(Ordering::SeqCst) {
+            return 0;
+        }
+        let rc = unsafe { libc::poll(&mut pollfd, 1, 100) };
+        if rc < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            return 1;
+        }
+        if rc == 0 {
+            continue; // timeout — re-check the detach signal
+        }
+        if pollfd.revents & libc::POLLIN == 0 {
+            continue;
+        }
+        let n = unsafe { libc::read(stdin_fd, buf.as_mut_ptr() as *mut _, buf.len()) };
+        if n <= 0 {
+            return 0;
+        }
+        let chunk = &buf[..n as usize];
+        // Detach-key sniffer: Ctrl-] = 0x1D. If present, fire the
+        // detach signal and don't forward the byte to the job (the
+        // user almost never wants to send literal Ctrl-] to a job).
+        if chunk.contains(&0x1D) {
+            detach_signal.store(true, Ordering::SeqCst);
+            return 0;
+        }
+        let b64 = base64_encode_local(chunk);
+        if let Err(e) = client.call(
+            "job_input",
+            json!({"id": id, "bytes_b64": b64}),
+        ) {
+            eprintln!("\r\nzjob: attach: job_input: {e}");
+            return 1;
+        }
+    }
+}
+
+/// Termios accessors. Kept inline (no nix dep) so the call site
+/// stays self-contained and readable. SAFETY: stdin_fd must outlive
+/// the call (it's process stdin, so always valid).
+unsafe fn read_termios(fd: std::os::fd::RawFd) -> std::io::Result<libc::termios> {
+    let mut t: libc::termios = std::mem::zeroed();
+    if libc::tcgetattr(fd, &mut t) != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(t)
+}
+
+unsafe fn set_raw(fd: std::os::fd::RawFd) -> std::io::Result<()> {
+    let mut t = read_termios(fd)?;
+    libc::cfmakeraw(&mut t);
+    if libc::tcsetattr(fd, libc::TCSANOW, &t) != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+fn current_winsize(fd: std::os::fd::RawFd) -> (u16, u16) {
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) == 0 {
+            (ws.ws_row, ws.ws_col)
+        } else {
+            (24, 80)
+        }
+    }
+}
+
+/// Restores the saved termios on Drop. Without this, a panic / early
+/// return inside attach_pty would leave the user's terminal in raw
+/// mode — uncomfortable.
+struct TermiosGuard {
+    fd: std::os::fd::RawFd,
+    saved: libc::termios,
+}
+
+impl Drop for TermiosGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = libc::tcsetattr(self.fd, libc::TCSANOW, &self.saved);
+        }
+    }
+}
+
+// ---- base64 encode/decode kept local to the builtin so it doesn't
+// need a new crate dep. Mirrors daemon/jobs.rs::base64_encode +
+// daemon/ops.rs::base64_decode. RFC 4648 alphabet, padded.
+
+const B64_ALPHABET: &[u8] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64_encode_local(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+        out.push(B64_ALPHABET[(b0 >> 2) as usize] as char);
+        out.push(B64_ALPHABET[(((b0 & 0b11) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(B64_ALPHABET[(((b1 & 0b1111) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(B64_ALPHABET[(b2 & 0b111111) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+fn base64_decode_local(s: &str) -> std::result::Result<Vec<u8>, String> {
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let bytes: Vec<u8> = s
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace() && *b != b'=')
+        .collect();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let mut buf = [0u8; 4];
+    let mut bi = 0;
+    for &b in &bytes {
+        let v = val(b).ok_or_else(|| format!("invalid base64 byte: 0x{b:02x}"))?;
+        buf[bi] = v;
+        bi += 1;
+        if bi == 4 {
+            out.push((buf[0] << 2) | (buf[1] >> 4));
+            out.push((buf[1] << 4) | (buf[2] >> 2));
+            out.push((buf[2] << 6) | buf[3]);
+            bi = 0;
+        }
+    }
+    if bi >= 2 {
+        out.push((buf[0] << 2) | (buf[1] >> 4));
+    }
+    if bi == 3 {
+        out.push((buf[1] << 4) | (buf[2] >> 2));
+    }
+    Ok(out)
 }
 
 fn kill(args: &[String]) -> i32 {

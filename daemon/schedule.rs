@@ -305,6 +305,7 @@ async fn tick_once(state: &Arc<DaemonState>) -> std::result::Result<(), String> 
             row.cwd.clone(),
             vec!["scheduled".to_string()],
             env,
+            false, // scheduled jobs never run under a pty — no interactive attach for them
         ) {
             Ok(job_id) => {
                 tracing::info!(
