@@ -44,7 +44,7 @@ The first Unix shell to compile to bytecodes and execute on a purpose-built virt
 
 ## [0x00] OVERVIEW
 
-zshrs replaces `fork + exec` with a persistent worker thread pool, compiles every command to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes, and **persists compiled chunks only in rkyv shards** under `~/.cache/zshrs/` (see [`docs/DAEMON.md`](docs/DAEMON.md)). Beside that tree, **`catalog.db` and related SQL views are read-only mirrors** for inspection (`dbview`, ad-hoc SQL): daemon-hydrated, **never authoritative for cache hit/miss or execution**. They are not a second shell cache. **`history.db`** holds history only — it is unrelated to bytecode caching. The result: shell startup, command dispatch, globbing, completion, and autoloading are all faster by orders of magnitude.
+zshrs replaces `fork + exec` with a persistent worker thread pool, compiles every command to [fusevm](https://github.com/MenkeTechnologies/fusevm) bytecodes, and **persists compiled chunks only in rkyv shards** under `~/.zshrs/images/` (single-directory rule — every zshrs file lives under `$ZSHRS_HOME` / `~/.zshrs/`; see [`docs/DAEMON.md`](docs/DAEMON.md)). Beside that tree, **`catalog.db` and related SQL views are read-only mirrors** for inspection (`dbview`, ad-hoc SQL): daemon-hydrated, **never authoritative for cache hit/miss or execution**. They are not a second shell cache. **`history.db`** holds history only — it is unrelated to bytecode caching. The result: shell startup, command dispatch, globbing, completion, and autoloading are all faster by orders of magnitude.
 
 ---
 
@@ -227,7 +227,7 @@ intercept around expensive_func {
 Persistent pool of [2-18] threads. Configurable:
 
 ```toml
-# ~/.config/zshrs/config.toml
+# ~/.zshrs/zshrs.toml  (single-directory rule; configurable via $ZSHRS_HOME)
 [worker_pool]
 size = 8
 
@@ -246,7 +246,7 @@ recursive_parallel = true
 
 ## [0x07] RKYV CACHE LAYOUT
 
-Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.cache/zshrs/`:
+Compiled bytecode and plugin/autoload payloads live in **rkyv** under `~/.zshrs/images/`:
 
 | Path | Purpose |
 |------|---------|
@@ -462,3 +462,21 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
 ## [0xFF] LICENSE
 
 MIT — Copyright (c) 2026 [MenkeTechnologies](https://github.com/MenkeTechnologies)
+
+Original-authorship record + portability stance:
+[CREATORS.md](CREATORS.md). Maintainer governance + protected
+invariants: [MAINTAINERS.md](MAINTAINERS.md).
+
+**Other shells / runtimes welcome to port any zshrs invention.**
+The synthesis (compiled-shell architecture, 90/10 daemon split,
+recorder-owns-rebuild AOP intercept, single `~/.zshrs/` rule,
+session-persistent supervised jobs with bidirectional ptmx
+attach, cross-shell pub/sub + named-lock builtins, auto-derived
+OpenAPI surface, flat-text history + sibling FTS5 index) is
+offered as prior art for the shell-design commons under the MIT
+grant. The protected invariants in `MAINTAINERS.md` guard
+upstream identity — they don't restrict ideas from being copied
+into bash, fish, nushell, elvish, oil, xonsh, murex, or any
+new project. See [CREATORS.md § Porting zshrs ideas to other
+shells / runtimes](CREATORS.md#porting-zshrs-ideas-to-other-shells--runtimes)
+for the full list.
