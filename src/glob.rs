@@ -1645,15 +1645,8 @@ fn expand_single_brace(s: &str, brace_ccl: bool) -> Option<Vec<String>> {
     let len = chars.len();
 
     // Find the first brace
-    let mut brace_start = None;
-    for i in 0..len {
-        if chars[i] == '{' {
-            brace_start = Some(i);
-            break;
-        }
-    }
-
-    let start = brace_start?;
+    let start = chars.iter().position(|&c| c == '{')?;
+    let _ = len;
 
     // Find matching close brace and contents
     let mut depth = 1;

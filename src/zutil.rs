@@ -561,6 +561,7 @@ impl OptDesc {
 }
 
 /// Parse options from arguments
+#[allow(clippy::type_complexity)]
 pub fn zparseopts(
     args: &[String],
     specs: &[OptDesc],

@@ -13656,6 +13656,7 @@ impl ShellExecutor {
             let tx = tx.clone();
             let chunk: Vec<String> = chunk.to_vec();
             self.worker_pool.submit(move || {
+                #[allow(clippy::type_complexity)]
                 let batch: Vec<(
                     String,
                     (Option<std::fs::Metadata>, Option<std::fs::Metadata>),
@@ -34390,6 +34391,9 @@ impl ShellExecutor {
             let rows = num_items.div_ceil(columns);
             // Compute width per column (max item width in that column).
             let mut col_widths = vec![0usize; columns];
+            // 2D access pattern with row/col both varying — needless_range_loop
+            // would force a per-axis enumerate that obscures the index math.
+            #[allow(clippy::needless_range_loop)]
             for col in 0..columns {
                 for row in 0..rows {
                     let idx = if print_across {
@@ -34417,6 +34421,7 @@ impl ShellExecutor {
                         i < num_items
                     })
                     .unwrap_or(0);
+                #[allow(clippy::needless_range_loop)]
                 for col in 0..=last_col_in_row {
                     let idx = if print_across {
                         row * columns + col
