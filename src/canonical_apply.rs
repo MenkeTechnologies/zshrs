@@ -28,7 +28,7 @@ use std::path::PathBuf;
 
 use crate::daemon::paths::CachePaths;
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
-use crate::exec::ShellExecutor;
+use crate::exec::{AutoloadFlags, ShellExecutor, ZStyle};
 
 /// Read the latest recorder shard from disk and apply its canonical
 /// state to the executor. Returns total rows applied (0 if no shard
@@ -151,23 +151,63 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         executor.arrays.insert("fpath".to_string(), shard.fpath);
     }
 
-    // named_dir (hash -d): pre-resolves `~name` expansion. zsh stores
-    // these in a global hash; zshrs reads them via the same
-    // `named_dirs` array surfaced through compsys / expansion. The
-    // executor doesn't have a dedicated field today; defer until the
-    // executor exposes it. Skipping is safe — `~name` won't expand
-    // until then but everything else works.
-    let _ = shard.named_dirs;
+    // named_dir (hash -d): direct insert into executor.named_dirs.
+    // After this, `~name` expansion is a HashMap lookup on first
+    // access, no parsing of `hash -d` lines.
+    for (name, path) in shard.named_dirs {
+        executor.named_dirs.insert(name, PathBuf::from(path));
+        total += 1;
+    }
 
-    // bindkey / compdef / zstyle / zmodload / functions / zle:
-    // captured in shard but not yet wired to executor. Skipping is
-    // safe — those subsystems work without pre-population, just
-    // slower (autoload on demand instead of pre-loaded).
+    // autoload_functions: register every name as autoload-pending
+    // with the standard `-Uz` flag set (NO_ALIAS + ZSH_STYLE), what
+    // every modern compsys / plugin does. The body lookup happens on
+    // first call via the autoload resolver; we don't pre-compile.
+    let auto_flags = AutoloadFlags::NO_ALIAS | AutoloadFlags::ZSH_STYLE;
+    for name in shard.autoload_functions.keys() {
+        executor
+            .autoload_pending
+            .insert(name.clone(), auto_flags);
+        total += 1;
+    }
+
+    // zstyle: shard stores `Vec<(pattern, "style val val ...")>` —
+    // split the joined-rest back into (style, values) so the exec
+    // side has the same `ZStyle { pattern, style, values: Vec<_> }`
+    // shape it would build by sourcing `zstyle :ctx style val val …`
+    // statements.
+    for (pattern, rest) in shard.zstyle {
+        let mut parts = rest.split_whitespace();
+        let style = match parts.next() {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let values: Vec<String> = parts.map(str::to_string).collect();
+        executor.zstyles.push(ZStyle {
+            pattern,
+            style,
+            values,
+        });
+        total += 1;
+    }
+
+    // bindkey / compdef / zle / inline-defined functions: captured in
+    // shard but need rich-type translation (KeymapManager / CompSpec /
+    // ZLE widget structs / parse+compile to fusevm Chunks). Skipping
+    // is safe — bindkey/compdef fall back to demand-resolution on
+    // first keystroke / first completion; inline functions get
+    // re-parsed when the autoload resolver fires for them. Slower
+    // than pre-baked but correct. Wiring these is its own commit per
+    // subsystem.
     let _ = shard.functions;
-    let _ = shard.autoload_functions;
     let _ = shard.bindkeys;
     let _ = shard.compdef;
-    let _ = shard.zstyle;
+
+    // zmodload / manpath / plugins / sourced_files / extras: no
+    // executor surface today (modules call `zmodload` builtin
+    // directly at use time; manpath is read from $MANPATH env;
+    // plugins/sourced_files are diagnostic-only; extras is a
+    // catch-all).
     let _ = shard.zmodload;
     let _ = shard.manpath;
     let _ = shard.plugins;
