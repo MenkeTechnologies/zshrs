@@ -139,12 +139,33 @@ fn assert_counts_with_home(file: &str, home_subdir: &str, expected: &[(&str, usi
 }
 
 fn assert_counts_inner(file: &str, actual: BTreeMap<String, usize>, expected: &[(&str, usize)]) {
+    // Lower-bound semantics: every kind in `expected` must appear with
+    // at least the given count in `actual`. Extra kinds in `actual`
+    // are allowed (they represent recorder-coverage growth or
+    // env-specific code paths firing that the dev's local env didn't
+    // hit). A regression that DROPS captures still fails.
+    //
+    // Why not exact match: the corpus .zshrc files run partway and
+    // fail somewhere in the middle (because the corpus doesn't include
+    // the full ~200k-line zpwr stack they reference). Where they fail
+    // is env-dependent — on macOS with env_clear, $ZPWR_LOCAL_TEMP is
+    // empty so an early `mkdir -p` aborts at line ~141; on Linux CI
+    // the same `mkdir` succeeds and the script reaches line ~657's
+    // 43-setopt block. Exact-match assertions whipsaw between the two
+    // platforms; lower-bound holds steady on both.
     let expected: BTreeMap<String, usize> = expected
         .iter()
         .map(|(k, v)| (k.to_string(), *v))
         .collect();
-    if actual != expected {
-        let mut msg = format!("\n{file}: capture-count mismatch\n");
+    let mut shortfalls: Vec<(String, usize, usize)> = Vec::new();
+    for (k, &e) in &expected {
+        let a = actual.get(k).copied().unwrap_or(0);
+        if a < e {
+            shortfalls.push((k.clone(), e, a));
+        }
+    }
+    if !shortfalls.is_empty() {
+        let mut msg = format!("\n{file}: capture-count regression (actual < expected)\n");
         let mut all_keys: std::collections::BTreeSet<&String> = expected.keys().collect();
         for k in actual.keys() {
             all_keys.insert(k);
@@ -152,8 +173,8 @@ fn assert_counts_inner(file: &str, actual: BTreeMap<String, usize>, expected: &[
         for k in all_keys {
             let e = expected.get(k).copied().unwrap_or(0);
             let a = actual.get(k).copied().unwrap_or(0);
-            let mark = if e == a { "  " } else { "!=" };
-            msg.push_str(&format!("  {mark} {k:<10} expected={e}  actual={a}\n"));
+            let mark = if a < e { "!!" } else if a > e { "+ " } else { "  " };
+            msg.push_str(&format!("  {mark} {k:<10} expected>={e}  actual={a}\n"));
         }
         panic!("{msg}");
     }
