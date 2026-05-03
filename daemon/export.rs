@@ -1,4 +1,11 @@
 // zcache view / export / import — universal cache dump/serialize.
+
+// Many local SQL row tuples in this file have 4-5 fields. Promoting
+// each to a named type alias would move the shape away from the
+// query that produces it; keep the inline tuples and silence the lint
+// at the file scope.
+#![allow(clippy::type_complexity)]
+
 //
 // Per docs/DAEMON.md "Universal cache dump / view / export":
 //   - Default `export` format = sh (eval-compatible) for shell-state targets,
@@ -81,8 +88,8 @@ async fn op_view_or_export(state: &Arc<DaemonState>, args: Value, _is_export: bo
         // autoload).
         let row = state
             .canonical
-            .row("function", &n)
-            .or_else(|| state.canonical.row("function_autoload", &n))
+            .row("function", n)
+            .or_else(|| state.canonical.row("function_autoload", n))
             .ok_or_else(|| ErrPayload::new("no_function", format!("function `{}` not found", n)))?;
         let body = unjson(&row.value);
         let out_str = match format.as_str() {

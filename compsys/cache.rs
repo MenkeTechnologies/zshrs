@@ -519,6 +519,7 @@ impl CompsysCache {
     }
 
     /// List all zstyles (for `zstyle -L`)
+    #[allow(clippy::type_complexity)]
     pub fn list_zstyles(&self) -> rusqlite::Result<Vec<(String, String, Vec<String>, bool)>> {
         let mut stmt = self
             .conn

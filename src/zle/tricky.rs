@@ -443,9 +443,8 @@ pub fn get_cur_cmd(line: &[char], cursor: usize) -> Option<String> {
     // Find start of current simple command
     let mut cmd_start = 0;
 
-    for i in 0..cursor {
-        let c = line[i];
-        if c == ';' || c == '|' || c == '&' || c == '(' || c == ')' || c == '`' {
+    for (i, &c) in line.iter().enumerate().take(cursor) {
+        if matches!(c, ';' | '|' | '&' | '(' | ')' | '`') {
             cmd_start = i + 1;
         }
     }

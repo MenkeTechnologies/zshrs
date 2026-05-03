@@ -3409,9 +3409,7 @@ fn write_ustar_entry(writer: &mut std::fs::File, name: &str, data: &[u8]) -> std
     let mtime_str = format!("{:011o}", mtime);
     header[136..147].copy_from_slice(mtime_str.as_bytes());
     // chksum field starts as spaces (8 bytes)
-    for i in 148..156 {
-        header[i] = b' ';
-    }
+    header[148..156].fill(b' ');
     // typeflag: '0' (regular file)
     header[156] = b'0';
     // ustar magic + version

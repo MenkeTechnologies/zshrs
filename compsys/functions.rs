@@ -600,9 +600,13 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
 
     let mut dp = vec![vec![0; n + 1]; m + 1];
 
+    // Levenshtein DP base row/col init — needless_range_loop trips here
+    // but the index IS the value being written, not a positional access.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..=m {
         dp[i][0] = i;
     }
+    #[allow(clippy::needless_range_loop)]
     for j in 0..=n {
         dp[0][j] = j;
     }
