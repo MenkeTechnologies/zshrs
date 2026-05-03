@@ -375,15 +375,20 @@ impl<'a> Walker<'a> {
         }
         if (wc & 2) != 0 {
             // Short: 1-3 bytes packed in bits 3-10, 11-18, 19-26.
-            let mut s = String::new();
+            // Pack the raw bytes then run them through untokenize so the
+            // result matches the long-string path (string_at also calls
+            // untokenize on the raw bytes). Without this, short strings
+            // like `$x` (`\x85x`) and `-f` (`\x9bf`) leak the raw token
+            // bytes (Pound, String, Dash, …) into the AST sexp.
+            let mut bytes: Vec<u8> = Vec::new();
             for shift in [3, 11, 19] {
                 let c = ((wc >> shift) & 0xff) as u8;
                 if c == 0 {
                     break;
                 }
-                s.push(c as char);
+                bytes.push(c);
             }
-            s
+            crate::zwc::untokenize(&bytes)
         } else {
             // Long: byte offset into strings table.
             let offset = self.strs_base + (wc >> 2) as usize;

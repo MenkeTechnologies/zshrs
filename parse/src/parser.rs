@@ -2182,6 +2182,18 @@ impl<'a> ZshParser<'a> {
             }
             self.lexer.incasepat = 0;
 
+            // zsh's `(P)` form (parse.c:1320-1360 hack) treats the entire
+            // parenthesized contents as ONE zsh pattern with internal `|`
+            // as the literal alternation operator — NOT as multiple
+            // case-arm alternatives. Without a leading `(`, the bare
+            // `P1|P2)` form splits into multiple alts. Mirror that here:
+            // when a leading `(` was consumed, fold the |-separated
+            // pieces back into a single pattern string.
+            if had_leading_paren && patterns.len() > 1 {
+                let joined = patterns.join("|");
+                patterns = vec![joined];
+            }
+
             // Expect ).  Also handle the `(P))` wrapped-pattern form:
             // when a leading `(` was consumed, accept an extra `)` —
             // the inner `)` closes the optional-paren wrapper, the
@@ -2932,8 +2944,13 @@ impl<'a> ZshParser<'a> {
 
         self.skip_cond_separators();
 
-        // Check for unary operator
-        if s1.starts_with('-') && s1.len() == 2 {
+        // Check for unary operator. zsh's lexer tokenizes leading `-` as
+        // `char_tokens::DASH` (\u{9b}) inside gettokstr (lex.c:1390-1400
+        // LX2_DASH — `-` always becomes Dash, untokenized later). Match
+        // either form here, and use char-count not byte-count since DASH
+        // is 2 UTF-8 bytes (`\xc2\x9b`).
+        let s1_chars: Vec<char> = s1.chars().collect();
+        if s1_chars.len() == 2 && crate::tokens::is_dash(s1_chars[0]) {
             let s2 = match self.lexer.tok {
                 LexTok::String => {
                     let s = self.lexer.tokstr.clone().unwrap_or_default();

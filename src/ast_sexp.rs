@@ -424,8 +424,14 @@ fn redir_type_tag(t: RedirType) -> &'static str {
 }
 
 fn emit_str(s: &str, out: &mut String) {
+    // Our parser stores tokstr with zsh's internal token bytes (Dash=0x9b,
+    // Star=0x87, Inpar=0x88, etc.) inline. zsh's wordcode side runs the
+    // same strings through `untokenize` before AST emission (exec.c:2077).
+    // Mirror that here so a `-` lexed as Dash inside a [[ ]] cond doesn't
+    // serialize as raw \xc2\x9b in the parity sexp.
+    let untok = crate::zwc::untokenize(s.as_bytes());
     out.push('"');
-    for b in s.bytes() {
+    for b in untok.bytes() {
         match b {
             b'\\' => out.push_str("\\\\"),
             b'"' => out.push_str("\\\""),
