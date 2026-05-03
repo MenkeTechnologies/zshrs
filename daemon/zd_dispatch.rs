@@ -613,7 +613,32 @@ fn cmd_export(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> 
     if rest.len() < 2 {
         return Err("usage: zd export TARGET FORMAT".into());
     }
-    t.post("export", json!({"target": rest[0], "format": rest[1]}))
+    let target = &rest[0];
+    let format = &rest[1];
+    let response = t.post("export", json!({"target": target, "format": format}))?;
+
+    // For binary formats the daemon returns a JSON envelope with the
+    // payload base64-encoded under `body_base64` (see
+    // `daemon/export.rs::op_view_or_export`). The user almost always
+    // wants the raw bytes — `zd export aliases pdf > out.pdf` should
+    // produce a valid PDF file, not a JSON wrapper they have to
+    // unpack with `jq -r .body_base64 | base64 -d`. Detect those
+    // responses, decode, write raw to stdout, and exit immediately
+    // so the dispatcher's trailing `println!` doesn't append a
+    // newline that would corrupt the output.
+    if let Ok(parsed) = serde_json::from_str::<Value>(&response) {
+        if let Some(b64) = parsed.get("body_base64").and_then(Value::as_str) {
+            let bytes = base64_decode(b64)
+                .map_err(|e| format!("decode body_base64: {e}"))?;
+            use std::io::Write;
+            let mut out = std::io::stdout().lock();
+            out.write_all(&bytes)
+                .map_err(|e| format!("write stdout: {e}"))?;
+            out.flush().ok();
+            std::process::exit(0);
+        }
+    }
+    Ok(response)
 }
 
 fn cmd_view(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
