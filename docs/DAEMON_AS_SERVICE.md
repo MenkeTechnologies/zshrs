@@ -372,7 +372,7 @@ add a reverse proxy for browser pages).
 | SNAPSHOT | ✅ (publish/sign deferred) | save/list/load/diff via rkyv `CanonicalShard` |
 | SHELL | ✅ | pre-existing IPC ops surfaced over HTTP |
 | EXPORT (PDF) | ✅ | `printpdf`-rendered, base64-wire |
-| AUTH | ✅ | bearer tokens in `daemon.toml`, refuses non-loopback bind without tokens |
+| AUTH | ✅ | bearer tokens in `daemon.toml` (legacy flat string OR scoped table form); per-token scopes enforced against op→scope table in `daemon/auth.rs`; refuses non-loopback bind without tokens; unscoped tokens grant full access (backward compat) |
 | METRICS | ✅ | Prom 0.0.4 text + JSON op |
 
 Deferred to a follow-up round, named here for forward compatibility:
@@ -383,25 +383,64 @@ Deferred to a follow-up round, named here for forward compatibility:
 
 ### Authentication / authorization
 
-Default: same-user, local unix socket, FS perms 0600.
-Cross-user / cross-machine access requires opt-in:
+**Defaults — single-user trust model.** The IPC unix socket is
+0600-mode in the user's own cache dir. The HTTP listener is
+**disabled by default** and refuses to bind anywhere except loopback
+unless at least one bearer token is configured (see
+`daemon/http.rs:91`). For solo use, leave `[http.tokens]` empty —
+loopback HTTP needs no auth.
 
+**Multi-client opt-in.** Configure bearer tokens in
+`~/.config/zshrs/daemon.toml`. Two value shapes per token:
+
+```toml
+[http]
+listen = "127.0.0.1:7733"
+
+[http.tokens]
+# Legacy / unscoped — flat string. Token grants full access (every op).
+mybox      = "0123abcd..."
+
+# Scoped — inline table. Token only grants the listed scopes; every
+# other op returns 403 with code `scope_denied`.
+vim-lsp    = { token = "feedface...", scopes = ["defs.read", "snapshot.read"] }
+ci-pipe    = { token = "deadbeef...", scopes = ["job.write", "cache.*"] }
+dashboard  = { token = "00112233...", scopes = ["*.read"] }
+admin      = { token = "ffaa9988...", scopes = ["*"] }
 ```
-~/.config/zshrs/daemon.toml:
 
-  [auth]
-  cross_user = false             # default
-  network_listen = "off"         # off | "127.0.0.1:PORT" | "0.0.0.0:PORT"
+**Scope namespaces.** Every op maps to a single `<area>.<verb>` scope
+in `daemon/auth.rs:op_scope`. The areas are `cache`, `job`, `lock`,
+`defs`, `snapshot`, `artifact`, `schedule`, `event`, `watch`, `shell`,
+`recorder`, `history`, `ask`, `export`, `import`, `meta`. Verbs are
+typically `read` / `write` / `admin` / `control`. Add an op to that
+table when you add a new op — unmapped ops fall through to
+`meta.admin` (deny-by-default for any new op until explicitly mapped).
 
-  [auth.token_clients]
-  vim-lsp = { token = "...", scopes = ["definitions.read", "snapshot.read"] }
-  ci-pipeline = { token = "...", scopes = ["job.submit", "cache.put"] }
+**Pattern syntax in `scopes`:**
+- `*`            — every op
+- `<area>.*`     — every verb in `<area>` (`cache.*`, `job.*`, …)
+- `*.<verb>`     — every area's `<verb>` (`*.read`, `*.write`)
+- `<area>.<verb>` — exact match (`cache.put`, `defs.read`)
+
+No nested globs, no regex — readability over flexibility.
+
+**403 response on scope mismatch:**
+
+```json
+{
+  "ok": false,
+  "code": "scope_denied",
+  "msg": "token `vim-lsp` lacks scope `cache.write` for op `cache_put`",
+  "required_scope": "cache.write",
+  "granted_scopes": ["defs.read", "snapshot.read"]
+}
 ```
 
-Per-client scopes (read-only vs write, per-namespace) enable
-least-privilege for diverse client populations. Tokens are local-
-file-readable, intentional for the single-user use case (no
-secret-management infra needed).
+Token files are local-FS-readable; intentional for the single-user
+use case (no secret-management infra needed). For multi-machine
+deployments, the daemon sits behind whatever reverse proxy /
+identity layer the operator wants in front of `127.0.0.1:7733`.
 
 ### Wire format
 
