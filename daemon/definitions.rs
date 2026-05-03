@@ -294,6 +294,43 @@ pub async fn op_definitions_diff(state: &Arc<DaemonState>, args: Value) -> OpRes
     }))
 }
 
+/// `definitions_subscribe` — flip the per-session opt-in flag so this
+/// client starts receiving `recorder_ingested` Frame::Event broadcasts
+/// (the IPC counterpart of HTTP `/stream/definitions`). Off by default
+/// so silent clients don't get every recorder bundle's summary on
+/// their socket. Idempotent — calling twice from the same session is
+/// a no-op (returns `was_subscribed: true` the second time).
+pub async fn op_definitions_subscribe(
+    state: &Arc<DaemonState>,
+    client_id: u64,
+    _args: Value,
+) -> OpResult {
+    let prev = state
+        .set_definitions_subscribed(client_id, true)
+        .ok_or_else(|| ErrPayload::new("no_session", "client session not registered"))?;
+    Ok(json!({
+        "subscribed": true,
+        "was_subscribed": prev,
+    }))
+}
+
+/// `definitions_unsubscribe` — clear the opt-in flag set by
+/// `definitions_subscribe`. Idempotent. Sessions that never subscribed
+/// are still allowed to call this (returns `was_subscribed: false`).
+pub async fn op_definitions_unsubscribe(
+    state: &Arc<DaemonState>,
+    client_id: u64,
+    _args: Value,
+) -> OpResult {
+    let prev = state
+        .set_definitions_subscribed(client_id, false)
+        .ok_or_else(|| ErrPayload::new("no_session", "client session not registered"))?;
+    Ok(json!({
+        "subscribed": false,
+        "was_subscribed": prev,
+    }))
+}
+
 /// JSON-decode a canonical-row value. The canonical engine wraps
 /// scalar values in JSON quotes (`"foo"`); strip that for
 /// presentation. Falls back to the raw string if the decode fails so

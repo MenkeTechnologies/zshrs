@@ -483,3 +483,105 @@ fn definitions_emit_rejects_unknown_kind() {
     };
     assert_eq!(status, 404);
 }
+
+#[test]
+fn definitions_subscribe_unsubscribe_round_trip() {
+    // Pin the subscribe/unsubscribe op surface — flag flips on then
+    // off, idempotent. Per-request HTTP sessions, so each call gets a
+    // fresh client_id; we verify the op succeeds and returns the
+    // expected shape, not cross-call state (cross-session state would
+    // require a long-lived IPC client, out of scope for HTTP tests).
+    let d = DaemonHttp::spawn(None);
+
+    let r = ureq::post(&d.url("/op/definitions_subscribe"))
+        .set("Content-Type", "application/json")
+        .send_string("{}")
+        .expect("subscribe");
+    let body: serde_json::Value = r.into_json().unwrap();
+    assert_eq!(body["subscribed"], serde_json::json!(true));
+    assert_eq!(body["was_subscribed"], serde_json::json!(false));
+
+    let r = ureq::post(&d.url("/op/definitions_unsubscribe"))
+        .set("Content-Type", "application/json")
+        .send_string("{}")
+        .expect("unsubscribe");
+    let body: serde_json::Value = r.into_json().unwrap();
+    assert_eq!(body["subscribed"], serde_json::json!(false));
+}
+
+#[test]
+fn watch_subscribe_returns_id_and_lists() {
+    // Pin watch_subscribe → watch_id → watch_list visibility →
+    // watch_unsubscribe removes. Refcounting verified by subscribing
+    // the same path twice and asserting unsubscribe of one keeps the
+    // other live.
+    let d = DaemonHttp::spawn(None);
+    let tmp = tempfile::TempDir::new().expect("tempdir for watch");
+    let path = tmp.path().to_str().unwrap().to_string();
+
+    // Two subscriptions on the same path.
+    let r1 = ureq::post(&d.url("/op/watch_subscribe"))
+        .set("Content-Type", "application/json")
+        .send_string(&format!(r#"{{"path":"{path}"}}"#))
+        .expect("watch_subscribe 1");
+    let b1: serde_json::Value = r1.into_json().unwrap();
+    let id1 = b1["watch_id"].as_u64().expect("watch_id u64");
+    assert!(id1 > 0);
+
+    let r2 = ureq::post(&d.url("/op/watch_subscribe"))
+        .set("Content-Type", "application/json")
+        .send_string(&format!(r#"{{"path":"{path}","recursive":true}}"#))
+        .expect("watch_subscribe 2");
+    let b2: serde_json::Value = r2.into_json().unwrap();
+    let id2 = b2["watch_id"].as_u64().expect("watch_id u64");
+    assert_ne!(id1, id2, "ids must be distinct");
+
+    // List shows both with refcount=2 (same path).
+    let r = ureq::post(&d.url("/op/watch_list"))
+        .set("Content-Type", "application/json")
+        .send_string("{}")
+        .expect("watch_list");
+    let body: serde_json::Value = r.into_json().unwrap();
+    assert_eq!(body["count"], serde_json::json!(2));
+    let subs = body["subscriptions"].as_array().unwrap();
+    assert!(subs.iter().all(|s| s["ref_count"] == serde_json::json!(2)));
+
+    // Unsubscribe one — other subscription survives, refcount drops to 1.
+    let r = ureq::post(&d.url("/op/watch_unsubscribe"))
+        .set("Content-Type", "application/json")
+        .send_string(&format!(r#"{{"watch_id":{id1}}}"#))
+        .expect("watch_unsubscribe 1");
+    let body: serde_json::Value = r.into_json().unwrap();
+    assert_eq!(body["removed"], serde_json::json!(true));
+
+    let r = ureq::post(&d.url("/op/watch_list"))
+        .set("Content-Type", "application/json")
+        .send_string("{}")
+        .expect("watch_list 2");
+    let body: serde_json::Value = r.into_json().unwrap();
+    assert_eq!(body["count"], serde_json::json!(1));
+    assert_eq!(body["subscriptions"][0]["ref_count"], serde_json::json!(1));
+
+    // Final unsubscribe — list goes empty.
+    let _ = ureq::post(&d.url("/op/watch_unsubscribe"))
+        .set("Content-Type", "application/json")
+        .send_string(&format!(r#"{{"watch_id":{id2}}}"#))
+        .expect("watch_unsubscribe 2");
+    let r = ureq::post(&d.url("/op/watch_list"))
+        .set("Content-Type", "application/json")
+        .send_string("{}")
+        .expect("watch_list 3");
+    let body: serde_json::Value = r.into_json().unwrap();
+    assert_eq!(body["count"], serde_json::json!(0));
+}
+
+#[test]
+fn watch_unsubscribe_unknown_id_is_idempotent() {
+    let d = DaemonHttp::spawn(None);
+    let r = ureq::post(&d.url("/op/watch_unsubscribe"))
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"watch_id":999999}"#)
+        .expect("watch_unsubscribe missing id");
+    let body: serde_json::Value = r.into_json().unwrap();
+    assert_eq!(body["removed"], serde_json::json!(false));
+}

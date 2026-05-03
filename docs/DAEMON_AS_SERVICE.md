@@ -281,7 +281,13 @@ SCHEDULE — cron-equivalent with persistent state (cache.db / table `schedule`)
 WATCH — fsnotify push stream
   GET /stream/watch?path=DIR&recursive=BOOL  → SSE `event: fs`                            ✅
                                                data: { trigger_path, source_root, … }
-  watch_unsubscribe                                                                      ⏳ (close TCP)
+  watch_subscribe   {path, recursive?}        → {watch_id, path, recursive}              ✅
+  watch_unsubscribe {watch_id}                → {removed: bool}                          ✅
+  watch_list        {}                        → {subscriptions[{watch_id, path,
+                                                                 ref_count}], count}     ✅
+  // Refcounted: same path subscribed N times stays armed until the
+  // Nth unsubscribe. HTTP /stream/watch uses watch_subscribe internally
+  // and releases on TCP close (no SSE-disconnect leak).
 
 EVENT — user-defined pubsub bus
   publish      {topic, data}                  → {delivered_to: N}                         ✅
@@ -298,14 +304,20 @@ LOCK — named cross-process mutual exclusion (PID-tied auto-release)
   lock_list        {}                           → {locks[{name, holder_pid, alive, …}]}   ✅
 
 DEFINITIONS — shell-state catalog (recorder-fed, federated by shell_id)
-  definitions_kinds   {}                                  → {kinds[], all_known[]}        ✅
-  definitions_query   {kind?, name?, prefix?, shell_id?, limit?}                          ✅
-                                                          → {records[], count}
-  definitions_emit    {shell_id, kind, name, value?, file?, line?, fn_chain?}             ✅
-                                                          → {wrote_rows, …}
-  definitions_diff    {shell_a, shell_b, kind?}           → {added[], removed[], changed[]} ✅
-  GET /stream/definitions                                  → SSE `event: defs`            ✅
-                                                            (fired on every recorder_ingest)
+  definitions_kinds        {}                              → {kinds[], all_known[]}      ✅
+  definitions_query        {kind?, name?, prefix?, shell_id?, limit?}                    ✅
+                                                           → {records[], count}
+  definitions_emit         {shell_id, kind, name, value?, file?, line?, fn_chain?}       ✅
+                                                           → {wrote_rows, …}
+  definitions_diff         {shell_a, shell_b, kind?}       → {added, removed, changed}   ✅
+  definitions_subscribe    {}   → {subscribed: true, was_subscribed: bool}               ✅
+  definitions_unsubscribe  {}   → {subscribed: false, was_subscribed: bool}              ✅
+  GET /stream/definitions                                   → SSE `event: defs`          ✅
+                                                             (fired on every recorder_ingest)
+  // recorder_ingest now broadcasts to opted-in sessions only — IPC
+  // clients call definitions_subscribe to start receiving the
+  // `recorder_ingested` Frame::Event. HTTP /stream/definitions auto-
+  // subscribes its synthetic session.
 
 SNAPSHOT — portable canonical-state artifacts
   snapshot_save  {tag, notes?}     → {tag, path, bytes, generation, total_rows}           ✅
@@ -353,10 +365,10 @@ add a reverse proxy for browser pages).
 | ARTIFACT | ✅ | sha256 dedup, base64 wire encoding, GC by age + size cap |
 | JOB | ✅ | tokio supervisor, per-job stdout/stderr files, terminal states `exited`/`failed`/`killed`/`cancelled` |
 | SCHEDULE | ✅ | cron 6-field format, sqlite-persisted, 1Hz tick, fires `job_submit` with `tags:["scheduled"]` |
-| WATCH | ✅ | per-connection fsnotify registration, SSE delivery |
+| WATCH | ✅ | refcounted per-path subscription via `watch_subscribe` (IPC) or `/stream/watch` (HTTP); same path subscribed N times stays armed until the Nth unsubscribe; SSE TCP-close auto-releases |
 | EVENT | ✅ | scope.topic patterns, `publish` requires session (HTTP `handler_op` registers per request) |
 | LOCK | ✅ | named mutex, u128 token, PID liveness probe |
-| DEFINITIONS | ✅ (subscribe deferred) | `kinds`, `query`, `emit`, `diff`; federated by `shell_id` (composite-key store keeps per-shell rows distinct); SSE pushes recorder ingests; see `docs/SHELL_IDS.md` for identifier registry |
+| DEFINITIONS | ✅ | `kinds`, `query`, `emit`, `diff`, `subscribe`, `unsubscribe`; federated by `shell_id` (composite-key store keeps per-shell rows distinct); IPC subscribe is opt-in (silent clients don't get every recorder bundle); HTTP `/stream/definitions` auto-subscribes; see `docs/SHELL_IDS.md` for identifier registry |
 | SNAPSHOT | ✅ (publish/sign deferred) | save/list/load/diff via rkyv `CanonicalShard` |
 | SHELL | ✅ | pre-existing IPC ops surfaced over HTTP |
 | EXPORT (PDF) | ✅ | `printpdf`-rendered, base64-wire |

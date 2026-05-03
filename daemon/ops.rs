@@ -11,6 +11,7 @@ pub const OP_NAMES: &[&str] = &[
     "canonical_hydrate_view", "clean", "cmd_result", "cmd_started", "compact",
     "complete", "config_get", "config_list", "config_set", "daemon",
     "definitions_diff", "definitions_emit", "definitions_kinds", "definitions_query",
+    "definitions_subscribe", "definitions_unsubscribe",
     "diff_canonical", "doctor", "export", "export_all", "export_catalog",
     "export_shard", "export_zcompdump", "fpath_changed", "highlight",
     "history_append", "history_query", "import_all", "import_catalog",
@@ -25,7 +26,8 @@ pub const OP_NAMES: &[&str] = &[
     "snapshot_load", "snapshot_save", "source_resolve", "stats_flush",
     "subscribe",
     "subscribe_shard", "subscription_set_paused", "suggest", "tag", "untag",
-    "unsubscribe", "verify", "view", "watcher_stats",
+    "unsubscribe", "verify", "view", "watch_list", "watch_subscribe",
+    "watch_unsubscribe", "watcher_stats",
 ];
 
 // IPC operation dispatch + handlers.
@@ -165,6 +167,13 @@ pub async fn dispatch(state: &Arc<DaemonState>, client_id: u64, op: &str, args: 
         "definitions_kinds" => super::definitions::op_definitions_kinds(state, args).await,
         "definitions_emit"  => super::definitions::op_definitions_emit(state, args).await,
         "definitions_diff"  => super::definitions::op_definitions_diff(state, args).await,
+        "definitions_subscribe"   => super::definitions::op_definitions_subscribe(state, client_id, args).await,
+        "definitions_unsubscribe" => super::definitions::op_definitions_unsubscribe(state, client_id, args).await,
+        // Refcounted fsnotify subscription — IPC counterpart of HTTP
+        // /stream/watch. See `op_watch_subscribe` below for the contract.
+        "watch_subscribe"   => op_watch_subscribe(state, args).await,
+        "watch_unsubscribe" => op_watch_unsubscribe(state, args).await,
+        "watch_list"        => op_watch_list(state).await,
         // Metrics (Prometheus-shaped also via GET /metrics).
         "metrics" => super::metrics::op_metrics(state, args).await,
 
@@ -1694,10 +1703,14 @@ async fn op_recorder_ingest(state: &Arc<DaemonState>, args: Value) -> OpResult {
         "finished_at_ns": bundle.finished_at_ns,
         "cmdline": bundle.cmdline.unwrap_or_default(),
     });
-    let _ = state.broadcast(
-        super::ipc::Frame::event("recorder_ingested", payload.clone()),
-        &[],
-    );
+    // Targeted broadcast — only clients that called `definitions_subscribe`
+    // (or HTTP /stream/definitions, which auto-subscribes its synthetic
+    // session) receive this frame. Silent IPC sessions stay quiet.
+    let _ = state
+        .broadcast_to_definitions_subscribers(super::ipc::Frame::event(
+            "recorder_ingested",
+            payload.clone(),
+        ));
     tracing::info!(
         events = total,
         hydrated,
@@ -2111,6 +2124,77 @@ async fn op_fpath_changed(state: &Arc<DaemonState>, args: Value) -> OpResult {
 async fn op_watcher_stats(state: &Arc<DaemonState>) -> OpResult {
     let stats = state.fs_watcher.stats();
     Ok(json!(stats))
+}
+
+/// `watch_subscribe {path, recursive?}` — register a refcounted
+/// fsnotify subscription. Returns `{watch_id}`. The same path can be
+/// subscribed multiple times safely; the underlying notify::Watcher
+/// stays armed until the last subscriber unsubscribes. Used by IPC
+/// clients that want fsnotify events without going through HTTP SSE
+/// (the HTTP `/stream/watch` handler uses this same op internally so
+/// SSE-disconnect cleanup is consistent).
+async fn op_watch_subscribe(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let path = args
+        .get("path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `path`"))?
+        .to_string();
+    let recursive = args
+        .get("recursive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let wp = super::fsnotify::WatchedPath {
+        path: std::path::PathBuf::from(&path),
+        shard_slug: format!("ipc-watch-{}", super::shard::hash8(&path)),
+        source_root: path.clone(),
+        kind: super::fsnotify::WatchKind::Generic,
+    };
+    let id = state
+        .fs_watcher
+        .subscribe(wp, recursive)
+        .map_err(|e| ErrPayload::new("watch_register", e.to_string()))?;
+    Ok(json!({
+        "watch_id": id,
+        "path": path,
+        "recursive": recursive,
+    }))
+}
+
+/// `watch_unsubscribe {watch_id}` — drop one subscription. Returns
+/// `{removed: bool}`. Decrements the path's refcount; the underlying
+/// notify::Watcher is unwatched only when the last subscriber for
+/// that path unsubscribes.
+async fn op_watch_unsubscribe(state: &Arc<DaemonState>, args: Value) -> OpResult {
+    let id = args
+        .get("watch_id")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ErrPayload::new("bad_args", "missing `watch_id` (u64)"))?;
+    let removed = state.fs_watcher.unsubscribe(id);
+    Ok(json!({
+        "watch_id": id,
+        "removed": removed,
+    }))
+}
+
+/// `watch_list {}` — snapshot of every active subscription. Returns
+/// `{subscriptions: [{watch_id, path, ref_count}], count}`. The
+/// `ref_count` field tells you how many other subscribers share the
+/// same path (1 = only this subscription).
+async fn op_watch_list(state: &Arc<DaemonState>) -> OpResult {
+    let subs = state.fs_watcher.list_subscriptions();
+    let entries: Vec<Value> = subs
+        .into_iter()
+        .map(|(id, path, count)| json!({
+            "watch_id": id,
+            "path": path,
+            "ref_count": count,
+        }))
+        .collect();
+    let count = entries.len();
+    Ok(json!({
+        "subscriptions": entries,
+        "count": count,
+    }))
 }
 
 async fn op_log_level(args: Value) -> OpResult {
