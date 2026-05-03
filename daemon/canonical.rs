@@ -72,6 +72,16 @@ pub struct CanonicalRow {
     /// docs/SHELL_IDS.md for the reserved-identifier registry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_id: Option<String>,
+    /// Source file where this definition was captured by the recorder
+    /// (e.g. `~/.zshrc`, a sourced plugin file). Powers `zwhere`'s
+    /// "where was this defined" answer. None on rows that pre-date
+    /// file/line attribution (older shards) or that come from
+    /// `definitions_emit` callers without `--file` set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Source line for `file`. Same nullable semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
 }
 
 /// In-memory canonical state, keyed first by subsystem, then by key. Values
@@ -145,6 +155,14 @@ impl CanonicalEngine {
                     // (`extras["row_shell_ids"]` map) so this round-
                     // trips. v1 keeps None and treats as "zshrs".
                     shell_id: None,
+                    // Same story for file/line: not in the shard
+                    // format yet. Reload-from-disk loses the
+                    // attribution. New ingests via
+                    // replace_subsystem_with_attrs populate them in
+                    // the in-memory canonical state; survives until
+                    // daemon restart.
+                    file: None,
+                    line: None,
                 },
             );
         };
@@ -239,6 +257,33 @@ impl CanonicalEngine {
         set_by_shell: Option<u64>,
         shell_id: Option<String>,
     ) -> usize {
+        self.upsert_tagged_with_attrs(
+            subsystem,
+            key,
+            json_value,
+            set_by_shell,
+            shell_id,
+            None,
+            None,
+        )
+    }
+
+    /// `upsert_tagged` + per-row file/line attribution. Used by
+    /// `definitions_emit` when the caller passes `--file`/`--line`,
+    /// and by `recorder_ingest` for every event (recorder always
+    /// captures file/line via `RecordCtx`). file/line live in the
+    /// in-memory `CanonicalRow` and survive until daemon restart;
+    /// they are not yet persisted in the rkyv shard format.
+    pub fn upsert_tagged_with_attrs(
+        &self,
+        subsystem: &str,
+        key: &str,
+        json_value: &str,
+        set_by_shell: Option<u64>,
+        shell_id: Option<String>,
+        file: Option<String>,
+        line: Option<u32>,
+    ) -> usize {
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let ckey = composite_storage_key(key, shell_id.as_deref());
         let mut g = self.inner.write();
@@ -250,6 +295,8 @@ impl CanonicalEngine {
                 set_at_ns: now,
                 set_by_shell: set_by_shell.map(|n| n as i64),
                 shell_id,
+                file,
+                line,
             },
         );
         1
@@ -281,6 +328,32 @@ impl CanonicalEngine {
         set_by_shell: Option<u64>,
         shell_id: Option<String>,
     ) -> usize {
+        // Adapt the (key, value) tuples into (key, value, None, None)
+        // and delegate. Existing callers (snapshot restore, etc.) use
+        // this; recorder_ingest uses the with_attrs variant directly
+        // so file/line propagate.
+        self.replace_subsystem_with_attrs(
+            subsystem,
+            rows.into_iter().map(|(k, v)| (k, v, None, None)),
+            set_by_shell,
+            shell_id,
+        )
+    }
+
+    /// `replace_subsystem_tagged` + per-row file/line attribution.
+    /// Iterator yields `(key, value, file, line)` 4-tuples. Used by
+    /// `recorder_ingest` so every captured definition retains its
+    /// `~/.zshrc:42` lineage for `zwhere` queries.
+    pub fn replace_subsystem_with_attrs<I>(
+        &self,
+        subsystem: &str,
+        rows: I,
+        set_by_shell: Option<u64>,
+        shell_id: Option<String>,
+    ) -> usize
+    where
+        I: IntoIterator<Item = (String, String, Option<String>, Option<u32>)>,
+    {
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let mut g = self.inner.write();
         let map = g.rows.entry(subsystem.to_string()).or_default();
@@ -297,7 +370,7 @@ impl CanonicalEngine {
             }
         }
         let mut inserted = 0;
-        for (k, v) in rows {
+        for (k, v, file, line) in rows {
             let ckey = composite_storage_key(&k, shell_id.as_deref());
             let r = CanonicalRow {
                 key: k,
@@ -305,6 +378,8 @@ impl CanonicalEngine {
                 set_at_ns: now,
                 set_by_shell: set_by_shell.map(|n| n as i64),
                 shell_id: shell_id.clone(),
+                file,
+                line,
             };
             map.insert(ckey, r);
             inserted += 1;

@@ -1841,6 +1841,35 @@ mod tests {
 /// `column -t` if they want it; `zwhere` stays narrow so scripts can
 /// `awk` cleanly.
 fn zwhere(args: &[String]) -> i32 {
+    // zwhere is a daemon-only feature — there's no source-of-truth
+    // fallback for "where was this defined" without the recorder
+    // having captured it and the daemon serving the catalog.
+    // Pre-flight with a cheap socket check + clear error message
+    // instead of the generic `connect_or_err` "transport: …" line.
+    {
+        let paths = match CachePaths::resolve() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("zwhere: cannot resolve $ZSHRS_HOME: {e}");
+                return 1;
+            }
+        };
+        if !Client::is_daemon_alive(&paths) {
+            eprintln!(
+                "zwhere: daemon is not running (no socket at {}).\n\
+                 zwhere queries the canonical catalog the daemon serves; \
+                 there's no source-of-truth fallback.\n\
+                 Start it via:\n  \
+                   zshrs-daemon                                  # foreground manual\n  \
+                   systemctl --user start zshrs-daemon           # Linux\n  \
+                   launchctl load ~/Library/LaunchAgents/com.menketechnologies.zshrs-daemon.plist\n  \
+                   brew services start zshrs",
+                paths.socket.display(),
+            );
+            return 1;
+        }
+    }
+
     let mut kind: Option<String> = None;
     let mut name: Option<String> = None;
     let mut prefix: Option<String> = None;
