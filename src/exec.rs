@@ -44276,11 +44276,11 @@ impl ShellExecutor {
         }
         if !out.is_empty() {
             print!("{}", out.join(&sep));
-            // Always end with a newline so the output is line-terminated
-            // (coreutils seq does this even with -s).
-            if !sep.ends_with('\n') {
-                println!();
-            }
+            // coreutils seq always terminates the final line with `\n`,
+            // even when -s SEPARATOR is given and the separator itself
+            // is not a newline. Joining with sep leaves no trailing
+            // terminator, so emit one unconditionally here.
+            println!();
         }
         0
     }

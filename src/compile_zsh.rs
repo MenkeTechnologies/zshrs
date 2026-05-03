@@ -1033,16 +1033,25 @@ impl ZshCompiler {
     /// to a runtime expand call via BUILTIN_EXPAND_TEXT.
     fn compile_word_str(&mut self, s: &str) {
         // ANSI-C quoted form: `$'a\tb'` arrives from the lexer as
-        // `<META-$><SNULL>a\tb<SNULL>` = `\u{85}\u{9d}a\tb\u{9d}`. Detect
-        // this shape and decode the C-style escapes into bytes.
-        if s.starts_with('\u{85}') && s.len() >= 3 {
-            let inner = &s[s.char_indices().nth(1).map(|(i, _)| i).unwrap_or(s.len())..];
+        // `<META-QSTRING><SNULL>a<BNULL>tb<SNULL>` —
+        // `\u{8c}\u{9d}a\u{9f}tb\u{9d}` per parse/src/lexer.rs:1767-1799.
+        // (Older comments reference `<META-$>` = `\u{85}`; accept either
+        // marker.) Strip the leading `<META-?>` + `<SNULL>` and trailing
+        // `<SNULL>`, convert each BNULL+X back to `\X` so decode_ansi_c
+        // sees real backslash escapes, then run the C-escape decoder.
+        let first = s.chars().next();
+        if matches!(first, Some('\u{85}') | Some('\u{8c}')) && s.len() >= 3 {
+            let inner = &s[first.unwrap().len_utf8()..];
             if inner.starts_with('\u{9d}') && inner.ends_with('\u{9d}') && inner.len() >= 6 {
-                // strip leading + trailing SNULL markers (3 bytes each in UTF-8)
-                let body_start = inner.char_indices().nth(1).map(|(i, _)| i).unwrap_or(0);
+                let body_start = '\u{9d}'.len_utf8();
                 let body_end = inner.len() - '\u{9d}'.len_utf8();
-                let body = &inner[body_start..body_end];
-                let decoded = decode_ansi_c(body);
+                let body_raw = &inner[body_start..body_end];
+                // BNULL → `\` so `BNULL t` becomes `\t` for the decoder.
+                let body: String = body_raw
+                    .chars()
+                    .map(|c| if c == '\u{9f}' { '\\' } else { c })
+                    .collect();
+                let decoded = decode_ansi_c(&body);
                 let idx = self.builder.add_constant(Value::str(decoded.as_str()));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 return;
