@@ -425,14 +425,43 @@ fn output(args: &[String]) -> i32 {
 /// daemon writes both files under user-owned 0600 perms, so reading
 /// them from the same user's shell is safe.
 ///
-/// True bidirectional `screen -r`-style attach (stdin pumped from
-/// the client back into the running job) requires the supervisor to
-/// spawn jobs under a ptmx instead of `Stdio::null()` for stdin
-/// (daemon/jobs.rs:251). That rewrite is its own design pass — pty
-/// pool, streaming `job_input` op, SIGWINCH propagation — and out
-/// of scope for this commit. For now attach is the read-only
-/// subset that covers the most common "what is this long-running
-/// job doing right now" use case.
+/// ## Bidirectional attach roadmap
+///
+/// True `screen -r`-style attach — stdin keystrokes from the client
+/// flow back to the running job — is intentionally NOT in this
+/// function. The path requires:
+///
+///   1. **Supervisor: pty allocation at submit** (`daemon/jobs.rs`).
+///      Today every job spawns with `Stdio::null()` for stdin
+///      (jobs.rs:251). Replace with `nix::pty::openpty()` when a
+///      new `--pty` submit flag is set. Slave side becomes child's
+///      stdin/stdout/stderr via pre_exec dup2; master fd held in
+///      JobMeta.
+///   2. **Output multiplexing** (`daemon/jobs.rs`).
+///      Reader task pumps `master_fd` to both the `.out` file (so
+///      non-attached observers can still tail) AND a broadcast
+///      channel that attached clients drain.
+///   3. **`job_input` op** (`daemon/ops.rs`).
+///      Accepts `{id, bytes_b64}`, writes bytes into the master fd.
+///      Base64 envelope keeps the JSON IPC framing intact — binary
+///      `Frame` variant would be cleaner but touches the protocol
+///      fundamentals.
+///   4. **`job_resize` op** (`daemon/ops.rs`).
+///      Accepts `{id, rows, cols}`, calls TIOCSWINSZ on master.
+///      Client pumps SIGWINCH on attach, reads from termios, fires
+///      this op.
+///   5. **Bidirectional pump in this function**.
+///      Detect pty-mode via `job_status.pty == true`. Switch
+///      stdin into raw mode (termios cfmakeraw), spawn a stdin
+///      reader thread that batches keystrokes and fires job_input,
+///      register a subscriber for output frames. SIGWINCH handler
+///      fires job_resize. Restore termios on exit.
+///
+/// Estimated scope: ~400 LOC across 4 files, plus careful testing
+/// for echo/cooked/raw mode interactions and process-group
+/// signalling. The current read-only attach is the safe slice of
+/// that work — it ships value (live tail of long-running jobs)
+/// without the protocol surface expansion.
 fn attach(args: &[String]) -> i32 {
     use std::io::{Read, Write};
 
