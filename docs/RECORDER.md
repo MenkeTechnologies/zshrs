@@ -838,7 +838,7 @@ CREATE TABLE runs (
     run_id           INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at_ns    INTEGER NOT NULL,
     finished_at_ns   INTEGER,
-    cmdline          TEXT,           -- 'zshrs --record'
+    cmdline          TEXT,           -- 'zshrs-recorder'
     zdotdir          TEXT,           -- snapshot of $ZDOTDIR
     home             TEXT,
     record_count     INTEGER,
@@ -1328,17 +1328,17 @@ The recorder fills the union of all the above into one queryable index.
 
 ## Failure modes
 
-| Failure mode | Mitigation |
-|---|---|
-| Recorder run is slow on cold sqlite (first-time setup of zpwr's 17k completions) | Batched inserts, `PRAGMA journal_mode=WAL`, prepared statements; benchmark target: ≤2× normal startup time |
-| Stale records after a sourced file changes | Daemon's fsnotify (already wired) detects mtime change → triggers `--record` re-run for the changed scope; old records of that file are flagged stale and excluded by default |
-| Recorder + daemon down | recorder is opt-in; falls back to silently no-op; user sees "no records, run `zshrs --record`" message from `zwhere` |
-| Schema growth across many runs | retain last K runs (K=10 default), GC older runs; daemon's existing log-rotation logic applies |
-| `eval`-generated code overflowing record size | truncate `value` field at 4KB, store full content in a side blob keyed by sha256 |
-| Sensitive content in records (export AWS_SECRET=...) | reuse `daemon/source_resolver.rs::is_sensitive` heuristic; `zwhere` masks values for sensitive entries unless `--show-sensitive` is passed |
-| Concurrent recorders | run_id is autoinc; multiple recorder runs are independent rows in `runs`; reads always see most-recent-by-default |
-| Hash collision on `current_defs` (same name set in multiple kinds) | primary key is `(kind, name)`, naturally handles |
-| Recorder catches its own internal calls | aspect's before-advice has a `IN_RECORDER` guard flag set during emit; nested calls during record-emit are skipped |
+| Failure mode | Mitigation                                                                                                                                                                        |
+|---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Recorder run is slow on cold sqlite (first-time setup of zpwr's 17k completions) | Batched inserts, `PRAGMA journal_mode=WAL`, prepared statements; benchmark target: ≤2× normal startup time                                                                        |
+| Stale records after a sourced file changes | Daemon's fsnotify (already wired) detects mtime change → triggers `zsh-recorder` re-run for the changed scope; old records of that file are flagged stale and excluded by default |
+| Recorder + daemon down | recorder is opt-in; falls back to silently no-op; user sees "no records, run `zshrs-recorder`" message from `zwhere`                                                              |
+| Schema growth across many runs | retain last K runs (K=10 default), GC older runs; daemon's existing log-rotation logic applies                                                                                    |
+| `eval`-generated code overflowing record size | truncate `value` field at 4KB, store full content in a side blob keyed by sha256                                                                                                  |
+| Sensitive content in records (export AWS_SECRET=...) | reuse `daemon/source_resolver.rs::is_sensitive` heuristic; `zwhere` masks values for sensitive entries unless `--show-sensitive` is passed                                        |
+| Concurrent recorders | run_id is autoinc; multiple recorder runs are independent rows in `runs`; reads always see most-recent-by-default                                                                 |
+| Hash collision on `current_defs` (same name set in multiple kinds) | primary key is `(kind, name)`, naturally handles                                                                                                                                  |
+| Recorder catches its own internal calls | aspect's before-advice has a `IN_RECORDER` guard flag set during emit; nested calls during record-emit are skipped                                                                |
 
 ## Performance targets
 
@@ -1356,7 +1356,7 @@ The recorder fills the union of all the above into one queryable index.
 
 ### Phase 1 — single-aspect proof
 
-1. Add `--record` flag to `zshrs` binary.
+1. Add `zshrs-recorder` binary.
 2. Wire one aspect: `bin_alias` dispatcher. Before-advice captures (file, line, fn_chain) and pushes to in-process `Vec<RecordEvent>`.
 3. At shell exit, dump the vec to stderr in plain text.
 4. Run on `~/.zshrc`. Validate: every alias appearing in the user's interactive shell is in the dump, with correct file:line.
@@ -1397,7 +1397,7 @@ Estimated: 2 days.
 
 ### Phase 6 — CI + fuzz
 
-17. Property test: for any input file, `zshrs --record` followed by `zwhere all *` should return a record matching every alias/function visible in `whence`.
+17. Property test: for any input file, `zshrs-recorder` followed by `zwhere all *` should return a record matching every alias/function visible in `whence`.
 18. Fuzz: generated `.zshrc` mutations + `cargo fuzz` against the aspect layer to catch missed mutations.
 
 Estimated: ongoing.
@@ -1435,8 +1435,8 @@ shipped by any shell.
 
 - Builtin: `zwhere` (matches the `z*` builtin family per
   `cache_architecture_rkyv.md` memory)
-- Mode flag: `zshrs --record`
-- Wrapper: `bins/zshrs-recorder` (calls `zshrs --record`)
+- Mode flag: `zshrs-recorder`
+- Wrapper: `bins/zshrs-recorder` (calls `zshrs-recorder`)
 - Daemon op: `record_events` (matches existing `source_resolve`,
   `op_*` naming)
 - SQLite table: `definitions` (canonical), `runs` (per-run header),
@@ -1461,7 +1461,7 @@ shipped by any shell.
    record; the parameters it provides are auto-discoverable via
    `parameter` module introspection — record once per module-load
    with a `provides` field listing exposed parameters.
-6. **Cross-shell visibility:** if Shell A runs `--record` and Shell B
+6. **Cross-shell visibility:** if Shell A runs `zshrs-recorder` and Shell B
    queries `zwhere`, should Shell B see Shell A's records
    immediately? Yes — the daemon is the singleton. fsnotify on
    sqlite WAL gives sub-second visibility.
@@ -1478,7 +1478,7 @@ shipped by any shell.
 ## TL;DR
 
 The **Plugin-Framework-Agnostic State-Modification Recorder
-(PFA-SMR)**: a `zshrs --record` mode that, by AOP-intercepting every
+(PFA-SMR)**: a `zshrs-recorder` mode that, by AOP-intercepting every
 state-mutating builtin dispatcher in zshrs's runtime, captures
 `(kind, name, value, file, line, fn_chain, ts, prev_def_id)` for every
 alias, function, export, fpath append, hash -d, zstyle, bindkey,
