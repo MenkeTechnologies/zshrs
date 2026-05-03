@@ -191,16 +191,28 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         total += 1;
     }
 
-    // bindkey / compdef / zle / inline-defined functions: captured in
-    // shard but need rich-type translation (KeymapManager / CompSpec /
-    // ZLE widget structs / parse+compile to fusevm Chunks). Skipping
-    // is safe — bindkey/compdef fall back to demand-resolution on
-    // first keystroke / first completion; inline functions get
-    // re-parsed when the autoload resolver fires for them. Slower
-    // than pre-baked but correct. Wiring these is its own commit per
-    // subsystem.
+    // bindkey: install each captured (keyseq, widget) into the global
+    // KeymapManager. Recorder encodes the keymap-target by prefixing
+    // the value with `[KEYMAP] ` (per `builtin_bindkey` in
+    // src/exec.rs); strip that prefix and dispatch to the right
+    // keymap. Default = Main.
+    {
+        use crate::zle::{zle, KeymapName};
+        let mut zle_state = zle();
+        for (keyseq, value) in shard.bindkeys {
+            let (keymap, widget) = parse_bindkey_value(&value);
+            zle_state.bind_key(keymap, &keyseq, widget);
+            total += 1;
+        }
+    }
+
+    // compdef / zle / inline-defined functions: captured in shard but
+    // need rich-type translation (CompSpec / ZLE widget structs /
+    // parse+compile to fusevm Chunks). Skipping is safe — compdef
+    // falls back to demand-resolution on first completion; inline
+    // functions get re-parsed when the autoload resolver fires for
+    // them. Wiring these is its own commit per subsystem.
     let _ = shard.functions;
-    let _ = shard.bindkeys;
     let _ = shard.compdef;
 
     // zmodload / manpath / plugins / sourced_files / extras: no
@@ -215,4 +227,60 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     let _ = shard.extras;
 
     total
+}
+
+/// Decode a recorder-emitted bindkey value into (keymap, widget).
+///
+/// Format from `src/exec.rs:builtin_bindkey`:
+///   `widget_name`               → KeymapName::Main
+///   `[keymap_name] widget_name` → KeymapName::from_str("keymap_name")
+///
+/// Unknown keymap names fall back to `Main` (matches what zsh's
+/// `bindkey` does for unrecognized -M targets — a safer default than
+/// silently dropping the binding).
+fn parse_bindkey_value(value: &str) -> (crate::zle::KeymapName, &str) {
+    use crate::zle::KeymapName;
+    if let Some(rest) = value.strip_prefix('[') {
+        if let Some(close_idx) = rest.find(']') {
+            let keymap_str = &rest[..close_idx];
+            let widget = rest[close_idx + 1..].trim_start();
+            let keymap = KeymapName::from_str(keymap_str).unwrap_or(KeymapName::Main);
+            return (keymap, widget);
+        }
+    }
+    (KeymapName::Main, value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zle::KeymapName;
+
+    #[test]
+    fn bindkey_value_parses_main_keymap_default() {
+        let (km, w) = parse_bindkey_value("history-search-backward");
+        assert_eq!(km, KeymapName::Main);
+        assert_eq!(w, "history-search-backward");
+    }
+
+    #[test]
+    fn bindkey_value_parses_explicit_keymap() {
+        let (km, w) = parse_bindkey_value("[viins] backward-delete-char");
+        assert_eq!(km, KeymapName::ViInsert);
+        assert_eq!(w, "backward-delete-char");
+    }
+
+    #[test]
+    fn bindkey_value_unknown_keymap_falls_back_to_main() {
+        let (km, w) = parse_bindkey_value("[totally-not-real] do-thing");
+        assert_eq!(km, KeymapName::Main);
+        assert_eq!(w, "do-thing");
+    }
+
+    #[test]
+    fn bindkey_value_handles_extra_whitespace_after_close_bracket() {
+        let (km, w) = parse_bindkey_value("[vicmd]   forward-word");
+        assert_eq!(km, KeymapName::ViCommand);
+        assert_eq!(w, "forward-word");
+    }
 }
