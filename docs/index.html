@@ -176,6 +176,231 @@
 
       <!-- ════════════════════════════════════════════════════════════ -->
       <section class="tutorial-section">
+        <h2><span class="section-num">[0x00a]</span> INVENTIONS &mdash; THE LIST</h2>
+
+        <p>This is a legacy, not a battle. Every item below originated in
+        zshrs and is offered as <strong>prior art for the shell-design
+        commons</strong> under the MIT grant. Future shells (bash, fish,
+        nushell, elvish, oil, xonsh, murex, projects that don&rsquo;t exist
+        yet) should inherit any of it. Ports must credit zshrs as the
+        invention source in their docs &mdash; see
+        <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/CREATORS.md"><code>CREATORS.md</code></a>
+        for the suggested wording. The protected invariants in
+        <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/MAINTAINERS.md"><code>MAINTAINERS.md</code></a>
+        guard upstream identity, not the ideas.</p>
+
+        <div class="cat-grid">
+          <div class="cat-card">
+            <h4>Compiled Unix shell</h4>
+            <p>First Unix shell to compile every command (interactive,
+            script, function, sourced file) to bytecode and execute on
+            a purpose-built VM. Every shell since Bell Labs 1970 has
+            been an interpreter.</p>
+          </div>
+          <div class="cat-card">
+            <h4>fusevm bytecode VM</h4>
+            <p>NaN-boxed register VM with fused superinstructions and a
+            Cranelift JIT for hot blocks. Shared substrate with stryke
+            so a shell and a scripting language ride the same value
+            representation.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Persistent worker thread pool</h4>
+            <p>18 (configurable [2-18]) tokio threads owned by the shell.
+            <code>$(cmd)</code>, <code>&lt;(cmd)</code>, <code>&amp;</code>,
+            globbing, completion, autoloading all dispatch to the pool
+            instead of <code>fork(2)</code>. Zero forks in the hot path.</p>
+          </div>
+          <div class="cat-card">
+            <h4>90/10 daemon / shell split</h4>
+            <p>Singleton <code>zshrs-daemon</code> owns every mutation
+            (canonical state, fsnotify, schedule, jobs, locks, cache,
+            history). Thin shell clients are stateless and forkable.
+            No shared writer, no second process tree, no auto-spawn.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Recorder-owns-rebuild (AOP intercept)</h4>
+            <p><code>zshrs-recorder</code> AOP-intercepts every state-mutating
+            dispatcher at runtime &mdash; alias / function / export / fpath
+            edit / hash -d / zstyle / bindkey / compdef / zmodload /
+            setopt / trap / sched / source / assignment &mdash; and ships
+            <code>(kind, name, value, file, line, fn_chain)</code> to the daemon.
+            Replaces the static-walker approach every other shell uses for
+            completion / fpath scanning.</p>
+          </div>
+          <div class="cat-card">
+            <h4>rkyv canonical-state shards</h4>
+            <p>Daemon's in-memory canonical state persists as
+            content-addressed rkyv archives under
+            <code>~/.zshrs/images/</code>. Cold-start shells mmap the
+            shard and skip every dotfile in <code>/etc</code> + <code>~</code>.
+            ~10ms cold-start vs &gt;100ms re-source.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Single <code>~/.zshrs/</code> directory rule</h4>
+            <p>Every config + log + sqlite + rkyv shard + socket lives
+            under one root. <code>$ZSHRS_HOME</code> overrides for
+            sandboxes / hermetic harnesses. <code>rm -rf ~/.zshrs/</code>
+            is the one-verb total reset.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Three log files, one per binary</h4>
+            <p><code>zshrs.log</code> (shell) + <code>zshrs-daemon.log</code> +
+            <code>zshrs-recorder.log</code> &mdash; never interleaved. One
+            <code>paths::is_zshrs_log_file</code> matcher feeds rotation,
+            tail, clear, snapshot bundling.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Three TOML configs, all auto-seeded</h4>
+            <p><code>zshrs.toml</code> + <code>zshrs-daemon.toml</code> +
+            <code>zshrs-recorder.toml</code> with documented defaults.
+            Every binary seeds the dir on first run; idempotent across
+            all four. Auto-migrates legacy <code>daemon.toml</code> &rarr;
+            <code>zshrs-daemon.toml</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4><code>z*</code> builtin family</h4>
+            <p>One namespace, twenty-three builtins, one daemon route.
+            <code>zcache</code>, <code>zls</code>, <code>zid</code>, <code>zping</code>,
+            <code>ztag</code>, <code>zsend</code>, <code>znotify</code>,
+            <code>zsubscribe</code>, <code>zjob</code>, <code>zsync</code>,
+            <code>zask</code>, <code>zhistory</code>, <code>zsource</code>,
+            <code>zcomplete</code>, <code>zsuggest</code>, <code>zlog</code>,
+            <code>zwhere</code>, <code>zd</code>, <code>zlock</code>,
+            <code>zpublish</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Cross-shell pub/sub + named locks</h4>
+            <p><code>zsubscribe</code> / <code>zpublish</code> /
+            <code>zlock</code> as builtins routed through the singleton
+            daemon. Replaces <code>flock</code> + <code>socat</code> + named
+            pipes glued by hand. Locks are token-issued; release requires
+            the original token (lost shell can&rsquo;t accidentally release
+            someone else&rsquo;s lock).</p>
+          </div>
+          <div class="cat-card">
+            <h4>Session-persistent supervised jobs</h4>
+            <p><code>zjob submit</code> spawns under the daemon &mdash; survives
+            shell exit, output captured to disk, status persisted in
+            catalog.db, history survives daemon restarts. Replaces
+            <code>nohup</code> + <code>screen</code> + <code>pueue</code> +
+            <code>disown</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Bidirectional ptmx <code>zjob attach</code></h4>
+            <p><code>--pty</code> submit allocates a pseudo-terminal pair;
+            child runs with slave on 0/1/2.
+            <code>zjob attach</code> switches client termios to raw mode,
+            pumps stdin via <code>job_input</code> (base64), drains daemon
+            broadcast back to user&rsquo;s tty, propagates SIGWINCH via
+            <code>job_resize</code>. Ctrl-] detaches; job keeps running.
+            Solves bg-jobs-blocked-on-stdin.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Auto-derived OpenAPI 3.1</h4>
+            <p><code>GET /openapi</code> serves a spec-compliant OpenAPI
+            doc generated on every request from the daemon&rsquo;s op
+            registry (<code>OP_NAMES</code>). 106 paths today (4 meta + 99
+            ops + 3 SSE streams). bearerAuth declared only when
+            <code>[http.tokens]</code> is populated. Loopback bind requires
+            no token; non-loopback bind refuses without one.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Daemon HTTP listener default-on (loopback)</h4>
+            <p>Seeded <code>zshrs-daemon.toml</code> ships
+            <code>[http] listen = "127.0.0.1:7733"</code> so
+            <code>zd health</code> works out of the box. Same trust model as
+            the Unix socket on a single-user box; flips to required-auth
+            the moment the bind goes non-loopback.</p>
+          </div>
+          <div class="cat-card">
+            <h4><code>zd</code> &mdash; HTTP bin AND in-process builtin</h4>
+            <p>Same arg surface, two transports.
+            <code>zd</code> the binary uses ureq against the HTTP listener
+            (works from bash / fish / CI / curl). <code>zd</code> the builtin
+            inside zshrs uses the local Unix socket via the daemon
+            <code>Client</code> &mdash; 5.5&times; faster (0.48ms vs 2.64ms,
+            no fork).</p>
+          </div>
+          <div class="cat-card">
+            <h4><code>zd doctor</code></h4>
+            <p>One-command health sweep: cache-root perms, file-perms drift,
+            pidlock liveness, socket presence, catalog integrity (sqlite
+            <code>PRAGMA integrity_check</code>), shards-present count,
+            fsnotify-alive, supervised-job count, legacy-litter scan
+            (<code>~/.zcompdump*</code>, <code>~/*.zwc</code>). Pretty
+            ASCII table; non-zero exit on any FAIL.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Flat history + sibling FTS5 sqlite</h4>
+            <p><code>~/.zshrs/zshrs_history</code> (flat zsh-extended-history
+            text, <code>cat</code>-able and <code>grep</code>-able) +
+            <code>~/.zshrs/zshrs_history.db</code> (FTS5 index for fast
+            search / dedup / frequency). The writer keeps both in lockstep;
+            on open, the text mirror is rehydrated from the index if
+            stale. Auto-migrates the legacy
+            <code>~/Library/Application Support/zshrs/history.db</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Recorder sources the full 8-file login chain</h4>
+            <p><code>zshrs-recorder</code> by default mirrors a real
+            <code>zsh -l -i</code>: <code>/etc/zshenv</code>,
+            <code>${ZDOTDIR:-$HOME}/.zshenv</code>, <code>/etc/zprofile</code>,
+            <code>~/.zprofile</code>, <code>/etc/zshrc</code>,
+            <code>~/.zshrc</code>, <code>/etc/zlogin</code>,
+            <code>~/.zlogin</code>. Missing files skipped silently.
+            <code>$ZDOTDIR</code> re-resolved per file.</p>
+          </div>
+          <div class="cat-card">
+            <h4><code>zsync up --all</code></h4>
+            <p>Single command snapshots every overlay table
+            (alias / galias / salias / setopt / params /
+            env / path / manpath / fpath / named_dir / compdef /
+            zstyle) and pushes into the daemon&rsquo;s canonical state.
+            Shell-side <code>overlay_snapshot::enumerate_all_overlays</code>
+            registered via fn-pointer trampoline so the daemon crate
+            stays decoupled from <code>ShellExecutor</code>.</p>
+          </div>
+          <div class="cat-card">
+            <h4>23 anti-fork coreutils builtins</h4>
+            <p><code>cat</code>, <code>head</code>, <code>tail</code>,
+            <code>wc</code>, <code>sort</code>, <code>find</code>,
+            <code>uniq</code>, <code>cut</code>, <code>tr</code>,
+            <code>seq</code>, <code>rev</code>, <code>tee</code>,
+            <code>sleep</code>, <code>date</code>, <code>mktemp</code>,
+            <code>hostname</code>, <code>uname</code>, <code>whoami</code>,
+            <code>id</code>, <code>basename</code>, <code>dirname</code>,
+            <code>touch</code>, <code>realpath</code>. All in-process; one
+            <code>cat</code> in a pipeline doesn&rsquo;t fork.</p>
+          </div>
+          <div class="cat-card">
+            <h4>Parallel-as-syntactic-primitive</h4>
+            <p>fish-style parallel iterators (<code>par_for</code>,
+            <code>par_map</code>, <code>par_filter</code>, <code>par_reduce</code>)
+            ship as VM opcodes, not library calls. Glob walks parallelize
+            at depth &ge; 32 by default. Worker pool is the substrate.</p>
+          </div>
+          <div class="cat-card">
+            <h4>The <code>--no-fork</code> philosophy as a measurement</h4>
+            <p>Every accepted commit is graded by &ldquo;does this remove
+            a fork?&rdquo; not &ldquo;does this add a feature?&rdquo;
+            Optimization layers (zinit turbo, p10k instant prompt, zwc,
+            zcompile, BG_NICE, lazy autoload) are evidence that zsh
+            can&rsquo;t solve the problem in userspace; zshrs accepts the
+            architecture cost to solve it for real.</p>
+          </div>
+        </div>
+
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 0.8rem;">
+          Full enumeration + suggested attribution wording in
+          <a href="https://github.com/MenkeTechnologies/zshrs/blob/main/CREATORS.md"><code>CREATORS.md</code></a>.
+          Op-by-op detail in <a href="daemon-report.html"><code>daemon-report.html</code></a>.
+          Port-coverage report in <a href="report.html"><code>report.html</code></a>.
+        </p>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════ -->
+      <section class="tutorial-section">
         <h2><span class="section-num">[0x00]</span> THE COMPILATION PIPELINE</h2>
 
         <p>Every path through zshrs ends at the same place: fusevm bytecode execution.</p>
