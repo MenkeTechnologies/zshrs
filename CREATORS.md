@@ -20,15 +20,19 @@ here.
 For governance, contribution flow, and current maintainers, see
 [MAINTAINERS.md](MAINTAINERS.md).
 
-## Porting zshrs ideas to other shells / runtimes
+## Legacy
 
-The synthesis above is offered as **prior art for the
-shell-design commons**, not as fenced IP. Any shell, scripting
-runtime, or terminal toolchain — bash, fish, nushell, elvish,
-oil, xonsh, murex, a new project, anything — is welcome to
-absorb, adapt, or fully port any zshrs-originated idea. No
-permission needed beyond what the MIT license already grants.
-Examples of inventions that other shells should feel free to take:
+This is a legacy, not a battle. The synthesis above is meant
+to outlast this codebase — to flow into bash, fish, nushell,
+elvish, oil, xonsh, murex, projects that don't exist yet,
+shell ideas that take twenty years to mature. None of this
+is defended turf; the protected invariants in `MAINTAINERS.md`
+guard upstream identity, not the ideas themselves.
+
+The zshrs corpus is offered as **prior art for the
+shell-design commons**. Take what helps. Drop what doesn't.
+No permission needed beyond what the MIT license already
+grants. Inventions that future shells should inherit:
 
 - The compiled-shell architecture itself (parse to bytecode,
   cache, JIT hot blocks) instead of re-parsing on every command.
@@ -64,7 +68,7 @@ Examples of inventions that other shells should feel free to take:
 
 What [MAINTAINERS.md](MAINTAINERS.md) governs is the *official
 zshrs upstream* — protecting it from identity-dissolving
-changes. It does not restrict anyone from copying zshrs's ideas
-elsewhere.
+changes. It is not a fence around the ideas. The point of
+shipping these inventions is for them to spread.
 
 License: MIT (per `Cargo.toml`; LICENSE file pending).
