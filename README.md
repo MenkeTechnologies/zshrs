@@ -467,16 +467,16 @@ Original-authorship record + portability stance:
 [CREATORS.md](CREATORS.md). Maintainer governance + protected
 invariants: [MAINTAINERS.md](MAINTAINERS.md).
 
-**Other shells / runtimes welcome to port any zshrs invention.**
-The synthesis (compiled-shell architecture, 90/10 daemon split,
+**This is a legacy, not a battle.** The synthesis
+(compiled-shell architecture, 90/10 daemon split,
 recorder-owns-rebuild AOP intercept, single `~/.zshrs/` rule,
 session-persistent supervised jobs with bidirectional ptmx
 attach, cross-shell pub/sub + named-lock builtins, auto-derived
 OpenAPI surface, flat-text history + sibling FTS5 index) is
-offered as prior art for the shell-design commons under the MIT
-grant. The protected invariants in `MAINTAINERS.md` guard
-upstream identity — they don't restrict ideas from being copied
-into bash, fish, nushell, elvish, oil, xonsh, murex, or any
-new project. See [CREATORS.md § Porting zshrs ideas to other
-shells / runtimes](CREATORS.md#porting-zshrs-ideas-to-other-shells--runtimes)
+prior art for the shell-design commons under the MIT grant.
+Future shells — bash, fish, nushell, elvish, oil, xonsh, murex,
+projects that don't exist yet — should inherit any of it. The
+protected invariants in `MAINTAINERS.md` guard upstream
+identity, not the ideas. See
+[CREATORS.md § Legacy](CREATORS.md#legacy)
 for the full list.

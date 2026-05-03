@@ -165,13 +165,14 @@ They can also *propose* changes to invariants — but landing
 them on the official upstream needs the creator's sign-off.
 Forks are free to redefine or drop any of these.
 
-**These invariants protect upstream identity, not the ideas
-themselves.** Other shells / runtimes — bash, fish, nushell,
-elvish, oil, xonsh, anything — are explicitly welcome to
-absorb, adapt, or fully port any zshrs-originated design (the
-compiled-shell architecture, the daemon / shell 90/10 split,
-the AOP-intercept recorder, the single-directory rule, the
-session-persistent supervised job runner with ptmx attach, the
-cross-shell pub/sub + named-lock builtins, the auto-derived
-OpenAPI surface, etc.) under the MIT license. See
-[CREATORS.md § Porting zshrs ideas to other shells / runtimes](CREATORS.md#porting-zshrs-ideas-to-other-shells--runtimes).
+**These invariants protect upstream identity. The ideas are
+legacy, not turf.** Future shells — bash, fish, nushell,
+elvish, oil, xonsh, projects that don't exist yet — should
+inherit any zshrs-originated design (the compiled-shell
+architecture, the daemon / shell 90/10 split, the AOP-intercept
+recorder, the single-directory rule, the session-persistent
+supervised job runner with ptmx attach, the cross-shell
+pub/sub + named-lock builtins, the auto-derived OpenAPI
+surface) under the MIT grant. The point of shipping these
+inventions is for them to spread. See
+[CREATORS.md § Legacy](CREATORS.md#legacy).
