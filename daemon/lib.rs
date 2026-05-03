@@ -123,21 +123,49 @@ pub fn run() -> Result<()> {
     let paths = paths::CachePaths::resolve()?;
     paths.ensure_dirs()?;
 
-    // Logging first so subsequent setup is observable.
+    // Seed daemon.toml + zshrs.toml with defaults BEFORE log::init so
+    // the new [log] level directive can be picked up on first run.
+    // Idempotent — never overwrites user edits.
+    if let Err(e) = paths.ensure_default_configs() {
+        eprintln!("zshrs-daemon: failed to seed default configs: {e}");
+    }
+
+    // Logging next so subsequent setup is observable.
     let _log_guard = log::init(&paths)?;
 
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "zshrs-daemon starting");
 
-    // Seed daemon.toml + zshrs.toml with documented defaults if absent.
-    // Idempotent — the user's edits are never overwritten. Has to land
-    // BEFORE load_http_config / DaemonState::new since both consume the
-    // newly-seeded values.
-    if let Err(e) = paths.ensure_default_configs() {
-        tracing::warn!(?e, "failed to seed default configs; continuing with built-in defaults");
-    }
+    // First-pass diagnostics — gated to TRACE so they don't flood
+    // the log at default INFO. Bump `[log] level = "trace"` in
+    // daemon.toml (or `ZSHRS_LOG=trace`) to see them.
+    let pid = std::process::id();
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "?".to_string());
+    let zshrs_home = std::env::var("ZSHRS_HOME").unwrap_or_default();
+    tracing::trace!(
+        pid,
+        cwd,
+        zshrs_home = if zshrs_home.is_empty() { "<unset>" } else { &zshrs_home },
+        root = %paths.root.display(),
+        socket = %paths.socket.display(),
+        pid_file = %paths.pid_file.display(),
+        log = %paths.log.display(),
+        daemon_toml = %paths.daemon_config_path().display(),
+        shell_toml = %paths.shell_config_path().display(),
+        catalog_db = %paths.catalog_db.display(),
+        history_db = %paths.history_db.display(),
+        cache_db = %paths.cache_db.display(),
+        images_dir = %paths.images.display(),
+        artifacts_dir = %paths.artifacts_dir.display(),
+        snapshots_dir = %paths.snapshots_dir.display(),
+        replay_dir = %paths.replay_dir.display(),
+        "daemon: resolved environment"
+    );
 
     // Singleton enforcement. Holds the lock for daemon lifetime.
     let _pid_lock = pidlock::acquire(&paths)?;
+    tracing::trace!(pid_file = %paths.pid_file.display(), pid, "daemon: pidlock acquired");
 
     // Spin up tokio runtime + run server.
     let rt = tokio::runtime::Builder::new_multi_thread()

@@ -39,6 +39,29 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
 
     let state = DaemonState::new(paths.clone())?;
 
+    // First-pass diagnostics — TRACE-gated so they don't flood at INFO.
+    // Each db size is what's on disk RIGHT NOW; useful for spotting
+    // catalog/history bloat without poking sqlite by hand.
+    let catalog_bytes = std::fs::metadata(&paths.catalog_db)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let history_bytes = std::fs::metadata(&paths.history_db)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let cache_bytes = std::fs::metadata(&paths.cache_db)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let shard_count = super::shard::list_shards(&paths)
+        .map(|v| v.len())
+        .unwrap_or(0);
+    tracing::trace!(
+        catalog_db_bytes = catalog_bytes,
+        history_db_bytes = history_bytes,
+        cache_db_bytes = cache_bytes,
+        shard_count,
+        "server: state opened"
+    );
+
     // Spawn the fsnotify watcher task. No paths are registered initially;
     // they're added by the walk-lifecycle evaluator + `fpath_changed` op.
     if let Err(e) = state.fs_watcher.start(Arc::clone(&state)) {
@@ -48,10 +71,12 @@ pub async fn serve(paths: CachePaths) -> Result<()> {
     // Spawn the periodic housekeeping ticker (tmp sweep, log size monitor,
     // catalog vacuum, zask timeouts). One minute cadence, weak-ref to state.
     super::ticker::spawn(Arc::clone(&state));
+    tracing::trace!("server: ticker spawned");
 
     // Spawn the schedule tick driver (daemon.schedule.* ops). Wakes once
     // a second, dispatches `job_submit` for any due cron / one-shot rows.
     super::schedule::spawn_tick(Arc::clone(&state));
+    tracing::trace!("server: schedule tick spawned");
 
     // HTTP listener (off by default; opt-in via [http].listen in
     // ~/.zshrs/daemon.toml). Surfaces the same op set as the

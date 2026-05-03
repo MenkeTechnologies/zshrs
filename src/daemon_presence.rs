@@ -187,6 +187,38 @@ pub fn read_config() -> ConfigSetting {
     read_config_full().daemon
 }
 
+/// `[log] level` from `~/.zshrs/zshrs.toml` for the SHELL side
+/// (zsh::log + zshrs-recorder). Same precedence model the daemon uses
+/// for its own side: `$ZSHRS_LOG` env wins, then this directive, then
+/// `"info"`. Caller hands the returned string straight to
+/// `EnvFilter::try_new`. Errors / missing file / missing key all
+/// resolve to "info" silently — a malformed directive produces a
+/// useful "bad directive" message at the EnvFilter parse layer
+/// instead.
+pub fn read_log_directive() -> String {
+    const DEFAULT: &str = "info";
+    let path = match config_file_path() {
+        Some(p) => p,
+        None => return DEFAULT.into(),
+    };
+    let body = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => return DEFAULT.into(),
+    };
+    let parsed = match body.parse::<toml::Table>() {
+        Ok(t) => t,
+        Err(_) => return DEFAULT.into(),
+    };
+    parsed
+        .get("log")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("level"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| DEFAULT.into())
+}
+
 /// Cached `[shell].skip_configs` value. Set by `probe()`; read by the
 /// shell-init path before sourcing dotfiles.
 static SKIP_CONFIGS: AtomicU8 = AtomicU8::new(0);
