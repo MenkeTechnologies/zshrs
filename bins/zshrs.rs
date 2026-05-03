@@ -655,6 +655,16 @@ pub fn zshrs_main() {
         let zero = args[0].clone();
         executor.variables.insert("0".to_string(), zero);
 
+        // Skip-configs apply: same gate as the interactive path.
+        // `-c` doesn't source dotfiles in vanilla zsh either, but
+        // when the daemon is up + has zshrs canonical state, we
+        // apply it here so `zshrs -c 'gst'` resolves the alias the
+        // same way an interactive shell would.
+        #[cfg(feature = "daemon")]
+        if zsh::daemon_presence::should_skip_configs() {
+            let _applied = zsh::canonical_apply::apply_all(&mut executor);
+        }
+
         // Long-cmd-started watchdog (-c path mirrors the interactive loop).
         #[cfg(feature = "daemon")]
         let completed_c = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

@@ -206,14 +206,80 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
         }
     }
 
-    // compdef / zle / inline-defined functions: captured in shard but
-    // need rich-type translation (CompSpec / ZLE widget structs /
-    // parse+compile to fusevm Chunks). Skipping is safe — compdef
-    // falls back to demand-resolution on first completion; inline
-    // functions get re-parsed when the autoload resolver fires for
-    // them. Wiring these is its own commit per subsystem.
+    // compdef: each (function, "cmd1 cmd2 ...") row replays through
+    // the same compdef builtin install path
+    // (compsys::compdef::compdef_execute) that runtime `compdef _git
+    // git` would have used. Recorder captures with format
+    // `name=function value="cmd1 cmd2 …"` (per `builtin_compdef` in
+    // src/exec.rs).
+    if !shard.compdef.is_empty() {
+        // Executor's constructor only opens compsys_cache if the
+        // .db file already exists (cold start = None). Open it
+        // lazily here so the apply path is self-sufficient: first
+        // recorder ingest creates the cache; subsequent shells see
+        // it and apply normally.
+        if executor.compsys_cache.is_none() {
+            let cache_path = compsys::cache::default_cache_path();
+            if let Some(parent) = cache_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match compsys::cache::CompsysCache::open(&cache_path) {
+                Ok(c) => {
+                    tracing::info!(
+                        path = %cache_path.display(),
+                        "compsys cache lazily created for canonical compdef apply"
+                    );
+                    executor.compsys_cache = Some(c);
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "compsys cache open failed; compdef rows skipped");
+                }
+            }
+        }
+        if let Some(cache) = executor.compsys_cache.as_mut() {
+            for (function, cmds_joined) in shard.compdef {
+                let mut args: Vec<String> = Vec::with_capacity(8);
+                args.push(function);
+                for cmd in cmds_joined.split_whitespace() {
+                    args.push(cmd.to_string());
+                }
+                if args.len() < 2 {
+                    continue; // recorder dropped the cmd list — can't replay
+                }
+                let _rc = compsys::compdef::compdef_execute(cache, &args);
+                total += 1;
+            }
+        }
+    }
+
+    // zle widgets: recorder routes them into shard.extras["zle"]
+    // (one per `zle -N name [body]` capture). Reinstall via
+    // ZleManager.user_widgets. Body string is whatever the user
+    // gave; the widget invocation path looks it up at execution
+    // time so re-installing the name+body string is enough.
+    if let Some(zle_widgets) = shard.extras.get("zle") {
+        use crate::zle::zle;
+        let mut zle_state = zle();
+        for (name, body) in zle_widgets {
+            zle_state.user_widgets.insert(name.clone(), body.clone());
+            total += 1;
+        }
+    }
+
+    // inline-defined functions: captured in shard but not yet wired.
+    // Two paths to install:
+    //   (a) parse body string + fusevm-compile here on cold-start.
+    //       ~50ms for 1k functions on M-series — defeats the
+    //       zero-cost goal.
+    //   (b) recorder ships pre-compiled bytecode in the shard;
+    //       shell installs the chunk directly.
+    // Path (b) is the right one (needs recorder-side change to
+    // capture body bytecode at definition time + a new
+    // `functions_compiled: HashMap<String, Vec<u8>>` shard field).
+    // Until then, autoload-pending fallback covers the case: when
+    // the user calls a function that wasn't pre-installed, the
+    // autoload resolver fires + parses the body lazily.
     let _ = shard.functions;
-    let _ = shard.compdef;
 
     // zmodload / manpath / plugins / sourced_files / extras: no
     // executor surface today (modules call `zmodload` builtin
