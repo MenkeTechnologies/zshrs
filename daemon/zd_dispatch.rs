@@ -91,6 +91,11 @@ SCHEDULE
 EXPORT
     export TARGET FORMAT           formats: sh|json|yaml|text|csv|sql|pdf|...
     view TARGET [FORMAT]
+
+DIAGNOSTICS
+    doctor [--json]                health-report sweep (perms, db
+                                   integrity, shards, fsnotify,
+                                   pidlock, jobs, legacy litter)
 ";
 
 /// Transport that backs op/get/sse calls. Implemented twice:
@@ -174,6 +179,7 @@ pub fn dispatch(args: &[String], t: &mut dyn Transport) -> i32 {
         "schedule" => cmd_schedule(t, &rest),
         "export" => cmd_export(t, &rest),
         "view" => cmd_view(t, &rest),
+        "doctor" => cmd_doctor(t, &rest),
         other => return usage_err(&format!("unknown command: {other}")),
     };
 
@@ -667,6 +673,74 @@ fn cmd_view(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
         body["format"] = json!(fmt);
     }
     t.post("view", body)
+}
+
+/// `zd doctor` — pretty-print the `doctor` op's check sweep as a
+/// human-readable table. `--json` opt-in returns the raw envelope
+/// (`{checks, total, passed, failed, ts_ns}`) for scripting.
+///
+/// Format: one line per check, `OK` or `FAIL` prefix, name padded
+/// to the widest in the response, then the detail string. Trailing
+/// summary line carries the pass/fail counts. Bare ASCII so
+/// non-TTY pipes (CI, jq, grep) don't see escape sequences.
+fn cmd_doctor(t: &mut dyn Transport, rest: &[String]) -> Result<String, String> {
+    let envelope = rest.iter().any(|a| a == "--json" || a == "--envelope");
+    let response = t.post("doctor", json!({}))?;
+    if envelope {
+        return Ok(response);
+    }
+
+    let parsed: Value = serde_json::from_str(&response)
+        .map_err(|e| format!("doctor response: {e}\nbody: {response}"))?;
+    let checks = parsed
+        .get("checks")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("doctor response missing `checks` array: {response}"))?;
+
+    // Column widths: status fixed at 4 chars (OK / FAIL), name padded
+    // to max-of-checks for vertical alignment, detail flushed left.
+    let max_name = checks
+        .iter()
+        .filter_map(|c| c.get("name").and_then(Value::as_str))
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+
+    let total = parsed.get("total").and_then(Value::as_u64).unwrap_or(0);
+    let passed = parsed.get("passed").and_then(Value::as_u64).unwrap_or(0);
+    let failed = parsed.get("failed").and_then(Value::as_u64).unwrap_or(0);
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "zshrs-daemon doctor — {passed} passed, {failed} failed (of {total})\n"
+    ));
+    out.push_str(&format!("{}\n", "-".repeat(max_name + 16)));
+    for c in checks {
+        let name = c.get("name").and_then(Value::as_str).unwrap_or("?");
+        let ok = c.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        let detail = c.get("detail").and_then(Value::as_str).unwrap_or("");
+        let status = if ok { "OK  " } else { "FAIL" };
+        out.push_str(&format!(
+            "{status}  {name:<width$}  {detail}\n",
+            width = max_name
+        ));
+    }
+    if failed == 0 {
+        out.push_str("\nall checks passed");
+    } else {
+        out.push_str(&format!(
+            "\n{failed} check{} failed — see above",
+            if failed == 1 { "" } else { "s" }
+        ));
+    }
+    // Print + exit directly so the exit code reflects health (non-zero
+    // on failures — CI / monitoring scripts depend on this). Bypasses
+    // the dispatcher's Ok-prints-with-newline path.
+    use std::io::Write;
+    let mut w = std::io::stdout().lock();
+    let _ = writeln!(w, "{}", out);
+    let _ = w.flush();
+    std::process::exit(if failed == 0 { 0 } else { 1 });
 }
 
 // ---- base64 helpers (avoid pulling the `base64` crate into the
