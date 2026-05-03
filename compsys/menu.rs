@@ -151,18 +151,18 @@ impl MenuColors {
 
             if let Some((key, color)) = spec.split_once('=') {
                 // Check if it's an extension pattern
-                if key.starts_with('*') {
+                if let Some(ext) = key.strip_prefix('*') {
                     patterns
                         .extensions
-                        .push((key[1..].to_string(), color.to_string()));
+                        .push((ext.to_string(), color.to_string()));
                     continue;
                 }
 
                 // Check if it's a glob pattern (starts with = for completion match)
-                if key.starts_with('=') {
+                if let Some(pat) = key.strip_prefix('=') {
                     patterns
                         .patterns
-                        .push((key[1..].to_string(), color.to_string()));
+                        .push((pat.to_string(), color.to_string()));
                     continue;
                 }
 
@@ -247,8 +247,8 @@ impl MenuColors {
     /// Simple glob matching (*, ?, [])
     fn glob_match(pattern: &str, text: &str) -> bool {
         // Handle case-insensitive flag (#i) at start
-        let (pattern, case_insensitive) = if pattern.starts_with("(#i)") {
-            (&pattern[4..], true)
+        let (pattern, case_insensitive) = if let Some(rest) = pattern.strip_prefix("(#i)") {
+            (rest, true)
         } else {
             (pattern, false)
         };

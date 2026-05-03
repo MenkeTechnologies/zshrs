@@ -647,16 +647,16 @@ pub fn zstrtol(s: &str) -> Option<i64> {
         return None;
     }
 
-    let (neg, rest) = if s.starts_with('-') {
-        (true, &s[1..])
-    } else if s.starts_with('+') {
-        (false, &s[1..])
+    let (neg, rest) = if let Some(after) = s.strip_prefix('-') {
+        (true, after)
+    } else if let Some(after) = s.strip_prefix('+') {
+        (false, after)
     } else {
         (false, s)
     };
 
-    let (base, rest) = if rest.starts_with("0x") || rest.starts_with("0X") {
-        (16, &rest[2..])
+    let (base, rest) = if let Some(after) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
+        (16, after)
     } else if rest.starts_with("0b") || rest.starts_with("0B") {
         (2, &rest[2..])
     } else if rest.starts_with('0') && rest.len() > 1 {

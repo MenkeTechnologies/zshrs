@@ -813,6 +813,7 @@ impl<'a> Walker<'a> {
     /// - WC_FOR_LIST: n_vars (count), var_strcodes×n, n_iter_words, iter_strcodes×n
     /// - WC_FOR_COND: init/cond/step strcodes (no count words)
     /// - WC_FOR_PPARAM: n_vars (count), var_strcodes×n
+    ///
     /// Followed by body lists.
     fn decode_for(&mut self, data: u32, _unused: bool) -> WcCommand {
         let ftype = data & 3;

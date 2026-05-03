@@ -375,12 +375,10 @@ pub fn urls(receiver: &mut CompletionReceiver, prefix: &str) -> bool {
     }
 
     // If we have a host prefix, complete with known hosts
-    if prefix.starts_with("https://") || prefix.starts_with("http://") {
-        let host_prefix = if prefix.starts_with("https://") {
-            &prefix[8..]
-        } else {
-            &prefix[7..]
-        };
+    if let Some(host_prefix) = prefix
+        .strip_prefix("https://")
+        .or_else(|| prefix.strip_prefix("http://"))
+    {
 
         // Get hosts and filter
         let home = std::env::var("HOME").unwrap_or_default();
