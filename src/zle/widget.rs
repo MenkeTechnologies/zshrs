@@ -454,22 +454,80 @@ fn widget_backward_kill_word(zle: &mut Zle) {
 }
 
 fn widget_yank(zle: &mut Zle) {
+    // Port of yank() from Src/Zle/zle_misc.c. Inserts the most-recent kill-ring
+    // entry at the cursor and remembers the inserted region so that an
+    // immediately-following yank-pop can rotate to the previous entry.
     if let Some(text) = zle.killring.front().cloned() {
-        for c in text {
-            zle.zleline.insert(zle.zlecs, c);
+        let start = zle.zlecs;
+        for c in &text {
+            zle.zleline.insert(zle.zlecs, *c);
             zle.zlecs += 1;
             zle.zlell += 1;
         }
+        zle.yank_start = start;
+        zle.yank_end = start + text.len();
+        zle.yank_cs = zle.zlecs;
+        zle.yank_ring_idx = Some(0);
+        zle.yanklast = true;
         zle.resetneeded = true;
     }
 }
 
 fn widget_yank_pop(zle: &mut Zle) {
-    // Rotate kill ring and yank
-    if let Some(text) = zle.killring.pop_front() {
-        zle.killring.push_back(text);
+    // Port of yankpop() from Src/Zle/zle_misc.c:728.
+    // Only meaningful immediately after a yank; replaces the just-yanked
+    // region with the previous kill-ring entry, cycling around the ring.
+    if !zle.yanklast {
+        return;
     }
-    // TODO: implement proper yank-pop (replace previous yank)
+    let ring_len = zle.killring.len();
+    if ring_len == 0 {
+        return;
+    }
+    // Advance to the next ring entry; skip empty buffers; bail out if we
+    // wrap all the way around without finding anything (matches kctstart guard
+    // in C zle_misc.c:730).
+    let start_idx = zle.yank_ring_idx.unwrap_or(0);
+    let mut idx = start_idx;
+    let mut found_idx: Option<usize> = None;
+    for _ in 0..ring_len {
+        idx = (idx + 1) % ring_len;
+        if idx == start_idx {
+            break;
+        }
+        if !zle.killring[idx].is_empty() {
+            found_idx = Some(idx);
+            break;
+        }
+    }
+    let new_idx = match found_idx {
+        Some(i) => i,
+        None => return,
+    };
+    let new_text: Vec<char> = zle.killring[new_idx].clone();
+
+    // Delete the previously-yanked region.
+    let yb = zle.yank_start.min(zle.zlell);
+    let ye = zle.yank_end.min(zle.zlell);
+    if ye > yb {
+        zle.zleline.drain(yb..ye);
+        zle.zlell -= ye - yb;
+    }
+    zle.zlecs = yb;
+
+    // Paste the new entry.
+    let start = zle.zlecs;
+    for c in &new_text {
+        zle.zleline.insert(zle.zlecs, *c);
+        zle.zlecs += 1;
+        zle.zlell += 1;
+    }
+    zle.yank_start = start;
+    zle.yank_end = start + new_text.len();
+    zle.yank_cs = zle.zlecs;
+    zle.yank_ring_idx = Some(new_idx);
+    zle.yanklast = true;
+    zle.resetneeded = true;
 }
 
 fn widget_undo(zle: &mut Zle) {
@@ -843,43 +901,89 @@ fn widget_vi_repeat_change(zle: &mut Zle) {
 }
 
 fn widget_vi_find_next_char(zle: &mut Zle) {
-    // TODO: implement vi find next char
-    let _ = zle;
+    // Port of vifindnextchar() from Src/Zle/zle_move.c:739.
+    zle.vi_find_char(true, false);
 }
 
 fn widget_vi_find_prev_char(zle: &mut Zle) {
-    // TODO: implement vi find prev char
-    let _ = zle;
+    // Port of vifindprevchar() from Src/Zle/zle_move.c:751.
+    zle.vi_find_char(false, false);
 }
 
 fn widget_vi_find_next_char_skip(zle: &mut Zle) {
-    // TODO: implement vi find next char skip
-    let _ = zle;
+    // Port of vifindnextcharskip() from Src/Zle/zle_move.c:763.
+    zle.vi_find_char(true, true);
 }
 
 fn widget_vi_find_prev_char_skip(zle: &mut Zle) {
-    // TODO: implement vi find prev char skip
-    let _ = zle;
+    // Port of vifindprevcharskip() from Src/Zle/zle_move.c:775.
+    zle.vi_find_char(false, true);
 }
 
 fn widget_vi_repeat_find(zle: &mut Zle) {
-    // TODO: implement vi repeat find
-    let _ = zle;
+    // Port of virepeatfind() from Src/Zle/zle_move.c:835.
+    let _ = zle.vi_repeat_find();
 }
 
 fn widget_vi_rev_repeat_find(zle: &mut Zle) {
-    // TODO: implement vi reverse repeat find
-    let _ = zle;
+    // Port of virevrepeatfind() from Src/Zle/zle_move.c:842.
+    let _ = zle.vi_rev_repeat_find();
 }
 
 fn widget_vi_history_search_forward(zle: &mut Zle) {
-    // TODO: implement vi history search
-    let _ = zle;
+    // Port of vihistorysearchforward() from Src/Zle/zle_hist.c.
+    // Read the search pattern starting from `?` then run a forward history search.
+    // For now: re-run the last srch_str if any.
+    let pat = match zle.srch_str.clone() {
+        Some(s) if !s.is_empty() => s,
+        _ => return,
+    };
+    let len = zle.history.entries.len();
+    let start = zle.history.cursor + 1;
+    for i in start..len {
+        if zle.history.entries[i].line.contains(&pat) {
+            if zle.history.saved_line.is_none() {
+                zle.history.saved_line = Some(zle.zleline.clone());
+                zle.history.saved_cs = zle.zlecs;
+            }
+            zle.history.cursor = i;
+            zle.zleline = zle.history.entries[i].line.chars().collect();
+            zle.zlell = zle.zleline.len();
+            zle.zlecs = 0;
+            zle.resetneeded = true;
+            return;
+        }
+    }
 }
 
 fn widget_vi_history_search_backward(zle: &mut Zle) {
-    // TODO: implement vi history search
-    let _ = zle;
+    // Port of vihistorysearchbackward() from Src/Zle/zle_hist.c.
+    let pat = match zle.srch_str.clone() {
+        Some(s) if !s.is_empty() => s,
+        _ => return,
+    };
+    if zle.history.cursor == 0 {
+        return;
+    }
+    let mut i = zle.history.cursor.min(zle.history.entries.len()).saturating_sub(1);
+    loop {
+        if zle.history.entries[i].line.contains(&pat) {
+            if zle.history.saved_line.is_none() {
+                zle.history.saved_line = Some(zle.zleline.clone());
+                zle.history.saved_cs = zle.zlecs;
+            }
+            zle.history.cursor = i;
+            zle.zleline = zle.history.entries[i].line.chars().collect();
+            zle.zlell = zle.zleline.len();
+            zle.zlecs = 0;
+            zle.resetneeded = true;
+            return;
+        }
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
 }
 
 fn widget_vi_repeat_search(zle: &mut Zle) {
@@ -893,8 +997,46 @@ fn widget_vi_rev_repeat_search(zle: &mut Zle) {
 }
 
 fn widget_vi_fetch_history(zle: &mut Zle) {
-    // TODO: implement vi fetch history
-    let _ = zle;
+    // Port of vifetchhistory() from Src/Zle/zle_hist.c:1787.
+    // With no count: jump to the live (newest) entry. With a count: load
+    // that history event by 1-based index. Negative count is rejected.
+    if zle.mult < 0 {
+        return;
+    }
+    let has_mult = zle.zmod.flags.contains(super::main::ModifierFlags::MULT);
+    let on_live = zle.history.cursor >= zle.history.entries.len();
+    if on_live || zle.zlereadflags.no_history {
+        if !has_mult {
+            zle.zlecs = zle.zlell;
+            zle.zlecs = zle.find_bol(zle.zlecs);
+            zle.resetneeded = true;
+            return;
+        }
+        if zle.zlereadflags.no_history {
+            return;
+        }
+    }
+    let target_idx_1: i32 = if has_mult {
+        zle.zmod.mult
+    } else {
+        zle.history.entries.len() as i32
+    };
+    if target_idx_1 < 1 {
+        return;
+    }
+    let target_idx = (target_idx_1 - 1) as usize;
+    if target_idx >= zle.history.entries.len() {
+        return;
+    }
+    if zle.history.saved_line.is_none() && on_live {
+        zle.history.saved_line = Some(zle.zleline.clone());
+        zle.history.saved_cs = zle.zlecs;
+    }
+    zle.history.cursor = target_idx;
+    zle.zleline = zle.history.entries[target_idx].line.chars().collect();
+    zle.zlell = zle.zleline.len();
+    zle.zlecs = 0;
+    zle.resetneeded = true;
 }
 
 fn widget_vi_goto_column(zle: &mut Zle) {
@@ -928,4 +1070,108 @@ fn widget_undefined(zle: &mut Zle) {
 /// Check if a character is a word character
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn populated() -> Zle {
+        let mut zle = Zle::new();
+        zle.zleline = Vec::new();
+        zle.zlell = 0;
+        zle.zlecs = 0;
+        zle.killring.push_back("first".chars().collect());
+        zle.killring.push_back("second".chars().collect());
+        // VecDeque::push_back appends; killring[0] is what pop_front would
+        // return. widget_yank uses front() so the "most recent" entry is at
+        // index 0. Reset in newest-first order:
+        zle.killring.clear();
+        zle.killring.push_front("oldest".chars().collect());
+        zle.killring.push_front("middle".chars().collect());
+        zle.killring.push_front("newest".chars().collect());
+        zle
+    }
+
+    #[test]
+    fn yank_records_region_for_yank_pop() {
+        let mut zle = populated();
+        widget_yank(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "newest");
+        assert_eq!(zle.yank_start, 0);
+        assert_eq!(zle.yank_end, 6);
+        assert_eq!(zle.yank_ring_idx, Some(0));
+        assert!(zle.yanklast);
+    }
+
+    #[test]
+    fn yank_pop_replaces_with_previous_kill_ring_entry() {
+        let mut zle = populated();
+        widget_yank(&mut zle);
+        widget_yank_pop(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "middle");
+        widget_yank_pop(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "oldest");
+    }
+
+    #[test]
+    fn yank_pop_no_op_without_prior_yank() {
+        let mut zle = populated();
+        zle.zleline = "abc".chars().collect();
+        zle.zlell = 3;
+        widget_yank_pop(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "abc");
+    }
+
+    #[test]
+    fn yank_pop_skips_empty_buffers() {
+        let mut zle = Zle::new();
+        zle.killring.push_front(Vec::new()); // empty buffer
+        zle.killring.push_front("real".chars().collect());
+        zle.killring.push_front("first".chars().collect());
+        // widget_yank picks killring[0] = "first"
+        widget_yank(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "first");
+        widget_yank_pop(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "real");
+        // Next pop wraps past the empty entry.
+        widget_yank_pop(&mut zle);
+        // After wrapping the empty entry, ring length 3, start_idx 1, advances
+        // to idx=2 (empty, skipped within loop), then idx=0 — but 0 == start_idx
+        // would only be true if start_idx were 0. We started from idx 1 and
+        // the empty slot is at 2, so advance: 2 (empty, continue), 0 ("first"),
+        // hit. Land on "first".
+        assert_eq!(zle.zleline.iter().collect::<String>(), "first");
+    }
+
+    #[test]
+    fn vi_fetch_history_no_count_on_live_jumps_to_bol() {
+        // When sitting on the live buffer with no explicit count, vi-fetch-history
+        // moves the cursor to the beginning of the current logical line.
+        // Port of C's `zlecs = zlell; zlecs = findbol()` no-mult branch
+        // (zle_hist.c:1793).
+        let mut zle = Zle::new();
+        zle.history.add("a".to_string());
+        zle.zleline = "abc def".chars().collect();
+        zle.zlell = 7;
+        zle.zlecs = 4;
+        zle.history.cursor = 1; // live buffer
+        widget_vi_fetch_history(&mut zle);
+        assert_eq!(zle.zlecs, 0);
+    }
+
+    #[test]
+    fn vi_fetch_history_with_count_jumps_to_event() {
+        let mut zle = Zle::new();
+        zle.history.add("a".to_string());
+        zle.history.add("b".to_string());
+        zle.history.add("c".to_string());
+        zle.history.cursor = 3; // live buffer
+        zle.zmod.flags.insert(crate::zle::main::ModifierFlags::MULT);
+        zle.zmod.mult = 2; // 1-based: event #2 = entry index 1
+        zle.mult = 2;
+        widget_vi_fetch_history(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "b");
+        assert_eq!(zle.history.cursor, 1);
+    }
 }
