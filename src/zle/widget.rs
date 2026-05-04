@@ -995,8 +995,19 @@ fn widget_vi_join(zle: &mut Zle) {
 }
 
 fn widget_vi_repeat_change(zle: &mut Zle) {
-    // TODO: implement vi repeat change
-    let _ = zle;
+    // Port of virepeatchange() from Src/Zle/zle_vi.c. Replays the keys in
+    // vi_chg_buf — but the recording side (which captures keystrokes during
+    // d/c/y operators into vi_chg_buf) is still pending, so without a
+    // recorded change the buffer is empty and the widget is a no-op.
+    // This matches zsh's behavior when no change has been made yet.
+    if zle.vi_chg_buf.is_empty() {
+        return;
+    }
+    // Re-feed the recorded keys via ungetbytes so the next iteration of
+    // zlecore re-runs them. ungetbytes prepends to the input buffer so the
+    // bytes will be consumed before any new keystrokes.
+    let bytes = zle.vi_chg_buf.clone();
+    zle.ungetbytes(&bytes);
 }
 
 fn widget_vi_find_next_char(zle: &mut Zle) {
