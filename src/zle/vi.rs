@@ -365,7 +365,7 @@ impl Zle {
 /// Map a vi mark name to its slot index in `Zle::vi_marks`.
 /// `a..z` → 0..25; `'` / `` ` `` → 26 (the implicit last-position mark).
 fn vi_mark_index(name: char) -> Option<usize> {
-    if ('a'..='z').contains(&name) {
+    if name.is_ascii_lowercase() {
         Some(name as usize - 'a' as usize)
     } else if name == '\'' || name == '`' {
         Some(26)
