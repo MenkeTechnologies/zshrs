@@ -285,9 +285,11 @@ impl Zle {
         self.resetneeded = true;
     }
 
-    /// Vi undo (u command)
+    /// Vi undo (`u` in command mode). Port of viundo() — which in C zsh just
+    /// dispatches to undo() (zle_utils.c:1601). Routes through our index-based
+    /// undo_widget() that mirrors that implementation.
     pub fn vi_undo(&mut self) {
-        // TODO: implement full undo
+        let _ = self.undo_widget();
     }
 
     /// Vi visual mode
@@ -308,17 +310,44 @@ impl Zle {
         // TODO: implement visual block mode
     }
 
-    /// Vi set mark
+    /// Vi set mark (`m{a-z}` in command mode). Port of visetmark() from
+    /// Src/Zle/zle_move.c:872. Stores the current cursor and history line in
+    /// the named slot; non-letter names are rejected.
     pub fn vi_set_mark(&mut self, name: char) {
-        // TODO: implement named marks
-        let _ = name;
+        // Set the historical mark (mirror with self.mark for emacs compat).
         self.mark = self.zlecs;
+        if let Some(idx) = vi_mark_index(name) {
+            self.vi_marks[idx] = Some((self.zlecs, self.history.cursor as i32));
+        }
     }
 
-    /// Vi goto mark
+    /// Vi goto mark (`'a` / `` `a `` in command mode). Port of vigotomark()
+    /// from zle_move.c:887. ASCII letters jump to the saved location;
+    /// `'` / `` ` `` jumps to the implicit "last position" mark; other
+    /// characters are rejected.
     pub fn vi_goto_mark(&mut self, name: char) {
-        // TODO: implement named marks
-        let _ = name;
+        let idx = match vi_mark_index(name) {
+            Some(i) => i,
+            None => return,
+        };
+        let (cs, hist) = match self.vi_marks[idx] {
+            Some(s) => s,
+            None => return,
+        };
+        // Save the pre-jump position into the implicit mark (slot 26) so the
+        // user can return to it with `''`.
+        self.vi_marks[26] = Some((self.zlecs, self.history.cursor as i32));
+        if hist >= 0 && (hist as usize) < self.history.entries.len() {
+            // Cross-history jumps need to load that entry.
+            let target = hist as usize;
+            if target != self.history.cursor {
+                self.history.cursor = target;
+                self.zleline = self.history.entries[target].line.chars().collect();
+                self.zlell = self.zleline.len();
+            }
+        }
+        self.zlecs = cs.min(self.zlell);
+        self.resetneeded = true;
     }
 
     /// Record keys for vi repeat
@@ -330,6 +359,18 @@ impl Zle {
     /// Replay last change (dot command)
     pub fn vi_repeat_change(&mut self) {
         // TODO: implement change replay
+    }
+}
+
+/// Map a vi mark name to its slot index in `Zle::vi_marks`.
+/// `a..z` → 0..25; `'` / `` ` `` → 26 (the implicit last-position mark).
+fn vi_mark_index(name: char) -> Option<usize> {
+    if ('a'..='z').contains(&name) {
+        Some(name as usize - 'a' as usize)
+    } else if name == '\'' || name == '`' {
+        Some(26)
+    } else {
+        None
     }
 }
 
@@ -411,6 +452,46 @@ mod tests {
         // And the next.
         assert_eq!(zle.vi_repeat_find(), 0);
         assert_eq!(zle.zlecs, 5);
+    }
+
+    #[test]
+    fn vi_set_and_goto_named_mark_round_trip() {
+        let mut zle = zle_with("hello world", 6);
+        zle.vi_set_mark('a');
+        zle.zlecs = 0;
+        zle.vi_goto_mark('a');
+        assert_eq!(zle.zlecs, 6);
+    }
+
+    #[test]
+    fn vi_goto_mark_records_implicit_last_position() {
+        let mut zle = zle_with("0123456789", 4);
+        zle.vi_set_mark('m');
+        zle.zlecs = 9;
+        zle.vi_goto_mark('m'); // jump back; 26th slot now holds 9
+        assert_eq!(zle.zlecs, 4);
+        zle.vi_goto_mark('\''); // jump to implicit last position
+        assert_eq!(zle.zlecs, 9);
+    }
+
+    #[test]
+    fn vi_set_mark_ignores_invalid_names() {
+        let mut zle = zle_with("abc", 1);
+        zle.vi_set_mark('A'); // uppercase not allowed
+        zle.vi_set_mark('1'); // digit not allowed
+        assert!(zle.vi_marks.iter().all(|m| m.is_none()));
+    }
+
+    #[test]
+    fn vi_undo_reverses_a_recorded_change() {
+        let mut zle = zle_with("", 0);
+        zle.setlastline();
+        zle.zleline = "abc".chars().collect();
+        zle.zlell = 3;
+        zle.zlecs = 3;
+        zle.mkundoent();
+        zle.vi_undo();
+        assert_eq!(zle.zleline.iter().collect::<String>(), "");
     }
 
     #[test]
