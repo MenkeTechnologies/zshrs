@@ -565,13 +565,116 @@ fn widget_down_history(zle: &mut Zle) {
 }
 
 fn widget_history_isearch_backward(zle: &mut Zle) {
-    // TODO: implement incremental search
-    let _ = zle;
+    // Port of historyincrementalsearchbackward() from Src/Zle/zle_hist.c:922
+    // (which is doisearch(-1, 0)).
+    do_isearch(zle, -1);
 }
 
 fn widget_history_isearch_forward(zle: &mut Zle) {
-    // TODO: implement incremental search
-    let _ = zle;
+    // Port of historyincrementalsearchforward() from Src/Zle/zle_hist.c:929
+    // (doisearch(1, 0)).
+    do_isearch(zle, 1);
+}
+
+/// Minimal port of doisearch() from zle_hist.c.
+/// Reads characters into a pattern and re-searches history on each keystroke.
+/// Recognised control chars: Ctrl-R repeats backward, Ctrl-S repeats forward,
+/// Ctrl-G/Esc cancels (restores starting line), backspace shortens the
+/// pattern, Enter accepts. Anything else exits the loop with the current
+/// match in place.
+fn do_isearch(zle: &mut Zle, mut dir: i32) {
+    // Save start state for cancel.
+    let start_line = zle.zleline.clone();
+    let start_cs = zle.zlecs;
+    let start_cursor = zle.history.cursor;
+
+    let mut pattern = String::new();
+    let mut current_idx: i32 = zle.history.cursor as i32;
+
+    loop {
+        let c = match zle.getfullchar(true) {
+            Some(c) => c,
+            None => break,
+        };
+        match c {
+            // Enter / Newline → accept current match.
+            '\r' | '\n' => break,
+            // Ctrl-G / Esc → cancel.
+            '\x07' | '\x1b' => {
+                zle.zleline = start_line;
+                zle.zlell = zle.zleline.len();
+                zle.zlecs = start_cs;
+                zle.history.cursor = start_cursor;
+                zle.resetneeded = true;
+                return;
+            }
+            // Ctrl-R → repeat backward.
+            '\x12' => {
+                dir = -1;
+                current_idx -= 1;
+            }
+            // Ctrl-S → repeat forward.
+            '\x13' => {
+                dir = 1;
+                current_idx += 1;
+            }
+            // Backspace / Delete → shrink pattern.
+            '\x08' | '\x7f' => {
+                pattern.pop();
+                current_idx = zle.history.cursor as i32;
+            }
+            // Other printable input → extend pattern.
+            ch if !ch.is_control() => {
+                pattern.push(ch);
+            }
+            _ => break,
+        }
+        if pattern.is_empty() {
+            continue;
+        }
+        zle.srch_str = Some(pattern.clone());
+        let len = zle.history.entries.len() as i32;
+        let matched: Option<usize> = if dir < 0 {
+            // Search backward starting at current_idx.
+            let mut i = current_idx.min(len - 1);
+            let mut found = None;
+            while i >= 0 {
+                if zle.history.entries[i as usize].line.contains(&pattern) {
+                    found = Some(i as usize);
+                    break;
+                }
+                i -= 1;
+            }
+            found
+        } else {
+            let mut i = current_idx.max(0);
+            let mut found = None;
+            while i < len {
+                if zle.history.entries[i as usize].line.contains(&pattern) {
+                    found = Some(i as usize);
+                    break;
+                }
+                i += 1;
+            }
+            found
+        };
+        if let Some(idx) = matched {
+            current_idx = idx as i32;
+            zle.history.cursor = idx;
+            zle.zleline = zle.history.entries[idx].line.chars().collect();
+            zle.zlell = zle.zleline.len();
+            // Place cursor at the start of the match for visual feedback.
+            zle.zlecs = zle.history.entries[idx]
+                .line
+                .find(&pattern)
+                .unwrap_or(0)
+                .min(zle.zlell);
+            zle.resetneeded = true;
+        } else {
+            // No match — beep but keep the prior position.
+            zle.handle_feep();
+        }
+    }
 }
 
 fn widget_beginning_of_buffer_or_history(zle: &mut Zle) {
@@ -987,13 +1090,18 @@ fn widget_vi_history_search_backward(zle: &mut Zle) {
 }
 
 fn widget_vi_repeat_search(zle: &mut Zle) {
-    // TODO: implement vi repeat search
-    let _ = zle;
+    // Port of virepeatsearch() from Src/Zle/zle_hist.c.
+    // Replays the last vi search in the same direction.
+    let mut hist = std::mem::take(&mut zle.history);
+    zle.vi_repeat_search(&mut hist);
+    zle.history = hist;
 }
 
 fn widget_vi_rev_repeat_search(zle: &mut Zle) {
-    // TODO: implement vi reverse repeat search
-    let _ = zle;
+    // Port of virevrepeatsearch() from Src/Zle/zle_hist.c.
+    let mut hist = std::mem::take(&mut zle.history);
+    zle.vi_rev_repeat_search(&mut hist);
+    zle.history = hist;
 }
 
 fn widget_vi_fetch_history(zle: &mut Zle) {
