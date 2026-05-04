@@ -51,10 +51,14 @@ impl Zle {
                 }
             }
             WordStyle::Shell => {
-                // TODO: implement shell word boundaries
-                while pos > 0 && !self.zleline[pos - 1].is_whitespace() {
-                    pos -= 1;
-                }
+                // Walk the buffer left-to-right as a coarse shell lexer to
+                // collect (word_start, word_end_exclusive) pairs that respect
+                // single quotes, double quotes, and backslash escapes — then
+                // jump backwards to the start of the word containing `pos`,
+                // or to the previous word if `pos` is on whitespace.
+                // Matches zsh's `bufferwords()` quoting semantics in
+                // Src/lex.c at a high level (no command-substitution recursion).
+                pos = shell_word_start_before(&self.zleline[..self.zlell], pos);
             }
             WordStyle::BlankDelimited => {
                 // Skip whitespace
@@ -104,13 +108,7 @@ impl Zle {
                 }
             }
             WordStyle::Shell => {
-                // TODO: implement shell word boundaries
-                while pos < self.zlell && !self.zleline[pos].is_whitespace() {
-                    pos += 1;
-                }
-                while pos < self.zlell && self.zleline[pos].is_whitespace() {
-                    pos += 1;
-                }
+                pos = shell_word_end_after(&self.zleline[..self.zlell], pos);
             }
             WordStyle::BlankDelimited => {
                 // Skip non-whitespace
@@ -143,4 +141,170 @@ fn is_emacs_word_char(c: ZleChar) -> bool {
 /// Check if character is a vi word character (alphanumeric)
 fn is_vi_word_char(c: ZleChar) -> bool {
     c.is_alphanumeric() || c == '_'
+}
+
+/// Walk `line` left-to-right collecting (start, end_exclusive) ranges of
+/// shell words. Words are runs of non-whitespace, with single quotes,
+/// double quotes, and backslash escapes treated as part of the surrounding
+/// word so `"foo bar"` stays one token. Whitespace inside quotes is part of
+/// the word; whitespace outside any quote separates words.
+///
+/// This is a deliberately simplified port of zsh's `bufferwords()` from
+/// Src/lex.c — it skips command-substitution recursion (`$(...)` and
+/// backticks) and treats them like any other characters; the underlying
+/// `bufferwords()` actually re-tokenizes those inner regions. The simpler
+/// form is sufficient for ZLE word-motion widgets, which only need
+/// boundary detection.
+fn shell_words(line: &[ZleChar]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    let n = line.len();
+    while i < n {
+        // Skip leading whitespace.
+        while i < n && line[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        let start = i;
+        let mut in_single = false;
+        let mut in_double = false;
+        while i < n {
+            let c = line[i];
+            if in_single {
+                if c == '\'' {
+                    in_single = false;
+                }
+                i += 1;
+                continue;
+            }
+            if in_double {
+                if c == '\\' && i + 1 < n {
+                    i += 2;
+                    continue;
+                }
+                if c == '"' {
+                    in_double = false;
+                }
+                i += 1;
+                continue;
+            }
+            if c == '\\' && i + 1 < n {
+                // Outside quotes, backslash escapes one char (incl. whitespace).
+                i += 2;
+                continue;
+            }
+            if c == '\'' {
+                in_single = true;
+                i += 1;
+                continue;
+            }
+            if c == '"' {
+                in_double = true;
+                i += 1;
+                continue;
+            }
+            if c.is_whitespace() {
+                break;
+            }
+            i += 1;
+        }
+        out.push((start, i));
+    }
+    out
+}
+
+/// Find the start of the shell word containing or immediately preceding `pos`.
+/// If `pos` is inside a word, returns that word's start. If `pos` is on
+/// whitespace or at end-of-buffer, returns the start of the previous word
+/// (or 0 if there is none).
+pub(crate) fn shell_word_start_before(line: &[ZleChar], pos: usize) -> usize {
+    let words = shell_words(line);
+    // Search for the word containing pos.
+    for (s, e) in words.iter().rev() {
+        if *s <= pos && pos <= *e {
+            // If we're sitting at the very start of a word, jump to the
+            // previous word — matches the "go-back-one-word" semantics that
+            // backward-word users expect when called from the first column
+            // of a token.
+            if pos == *s {
+                continue;
+            }
+            return *s;
+        }
+        if *e < pos {
+            return *s;
+        }
+    }
+    0
+}
+
+/// Find the end (exclusive) of the shell word at or after `pos`.
+/// If `pos` is inside a word, returns that word's end. If `pos` is on
+/// whitespace, returns the end of the next word (or `line.len()` if none).
+pub(crate) fn shell_word_end_after(line: &[ZleChar], pos: usize) -> usize {
+    let words = shell_words(line);
+    for (s, e) in words {
+        if pos >= s && pos < e {
+            return e;
+        }
+        if pos < s {
+            return e;
+        }
+    }
+    line.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chars(s: &str) -> Vec<char> {
+        s.chars().collect()
+    }
+
+    #[test]
+    fn shell_words_splits_on_whitespace() {
+        let line = chars("echo hello world");
+        assert_eq!(shell_words(&line), vec![(0, 4), (5, 10), (11, 16)]);
+    }
+
+    #[test]
+    fn shell_words_keeps_double_quoted_run_intact() {
+        let line = chars(r#"echo "hello world""#);
+        assert_eq!(shell_words(&line), vec![(0, 4), (5, 18)]);
+    }
+
+    #[test]
+    fn shell_words_keeps_single_quoted_run_intact() {
+        let line = chars("a 'b c' d");
+        assert_eq!(shell_words(&line), vec![(0, 1), (2, 7), (8, 9)]);
+    }
+
+    #[test]
+    fn shell_words_treats_backslash_escape_as_part_of_word() {
+        let line = chars(r"foo\ bar baz");
+        assert_eq!(shell_words(&line), vec![(0, 8), (9, 12)]);
+    }
+
+    #[test]
+    fn shell_word_end_after_advances_into_next_word() {
+        let line = chars("aa bb cc");
+        // pos 2 is the space between "aa" and "bb" — end_after lands at 5.
+        assert_eq!(shell_word_end_after(&line, 2), 5);
+        // pos 0 is inside "aa" — end_after lands at 2.
+        assert_eq!(shell_word_end_after(&line, 0), 2);
+    }
+
+    #[test]
+    fn shell_word_start_before_returns_word_start() {
+        let line = chars("aa bb cc");
+        // pos 4 is inside "bb" — start_before is 3.
+        assert_eq!(shell_word_start_before(&line, 4), 3);
+        // pos 3 is at the start of "bb" — start_before goes back to "aa" → 0.
+        assert_eq!(shell_word_start_before(&line, 3), 0);
+        // pos 5 is end of "bb" — start_before is 3.
+        assert_eq!(shell_word_start_before(&line, 5), 3);
+    }
 }

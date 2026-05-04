@@ -149,32 +149,31 @@ pub fn format_key_sequence(seq: &[u8]) -> String {
     result
 }
 
-/// Bind a key in a keymap
+/// Bind a key sequence in a named keymap (port of bindkey from
+/// Src/Zle/zle_keymap.c). Returns true if the keymap exists and the binding
+/// is installed. Uses `Arc::make_mut` to copy-on-write the wrapped Keymap so
+/// the mutation respects the existing Arc-shared layout.
 pub fn bind_key(km: &mut KeymapManager, keymap: &str, seq: &str, widget: &str) -> bool {
     let seq_bytes = parse_key_sequence(seq);
-
-    if let Some(map) = km.keymaps.get_mut(keymap) {
-        // We need to get mutable access - this is tricky with Arc
-        // For now, this is a no-op as we'd need interior mutability
-        let _ = (map, seq_bytes, widget);
-        // TODO: implement proper binding mutation
-        false
-    } else {
-        false
-    }
+    let map = match km.keymaps.get_mut(keymap) {
+        Some(m) => m,
+        None => return false,
+    };
+    let inner = std::sync::Arc::make_mut(map);
+    inner.bind_seq(&seq_bytes, Thingy::new(widget));
+    true
 }
 
-/// Unbind a key in a keymap
+/// Remove a binding in a named keymap (port of `bindkey -r` from zle_keymap.c).
 pub fn unbind_key(km: &mut KeymapManager, keymap: &str, seq: &str) -> bool {
     let seq_bytes = parse_key_sequence(seq);
-
-    if let Some(map) = km.keymaps.get_mut(keymap) {
-        let _ = (map, seq_bytes);
-        // TODO: implement proper binding removal
-        false
-    } else {
-        false
-    }
+    let map = match km.keymaps.get_mut(keymap) {
+        Some(m) => m,
+        None => return false,
+    };
+    let inner = std::sync::Arc::make_mut(map);
+    inner.unbind_seq(&seq_bytes);
+    true
 }
 
 /// List bindings in a keymap
@@ -204,4 +203,39 @@ pub fn list_bindings(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> 
 
     bindings.sort_by(|a, b| a.0.cmp(&b.0));
     bindings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bind_key_returns_false_for_unknown_keymap() {
+        let mut km = KeymapManager::new();
+        assert!(!bind_key(&mut km, "no-such-keymap", "^A", "self-insert"));
+    }
+
+    #[test]
+    fn bind_key_then_unbind_round_trips_through_emacs_keymap() {
+        let mut km = KeymapManager::new();
+        // Pick a sequence unlikely to clash with the default emacs map.
+        // \M-z = ESC z = bytes 0x1B 0x7A.
+        assert!(bind_key(&mut km, "emacs", "\\ez", "self-insert"));
+        // Verify the binding shows up in list_bindings.
+        let listed = list_bindings(&km, "emacs");
+        let seq = format_key_sequence(&[0x1b, 0x7a]);
+        assert!(
+            listed.iter().any(|(k, v)| k == &seq && v == "self-insert"),
+            "bound sequence missing from list: {:?}",
+            listed
+        );
+        // Now remove it.
+        assert!(unbind_key(&mut km, "emacs", "\\ez"));
+        let listed = list_bindings(&km, "emacs");
+        assert!(
+            !listed.iter().any(|(k, _)| k == &seq),
+            "unbound sequence still present: {:?}",
+            listed
+        );
+    }
 }
