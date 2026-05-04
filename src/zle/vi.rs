@@ -165,10 +165,8 @@ impl Zle {
             }
         }
         // Apply the t/T adjustment after the final landing.
-        if self.vi_last_find_tail > 0 {
-            if self.zlecs + 1 <= self.zlell {
-                self.zlecs += 1;
-            }
+        if self.vi_last_find_tail > 0 && self.zlecs < self.zlell {
+            self.zlecs += 1;
         } else if self.vi_last_find_tail < 0 && self.zlecs > 0 {
             self.zlecs -= 1;
         }
