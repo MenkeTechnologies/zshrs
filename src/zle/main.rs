@@ -244,6 +244,42 @@ pub struct Zle {
     pub neg_arg: bool,
     /// Multiplier for commands
     pub mult: i32,
+    /// History list and navigation state.
+    /// Port of zsh's global histline/curhist + saved-line state in
+    /// Src/Zle/zle_hist.c. zsh treats this as global; we own it on Zle.
+    pub history: super::hist::History,
+    /// Sticky column for vertical motion across lines.
+    /// Port of `lastcol` in zle_hist.c — `-1` means "recompute from cursor".
+    pub lastcol: i32,
+    /// Buffer stack: lines pushed by push-line / accept-line-and-down-history,
+    /// to be re-fed at the next zleread. Port of `bufstack` in zle_hist.c
+    /// (a linked list there; a Vec used as a LIFO works the same here).
+    pub bufstack: Vec<String>,
+    /// Vi find-char state for repeat-find / rev-repeat-find.
+    /// Port of `vfindchar`/`vfinddir`/`vfindtail` from zle_vi.c.
+    pub vi_find_char: Option<char>,
+    pub vi_find_dir: i32,
+    pub vi_find_tail: bool,
+    /// Vi last change replay buffer (for `.` operator).
+    /// Port of `vichgbuf` from zle_vi.c — bytes of the last change op.
+    pub vi_chg_buf: Vec<u8>,
+    /// Last inline search pattern, used by repeat-search.
+    /// Port of `srch_str` in zle_hist.c.
+    pub srch_str: Option<String>,
+    /// Snapshot of zleline at the start of the current widget invocation.
+    /// Port of `lastline`/`lastll`/`lastcs` from Src/Zle/zle_utils.c — used by
+    /// `mkundoent` to diff against `zleline` and produce a Change record.
+    pub last_line: ZleString,
+    pub last_ll: usize,
+    pub last_cs: usize,
+    /// Position in `undo_stack` (the index *after* the last applied change).
+    /// Equivalent to `curchange` in C, expressed as an index instead of a pointer.
+    pub cur_change: usize,
+    /// Monotonic change number issued by `mkundoent`.
+    pub undo_changeno: u64,
+    /// Lower bound on the change number that `undo` will accept.
+    /// Port of `undo_limitno` from zle_utils.c — used by `vi-undo-change`.
+    pub undo_limitno: u64,
 }
 
 impl Default for Zle {
@@ -299,6 +335,20 @@ impl Zle {
             yanklast: false,
             neg_arg: false,
             mult: 1,
+            history: super::hist::History::new(2000),
+            lastcol: -1,
+            bufstack: Vec::new(),
+            vi_find_char: None,
+            vi_find_dir: 0,
+            vi_find_tail: false,
+            vi_chg_buf: Vec::new(),
+            srch_str: None,
+            last_line: Vec::new(),
+            last_ll: 0,
+            last_cs: 0,
+            cur_change: 0,
+            undo_changeno: 0,
+            undo_limitno: 0,
         }
     }
 
@@ -540,6 +590,9 @@ impl Zle {
     /// Execute a widget
     fn execute_widget(&mut self, widget: &Widget) {
         self.lastcmd = widget.flags;
+        // Snapshot the line so mkundoent can diff it post-widget.
+        // Port of zsh's setlastline()/handleundo() framing around widget calls.
+        self.handleundo();
 
         match &widget.func {
             super::widget::WidgetFunc::Internal(f) => {
@@ -551,6 +604,10 @@ impl Zle {
                 let _ = name;
             }
         }
+
+        // Capture the change (if any) into the undo stack. undo/redo widgets
+        // call mkundoent themselves, so a no-op diff here is harmless.
+        self.mkundoent();
     }
 
     /// Self-insert character (internal, used by zlecore)

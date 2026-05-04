@@ -158,6 +158,187 @@ impl Zle {
         let _ = max_size;
     }
 
+    /// Move cursor up by `self.mult` lines within the multi-line buffer.
+    /// Returns leftover count (positive = hit top of buffer before completing).
+    /// Port of upline() from Src/Zle/zle_hist.c:243.
+    pub fn upline(&mut self) -> i32 {
+        let mut n = self.mult;
+        if n < 0 {
+            self.mult = -self.mult;
+            let r = -self.downline();
+            self.mult = -self.mult;
+            return r;
+        }
+        if self.lastcol == -1 {
+            self.lastcol = (self.zlecs - self.find_bol(self.zlecs)) as i32;
+        }
+        self.zlecs = self.find_bol(self.zlecs);
+        while n > 0 {
+            if self.zlecs == 0 {
+                break;
+            }
+            self.zlecs -= 1;
+            self.zlecs = self.find_bol(self.zlecs);
+            n -= 1;
+        }
+        if n == 0 {
+            let x = self.find_eol(self.zlecs);
+            self.zlecs += self.lastcol as usize;
+            if self.zlecs >= x {
+                self.zlecs = x;
+            }
+        }
+        n
+    }
+
+    /// Move cursor down by `self.mult` lines.
+    /// Returns leftover count (positive = hit bottom before completing).
+    /// Port of downline() from Src/Zle/zle_hist.c:332.
+    pub fn downline(&mut self) -> i32 {
+        let mut n = self.mult;
+        if n < 0 {
+            self.mult = -self.mult;
+            let r = -self.upline();
+            self.mult = -self.mult;
+            return r;
+        }
+        if self.lastcol == -1 {
+            self.lastcol = (self.zlecs - self.find_bol(self.zlecs)) as i32;
+        }
+        while n > 0 {
+            let x = self.find_eol(self.zlecs);
+            if x == self.zlell {
+                break;
+            }
+            self.zlecs = x + 1;
+            n -= 1;
+        }
+        if n == 0 {
+            let x = self.find_eol(self.zlecs);
+            self.zlecs += self.lastcol as usize;
+            if self.zlecs >= x {
+                self.zlecs = x;
+            }
+        }
+        n
+    }
+
+    /// Try to move cursor up one line; if at top of buffer, navigate history.
+    /// Port of uplineorhistory() from Src/Zle/zle_hist.c:282.
+    /// Returns 0 on success, 1 if exhausted (caller may beep).
+    pub fn up_line_or_history_widget(&mut self) -> i32 {
+        let ocs = self.zlecs;
+        let n = self.upline();
+        if n != 0 {
+            self.zlecs = ocs;
+            if self.zlereadflags.no_history {
+                return 1;
+            }
+            let saved_mult = self.mult;
+            self.mult = n;
+            let ret = if self.zle_goto_hist(-self.mult, false) {
+                0
+            } else {
+                1
+            };
+            self.mult = saved_mult;
+            self.resetneeded = true;
+            ret
+        } else {
+            self.resetneeded = true;
+            0
+        }
+    }
+
+    /// Try to move cursor down one line; if at bottom of buffer, navigate history.
+    /// Port of downlineorhistory() from Src/Zle/zle_hist.c:370.
+    pub fn down_line_or_history_widget(&mut self) -> i32 {
+        let ocs = self.zlecs;
+        let n = self.downline();
+        if n != 0 {
+            self.zlecs = ocs;
+            if self.zlereadflags.no_history {
+                return 1;
+            }
+            let saved_mult = self.mult;
+            self.mult = n;
+            let ret = if self.zle_goto_hist(self.mult, false) {
+                0
+            } else {
+                1
+            };
+            self.mult = saved_mult;
+            self.resetneeded = true;
+            ret
+        } else {
+            self.resetneeded = true;
+            0
+        }
+    }
+
+    /// Move the history cursor by `n` (negative = older / "up", positive = newer / "down").
+    /// If `skipdups`, keep stepping while the visited entry equals the current line.
+    /// Returns true if the line changed, false if exhausted (caller may beep).
+    /// Port of `zle_goto_hist` from Src/Zle/zle_hist.c:805.
+    pub fn zle_goto_hist(&mut self, n: i32, skipdups: bool) -> bool {
+        let len = self.history.entries.len() as i32;
+        if len == 0 {
+            return false;
+        }
+        let cur: i32 = if (self.history.cursor as i32) > len {
+            len
+        } else {
+            self.history.cursor as i32
+        };
+        let mut new_idx = cur + n;
+        if new_idx < 0 || new_idx > len {
+            return false;
+        }
+        if skipdups && n != 0 {
+            let cur_line: String = self.zleline.iter().collect();
+            let step: i32 = if n < 0 { -1 } else { 1 };
+            while new_idx >= 0 && new_idx < len {
+                if self.history.entries[new_idx as usize].line != cur_line {
+                    break;
+                }
+                new_idx += step;
+            }
+            if new_idx < 0 || new_idx > len {
+                return false;
+            }
+        }
+
+        // Save current line on first navigation away from the live buffer.
+        if self.history.saved_line.is_none() && self.history.cursor as i32 == len {
+            self.history.saved_line = Some(self.zleline.clone());
+            self.history.saved_cs = self.zlecs;
+        }
+
+        self.history.cursor = new_idx as usize;
+        let new_line: Option<ZleString> = if new_idx == len {
+            self.history.saved_line.clone()
+        } else {
+            Some(
+                self.history.entries[new_idx as usize]
+                    .line
+                    .chars()
+                    .collect(),
+            )
+        };
+        if let Some(line) = new_line {
+            self.zleline = line;
+            self.zlell = self.zleline.len();
+            self.zlecs = if new_idx == len {
+                self.history.saved_cs.min(self.zlell)
+            } else {
+                self.zlell
+            };
+            self.resetneeded = true;
+            self.lastcol = -1;
+        }
+        true
+    }
+
     /// Go to previous history entry
     pub fn history_up(&mut self, hist: &mut History) {
         if hist.saved_line.is_none() {
@@ -457,5 +638,142 @@ impl Zle {
     pub fn forget_edits(&mut self, _hist: &mut History) {
         // Would restore original history entries
         // TODO: implement edit restoration
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zle_with_history(entries: &[&str]) -> Zle {
+        let mut zle = Zle::new();
+        for line in entries {
+            zle.history.add((*line).to_string());
+        }
+        zle
+    }
+
+    #[test]
+    fn zle_goto_hist_walks_backwards_then_forwards() {
+        let mut zle = zle_with_history(&["echo a", "echo b", "echo c"]);
+        // Sit on the live (sentinel) buffer.
+        zle.history.cursor = 3;
+        // Up once → "echo c".
+        assert!(zle.zle_goto_hist(-1, false));
+        assert_eq!(zle.zleline.iter().collect::<String>(), "echo c");
+        // Up two more → "echo a".
+        assert!(zle.zle_goto_hist(-2, false));
+        assert_eq!(zle.zleline.iter().collect::<String>(), "echo a");
+        // One more up: exhausted.
+        assert!(!zle.zle_goto_hist(-1, false));
+        // Down twice → "echo c".
+        assert!(zle.zle_goto_hist(2, false));
+        assert_eq!(zle.zleline.iter().collect::<String>(), "echo c");
+    }
+
+    #[test]
+    fn zle_goto_hist_restores_saved_line_when_returning_to_sentinel() {
+        let mut zle = zle_with_history(&["one", "two"]);
+        zle.zleline = "draft".chars().collect();
+        zle.zlell = zle.zleline.len();
+        zle.zlecs = zle.zlell;
+        zle.history.cursor = 2; // sentinel
+        // Up to "two", then up to "one", then back down twice → restore "draft".
+        assert!(zle.zle_goto_hist(-1, false));
+        assert!(zle.zle_goto_hist(-1, false));
+        assert!(zle.zle_goto_hist(2, false));
+        assert_eq!(zle.zleline.iter().collect::<String>(), "draft");
+    }
+
+    #[test]
+    fn zle_goto_hist_skipdups_skips_consecutive_dupes() {
+        let mut zle = zle_with_history(&["dup", "dup", "uniq"]);
+        zle.zleline = "uniq".chars().collect();
+        zle.zlell = zle.zleline.len();
+        zle.history.cursor = 3;
+        // skipdups + n=-1 from sentinel: matching cur_line "uniq" → entries[2]
+        // is "uniq", same string as zleline, so it gets skipped, landing on "dup".
+        assert!(zle.zle_goto_hist(-1, true));
+        assert_eq!(zle.zleline.iter().collect::<String>(), "dup");
+    }
+
+    #[test]
+    fn upline_in_single_line_buffer_returns_remaining_count() {
+        let mut zle = Zle::new();
+        zle.zleline = "echo hi".chars().collect();
+        zle.zlell = zle.zleline.len();
+        zle.zlecs = 4;
+        let leftover = zle.upline();
+        // Single-line buffer: can't go up, leftover == self.mult (1).
+        assert_eq!(leftover, 1);
+    }
+
+    #[test]
+    fn upline_in_two_line_buffer_moves_cursor_to_first_line() {
+        let mut zle = Zle::new();
+        zle.zleline = "first\nsecond".chars().collect();
+        zle.zlell = zle.zleline.len();
+        zle.zlecs = 9; // inside "second" at col 3 ("sec[o]nd")
+        let leftover = zle.upline();
+        assert_eq!(leftover, 0);
+        // Should land at column 3 of first line → index 3
+        assert_eq!(zle.zlecs, 3);
+    }
+
+    #[test]
+    fn up_line_or_history_falls_through_to_history_when_at_top() {
+        let mut zle = zle_with_history(&["prev cmd"]);
+        zle.zleline = "current".chars().collect();
+        zle.zlell = zle.zleline.len();
+        zle.zlecs = 0;
+        zle.history.cursor = 1;
+        let ret = zle.up_line_or_history_widget();
+        assert_eq!(ret, 0);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "prev cmd");
+    }
+
+    #[test]
+    fn undo_redo_round_trip() {
+        let mut zle = Zle::new();
+        zle.setlastline();
+        // Type "abc"
+        zle.zleline = "abc".chars().collect();
+        zle.zlell = 3;
+        zle.zlecs = 3;
+        zle.mkundoent();
+        // Undo → empty.
+        assert_eq!(zle.undo_widget(), 0);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "");
+        assert_eq!(zle.zlell, 0);
+        // Redo → "abc" back.
+        assert_eq!(zle.redo_widget(), 0);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "abc");
+    }
+
+    #[test]
+    fn undo_returns_one_when_stack_empty() {
+        let mut zle = Zle::new();
+        zle.setlastline();
+        assert_eq!(zle.undo_widget(), 1);
+    }
+
+    #[test]
+    fn accept_line_and_down_history_pushes_next_entry_on_bufstack() {
+        let mut zle = zle_with_history(&["one", "two", "three"]);
+        zle.history.cursor = 0; // sitting on "one"
+        zle.zleline = "one".chars().collect();
+        zle.zlell = 3;
+        // Simulate widget body inline.
+        let len = zle.history.entries.len();
+        let next_idx = zle.history.cursor + 1;
+        if next_idx < len {
+            if let Some(entry) = zle.history.entries.get(next_idx) {
+                zle.bufstack.push(entry.line.clone());
+                zle.stackhist = (entry.num as i32).max(0);
+            }
+        }
+        zle.done = true;
+        assert!(zle.done);
+        assert_eq!(zle.bufstack, vec!["two".to_string()]);
     }
 }

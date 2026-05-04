@@ -248,12 +248,29 @@ fn widget_accept_line(zle: &mut Zle) {
 }
 
 fn widget_accept_and_hold(zle: &mut Zle) {
-    // TODO: implement accept-and-hold
+    // Port of acceptandhold() from Src/Zle/zle_misc.c:409.
+    // Push current line onto bufstack so the next zleread() re-feeds it
+    // as the next entry, then exit the editor.
+    let line: String = zle.zleline.iter().collect();
+    zle.bufstack.push(line);
+    zle.stackcs = zle.zlecs;
+    zle.done = true;
     zle.accept_line();
 }
 
 fn widget_accept_line_and_down_history(zle: &mut Zle) {
-    // TODO: implement accept-line-and-down-history
+    // Port of acceptlineanddownhistory() from Src/Zle/zle_hist.c:420.
+    // Move forward one history entry and queue it on bufstack so the
+    // next zleread() loads it; then exit the editor to run the current line.
+    let len = zle.history.entries.len();
+    let next_idx = zle.history.cursor + 1;
+    if next_idx < len {
+        if let Some(entry) = zle.history.entries.get(next_idx) {
+            zle.bufstack.push(entry.line.clone());
+            zle.stackhist = (entry.num as i32).max(0);
+        }
+    }
+    zle.done = true;
     zle.accept_line();
 }
 
@@ -456,33 +473,37 @@ fn widget_yank_pop(zle: &mut Zle) {
 }
 
 fn widget_undo(zle: &mut Zle) {
-    // TODO: implement undo
-    let _ = zle;
+    // Port of undo() from Src/Zle/zle_utils.c:1601.
+    let _ = zle.undo_widget();
 }
 
 fn widget_redo(zle: &mut Zle) {
-    // TODO: implement redo
-    let _ = zle;
+    // Port of redo() from Src/Zle/zle_utils.c:1661.
+    let _ = zle.redo_widget();
 }
 
 fn widget_up_line_or_history(zle: &mut Zle) {
-    // TODO: implement history navigation
-    let _ = zle;
+    // Port of uplineorhistory() from Src/Zle/zle_hist.c:282.
+    let _ = zle.up_line_or_history_widget();
 }
 
 fn widget_down_line_or_history(zle: &mut Zle) {
-    // TODO: implement history navigation
-    let _ = zle;
+    // Port of downlineorhistory() from Src/Zle/zle_hist.c:370.
+    let _ = zle.down_line_or_history_widget();
 }
 
 fn widget_up_history(zle: &mut Zle) {
-    // TODO: implement history navigation
-    let _ = zle;
+    // Port of uphistory() from Src/Zle/zle_hist.c:233.
+    // C calls zle_goto_hist(histline, -zmult, isset(HISTIGNOREDUPS)).
+    // skipdups=false until ZLE has access to ShellOptions; behavior matches HISTIGNOREDUPS unset.
+    let m = zle.mult;
+    zle.zle_goto_hist(-m, false);
 }
 
 fn widget_down_history(zle: &mut Zle) {
-    // TODO: implement history navigation
-    let _ = zle;
+    // Port of downhistory() from Src/Zle/zle_hist.c:434.
+    let m = zle.mult;
+    zle.zle_goto_hist(m, false);
 }
 
 fn widget_history_isearch_backward(zle: &mut Zle) {

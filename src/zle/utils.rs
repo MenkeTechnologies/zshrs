@@ -291,9 +291,12 @@ impl UndoState {
 }
 
 impl Zle {
-    /// Apply an undo entry
-    /// Port of applychange() from zle_utils.c
-    fn apply_change(&mut self, entry: &UndoEntry, reverse: bool) {
+    /// Apply an undo entry (legacy entry-based path).
+    /// Superseded by the index-based `apply_change`/`unapply_change` further
+    /// down which match zsh's `applychange`/`unapplychange` (zle_utils.c:1633/1677).
+    /// Kept private; remove after the legacy `UndoStack` callers are gone.
+    #[allow(dead_code)]
+    fn apply_undo_entry(&mut self, entry: &UndoEntry, reverse: bool) {
         if reverse {
             // Redo: re-insert removed text
             let removed: ZleString = self.zleline.drain(entry.start..entry.end).collect();
@@ -659,8 +662,172 @@ pub fn print_bind(seq: &[u8]) -> String {
 }
 
 /// Call ZLE hook
-/// Port of zlecallhook() from zle_utils.c  
+/// Port of zlecallhook() from zle_utils.c
 pub fn zle_call_hook(_name: &str, _args: &[&str]) -> i32 {
     // Would call user-defined hook function
     0
+}
+
+impl Zle {
+    /// Snapshot the current line into `last_line` so the next `mkundoent`
+    /// can diff against it. Port of `setlastline` (zle_utils.c:1587).
+    pub fn setlastline(&mut self) {
+        self.last_line.clear();
+        self.last_line.extend_from_slice(&self.zleline);
+        self.last_ll = self.zlell;
+        self.last_cs = self.zlecs;
+    }
+
+    /// If the line changed since the last snapshot, append a Change record
+    /// describing the diff. Port of `mkundoent` (zle_utils.c:1532).
+    pub fn mkundoent(&mut self) {
+        if self.last_ll == self.zlell && self.last_line[..self.last_ll] == self.zleline[..self.zlell]
+        {
+            self.last_cs = self.zlecs;
+            return;
+        }
+        let sh = self.last_ll.min(self.zlell);
+        let mut pre = 0usize;
+        while pre < sh && self.zleline[pre] == self.last_line[pre] {
+            pre += 1;
+        }
+        let mut suf = 0usize;
+        while suf < sh - pre
+            && self.zleline[self.zlell - 1 - suf] == self.last_line[self.last_ll - 1 - suf]
+        {
+            suf += 1;
+        }
+        let del: ZleString = if suf + pre == self.last_ll {
+            Vec::new()
+        } else {
+            self.last_line[pre..self.last_ll - suf].to_vec()
+        };
+        let ins: ZleString = if suf + pre == self.zlell {
+            Vec::new()
+        } else {
+            self.zleline[pre..self.zlell - suf].to_vec()
+        };
+        self.undo_changeno += 1;
+        let ch = super::main::Change {
+            flags: super::main::ChangeFlags::empty(),
+            hist: self.history.cursor as i32,
+            off: pre,
+            del,
+            ins,
+            old_cs: self.last_cs,
+            new_cs: self.zlecs,
+            changeno: self.undo_changeno,
+        };
+        // Drop any forward redo history past the cursor before pushing.
+        self.undo_stack.truncate(self.cur_change);
+        self.undo_stack.push(ch);
+        self.cur_change = self.undo_stack.len();
+    }
+
+    /// Pre-widget hook. Port of `handleundo` (zle_utils.c) — currently a thin
+    /// stub since `mkundoent` runs after each widget; the C version uses it to
+    /// flush in-flight `nextchanges` chains, which our one-change-per-widget
+    /// model doesn't need.
+    pub fn handleundo(&mut self) {
+        self.setlastline();
+    }
+
+    /// Reverse the change at `idx` (move zleline back to its pre-change state).
+    /// Returns true on success.
+    /// Port of `unapplychange` (zle_utils.c:1633).
+    pub fn unapply_change(&mut self, idx: usize) -> bool {
+        if idx >= self.undo_stack.len() {
+            return false;
+        }
+        // Borrow check: clone the small fields we need.
+        let (off, dell, insl, old_cs);
+        let del_vec;
+        let ins_len;
+        {
+            let ch = &self.undo_stack[idx];
+            off = ch.off;
+            dell = ch.del.len();
+            insl = ch.ins.len();
+            ins_len = ch.ins.len();
+            old_cs = ch.old_cs;
+            del_vec = ch.del.clone();
+        }
+        let _ = ins_len;
+        self.zlecs = off;
+        if insl > 0 {
+            // Remove the inserted text.
+            self.zleline.drain(off..off + insl);
+        }
+        if dell > 0 {
+            // Re-insert the deleted text.
+            for (i, c) in del_vec.into_iter().enumerate() {
+                self.zleline.insert(off + i, c);
+            }
+        }
+        self.zlell = self.zleline.len();
+        self.zlecs = old_cs.min(self.zlell);
+        self.resetneeded = true;
+        true
+    }
+
+    /// Replay the change at `idx`. Port of `applychange` (zle_utils.c:1677).
+    pub fn apply_change(&mut self, idx: usize) -> bool {
+        if idx >= self.undo_stack.len() {
+            return false;
+        }
+        let (off, dell, insl, new_cs);
+        let ins_vec;
+        {
+            let ch = &self.undo_stack[idx];
+            off = ch.off;
+            dell = ch.del.len();
+            insl = ch.ins.len();
+            new_cs = ch.new_cs;
+            ins_vec = ch.ins.clone();
+        }
+        self.zlecs = off;
+        if dell > 0 {
+            self.zleline.drain(off..off + dell);
+        }
+        if insl > 0 {
+            for (i, c) in ins_vec.into_iter().enumerate() {
+                self.zleline.insert(off + i, c);
+            }
+        }
+        self.zlell = self.zleline.len();
+        self.zlecs = new_cs.min(self.zlell);
+        self.resetneeded = true;
+        true
+    }
+
+    /// Walk back one Change. Port of `undo` (zle_utils.c:1601).
+    pub fn undo_widget(&mut self) -> i32 {
+        // Capture any in-flight edits into a Change before stepping back.
+        self.mkundoent();
+        if self.cur_change == 0 {
+            return 1;
+        }
+        let prev_idx = self.cur_change - 1;
+        if self.undo_stack[prev_idx].changeno <= self.undo_limitno {
+            return 1;
+        }
+        if self.unapply_change(prev_idx) {
+            self.cur_change = prev_idx;
+        }
+        self.setlastline();
+        0
+    }
+
+    /// Walk forward one Change. Port of `redo` (zle_utils.c:1661).
+    pub fn redo_widget(&mut self) -> i32 {
+        self.mkundoent();
+        if self.cur_change >= self.undo_stack.len() {
+            return 1;
+        }
+        if self.apply_change(self.cur_change) {
+            self.cur_change += 1;
+        }
+        self.setlastline();
+        0
+    }
 }
