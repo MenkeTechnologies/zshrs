@@ -1422,18 +1422,107 @@ impl DecodedOp {
                 None
             }
 
-            DecodedOp::If { .. }
-            | DecodedOp::Case { .. }
-            | DecodedOp::CaseItem { .. }
-            | DecodedOp::Select { .. }
-            | DecodedOp::Cond { .. }
-            | DecodedOp::Repeat { .. }
-            | DecodedOp::Try { .. }
-            | DecodedOp::Timed { .. }
-            | DecodedOp::Unknown { .. } => {
-                // TODO: Implement these
+            DecodedOp::If {
+                conditions,
+                else_body,
+                ..
+            } => {
+                let cond_pairs: Vec<(Vec<ShellCommand>, Vec<ShellCommand>)> = conditions
+                    .iter()
+                    .map(|(c, b)| {
+                        (
+                            c.iter().filter_map(|op| op.to_shell_command()).collect(),
+                            b.iter().filter_map(|op| op.to_shell_command()).collect(),
+                        )
+                    })
+                    .collect();
+                let else_part: Option<Vec<ShellCommand>> = else_body.as_ref().map(|body| {
+                    body.iter()
+                        .filter_map(|op| op.to_shell_command())
+                        .collect()
+                });
+                Some(ShellCommand::Compound(CompoundCommand::If {
+                    conditions: cond_pairs,
+                    else_part,
+                }))
+            }
+
+            DecodedOp::Case { word, cases } => {
+                let mapped: Vec<(Vec<ShellWord>, Vec<ShellCommand>, CaseTerminator)> = cases
+                    .iter()
+                    .map(|(pat, body)| {
+                        (
+                            vec![ShellWord::Literal(pat.clone())],
+                            body.iter().filter_map(|op| op.to_shell_command()).collect(),
+                            CaseTerminator::Break,
+                        )
+                    })
+                    .collect();
+                Some(ShellCommand::Compound(CompoundCommand::Case {
+                    word: ShellWord::Literal(word.clone()),
+                    cases: mapped,
+                }))
+            }
+
+            DecodedOp::CaseItem { .. } => {
+                // CaseItem is only meaningful as a child of Case; the Case
+                // branch above flattens directly from the (pattern, body)
+                // pairs the decoder builds, so a stray CaseItem at the top
+                // level has no executable form.
                 None
             }
+
+            DecodedOp::Repeat { count, body } => {
+                let body_cmds: Vec<ShellCommand> =
+                    body.iter().filter_map(|op| op.to_shell_command()).collect();
+                Some(ShellCommand::Compound(CompoundCommand::Repeat {
+                    count: count.clone(),
+                    body: body_cmds,
+                }))
+            }
+
+            DecodedOp::Try {
+                try_body,
+                always_body,
+            } => {
+                let try_cmds: Vec<ShellCommand> = try_body
+                    .iter()
+                    .filter_map(|op| op.to_shell_command())
+                    .collect();
+                let always_cmds: Vec<ShellCommand> = always_body
+                    .iter()
+                    .filter_map(|op| op.to_shell_command())
+                    .collect();
+                Some(ShellCommand::Compound(CompoundCommand::Try {
+                    try_body: try_cmds,
+                    always_body: always_cmds,
+                }))
+            }
+
+            DecodedOp::Select { .. } => {
+                // CompoundCommand::Select needs a var and word list; the
+                // current DecodedOp::Select carries fields the decoder
+                // hasn't surfaced yet (see zwc.rs:1054-1086 for the parts
+                // we do decode). Leave unmapped until the decoder grows
+                // those fields rather than guess at them here.
+                None
+            }
+
+            DecodedOp::Cond { .. } => {
+                // [[ ... ]] conditional. CompoundCommand has no Cond variant —
+                // the parser-level ZshCond shape lives only in the parse
+                // crate. Bridging that requires a converter on the parse
+                // side; deferred to a follow-up port.
+                None
+            }
+
+            DecodedOp::Timed { .. } => {
+                // `time cmd` — needs ZshCommand::Time-style wrapping which
+                // CompoundCommand doesn't model. Deferred.
+                None
+            }
+
+            DecodedOp::Unknown { .. } => None,
         }
     }
 }
@@ -1583,6 +1672,101 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn decoded_op_if_converts_to_compound_if() {
+        let cmd_a = DecodedOp::Simple {
+            args: vec!["true".into()],
+        };
+        let cmd_b = DecodedOp::Simple {
+            args: vec!["false".into()],
+        };
+        let op = DecodedOp::If {
+            if_type: 0,
+            conditions: vec![(vec![cmd_a], vec![cmd_b])],
+            else_body: None,
+        };
+        let result = op.to_shell_command();
+        match result {
+            Some(ShellCommand::Compound(CompoundCommand::If {
+                conditions,
+                else_part,
+            })) => {
+                assert_eq!(conditions.len(), 1);
+                assert!(else_part.is_none());
+                assert_eq!(conditions[0].0.len(), 1);
+                assert_eq!(conditions[0].1.len(), 1);
+            }
+            other => panic!("expected If, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decoded_op_repeat_converts_with_count_and_body() {
+        let body = DecodedOp::Simple {
+            args: vec!["echo".into(), "hi".into()],
+        };
+        let op = DecodedOp::Repeat {
+            count: "3".into(),
+            body: vec![body],
+        };
+        match op.to_shell_command() {
+            Some(ShellCommand::Compound(CompoundCommand::Repeat { count, body })) => {
+                assert_eq!(count, "3");
+                assert_eq!(body.len(), 1);
+            }
+            other => panic!("expected Repeat, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decoded_op_case_converts_each_pattern_branch() {
+        let body_one = DecodedOp::Simple {
+            args: vec!["echo".into(), "one".into()],
+        };
+        let body_two = DecodedOp::Simple {
+            args: vec!["echo".into(), "two".into()],
+        };
+        let op = DecodedOp::Case {
+            word: "$x".into(),
+            cases: vec![
+                ("a*".into(), vec![body_one]),
+                ("b*".into(), vec![body_two]),
+            ],
+        };
+        match op.to_shell_command() {
+            Some(ShellCommand::Compound(CompoundCommand::Case { cases, .. })) => {
+                assert_eq!(cases.len(), 2);
+                assert_eq!(cases[0].0.len(), 1);
+                assert_eq!(cases[1].0.len(), 1);
+            }
+            other => panic!("expected Case, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decoded_op_try_converts_both_arms() {
+        let try_arm = DecodedOp::Simple {
+            args: vec!["false".into()],
+        };
+        let always_arm = DecodedOp::Simple {
+            args: vec!["echo".into(), "done".into()],
+        };
+        let op = DecodedOp::Try {
+            try_body: vec![try_arm],
+            always_body: vec![always_arm],
+        };
+        match op.to_shell_command() {
+            Some(ShellCommand::Compound(CompoundCommand::Try {
+                try_body,
+                always_body,
+            })) => {
+                assert_eq!(try_body.len(), 1);
+                assert_eq!(always_body.len(), 1);
+            }
+            other => panic!("expected Try, got {:?}", other),
         }
     }
 
