@@ -256,10 +256,11 @@ pub struct Zle {
     /// (a linked list there; a Vec used as a LIFO works the same here).
     pub bufstack: Vec<String>,
     /// Vi find-char state for repeat-find / rev-repeat-find.
-    /// Port of `vfindchar`/`vfinddir`/`vfindtail` from zle_vi.c.
-    pub vi_find_char: Option<char>,
-    pub vi_find_dir: i32,
-    pub vi_find_tail: bool,
+    /// Port of `vfindchar` (zle_move.c:734), `vfinddir` and `tailadd` (zle_move.c:735).
+    /// `vi_last_find_tail` is the C `tailadd`: 0=on, -1=skip-back-after, +1=skip-forward-after.
+    pub vi_last_find_char: Option<char>,
+    pub vi_last_find_dir: i32,
+    pub vi_last_find_tail: i32,
     /// Vi last change replay buffer (for `.` operator).
     /// Port of `vichgbuf` from zle_vi.c — bytes of the last change op.
     pub vi_chg_buf: Vec<u8>,
@@ -280,6 +281,15 @@ pub struct Zle {
     /// Lower bound on the change number that `undo` will accept.
     /// Port of `undo_limitno` from zle_utils.c — used by `vi-undo-change`.
     pub undo_limitno: u64,
+    /// Bounds of the most recent yank's inserted region. Used by yank-pop to
+    /// know what to delete before pasting the previous kill-ring entry.
+    /// Port of `yankb`/`yanke`/`yankcs` from zle_misc.c.
+    pub yank_start: usize,
+    pub yank_end: usize,
+    pub yank_cs: usize,
+    /// Current rotation index into the kill ring. `None` means "show the
+    /// most recent yank"; rotates via yank-pop. Port of `kct` from zle_misc.c.
+    pub yank_ring_idx: Option<usize>,
 }
 
 impl Default for Zle {
@@ -338,9 +348,9 @@ impl Zle {
             history: super::hist::History::new(2000),
             lastcol: -1,
             bufstack: Vec::new(),
-            vi_find_char: None,
-            vi_find_dir: 0,
-            vi_find_tail: false,
+            vi_last_find_char: None,
+            vi_last_find_dir: 0,
+            vi_last_find_tail: 0,
             vi_chg_buf: Vec::new(),
             srch_str: None,
             last_line: Vec::new(),
@@ -349,6 +359,10 @@ impl Zle {
             cur_change: 0,
             undo_changeno: 0,
             undo_limitno: 0,
+            yank_start: 0,
+            yank_end: 0,
+            yank_cs: 0,
+            yank_ring_idx: None,
         }
     }
 
