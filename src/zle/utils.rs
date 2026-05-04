@@ -135,10 +135,13 @@ pub fn unmetafy(s: &str) -> String {
     s.to_string()
 }
 
-/// String width calculation
+/// String width calculation in display columns. Honours East-Asian wide
+/// characters (CJK, emoji presentation), zero-width combining marks, and
+/// other Unicode-defined widths via the `unicode-width` crate. Control
+/// characters report as zero (display undefined).
 pub fn strwidth(s: &str) -> usize {
-    // TODO: use unicode-width for proper width calculation
-    s.chars().count()
+    use unicode_width::UnicodeWidthStr;
+    s.width()
 }
 
 /// Check if character is printable
@@ -666,6 +669,36 @@ pub fn print_bind(seq: &[u8]) -> String {
 pub fn zle_call_hook(_name: &str, _args: &[&str]) -> i32 {
     // Would call user-defined hook function
     0
+}
+
+#[cfg(test)]
+mod tests_strwidth {
+    use super::strwidth;
+
+    #[test]
+    fn strwidth_ascii_is_one_per_char() {
+        assert_eq!(strwidth("hello"), 5);
+    }
+
+    #[test]
+    fn strwidth_counts_east_asian_wide_as_two() {
+        // 漢 is Wide; expected width 2 columns.
+        assert_eq!(strwidth("漢"), 2);
+        // Mixed: ascii + wide → 1 + 2 = 3
+        assert_eq!(strwidth("a漢"), 3);
+    }
+
+    #[test]
+    fn strwidth_zero_width_combining_mark_does_not_widen() {
+        // U+0301 COMBINING ACUTE ACCENT is zero-width.
+        assert_eq!(strwidth("e\u{0301}"), 1);
+    }
+
+    #[test]
+    fn strwidth_emoji_presentation_is_wide() {
+        // 🎉 is Wide.
+        assert_eq!(strwidth("🎉"), 2);
+    }
 }
 
 impl Zle {
