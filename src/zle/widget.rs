@@ -591,11 +591,7 @@ fn do_isearch(zle: &mut Zle, mut dir: i32) {
     let mut pattern = String::new();
     let mut current_idx: i32 = zle.history.cursor as i32;
 
-    loop {
-        let c = match zle.getfullchar(true) {
-            Some(c) => c,
-            None => break,
-        };
+    while let Some(c) = zle.getfullchar(true) {
         match c {
             // Enter / Newline → accept current match.
             '\r' | '\n' => break,
