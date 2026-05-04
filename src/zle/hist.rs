@@ -371,16 +371,17 @@ impl Zle {
         }
     }
 
-    /// Incremental search backward
+    /// Set search direction for an incremental backward search. The full
+    /// interactive isearch UI lives in `widget::do_isearch` (called by the
+    /// `widget_history_isearch_backward` widget) — this method only flips
+    /// the saved direction flag for callers that drive History externally.
     pub fn history_isearch_backward(&mut self, hist: &mut History) {
         hist.search_backward = true;
-        // TODO: implement full incremental search UI
     }
 
-    /// Incremental search forward
+    /// Mirror of `history_isearch_backward` but for forward search.
     pub fn history_isearch_forward(&mut self, hist: &mut History) {
         hist.search_backward = false;
-        // TODO: implement full incremental search UI
     }
 
     /// Search history for prefix
@@ -426,10 +427,12 @@ impl Zle {
         }
     }
 
-    /// Up line or history - move up in multi-line buffer or go to previous history
-    /// Port of uplineorhistory() from zle_hist.c
+    /// Up line or history — external-History overload of the widget-callable
+    /// `Zle::up_line_or_history_widget` (which handles multi-line motion via
+    /// upline() + zle_goto_hist). This variant is kept for callers that
+    /// thread their own History; it just steps the cursor up and falls
+    /// through to history_up.
     pub fn up_line_or_history(&mut self, hist: &mut History) {
-        // For now, just do history (multi-line TODO)
         self.history_up(hist);
     }
 
