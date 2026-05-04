@@ -378,10 +378,11 @@ impl ZshCompiler {
     }
 
     fn compile_pipe(&mut self, pipe: &ZshPipe) {
-        // ZshPipe = command + Optional(next ZshPipe). For a single-
-        // command pipe (no next), just compile the command. Multi-stage
-        // pipelines are TODO — they need fork-per-stage via
-        // BUILTIN_RUN_PIPELINE which compiles each stage as a sub-chunk.
+        // ZshPipe = command + Optional(next ZshPipe). For a single-command
+        // pipe (no next), compile inline. Multi-stage pipelines fork one
+        // child per stage via BUILTIN_RUN_PIPELINE: each stage is compiled
+        // as its own sub-chunk and pushed by index, the count goes on
+        // CallBuiltin's argc, and the runtime wires up the pipe fds.
         if pipe.next.is_none() {
             self.compile_command(&pipe.cmd);
             return;
