@@ -290,6 +290,10 @@ pub struct Zle {
     /// Current rotation index into the kill ring. `None` means "show the
     /// most recent yank"; rotates via yank-pop. Port of `kct` from zle_misc.c.
     pub yank_ring_idx: Option<usize>,
+    /// Vi named marks: 0..=25 are 'a'..'z', 26 is the implicit ' / ` mark
+    /// (last position before a jump). Each entry is `(cursor, histline)`.
+    /// Port of `vimarkcs[27]` / `vimarkline[27]` in Src/Zle/zle_move.c.
+    pub vi_marks: [Option<(usize, i32)>; 27],
 }
 
 impl Default for Zle {
@@ -363,6 +367,7 @@ impl Zle {
             yank_end: 0,
             yank_cs: 0,
             yank_ring_idx: None,
+            vi_marks: [None; 27],
         }
     }
 
