@@ -1748,14 +1748,16 @@ impl<'a> ZshLexer<'a> {
                             }
                         }
                         Some('\'') => {
-                            // $'...' ANSI-C escape syntax. Inside, `\X`
-                            // sequences are escapes (`\n`, `\t`, `\x1b`,
-                            // `\'` for literal apostrophe, `\\` for
-                            // backslash). Lexer captures the raw form
-                            // wrapped in QSTRING/SNULL markers; later
-                            // expansion decodes the escapes. zsh's
-                            // analogue lives in lex.c gettokstr's
-                            // LX2_QUOTE branch when prev char was `$`.
+                            // $'...' ANSI-C escape syntax.
+                            // Port of Src/lex.c:1284-1314 (LX2_QUOTE
+                            // branch when prev char was `String`):
+                            // only `\\` and `\'` emit a `Bnull`
+                            // marker (so getkeystring later
+                            // recognizes them as user-literal); any
+                            // other `\X` emits a literal `\` + the
+                            // following char so getkeystring's
+                            // standard `\n`/`\x`/`\u`/... decoding
+                            // can fire.
                             self.add(char_tokens::QSTRING);
                             self.add(char_tokens::SNULL);
                             loop {
@@ -1763,11 +1765,16 @@ impl<'a> ZshLexer<'a> {
                                 match ch {
                                     Some('\'') => break,
                                     Some('\\') => {
-                                        // `\X` — store both chars literally;
-                                        // expansion handles the actual escape.
-                                        self.add(char_tokens::BNULL);
-                                        match self.hgetc() {
-                                            Some(n) => self.add(n),
+                                        let next = self.hgetc();
+                                        match next {
+                                            Some(n) => {
+                                                if n == '\\' || n == '\'' {
+                                                    self.add(char_tokens::BNULL);
+                                                } else {
+                                                    self.add('\\');
+                                                }
+                                                self.add(n);
+                                            }
                                             None => {
                                                 self.lexstop = true;
                                                 unmatched = '\'';
@@ -3215,6 +3222,153 @@ pub fn untokenize_preserve_quotes(s: &str) -> String {
     result
 }
 
+/// Decode `\X` escape sequences for `$'...'` content.
+/// Port of `getkeystring()` from Src/utils.c:6915 with the
+/// `GETKEYS_DOLLARS_QUOTE` flag — handles the `\n`/`\t`/`\r`/`\e`/
+/// `\E`/`\a`/`\b`/`\f`/`\v`/`\xNN`/`\uNNNN`/`\UNNNNNNNN`/octal/`\\`/`\'`
+/// arms the C source recognizes inside dollar-single-quoted
+/// strings. Walks `chars[start..]` until `Snull` is hit, returns
+/// `(decoded, end_idx)` where `end_idx` points at the terminating
+/// `Snull`. `Bnull \\` and `Bnull '` are user-literal `\` / `'`
+/// per Src/lex.c:1303.
+fn getkeystring_dollar_quote(chars: &[char], start: usize) -> (String, usize) {
+    let mut out = String::new();
+    let mut i = start;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == char_tokens::SNULL {
+            return (out, i);
+        }
+        if c == char_tokens::BNULL {
+            // Bnull marks a user-literal `\\` or `\'` per
+            // Src/lex.c:1303-1306. The next char is the literal.
+            i += 1;
+            if i < chars.len() {
+                out.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if c == '\\' && i + 1 < chars.len() {
+            let nc = chars[i + 1];
+            match nc {
+                'a' => {
+                    out.push('\x07');
+                    i += 2;
+                }
+                'b' => {
+                    out.push('\x08');
+                    i += 2;
+                }
+                'e' | 'E' => {
+                    out.push('\x1b');
+                    i += 2;
+                }
+                'f' => {
+                    out.push('\x0c');
+                    i += 2;
+                }
+                'n' => {
+                    out.push('\n');
+                    i += 2;
+                }
+                'r' => {
+                    out.push('\r');
+                    i += 2;
+                }
+                't' => {
+                    out.push('\t');
+                    i += 2;
+                }
+                'v' => {
+                    out.push('\x0b');
+                    i += 2;
+                }
+                '\\' | '\'' | '"' => {
+                    out.push(nc);
+                    i += 2;
+                }
+                'x' => {
+                    // \xNN — up to 2 hex digits per Src/utils.c:7156
+                    let mut val: u32 = 0;
+                    let mut consumed = 2; // \x
+                    let mut got = 0;
+                    while got < 2 && i + consumed < chars.len() {
+                        let h = chars[i + consumed];
+                        if let Some(d) = h.to_digit(16) {
+                            val = val * 16 + d;
+                            consumed += 1;
+                            got += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if got == 0 {
+                        // No hex digits — emit literal `\x` per
+                        // Src/utils.c:7160-7163 fallthrough
+                        out.push('\\');
+                        out.push('x');
+                    } else if let Some(ch) = char::from_u32(val) {
+                        out.push(ch);
+                    }
+                    i += consumed;
+                }
+                'u' | 'U' => {
+                    let n = if nc == 'u' { 4 } else { 8 };
+                    let mut val: u32 = 0;
+                    let mut consumed = 2; // \u or \U
+                    let mut got = 0;
+                    while got < n && i + consumed < chars.len() {
+                        let h = chars[i + consumed];
+                        if let Some(d) = h.to_digit(16) {
+                            val = val * 16 + d;
+                            consumed += 1;
+                            got += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(ch) = char::from_u32(val) {
+                        out.push(ch);
+                    }
+                    i += consumed;
+                }
+                '0'..='7' => {
+                    // Octal — up to 3 digits per Src/utils.c:7156
+                    let mut val: u32 = 0;
+                    let mut consumed = 1; // skip backslash
+                    let mut got = 0;
+                    while got < 3 && i + consumed < chars.len() {
+                        let h = chars[i + consumed];
+                        if let Some(d) = h.to_digit(8) {
+                            val = val * 8 + d;
+                            consumed += 1;
+                            got += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Some(ch) = char::from_u32(val) {
+                        out.push(ch);
+                    }
+                    i += consumed;
+                }
+                _ => {
+                    // Unknown escape — keep `\` per
+                    // Src/utils.c:7180-7185 default branch
+                    out.push('\\');
+                    out.push(nc);
+                    i += 2;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    (out, i)
+}
+
 pub fn untokenize(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
@@ -3228,6 +3382,27 @@ pub fn untokenize(s: &str) -> String {
         // none of zsh's tokens land in that range.
         let cu = c as u32;
         if (0x83..=0x9f).contains(&cu) {
+            // `Qstring Snull` opens a `$'...'` ANSI-C-quoted region.
+            // Per Src/subst.c:301-304, when `stringsubst()` hits an
+            // `Snull` it calls `stringsubstquote()` (line 206) which
+            // calls `getkeystring(s+2, ...)` over the content,
+            // skipping the leading `Qstring Snull` and stopping at
+            // the closing `Snull`. zshrs's pipeline runs untokenize
+            // at points where C runs subst, so we apply the same
+            // decoding inline here. Result: the entire `$'...'`
+            // region is replaced by its decoded content with no
+            // `$`/`'`/marker remnants.
+            if c == char_tokens::QSTRING
+                && i + 1 < chars.len()
+                && chars[i + 1] == char_tokens::SNULL
+            {
+                let (decoded, end) = getkeystring_dollar_quote(&chars, i + 2);
+                result.push_str(&decoded);
+                // `end` points at the closing `Snull` (or end of
+                // string if unterminated); skip past it.
+                i = if end < chars.len() { end + 1 } else { end };
+                continue;
+            }
             // Convert token back to original character
             match c {
                 c if c == char_tokens::POUND => result.push('#'),
