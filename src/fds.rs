@@ -1,6 +1,13 @@
-//! File descriptor utilities for zshrs
+//! File descriptor utilities for zshrs.
 //!
-//! Based on fish-shell's fds.rs, providing safe fd management.
+//! The top half (`AutoClosePipes`, `heightenize_fd`, `BorrowedFdFile`)
+//! is borrowed from fish-shell's `fds.rs` — these are zshrs-original
+//! safe-wrapper infrastructure with no direct C zsh counterpart.
+//!
+//! The bottom half (`movefd`, `redup`, `zclose`, etc.) is a direct
+//! port of the fd helpers C zsh keeps in `Src/utils.c` for redirection
+//! and pipe management. Each function below is annotated with its
+//! exact C origin.
 
 use std::fs::File;
 use std::io;
@@ -9,16 +16,26 @@ use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
 /// The first "high fd", outside the user-specifiable range (>&5).
+/// Mirrors the `FDT_HIGHFD` constant Src/exec.c uses when calling
+/// `movefd()` to keep low fds free for `>&N` user redirection.
 pub const FIRST_HIGH_FD: RawFd = 10;
 
 /// A pair of connected pipe file descriptors.
+/// zshrs-original RAII wrapper (borrowed from fish-shell). C zsh
+/// uses bare `int fds[2]` from `pipe(2)` and `mpipe()`
+/// (Src/exec.c) which gets manual `close(2)` calls on every error
+/// path; the OwnedFd pair makes that automatic.
 pub struct AutoClosePipes {
     pub read: OwnedFd,
     pub write: OwnedFd,
 }
 
 /// Create a pair of connected pipes with CLOEXEC set.
-/// Returns None on failure.
+/// zshrs-original wrapper around `pipe(2)` (borrowed from fish-
+/// shell). C zsh's equivalent is `mpipe()` in Src/exec.c which
+/// calls `pipe(2)` then `movefd(fd, 1)` on each end. The Rust path
+/// also sets `FD_CLOEXEC` so descriptors don't leak into child
+/// processes.
 pub fn make_autoclose_pipes() -> io::Result<AutoClosePipes> {
     let (read_fd, write_fd) =
         nix::unistd::pipe().map_err(|e| io::Error::from_raw_os_error(e as i32))?;
@@ -34,6 +51,9 @@ pub fn make_autoclose_pipes() -> io::Result<AutoClosePipes> {
 }
 
 /// Move an fd to the high range (>= FIRST_HIGH_FD) and set CLOEXEC.
+/// Equivalent to `movefd()` from Src/utils.c plus an additional
+/// `FD_CLOEXEC` set step. The C source sets `FD_CLOEXEC` indirectly
+/// by registering the fd in `fdtable[]` with `FDT_INTERNAL`.
 fn heightenize_fd(fd: OwnedFd) -> io::Result<OwnedFd> {
     let raw_fd = fd.as_raw_fd();
 
@@ -50,6 +70,10 @@ fn heightenize_fd(fd: OwnedFd) -> io::Result<OwnedFd> {
 }
 
 /// Set or clear CLOEXEC on a file descriptor.
+/// Port of the `fdtable_flocks` close-on-exec set/clear logic
+/// Src/utils.c uses on internal fds — `fcntl(F_GETFD)` + `F_SETFD`
+/// with the bit toggled. The C source doesn't expose this as a
+/// dedicated function; we factor it out for the RAII pipe path.
 pub fn set_cloexec(fd: RawFd, should_set: bool) -> io::Result<()> {
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD, 0) };
     if flags < 0 {
@@ -73,6 +97,8 @@ pub fn set_cloexec(fd: RawFd, should_set: bool) -> io::Result<()> {
 }
 
 /// Make an fd nonblocking.
+/// Port of the `fcntl(fd, F_SETFL, O_NONBLOCK)` idiom Src/utils.c
+/// uses for completion's coroutine fds and for `read -t`.
 pub fn make_fd_nonblocking(fd: RawFd) -> io::Result<()> {
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
     if flags < 0 {
@@ -90,6 +116,8 @@ pub fn make_fd_nonblocking(fd: RawFd) -> io::Result<()> {
 }
 
 /// Make an fd blocking.
+/// Counterpart of `make_fd_nonblocking`. C zsh restores blocking
+/// mode after `read -t` (Src/utils.c) by clearing `O_NONBLOCK`.
 pub fn make_fd_blocking(fd: RawFd) -> io::Result<()> {
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
     if flags < 0 {
@@ -107,6 +135,8 @@ pub fn make_fd_blocking(fd: RawFd) -> io::Result<()> {
 }
 
 /// Close a file descriptor, retrying on EINTR.
+/// Port of `zclose()` from Src/utils.c — same `EINTR` retry loop;
+/// negative fds are treated as already-closed (no-op).
 pub fn close_fd(fd: RawFd) {
     if fd < 0 {
         return;
@@ -124,6 +154,9 @@ pub fn close_fd(fd: RawFd) {
 }
 
 /// Duplicate a file descriptor.
+/// Port of the `dup(2)` call sites in Src/exec.c that copy a saved
+/// fd back into place during `exec >` / `exec <` redirection
+/// teardown.
 pub fn dup_fd(fd: RawFd) -> io::Result<RawFd> {
     let new_fd = unsafe { libc::dup(fd) };
     if new_fd < 0 {
@@ -134,6 +167,8 @@ pub fn dup_fd(fd: RawFd) -> io::Result<RawFd> {
 }
 
 /// Duplicate fd to a specific target fd.
+/// Port of the `dup2(2)` calls Src/exec.c uses to install the
+/// shell's pipeline ends on fd 0/1/2 before `execve(2)`.
 pub fn dup2_fd(src: RawFd, dst: RawFd) -> io::Result<()> {
     if src == dst {
         return Ok(());
@@ -146,7 +181,11 @@ pub fn dup2_fd(src: RawFd, dst: RawFd) -> io::Result<()> {
     }
 }
 
-/// A File wrapper that doesn't close on drop (borrows the fd).
+/// A `File` wrapper that doesn't close on drop (borrows the fd).
+/// zshrs-original (borrowed from fish-shell). C zsh shares fds
+/// across builtins with bare `int fd` since lifetime is implicit;
+/// Rust needs an explicit RAII handle that dups the fd without
+/// transferring ownership.
 pub struct BorrowedFdFile(ManuallyDrop<File>);
 
 impl Deref for BorrowedFdFile {
@@ -220,7 +259,10 @@ impl io::Write for BorrowedFdFile {
 // Port from zsh/Src/utils.c: File descriptor table and management
 // ============================================================================
 
-/// File descriptor type constants (from zsh.h FDT_*)
+/// File descriptor type constants.
+/// Port of the `FDT_*` enum from `Src/zsh.h` — the C source uses
+/// these to tag every fd in `fdtable[]` so `closem()` (Src/utils.c)
+/// can decide which fds to leave open across `exec(2)` / `fork(2)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FdType {
     Unused = 0,
@@ -232,8 +274,11 @@ pub enum FdType {
     Proc = 6,
 }
 
-/// Move file descriptor to >= 10 to keep low fds free for user redirection
-/// Port from zsh/Src/utils.c movefd() lines 1980-2012
+/// Move a file descriptor to >= `FIRST_HIGH_FD` so the low fds 0-9
+/// stay free for user redirection.
+/// Port of `movefd()` from Src/utils.c (~lines 1980-2012). Uses
+/// `fcntl(F_DUPFD_CLOEXEC)` to get the new fd in the high range
+/// then closes the original.
 pub fn movefd(fd: RawFd) -> RawFd {
     if !(0..FIRST_HIGH_FD).contains(&fd) {
         return fd;
@@ -249,8 +294,10 @@ pub fn movefd(fd: RawFd) -> RawFd {
     fd
 }
 
-/// Duplicate fd x to y. If x == -1, fd y is closed.
-/// Port from zsh/Src/utils.c redup() lines 2019-2068
+/// Duplicate fd `x` to `y`. If `x == -1`, fd `y` is closed.
+/// Port of `redup()` from Src/utils.c (~lines 2019-2068) — the C
+/// source's "move fd x onto y, closing x" primitive that the
+/// pipeline-builder calls for every redirection.
 pub fn redup(x: RawFd, y: RawFd) -> RawFd {
     if x < 0 {
         unsafe { libc::close(y) };
@@ -270,8 +317,10 @@ pub fn redup(x: RawFd, y: RawFd) -> RawFd {
     y
 }
 
-/// Close a file descriptor
-/// Port from zsh/Src/utils.c zclose() lines 2126-2148
+/// Close a file descriptor.
+/// Port of `zclose()` from Src/utils.c (~lines 2126-2148) — the
+/// safe-close shim that no-ops on negative fds and clears the
+/// fdtable entry the C source maintains for `closem()` accounting.
 pub fn zclose(fd: RawFd) -> i32 {
     if fd >= 0 {
         unsafe { libc::close(fd) }
@@ -280,7 +329,10 @@ pub fn zclose(fd: RawFd) -> i32 {
     }
 }
 
-/// Duplicate file descriptor
+/// Duplicate a file descriptor.
+/// Port of the bare `dup(2)` calls Src/utils.c sprinkles around
+/// the redirection-save/restore code. Negative input returns -1
+/// (matches the C source's no-op-on-bad-fd convention).
 pub fn zdup(fd: RawFd) -> RawFd {
     if fd < 0 {
         return -1;
@@ -288,7 +340,10 @@ pub fn zdup(fd: RawFd) -> RawFd {
     unsafe { libc::dup(fd) }
 }
 
-/// Check if file descriptor is open
+/// Check if a file descriptor is open.
+/// zshrs-original convenience — equivalent to the
+/// `fcntl(fd, F_GETFD)` probe Src/utils.c uses inline before
+/// touching an fd that may have been closed by a parallel branch.
 pub fn fd_is_open(fd: RawFd) -> bool {
     if fd < 0 {
         return false;
