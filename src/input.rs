@@ -43,7 +43,11 @@ struct InputStackEntry {
     alias: Option<String>,
 }
 
-/// Input buffer state
+/// Input buffer + nested input stack.
+/// Port of the file-static `instack` + `inbuf` / `inbufpos` /
+/// `inbufct` / `lexstop` / `strin` slots Src/input.c keeps —
+/// `inpush()` (line 675) pushes a new level, `inpop()` (line 785)
+/// pops it, `ingetc()` (line 318) reads from the top.
 pub struct InputBuffer {
     /// Stack of input sources
     stack: Vec<InputStackEntry>,
@@ -98,26 +102,32 @@ impl InputBuffer {
         }
     }
 
-    /// Reset the SHIN buffer
+    /// Reset the SHIN (shell input fd) buffer.
+    /// Port of `shinbufreset()` from Src/input.c:159.
     pub fn shin_buf_reset(&mut self) {
         self.shin_buffer.clear();
         self.shin_pos = 0;
     }
 
-    /// Allocate a new SHIN buffer
+    /// Allocate a new SHIN buffer.
+    /// Port of `shinbufalloc()` from Src/input.c:171.
     pub fn shin_buf_alloc(&mut self) {
         self.shin_buffer = String::with_capacity(SHIN_BUF_SIZE);
         self.shin_buf_reset();
     }
 
-    /// Save current SHIN buffer state
+    /// Save the current SHIN buffer state.
+    /// Port of `shinbufsave()` from Src/input.c:181 — pushes the
+    /// existing buffer onto a save-stack and starts a fresh one
+    /// for nested `eval`/`source` contexts.
     pub fn shin_buf_save(&mut self) {
         self.shin_save_stack
             .push((std::mem::take(&mut self.shin_buffer), self.shin_pos));
         self.shin_buf_alloc();
     }
 
-    /// Restore saved SHIN buffer state
+    /// Restore the previously-saved SHIN buffer state.
+    /// Port of `shinbufrestore()` from Src/input.c:200.
     pub fn shin_buf_restore(&mut self) {
         if let Some((buffer, pos)) = self.shin_save_stack.pop() {
             self.shin_buffer = buffer;
@@ -125,7 +135,9 @@ impl InputBuffer {
         }
     }
 
-    /// Get next character from a reader
+    /// Read the next character from the underlying reader,
+    /// refilling the SHIN buffer as needed.
+    /// Port of `shingetchar()` from Src/input.c:218.
     pub fn shin_getchar<R: Read>(&mut self, reader: &mut BufReader<R>) -> Option<char> {
         // First check if we have buffered data
         if self.shin_pos < self.shin_buffer.len() {
@@ -149,6 +161,8 @@ impl InputBuffer {
     }
 
     /// Read a line from shell input, encoding meta characters
+    /// Read a full line from the underlying reader.
+    /// Port of `shingetline()` from Src/input.c:267.
     pub fn shin_getline<R: Read>(&mut self, reader: &mut BufReader<R>) -> Option<String> {
         let mut result = String::new();
 
@@ -177,6 +191,9 @@ impl InputBuffer {
     }
 
     /// Get the next character from input
+    /// Get the next char from the active input source.
+    /// Port of `ingetc()` from Src/input.c:318 — drives the
+    /// lexer; consumes pushback first, then top-of-stack input.
     pub fn ingetc(&mut self) -> Option<char> {
         if self.lexstop {
             return Some(' ');
@@ -228,6 +245,8 @@ impl InputBuffer {
     }
 
     /// Push a character back into input
+    /// Push a character back onto the input stream.
+    /// Port of `inungetc()` from Src/input.c:546.
     pub fn inungetc(&mut self, c: char) {
         if self.lexstop {
             return;
@@ -250,6 +269,11 @@ impl InputBuffer {
     }
 
     /// Push a string onto the input stack
+    /// Push a new input source onto the stack.
+    /// Port of `inpush()` from Src/input.c:675 — used for
+    /// `eval`/`source`, alias expansion, and process
+    /// substitution to layer a new input on top of the current
+    /// one.
     pub fn inpush(&mut self, s: &str, flags: u32, alias: Option<String>) {
         // Save current state
         let entry = InputStackEntry {
@@ -307,6 +331,8 @@ impl InputBuffer {
     }
 
     /// Pop the stack including all continuations
+    /// Pop the top input source.
+    /// Port of `inpop()` from Src/input.c:785.
     pub fn inpop(&mut self) {
         loop {
             let was_cont = self.flags & flags::INP_CONT != 0;
@@ -318,6 +344,10 @@ impl InputBuffer {
     }
 
     /// Expunge any aliases from the input stack
+    /// Pop the top input level only if it's an alias frame.
+    /// Port of `inpopalias()` from Src/input.c:804 — used to
+    /// unwind alias expansion without disturbing the underlying
+    /// source.
     pub fn inpop_alias(&mut self) {
         while self.flags & flags::INP_ALIAS != 0 {
             self.inpop_top();
@@ -325,6 +355,8 @@ impl InputBuffer {
     }
 
     /// Set the input line directly
+    /// Replace the current input line.
+    /// Port of `inputsetline()` from Src/input.c:510.
     pub fn inputsetline(&mut self, s: &str, flags: u32) {
         self.buf = s.to_string();
         self.pos = 0;
@@ -338,6 +370,8 @@ impl InputBuffer {
     }
 
     /// Flush remaining input (on error)
+    /// Discard pending input after a parse error.
+    /// Port of `inerrflush()` from Src/input.c:665.
     pub fn inerrflush(&mut self) {
         while !self.lexstop && self.buf_ct > 0 {
             let _ = self.ingetc();
@@ -345,6 +379,9 @@ impl InputBuffer {
     }
 
     /// Get pointer to remaining input
+    /// Get a slice of the unread portion of the current
+    /// input.
+    /// Port of `ingetptr()` from Src/input.c:817.
     pub fn ingetptr(&self) -> &str {
         if self.pos < self.buf.len() {
             &self.buf[self.pos..]
@@ -354,6 +391,10 @@ impl InputBuffer {
     }
 
     /// Check if current input is from an alias
+    /// Look up an active alias frame on the input stack.
+    /// Port of `input_hasalias()` from Src/input.c:831 — the
+    /// alias-loop guard the lexer uses to avoid recursing into
+    /// the same alias twice.
     pub fn input_has_alias(&self) -> Option<&str> {
         let mut flags = self.flags;
 
@@ -416,11 +457,17 @@ fn meta_encode(c: char) -> char {
 }
 
 /// Decode a meta character
+/// Decode a metafied byte to its original.
+/// Port of the `Meta`+`xor 32` reverse the C source's parser
+/// uses across Src/input.c.
 pub fn meta_decode(c: char) -> char {
     char::from_u32((c as u32) ^ 32).unwrap_or(c)
 }
 
 /// Read entire file into memory
+/// Read a file as a string for `source`/`stuff` semantics.
+/// Port of `zstuff()` from Src/input.c:614 — the C source uses
+/// it for `Functions/Misc/run-help` and similar autoload paths.
 pub fn zstuff(path: &str) -> io::Result<String> {
     std::fs::read_to_string(path)
 }

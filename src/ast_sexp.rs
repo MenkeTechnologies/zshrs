@@ -1,8 +1,17 @@
 //! Canonical AST s-expression emitter for `ZshProgram`.
 //!
-//! Used by `tests/parity_harness.rs` to compare zshrs's parser output
-//! against zsh's wordcode parser output (via `zwc_decode`). Both sides
-//! emit IDENTICAL byte sequences for logically-equivalent ASTs.
+//! **zshrs-original infrastructure — no C source counterpart.** C
+//! zsh has `Src/text.c` for AST→shell-source rendering (used by
+//! `which -x`, `functions`, `whence -f`) but no S-expression
+//! emitter. zshrs adds this canonical sexp form so the parity
+//! harness in `tests/parity_harness.rs` can byte-compare zshrs's
+//! parser output against the wordcode `zsh` writes via
+//! `bin_zcompile()` (Src/parse.c → decoded by `zwc_decode`).
+//!
+//! Used by `tests/parity_harness.rs` to compare zshrs's parser
+//! output against zsh's wordcode parser output (via `zwc_decode`).
+//! Both sides emit IDENTICAL byte sequences for logically-
+//! equivalent ASTs.
 //!
 //! ## Canonical sexp grammar
 //!
@@ -42,6 +51,9 @@ use crate::parser::{
 };
 
 /// Convert a parsed `ZshProgram` to canonical sexp.
+/// zshrs-original — no C counterpart. The closest C analog is
+/// `getpermtext()` from Src/text.c which renders the AST as zsh
+/// shell source (not sexp).
 pub fn ast_to_sexp(prog: &ZshProgram) -> String {
     let mut out = String::new();
     emit_program(prog, &mut out);
