@@ -430,23 +430,34 @@ impl Zle {
         }
     }
 
-    /// Set up terminal for ZLE
+    /// Configure the terminal for ZLE input.
+    /// Port of `zsetterm()` from Src/Zle/zle_main.c:210. The C source
+    /// disables ICANON + ECHO, sets VMIN=1 / VTIME=0 (one-byte
+    /// blocking reads), captures VEOF as `eofchar` for the empty-line
+    /// EOF detection in zlecore (zle_main.c:1139), and disables TAB3
+    /// output mapping plus VQUIT/VSUSP/VDSUSP so the keymap can rebind
+    /// those control chars. Our Rust port covers the daily-driver
+    /// subset: ICANON+ECHO off, VMIN/VTIME, and eofchar capture from
+    /// VEOF. The flow-control + TAB3 + IXON disables and the
+    /// fetchttyinfo/attachtty save state remain on the host side.
     pub fn zsetterm(&mut self) -> io::Result<()> {
-        use std::os::unix::io::FromRawFd;
-
-        // Get current terminal settings
+        // termios::FromRawFd is not used directly here — the path goes
+        // through termios::Termios::from_fd which already opens the fd.
         let mut termios = termios::Termios::from_fd(self.ttyfd)?;
 
-        // Save original settings (would need to store for restore)
+        // Capture VEOF before we mask it — zlecore checks lastchar
+        // against eofchar for the empty-line EOF branch (zle_main.c:1139).
+        let veof = termios.c_cc[termios::VEOF];
+        if veof != 0 {
+            self.eofchar = veof;
+        }
 
-        // Set raw mode
+        // Disable canonical line input + echo so we receive raw keys.
         termios.c_lflag &= !(termios::ICANON | termios::ECHO);
         termios.c_cc[termios::VMIN] = 1;
         termios.c_cc[termios::VTIME] = 0;
 
-        // Apply settings
         termios::tcsetattr(self.ttyfd, termios::TCSANOW, &termios)?;
-
         Ok(())
     }
 
@@ -1283,7 +1294,7 @@ pub struct ZleData {
 
 /// Module for termios operations
 mod termios {
-    pub use libc::{ECHO, ICANON, TCSANOW, VMIN, VTIME};
+    pub use libc::{ECHO, ICANON, TCSANOW, VEOF, VMIN, VTIME};
     use std::io;
     use std::os::unix::io::RawFd;
 
