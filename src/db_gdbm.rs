@@ -105,7 +105,11 @@ extern "C" {
     static gdbm_errno: c_int;
 }
 
-/// A GDBM database handle wrapper
+/// GDBM database handle wrapper.
+/// Port of the per-tied-param `Db` slot Src/Modules/db_gdbm.c
+/// stores in `myfreeparamnode()` (line 45) — the C source threads
+/// the live `GDBM_FILE *` through every `gdbmgetfn`/`gdbmsetfn` call
+/// (lines 282/347). Same shape on the Rust side.
 #[derive(Debug)]
 pub struct GdbmDatabase {
     dbf: GdbmFile,
@@ -353,7 +357,13 @@ impl Drop for GdbmDatabase {
 unsafe impl Send for GdbmDatabase {}
 unsafe impl Sync for GdbmDatabase {}
 
-/// A tied parameter backed by GDBM
+/// A parameter tied to a GDBM database.
+/// Port of the `Param` shape Src/Modules/db_gdbm.c installs via
+/// `bin_ztie()` (line 109) — the C source builds a special hash
+/// `Param` whose `getfn`/`setfn`/`unsetfn` route every read/write
+/// through `gdbmgetfn` (line 282) / `gdbmsetfn` (line 347) /
+/// `gdbmunsetfn` (line 399). The Rust struct holds the live db
+/// handle plus a small per-key cache.
 pub struct TiedGdbmParam {
     pub name: String,
     pub db: Arc<GdbmDatabase>,
@@ -432,7 +442,10 @@ impl TiedGdbmParam {
 static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// Get list of tied parameter names
+/// List currently-tied GDBM parameter names.
+/// Port of the `tied_param_list` enumeration the C source keeps in
+/// Src/Modules/db_gdbm.c via `append_tied_name()` /
+/// `remove_tied_name()` (lines 42/43) — `${zgdbm_tied}` reads it.
 pub fn zgdbm_tied() -> Vec<String> {
     if let Ok(params) = TIED_PARAMS.lock() {
         params.keys().cloned().collect()
@@ -441,9 +454,13 @@ pub fn zgdbm_tied() -> Vec<String> {
     }
 }
 
-/// Tie a parameter to a GDBM database
+/// `ztie` builtin entry point — bind a parameter to a GDBM file.
+/// Port of `bin_ztie()` from Src/Modules/db_gdbm.c:109 — the C
+/// source opens the GDBM file via `gdbm_open()`, allocates a hash
+/// `Param`, wires the per-key getter/setter slots, and inserts
+/// the param name into the tied-list.
 ///
-/// Usage: ztie -d db/gdbm -f /path/to/db.gdbm [-r] PARAM_NAME
+/// Usage: `ztie -d db/gdbm -f /path/to/db.gdbm [-r] PARAM_NAME`
 pub fn ztie(
     args: &[String],
     readonly: bool,
@@ -492,9 +509,12 @@ pub fn ztie(
     Ok(())
 }
 
-/// Untie a parameter from its GDBM database
+/// `zuntie` builtin entry point — release a tied parameter.
+/// Port of `bin_zuntie()` from Src/Modules/db_gdbm.c:201 — the C
+/// source's `gdbmuntie()` (line 555) closes the database, frees
+/// the hash table, and removes the entry from the tied-list.
 ///
-/// Usage: zuntie [-u] PARAM_NAME...
+/// Usage: `zuntie [-u] PARAM_NAME...`
 pub fn zuntie(args: &[String], force_unset: bool) -> Result<(), String> {
     let mut errors = Vec::new();
 
@@ -522,10 +542,11 @@ pub fn zuntie(args: &[String], force_unset: bool) -> Result<(), String> {
     }
 }
 
-/// Get the path of a tied GDBM database
+/// `zgdbmpath` builtin entry point — print a tied parameter's path.
+/// Port of `bin_zgdbmpath()` from Src/Modules/db_gdbm.c:236 — the
+/// C source writes the result into `$REPLY`. Same convention.
 ///
-/// Usage: zgdbmpath PARAM_NAME
-/// Sets $REPLY to the path
+/// Usage: `zgdbmpath PARAM_NAME`
 pub fn zgdbmpath(param_name: &str) -> Result<String, String> {
     let params = TIED_PARAMS.lock().map_err(|_| "lock error")?;
 
@@ -536,7 +557,9 @@ pub fn zgdbmpath(param_name: &str) -> Result<String, String> {
     Ok(tied.db.path().to_string_lossy().to_string())
 }
 
-/// Check if a parameter is tied to GDBM
+/// Is a given parameter currently tied to GDBM?
+/// zshrs convenience — equivalent to scanning `tied_param_list`
+/// in Src/Modules/db_gdbm.c.
 pub fn is_gdbm_tied(param_name: &str) -> bool {
     if let Ok(params) = TIED_PARAMS.lock() {
         params.contains_key(param_name)
@@ -545,7 +568,9 @@ pub fn is_gdbm_tied(param_name: &str) -> bool {
     }
 }
 
-/// Get a tied parameter by name
+/// Get the live `TiedGdbmParam` for a given name.
+/// zshrs convenience — Src/Modules/db_gdbm.c uses
+/// `getgdbmnode()` (line 407) for the same lookup at the C level.
 pub fn get_tied_param(param_name: &str) -> Option<Arc<TiedGdbmParam>> {
     if let Ok(params) = TIED_PARAMS.lock() {
         params.get(param_name).cloned()
@@ -554,26 +579,33 @@ pub fn get_tied_param(param_name: &str) -> Option<Arc<TiedGdbmParam>> {
     }
 }
 
-/// Get value from a tied parameter
+/// Read a key from a tied parameter.
+/// Port of `gdbmgetfn()` from Src/Modules/db_gdbm.c:282 — the
+/// `getfn` slot the C source wires for `${db[key]}`.
 pub fn gdbm_get(param_name: &str, key: &str) -> Option<String> {
     get_tied_param(param_name).and_then(|p| p.get(key))
 }
 
-/// Set value in a tied parameter
+/// Write a key to a tied parameter.
+/// Port of `gdbmsetfn()` from Src/Modules/db_gdbm.c:347.
 pub fn gdbm_set(param_name: &str, key: &str, value: &str) -> Result<(), String> {
     let param = get_tied_param(param_name)
         .ok_or_else(|| format!("not a tied gdbm hash: {}", param_name))?;
     param.set(key, value)
 }
 
-/// Delete key from a tied parameter
+/// Delete a key from a tied parameter.
+/// Port of `gdbmunsetfn()` from Src/Modules/db_gdbm.c:399 — used
+/// by `unset 'db[key]'`.
 pub fn gdbm_delete(param_name: &str, key: &str) -> Result<(), String> {
     let param = get_tied_param(param_name)
         .ok_or_else(|| format!("not a tied gdbm hash: {}", param_name))?;
     param.delete(key)
 }
 
-/// Get all keys from a tied parameter
+/// Get every key in a tied parameter.
+/// Port of `scangdbmkeys()` from Src/Modules/db_gdbm.c:442 — the
+/// `scanfn` slot the C source wires for `${(k)db}`.
 pub fn gdbm_keys(param_name: &str) -> Option<Vec<String>> {
     get_tied_param(param_name).map(|p| p.keys())
 }
