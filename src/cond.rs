@@ -21,7 +21,12 @@ use std::path::Path;
 
 use crate::glob::pattern_match;
 
-/// Condition type codes matching zsh's COND_* constants
+/// `[[ ... ]]` operator codes.
+/// Port of the `COND_*` enum from Src/zsh.h — `evalcond()`
+/// (Src/cond.c:70) dispatches between these for every binary /
+/// unary / regex test the C source supports. Single-character
+/// `FileTest('e')` etc. delegates to `doaccess()` (Src/cond.c:438)
+/// / `dostat()` (line 474) / `dolstat()` (line 488).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CondType {
     // Logical operators
@@ -60,7 +65,10 @@ pub enum CondType {
     Modi,
 }
 
-/// Result of condition evaluation
+/// Outcome of evaluating a `[[ ... ]]` test.
+/// Port of the integer return values `evalcond()` from
+/// Src/cond.c:70 produces — `0` true, `1` false, `2` error,
+/// `3` option-not-found (the `-o NONEXISTENT_OPT` case).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CondResult {
     True,           // 0 - condition is true
@@ -96,7 +104,10 @@ impl CondResult {
     }
 }
 
-/// Conditional expression evaluator
+/// Conditional expression evaluator state.
+/// Port of the per-evaluation locals `evalcond()` from
+/// Src/cond.c:70 keeps on the C source's stack — the option /
+/// variable tables it consults plus tracing/posix flags.
 pub struct CondEval<'a> {
     /// Shell options (for -o test)
     options: &'a HashMap<String, bool>,
@@ -540,7 +551,10 @@ fn short_option_name(c: char) -> Option<&'static str> {
     })
 }
 
-/// Parsed conditional expression
+/// Parsed `[[ ... ]]` expression tree.
+/// Port of the `Wordcode` shape `parse_cond()` from Src/parse.c
+/// produces and `evalcond()` (Src/cond.c:70) walks. Each variant
+/// matches one of the C `COND_*` operator categories.
 #[derive(Debug, Clone)]
 pub enum CondExpr {
     Not(Box<CondExpr>),
@@ -551,7 +565,10 @@ pub enum CondExpr {
     Ternary(CondType, String, String, String),
 }
 
-/// Parser for conditional expressions
+/// Parser for `[[ ... ]]` / `test`-style expressions.
+/// Port of the cond-parsing path inside Src/parse.c (`par_cond_*`
+/// functions) — the C source emits wordcode; this Rust parser
+/// produces a typed AST instead.
 pub struct CondParser<'a> {
     tokens: Vec<&'a str>,
     pos: usize,
@@ -728,6 +745,11 @@ fn parse_binary_op(s: &str) -> Option<CondType> {
 }
 
 /// Convenience function to evaluate a test expression
+/// Evaluate a POSIX `test`/`[[` expression.
+/// Top-level wrapper around `CondParser` + `CondEval`. Port of
+/// the `evalcond()` driver from Src/cond.c:70 — the C source's
+/// entry point that the `[[` keyword and the `test`/`[`
+/// builtins both delegate to.
 pub fn eval_test(
     args: &[&str],
     options: &HashMap<String, bool>,
