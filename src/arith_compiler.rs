@@ -1,8 +1,14 @@
-//! ArithCompiler — lowers zsh arithmetic expressions ($((...))) into
-//! fusevm bytecodes. Used by ZshCompiler (in compile_zsh.rs).
+//! ArithCompiler — lowers zsh arithmetic expressions
+//! (`$((...))`) into fusevm bytecodes. Used by `ZshCompiler` (in
+//! `compile_zsh.rs`).
 //!
-//! Port of MathEval from zsh/src/math.rs — same tokenizer, but emits
-//! ops instead of evaluating.
+//! **zshrs-original infrastructure with C-zsh-derived semantics.**
+//! C zsh has no arithmetic compiler — `Src/math.c::matheval()`
+//! tokenizes and evaluates in one pass via `getmathparam()` /
+//! `mathevall()`. zshrs splits compilation from evaluation: the
+//! tokenizer here matches `zzlex()` / `mathlex()` from
+//! Src/math.c, but instead of pushing onto the math eval stack
+//! we emit fusevm Ops which the JIT can specialize.
 
 use fusevm::{ChunkBuilder, Op, Value};
 use std::collections::HashMap;
@@ -13,11 +19,13 @@ use std::collections::HashMap;
 
 /// Arithmetic expression compiler.
 ///
-/// Takes a zsh arithmetic expression (the content inside $((...)))
-/// and emits fusevm bytecodes that compute the result.
+/// Takes a zsh arithmetic expression (the content inside
+/// `$((...))`) and emits fusevm bytecodes that compute the result.
 ///
-/// Port of MathEval from zsh/src/math.rs — same tokenizer,
-/// but instead of evaluating, we emit ops.
+/// **Tokenizer port**: same lexer shape as `zzlex()` /
+/// `mathlex()` from Src/math.c. **Emit step**: zshrs-original —
+/// C zsh evaluates inline via `mathevall()` (Src/math.c) and has
+/// no compile-then-run path.
 pub struct ArithCompiler<'a> {
     pub input: &'a str,
     pub pos: usize,
@@ -27,7 +35,9 @@ pub struct ArithCompiler<'a> {
     pub next_slot: u16,
 }
 
-// Token types matching math.rs MathTok
+// Token types matching the `MTYPE_*` enum from Src/math.c.
+// Each variant corresponds to one of the operators / operand
+// kinds the C source's `zzlex()` produces.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Tok {
     Num(i64),

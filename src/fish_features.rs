@@ -1,7 +1,16 @@
-//! Fish-style features for zshrs - native Rust implementations
+//! Fish-style features for zshrs - native Rust implementations.
 //!
-//! Lifted from fish-shell's Rust codebase for maximum performance.
-//! These run as pure Rust with zero interpreter overhead.
+//! **zshrs-original infrastructure — no C zsh source counterpart.**
+//! C zsh has no built-in syntax highlighting, autosuggestion, or
+//! abbreviation support; users layer these via plugins
+//! (zsh-syntax-highlighting / zsh-autosuggestions / zsh-abbr) which
+//! reimplement everything as zsh script. zshrs ships them as
+//! native Rust to skip the interpreter overhead.
+//!
+//! Code adapted from fish-shell's Rust codebase. The fish-shell
+//! origin gives us a structurally-validated implementation; the
+//! zshrs port keeps the same shape so tests / fuzzers from upstream
+//! still apply.
 
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
@@ -10,7 +19,12 @@ use std::sync::{LazyLock, Mutex};
 // SYNTAX HIGHLIGHTING
 // ============================================================================
 
-/// Highlight roles - what kind of syntax element this is
+/// Syntax-highlight role for one source token.
+/// Adapted from fish-shell's `parse_constants::HighlightRole`. No
+/// C zsh counterpart — C zsh's highlighting (`zle_highlight`
+/// special parameter, Src/Zle/zle_refresh.c) only colors
+/// match-positions; full token-classification highlighting is a
+/// fish-shell innovation we port here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum HighlightRole {
     #[default]
@@ -97,6 +111,10 @@ const BUILTINS: &[&str] = &[
 ];
 
 /// Highlight a shell command line
+/// Lex a shell line and produce per-character highlight specs.
+/// Adapted from fish-shell's syntax highlighter (no C zsh
+/// counterpart; this is the feature `zsh-syntax-highlighting` plugin
+/// users layer on top of zsh, but native).
 pub fn highlight_shell(line: &str) -> Vec<HighlightSpec> {
     let mut colors = vec![HighlightSpec::default(); line.len()];
     if line.is_empty() {
@@ -351,6 +369,9 @@ pub fn colorize_line(line: &str, colors: &[HighlightSpec]) -> String {
 
 /// Position where abbreviation can expand
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Abbreviation expansion position.
+/// Adapted from fish-shell. No C zsh counterpart — C zsh has
+/// `setopt EXPANDABBREV` only via the `zsh-abbr` plugin, not natively.
 pub enum AbbrPosition {
     Command,  // Only in command position
     Anywhere, // Anywhere in the line
@@ -447,6 +468,8 @@ impl AbbreviationSet {
 }
 
 /// Expand abbreviations in a line at the current word
+/// Expand an abbreviation at the cursor position.
+/// Adapted from fish-shell. No C zsh counterpart.
 pub fn expand_abbreviation(line: &str, cursor: usize) -> Option<(String, usize)> {
     // Find the word at cursor
     let before_cursor = &line[..cursor.min(line.len())];
@@ -502,6 +525,11 @@ impl Autosuggestion {
 }
 
 /// Generate autosuggestion from history
+/// Build an autosuggestion from history (the `zsh-autosuggestions`
+/// behavior, native).
+/// Adapted from fish-shell's `autosuggestion::autosuggest_*` set —
+/// no C zsh counterpart; users currently get this via the
+/// zsh-autosuggestions zle plugin.
 pub fn autosuggest_from_history(line: &str, history: &[String]) -> Autosuggestion {
     if line.is_empty() {
         return Autosuggestion::empty();
@@ -567,6 +595,10 @@ pub fn validate_autosuggestion(suggestion: &str, current_line: &str) -> bool {
 
 static KILLRING: LazyLock<Mutex<KillRing>> = LazyLock::new(|| Mutex::new(KillRing::new(100)));
 
+/// Yank-pop kill ring.
+/// Adapted from fish-shell. C zsh's equivalent lives in
+/// Src/Zle/zle_misc.c — the `kringnum` array drives `yank-pop`.
+/// We keep a separate kill-ring here for fish-style yank cycling.
 pub struct KillRing {
     entries: Vec<String>,
     max_size: usize,
