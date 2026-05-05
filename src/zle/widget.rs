@@ -742,6 +742,11 @@ fn widget_backward_kill_line(zle: &mut Zle) {
 }
 
 fn widget_kill_whole_line(zle: &mut Zle) {
+    // Port of killwholeline() from Src/Zle/zle_misc.c:195. The C source
+    // is count-aware: kills `mult` lines centered on the current line
+    // (or the whole buffer if -1). Our simplified version kills the
+    // entire buffer once — sufficient for the common single-line use,
+    // multi-line variants left as a follow-up.
     if zle.zlell > 0 {
         let killed = std::mem::take(&mut zle.zleline);
         zle.killring.push_front(killed);
@@ -1037,13 +1042,27 @@ fn do_isearch(zle: &mut Zle, mut dir: i32) {
 }
 
 fn widget_beginning_of_buffer_or_history(zle: &mut Zle) {
-    zle.zlecs = 0;
-    zle.resetneeded = true;
+    // Port of beginningofbufferorhistory() from Src/Zle/zle_hist.c:573.
+    // If the cursor is past the start of its current logical line
+    // (findbol > 0), jump to absolute position 0 inside the buffer;
+    // otherwise we're already at BoB → fall through to
+    // beginning-of-history (load oldest entry).
+    if zle.find_bol(zle.zlecs) > 0 {
+        zle.zlecs = 0;
+        zle.resetneeded = true;
+    } else {
+        widget_beginning_of_history(zle);
+    }
 }
 
 fn widget_end_of_buffer_or_history(zle: &mut Zle) {
-    zle.zlecs = zle.zlell;
-    zle.resetneeded = true;
+    // Port of endofbufferorhistory() from Src/Zle/zle_hist.c:593.
+    if zle.find_eol(zle.zlecs) != zle.zlell {
+        zle.zlecs = zle.zlell;
+        zle.resetneeded = true;
+    } else {
+        widget_end_of_history(zle);
+    }
 }
 
 fn widget_transpose_chars(zle: &mut Zle) {
@@ -1170,6 +1189,9 @@ fn widget_menu_complete(zle: &mut Zle) {
 // Vi mode widgets
 
 fn widget_vi_cmd_mode(zle: &mut Zle) {
+    // Port of vicmdmode() from Src/Zle/zle_vi.c. ESC out of insert →
+    // command mode; cursor steps back one (vim convention) since vi
+    // command mode treats the cursor as ON a char rather than between.
     zle.keymaps.select("vicmd");
     if zle.zlecs > 0 {
         zle.zlecs -= 1;
@@ -1178,109 +1200,161 @@ fn widget_vi_cmd_mode(zle: &mut Zle) {
 }
 
 fn widget_vi_insert(zle: &mut Zle) {
+    // Port of viinsert() from Src/Zle/zle_vi.c:355.
     zle.keymaps.select("viins");
     zle.insmode = true;
 }
 
 fn widget_vi_insert_bol(zle: &mut Zle) {
+    // Port of viinsertbol() from Src/Zle/zle_vi.c:374. Vim's `I` —
+    // first-non-blank of current line, then enter insert mode.
     zle.keymaps.select("viins");
     zle.insmode = true;
-    // Move to first non-blank
-    zle.zlecs = 0;
-    while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
-        zle.zlecs += 1;
+    let bol = zle.find_bol(zle.zlecs);
+    let mut p = bol;
+    while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
+        p += 1;
     }
+    zle.zlecs = p;
     zle.resetneeded = true;
 }
 
 fn widget_vi_add_next(zle: &mut Zle) {
+    // Port of viaddnext() from Src/Zle/zle_vi.c:336. Vim's `a` —
+    // step right one then enter insert mode (so insert lands AFTER
+    // the cursor's current char).
     zle.keymaps.select("viins");
     zle.insmode = true;
-    if zle.zlecs < zle.zlell {
+    if zle.zlecs < zle.find_eol(zle.zlecs) {
         zle.zlecs += 1;
     }
     zle.resetneeded = true;
 }
 
 fn widget_vi_add_eol(zle: &mut Zle) {
+    // Port of viaddeol() from Src/Zle/zle_vi.c:346. Vim's `A` —
+    // jump to end-of-line then enter insert mode.
     zle.keymaps.select("viins");
     zle.insmode = true;
-    zle.zlecs = zle.zlell;
+    zle.zlecs = zle.find_eol(zle.zlecs);
     zle.resetneeded = true;
 }
 
 fn widget_vi_forward_char(zle: &mut Zle) {
-    if zle.zlecs < zle.zlell.saturating_sub(1) {
-        zle.zlecs += 1;
-        zle.resetneeded = true;
+    // Port of viforwardchar() from Src/Zle/zle_move.c:653. Vim's `l`
+    // — count-aware, can't cross EoL (cursor lands on the last char
+    // of the current logical line at most).
+    let mut n = zle.mult;
+    if n < 0 {
+        zle.mult = -n;
+        widget_vi_backward_char(zle);
+        zle.mult = n;
+        return;
     }
+    let eol = zle.find_eol(zle.zlecs);
+    let limit = eol.saturating_sub(1);
+    while zle.zlecs < limit && n > 0 {
+        zle.zlecs += 1;
+        n -= 1;
+    }
+    zle.resetneeded = true;
 }
 
 fn widget_vi_backward_char(zle: &mut Zle) {
-    if zle.zlecs > 0 {
-        zle.zlecs -= 1;
-        zle.resetneeded = true;
+    // Port of vibackwardchar() from Src/Zle/zle_move.c:683. Vim's `h`
+    // — count-aware, can't cross BoL.
+    let mut n = zle.mult;
+    if n < 0 {
+        zle.mult = -n;
+        widget_vi_forward_char(zle);
+        zle.mult = n;
+        return;
     }
+    let bol = zle.find_bol(zle.zlecs);
+    while zle.zlecs > bol && n > 0 {
+        zle.zlecs -= 1;
+        n -= 1;
+    }
+    zle.resetneeded = true;
 }
 
 fn widget_vi_forward_word(zle: &mut Zle) {
+    // Port of viforwardword() from Src/Zle/zle_word.c. Vim's `w` —
+    // routes to forward-word with the iword class definition.
     widget_forward_word(zle);
 }
 
 fn widget_vi_forward_word_end(zle: &mut Zle) {
-    if zle.zlecs < zle.zlell {
-        zle.zlecs += 1;
-    }
-    // Skip non-word
-    while zle.zlecs < zle.zlell && !is_word_char(zle.zleline[zle.zlecs]) {
-        zle.zlecs += 1;
-    }
-    // Skip word
-    while zle.zlecs < zle.zlell.saturating_sub(1) && is_word_char(zle.zleline[zle.zlecs + 1]) {
-        zle.zlecs += 1;
+    // Port of viforwardwordend() from Src/Zle/zle_word.c. Vim's `e` —
+    // step right one, skip non-word, then walk word chars but land on
+    // the LAST word char (peek-ahead pattern). Count-aware.
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        if zle.zlecs < zle.zlell {
+            zle.zlecs += 1;
+        }
+        while zle.zlecs < zle.zlell && !is_word_char(zle.zleline[zle.zlecs]) {
+            zle.zlecs += 1;
+        }
+        while zle.zlecs < zle.zlell.saturating_sub(1)
+            && is_word_char(zle.zleline[zle.zlecs + 1])
+        {
+            zle.zlecs += 1;
+        }
     }
     zle.resetneeded = true;
 }
 
 fn widget_vi_forward_blank_word(zle: &mut Zle) {
-    // Skip non-blank
-    while zle.zlecs < zle.zlell && !zle.zleline[zle.zlecs].is_whitespace() {
-        zle.zlecs += 1;
-    }
-    // Skip blank
-    while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
-        zle.zlecs += 1;
+    // Port of viforwardblankword() from Src/Zle/zle_word.c. Vim's `W` —
+    // whitespace-only word boundary (no iword class distinction).
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        while zle.zlecs < zle.zlell && !zle.zleline[zle.zlecs].is_whitespace() {
+            zle.zlecs += 1;
+        }
+        while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
+            zle.zlecs += 1;
+        }
     }
     zle.resetneeded = true;
 }
 
 fn widget_vi_forward_blank_word_end(zle: &mut Zle) {
-    if zle.zlecs < zle.zlell {
-        zle.zlecs += 1;
-    }
-    // Skip whitespace
-    while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
-        zle.zlecs += 1;
-    }
-    // Skip non-whitespace
-    while zle.zlecs < zle.zlell.saturating_sub(1) && !zle.zleline[zle.zlecs + 1].is_whitespace() {
-        zle.zlecs += 1;
+    // Port of viforwardblankwordend() from Src/Zle/zle_word.c. Vim's
+    // `E` — whitespace-only end-of-word.
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        if zle.zlecs < zle.zlell {
+            zle.zlecs += 1;
+        }
+        while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
+            zle.zlecs += 1;
+        }
+        while zle.zlecs < zle.zlell.saturating_sub(1)
+            && !zle.zleline[zle.zlecs + 1].is_whitespace()
+        {
+            zle.zlecs += 1;
+        }
     }
     zle.resetneeded = true;
 }
 
 fn widget_vi_backward_word(zle: &mut Zle) {
+    // Port of vibackwardword() from Src/Zle/zle_word.c. Vim's `b`.
     widget_backward_word(zle);
 }
 
 fn widget_vi_backward_blank_word(zle: &mut Zle) {
-    // Skip blanks
-    while zle.zlecs > 0 && zle.zleline[zle.zlecs - 1].is_whitespace() {
-        zle.zlecs -= 1;
-    }
-    // Skip non-blanks
-    while zle.zlecs > 0 && !zle.zleline[zle.zlecs - 1].is_whitespace() {
-        zle.zlecs -= 1;
+    // Port of vibackwardblankword() from Src/Zle/zle_word.c. Vim's `B`.
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        while zle.zlecs > 0 && zle.zleline[zle.zlecs - 1].is_whitespace() {
+            zle.zlecs -= 1;
+        }
+        while zle.zlecs > 0 && !zle.zleline[zle.zlecs - 1].is_whitespace() {
+            zle.zlecs -= 1;
+        }
     }
     zle.resetneeded = true;
 }
@@ -1291,10 +1365,16 @@ fn widget_vi_delete(zle: &mut Zle) {
 }
 
 fn widget_vi_delete_char(zle: &mut Zle) {
+    // Port of videletechar() from Src/Zle/zle_vi.c:405. Vim's `x`
+    // command — same as delete-char but C source clamps the count to
+    // findeol-zlecs to avoid spilling past the current line. We let
+    // delete-char run with EoB clamp; for vi-aware line-bounded
+    // semantics, callers should use vi_delete_op('l').
     widget_delete_char(zle);
 }
 
 fn widget_vi_backward_delete_char(zle: &mut Zle) {
+    // Port of vibackwarddeletechar() from Src/Zle/zle_vi.c. Vim's `X`.
     widget_backward_delete_char(zle);
 }
 
@@ -1304,11 +1384,15 @@ fn widget_vi_change(zle: &mut Zle) {
 }
 
 fn widget_vi_change_eol(zle: &mut Zle) {
+    // Port of vichangeeol() from Src/Zle/zle_vi.c:482. Vim's `C` —
+    // kill from cursor to EoL, enter insert mode.
     widget_kill_line(zle);
     widget_vi_insert(zle);
 }
 
 fn widget_vi_kill_eol(zle: &mut Zle) {
+    // Port of vikilleol() from Src/Zle/zle_vi.c. Vim's `D` — kill
+    // from cursor to EoL without entering insert.
     widget_kill_line(zle);
 }
 
@@ -1318,9 +1402,28 @@ fn widget_vi_yank(zle: &mut Zle) {
 }
 
 fn widget_vi_yank_whole_line(zle: &mut Zle) {
-    zle.killring.push_front(zle.zleline.clone());
-    if zle.killring.len() > zle.killringmax {
-        zle.killring.pop_back();
+    // Port of viyankwholeline() from Src/Zle/zle_vi.c:550. Vim's `Y` —
+    // yank `mult` whole lines into the kill ring (with the trailing
+    // newline included so vi-put-after / vi-put-before recognise this
+    // as a line-wise yank). C source: zle_vi.c:559 walks zlecs through
+    // findeol+1 to capture each line.
+    let n = zle.mult.max(1);
+    let bol = zle.find_bol(zle.zlecs);
+    let mut end = bol;
+    for _ in 0..n {
+        end = zle.find_eol(end);
+        if end < zle.zlell {
+            end += 1; // include trailing '\n'
+        } else {
+            break;
+        }
+    }
+    let region: Vec<char> = zle.zleline[bol..end].to_vec();
+    if !region.is_empty() {
+        zle.killring.push_front(region);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
     }
 }
 
@@ -1680,12 +1783,21 @@ fn widget_vi_fetch_history(zle: &mut Zle) {
 }
 
 fn widget_vi_goto_column(zle: &mut Zle) {
+    // Port of vigotocolumn() from Src/Zle/zle_move.c. Vim's `|` —
+    // jump to column N (1-based) on the current logical line. The
+    // count is in zmod.mult; cursor lands at bol + (mult - 1),
+    // clamped to the line's EoL.
     let col = zle.zmod.mult.saturating_sub(1) as usize;
-    zle.zlecs = col.min(zle.zlell);
+    let bol = zle.find_bol(zle.zlecs);
+    let eol = zle.find_eol(zle.zlecs);
+    zle.zlecs = (bol + col).min(eol);
     zle.resetneeded = true;
 }
 
 fn widget_vi_backward_kill_word(zle: &mut Zle) {
+    // Port of vibackwardkillword() from Src/Zle/zle_word.c. Vim's
+    // ^W in insert mode — same as backward-kill-word but specifically
+    // bound for the vi insert keymap.
     widget_backward_kill_word(zle);
 }
 
@@ -1721,7 +1833,12 @@ fn widget_digit_argument(zle: &mut Zle) {
 }
 
 fn widget_undefined(zle: &mut Zle) {
-    // Beep or do nothing
+    // Port of undefinedkey() from Src/Zle/zle_main.c. zsh dispatches
+    // here when a key has no binding in the current keymap; the C
+    // source just beeps. We do the same by ignoring `zle` (handle_feep
+    // would also work, but the zlecore's no-binding fallback already
+    // calls handle_feep before reaching this — calling it again would
+    // double-beep).
     let _ = zle;
 }
 
@@ -3645,6 +3762,80 @@ mod tests {
         widget_digit_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, -5);
         assert!(!zle.zmod.flags.contains(crate::zle::main::ModifierFlags::NEG));
+    }
+
+    #[test]
+    fn vi_yank_whole_line_includes_trailing_newline() {
+        // Linewise yank must include the \n so vi-put-after's
+        // is_line_paste detection fires (zle_vi.c:559 path).
+        let mut zle = Zle::new();
+        zle.zleline = "first\nsecond".chars().collect();
+        zle.zlell = 12;
+        zle.zlecs = 2; // mid-"first"
+        zle.mult = 1;
+        widget_vi_yank_whole_line(&mut zle);
+        let killed = zle.killring.front().unwrap().iter().collect::<String>();
+        assert_eq!(killed, "first\n");
+    }
+
+    #[test]
+    fn vi_yank_whole_line_with_count_yanks_n_lines() {
+        let mut zle = Zle::new();
+        zle.zleline = "a\nb\nc\nd".chars().collect();
+        zle.zlell = 7;
+        zle.zlecs = 0;
+        zle.mult = 3;
+        widget_vi_yank_whole_line(&mut zle);
+        let killed = zle.killring.front().unwrap().iter().collect::<String>();
+        assert_eq!(killed, "a\nb\nc\n");
+    }
+
+    #[test]
+    fn vi_goto_column_lands_on_column_within_logical_line() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello\nworld".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 9; // mid-"world"
+        zle.zmod.mult = 3; // 1-based → column 3 = 'r'
+        widget_vi_goto_column(&mut zle);
+        // bol of "world" is 6 → 6 + (3-1) = 8.
+        assert_eq!(zle.zlecs, 8);
+    }
+
+    #[test]
+    fn vi_goto_column_clamps_to_end_of_line() {
+        let mut zle = Zle::new();
+        zle.zleline = "ab\ncd".chars().collect();
+        zle.zlell = 5;
+        zle.zlecs = 3; // on "cd" line
+        zle.zmod.mult = 99;
+        widget_vi_goto_column(&mut zle);
+        // EoL of "cd" is index 5; clamp lands there.
+        assert_eq!(zle.zlecs, 5);
+    }
+
+    #[test]
+    fn vi_add_eol_jumps_to_eol_of_current_line() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello".chars().collect();
+        zle.zlell = 5;
+        zle.zlecs = 1;
+        widget_vi_add_eol(&mut zle);
+        assert_eq!(zle.zlecs, 5);
+    }
+
+    #[test]
+    fn vi_forward_char_clamps_at_eol() {
+        // Vim 'l' can't cross EoL — cursor lands on last char of
+        // current logical line at most.
+        let mut zle = Zle::new();
+        zle.zleline = "abc\ndef".chars().collect();
+        zle.zlell = 7;
+        zle.zlecs = 1; // on 'b' of "abc"
+        zle.mult = 5;
+        widget_vi_forward_char(&mut zle);
+        // EoL of "abc" is 3 (the \n); limit is 2 (eol-1 = on 'c').
+        assert_eq!(zle.zlecs, 2);
     }
 
     #[test]
