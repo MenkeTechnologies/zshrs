@@ -64,8 +64,13 @@ impl Zle {
         self.zleline.iter().collect()
     }
 
-    /// Set the line from a string
-    pub fn set_line(&mut self, s: &str) {
+    /// Set the line from a string while preserving the current cursor
+    /// position (clamped to the new length).
+    /// Port of `setline()` from Src/Zle/zle_utils.c:1129 with the
+    /// `ZSL_NOCURSOR` flag set. Used by widget bodies that swap in a
+    /// fresh line (history navigation, isearch hit) but want to keep
+    /// the cursor where it was.
+    pub fn set_line_keep_cursor(&mut self, s: &str) {
         self.zleline = s.chars().collect();
         self.zlell = self.zleline.len();
         self.zlecs = self.zlecs.min(self.zlell);
@@ -586,17 +591,51 @@ impl Zle {
         &self.zleline
     }
 
-    /// Get ZLE query (for menu selection etc)
-    /// Port of getzlequery() from zle_utils.c
-    pub fn get_zle_query(&self) -> Option<String> {
-        // Would prompt for input
-        None
+    /// Read a y/n response from input.
+    /// Port of `getzlequery()` from Src/Zle/zle_utils.c:1197. The C source
+    /// reads one key, treats Tab as 'y', any control char or EOF as 'n',
+    /// and otherwise tolowers the input. Echoes the response and returns
+    /// true iff the user pressed 'y'. Used by completion-listing prompts
+    /// like "show all 200 matches?".
+    pub fn get_zle_query(&mut self) -> bool {
+        let c = match self.getfullchar(false) {
+            Some(c) => c,
+            None => return false, // EOF → 'n'
+        };
+        let resolved = if c == '\t' {
+            'y'
+        } else if c.is_control() {
+            'n'
+        } else {
+            c.to_ascii_lowercase()
+        };
+        // Echo the response (mirrors zwcputc at zle_utils.c:1229).
+        if resolved != '\n' {
+            print!("{}", resolved);
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        }
+        resolved == 'y'
     }
 
-    /// Handle suffix (for completion)
-    /// Port of handlesuffix() from zle_utils.c
+    /// Handle the auto-removable completion suffix.
+    /// Port of `handlesuffix()` from Src/Zle/zle_utils.c:1415. The C
+    /// source clears or retains the pending suffix depending on the
+    /// invoking widget's flags; without compsys integration in this
+    /// crate, we surface a hook so the host can update its compsys
+    /// state at the right moment.
     pub fn handle_suffix(&mut self) {
-        // Would handle completion suffix removal
+        self.call_hook("handle-suffix", None);
+    }
+
+    /// Set the editor line from a string.
+    /// Port of `setline()` from Src/Zle/zle_utils.c:1129. The C source
+    /// converts the metafied input back to a wide-char buffer; in Rust
+    /// we just collect chars into the line buffer and reset the cursor.
+    pub fn set_line(&mut self, s: &str) {
+        self.zleline = s.chars().collect();
+        self.zlell = self.zleline.len();
+        self.zlecs = self.zlell;
+        self.resetneeded = true;
     }
 }
 
@@ -640,6 +679,38 @@ bitflags::bitflags! {
 pub enum CutDirection {
     Front,
     Back,
+}
+
+/// Format a key sequence for `bindkey -L` listing.
+/// Port of `bindztrdup()` from Src/Zle/zle_utils.c:1238. Produces the
+/// dquoted-friendly form (`\C-a`, `\M-x`, escaped backslashes/carets)
+/// that the bindkey command uses for round-trippable output —
+/// distinct from `print_bind` below which uses the human-readable
+/// `^A` / `^[X` form printed in describe-key-briefly etc.
+pub fn bind_ztrdup(seq: &[u8]) -> String {
+    let mut buf = String::new();
+    for &b in seq {
+        // Meta bit handling: zsh metafies bytes >= 0x80 by inserting
+        // 0x83 (Meta) before a (b ^ 0x20) byte. The C source unwinds
+        // that here; in our Rust model we don't metafy in storage, so
+        // we treat any byte >= 0x80 as already a M- target.
+        let mut c = b;
+        if c & 0x80 != 0 {
+            buf.push('\\');
+            buf.push('M');
+            buf.push('-');
+            c &= 0x7f;
+        }
+        if c < 32 || c == 0x7f {
+            buf.push('^');
+            c ^= 64;
+        }
+        if c == b'\\' || c == b'^' {
+            buf.push('\\');
+        }
+        buf.push(c as char);
+    }
+    buf
 }
 
 /// Print a key binding for display
@@ -769,6 +840,43 @@ mod tests_strwidth {
     fn strwidth_emoji_presentation_is_wide() {
         // 🎉 is Wide.
         assert_eq!(strwidth("🎉"), 2);
+    }
+}
+
+#[cfg(test)]
+mod tests_bindkey_format {
+    use super::bind_ztrdup;
+    use super::print_bind;
+
+    #[test]
+    fn bind_ztrdup_emits_caret_form_for_control_chars() {
+        // Ctrl-A → "^A". Mirrors zsh's bindkey -L line for `bindkey '^A'`.
+        assert_eq!(bind_ztrdup(b"\x01"), "^A");
+        // Ctrl-_ → "^_".
+        assert_eq!(bind_ztrdup(b"\x1f"), "^_");
+        // DEL (0x7f) → "^?".
+        assert_eq!(bind_ztrdup(b"\x7f"), "^?");
+    }
+
+    #[test]
+    fn bind_ztrdup_escapes_backslash_and_caret() {
+        // '\\' → "\\\\" (escaped per C source's `c == '\\'` branch).
+        assert_eq!(bind_ztrdup(b"\\"), "\\\\");
+        // '^' → "\\^".
+        assert_eq!(bind_ztrdup(b"^"), "\\^");
+    }
+
+    #[test]
+    fn bind_ztrdup_handles_high_bit_as_meta() {
+        // Byte with bit-7 set → "\\M-X" prefix. \\xC1 = M-A.
+        assert_eq!(bind_ztrdup(b"\xC1"), "\\M-A");
+    }
+
+    #[test]
+    fn print_bind_caret_form_matches_describe_key_output() {
+        // `^A`-style display form (distinct from bindkey's escape form).
+        assert_eq!(print_bind(b"\x01"), "^A");
+        assert_eq!(print_bind(b"\x1b"), "^[");
     }
 }
 
