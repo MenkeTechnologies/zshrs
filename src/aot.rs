@@ -3,6 +3,14 @@
 //! executable. At startup, zshrs detects the trailer and runs every embedded
 //! script IN INPUT ORDER as a single concatenated zsh program.
 //!
+//! **zshrs-original infrastructure — no C source counterpart.** C zsh
+//! has the `zcompile` builtin (Src/parse.c → `bin_zcompile()`) which
+//! writes a parsed-AST `.zwc` file alongside a script for faster
+//! re-parse. That's a separate file, not a self-contained binary.
+//! AOT-ing scripts into the shell executable itself is a zshrs
+//! addition — it lets you ship a single binary that bundles its own
+//! script (think `zsh -c '...'` but compiled in).
+//!
 //! Layout (little-endian, appended to the end of a copy of the `zshrs` binary):
 //!
 //! ```text
@@ -157,6 +165,9 @@ fn build_trailer(compressed_len: u64, uncompressed_len: u64, version: u32) -> [u
 }
 
 /// Append a compressed v2 ordered-file payload to an existing file.
+/// zshrs-original — no C counterpart. C zsh's closest analog is the
+/// `zcompile` builtin in Src/parse.c which writes parsed-AST data
+/// to a separate `.zwc` file rather than appending to the binary.
 pub fn append_embedded_files(out_path: &Path, files: &[EmbeddedFile]) -> io::Result<()> {
     let payload = encode_payload_v2(files);
     let compressed = zstd::stream::encode_all(&payload[..], 3)?;
@@ -175,6 +186,7 @@ pub fn append_embedded_files(out_path: &Path, files: &[EmbeddedFile]) -> io::Res
 /// Fast probe: read the last 32 bytes of `exe` and return embedded files
 /// in build-order if present. Decodes both v1 (legacy single-script) and
 /// v2 (current ordered list). Called at zshrs startup before arg parsing.
+/// zshrs-original — no C counterpart.
 pub fn try_load_embedded(exe: &Path) -> Option<EmbeddedFiles> {
     let mut f = File::open(exe).ok()?;
     let size = f.metadata().ok()?.len();
@@ -263,6 +275,9 @@ fn copy_exe_without_trailer(src: &Path, dst: &Path) -> io::Result<()> {
 /// executable. At runtime, all embedded files run sequentially under one
 /// ShellExecutor — globals + functions from earlier files are visible
 /// to later ones.
+/// zshrs-original — no C counterpart. C zsh's `bin_zcompile()`
+/// (Src/parse.c) writes a `.zwc` cache file but doesn't bundle into
+/// the shell binary itself.
 pub fn build(script_paths: &[PathBuf], out_path: &Path) -> Result<PathBuf, String> {
     if script_paths.is_empty() {
         return Err("zbuild: at least one --in PATH required".to_string());
