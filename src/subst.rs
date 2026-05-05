@@ -825,29 +825,31 @@ pub fn path_tail(path: &str) -> String {
     }
 }
 
-/// Get the head (directory) part of a path
 /// Get all but the trailing path component (`:h` shorthand).
-/// zshrs convenience around `remlpaths(s, 1)`.
+/// zshrs convenience around `remlpaths(s, 1)`. Equivalent to the
+/// `:h` arm of `modify()` (Src/subst.c:4531) when the count is 1.
 pub fn path_head(path: &str) -> String {
     remtpath(path, 1)
 }
 
-/// Case modification modes
-/// Port from CASMOD_* in zsh.h
-#[derive(Clone, Copy, PartialEq, Eq)]
 /// Case-modifier kind (`:U`/`:L`/`:C`).
-/// Mirrors the `CASMOD_*` flag set Src/subst.c uses inside
-/// `casemodify()` for `${(U)var}` and `${var:U}`.
+/// Port of the `CASMOD_*` enum from Src/zsh.h — `casemodify()`
+/// (Src/utils.c) dispatches on these for `${(U)var}` /
+/// `${(L)var}` / `${(C)var}` and the `:U`/`:L`/`:C` modifier
+/// chain.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CaseMod {
     Lower,
     Upper,
     Caps,
 }
 
-/// Modify case of a string — direct port of casemodify() in
-/// src/zsh/Src/hist.c:2194-2370 (the multibyte branch).
+/// Apply `:U`/`:L`/`:C` casing.
+/// Port of `casemodify()` from Src/hist.c:2194-2370 (the
+/// multibyte branch).
 ///
 /// CASMOD_CAPS algorithm (lines 2239-2256):
+///
 ///   - Skip combining characters without resetting word state.
 ///   - Non-alphanumeric chars set `nextupper = 1` (word boundary
 ///     marker). zsh's `iswalnum` includes digits — so `foo1bar`
@@ -857,9 +859,6 @@ pub enum CaseMod {
 ///   - In the middle of a word: uppercase letter → lowercase
 ///     (so input "HELLO world" → "Hello World").
 ///   - All other characters pass through verbatim.
-/// Apply `:U`/`:L`/`:C` casing.
-/// Port of `casemodify()` (Src/utils.c) — same upper / lower /
-/// title-case logic.
 pub fn casemodify(s: &str, mode: CaseMod) -> String {
     match mode {
         CaseMod::Lower => s.to_lowercase(),
