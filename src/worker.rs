@@ -1,9 +1,14 @@
 //! Worker pool for zshrs — persistent threads for background work.
 //!
-//! Port rationale: zsh forks for everything (completion, process subs,
-//! command substitution).  Each fork copies the entire shell state.
-//! We replace that with a fixed-size thread pool + channel dispatch,
-//! giving us:
+//! **zshrs-original infrastructure — no C source counterpart.** This
+//! module does NOT port a corresponding `Src/*.c` file. C zsh's
+//! background-work strategy is `fork(2)`: every completion run,
+//! process substitution, or command substitution is a child process
+//! (see `zfork()` in Src/exec.c and the `forklevel` machinery
+//! Src/init.c uses to track depth). zshrs replaces that pattern with
+//! a fixed-size thread pool + crossbeam channel dispatch.
+//!
+//! Replacement rationale (vs the fork() path the C source takes):
 //!   - No fork overhead (50-500μs per fork on macOS)
 //!   - No address space duplication
 //!   - Warm thread stacks ready to go
@@ -29,8 +34,11 @@ type Task = Box<dyn FnOnce() + Send + 'static>;
 
 /// Fixed-size thread pool with bounded FIFO task queue.
 ///
-/// Uses crossbeam-channel for lock-free multi-consumer dispatch —
-/// each worker calls `recv()` directly, no mutex.
+/// zshrs-original — replaces C zsh's per-task `fork()` + `wait()`
+/// pattern (Src/exec.c `zfork()` / Src/jobs.c child management) with
+/// a persistent thread pool. Uses crossbeam-channel for lock-free
+/// multi-consumer dispatch — each worker calls `recv()` directly,
+/// no mutex.
 pub struct WorkerPool {
     workers: Vec<Worker>,
     sender: Option<crossbeam_channel::Sender<Task>>,
@@ -51,7 +59,12 @@ struct Worker {
 
 impl WorkerPool {
     /// Create a pool with `size` worker threads and bounded channel.
-    /// Channel capacity = 4 × size (provides backpressure without starving).
+    /// Channel capacity = 4 × size (provides backpressure without
+    /// starving).
+    /// zshrs-original — no C counterpart. Replaces the
+    /// "spawn-on-demand" semantics of `zfork()` (Src/exec.c) with
+    /// pre-spawned threads ready to receive work over a bounded
+    /// channel.
     pub fn new(size: usize) -> Self {
         let capacity = size * 4;
         let (sender, receiver) = crossbeam_channel::bounded::<Task>(capacity);
@@ -127,7 +140,11 @@ impl WorkerPool {
         }
     }
 
-    /// Create a pool sized to the machine's parallelism, clamped [2, 18].
+    /// Create a pool sized to the machine's parallelism, clamped to
+    /// `[2, 18]`.
+    /// zshrs-original — no C counterpart. C zsh has no concept of a
+    /// "pool size" because it forks on demand (one child per
+    /// background task, see Src/jobs.c).
     pub fn default_size() -> Self {
         let cpus = thread::available_parallelism()
             .map(|n| n.get())
@@ -135,8 +152,10 @@ impl WorkerPool {
         Self::new(cpus.clamp(2, 18))
     }
 
-    /// Submit a task to the pool.  Blocks if the queue is full (backpressure).
-    /// Panics if the pool has been shut down.
+    /// Submit a task to the pool. Blocks if the queue is full
+    /// (backpressure). Panics if the pool has been shut down.
+    /// zshrs-original — replaces the `fork() + execve()` /
+    /// `fork() + run-shell-fn` dispatch pairs in Src/exec.c.
     pub fn submit<F>(&self, f: F)
     where
         F: FnOnce() + Send + 'static,
@@ -153,6 +172,10 @@ impl WorkerPool {
     }
 
     /// Submit a task and get a receiver for its result.
+    /// zshrs-original — closest C analog is the pipe-based
+    /// command-substitution result capture in Src/exec.c
+    /// (`getoutput()` reading the child's stdout pipe), but using a
+    /// typed Rust channel sidesteps the marshalling.
     pub fn submit_with_result<F, R>(&self, f: F) -> crossbeam_channel::Receiver<R>
     where
         F: FnOnce() -> R + Send + 'static,
@@ -167,29 +190,38 @@ impl WorkerPool {
     }
 
     /// Signal all workers to drop pending tasks.
-    /// Already-running tasks will finish, but queued tasks are skipped.
-    /// Reset with `reset_cancel()`.
+    /// Already-running tasks will finish, but queued tasks are
+    /// skipped. Reset with `reset_cancel()`.
+    /// zshrs-original — closest C analog is the SIGINT/SIGQUIT
+    /// signal-storm dispatch C zsh fires at its background children
+    /// in Src/signals.c (`killjb()` / `killpg()`), but here we set a
+    /// flag instead of sending a signal across a fork boundary.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
         tracing::info!("worker pool: cancel requested");
     }
 
     /// Clear the cancellation flag — pool resumes normal execution.
+    /// zshrs-original — no C counterpart.
     pub fn reset_cancel(&self) {
         self.cancelled.store(false, Ordering::Relaxed);
     }
 
     /// Number of worker threads.
+    /// zshrs-original — no C counterpart.
     pub fn size(&self) -> usize {
         self.size
     }
 
     /// Approximate number of tasks waiting in the queue.
+    /// zshrs-original — no C counterpart; closest equivalent is the
+    /// `jobtab` length walk Src/jobs.c uses for `jobs -l` output.
     pub fn queue_depth(&self) -> usize {
         self.queued.load(Ordering::Relaxed)
     }
 
     /// Total tasks completed since pool creation.
+    /// zshrs-original — no C counterpart.
     pub fn completed(&self) -> usize {
         self.completed.load(Ordering::Relaxed)
     }
