@@ -44,7 +44,11 @@ pub struct ViChange {
 }
 
 impl Zle {
-    /// Get numeric argument (mult)
+    /// Read the active numeric multiplier.
+    /// Port of `zmult` macro at Src/Zle/zle.h:267 (`#define zmult
+    /// (zmod.mult)`). Returns the explicit MULT prefix when set,
+    /// otherwise 1 — the default-1 fall-through that initmodifier
+    /// installs (zle_main.c:1604).
     pub fn vi_get_arg(&self) -> i32 {
         if self.zmod.flags.contains(ModifierFlags::MULT) {
             self.zmod.mult
@@ -195,7 +199,10 @@ impl Zle {
         ret
     }
 
-    /// Vi percent match (find matching bracket)
+    /// Jump to the bracket matching the one under the cursor.
+    /// Port of `vimatchbracket()` from Src/Zle/zle_misc.c. Vim's `%`
+    /// motion — recognises (), [], {}, <>; walks forward or backward
+    /// honouring nesting depth.
     pub fn vi_match_bracket(&mut self) {
         let c = if self.zlecs < self.zlell {
             self.zleline[self.zlecs]
@@ -253,13 +260,19 @@ impl Zle {
         }
     }
 
-    /// Vi replace mode (R command)
+    /// Enter overwrite mode (vim's `R` command).
+    /// Port of `vireplace()` from Src/Zle/zle_vi.c. Switches to the
+    /// insert keymap with `insmode = false` so subsequent self-inserts
+    /// overwrite existing chars instead of pushing them right.
     pub fn vi_replace_mode(&mut self) {
         self.keymaps.select("viins");
         self.insmode = false; // Overwrite mode
     }
 
-    /// Vi swap case
+    /// Toggle the case of the character under the cursor and advance.
+    /// Port of `viswapcase()` from Src/Zle/zle_vi.c (vim's `~`).
+    /// Uppercase letters become lowercase and vice versa; non-letters
+    /// pass through untouched. Cursor advances one position post-swap.
     pub fn vi_swap_case(&mut self) {
         let count = self.vi_get_arg() as usize;
 
