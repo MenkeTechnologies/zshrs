@@ -8,6 +8,10 @@ use std::path::PathBuf;
 
 /// Parameter type flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Parameter type tag.
+/// Mirrors the `PM_*` type bits from Src/zsh.h —
+/// `paramtypestr()` from Src/Modules/parameter.c:43 maps these
+/// onto the `typeset -p` output letters.
 pub enum ParamType {
     Scalar,
     Integer,
@@ -32,6 +36,10 @@ impl ParamType {
 
 /// Parameter attributes
 #[derive(Debug, Clone, Default)]
+/// Per-parameter flag bits.
+/// Port of the `PM_*` modifier flags Src/zsh.h declares
+/// (`PM_LOCAL` / `PM_READONLY` / `PM_TAGGED` / `PM_EXPORTED` /
+/// `PM_HASHED` / `PM_HIDE` / etc.).
 pub struct ParamFlags {
     pub local: bool,
     pub left_justify: bool,
@@ -50,6 +58,8 @@ pub struct ParamFlags {
 }
 
 /// Generate parameter type string (like "scalar-local-export")
+/// Render a parameter's type as a `typeset -p` flag string.
+/// Port of `paramtypestr()` from Src/Modules/parameter.c:43.
 pub fn param_type_str(ptype: ParamType, flags: &ParamFlags) -> String {
     let mut parts = vec![ptype.name().to_string()];
 
@@ -101,6 +111,10 @@ pub fn param_type_str(ptype: ParamType, flags: &ParamFlags) -> String {
 
 /// Commands hash table ($commands)
 #[derive(Debug, Default)]
+/// `${commands}` special-parameter table.
+/// Port of the parameter Src/Modules/parameter.c installs via
+/// `getpmcommand()` (line 213) / `scanpmcommands()` (line 245)
+/// — exposes the `cmdnamtab` HashTable as a hash parameter.
 pub struct CommandsTable {
     hashed: HashMap<String, PathBuf>,
 }
@@ -158,6 +172,9 @@ impl CommandsTable {
 
 /// Functions hash table ($functions)
 #[derive(Debug, Clone)]
+/// Function definition body.
+/// Port of the body slot `getfunction()` (Src/Modules/
+/// parameter.c:389) returns — for `${functions[name]}` lookups.
 pub struct FunctionDef {
     pub body: String,
     pub flags: u32,
@@ -165,6 +182,10 @@ pub struct FunctionDef {
 }
 
 #[derive(Debug, Default)]
+/// `${functions}` / `${dis_functions}` special-parameter table.
+/// Port of the param Src/Modules/parameter.c installs via
+/// `getpmfunction()` (line 444) / `scanpmfunctions()` (line 519)
+/// — exposes `shfunctab` as a hash parameter.
 pub struct FunctionsTable {
     functions: HashMap<String, FunctionDef>,
     disabled: HashMap<String, FunctionDef>,
@@ -214,6 +235,10 @@ impl FunctionsTable {
 
 /// Aliases hash table ($aliases)
 #[derive(Debug, Clone)]
+/// Alias definition record.
+/// Port of the per-entry shape `${aliases}` / `${galiases}` /
+/// `${saliases}` returns — Src/Modules/parameter.c uses
+/// `aliastab` HashTable nodes directly.
 pub struct AliasDef {
     pub value: String,
     pub global: bool,
@@ -221,6 +246,9 @@ pub struct AliasDef {
 }
 
 #[derive(Debug, Default)]
+/// `${aliases}` / `${galiases}` / `${saliases}` parameter.
+/// Port of the alias-table parameters Src/Modules/parameter.c
+/// installs (regular + global + suffix variants).
 pub struct AliasesTable {
     aliases: HashMap<String, AliasDef>,
     disabled: HashMap<String, AliasDef>,
@@ -288,6 +316,9 @@ impl AliasesTable {
 
 /// Builtins list ($builtins)
 #[derive(Debug, Default)]
+/// `${builtins}` / `${dis_builtins}` parameter.
+/// Port of the builtin-table parameter Src/Modules/parameter.c
+/// installs — exposes `builtintab` HashTable.
 pub struct BuiltinsTable {
     builtins: HashMap<String, bool>,
     disabled: HashMap<String, bool>,
@@ -329,6 +360,10 @@ impl BuiltinsTable {
 
 /// Directory stack ($dirstack)
 #[derive(Debug, Default)]
+/// `${dirstack}` parameter.
+/// Port of the dirstack accessor in Src/Modules/parameter.c —
+/// reads the directory stack `pushd` / `popd` (Src/builtin.c)
+/// maintains.
 pub struct DirStack {
     stack: Vec<PathBuf>,
 }
@@ -376,6 +411,9 @@ impl DirStack {
 
 /// Options special parameter ($options)
 #[derive(Debug, Default)]
+/// `${options}` parameter.
+/// Port of the parameter-shape exposing `optab[]` (Src/options.c)
+/// from Src/Modules/parameter.c.
 pub struct OptionsTable {
     options: HashMap<String, bool>,
 }
@@ -423,6 +461,9 @@ impl OptionsTable {
 
 /// Named directories ($nameddirs, $userdirs)
 #[derive(Debug, Default)]
+/// `${nameddirs}` parameter.
+/// Port of the parameter exposing `nameddirtab`
+/// (Src/hashnameddir.c) from Src/Modules/parameter.c.
 pub struct NamedDirsTable {
     dirs: HashMap<String, PathBuf>,
 }
@@ -458,6 +499,10 @@ impl NamedDirsTable {
 
 /// Job states ($jobstates)
 #[derive(Debug, Clone)]
+/// One job state entry.
+/// Mirrors `struct job` from Src/zsh.h — Src/Modules/parameter.c
+/// reads the `jobtab` for `${jobtexts}` / `${jobdirs}` /
+/// `${jobstates}`.
 pub struct JobState {
     pub running: bool,
     pub suspended: bool,
@@ -480,6 +525,9 @@ impl JobState {
 
 /// Job texts ($jobtexts)
 #[derive(Debug, Default)]
+/// `${jobtexts}` / `${jobdirs}` / `${jobstates}` parameter.
+/// Port of the job-table parameter shape Src/Modules/parameter.c
+/// installs.
 pub struct JobsTable {
     jobs: HashMap<i32, (JobState, String)>,
 }
@@ -522,12 +570,19 @@ impl JobsTable {
 
 /// Modules table ($modules)
 #[derive(Debug, Clone)]
+/// Per-module info entry for `${modules}`.
+/// Mirrors the C source's `Module` struct (Src/zsh.h) the way
+/// Src/Modules/parameter.c presents it through the
+/// `${modules[NAME]}` parameter.
 pub struct ModuleInfo {
     pub loaded: bool,
     pub autoload: bool,
 }
 
 #[derive(Debug, Default)]
+/// `${modules}` special-parameter.
+/// Port of the parameter exposing `modulestab` (Src/module.c)
+/// from Src/Modules/parameter.c.
 pub struct ModulesTable {
     modules: HashMap<String, ModuleInfo>,
 }
