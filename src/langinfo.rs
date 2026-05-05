@@ -63,7 +63,13 @@ pub static LANGINFO_NAMES: &[&str] = &[
     "ALT_DIGITS",
 ];
 
-/// Get langinfo value by name
+/// Look up a locale string by langinfo item name.
+/// Port of `bin_getln`/`getlanginfo` shape from Src/Modules/langinfo.c.
+/// The C source registers `${langinfo[NAME]}` as a special-parameter
+/// hash whose getfn calls `nl_langinfo(3)`; this Rust function is
+/// the equivalent direct lookup, used by both the `Langinfo`
+/// parameter wrapper and the prompt-expansion code that reads
+/// `%D`/`%T` formats.
 #[cfg(unix)]
 pub fn get_langinfo(name: &str) -> Option<String> {
     use std::ffi::CStr;
@@ -137,12 +143,19 @@ pub fn get_langinfo(name: &str) -> Option<String> {
     }
 }
 
+/// Non-Unix fallback for `get_langinfo` — `nl_langinfo(3)` is POSIX-only.
+/// On Windows / WASI / sandboxed builds the parameter always reads
+/// as unset, matching how Src/Modules/langinfo.c behaves when the
+/// build doesn't link against libc's locale.
 #[cfg(not(unix))]
 pub fn get_langinfo(_name: &str) -> Option<String> {
     None
 }
 
-/// Get all langinfo values
+/// Snapshot every supported langinfo item into a name→value map.
+/// Equivalent to scanning the parameter via `${(kv)langinfo}` in
+/// zsh — the C source's `scan_langinfo()` (Src/Modules/langinfo.c)
+/// fires the same loop over the registered item table.
 pub fn get_all_langinfo() -> HashMap<String, String> {
     let mut result = HashMap::new();
 
@@ -160,14 +173,25 @@ pub fn get_all_langinfo() -> HashMap<String, String> {
 pub struct Langinfo;
 
 impl Langinfo {
+    /// Construct the langinfo parameter handle.
+    /// Equivalent to the special-parameter installation done by
+    /// `setup_langinfo_module()` in Src/Modules/langinfo.c — the C
+    /// source registers a `langinfo` Param backed by getfn/scanfn
+    /// callbacks; this struct holds the same role on the Rust side.
     pub fn new() -> Self {
         Self
     }
 
+    /// `${langinfo[NAME]}` getter.
+    /// Equivalent to the `getfn` slot of the `langinfo` Param in
+    /// Src/Modules/langinfo.c.
     pub fn get(&self, name: &str) -> Option<String> {
         get_langinfo(name)
     }
 
+    /// `${(kv)langinfo}` enumeration.
+    /// Equivalent to the `scanfn` slot of the `langinfo` Param in
+    /// Src/Modules/langinfo.c.
     pub fn iter(&self) -> impl Iterator<Item = (String, String)> {
         get_all_langinfo().into_iter()
     }

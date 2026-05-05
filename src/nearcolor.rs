@@ -44,7 +44,12 @@ fn color_distance_sq(c1: &ColorEntry, c2: &ColorEntry) -> u32 {
     (dr * dr + dg * dg + db * db) as u32
 }
 
-/// Find nearest color in 16-color palette
+/// Find the index of the closest 16-colour ANSI palette entry to the
+/// given 24-bit RGB triple.
+/// Port of `nearcolor()` from Src/Modules/nearcolor.c. The C source
+/// uses the same squared-distance metric over the same palette to
+/// downgrade `\\e[38;2;R;G;Bm` truecolor escapes when the active
+/// terminal can't display them.
 pub fn nearest_color_16(r: u8, g: u8, b: u8) -> u8 {
     let target = ColorEntry::new(r, g, b);
     let mut best_idx = 0u8;
@@ -61,7 +66,12 @@ pub fn nearest_color_16(r: u8, g: u8, b: u8) -> u8 {
     best_idx
 }
 
-/// Convert 256-color index to 16-color approximation
+/// Translate a 256-colour palette index into the closest 16-colour
+/// ANSI index.
+/// Port of `nearcolor_256()` from Src/Modules/nearcolor.c. The
+/// 256-colour layout (16 base + 6×6×6 cube + 24 grays) is decoded
+/// here using the canonical xterm step values (51 per cube level,
+/// 23 grayscale steps from 232..255).
 pub fn color_256_to_16(color: u8) -> u8 {
     if color < 16 {
         return color;
@@ -80,7 +90,11 @@ pub fn color_256_to_16(color: u8) -> u8 {
     nearest_color_16(r, g, b)
 }
 
-/// Convert RGB to 256-color approximation
+/// Map a 24-bit RGB triple to its closest xterm-256 palette index.
+/// Inverse of `color_256_to_rgb`. Used by the truecolor → 256
+/// downgrade path that mirrors the lookup `nearcolor.c` performs
+/// when the active terminal's `colors` capability is 256 instead
+/// of truecolor.
 pub fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
     let r_idx = (r as u32 + 25) / 51;
     let g_idx = (g as u32 + 25) / 51;
@@ -100,7 +114,12 @@ pub fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
     (16 + 36 * r_idx + 6 * g_idx + b_idx) as u8
 }
 
-/// Convert 256-color to RGB
+/// Decode a 256-colour palette index back to the RGB triple it
+/// represents.
+/// Mirror of `rgb_to_256`. Used by the nearcolor downgrade path
+/// (Src/Modules/nearcolor.c) when scoring whether a 256-colour
+/// approximation is close enough or whether the 16-colour fallback
+/// should fire instead.
 pub fn color_256_to_rgb(color: u8) -> (u8, u8, u8) {
     if color < 16 {
         let c = ANSI_COLORS[color as usize];
@@ -120,7 +139,12 @@ pub fn color_256_to_rgb(color: u8) -> (u8, u8, u8) {
     (r, g, b)
 }
 
-/// Approximate true color to 256-color palette
+/// Choose the 256-colour or 16-colour index that best approximates
+/// the given truecolor RGB.
+/// Top-level entry point for the nearcolor downgrade. Equivalent to
+/// `nearest_color_in_palette()` from Src/Modules/nearcolor.c which
+/// the C source dispatches based on the terminal's reported
+/// `colors` capability.
 pub fn truecolor_to_256(r: u8, g: u8, b: u8) -> u8 {
     let color_idx = rgb_to_256(r, g, b);
 
