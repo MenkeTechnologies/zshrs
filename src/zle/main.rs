@@ -314,6 +314,33 @@ pub struct Zle {
     /// re-expand without the host re-feeding them.
     pub lprompt_raw: String,
     pub rprompt_raw: String,
+    /// Pending completion request for the host to satisfy.
+    /// `None` = nothing pending; otherwise carries the requested action.
+    /// Port of the dispatcher entry to compsys's `do_completion()`
+    /// (Src/Zle/zle_tricky.c) — the C source can call into the
+    /// completion module directly because it lives in the same binary;
+    /// the Rust port keeps `compsys` as a separate crate, so widgets
+    /// surface the request and the host (which depends on both crates)
+    /// runs the completion engine and writes the result back.
+    pub completion_request: Option<CompletionRequest>,
+}
+
+/// What kind of completion the user invoked. Each variant maps to one of
+/// zsh's tab-completion widgets (Src/Zle/zle_tricky.c) which all funnel
+/// through `do_completion()` with different option flags. The host runs
+/// compsys with the matching mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionRequest {
+    /// `complete-word` (zle_tricky.c bin_zle 'C') — single-shot match.
+    CompleteWord,
+    /// `expand-or-complete` — try expansion first, fall back to completion.
+    ExpandOrComplete,
+    /// `expand-word` — only run the expansion phase.
+    ExpandWord,
+    /// `list-choices` — show matches without inserting.
+    ListChoices,
+    /// `menu-complete` — start (or step through) menu selection.
+    MenuComplete,
 }
 
 impl Default for Zle {
@@ -392,6 +419,7 @@ impl Zle {
             pending_hooks: Vec::new(),
             lprompt_raw: String::new(),
             rprompt_raw: String::new(),
+            completion_request: None,
         }
     }
 
