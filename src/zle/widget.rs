@@ -1142,16 +1142,58 @@ fn widget_vi_yank_whole_line(zle: &mut Zle) {
 }
 
 fn widget_vi_put_after(zle: &mut Zle) {
-    if zle.zlecs < zle.zlell {
-        zle.zlecs += 1;
+    // Port of viputafter() from Src/Zle/zle_misc.c. Vim's `p` command —
+    // for character-wise paste, insert AFTER the cursor; for line-wise
+    // paste (when the kill-ring entry contains a trailing '\n'), insert
+    // on a new line below. Cursor lands on the LAST char of the pasted
+    // text. The C source distinguishes line vs char ranges via the
+    // CUTBUFFER_LINE flag on the cutbuf; we approximate by checking
+    // whether the most-recent kill-ring entry ends in a newline.
+    let is_line_paste = zle
+        .killring
+        .front()
+        .and_then(|v| v.last().copied())
+        == Some('\n');
+    if is_line_paste {
+        // Move to end of current line, then paste (which inserts the
+        // newline-prefixed content immediately).
+        zle.zlecs = zle.find_eol(zle.zlecs);
+        if zle.zlecs < zle.zlell {
+            zle.zlecs += 1;
+        }
+        widget_yank(zle);
+    } else {
+        if zle.zlecs < zle.zlell {
+            zle.zlecs += 1;
+        }
+        widget_yank(zle);
+        // Vim convention: cursor on last pasted char, not after.
+        if zle.zlecs > 0 {
+            zle.zlecs -= 1;
+        }
     }
-    widget_yank(zle);
 }
 
 fn widget_vi_put_before(zle: &mut Zle) {
-    // Port of viputbefore() from Src/Zle/zle_misc.c. Insert kill-ring
-    // entry at the cursor without advancing — vim's `P` semantics.
-    widget_yank(zle);
+    // Port of viputbefore() from Src/Zle/zle_misc.c. Vim's `P` command —
+    // char-wise paste BEFORE the cursor; line-wise paste opens a new
+    // line ABOVE. Cursor lands on the last char of the pasted region.
+    let is_line_paste = zle
+        .killring
+        .front()
+        .and_then(|v| v.last().copied())
+        == Some('\n');
+    if is_line_paste {
+        // Move to start of current line, paste (the newline at end of
+        // the kill-ring entry pushes the existing line down).
+        zle.zlecs = zle.find_bol(zle.zlecs);
+        widget_yank(zle);
+    } else {
+        widget_yank(zle);
+        if zle.zlecs > 0 {
+            zle.zlecs -= 1;
+        }
+    }
 }
 
 fn widget_vi_replace(zle: &mut Zle) {
@@ -2956,6 +2998,47 @@ mod tests {
         zle.zlecs = 0;
         widget_capitalize_word(&mut zle);
         assert_eq!(zle.zleline.iter().collect::<String>(), "Hello world");
+    }
+
+    #[test]
+    fn vi_put_after_pastes_after_cursor_on_charwise_yank() {
+        let mut zle = Zle::new();
+        zle.zleline = "abc".chars().collect();
+        zle.zlell = 3;
+        zle.zlecs = 0; // on 'a'
+        zle.killring.push_front("XY".chars().collect());
+        widget_vi_put_after(&mut zle);
+        // `p` after 'a' inserts XY at index 1 → "aXYbc". Cursor lands
+        // on 'Y' (last char of pasted region) at index 2.
+        assert_eq!(zle.zleline.iter().collect::<String>(), "aXYbc");
+        assert_eq!(zle.zlecs, 2);
+    }
+
+    #[test]
+    fn vi_put_before_pastes_before_cursor_on_charwise_yank() {
+        let mut zle = Zle::new();
+        zle.zleline = "abc".chars().collect();
+        zle.zlell = 3;
+        zle.zlecs = 1; // on 'b'
+        zle.killring.push_front("XY".chars().collect());
+        widget_vi_put_before(&mut zle);
+        // `P` at cursor 1 inserts XY → "aXYbc". Cursor lands on 'Y'.
+        assert_eq!(zle.zleline.iter().collect::<String>(), "aXYbc");
+        assert_eq!(zle.zlecs, 2);
+    }
+
+    #[test]
+    fn vi_put_after_linewise_pastes_on_new_line_below() {
+        let mut zle = Zle::new();
+        zle.zleline = "first\nthird".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 2; // mid-"first"
+        // Linewise yank entry ends in newline.
+        zle.killring.push_front("second\n".chars().collect());
+        widget_vi_put_after(&mut zle);
+        let s: String = zle.zleline.iter().collect();
+        // Should now be "first\nsecond\nthird".
+        assert!(s.contains("first\nsecond\nthird"), "got: {:?}", s);
     }
 
     #[test]
