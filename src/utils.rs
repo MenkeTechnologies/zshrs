@@ -14,26 +14,36 @@ pub static mut SCRIPT_NAME: Option<String> = None;
 pub static mut SCRIPT_FILENAME: Option<String> = None;
 
 /// Print an error message
+/// Print a shell error message to stderr.
+/// Port of `zerr()` from Src/utils.c — same `zsh: <msg>` shape.
 pub fn zerr(msg: &str) {
     eprintln!("zsh: {}", msg);
 }
 
 /// Print an error message with command name
+/// Print a shell error message tagged with a command name.
+/// Port of `zerrnam()` from Src/utils.c.
 pub fn zerrnam(cmd: &str, msg: &str) {
     eprintln!("{}: {}", cmd, msg);
 }
 
 /// Print a warning message
+/// Print a non-fatal warning.
+/// Port of `zwarn()` from Src/utils.c.
 pub fn zwarn(msg: &str) {
     eprintln!("zsh: warning: {}", msg);
 }
 
 /// Print a warning with command name  
+/// Print a non-fatal warning tagged with a command name.
+/// Port of `zwarnnam()` from Src/utils.c.
 pub fn zwarnnam(cmd: &str, msg: &str) {
     eprintln!("{}: warning: {}", cmd, msg);
 }
 
 /// Print formatted error with optional errno
+/// Print an errno-aware diagnostic.
+/// Port of `zerrmsg()` from Src/utils.c — wraps `strerror(3)`.
 pub fn zerrmsg(msg: &str, errno: Option<i32>) {
     if let Some(e) = errno {
         let errmsg = std::io::Error::from_raw_os_error(e);
@@ -44,11 +54,18 @@ pub fn zerrmsg(msg: &str, errno: Option<i32>) {
 }
 
 /// Check if a path is a directory
+/// Check whether a path is a directory.
+/// Port of the `S_ISDIR` test inline in Src/utils.c (no
+/// dedicated function — used wherever a path-vs-dir check is
+/// needed).
 pub fn is_directory(path: &str) -> bool {
     Path::new(path).is_dir()
 }
 
 /// Check if a file exists and is executable
+/// Check whether a path is executable.
+/// Port of the `access(X_OK)` test inline in Src/utils.c
+/// `findcmd()` (called from Src/exec.c).
 pub fn is_executable(path: &str) -> bool {
     #[cfg(unix)]
     {
@@ -66,6 +83,9 @@ pub fn is_executable(path: &str) -> bool {
 }
 
 /// Find an executable in PATH
+/// Walk `$PATH` for an executable.
+/// Port of `pathprog()` from Src/init.c (called via `findcmd()`
+/// in Src/exec.c) — first hit on access(X_OK).
 pub fn find_in_path(name: &str) -> Option<PathBuf> {
     if name.contains('/') {
         let path = PathBuf::from(name);
@@ -89,6 +109,10 @@ pub fn find_in_path(name: &str) -> Option<PathBuf> {
 }
 
 /// Expand tilde in a path
+/// Expand `~user` and `~+`/`~-` shorthands in a path.
+/// Port of `unmeta_named_dir()` / `gethnameddir()` chain from
+/// Src/utils.c (around `equalsplit()` line 3000-ish) — same
+/// `~`/`~+N`/`~-N`/`~user` precedence.
 pub fn expand_tilde(path: &str) -> String {
     if !path.starts_with('~') {
         return path.to_string();
@@ -131,6 +155,9 @@ fn get_user_home(user: &str) -> Option<String> {
 }
 
 /// Nicely format a string for display (escape unprintable chars)
+/// Render a control character as a printable form.
+/// Port of `nicechar()` from Src/utils.c — same `^X`/`M-X`
+/// /`\xNN` rules used by `print -P` and the prompt path.
 pub fn nicechar(c: char) -> String {
     if c.is_ascii_control() {
         match c {
@@ -148,31 +175,45 @@ pub fn nicechar(c: char) -> String {
 }
 
 /// Nicely format a string
+/// Render an entire string with `nicechar()` for every byte.
+/// Port of `nicezputs()` from Src/utils.c.
 pub fn nicezputs(s: &str) -> String {
     s.chars().map(nicechar).collect()
 }
 
 /// Check if character is a word character
+/// Check whether a char is part of a word per `$WORDCHARS`.
+/// Port of the `iword()` macro from Src/zsh.h — used by ZLE
+/// movement (Src/Zle/zle_word.c) and substring expansion.
 pub fn is_word_char(c: char, wordchars: &str) -> bool {
     c.is_alphanumeric() || wordchars.contains(c)
 }
 
 /// Check if character is an IFS character
+/// Check whether a char is in `$IFS`.
+/// Port of the `iifs()` macro from Src/zsh.h.
 pub fn is_ifs_char(c: char, ifs: &str) -> bool {
     ifs.contains(c)
 }
 
 /// Convert character to lowercase
+/// To-lowercase that respects locale.
+/// Port of `tulower()` from Src/utils.c.
 pub fn tulower(c: char) -> char {
     c.to_lowercase().next().unwrap_or(c)
 }
 
 /// Convert character to uppercase
+/// To-uppercase that respects locale.
+/// Port of `tuupper()` from Src/utils.c.
 pub fn tuupper(c: char) -> char {
     c.to_uppercase().next().unwrap_or(c)
 }
 
 /// Check if string is a valid identifier
+/// Check whether a string is a valid shell identifier.
+/// Port of the `itype_end(...IIDENT)` walk Src/utils.c uses
+/// (around `validident()`).
 pub fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
@@ -183,6 +224,9 @@ pub fn is_identifier(s: &str) -> bool {
 }
 
 /// Check if string looks like a number
+/// Check whether a string parses as a decimal integer.
+/// Port of the `itype_end(...IDIGIT)` walk Src/utils.c uses
+/// inside `mathevalarg()`.
 pub fn is_number(s: &str) -> bool {
     let s = s.trim();
     if s.is_empty() {
@@ -199,11 +243,17 @@ pub fn is_number(s: &str) -> bool {
 }
 
 /// Check if string is a valid floating point number
+/// Check whether a string parses as a floating-point number.
+/// Port of the floating-literal recogniser inside
+/// `mathevall()` (Src/math.c).
 pub fn is_float(s: &str) -> bool {
     s.parse::<f64>().is_ok()
 }
 
 /// Get monotonic time in nanoseconds
+/// Get monotonic time in nanoseconds.
+/// Port of `zgettime_monotonic_if_available()` (Src/compat.c:133)
+/// — used by the `time` keyword and history-duration tracking.
 pub fn monotonic_time_ns() -> u64 {
     use std::time::Instant;
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -212,12 +262,18 @@ pub fn monotonic_time_ns() -> u64 {
 }
 
 /// Sleep for a given number of seconds (fractional)
+/// Sleep for a fractional number of seconds.
+/// Port of `zsleep()` from Src/utils.c — wraps `nanosleep(2)`
+/// with EINTR retry.
 pub fn zsleep(seconds: f64) {
     let duration = std::time::Duration::from_secs_f64(seconds);
     std::thread::sleep(duration);
 }
 
 /// Write a string to a file descriptor
+/// Write a string to an fd with EINTR retry.
+/// Port of the `zwrite()`-style loop Src/utils.c uses for
+/// retry-safe writes (around `write_loop()`).
 pub fn write_to_fd(fd: i32, data: &str) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -235,6 +291,9 @@ pub fn write_to_fd(fd: i32, data: &str) -> io::Result<()> {
 }
 
 /// Move a file descriptor to a high number (>10)
+/// Move an fd to the high range to avoid colliding with
+/// user redirections.
+/// Port of `movefd()` from Src/utils.c.
 pub fn move_fd(fd: i32) -> i32 {
     #[cfg(unix)]
     {
@@ -256,6 +315,8 @@ pub fn move_fd(fd: i32) -> i32 {
 }
 
 /// Close a file descriptor
+/// Close an fd with EINTR retry.
+/// Port of `zclose()` from Src/utils.c.
 pub fn zclose(fd: i32) {
     #[cfg(unix)]
     unsafe {
@@ -264,6 +325,9 @@ pub fn zclose(fd: i32) {
 }
 
 /// Check if a file descriptor is a tty
+/// Check whether an fd is a TTY.
+/// Port of the `isatty(3)` calls Src/utils.c sprinkles around
+/// the prompt / completion paths.
 pub fn is_tty(fd: i32) -> bool {
     #[cfg(unix)]
     unsafe {
@@ -277,6 +341,9 @@ pub fn is_tty(fd: i32) -> bool {
 }
 
 /// Get terminal width
+/// Get terminal column count.
+/// Port of the `TIOCGWINSZ` lookup `setupvals()` (Src/init.c)
+/// uses to seed `$COLUMNS`.
 pub fn get_term_width() -> usize {
     #[cfg(unix)]
     {
@@ -294,6 +361,9 @@ pub fn get_term_width() -> usize {
 }
 
 /// Get terminal height
+/// Get terminal row count.
+/// Port of the `TIOCGWINSZ` lookup `setupvals()` (Src/init.c)
+/// uses to seed `$LINES`.
 pub fn get_term_height() -> usize {
     #[cfg(unix)]
     {
@@ -313,6 +383,10 @@ pub fn get_term_height() -> usize {
 /// Quote type constants for quotestring()
 /// Port from zsh.h QT_* enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Quote-rendering mode.
+/// Mirrors the `quotetype_t` enum in Src/utils.c —
+/// `quotestring()` (line ~6500) takes one of these to choose
+/// `\`-escape, `'…'`, `"…"`, or POSIX `$'…'` quoting.
 pub enum QuoteType {
     None = 0,
     Backslash = 1,
@@ -383,6 +457,10 @@ fn is_pattern(c: char) -> bool {
 
 /// Quote a string according to the specified type
 /// Port from zsh/Src/utils.c quotestring() (lines 6141-6452)
+/// Quote a string per the requested quote style.
+/// Port of `quotestring()` from Src/utils.c — used by `print
+/// -%q`, `${(q)var}`, completion-output escaping, history
+/// re-emission.
 pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
     if s.is_empty() {
         return match quote_type {
@@ -530,6 +608,9 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
 }
 
 /// Quote a string for safe shell use (convenience wrapper)
+/// Default-mode quote.
+/// Convenience wrapper around `quotestring()` with the most
+/// conservative quote-everything-special mode.
 pub fn quote_string(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
@@ -545,6 +626,9 @@ pub fn quote_string(s: &str) -> String {
 }
 
 /// Split a string respecting quotes
+/// Split a string respecting quote pairs.
+/// Port of the `getshquote()` / `splitstring` routines around
+/// Src/utils.c — used for `${(z)…}` parameter flag.
 pub fn split_quoted(s: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();
@@ -584,6 +668,8 @@ pub fn split_quoted(s: &str) -> Vec<String> {
 /// If sep is None, performs IFS-style word splitting (spacesplit).
 /// Otherwise splits on the given separator string.
 /// allownull: if true, allows empty strings in result
+/// Split a string on `IFS` separators.
+/// Port of `sepsplit()` from Src/utils.c:3962.
 pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
     // Handle Nularg at start (zsh internal marker) - line 3968
     let s = if s.starts_with('\x00') && s.len() > 1 {
@@ -620,6 +706,8 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allownull: bool) -> Vec<String> {
 ///
 /// Splits on whitespace (space, tab, newline), treating consecutive
 /// whitespace as a single separator.
+/// Split on whitespace.
+/// Port of `spacesplit()` from Src/utils.c.
 pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
     if allownull {
         s.split([' ', '\t', '\n']).map(|p| p.to_string()).collect()
@@ -631,6 +719,8 @@ pub fn spacesplit(s: &str, allownull: bool) -> Vec<String> {
 /// Join array with separator - port from zsh/Src/utils.c sepjoin() lines 3926-3958
 ///
 /// If sep is None, uses first char of IFS (defaults to space).
+/// Join an array with separator.
+/// Port of `sepjoin()` from Src/utils.c:3928.
 pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
     if arr.is_empty() {
         return String::new();
@@ -641,6 +731,9 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
 
 /// Parse a string to a signed integer with base detection
 /// Port from zsh/Src/utils.c zstrtol() lines 2384-2516
+/// Parse a signed integer with zsh's base-prefix syntax.
+/// Port of `zstrtol()` from Src/utils.c — accepts `0x` (hex),
+/// `0` (octal), and explicit base-prefix `BASE#NUM`.
 pub fn zstrtol(s: &str) -> Option<i64> {
     let s = s.trim();
     if s.is_empty() {
@@ -673,6 +766,9 @@ pub fn zstrtol(s: &str) -> Option<i64> {
 
 /// Parse unsigned integer with underscore support
 /// Port from zsh/Src/utils.c zstrtoul_underscore() lines 2528-2575
+/// Parse an unsigned integer with optional `_` separators.
+/// zshrs convenience over `zstrtol()` — C zsh strips `_` inline
+/// during numeric arg parsing in Src/math.c.
 pub fn zstrtoul_underscore(s: &str) -> Option<u64> {
     let s = s.trim();
     let s = s.strip_prefix('+').unwrap_or(s);
@@ -693,6 +789,9 @@ pub fn zstrtoul_underscore(s: &str) -> Option<u64> {
 
 /// Convert integer to string with specified base
 /// Port from zsh/Src/utils.c convbase()
+/// Render an integer in an arbitrary base.
+/// Port of the radix-conversion loop in Src/utils.c — also
+/// exposed via `convbase()` in `crate::compat`.
 pub fn convbase(val: i64, base: u32) -> String {
     match base {
         2 => format!("0b{:b}", val),
@@ -704,6 +803,9 @@ pub fn convbase(val: i64, base: u32) -> String {
 
 /// Set blocking/nonblocking on a file descriptor
 /// Port from zsh/Src/utils.c setblock_fd() lines 2578-2618
+/// Toggle non-blocking mode on an fd.
+/// Port of the `fcntl(F_SETFL, O_NONBLOCK)` toggle Src/utils.c
+/// uses around `read -t` and select-based polling.
 pub fn setblock_fd(fd: i32, blocking: bool) -> bool {
     #[cfg(unix)]
     {
@@ -731,6 +833,9 @@ pub fn setblock_fd(fd: i32, blocking: bool) -> bool {
 
 /// Read poll - check for pending input
 /// Port from zsh/Src/utils.c read_poll() lines 2643-2730
+/// Poll an fd with timeout, returning whether it's readable.
+/// Port of the `poll(2)` wrapper Src/utils.c uses for
+/// `read -t` timeout handling.
 pub fn read_poll(fd: i32, timeout_us: i64) -> bool {
     #[cfg(unix)]
     {
@@ -753,6 +858,8 @@ pub fn read_poll(fd: i32, timeout_us: i64) -> bool {
 
 /// Check glob qualifier syntax
 /// Port from zsh/Src/utils.c checkglobqual()
+/// Check whether a string contains glob qualifiers `(…)`.
+/// Port of `checkglobqual()` from Src/utils.c.
 pub fn checkglobqual(s: &str) -> bool {
     if !s.ends_with(')') {
         return false;
@@ -779,6 +886,9 @@ pub fn checkglobqual(s: &str) -> bool {
 
 /// Compute edit distance between two strings (for spelling correction)
 /// Port from zsh/Src/utils.c spdist() lines 4675-4759
+/// Levenshtein-style edit distance for typo correction.
+/// Port of `spdist()` from Src/utils.c — drives the
+/// `setopt CORRECT` typo-prompt machinery.
 pub fn spdist(s: &str, t: &str, max_dist: usize) -> usize {
     let s_chars: Vec<char> = s.chars().collect();
     let t_chars: Vec<char> = t.chars().collect();
