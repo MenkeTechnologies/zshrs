@@ -360,6 +360,286 @@ impl Zle {
     pub fn vi_repeat_change(&mut self) {
         // TODO: implement change replay
     }
+
+    /// Read the next keystroke and treat it as a vi motion to define an
+    /// operator range. Returns `Some((start, end, line_mode))` where the
+    /// operator should act on `[start, end)`, or `None` if the motion was
+    /// unknown / canceled / a no-op.
+    ///
+    /// Port of `getvirange()` from `Src/Zle/zle_vi.c:172`. The full C
+    /// implementation runs the next bound widget under `virangeflag = 1`
+    /// using the operator-pending keymap. This Rust port short-circuits by
+    /// dispatching a fixed set of common motions inline rather than going
+    /// through the keymap — covering the daily-driver subset (`w`/`W`,
+    /// `b`/`B`, `e`/`E`, `0`, `^`, `$`, `h`, `l`, `j`, `k`, `f`/`F`/`t`/`T`)
+    /// plus the doubled-letter line-mode pattern (`dd`, `cc`, `yy` etc.).
+    /// Text objects (`iw`, `aw`, `i"`, `a"`, …) and arbitrary user-bound
+    /// motions in the operator-pending map are not yet wired through.
+    ///
+    /// `op_char` is the operator that triggered the call (`d` / `c` / `y`)
+    /// — used to recognise the doubled form for line mode.
+    pub fn vi_get_range(&mut self, op_char: char) -> Option<(usize, usize, bool)> {
+        let pos = self.zlecs;
+        let n = self.vi_get_arg().max(1);
+        let motion = self.getfullchar(false)?;
+
+        // Doubled letter (e.g. `dd`, `cc`, `yy`) → entire current line(s).
+        // Mirrors the `MOD_LINE` branch of `getvirange()` in zle_vi.c:281
+        // but invoked directly when the user repeats the operator letter.
+        if motion == op_char {
+            let bol = self.find_bol(pos);
+            let mut eol = self.find_eol(bol);
+            // Extend by `n - 1` more lines forward to honour the count
+            // (vi `3dd` deletes 3 lines).
+            for _ in 1..n {
+                if eol >= self.zlell {
+                    break;
+                }
+                eol = self.find_eol(eol + 1);
+            }
+            // Include the trailing newline in the range when there is one,
+            // so the operator pulls the whole line including its terminator.
+            let end = if eol < self.zlell { eol + 1 } else { eol };
+            return Some((bol, end, true));
+        }
+
+        let other = match motion {
+            // Word motions — `w` / `b` / `e` use the WordStyle::Vi class,
+            // `W` / `B` / `E` use blank-delimited (matches zsh's WORDFLAG_W
+            // distinction between iword and ialnum classes).
+            'w' => {
+                let mut p = pos;
+                for _ in 0..n {
+                    let saved_cs = self.zlecs;
+                    self.zlecs = p;
+                    p = self.find_word_end(super::word::WordStyle::Vi);
+                    self.zlecs = saved_cs;
+                }
+                p
+            }
+            'W' => {
+                let mut p = pos;
+                for _ in 0..n {
+                    let saved_cs = self.zlecs;
+                    self.zlecs = p;
+                    p = self.find_word_end(super::word::WordStyle::BlankDelimited);
+                    self.zlecs = saved_cs;
+                }
+                p
+            }
+            'b' => {
+                let mut p = pos;
+                for _ in 0..n {
+                    let saved_cs = self.zlecs;
+                    self.zlecs = p;
+                    p = self.find_word_start(super::word::WordStyle::Vi);
+                    self.zlecs = saved_cs;
+                }
+                p
+            }
+            'B' => {
+                let mut p = pos;
+                for _ in 0..n {
+                    let saved_cs = self.zlecs;
+                    self.zlecs = p;
+                    p = self.find_word_start(super::word::WordStyle::BlankDelimited);
+                    self.zlecs = saved_cs;
+                }
+                p
+            }
+            'e' => {
+                // `e` is end-of-word inclusive; the C path (`viendword`)
+                // lands on the last char of the word. For our range it
+                // becomes start..=word_end which is start..(word_end+1).
+                let saved_cs = self.zlecs;
+                self.zlecs = pos;
+                let mut p = self.find_word_end(super::word::WordStyle::Vi);
+                self.zlecs = saved_cs;
+                if p < self.zlell {
+                    p += 1;
+                }
+                p
+            }
+            'E' => {
+                let saved_cs = self.zlecs;
+                self.zlecs = pos;
+                let mut p = self.find_word_end(super::word::WordStyle::BlankDelimited);
+                self.zlecs = saved_cs;
+                if p < self.zlell {
+                    p += 1;
+                }
+                p
+            }
+            // Line-internal motions.
+            '0' => self.find_bol(pos),
+            '^' => {
+                // First non-blank — `vifirstnonblank` in zle_move.c:862.
+                let bol = self.find_bol(pos);
+                let mut p = bol;
+                while p < self.zlell && self.zleline[p].is_whitespace()
+                    && self.zleline[p] != '\n'
+                {
+                    p += 1;
+                }
+                p
+            }
+            '$' => self.find_eol(pos),
+            'h' => pos.saturating_sub(n as usize),
+            'l' => (pos + n as usize).min(self.zlell),
+            // Line mode for j/k — extend the range across `n` lines.
+            'j' => {
+                let mut p = self.find_eol(pos);
+                for _ in 0..n {
+                    if p >= self.zlell {
+                        break;
+                    }
+                    p = self.find_eol(p + 1);
+                }
+                let bol = self.find_bol(pos);
+                let end = if p < self.zlell { p + 1 } else { p };
+                return Some((bol, end, true));
+            }
+            'k' => {
+                let mut bol = self.find_bol(pos);
+                for _ in 0..n {
+                    if bol == 0 {
+                        break;
+                    }
+                    bol = self.find_bol(bol - 1);
+                }
+                let eol = self.find_eol(pos);
+                let end = if eol < self.zlell { eol + 1 } else { eol };
+                return Some((bol, end, true));
+            }
+            // Find-char motions delegate to vi_find_char_inner which already
+            // honours t/T tail-skip and the count via `mult`. We push the
+            // motion char as the find-char target.
+            'f' | 'F' | 't' | 'T' => {
+                let next = self.getfullchar(false)?;
+                self.vi_last_find_char = Some(next);
+                self.vi_last_find_dir = if motion == 'f' || motion == 't' { 1 } else { -1 };
+                self.vi_last_find_tail = match motion {
+                    'f' | 'F' => 0,
+                    't' => -1,
+                    'T' => 1,
+                    _ => 0,
+                };
+                let saved_mult = self.zmod.mult;
+                self.zmod.mult = n;
+                let ok = self.vi_find_char_inner(false) == 0;
+                self.zmod.mult = saved_mult;
+                if !ok {
+                    return None;
+                }
+                // For `f`/`t` (forward), include the landed-on char in the
+                // range — match C's `if (vfinddir == 1 && virangeflag) INCCS();`
+                // at zle_move.c:828.
+                let mut p = self.zlecs;
+                if (motion == 'f' || motion == 't') && p < self.zlell {
+                    p += 1;
+                }
+                self.zlecs = pos;
+                p
+            }
+            _ => return None,
+        };
+
+        if other == pos {
+            return None;
+        }
+        let (start, end) = if other > pos { (pos, other) } else { (other, pos) };
+        Some((start, end, false))
+    }
+
+    /// Push `n` chars from `start` onto the kill ring (front).
+    /// Helper used by the operator ports below — equivalent to C zsh's
+    /// `cut(start, n, CUT_RAW)` / `forekill(n, CUT_RAW)` but operating
+    /// directly on our `Vec<char>` buffer.
+    fn vi_cut_into_killring(&mut self, start: usize, end: usize) {
+        if end <= start || end > self.zleline.len() {
+            return;
+        }
+        let killed: Vec<char> = self.zleline[start..end].to_vec();
+        self.killring.push_front(killed);
+        if self.killring.len() > self.killringmax {
+            self.killring.pop_back();
+        }
+    }
+
+    /// `d{motion}` — vi delete operator.
+    /// Port of `videlete()` from `Src/Zle/zle_vi.c:384`.
+    pub fn vi_delete_op(&mut self) -> i32 {
+        let (start, end, line_mode) = match self.vi_get_range('d') {
+            Some(r) => r,
+            None => return 1,
+        };
+        self.vi_cut_into_killring(start, end);
+        let drained = end - start;
+        self.zleline.drain(start..end);
+        self.zlell = self.zleline.len();
+        self.zlecs = start.min(self.zlell);
+        if line_mode && self.zlell > 0 {
+            // C zle_vi.c:392-397 — for line ranges, also pull the trailing
+            // \n if the cursor now sits past the buffer end, then jump to
+            // the first non-blank of the surviving line.
+            self.lastcol = -1;
+            let bol = self.find_bol(self.zlecs);
+            let mut p = bol;
+            while p < self.zlell && self.zleline[p].is_whitespace() && self.zleline[p] != '\n' {
+                p += 1;
+            }
+            self.zlecs = p;
+        }
+        let _ = drained;
+        self.resetneeded = true;
+        0
+    }
+
+    /// `c{motion}` — vi change operator.
+    /// Port of `vichange()` from `Src/Zle/zle_vi.c:438`. After deleting the
+    /// range, switches the keymap to insert mode (`startvitext`) — the C
+    /// path also sets `viinsbegin = zlecs; vistartchange = undo_changeno`,
+    /// which we mirror so a future `.` repeat can replay correctly.
+    pub fn vi_change_op(&mut self) -> i32 {
+        let (start, end, _) = match self.vi_get_range('c') {
+            Some(r) => r,
+            None => return 1,
+        };
+        self.vi_cut_into_killring(start, end);
+        self.zleline.drain(start..end);
+        self.zlell = self.zleline.len();
+        self.zlecs = start.min(self.zlell);
+        self.vistartchange = self.undo_changeno;
+        self.keymaps.select("main");
+        self.resetneeded = true;
+        0
+    }
+
+    /// `y{motion}` — vi yank operator.
+    /// Port of `viyank()` from `Src/Zle/zle_vi.c:507`. Copies the range to
+    /// the kill ring without removing it; cursor lands at the start of the
+    /// yanked region.
+    pub fn vi_yank_op(&mut self) -> i32 {
+        let saved_lastcol = self.lastcol;
+        let (start, end, line_mode) = match self.vi_get_range('y') {
+            Some(r) => r,
+            None => return 1,
+        };
+        self.vi_cut_into_killring(start, end);
+        self.zlecs = start;
+        if line_mode && saved_lastcol != -1 {
+            // zle_vi.c:518-531 — for line yanks, restore the column on the
+            // current line (clamped to its end-of-line).
+            let eol = self.find_eol(self.zlecs);
+            self.zlecs += saved_lastcol as usize;
+            if self.zlecs >= eol {
+                self.zlecs = eol;
+            }
+            self.lastcol = -1;
+        }
+        self.resetneeded = true;
+        0
+    }
 }
 
 /// Map a vi mark name to its slot index in `Zle::vi_marks`.
@@ -480,6 +760,90 @@ mod tests {
         zle.vi_set_mark('A'); // uppercase not allowed
         zle.vi_set_mark('1'); // digit not allowed
         assert!(zle.vi_marks.iter().all(|m| m.is_none()));
+    }
+
+    fn feed(zle: &mut Zle, s: &str) {
+        // Pre-feed bytes into the unget buffer so getfullchar() returns
+        // them without blocking on stdin. Used by the operator tests below
+        // to drive vi_get_range's next-keystroke read.
+        zle.ungetbytes(s.as_bytes());
+    }
+
+    #[test]
+    fn vi_get_range_dd_selects_whole_current_line() {
+        let mut zle = zle_with("aaa\nbbb\nccc", 4); // cursor on 'b' line
+        feed(&mut zle, "d");
+        let (s, e, line) = zle.vi_get_range('d').expect("range");
+        assert!(line);
+        assert_eq!(s, 4);
+        assert_eq!(e, 8); // up to and including the trailing '\n'
+    }
+
+    #[test]
+    fn vi_get_range_dw_selects_to_word_end() {
+        let mut zle = zle_with("hello world", 0);
+        feed(&mut zle, "w");
+        let (s, e, line) = zle.vi_get_range('d').expect("range");
+        assert!(!line);
+        assert_eq!(s, 0);
+        // find_word_end on "hello world" at pos 0 (Vi style) skips through
+        // "hello" plus trailing whitespace, landing at 6 ("world" start).
+        assert_eq!(e, 6);
+    }
+
+    #[test]
+    fn vi_get_range_d_dollar_selects_to_eol() {
+        let mut zle = zle_with("foo bar baz", 4);
+        feed(&mut zle, "$");
+        let (s, e, _) = zle.vi_get_range('d').expect("range");
+        assert_eq!(s, 4);
+        assert_eq!(e, 11);
+    }
+
+    #[test]
+    fn vi_delete_op_dw_removes_first_word() {
+        let mut zle = zle_with("hello world", 0);
+        feed(&mut zle, "w");
+        assert_eq!(zle.vi_delete_op(), 0);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "world");
+        // Killed text landed on the kill ring.
+        assert_eq!(
+            zle.killring.front().map(|v| v.iter().collect::<String>()),
+            Some("hello ".to_string())
+        );
+    }
+
+    #[test]
+    fn vi_yank_op_y_dollar_copies_without_removing() {
+        let mut zle = zle_with("foo bar", 4);
+        feed(&mut zle, "$");
+        assert_eq!(zle.vi_yank_op(), 0);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "foo bar");
+        assert_eq!(
+            zle.killring.front().map(|v| v.iter().collect::<String>()),
+            Some("bar".to_string())
+        );
+        // Cursor lands at start of the yanked range.
+        assert_eq!(zle.zlecs, 4);
+    }
+
+    #[test]
+    fn vi_change_op_cw_removes_word_and_clears_pending_change() {
+        let mut zle = zle_with("foo bar", 0);
+        feed(&mut zle, "w");
+        assert_eq!(zle.vi_change_op(), 0);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "bar");
+        assert_eq!(zle.zlecs, 0);
+        // vistartchange records the change number we entered insert mode at;
+        // it should now equal undo_changeno (zero in this fresh zle).
+        assert_eq!(zle.vistartchange, zle.undo_changeno);
+    }
+
+    #[test]
+    fn vi_get_range_unknown_motion_returns_none() {
+        let mut zle = zle_with("abc", 0);
+        feed(&mut zle, "Z"); // no motion mapped to Z
+        assert!(zle.vi_get_range('d').is_none());
     }
 
     #[test]
