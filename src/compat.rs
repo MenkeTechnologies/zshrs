@@ -64,7 +64,10 @@ impl std::ops::Sub for TimeSpec {
     }
 }
 
-/// Get current time with nanosecond precision (real time)
+/// Get current real-time with nanosecond precision.
+/// Port of `zgettime()` from Src/compat.c:101 — the C source
+/// uses `clock_gettime(CLOCK_REALTIME)` (with fallbacks for older
+/// systems); Rust's `SystemTime::now()` does the same.
 pub fn zgettime() -> TimeSpec {
     TimeSpec::now()
 }
@@ -72,7 +75,11 @@ pub fn zgettime() -> TimeSpec {
 /// Monotonic time tracking
 static MONOTONIC_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
-/// Get monotonic time (for timing, doesn't go backwards)
+/// Get monotonic time for elapsed-duration measurement.
+/// Port of `zgettime_monotonic_if_available()` from
+/// Src/compat.c:133 — uses `CLOCK_MONOTONIC` so the value never
+/// goes backwards across NTP corrections. Rust's `Instant`
+/// guarantees monotonicity.
 pub fn zgettime_monotonic() -> TimeSpec {
     let start = MONOTONIC_START.get_or_init(Instant::now);
     let elapsed = start.elapsed();
@@ -82,7 +89,9 @@ pub fn zgettime_monotonic() -> TimeSpec {
     }
 }
 
-/// Compute difference between two times
+/// Compute the difference between two times in seconds.
+/// Port of `difftime()` from Src/compat.c:175 — wraps
+/// libc's `difftime(3)` for systems lacking the prototype.
 pub fn difftime(t2: i64, t1: i64) -> f64 {
     (t2 - t1) as f64
 }
@@ -150,14 +159,20 @@ pub fn zopenmax() -> i64 {
     }
 }
 
-/// Get the current working directory
+/// Get the current working directory.
+/// Port of `zgetcwd()` from Src/compat.c:559 — wraps
+/// `getcwd(3)` with a long-path-tolerant fallback. Rust's
+/// `current_dir()` covers the same range.
 pub fn zgetcwd() -> Option<String> {
     env::current_dir()
         .ok()
         .and_then(|p| p.to_str().map(|s| s.to_string()))
 }
 
-/// Get directory with additional metadata
+/// Saved-directory state (name + inode + device).
+/// Port of `struct dirsav` from Src/zsh.h — populated by
+/// `zgetdir()` (Src/compat.c:355) so `cd OLDDIR` can detect
+/// when the named directory has been moved/replaced.
 #[derive(Default)]
 pub struct DirSav {
     pub dirname: Option<String>,
@@ -167,7 +182,10 @@ pub struct DirSav {
     pub dev: u64,
 }
 
-/// Get current directory with optional metadata storage
+/// Get the current directory with optional metadata capture.
+/// Port of `zgetdir()` from Src/compat.c:355 — when called with
+/// a `dirsav` slot, fills inode/device the C source uses to
+/// detect rename-replace cases.
 pub fn zgetdir(d: Option<&mut DirSav>) -> Option<String> {
     let cwd = env::current_dir().ok()?;
     let cwd_str = cwd.to_str()?.to_string();
@@ -190,8 +208,11 @@ pub fn zgetdir(d: Option<&mut DirSav>) -> Option<String> {
     Some(cwd_str)
 }
 
-/// Change directory with support for long pathnames
-/// Returns 0 on success, -1 on normal failure, -2 if current directory is lost
+/// Change directory with long-pathname support.
+/// Port of `zchdir()` from Src/compat.c:579 — falls back to
+/// component-by-component descent when a single `chdir(2)` call
+/// fails (typically `ENAMETOOLONG`). Returns `0` on success,
+/// `-1` on normal failure, `-2` if the cwd was lost mid-walk.
 pub fn zchdir(dir: &str) -> i32 {
     if dir.is_empty() {
         return 0;
@@ -229,17 +250,24 @@ pub fn zchdir(dir: &str) -> i32 {
     0
 }
 
-/// Format a 64-bit integer for output
+/// Format a 64-bit signed integer for output.
+/// Port of `output64()` from Src/compat.c:638 — needed in C
+/// because `%lld` printf support varied; Rust's `to_string()`
+/// handles every target.
 pub fn output64(val: i64) -> String {
     val.to_string()
 }
 
-/// Format an unsigned 64-bit integer for output
+/// Format a 64-bit unsigned integer for output.
+/// Unsigned counterpart of `output64()` (Src/compat.c:638).
 pub fn output64u(val: u64) -> String {
     val.to_string()
 }
 
-/// Convert number to string with given base
+/// Convert a signed integer to a string in an arbitrary base.
+/// Port of the inner radix-conversion loop `convbase()` in
+/// Src/utils.c (math.c calls it from `bin_print -P`). Bases up
+/// to 36 use the standard `0-9a-z` digit set.
 pub fn convbase(val: i64, base: u32) -> String {
     if base == 0 || base == 10 {
         return val.to_string();
@@ -267,7 +295,8 @@ pub fn convbase(val: i64, base: u32) -> String {
     result.chars().rev().collect()
 }
 
-/// Convert unsigned number to string with given base
+/// Convert an unsigned integer to a string in an arbitrary base.
+/// Unsigned counterpart of `convbase`.
 pub fn convbaseu(val: u64, base: u32) -> String {
     if base == 0 || base == 10 {
         return val.to_string();
@@ -290,35 +319,53 @@ pub fn convbaseu(val: u64, base: u32) -> String {
     result.chars().rev().collect()
 }
 
-/// Get hostname
+/// Get the local hostname.
+/// Port of the `gethostname()` shim from Src/compat.c:64 — the C
+/// source provides this as a fallback for systems that lack the
+/// POSIX prototype. Rust just uses the `hostname` crate.
 pub fn gethostname() -> Option<String> {
     hostname::get().ok().and_then(|h| h.into_string().ok())
 }
 
-/// Check if a character is printable (ASCII safe version)
+/// Check whether an ASCII byte is printable.
+/// Port of `isprint_ascii()` from Src/compat.c:785 — locale-
+/// independent printable check the C source uses when locale
+/// data isn't safe to read (signal handlers, early init).
 pub fn isprint_safe(c: char) -> bool {
     let b = c as u32;
     (0x20..=0x7e).contains(&b)
 }
 
-/// Unicode-aware character width
+/// Get the column width of a Unicode character.
+/// Port of `u9_wcwidth()` from Src/compat.c:760 — the C source
+/// ships its own Unicode 9 wcwidth fallback because system
+/// `wcwidth(3)` data ages with libc. Rust uses the
+/// `unicode-width` crate which tracks the latest UCD.
 pub fn wcwidth(c: char) -> i32 {
     unicode_width::UnicodeWidthChar::width(c)
         .map(|w| w as i32)
         .unwrap_or(if c.is_control() { -1 } else { 1 })
 }
 
-/// Check if a wide character is printable
+/// Check whether a wide character is printable.
+/// Port of `u9_iswprint()` from Src/compat.c:770.
 pub fn iswprint(c: char) -> bool {
     !c.is_control() && wcwidth(c) >= 0
 }
 
-/// String width accounting for unicode
+/// Compute the column width of a UTF-8 string.
+/// zshrs convenience over `wcwidth` — closest C analog is the
+/// per-character width sum the prompt-width logic does in
+/// Src/prompt.c via repeated `WCWIDTH()` calls.
 pub fn strwidth(s: &str) -> usize {
     unicode_width::UnicodeWidthStr::width(s)
 }
 
-/// Metafy a string (encode special characters)
+/// Metafy a string (encode bytes the parser would otherwise eat).
+/// Port of `metafy()` from Src/utils.c — escapes the high-bit
+/// range zsh's parser reserves (`Meta`+`xor 32`). Most Rust code
+/// paths don't need metafication (UTF-8 is native) but FFI to C
+/// modules sometimes does.
 pub fn metafy(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
@@ -333,7 +380,8 @@ pub fn metafy(s: &str) -> String {
     result
 }
 
-/// Unmetafy a string (decode special characters)
+/// Unmetafy a string.
+/// Port of `unmetafy()` from Src/utils.c — inverse of `metafy`.
 pub fn unmetafy(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
