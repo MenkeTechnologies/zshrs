@@ -4,21 +4,29 @@
 
 use std::collections::HashMap;
 
-/// Termcap boolean capability codes
+/// Two-letter boolean termcap capability codes.
+/// Port of the boolean half of the `termcap` capability table the C
+/// source uses inside `gettermcap()` (Src/Modules/termcap.c:144) +
+/// `scantermcap()` (line 200) — codes match the canonical set
+/// shipped with `man termcap(5)`.
 pub static BOOL_CODES: &[&str] = &[
     "bw", "am", "ut", "cc", "xs", "YA", "YF", "YB", "xt", "xn", "eo", "gn", "hc", "HC", "km", "YC",
     "hs", "hl", "in", "YG", "da", "db", "mi", "ms", "nx", "xb", "NP", "ND", "NR", "os", "5i", "YD",
     "YE", "es", "hz", "ul", "xo",
 ];
 
-/// Termcap numeric capability codes
+/// Two-letter numeric termcap capability codes.
+/// Numeric half of the same table — `gettermcap()` /
+/// `scantermcap()` in Src/Modules/termcap.c.
 pub static NUM_CODES: &[&str] = &[
     "co", "it", "lh", "lw", "li", "lm", "sg", "ma", "Co", "pa", "MW", "NC", "Nl", "pb", "vt", "ws",
     "Yo", "Yp", "Ya", "BT", "Yc", "Yb", "Yd", "Ye", "Yf", "Yg", "Yh", "Yi", "Yk", "Yj", "Yl", "Ym",
     "Yn",
 ];
 
-/// Termcap string capability codes
+/// Two-letter string termcap capability codes.
+/// String half of the same table — `gettermcap()` /
+/// `scantermcap()` in Src/Modules/termcap.c.
 pub static STR_CODES: &[&str] = &[
     "ac", "bt", "bl", "cr", "ZA", "ZB", "ZC", "ZD", "cs", "rP", "ct", "MC", "cl", "cb", "ce", "cd",
     "ch", "CC", "CW", "cm", "do", "ho", "vi", "le", "CM", "ve", "nd", "ll", "up", "vs", "ZE", "dc",
@@ -42,7 +50,12 @@ pub enum TermcapValue {
     String(String),
 }
 
-/// Termcap interface using basic ANSI escape sequences
+/// Termcap interface backed by ANSI escape sequences.
+/// Port of the file-static state Src/Modules/termcap.c populates
+/// in `boot_()` (line 345) — the C source links against libtermcap
+/// (or libtinfo) and reads `/etc/termcap`. The Rust port computes a
+/// minimal capability set inline based on `$TERM` so we don't drag
+/// libtermcap into the build.
 #[derive(Debug, Default)]
 pub struct Termcap {
     initialized: bool,
@@ -55,7 +68,10 @@ impl Termcap {
         Self::default()
     }
 
-    /// Initialize termcap for the given terminal
+    /// Initialize termcap for the given terminal name.
+    /// Port of the `setupterm()`/`tgetent()` call inside `boot_()`
+    /// from Src/Modules/termcap.c:345 — picks up `$TERM` if no
+    /// argument is supplied.
     pub fn init(&mut self, term: Option<&str>) -> bool {
         let terminal = term
             .map(|s| s.to_string())
@@ -186,7 +202,8 @@ impl Termcap {
         }
     }
 
-    /// Get a boolean capability
+    /// Look up a boolean capability.
+    /// Port of `ztgetflag()` from Src/Modules/termcap.c:54.
     pub fn get_flag(&self, name: &str) -> Option<bool> {
         match self.capabilities.get(name)? {
             TermcapValue::Boolean(b) => Some(*b),
@@ -194,7 +211,10 @@ impl Termcap {
         }
     }
 
-    /// Get a numeric capability
+    /// Look up a numeric capability.
+    /// Equivalent to the `tgetnum(3)` lookup `gettermcap()` from
+    /// Src/Modules/termcap.c:144 dispatches when the requested key
+    /// is in the numeric table.
     pub fn get_num(&self, name: &str) -> Option<i32> {
         match self.capabilities.get(name)? {
             TermcapValue::Number(n) => Some(*n),
@@ -202,7 +222,10 @@ impl Termcap {
         }
     }
 
-    /// Get a string capability
+    /// Look up a string capability.
+    /// Equivalent to the `tgetstr(3)` lookup `gettermcap()` from
+    /// Src/Modules/termcap.c:144 dispatches when the requested key
+    /// is in the string table.
     pub fn get_str(&self, name: &str) -> Option<String> {
         match self.capabilities.get(name)? {
             TermcapValue::String(s) => Some(s.clone()),
@@ -210,7 +233,9 @@ impl Termcap {
         }
     }
 
-    /// Get any capability
+    /// Get any capability (any of the three types).
+    /// Equivalent to the unified `gettermcap()` entry point from
+    /// Src/Modules/termcap.c:144.
     pub fn get(&self, name: &str) -> Option<&TermcapValue> {
         self.capabilities.get(name)
     }
@@ -220,7 +245,10 @@ impl Termcap {
         self.initialized
     }
 
-    /// Get all boolean capabilities
+    /// Snapshot all boolean capabilities.
+    /// Port of the boolean half of `scantermcap()` from
+    /// Src/Modules/termcap.c:200 — the `scanfn` slot the C source
+    /// wires for `${(kv)termcap}`.
     pub fn booleans(&self) -> HashMap<String, bool> {
         self.capabilities
             .iter()
@@ -234,7 +262,8 @@ impl Termcap {
             .collect()
     }
 
-    /// Get all numeric capabilities
+    /// Snapshot all numeric capabilities.
+    /// Numeric half of `scantermcap()` (Src/Modules/termcap.c:200).
     pub fn numbers(&self) -> HashMap<String, i32> {
         self.capabilities
             .iter()
@@ -248,7 +277,8 @@ impl Termcap {
             .collect()
     }
 
-    /// Get all string capabilities
+    /// Snapshot all string capabilities.
+    /// String half of `scantermcap()` (Src/Modules/termcap.c:200).
     pub fn strings(&self) -> HashMap<String, String> {
         self.capabilities
             .iter()
@@ -263,7 +293,11 @@ impl Termcap {
     }
 }
 
-/// Apply tgoto-style parameter substitution
+/// Apply tgoto-style parameter substitution.
+/// Port of the `tgoto()` substitution path inside `bin_echotc()`
+/// (Src/Modules/termcap.c:80) — the C source delegates to libc's
+/// `tgoto(3)`. We reimplement the most common `%d`/`%2`/`%3`/
+/// `%.`/`%+`/`%i`/`%%` directives inline.
 pub fn tgoto(cap: &str, col: i32, row: i32) -> String {
     let mut result = String::new();
     let mut chars = cap.chars().peekable();
@@ -319,7 +353,11 @@ pub fn tgoto(cap: &str, col: i32, row: i32) -> String {
     result
 }
 
-/// Execute echotc builtin
+/// `echotc` builtin entry point.
+/// Port of `bin_echotc()` from Src/Modules/termcap.c:80 —
+/// dispatches between numeric / boolean / string capabilities and
+/// applies `tgoto` substitution when a string capability takes
+/// arguments.
 pub fn builtin_echotc(args: &[&str], tc: &Termcap) -> (i32, String) {
     if args.is_empty() {
         return (1, "echotc: capability name required\n".to_string());
