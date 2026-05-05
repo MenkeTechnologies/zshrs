@@ -710,6 +710,45 @@ impl<'a> PromptExpander<'a> {
             // Line number
             'i' => self.output.push_str(&self.ctx.lineno.to_string()),
 
+            // `%I` — line number being executed in the current
+            // script / file / function. Port of Src/prompt.c case
+            // 'I' which adds funcstack->flineno when inside a
+            // function. At top-level (no funcstack), it falls
+            // through to plain lineno. zshrs doesn't yet track
+            // funcstack-relative line numbers in PromptContext, so
+            // emit the same lineno as `%i` — matches zsh at top
+            // level and degrades gracefully inside functions.
+            'I' => self.output.push_str(&self.ctx.lineno.to_string()),
+
+            // `%x` — file containing the source code currently
+            // being executed. Port of Src/prompt.c case 'x':
+            // `promptpath(scriptfilename ? scriptfilename :
+            // argzero, arg, 0)` (the funcstack->filename path
+            // inside functions isn't modeled yet — same TODO as
+            // `%I`). zshrs's PromptContext.scriptname mirrors C
+            // zsh's `scriptname`/`scriptfilename`; both globals
+            // stay in sync (init.c:479, init.c:1591), so we read
+            // scriptname here too. Honors the `arg` (npath) digit
+            // identically to %N — `%2x` returns the last 2 path
+            // components, `%0x` (default) is the full path.
+            'x' => {
+                let name = self
+                    .ctx
+                    .scriptname
+                    .as_deref()
+                    .unwrap_or(&self.ctx.argzero);
+                let n = if arg <= 0 {
+                    0
+                } else {
+                    arg.unsigned_abs() as usize
+                };
+                if n == 0 {
+                    self.output.push_str(name);
+                } else {
+                    self.output.push_str(&self.trailing_path(name, n, false));
+                }
+            }
+
             // Date/time
             'D' => {
                 let now = chrono::Local::now();

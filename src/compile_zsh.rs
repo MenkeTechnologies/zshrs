@@ -1067,17 +1067,37 @@ impl ZshCompiler {
             }
         }
         // Single-quoted: word contains SNULL markers wrapping a literal
-        // segment. Mixed forms like `g='echo greeted'` lex to
-        // `g<EQUALS><SNULL>echo greeted<SNULL>` — META tokens outside the
-        // SNULLs need de-tokenizing too. Run full untokenize (which strips
-        // SNULL/DNULL/BNULL markers AND maps META → original char) and
-        // emit the literal result. Note: `$` inside the SNULL block is
-        // already a plain `$`, never a META-$, so this is safe.
+        // segment. Two cases:
+        //
+        //   1. The whole value is one single-quoted span — e.g.
+        //      `y='hello'` → `<SNULL>hello<SNULL>`. Take the literal
+        //      shortcut: no expansion needed, no $/glob/brace meta.
+        //
+        //   2. Mixed: a single-quoted segment is embedded INSIDE a
+        //      larger unquoted/expansion-bearing word — e.g.
+        //      `y=${x:-'foo'}` → `${x:-<SNULL>foo<SNULL>}`. Here the
+        //      SNULLs only mark the inner literal; the surrounding
+        //      `${...}` still needs runtime parameter expansion.
+        //      Falling through to the literal shortcut would emit
+        //      `${x:-foo}` as the variable value with no expansion.
+        //
+        // Distinguish by checking whether the SNULLs span the entire
+        // value (start AND end with SNULL, no other unquoted content).
+        // If yes → literal. Otherwise → fall through to expand path.
         if s.contains('\u{9d}') {
-            let cleaned = crate::lexer::untokenize(s);
-            let idx = self.builder.add_constant(Value::str(cleaned.as_str()));
-            self.builder.emit(Op::LoadConst(idx), 0);
-            return;
+            let trimmed = s.trim_matches(|c: char| c.is_whitespace());
+            let whole_sq = trimmed.starts_with('\u{9d}')
+                && trimmed.ends_with('\u{9d}')
+                && trimmed.matches('\u{9d}').count() == 2;
+            if whole_sq {
+                let cleaned = crate::lexer::untokenize(s);
+                let idx = self.builder.add_constant(Value::str(cleaned.as_str()));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                return;
+            }
+            // Mixed: fall through. The runtime expand path needs to
+            // see the SNULL-bounded segments as literal islands while
+            // expanding the surrounding `${…}` / `$name` content.
         }
 
         // ZshLexer marks shell-special chars with zsh's META-range tokens
@@ -3240,7 +3260,11 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
             }
             j
         }
-        // Special single-char params: $@ $* $# $? $! $- $_ $$.
+        // Special single-char params: $@ $* $# $? $! $- $$.
+        // (`$_` is NOT in this list — `_` is also a valid identifier
+        // first char, so `$__foo` must read the full identifier
+        // `__foo`, not split into `$_` + `_foo`. The identifier
+        // branch below handles bare `$_` correctly via its terminator.)
         // The lexer META-marks `*`, `?`, `#`, `-`, `!` (and similar
         // glob/syntax chars) when they appear as a token; after a META-$
         // they're still the variable-name char even in their META form.
@@ -3252,7 +3276,7 @@ fn find_expansion_end(chars: &[char], i: usize) -> usize {
         Some(ch)
             if matches!(
                 ch,
-                '@' | '*' | '#' | '?' | '!' | '-' | '_' | '$'
+                '@' | '*' | '#' | '?' | '!' | '-' | '$'
                     | '\u{87}' // META-* (STAR)
                     | '\u{84}' // META-# (POUND)
                     | '\u{97}' // META-? (QUEST)
