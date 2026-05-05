@@ -294,6 +294,11 @@ pub struct Zle {
     /// (last position before a jump). Each entry is `(cursor, histline)`.
     /// Port of `vimarkcs[27]` / `vimarkline[27]` in Src/Zle/zle_move.c.
     pub vi_marks: [Option<(usize, i32)>; 27],
+    /// Vi visual selection state: 0 = inactive, 1 = character-wise, 2 = line-wise.
+    /// Port of the global `region_active` int in Src/Zle/zle_main.c (consumed
+    /// by visualmode/visuallinemode/deactivateregion in zle_move.c:516-568
+    /// and by killregion / textobjects to know the selection shape).
+    pub region_active: u8,
 }
 
 impl Default for Zle {
@@ -368,6 +373,7 @@ impl Zle {
             yank_cs: 0,
             yank_ring_idx: None,
             vi_marks: [None; 27],
+            region_active: 0,
         }
     }
 
