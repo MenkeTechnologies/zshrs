@@ -1522,15 +1522,48 @@ fn widget_vi_backward_kill_word(zle: &mut Zle) {
 }
 
 fn widget_digit_argument(zle: &mut Zle) {
-    let digit = (zle.lastchar as u8).saturating_sub(b'0') as i32;
-
-    if zle.zmod.flags.contains(super::main::ModifierFlags::TMULT) {
-        zle.zmod.tmult = zle.zmod.tmult * zle.zmod.base + digit;
+    // Port of digitargument() from Src/Zle/zle_misc.c:950 plus the
+    // parsedigit() helper at zle_misc.c:919. Accepts a digit in the
+    // current zmod.base (10 by default; up to 36 honours a-z / A-Z),
+    // and accumulates it into zmod.tmult with sign tracking. After
+    // neg-argument has fired (MOD_NEG set), the first digit replaces
+    // the placeholder -1 so `M-- 5` ends up as -5, matching C zsh.
+    let inkey = zle.lastchar as u8 as i32;
+    let base = zle.zmod.base;
+    let new_digit = if base > 10 {
+        if (b'a' as i32..b'a' as i32 + base - 10).contains(&inkey) {
+            inkey - b'a' as i32 + 10
+        } else if (b'A' as i32..b'A' as i32 + base - 10).contains(&inkey) {
+            inkey - b'A' as i32 + 10
+        } else if (b'0' as i32..=b'9' as i32).contains(&inkey) {
+            inkey - b'0' as i32
+        } else {
+            -1
+        }
+    } else if (b'0' as i32..b'0' as i32 + base).contains(&inkey) {
+        inkey - b'0' as i32
     } else {
-        zle.zmod.flags.insert(super::main::ModifierFlags::TMULT);
-        zle.zmod.tmult = digit;
+        -1
+    };
+    if new_digit < 0 {
+        zle.handle_feep();
+        return;
     }
-
+    let sign = if zle.zmod.mult < 0 { -1 } else { 1 };
+    if !zle
+        .zmod
+        .flags
+        .contains(crate::zle::main::ModifierFlags::TMULT)
+    {
+        zle.zmod.tmult = 0;
+    }
+    if zle.zmod.flags.contains(crate::zle::main::ModifierFlags::NEG) {
+        zle.zmod.tmult = sign * new_digit;
+        zle.zmod.flags.remove(crate::zle::main::ModifierFlags::NEG);
+    } else {
+        zle.zmod.tmult = zle.zmod.tmult * base + sign * new_digit;
+    }
+    zle.zmod.flags.insert(crate::zle::main::ModifierFlags::TMULT);
     zle.prefixflag = true;
 }
 
@@ -2115,23 +2148,68 @@ fn widget_vi_undo_change(zle: &mut Zle) {
 }
 
 fn widget_universal_argument(zle: &mut Zle) {
-    // Port of universalargument() from Src/Zle/zle_misc.c. The classic
-    // emacs C-u widget: each invocation multiplies the pending count by
-    // 4 (or sets it to 4 on first call). Subsequent digit-arguments
-    // override the count.
-    if zle.zmod.flags.contains(super::main::ModifierFlags::MULT) {
-        zle.zmod.mult *= 4;
-    } else {
-        zle.zmod.flags.insert(super::main::ModifierFlags::MULT);
-        zle.zmod.mult = 4;
+    // Port of universalargument() from Src/Zle/zle_misc.c:986. The C
+    // source greedily reads digits (and an optional leading '-') from
+    // the input stream right after C-u, then applies the result as
+    // tmult; if no digits follow, multiplies the existing tmult by 4
+    // (the classic emacs C-u-C-u → 16 chord). The leading '-' branch is
+    // distinct from neg-argument: it's a single token belonging to this
+    // widget's read loop. Any non-digit byte gets ungot back.
+    let mut digcnt = 0;
+    let mut pref: i32 = 0;
+    let mut minus: i32 = 1;
+    let base = zle.zmod.base;
+    while let Some(b) = zle.getbyte(false) {
+        if b == b'-' && digcnt == 0 {
+            minus = -1;
+            digcnt += 1;
+            continue;
+        }
+        let new_digit = if base > 10 {
+            if (b'a'..b'a' + (base - 10) as u8).contains(&b) {
+                (b - b'a') as i32 + 10
+            } else if (b'A'..b'A' + (base - 10) as u8).contains(&b) {
+                (b - b'A') as i32 + 10
+            } else if b.is_ascii_digit() {
+                (b - b'0') as i32
+            } else {
+                -1
+            }
+        } else if (b'0'..b'0' + base as u8).contains(&b) {
+            (b - b'0') as i32
+        } else {
+            -1
+        };
+        if new_digit >= 0 {
+            pref = pref * base + new_digit;
+            digcnt += 1;
+        } else {
+            zle.ungetbyte(b);
+            break;
+        }
     }
+    if digcnt > 0 {
+        zle.zmod.tmult = minus * if pref != 0 { pref } else { 1 };
+    } else {
+        zle.zmod.tmult = zle.zmod.tmult.saturating_mul(4);
+    }
+    zle.zmod.flags.insert(crate::zle::main::ModifierFlags::TMULT);
     zle.prefixflag = true;
 }
 
 fn widget_neg_argument(zle: &mut Zle) {
-    // Port of negargument() from Src/Zle/zle_misc.c. Toggles the
-    // negative-argument flag, mirroring the C `zmod.flags ^= MOD_NEG`.
-    zle.zmod.flags.toggle(super::main::ModifierFlags::NEG);
+    // Port of negargument() from Src/Zle/zle_misc.c:974. The C source
+    // bails (returns 1) if MOD_TMULT is already set — neg-argument is
+    // only valid as the *first* prefix, not after a digit. Otherwise
+    // sets tmult = -1 and the MOD_TMULT|MOD_NEG flags so the next
+    // digit-argument knows to use sign on its first digit.
+    if zle.zmod.flags.contains(crate::zle::main::ModifierFlags::TMULT) {
+        zle.handle_feep();
+        return;
+    }
+    zle.zmod.tmult = -1;
+    zle.zmod.flags.insert(crate::zle::main::ModifierFlags::TMULT);
+    zle.zmod.flags.insert(crate::zle::main::ModifierFlags::NEG);
     zle.prefixflag = true;
 }
 
@@ -2338,11 +2416,22 @@ fn widget_split_undo(zle: &mut Zle) {
 }
 
 fn widget_argument_base(zle: &mut Zle) {
-    // Port of argumentbase() from Src/Zle/zle_misc.c. Updates the
-    // numeric base used for digit-argument input. The C source stores
-    // the new base in zmod.base; our minimal model just remembers
-    // the multiplier as the requested base, since digit-argument
-    // multiplication is base-10 only here.
+    // Port of argumentbase() from Src/Zle/zle_misc.c:1038. The C source
+    // takes the requested base from the previous mult (no explicit
+    // arg), validates it's in [2, 36], stashes it in zmod.base, and
+    // resets the rest of the modifier so the next digit-argument starts
+    // fresh in the new base. Useful for `M-2 M-x argument-base M-f f`
+    // = forward-word x15 in base 16.
+    let multbase = zle.zmod.mult;
+    if !(2..=36).contains(&multbase) {
+        zle.handle_feep();
+        return;
+    }
+    zle.zmod.base = multbase;
+    zle.zmod.flags = super::main::ModifierFlags::empty();
+    zle.zmod.mult = 1;
+    zle.zmod.tmult = 1;
+    zle.zmod.vibuf = 0;
     zle.prefixflag = true;
 }
 
@@ -3315,12 +3404,93 @@ mod tests {
     }
 
     #[test]
-    fn universal_argument_bumps_count_by_4_each_call() {
+    fn universal_argument_bumps_tmult_by_4_each_call() {
+        // C zsh's universalargument() (zle_misc.c:986) updates tmult,
+        // not mult — handleprefixes promotes TMULT→MULT on the next
+        // widget call. Matches initmodifier() which seeds tmult=1.
         let mut zle = Zle::new();
+        zle.initmodifier();
         widget_universal_argument(&mut zle);
-        assert_eq!(zle.zmod.mult, 4);
+        // No bytes available in test → digcnt=0 path → tmult *= 4.
+        assert_eq!(zle.zmod.tmult, 4);
+        assert!(zle.zmod.flags.contains(crate::zle::main::ModifierFlags::TMULT));
         widget_universal_argument(&mut zle);
-        assert_eq!(zle.zmod.mult, 16);
+        assert_eq!(zle.zmod.tmult, 16);
+    }
+
+    #[test]
+    fn universal_argument_with_digits_reads_pref() {
+        let mut zle = Zle::new();
+        zle.initmodifier();
+        // Pre-feed "42x" — universal-argument should pull the "42" and
+        // unget the trailing 'x' for the next read.
+        zle.ungetbytes(b"42x");
+        widget_universal_argument(&mut zle);
+        assert_eq!(zle.zmod.tmult, 42);
+        assert!(zle.zmod.flags.contains(crate::zle::main::ModifierFlags::TMULT));
+        // 'x' should still be in the unget buffer.
+        let next = zle.getbyte(false);
+        assert_eq!(next, Some(b'x'));
+    }
+
+    #[test]
+    fn universal_argument_with_minus_reads_negative() {
+        let mut zle = Zle::new();
+        zle.initmodifier();
+        zle.ungetbytes(b"-7\n");
+        widget_universal_argument(&mut zle);
+        assert_eq!(zle.zmod.tmult, -7);
+    }
+
+    #[test]
+    fn neg_argument_first_invocation_sets_tmult_minus_one() {
+        let mut zle = Zle::new();
+        zle.initmodifier();
+        widget_neg_argument(&mut zle);
+        assert_eq!(zle.zmod.tmult, -1);
+        assert!(zle.zmod.flags.contains(crate::zle::main::ModifierFlags::TMULT));
+        assert!(zle.zmod.flags.contains(crate::zle::main::ModifierFlags::NEG));
+    }
+
+    #[test]
+    fn neg_argument_after_tmult_already_set_is_rejected() {
+        // C: returns 1 (error/beep) if MOD_TMULT was already set.
+        let mut zle = Zle::new();
+        zle.initmodifier();
+        zle.zmod.flags.insert(crate::zle::main::ModifierFlags::TMULT);
+        zle.zmod.tmult = 5;
+        widget_neg_argument(&mut zle);
+        // tmult unchanged, NEG NOT set.
+        assert_eq!(zle.zmod.tmult, 5);
+        assert!(!zle.zmod.flags.contains(crate::zle::main::ModifierFlags::NEG));
+    }
+
+    #[test]
+    fn digit_argument_after_neg_argument_inherits_sign() {
+        // After neg-argument, handleprefixes promotes tmult=-1 into
+        // mult=-1; the next digit-argument sees mult<0 and applies the
+        // negative sign to the first digit (C: zle_misc.c:961-964 +
+        // zle_main.c:1620 promote chain).
+        let mut zle = Zle::new();
+        zle.initmodifier();
+        widget_neg_argument(&mut zle);
+        // Simulate the zlecore→handleprefixes step the live loop runs
+        // between widgets.
+        zle.handleprefixes();
+        zle.lastchar = b'5' as i32;
+        widget_digit_argument(&mut zle);
+        assert_eq!(zle.zmod.tmult, -5);
+        assert!(!zle.zmod.flags.contains(crate::zle::main::ModifierFlags::NEG));
+    }
+
+    #[test]
+    fn argument_base_clamps_invalid_base_via_feep() {
+        let mut zle = Zle::new();
+        zle.initmodifier();
+        zle.zmod.mult = 1; // base 1 is invalid (< 2)
+        widget_argument_base(&mut zle);
+        // base unchanged at 10; no prefixflag side effect.
+        assert_eq!(zle.zmod.base, 10);
     }
 
     #[test]

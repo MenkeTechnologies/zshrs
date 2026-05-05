@@ -56,8 +56,12 @@ pub enum ZleContext {
     Vared,
 }
 
-/// Modifier state for commands
-#[derive(Debug, Clone, Default)]
+/// Modifier state for commands.
+/// Layout mirrors `struct modifier` in Src/Zle/zle.h. The Default impl
+/// matches `initmodifier()` from Src/Zle/zle_main.c:1604 — mult=1,
+/// tmult=1, base=10 — so a fresh Modifier behaves like the result of
+/// initmodifier() rather than the all-zero Rust derive default.
+#[derive(Debug, Clone)]
 pub struct Modifier {
     pub flags: ModifierFlags,
     /// Repeat count
@@ -68,6 +72,18 @@ pub struct Modifier {
     pub vibuf: i32,
     /// Numeric base for digit arguments (usually 10)
     pub base: i32,
+}
+
+impl Default for Modifier {
+    fn default() -> Self {
+        Modifier {
+            flags: ModifierFlags::empty(),
+            mult: 1,
+            tmult: 1,
+            vibuf: 0,
+            base: 10,
+        }
+    }
 }
 
 bitflags::bitflags! {
@@ -907,12 +923,16 @@ impl Zle {
     }
 
     /// Initialize ZLE modifiers
+    /// Reset zmod to its starting state (port of `initmodifier()` from
+    /// Src/Zle/zle_main.c:1604). The C source sets mult=1, tmult=1,
+    /// vibuf=0, base=10 — `tmult=1` is what makes successive C-u
+    /// invocations multiply (1→4→16→64) instead of staying at 0.
     pub fn initmodifier(&mut self) {
         self.zmod = Modifier {
             flags: ModifierFlags::empty(),
             mult: 1,
-            tmult: 0,
-            vibuf: -1,
+            tmult: 1,
+            vibuf: 0,
             base: 10,
         };
     }
