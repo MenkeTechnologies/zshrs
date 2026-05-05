@@ -79,6 +79,12 @@ pub struct CompMatch {
 }
 
 impl CompMatch {
+    /// Construct a bare match with the given word and no metadata.
+    /// Equivalent to a freshly-allocated `Cmatch` from
+    /// `mkmatch()` at Src/Zle/compcore.c — every other field
+    /// (description, group, prefix, suffix, display) defaults to
+    /// empty until a `comp* -d desc` / `comp* -J group` etc.
+    /// invocation populates it.
     pub fn new(word: &str) -> Self {
         CompMatch {
             word: word.to_string(),
@@ -90,13 +96,23 @@ impl CompMatch {
         }
     }
 
+    /// Builder helper to set the match description (`compadd -d desc`).
+    /// Equivalent to writing `cm->disp` in Src/Zle/compcore.c after
+    /// `mkmatch()` — the description is later rendered to the right
+    /// of the match in the completion listing.
     pub fn with_description(mut self, desc: &str) -> Self {
         self.description = Some(desc.to_string());
         self
     }
 }
 
-/// Initialize completion for a line (from compcore.c do_completion)
+/// Initialise completion state for a buffer + cursor pair.
+/// Port of the front of `do_completion()` from Src/Zle/compcore.c —
+/// the C source splits the line via `getbufferwords()` and stages
+/// the surrounding context into the `CompCtl`/`compstate` globals.
+/// This Rust port produces a self-contained `CompState` (with
+/// quoted-string awareness) that the rest of the completion engine
+/// consumes without touching globals.
 pub fn init_completion(buffer: &str, cursor: usize) -> CompState {
     let mut state = CompState {
         buffer: buffer.to_string(),
@@ -161,13 +177,22 @@ pub fn init_completion(buffer: &str, cursor: usize) -> CompState {
     state
 }
 
-/// Add a match to the completion state (from compcore.c addmatch/add_match_data)
+/// Append a match to the in-progress completion state.
+/// Port of `addmatch()` from Src/Zle/compcore.c. The C source
+/// allocates a new `Cmatch`, fills it from `add_match_data()`'s
+/// computed buckets, and pushes onto the per-group `matches` linked
+/// list. Our Rust shape collapses that to a `Vec<CompMatch>` push +
+/// a count update on the surrounding `CompState`.
 pub fn addmatch(state: &mut CompState, m: CompMatch) {
     state.matches.push(m);
     state.nmatches = state.matches.len();
 }
 
-/// Get user variable for completion (from compcore.c get_user_var)
+/// Look up a user-set parameter for the completion engine.
+/// Port of `get_user_var()` from Src/Zle/compcore.c. The C source
+/// reads the `Param` table directly via `getsparam()`; our shape
+/// takes an explicit `vars` map so completion functions can be
+/// called outside a live shell session (e.g. tests).
 pub fn get_user_var(
     name: &str,
     vars: &std::collections::HashMap<String, String>,
@@ -175,7 +200,12 @@ pub fn get_user_var(
     vars.get(name).cloned()
 }
 
-/// Quote a string for completion insertion (from compcore.c multiquote)
+/// Quote a string for safe insertion into the buffer.
+/// Port of `multiquote()` from Src/Zle/compcore.c. The C source
+/// switches between heavy quoting (escape every special char) and
+/// light quoting (escape just `'` / `\\`) based on whether the
+/// surrounding context is already inside single quotes — `in_quotes`
+/// here mirrors that flag.
 pub fn multiquote(s: &str, in_quotes: bool) -> String {
     if in_quotes {
         s.replace('\\', "\\\\").replace('\'', "\\'")
@@ -184,7 +214,9 @@ pub fn multiquote(s: &str, in_quotes: bool) -> String {
     }
 }
 
-/// Quote tilde in completion (from compcore.c tildequote)
+/// Escape a leading `~` so the inserted completion isn't tilde-expanded
+/// against a username on next pass.
+/// Port of `tildequote()` from Src/Zle/compcore.c.
 pub fn tildequote(s: &str) -> String {
     if s.starts_with('~') {
         format!("\\{}", s)
@@ -193,7 +225,10 @@ pub fn tildequote(s: &str) -> String {
     }
 }
 
-/// Remove backslashes from completion word (from compcore.c rembslash)
+/// Strip backslash escapes from a token, treating `\\X` as `X`.
+/// Port of `rembslash()` from Src/Zle/compcore.c — used when the
+/// completion engine has already quoted a candidate but a later
+/// stage needs the raw form for matching.
 pub fn rembslash(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut escape = false;

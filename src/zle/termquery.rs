@@ -27,7 +27,13 @@ pub struct TermCapabilities {
 /// Default probe timeout (from termquery.c TIMEOUT)
 const PROBE_TIMEOUT_MS: u64 = 500;
 
-/// Query the terminal for supported features (from termquery.c query_terminal)
+/// Probe the connected terminal for advertised capabilities.
+/// Port of `query_terminal()` from Src/Zle/termquery.c. The C source
+/// sends DA1 (`ESC [ c`), DA2 (`ESC [ > c`), and OSC-based probes,
+/// reads with a fixed timeout, and feeds the responses through
+/// per-capability parsers. zshrs sticks to the daily-driver subset
+/// (DA1, COLORTERM, OSC52) so script startup doesn't pay for the
+/// full 5+ probe round-trip.
 pub fn query_terminal() -> TermCapabilities {
     let mut caps = TermCapabilities::default();
 
@@ -152,7 +158,12 @@ fn parse_device_attributes(response: &str, caps: &mut TermCapabilities) {
     }
 }
 
-/// Probe for bracketed paste support (from termquery.c)
+/// Decide whether bracketed-paste should be enabled.
+/// Port of the bracketed-paste support check from
+/// Src/Zle/termquery.c. The C source sends DA2 to discriminate, but
+/// every modern terminal (xterm-derived, kitty, alacritty,
+/// terminal.app, vscode) supports it; we white-list by `$TERM` not
+/// being a `dumb` / `cons` prefix.
 pub fn probe_bracketed_paste() -> bool {
     // Most modern terminals support this
     if let Ok(term) = std::env::var("TERM") {
@@ -162,16 +173,25 @@ pub fn probe_bracketed_paste() -> bool {
     }
 }
 
-/// Handle paste mode (from termquery.c handle_paste)
+/// Emit the CSI sequence enabling bracketed-paste mode.
+/// Port of the `\\e[?2004h` send-on-zle-init path in
+/// Src/Zle/termquery.c (`handle_paste`). DEC private mode 2004 is
+/// the cross-vendor bracketed-paste enable.
 pub fn enable_bracketed_paste() -> String {
     "\x1b[?2004h".to_string()
 }
 
+/// Emit the CSI sequence disabling bracketed-paste mode.
+/// Mirror of `enable_bracketed_paste` — sent at zle-line-finish or
+/// shell exit via the `\\e[?2004l` reset.
 pub fn disable_bracketed_paste() -> String {
     "\x1b[?2004l".to_string()
 }
 
-/// URL encode a string (from termquery.c url_encode)
+/// Percent-encode a string for OSC-7 / OSC-8 URLs.
+/// Port of `url_encode()` from Src/Zle/termquery.c. Preserves the
+/// RFC 3986 unreserved set (`A-Za-z0-9-._~`) plus `/` so path-shaped
+/// input round-trips, percent-encodes everything else as `%XX`.
 pub fn url_encode(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
@@ -187,14 +207,21 @@ pub fn url_encode(s: &str) -> String {
     result
 }
 
-/// Get clipboard via OSC 52 (from termquery.c system_clipget)
+/// Read the system clipboard via the OSC-52 read query.
+/// Port of `system_clipget()` from Src/Zle/termquery.c. The C source
+/// emits `ESC ] 52 ; c ; ? ST` and parses the terminal's
+/// base64-encoded reply; our Rust port returns None until the
+/// async terminal-response handler is wired in (the read needs to
+/// time-share with `getbyte()` via the pending-input queue).
 pub fn system_clipget() -> Option<String> {
-    // OSC 52: ESC ] 52 ; c ; <base64-data> ST
-    // This is read asynchronously from the terminal
-    None // Requires terminal response handling
+    None
 }
 
-/// Set clipboard via OSC 52 (from termquery.c system_clipput)
+/// Encode `data` as an OSC-52 clipboard-set sequence.
+/// Port of `system_clipput()` from Src/Zle/termquery.c. Emits
+/// `ESC ] 52 ; c ; <base64> ST` so the terminal can populate the
+/// system clipboard — used by widgets that surface yanked text
+/// outside the editor's local kill ring.
 pub fn system_clipput(data: &str) -> String {
     use std::io::Write;
     let mut buf = Vec::new();
@@ -231,7 +258,13 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
-/// Check if extension is enabled (from termquery.c extension_enabled)
+/// Test whether a named terminal extension is enabled in the current
+/// session.
+/// Port of `extension_enabled()` from Src/Zle/termquery.c. The C
+/// source consults the cached probe state stored on the global
+/// `caps`; we re-derive each call from `$TERM` / `$COLORTERM` /
+/// `$TERM_PROGRAM` since the probe-once-cache machinery isn't wired
+/// through this crate yet.
 pub fn extension_enabled(name: &str) -> bool {
     match name {
         "bracketed-paste" => probe_bracketed_paste(),
@@ -245,7 +278,12 @@ pub fn extension_enabled(name: &str) -> bool {
     }
 }
 
-/// Set cursor shape (from termquery.c zle_set_cursorform)
+/// Emit the CSI-q sequence selecting a cursor shape.
+/// Port of `zle_set_cursorform()` from Src/Zle/termquery.c which the
+/// C source uses to surface the keymap-selected cursor (block in
+/// vicmd, bar in viins). The `CSI Ps SP q` codes — 1..=6 with `0`
+/// reserved for "default" — are the DECSCUSR specification followed
+/// by every modern terminal.
 pub fn set_cursor_shape(shape: CursorShape) -> String {
     match shape {
         CursorShape::Block => "\x1b[2 q".to_string(),
@@ -269,35 +307,58 @@ pub enum CursorShape {
     Bar,
 }
 
-/// Notify terminal of current working directory (from termquery.c notify_pwd)
+/// Encode the `OSC 7 ; file://host/path` CWD notification used by
+/// modern terminals to track the shell's directory across new tabs
+/// and splits.
+/// Port of `notify_pwd()` from Src/Zle/termquery.c. The C source
+/// emits the same sequence at `chpwd` time.
 pub fn notify_pwd(path: &str) -> String {
-    // OSC 7: file://hostname/path
     let hostname = crate::utils::gethostname();
     format!("\x1b]7;file://{}{}\x1b\\", hostname, url_encode(path))
 }
 
-/// Prompt markers for shell integration (from termquery.c prompt_markers/mark_output)
+/// `OSC 133 ; A` — prompt start marker.
+/// Port of the `prompt_marker_start` half of
+/// `mark_output()`/`prompt_markers()` in Src/Zle/termquery.c. Used
+/// by terminal emulators (iTerm, WezTerm, vscode) to fold prompts
+/// for selection / "go to previous prompt" navigation.
 pub fn prompt_marker_start() -> &'static str {
-    "\x1b]133;A\x1b\\" // OSC 133;A = prompt start
+    "\x1b]133;A\x1b\\"
 }
 
+/// `OSC 133 ; B` — command start marker (printed after the prompt).
+/// Mirrors `prompt_marker_start`'s role in `mark_output()` from
+/// Src/Zle/termquery.c.
 pub fn prompt_marker_end() -> &'static str {
-    "\x1b]133;B\x1b\\" // OSC 133;B = command start
+    "\x1b]133;B\x1b\\"
 }
 
+/// `OSC 133 ; C` — command output start.
+/// Port of the output-start half of `mark_output()` in
+/// Src/Zle/termquery.c.
 pub fn output_marker_start() -> &'static str {
-    "\x1b]133;C\x1b\\" // OSC 133;C = command output start
+    "\x1b]133;C\x1b\\"
 }
 
+/// `OSC 133 ; D ; exit_code` — command end + exit status.
+/// Port of the output-end branch of `mark_output()` from
+/// Src/Zle/termquery.c.
 pub fn output_marker_end(exit_code: i32) -> String {
-    format!("\x1b]133;D;{}\x1b\\", exit_code) // OSC 133;D = command end
+    format!("\x1b]133;D;{}\x1b\\", exit_code)
 }
 
-/// Enable/disable synchronized output (from termquery.c)
+/// Enter synchronized-output mode — terminal queues the next
+/// frame's worth of writes until the matching end is sent.
+/// Port of the `\\e[?2026h` half of the synchronized-output enable
+/// in Src/Zle/termquery.c. Mode 2026 is the kitty/iTerm/wezterm
+/// vendor-shared synchronized-rendering protocol.
 pub fn sync_output_start() -> &'static str {
     "\x1b[?2026h"
 }
 
+/// Leave synchronized-output mode — terminal flushes the queued
+/// frame.
+/// Mirror of `sync_output_start`.
 pub fn sync_output_end() -> &'static str {
     "\x1b[?2026l"
 }
