@@ -10,7 +10,11 @@ use std::os::unix::io::RawFd;
 /// Maximum bytes to read at once
 pub const READ_MAX: usize = 1024 * 1024;
 
-/// A pseudo-terminal command session
+/// A pseudo-terminal command session.
+/// Port of `struct ptycmd` from Src/Modules/zpty.c — the C
+/// source threads it through `getptycmd()` (line 153),
+/// `newptycmd()` (line 310), `deleteptycmd()` (line 490) etc.
+/// Same fields (name, args, master fd, pid, echo, nonblock).
 #[derive(Debug)]
 pub struct PtyCmd {
     pub name: String,
@@ -45,7 +49,10 @@ impl PtyCmd {
     }
 }
 
-/// Pty commands manager
+/// Pty commands manager.
+/// Port of the file-static `ptycmds` linked list in
+/// Src/Modules/zpty.c — `getptycmd()` (line 153) walks it for
+/// lookup, `bin_zpty()` (line 773) drives mutations.
 #[derive(Debug, Default)]
 pub struct PtyCmds {
     cmds: HashMap<String, PtyCmd>,
@@ -89,7 +96,10 @@ impl PtyCmds {
     }
 }
 
-/// Open a pseudo-terminal pair
+/// Open a pseudo-terminal master/slave pair.
+/// Port of `get_pty()` from Src/Modules/zpty.c:191 (or :255 for
+/// the fallback path on systems without `posix_openpt`). Wraps
+/// `posix_openpt` + `grantpt` + `unlockpt` + `ptsname` + `open`.
 #[cfg(unix)]
 pub fn open_pty() -> io::Result<(RawFd, RawFd)> {
     let master_fd = unsafe {
@@ -127,7 +137,9 @@ pub fn open_pty() -> io::Result<(RawFd, RawFd)> {
     }
 }
 
-/// Set non-blocking mode on a file descriptor
+/// Set non-blocking mode on a file descriptor.
+/// Port of `ptynonblock()` from Src/Modules/zpty.c:65 — wraps
+/// `fcntl(F_GETFL)` + `fcntl(F_SETFL, |O_NONBLOCK)`.
 #[cfg(unix)]
 pub fn set_nonblock(fd: RawFd) -> io::Result<()> {
     unsafe {
@@ -143,7 +155,10 @@ pub fn set_nonblock(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-/// Disable echo on a terminal
+/// Disable line-discipline echo on a terminal.
+/// Port of the echo-clearing path inside `ptysettyinfo()`
+/// (Src/Modules/zpty.c:124) — `tcgetattr` → clear `ECHO` →
+/// `tcsetattr(TCSADRAIN)`.
 #[cfg(unix)]
 pub fn disable_echo(fd: RawFd) -> io::Result<()> {
     unsafe {
@@ -161,7 +176,10 @@ pub fn disable_echo(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-/// Read from a pty, optionally matching a pattern
+/// Read from a pty, optionally matching a pattern.
+/// Port of `ptyread()` from Src/Modules/zpty.c:548 — `poll(2)`
+/// + `read(2)` loop that bails when `pattern` is found in the
+/// accumulated buffer or when EOF/timeout fires.
 pub fn pty_read(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> {
     let mut buffer = vec![0u8; 4096];
     let mut result = Vec::new();
@@ -219,7 +237,9 @@ pub fn pty_read(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io
     String::from_utf8(result).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-/// Write to a pty
+/// Write a string to a pty's master end.
+/// Port of `ptywritestr()` from Src/Modules/zpty.c:714 (which
+/// `ptywrite()` line 743 wraps with `-n` newline handling).
 pub fn pty_write(fd: RawFd, data: &str) -> io::Result<usize> {
     #[cfg(unix)]
     {
@@ -238,7 +258,8 @@ pub fn pty_write(fd: RawFd, data: &str) -> io::Result<usize> {
     }
 }
 
-/// Send EOF to pty
+/// Send EOF (Ctrl-D, byte 0x04) to a pty's master end.
+/// Port of the `-e` branch of `bin_zpty()` (Src/Modules/zpty.c:773).
 pub fn pty_send_eof(fd: RawFd) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -251,7 +272,9 @@ pub fn pty_send_eof(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-/// Check if a pty has data available
+/// Check whether a pty has unread bytes pending.
+/// Port of the `-t` branch of `bin_zpty()` (Src/Modules/zpty.c:773)
+/// — `poll(2)` with zero timeout for non-blocking probe.
 pub fn pty_test(fd: RawFd) -> io::Result<bool> {
     #[cfg(unix)]
     {
@@ -274,7 +297,10 @@ pub fn pty_test(fd: RawFd) -> io::Result<bool> {
     }
 }
 
-/// Kill a pty process
+/// Send a signal to the child process behind a pty.
+/// Port of the `kill()` call inside `deleteptycmd()`
+/// (Src/Modules/zpty.c:490) — the C source sends SIGHUP/SIGTERM
+/// when freeing a ptycmd entry.
 pub fn pty_kill(pid: i32, signal: i32) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -286,7 +312,9 @@ pub fn pty_kill(pid: i32, signal: i32) -> io::Result<()> {
     Ok(())
 }
 
-/// Close a pty
+/// Close a pty file descriptor.
+/// Port of the `zclose()` call inside `deleteptycmd()`
+/// (Src/Modules/zpty.c:490).
 pub fn pty_close(fd: RawFd) -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -298,7 +326,10 @@ pub fn pty_close(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-/// Options for zpty builtin
+/// `zpty` builtin option flags.
+/// Port of the `Options ops` flag bag `bin_zpty()` from
+/// Src/Modules/zpty.c:773 reads — `-d`/`-L`/`-w`/`-r`/`-t`/`-b`
+/// `-e`/`-T`/`-m` map onto these fields.
 #[derive(Debug, Default)]
 pub struct ZptyOptions {
     pub delete: bool,
@@ -312,7 +343,9 @@ pub struct ZptyOptions {
     pub pattern: Option<String>,
 }
 
-/// Execute zpty builtin
+/// `zpty` builtin entry point.
+/// Port of `bin_zpty()` from Src/Modules/zpty.c:773 — same
+/// dispatch tree (delete / list / write / read / test / spawn).
 pub fn builtin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i32, String) {
     let mut output = String::new();
 
