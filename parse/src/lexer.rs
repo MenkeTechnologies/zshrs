@@ -622,11 +622,24 @@ impl<'a> ZshLexer<'a> {
     }
 
     /// Check and increment global iteration counter; returns true if limit exceeded
+    /// Soft cap on `hgetc` invocations — an infinite-loop tripwire.
+    /// Real-world scripts: zinit.zsh ~5K lines / ~200KB, p10k's
+    /// internal/p10k.zsh ~10K lines / ~360KB, the user's daily-driver
+    /// `.zshrc` + zpwr stack collectively crosses 1M+ chars per shell
+    /// invocation. The previous 50K cap was tripped by p10k by line
+    /// 1277 (well below its actual 10K-line size). 100M chars handles
+    /// every reasonable script while still bailing out of a real
+    /// runaway lexer state machine.
+    const LEXER_HGETC_CAP: u64 = 100_000_000;
+
     #[inline]
     fn check_iterations(&mut self) -> bool {
         self.global_iterations += 1;
-        if self.global_iterations > 50_000 {
-            self.error = Some("lexer exceeded 50K iterations".to_string());
+        if self.global_iterations as u64 > Self::LEXER_HGETC_CAP {
+            self.error = Some(format!(
+                "lexer exceeded {} hgetc iterations — possible infinite loop",
+                Self::LEXER_HGETC_CAP
+            ));
             self.lexstop = true;
             self.tok = LexTok::Lexerr;
             true
