@@ -13,6 +13,11 @@ use std::collections::HashMap;
 
 /// Module feature types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Module feature category.
+/// Mirrors the C source's `M_F_*` constants used in
+/// `Src/module.c::register_module()` (line 359) — the C source
+/// classifies module-exported names by builtin / parameter /
+/// condition / mathfunc / hook.
 pub enum FeatureType {
     Builtin,
     Condition,
@@ -23,6 +28,11 @@ pub enum FeatureType {
 
 /// A registered module feature
 #[derive(Debug, Clone)]
+/// One module-exported feature record.
+/// Port of the per-feature shape `features_()` (Src/module.c:313)
+/// returns — the C source emits a `(name, type, flags)` tuple
+/// for each Builtin / Param / Conddef / Mathfunc / Hookdef the
+/// module wants to expose.
 pub struct ModuleFeature {
     pub name: String,
     pub feature_type: FeatureType,
@@ -31,6 +41,9 @@ pub struct ModuleFeature {
 
 /// Module state
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Module load state.
+/// Mirrors the `MOD_*` flag bits Src/module.c sets on each
+/// `Module` slot — registered, busy (loading), unloading, etc.
 pub enum ModuleState {
     Loaded,
     Autoloaded,
@@ -40,6 +53,10 @@ pub enum ModuleState {
 
 /// A loaded module
 #[derive(Debug, Clone)]
+/// One loaded module entry.
+/// Port of `struct module` from Src/zsh.h — name, hooks, state,
+/// feature list. The C source threads it through every
+/// `addbuiltin()` / `addconddef()` / `addhookdef()` call.
 pub struct Module {
     pub name: String,
     pub state: ModuleState,
@@ -66,6 +83,11 @@ impl Module {
 
 /// Module table (from module.c module hash table)
 #[derive(Debug, Default)]
+/// Table of registered modules.
+/// Port of the `modulestab` HashTable Src/module.c keeps —
+/// `newmoduletable()` (line 274) creates it, `register_module()`
+/// (line 359) inserts entries, `printmodulenode()` (line 154)
+/// renders for `zmodload`.
 pub struct ModuleTable {
     modules: HashMap<String, Module>,
     /// Builtin name → module name mapping for autoload
@@ -84,6 +106,10 @@ pub struct ModuleTable {
 
 /// Wrapper entry (from module.c addwrapper/deletewrapper)
 #[derive(Debug, Clone)]
+/// Function-wrapper hook.
+/// Port of `struct funcwrap` from Src/zsh.h — `addwrapper()`
+/// (Src/module.c:577) registers a module's pre/post hooks for
+/// shell function dispatch (`zsh/zprof` uses this).
 pub struct Wrapper {
     pub name: String,
     pub flags: u32,
@@ -477,6 +503,11 @@ impl ModuleTable {
 }
 
 /// Module lifecycle callbacks (from module.c setup_/boot_/cleanup_/finish_)
+/// Lifecycle hooks every module must implement.
+/// Port of the `setup_`/`features_`/`enables_`/`boot_`/`cleanup_`
+/// /`finish_` entry points every C module exposes (Src/module.c
+/// lines 306-345 illustrate the canonical no-op set). Rust
+/// modules implement this trait directly.
 pub trait ModuleLifecycle {
     fn setup(&mut self) -> i32 {
         0
@@ -493,11 +524,17 @@ pub trait ModuleLifecycle {
 }
 
 /// Free module node (from module.c freemodulenode)
+/// Free a module table entry.
+/// Port of `freemodulenode()` from Src/module.c:119 — Rust's
+/// `Drop` handles the per-field free; this exists for API
+/// parity with C callers.
 pub fn freemodulenode(_module: Module) {
     // Rust Drop handles this
 }
 
 /// Print module node (from module.c printmodulenode)
+/// Format a module entry for `zmodload -L` listing.
+/// Port of `printmodulenode()` from Src/module.c:154.
 pub fn printmodulenode(name: &str, module: &Module) -> String {
     let state = match module.state {
         ModuleState::Loaded => "loaded",
@@ -509,11 +546,18 @@ pub fn printmodulenode(name: &str, module: &Module) -> String {
 }
 
 /// Create new module table (from module.c newmoduletable)
+/// Create an empty module table.
+/// Port of `newmoduletable()` from Src/module.c:274 — the C
+/// source allocates the `modulestab` hash with `createhashtable`.
 pub fn newmoduletable() -> ModuleTable {
     ModuleTable::new()
 }
 
 /// Register module (from module.c register_module)
+/// Register a module by name.
+/// Port of `register_module()` from Src/module.c:359 — wraps
+/// a slot in the global `modulestab` and seeds its lifecycle
+/// callbacks.
 pub fn register_module(table: &mut ModuleTable, name: &str) -> bool {
     if table.modules.contains_key(name) {
         return false;

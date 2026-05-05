@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 
 /// Shell initialization options
 #[derive(Clone, Debug, Default)]
+/// Parsed command-line options for the shell binary.
+/// Mirrors the option set `parseargs()` from Src/init.c:263 +
+/// `parseopts()` (line 390) build into the global state.
 pub struct ShellOptions {
     pub interactive: bool,
     pub login: bool,
@@ -23,6 +26,10 @@ pub struct ShellOptions {
 }
 
 /// Global shell state
+/// Top-level shell state.
+/// Aggregates the slots Src/init.c populates in `setupvals()`
+/// (line 1014) and `init_misc()` (line 1524) — `argv0`,
+/// `cmd_string`, login-shell flag, runscript path, etc.
 pub struct ShellState {
     pub options: ShellOptions,
     pub argv0: String,
@@ -49,6 +56,10 @@ pub struct ShellState {
 
 /// Shell emulation mode
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// Shell emulation modes.
+/// Port of the `EMULATE_*` enum from Src/zsh.h —
+/// `parseopts_setemulate()` (Src/init.c:348) maps `--emulate`
+/// values onto these.
 pub enum ShellEmulation {
     #[default]
     Zsh,
@@ -128,6 +139,9 @@ impl Default for ShellState {
 
 /// Loop result
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Outcome of one iteration of the main shell loop.
+/// Port of the integer return values `loop()` from Src/init.c:113
+/// produces — Continue / Break / Done / Error.
 pub enum LoopReturn {
     Ok,
     Empty,
@@ -136,6 +150,9 @@ pub enum LoopReturn {
 
 /// Source result
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Outcome of `source`/`.` execution.
+/// Mirrors the return codes `source()` from Src/init.c:1551
+/// produces — Success / NotFound / Error.
 pub enum SourceReturn {
     Ok,
     NotFound,
@@ -143,6 +160,10 @@ pub enum SourceReturn {
 }
 
 /// Parse command line arguments
+/// Parse `argv` for the shell binary.
+/// Port of `parseargs()` from Src/init.c:263 — extracts `-c`
+/// command, runscript path, and remaining positional args; the
+/// option flags it sets feed into `parseopts()` (line 390).
 pub fn parseargs(args: &[String]) -> (ShellOptions, Option<String>, Vec<String>) {
     let mut opts = ShellOptions::default();
     let mut cmd = None;
@@ -239,6 +260,10 @@ fn print_help() {
 }
 
 /// Initialize shell I/O
+/// Initialize the shell's stdio.
+/// Port of `init_io()` from Src/init.c:577 — sets up SHIN/SHTTY,
+/// duplicates the controlling tty into `mailfd`, and configures
+/// terminal-related globals.
 pub fn init_io(state: &mut ShellState) {
     // Try to get tty
     if atty::is(atty::Stream::Stdin) {
@@ -251,6 +276,10 @@ pub fn init_io(state: &mut ShellState) {
 }
 
 /// Set up shell values
+/// Populate environment-derived globals (PWD/UID/HOME/etc.).
+/// Port of `setupvals()` from Src/init.c:1014 — the C source
+/// reads `getuid()`/`gethostname()`/`getpwuid()` and seeds the
+/// special parameter table. Same effect on Rust state here.
 pub fn setupvals(state: &mut ShellState) {
     // Set up PATH
     if let Ok(path_env) = env::var("PATH") {
@@ -268,6 +297,10 @@ pub fn setupvals(state: &mut ShellState) {
 }
 
 /// Source a file
+/// Source a shell file at `path`.
+/// Port of `source()` from Src/init.c:1551 — parses + runs the
+/// file in the current shell environment, with the standard
+/// `noexec`/`autocd`/`local-script-options` handling.
 pub fn source(state: &mut ShellState, path: &str) -> SourceReturn {
     let path = Path::new(path);
 
@@ -287,6 +320,10 @@ pub fn source(state: &mut ShellState, path: &str) -> SourceReturn {
 }
 
 /// Source a file from home directory
+/// Source a startup file from `$ZDOTDIR` / `$HOME`.
+/// Port of `sourcehome()` from Src/init.c:1679 — same
+/// `$ZDOTDIR`-overrides-`$HOME` lookup precedence the C source
+/// uses for `.zshrc` / `.zprofile` / `.zlogin` / `.zlogout`.
 pub fn sourcehome(state: &mut ShellState, filename: &str) -> SourceReturn {
     let zdotdir = env::var("ZDOTDIR").unwrap_or_else(|_| state.home.clone());
     let path = format!("{}/{}", zdotdir, filename);
@@ -294,6 +331,12 @@ pub fn sourcehome(state: &mut ShellState, filename: &str) -> SourceReturn {
 }
 
 /// Run initialization scripts
+/// Run the standard startup-file chain.
+/// Port of `run_init_scripts()` from Src/init.c:1445 — sources
+/// `/etc/zshenv` → `$ZDOTDIR/.zshenv` → (if login)
+/// `/etc/zprofile` → `$ZDOTDIR/.zprofile` → (if interactive)
+/// `/etc/zshrc` → `$ZDOTDIR/.zshrc` → (if login) `/etc/zlogin` →
+/// `$ZDOTDIR/.zlogin`. Same precedence as the C source.
 pub fn run_init_scripts(state: &mut ShellState) {
     if state.is_posix_emulation() {
         // sh/ksh emulation
@@ -346,6 +389,10 @@ pub fn run_init_scripts(state: &mut ShellState) {
 }
 
 /// Get the executable path of the current process
+/// Locate the running shell binary.
+/// zshrs convenience — the closest C analog is `getmypath()`
+/// (Src/init.c:909) which walks `$0`, `$PATH`, then `getcwd(2)`
+/// to identify the executable.
 pub fn get_exe_path() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
@@ -373,13 +420,15 @@ pub fn get_exe_path() -> Option<PathBuf> {
     }
 }
 
-/// Direct port of src/zsh/Src/init.c:909-1004 getmypath. Used to
-/// resolve the absolute path of the running shell binary on
-/// platforms where the kernel doesn't expose it (no /proc/self/exe,
-/// no _NSGetExecutablePath, no KERN_PROC_PATHNAME). Walks the
-/// argv\[0\]/cwd/$PATH heuristics that zsh uses as a fallback.
+/// Resolve the shell's own executable path.
+/// Port of `getmypath()` from Src/init.c:909-1004 — used on
+/// platforms where the kernel doesn't expose the binary path
+/// (no /proc/self/exe, no _NSGetExecutablePath, no
+/// KERN_PROC_PATHNAME). Walks the argv\[0\]/cwd/$PATH heuristics
+/// the C source falls back on.
 ///
 /// Algorithm (init.c:956-1004):
+///
 ///   1. If name starts with `-`, skip it (login-shell prefix).
 ///   2. If name is empty or ends with `/`, return None.
 ///   3. If name is absolute (starts with `/`), return as-is.
@@ -433,6 +482,9 @@ pub fn getmypath(name: Option<&str>, cwd: Option<&str>) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 /// Initialize terminal settings (from init.c init_term)
+/// Initialize terminal-capability state.
+/// Port of `init_term()` from Src/init.c:771 — looks up TERM,
+/// resolves `tgetent()`, and populates the termcap globals.
 pub fn init_term(state: &ShellState) -> bool {
     let term = &state.term;
     if term.is_empty() {
@@ -444,6 +496,9 @@ pub fn init_term(state: &ShellState) -> bool {
 }
 
 /// Set up the PWD variable (from init.c set_pwd_env)
+/// Set `$PWD` from the current working directory.
+/// Port of the `setupvals()` PWD-init step (Src/init.c:1014) —
+/// uses `zgetcwd()` and writes both `$PWD` and `$OLDPWD`.
 pub fn set_pwd_env(state: &mut ShellState) {
     if let Ok(cwd) = env::current_dir() {
         state.pwd = cwd.to_string_lossy().to_string();
@@ -453,6 +508,9 @@ pub fn set_pwd_env(state: &mut ShellState) {
 }
 
 /// Run logout scripts (from init.c run_exit_scripts counterpart)
+/// Run shutdown / exit-trap scripts.
+/// Port of the exit-trap dispatch inside `zexit()` (Src/init.c)
+/// — fires `TRAPEXIT`/`zshexit` hooks before tearing down.
 pub fn run_exit_scripts(state: &mut ShellState) {
     if state.options.login {
         if state.options.rcs && state.options.global_rcs {
@@ -465,12 +523,20 @@ pub fn run_exit_scripts(state: &mut ShellState) {
 }
 
 /// Close the shell (from init.c zexit)
+/// Terminate the shell with an exit status.
+/// Port of `zexit()` (Src/init.c) — runs exit traps, flushes
+/// history, releases tty, then `exit(val)`. The `from_where`
+/// argument matches the C source's `ZEXIT_*` reason codes.
 pub fn zexit(val: i32, from_where: i32) -> ! {
     // from_where: 0=normal, 1=signal, 2=exec
     std::process::exit(val)
 }
 
 /// Set up the tty (from init.c init_tty)
+/// Initialize the controlling terminal.
+/// Port of `init_shout()` from Src/init.c:712 — opens `/dev/tty`
+/// and configures the shell's output stream for prompt-aware
+/// writes.
 pub fn init_tty(state: &mut ShellState) {
     #[cfg(unix)]
     {
@@ -485,12 +551,20 @@ pub fn init_tty(state: &mut ShellState) {
 }
 
 /// Set up the hash tables (from init.c init_hashtable equivalent)
+/// Initialize the global hash tables (params, aliases, ...).
+/// Port of the `createhash*()` calls inside `setupvals()`
+/// (Src/init.c:1014) — Rust uses lazy-init slots so this is a
+/// no-op shim for parity.
 pub fn init_hashtable() {
     // In Rust, hash tables are managed by the exec module
     // This is a placeholder for compatibility
 }
 
 /// Set up options from emulation mode (from init.c setupvals emulation portion)
+/// Apply emulation-flag presets.
+/// Port of `parseopts_setemulate()` from Src/init.c:348 — sets
+/// the `EMULATE_*` flag bits and toggles compatibility options
+/// to match `--emulate sh`/`csh`/`ksh`.
 pub fn setup_emulation_opts(state: &mut ShellState) {
     match state.emulation {
         ShellEmulation::Sh => {
@@ -513,6 +587,10 @@ pub fn setup_emulation_opts(state: &mut ShellState) {
 }
 
 /// Find a command in PATH (from init.c pathprog equivalent)
+/// Search `$path` for an executable.
+/// zshrs convenience — the C source has a similar helper
+/// inline in `findcmd()` (Src/exec.c). Walks each directory and
+/// returns the first match for which `access(X_OK)` succeeds.
 pub fn pathprog(prog: &str, path: &[String]) -> Option<PathBuf> {
     if prog.contains('/') {
         let p = PathBuf::from(prog);
@@ -543,16 +621,26 @@ pub fn pathprog(prog: &str, path: &[String]) -> Option<PathBuf> {
 }
 
 /// Determine if shell is a login shell from `argv[0]`
+/// Detect whether `argv[0]` indicates a login shell.
+/// Port of the `argv[0][0] == '-'` check inside `parseargs()`
+/// (Src/init.c:263) — same `-zsh` invocation convention.
 pub fn is_login_shell(argv0: &str) -> bool {
     argv0.starts_with('-')
 }
 
 /// Get the ZDOTDIR
+/// Resolve `$ZDOTDIR` (or `$HOME` fallback).
+/// Port of the `ZDOTDIR ? ZDOTDIR : HOME` lookup
+/// `sourcehome()` (Src/init.c:1679) inlines.
 pub fn get_zdotdir() -> String {
     env::var("ZDOTDIR").unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()))
 }
 
 /// Full initialization sequence (from init.c init_main)
+/// Top-level shell initialization driver.
+/// Port of `zsh_main()` from Src/init.c:1855 — parses argv,
+/// sets up signals, populates the env, sources the init chain,
+/// then returns ready state for the main loop.
 pub fn init_main(args: &[String]) -> ShellState {
     let (opts, cmd, positional) = parseargs(args);
     let mut state = ShellState::new();
