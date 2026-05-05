@@ -189,60 +189,148 @@ impl RefreshState {
 }
 
 impl Zle {
-    /// Main refresh function - redraws the screen
-    /// Port of zrefresh() from zle_refresh.c
+    /// Main refresh function — redraws the line.
+    /// Port of `zrefresh()` from Src/Zle/zle_refresh.c. The C source paints
+    /// a full virtual-screen diff against the previous frame; this Rust
+    /// port renders the single line each call but adds three behaviors
+    /// the previous bare-buffer version was missing:
+    ///   * region-attribute overlay (zle_refresh.c `region_highlights[]`),
+    ///   * vi visual-mode auto-region (mirrors zle_refresh.c's check of
+    ///     `region_active` to paint mark..zlecs in standout),
+    ///   * RPS1 / right-prompt rendering at the right margin
+    ///     (zle_refresh.c `put_rpromptbuf` path).
     pub fn zrefresh(&mut self) {
         let stdout = io::stdout();
         let mut handle = stdout.lock();
 
-        // Get terminal size
         let (cols, _rows) = get_terminal_size();
 
-        // Build the display line
-        let prompt = self.prompt();
-        let buffer: String = self.zleline.iter().collect();
+        let prompt = self.prompt().to_string();
+        let rprompt = self.rprompt().to_string();
         let cursor = self.zlecs;
 
-        // Calculate display positions
-        let prompt_width = visible_width(prompt);
+        let prompt_width = visible_width(&prompt);
+        let rprompt_width = visible_width(&rprompt);
         let buffer_before_cursor: String = self.zleline[..cursor.min(self.zleline.len())]
             .iter()
             .collect();
         let cursor_col = prompt_width + visible_width(&buffer_before_cursor);
 
-        // Handle horizontal scrolling if line is too long
+        // Horizontal scroll if the cursor approaches the right edge.
+        // Mirrors zle_refresh.c's `winw` clamp logic — without the full
+        // multi-line wrap path our single-line shell uses scroll instead.
         let scroll_margin = 8;
         let effective_cols = cols.saturating_sub(1);
-
         let scroll_offset = if cursor_col >= effective_cols.saturating_sub(scroll_margin) {
             cursor_col.saturating_sub(effective_cols / 2)
         } else {
             0
         };
 
-        // Move to start of line and clear
+        // Compose the per-buffer-char attribute overlay before paint, so
+        // we don't have to re-walk the highlight list per char during write.
+        let attrs = self.compute_render_attrs();
+
         let _ = write!(handle, "\r\x1b[K");
 
-        // Draw prompt (if not scrolled past)
+        // Prompt — drawn unless we've scrolled past it.
         if scroll_offset < prompt_width {
-            let visible_prompt = skip_chars(prompt, scroll_offset);
+            let visible_prompt = skip_chars(&prompt, scroll_offset);
             let _ = write!(handle, "{}", visible_prompt);
         }
 
-        // Draw buffer content
+        // Compute the visible byte/char range of the buffer after scroll.
         let buffer_start = scroll_offset.saturating_sub(prompt_width);
-        let visible_buffer = skip_chars(&buffer, buffer_start);
-        let truncated = truncate_to_width(
-            visible_buffer,
-            effective_cols.saturating_sub(prompt_width.saturating_sub(scroll_offset)),
-        );
-        let _ = write!(handle, "{}", truncated);
+        // Width budget for buffer = total cols - prompt drawn - rprompt reserve.
+        let drawn_prompt_width = prompt_width.saturating_sub(scroll_offset);
+        let rprompt_reserve = if rprompt_width > 0 {
+            rprompt_width + 1
+        } else {
+            0
+        };
+        let buffer_budget = effective_cols
+            .saturating_sub(drawn_prompt_width)
+            .saturating_sub(rprompt_reserve);
 
-        // Position cursor
+        // Walk the buffer chars from buffer_start, applying overlay attrs.
+        let mut current_attr: Option<TextAttr> = None;
+        for (written, (idx, ch)) in self
+            .zleline
+            .iter()
+            .enumerate()
+            .skip(buffer_start)
+            .enumerate()
+        {
+            if written >= buffer_budget {
+                break;
+            }
+            let want_attr = attrs.get(idx).and_then(|a| *a);
+            if want_attr != current_attr {
+                let _ = write!(handle, "\x1b[0m");
+                if let Some(a) = want_attr {
+                    let _ = write!(handle, "{}", a.to_ansi());
+                }
+                current_attr = want_attr;
+            }
+            let _ = write!(handle, "{}", ch);
+        }
+        // Reset SGR before the rprompt / cursor jump.
+        if current_attr.is_some() {
+            let _ = write!(handle, "\x1b[0m");
+        }
+
+        // Right prompt — paint at the absolute right margin if there's
+        // room. Mirrors put_rpromptbuf in zle_refresh.c which writes RPS1
+        // at column (winw - rpromptw).
+        if rprompt_width > 0 && rprompt_width + 2 < effective_cols {
+            let rprompt_col = effective_cols.saturating_sub(rprompt_width);
+            let _ = write!(handle, "\r\x1b[{}C{}\x1b[0m", rprompt_col, rprompt);
+        }
+
+        // Cursor positioning (1-based column in ANSI).
         let display_cursor_col = cursor_col.saturating_sub(scroll_offset);
         let _ = write!(handle, "\r\x1b[{}C", display_cursor_col);
 
         let _ = handle.flush();
+    }
+
+    /// Build the per-character attribute overlay used by `zrefresh`.
+    /// One slot per char in `zleline`; `None` means "default attrs",
+    /// `Some(attr)` means apply `attr` for that cell.
+    ///
+    /// Port of the inner loop in `zrefresh()` (Src/Zle/zle_refresh.c) that
+    /// consults `region_highlights[]` for each visible cell. The vi
+    /// visual-mode region is synthesised from `region_active` + `mark`
+    /// here so `v` selects visibly without callers having to push a
+    /// region themselves — matching zle_refresh.c's auto-promotion of
+    /// `region_active` into a paintable highlight.
+    pub fn compute_render_attrs(&self) -> Vec<Option<TextAttr>> {
+        let buf_len = self.zleline.len();
+        let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
+        let visual_attr = TextAttr {
+            standout: true,
+            ..TextAttr::default()
+        };
+        if self.region_active != 0 {
+            let (lo, hi) = if self.mark <= self.zlecs {
+                (self.mark, self.zlecs)
+            } else {
+                (self.zlecs, self.mark)
+            };
+            let lo = lo.min(buf_len);
+            let hi = hi.min(buf_len);
+            for slot in attrs.iter_mut().take(hi).skip(lo) {
+                *slot = Some(visual_attr);
+            }
+        }
+        for region in &self.highlight.regions {
+            let start = region.start.min(buf_len);
+            let end = region.end.min(buf_len);
+            for slot in attrs.iter_mut().take(end).skip(start) {
+                *slot = Some(region.attr);
+            }
+        }
+        attrs
     }
 
     /// Full screen refresh - clears and redraws everything
@@ -550,5 +638,74 @@ mod tests {
         state.swap_buffers();
         state.free_video();
         assert!(state.old_video.is_none());
+    }
+
+    #[test]
+    fn compute_render_attrs_empty_buffer_yields_empty_overlay() {
+        let zle = Zle::new();
+        assert!(zle.compute_render_attrs().is_empty());
+    }
+
+    #[test]
+    fn compute_render_attrs_visual_mode_paints_mark_to_cursor_in_standout() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello world".chars().collect();
+        zle.zlell = zle.zleline.len();
+        zle.mark = 2;
+        zle.zlecs = 7;
+        zle.region_active = 1; // charwise visual
+        let attrs = zle.compute_render_attrs();
+        assert_eq!(attrs.len(), 11);
+        // [0..2) and [7..11) are unstyled.
+        for slot in attrs.iter().take(2) {
+            assert!(slot.is_none());
+        }
+        for slot in attrs.iter().skip(7) {
+            assert!(slot.is_none());
+        }
+        // [2..7) painted in standout.
+        for slot in attrs.iter().take(7).skip(2) {
+            let attr = slot.expect("standout");
+            assert!(attr.standout);
+        }
+    }
+
+    #[test]
+    fn compute_render_attrs_visual_mode_handles_reverse_mark_order() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcdef".chars().collect();
+        zle.zlell = 6;
+        zle.mark = 5;
+        zle.zlecs = 1;
+        zle.region_active = 2; // linewise — same swap behavior
+        let attrs = zle.compute_render_attrs();
+        // Range collapses to (1..5).
+        assert!(attrs[0].is_none());
+        for slot in attrs.iter().take(5).skip(1) {
+            assert!(slot.unwrap().standout);
+        }
+        assert!(attrs[5].is_none());
+    }
+
+    #[test]
+    fn compute_render_attrs_explicit_regions_override_default() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcde".chars().collect();
+        zle.zlell = 5;
+        let custom = TextAttr {
+            bold: true,
+            fg_color: Some(1),
+            ..TextAttr::default()
+        };
+        zle.highlight
+            .set_region_highlight(1, 4, custom);
+        let attrs = zle.compute_render_attrs();
+        assert!(attrs[0].is_none());
+        for slot in attrs.iter().take(4).skip(1) {
+            let a = slot.expect("custom");
+            assert!(a.bold);
+            assert_eq!(a.fg_color, Some(1));
+        }
+        assert!(attrs[4].is_none());
     }
 }
