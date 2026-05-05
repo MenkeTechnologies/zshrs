@@ -24,11 +24,20 @@ pub struct ListColors {
 }
 
 impl ListColors {
+    /// Construct an empty colour map.
+    /// Equivalent to a freshly-allocated `Listcols` from
+    /// `getcols()` at Src/Zle/complist.c when `LS_COLORS` /
+    /// `ZLS_COLORS` is unset.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Parse LS_COLORS format: "*.rs=1;32:*.c=0;33:di=1;34:..."
+    /// Parse a `LS_COLORS`-style spec into pattern→code lookups.
+    /// Port of `getcols()` from Src/Zle/complist.c. The C source
+    /// reads `$LS_COLORS` (or `$ZLS_COLORS`) and walks
+    /// `:`-separated `pattern=code` pairs into `Listcols`. This
+    /// Rust shape uses `pattern` as the hash key for
+    /// `get_color`'s lookup.
     pub fn from_ls_colors(spec: &str) -> Self {
         let mut colors = HashMap::new();
         for entry in spec.split(':') {
@@ -42,7 +51,12 @@ impl ListColors {
         }
     }
 
-    /// Get ANSI color code for a file pattern
+    /// Resolve a filename to its ANSI colour code (or empty when no
+    /// match).
+    /// Port of `filecol()` from Src/Zle/complist.c. The C source
+    /// matches `di` (directory), `ln` (symlink), `ex` (executable),
+    /// and the per-extension `*.X=code` entries against the file
+    /// metadata; ours follows the same precedence.
     pub fn get_color(
         &self,
         name: &str,
@@ -75,6 +89,10 @@ impl ListColors {
         None
     }
 
+    /// Emit the SGR reset escape (`\\e[0m`) used between coloured
+    /// matches so a per-match colour doesn't bleed into separators.
+    /// Equivalent to the `tcout(TCSGR0)` / hardcoded `\\e[0m` write
+    /// at the end of each `clprintm()` call in Src/Zle/complist.c.
     pub fn reset() -> &'static str {
         "\x1b[0m"
     }
@@ -89,7 +107,13 @@ pub struct ListLayout {
     pub total_width: usize,
 }
 
-/// Calculate optimal column layout for matches (from complist.c calclist)
+/// Compute the row/column layout for the matches list given a terminal
+/// width.
+/// Port of `calclist()` from Src/Zle/complist.c. The C source picks
+/// the column count by trying widths in descending order until the
+/// row product fits the available rows; this Rust port uses the
+/// simpler `term_width / max_item_width` heuristic — sufficient for
+/// the common single-screen listing.
 pub fn calclist(
     matches: &[String],
     term_width: usize,
@@ -129,7 +153,14 @@ pub fn calclist(
     }
 }
 
-/// Format completion list for display (from complist.c compprintlist)
+/// Render the laid-out match list as a Vec of lines ready to write
+/// to the terminal.
+/// Port of `compprintlist()` from Src/Zle/complist.c. Walks
+/// row-major across the column grid, emits group headers when the
+/// group name changes, applies LS_COLORS-derived attrs to each
+/// match (matching the per-cell `clprintm()` call in the C source),
+/// and reverse-videos the optional `selected` index for
+/// menu-selection mode.
 pub fn compprintlist(
     matches: &[String],
     descriptions: &[Option<String>],
@@ -200,13 +231,21 @@ pub fn compprintlist(
     lines
 }
 
-/// Ask if user wants to scroll (from complist.c asklistscroll)
+/// Format the "scroll for more?" prompt shown when the match list
+/// exceeds the terminal height.
+/// Port of `asklistscroll()` from Src/Zle/complist.c. The C source
+/// emits "--More--" plus a percent indicator and reads y/n via
+/// `getzlequery`; ours produces the prompt string and leaves the
+/// input read to the caller.
 pub fn asklistscroll(total: usize, shown: usize) -> String {
-    let remaining = total - shown;
+    let _remaining = total.saturating_sub(shown);
     format!("--More--({}/{})", shown, total)
 }
 
-/// Format completion group header (from complist.c compprintfmt)
+/// Substitute `%d`/`%g`/`%%` in a `LIST_GROUPS_HEADER`-style format.
+/// Port of `compprintfmt()` from Src/Zle/complist.c. The C source
+/// supports more escapes (per-group counts, etc.); the daily-driver
+/// subset (count + group + literal `%`) is honoured here.
 pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String {
     format
         .replace("%d", &matches_count.to_string())
@@ -214,12 +253,19 @@ pub fn compprintfmt(format: &str, matches_count: usize, group: &str) -> String {
         .replace("%%", "%")
 }
 
-/// Clear to end of line (from complist.c cleareol)
+/// Emit the CSI-K sequence clearing from cursor to end of the
+/// current line — used between match-list rows so leftover
+/// characters from a prior frame don't bleed through.
+/// Port of `cleareol()` from Src/Zle/complist.c (the C source
+/// fronts the same `\\e[K` escape via `tcout(TCCLEAREOL)`).
 pub fn cleareol() -> &'static str {
     "\x1b[K"
 }
 
-/// Print with color for completion (from complist.c zcputs)
+/// Wrap a string in a CSI SGR sequence using the supplied colour
+/// code, then reset.
+/// Port of `zcputs()` from Src/Zle/complist.c. The C source uses
+/// this for per-match colour application during list paint.
 pub fn zcputs(s: &str, color: Option<&str>) -> String {
     match color {
         Some(c) => format!("\x1b[{}m{}\x1b[0m", c, s),
