@@ -1,4 +1,12 @@
-//! zshrs logging & profiling framework
+//! zshrs logging & profiling framework.
+//!
+//! **zshrs-original infrastructure — no C source counterpart.** C
+//! zsh emits all diagnostics through `zwarn()` / `zwarnnam()` /
+//! `zerr()` / `zerrnam()` in Src/utils.c, which print directly to
+//! stderr. This module replaces that pattern with a structured
+//! `tracing`-based subscriber that writes to `~/.zshrs/zshrs.log`.
+//! Per the project's "no startup chatter" rule, all init progress
+//! goes here instead of stderr.
 //!
 //! **Logging** (always on):
 //!   - File: `$HOME/.zshrs/{binary}.log` — three separate files so the
@@ -34,7 +42,10 @@ struct Guards {
 
 static GUARDS: OnceLock<Guards> = OnceLock::new();
 
-/// Resolve log/profile output directory: $ZSHRS_HOME or $HOME/.zshrs
+/// Resolve log/profile output directory: `$ZSHRS_HOME` or
+/// `$HOME/.zshrs`.
+/// zshrs-original — no C counterpart. C zsh has no log file at all
+/// (it writes to stderr).
 pub fn log_dir() -> PathBuf {
     if let Some(custom) = std::env::var_os("ZSHRS_HOME") {
         return PathBuf::from(custom);
@@ -44,14 +55,19 @@ pub fn log_dir() -> PathBuf {
         .join(".zshrs")
 }
 
-/// Resolve full log path for the shell binary (zshrs.log).
+/// Resolve the full log path for the shell binary
+/// (`zshrs.log`).
+/// zshrs-original — no C counterpart.
 pub fn log_path() -> PathBuf {
     log_dir().join("zshrs.log")
 }
 
-/// Initialize logging + optional profiling subscribers using the default
-/// `zshrs.log` filename. Equivalent to `init_named("zshrs.log")`.
-/// Safe to call multiple times — only the first call takes effect.
+/// Initialize logging + optional profiling subscribers using the
+/// default `zshrs.log` filename. Equivalent to
+/// `init_named("zshrs.log")`. Safe to call multiple times — only
+/// the first call takes effect.
+/// zshrs-original — no C counterpart. C zsh's `Src/init.c`
+/// `setupshin()` doesn't open a log file.
 ///
 /// Env vars:
 ///   ZSHRS_LOG=debug|trace|info|warn|error  (default: info)
@@ -60,10 +76,12 @@ pub fn init() {
 }
 
 /// Initialize logging + optional profiling subscribers, writing to
-/// `$ZSHRS_HOME/<filename>` (or `$HOME/.zshrs/<filename>`). Used by
-/// `zshrs-recorder` to land tracing in `zshrs-recorder.log` instead of
-/// the shell's `zshrs.log`. The daemon owns its own subscriber via
-/// `daemon/log.rs` and uses the path from `paths.log_file_name`.
+/// `$ZSHRS_HOME/<filename>` (or `$HOME/.zshrs/<filename>`). Used
+/// by `zshrs-recorder` to land tracing in `zshrs-recorder.log`
+/// instead of the shell's `zshrs.log`. The daemon owns its own
+/// subscriber via `daemon/log.rs` and uses the path from
+/// `paths.log_file_name`.
+/// zshrs-original — no C counterpart.
 ///
 /// Safe to call multiple times — only the first call takes effect.
 pub fn init_named(filename: &str) {
@@ -157,8 +175,12 @@ pub fn init_named(filename: &str) {
     });
 }
 
-/// Flush all log writers. Call before std::process::exit() to ensure
-/// buffered log data reaches disk — exit() doesn't run destructors.
+/// Flush all log writers. Call before `std::process::exit()` to
+/// ensure buffered log data reaches disk — `exit()` doesn't run
+/// destructors.
+/// zshrs-original — no C counterpart. C zsh's stderr is line-
+/// buffered (or unbuffered), so it doesn't need an explicit flush
+/// step.
 pub fn flush() {
     // The WorkerGuard flushes on drop, but we can't drop a static.
     // Instead, give the non-blocking writer time to drain its buffer.
@@ -166,15 +188,22 @@ pub fn flush() {
     std::thread::sleep(std::time::Duration::from_millis(50));
 }
 
-/// Convenience: check if profiling features are compiled in
+/// Check if the chrome-tracing profiling feature is compiled in.
+/// zshrs-original — no C counterpart. C zsh has the `zsh/zprof`
+/// module (Src/Modules/zprof.c) for function-level profiling but
+/// nothing as fine-grained as chrome:// tracing spans.
 pub fn profiling_enabled() -> bool {
     cfg!(feature = "profiling")
 }
 
+/// Check if the flamegraph feature is compiled in.
+/// zshrs-original — no C counterpart.
 pub fn flamegraph_enabled() -> bool {
     cfg!(feature = "flamegraph")
 }
 
+/// Check if the Prometheus metrics exporter is compiled in.
+/// zshrs-original — no C counterpart.
 pub fn prometheus_enabled() -> bool {
     cfg!(feature = "prometheus")
 }
