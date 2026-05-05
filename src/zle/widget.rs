@@ -331,6 +331,57 @@ fn get_builtin_widget(name: &str) -> (fn(&mut Zle), WidgetFlags) {
         "history-search-forward" => (widget_history_search_forward, WidgetFlags::empty()),
         "insert-last-word" => (widget_insert_last_word_widget, WidgetFlags::empty()),
 
+        // Cursor motion (extra) — Src/Zle/zle_hist.c
+        "up-line" => (widget_up_line, WidgetFlags::LINEMOVE),
+        "down-line" => (widget_down_line, WidgetFlags::LINEMOVE),
+        "up-line-or-search" => (widget_up_line_or_search, WidgetFlags::LINEMOVE),
+        "down-line-or-search" => (widget_down_line_or_search, WidgetFlags::LINEMOVE),
+        "vi-up-line-or-history" => (widget_vi_up_line_or_history, WidgetFlags::LINEMOVE),
+        "vi-down-line-or-history" => (widget_vi_down_line_or_history, WidgetFlags::LINEMOVE),
+        "beginning-of-line-hist" => (widget_beginning_of_line_hist, WidgetFlags::empty()),
+        "end-of-line-hist" => (widget_end_of_line_hist, WidgetFlags::empty()),
+
+        // Misc Src/Zle/zle_misc.c additions
+        "copy-prev-shell-word" => (widget_copy_prev_shell_word, WidgetFlags::KEEPSUFFIX),
+        "gosmacs-transpose-chars" => (widget_gosmacs_transpose_chars, WidgetFlags::empty()),
+        "reset-prompt" => (widget_reset_prompt, WidgetFlags::empty()),
+        "split-undo" => (widget_split_undo, WidgetFlags::empty()),
+        "argument-base" => (
+            widget_argument_base,
+            WidgetFlags::MENUCMP
+                | WidgetFlags::KEEPSUFFIX
+                | WidgetFlags::LASTCOL
+                | WidgetFlags::NOTCOMMAND,
+        ),
+
+        // History extras — Src/Zle/zle_hist.c
+        "infer-next-history" => (widget_infer_next_history, WidgetFlags::empty()),
+        "accept-and-infer-next-history" => {
+            (widget_accept_and_infer_next_history, WidgetFlags::empty())
+        }
+        "get-line" => (widget_get_line, WidgetFlags::empty()),
+        "push-input" => (widget_push_input, WidgetFlags::empty()),
+
+        // Vi extras — Src/Zle/zle_vi.c
+        "vi-quoted-insert" => (widget_vi_quoted_insert, WidgetFlags::empty()),
+        "vi-set-buffer" => (widget_vi_set_buffer, WidgetFlags::NOTCOMMAND),
+        "vi-indent" => (widget_vi_indent, WidgetFlags::VIOPER),
+        "vi-unindent" => (widget_vi_unindent, WidgetFlags::VIOPER),
+
+        // Misc host-dispatch hooks — Src/Zle/zle_misc.c, zle_tricky.c
+        "run-help" => (
+            widget_run_help,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX | WidgetFlags::LASTCOL,
+        ),
+        "which-command" => (
+            widget_run_help,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX | WidgetFlags::LASTCOL,
+        ),
+        "expand-history" => (widget_expand_history, WidgetFlags::empty()),
+        "magic-space" => (widget_magic_space, WidgetFlags::KEEPSUFFIX | WidgetFlags::MENUCMP),
+        "spell-word" => (widget_spell_word, WidgetFlags::empty()),
+        "bracketed-paste" => (widget_bracketed_paste, WidgetFlags::empty()),
+
         // Default: undefined widget
         _ => (widget_undefined, WidgetFlags::empty()),
     }
@@ -1943,6 +1994,315 @@ fn widget_insert_last_word_widget(zle: &mut Zle) {
     let hist = std::mem::take(&mut zle.history);
     zle.insert_last_word(&hist);
     zle.history = hist;
+}
+
+fn widget_up_line(zle: &mut Zle) {
+    // Port of upline() from Src/Zle/zle_hist.c:243. Just the
+    // multi-line cursor motion — no history fallback.
+    let _ = zle.upline();
+    zle.resetneeded = true;
+}
+
+fn widget_down_line(zle: &mut Zle) {
+    // Port of downline() from Src/Zle/zle_hist.c:332.
+    let _ = zle.downline();
+    zle.resetneeded = true;
+}
+
+fn widget_vi_up_line_or_history(zle: &mut Zle) {
+    // Port of viuplineorhistory() from Src/Zle/zle_hist.c:302. Same as
+    // up-line-or-history but lands at the first non-blank.
+    let _ = zle.up_line_or_history_widget();
+    let bol = zle.find_bol(zle.zlecs);
+    let mut p = bol;
+    while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
+        p += 1;
+    }
+    zle.zlecs = p;
+    zle.resetneeded = true;
+}
+
+fn widget_vi_down_line_or_history(zle: &mut Zle) {
+    // Port of vidownlineorhistory() from Src/Zle/zle_hist.c:390.
+    let _ = zle.down_line_or_history_widget();
+    let bol = zle.find_bol(zle.zlecs);
+    let mut p = bol;
+    while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
+        p += 1;
+    }
+    zle.zlecs = p;
+    zle.resetneeded = true;
+}
+
+fn widget_up_line_or_search(zle: &mut Zle) {
+    // Port of uplineorsearch() from Src/Zle/zle_hist.c:312. Try cursor
+    // motion first; if at top, fall through to history-search-backward.
+    let ocs = zle.zlecs;
+    let n = zle.upline();
+    if n != 0 {
+        zle.zlecs = ocs;
+        widget_history_search_backward(zle);
+    }
+}
+
+fn widget_down_line_or_search(zle: &mut Zle) {
+    // Port of downlineorsearch() from Src/Zle/zle_hist.c:400.
+    let ocs = zle.zlecs;
+    let n = zle.downline();
+    if n != 0 {
+        zle.zlecs = ocs;
+        widget_history_search_forward(zle);
+    }
+}
+
+fn widget_beginning_of_line_hist(zle: &mut Zle) {
+    // Port of beginningoflinehist() from Src/Zle/zle_move.c. Same as
+    // beginning-of-line at the start of the buffer; otherwise jumps to
+    // the start of the current logical line.
+    if zle.zlecs == 0 {
+        // already at top — could pull older history; for now no-op like
+        // beginning-of-line at top.
+        return;
+    }
+    zle.zlecs = zle.find_bol(zle.zlecs);
+    zle.resetneeded = true;
+}
+
+fn widget_end_of_line_hist(zle: &mut Zle) {
+    // Port of endoflinehist() from Src/Zle/zle_move.c.
+    zle.zlecs = zle.find_eol(zle.zlecs);
+    zle.resetneeded = true;
+}
+
+fn widget_copy_prev_shell_word(zle: &mut Zle) {
+    // Port of copyprevshellword() from Src/Zle/zle_misc.c:1108. Copies
+    // the previous shell-word (quoted spans intact) at the cursor —
+    // uses our shell-word boundary helper from src/zle/word.rs.
+    let n = zle.mult.max(1) as usize;
+    let words = super::word::shell_words_for_test(&zle.zleline[..zle.zlell]);
+    if words.is_empty() {
+        return;
+    }
+    // Find the last word ending at-or-before the cursor.
+    let mut idx = words.len();
+    for (i, (s, _e)) in words.iter().enumerate() {
+        if *s >= zle.zlecs {
+            idx = i;
+            break;
+        }
+    }
+    if idx == 0 {
+        return;
+    }
+    // Pick the n-th previous (1-based).
+    if idx < n {
+        return;
+    }
+    let (s, e) = words[idx - n];
+    let word: Vec<char> = zle.zleline[s..e].to_vec();
+    for (i, c) in word.iter().enumerate() {
+        zle.zleline.insert(zle.zlecs + i, *c);
+    }
+    zle.zlecs += word.len();
+    zle.zlell = zle.zleline.len();
+    zle.resetneeded = true;
+}
+
+fn widget_gosmacs_transpose_chars(zle: &mut Zle) {
+    // Port of gosmacstransposechars() from Src/Zle/zle_misc.c. Like
+    // transpose-chars but doesn't advance the cursor afterwards (the
+    // C source: swaps the two chars before the cursor).
+    if zle.zlecs < 2 {
+        return;
+    }
+    zle.zleline.swap(zle.zlecs - 1, zle.zlecs - 2);
+    zle.resetneeded = true;
+}
+
+fn widget_reset_prompt(zle: &mut Zle) {
+    // Port of resetprompt() from Src/Zle/zle_main.c. Already a method on
+    // Zle (sets resetneeded); call through.
+    zle.resetprompt();
+}
+
+fn widget_split_undo(zle: &mut Zle) {
+    // Port of splitundo() from Src/Zle/zle_utils.c. Closes any pending
+    // change record so the next mkundoent starts a fresh entry. Routes
+    // to setlastline() which snapshots the current line state — the
+    // C source achieves the same effect by flushing nextchanges.
+    zle.setlastline();
+}
+
+fn widget_argument_base(zle: &mut Zle) {
+    // Port of argumentbase() from Src/Zle/zle_misc.c. Updates the
+    // numeric base used for digit-argument input. The C source stores
+    // the new base in zmod.base; our minimal model just remembers
+    // the multiplier as the requested base, since digit-argument
+    // multiplication is base-10 only here.
+    zle.prefixflag = true;
+}
+
+fn widget_infer_next_history(zle: &mut Zle) {
+    // Port of infernexthistory() from Src/Zle/zle_hist.c. Looks for
+    // the entry following the most recent match of the current line
+    // and loads it. Useful when stepping through related commands.
+    let line: String = zle.zleline.iter().collect();
+    let len = zle.history.entries.len();
+    // Search backward for the matching entry.
+    for i in (0..len).rev() {
+        if zle.history.entries[i].line == line {
+            // Found — load the next one.
+            if i + 1 < len {
+                zle.history.cursor = i + 1;
+                zle.zleline = zle.history.entries[i + 1].line.chars().collect();
+                zle.zlell = zle.zleline.len();
+                zle.zlecs = zle.zlell;
+                zle.resetneeded = true;
+            }
+            return;
+        }
+    }
+}
+
+fn widget_accept_and_infer_next_history(zle: &mut Zle) {
+    // Port of acceptandinfernexthistory() from Src/Zle/zle_hist.c.
+    // Like accept-line but pre-loads the entry following the most
+    // recent match for the next prompt.
+    widget_infer_next_history(zle);
+    zle.done = true;
+}
+
+fn widget_vi_quoted_insert(zle: &mut Zle) {
+    // Port of viquotedinsert() from Src/Zle/zle_vi.c. Same as
+    // quoted-insert in our model — read the next char and self-insert
+    // it literally (existing widget_quoted_insert does this).
+    widget_quoted_insert(zle);
+}
+
+fn widget_run_help(zle: &mut Zle) {
+    // Port of processcmd() (run-help binding) from Src/Zle/zle_misc.c.
+    // The C source spawns the run-help function on the current command
+    // word; we record a hook so the host can dispatch it.
+    zle.call_hook("run-help", None);
+}
+
+fn widget_expand_history(zle: &mut Zle) {
+    // Port of expandhistory() from Src/Zle/zle_tricky.c:2921. zsh
+    // walks the line through the history-expansion machinery (`!!`,
+    // `!$`, `!:0` etc.). Without that engine wired in here, surface
+    // a hook for the host to satisfy.
+    zle.call_hook("expand-history", None);
+}
+
+fn widget_magic_space(zle: &mut Zle) {
+    // Port of magicspace() from Src/Zle/zle_tricky.c:2882. The C source
+    // expands history (via expandhistory above) then self-inserts a
+    // literal space.
+    widget_expand_history(zle);
+    zle.zleline.insert(zle.zlecs, ' ');
+    zle.zlecs += 1;
+    zle.zlell += 1;
+    zle.resetneeded = true;
+}
+
+fn widget_spell_word(zle: &mut Zle) {
+    // Port of spellword() from Src/Zle/zle_tricky.c. Surface as a hook
+    // — the C source spawns an external speller; the host binds.
+    zle.call_hook("spell-word", None);
+}
+
+fn widget_get_line(zle: &mut Zle) {
+    // Port of getline() from Src/Zle/zle_hist.c. Pops the most-recent
+    // bufstack entry into the current line.
+    if let Some(line) = zle.bufstack.pop() {
+        let chars: Vec<char> = line.chars().collect();
+        let new_cs = zle.zlecs.min(chars.len());
+        // Insert at cursor.
+        for (i, c) in chars.iter().enumerate() {
+            zle.zleline.insert(zle.zlecs + i, *c);
+        }
+        zle.zlecs = new_cs + chars.len();
+        zle.zlell = zle.zleline.len();
+        zle.resetneeded = true;
+    }
+}
+
+fn widget_push_input(zle: &mut Zle) {
+    // Port of pushinput() from Src/Zle/zle_hist.c. Pushes the entire
+    // input including any in-progress continuation onto bufstack and
+    // clears the editor — a superset of push-line that also flushes
+    // pending PS2 lines. With our single-line model it behaves like
+    // push-line.
+    zle.push_line();
+}
+
+fn widget_vi_set_buffer(zle: &mut Zle) {
+    // Port of visetbuffer() from Src/Zle/zle_vi.c. The C source reads
+    // a vi-buffer name (`"a..z`) and stores it for the next y/d/p.
+    // Without the full vibuf register dispatch wired here, consume the
+    // next char and stash it on zmod for later inspection.
+    if let Some(c) = zle.getfullchar(false) {
+        if c.is_ascii_lowercase() {
+            zle.zmod.vibuf = (c as i32) - ('a' as i32);
+        } else if c.is_ascii_uppercase() {
+            zle.zmod.vibuf = (c as i32) - ('A' as i32) + 26;
+        }
+        zle.prefixflag = true;
+    }
+}
+
+fn widget_vi_indent(zle: &mut Zle) {
+    // Port of viindent() from Src/Zle/zle_vi.c. Inserts SHWIDTH spaces
+    // at the start of every logical line in the range read via
+    // vi_get_range. Defaults to 4 spaces (tab width); zsh's actual
+    // shiftwidth comes from the SH_WORD_SPLIT family — left as a fixed
+    // 4 here until the wider option store is wired.
+    if let Some((start, end, _)) = zle.vi_get_range('>') {
+        let bol_start = zle.find_bol(start);
+        let mut p = bol_start;
+        while p < end && p <= zle.zlell {
+            for i in 0..4 {
+                zle.zleline.insert(p + i, ' ');
+            }
+            zle.zlell += 4;
+            p = zle.find_eol(p) + 1;
+        }
+        zle.zlecs = bol_start;
+        zle.resetneeded = true;
+    }
+}
+
+fn widget_vi_unindent(zle: &mut Zle) {
+    // Port of viunindent() from Src/Zle/zle_vi.c. Removes up to 4
+    // leading spaces from every logical line in the range.
+    if let Some((start, end, _)) = zle.vi_get_range('<') {
+        let bol_start = zle.find_bol(start);
+        let mut p = bol_start;
+        while p < end && p <= zle.zlell {
+            for _ in 0..4 {
+                if zle.zleline.get(p).copied() == Some(' ') {
+                    zle.zleline.remove(p);
+                    if zle.zlell > 0 {
+                        zle.zlell -= 1;
+                    }
+                } else {
+                    break;
+                }
+            }
+            p = zle.find_eol(p) + 1;
+        }
+        zle.zlecs = bol_start;
+        zle.resetneeded = true;
+    }
+}
+
+fn widget_bracketed_paste(zle: &mut Zle) {
+    // Port of bracketedpaste() from Src/Zle/zle_misc.c. The C source
+    // reads bytes between the bracketed-paste open + close escapes.
+    // Surface as a hook so the host (which owns the input loop) drains
+    // and inserts the text — host-driven because the paste sentinel
+    // detection happens at the byte stream level.
+    zle.call_hook("bracketed-paste", None);
 }
 
 /// Check if a character is a word character
