@@ -23658,7 +23658,19 @@ impl ShellExecutor {
                         's' => silent = true,
                         'z' => to_history = true,
                         'A' => use_array = true,
-                        'c' | 'l' => {} // TODO
+                        'c' | 'l' => {
+                            // Port of read -c / -l from Src/builtin.c:6454.
+                            // The C source dispatches both to the
+                            // compctlread function pointer; without an
+                            // active completion-widget context they're
+                            // an error. zsh writes:
+                            //   "read: option valid only in functions called from completion"
+                            // and exits 1.
+                            eprintln!(
+                                "zshrs:read:1: option valid only in functions called from completion"
+                            );
+                            return 1;
+                        }
                         'e' => echo_line = true,
                         'E' => echo_and_assign = true,
                         'n' => {
@@ -33975,7 +33987,18 @@ impl ShellExecutor {
                         'a' => print_across = true,
                         'i' => sort_ignore_case = true,
                         'b' => bindkey_escapes = true,
-                        'p' => {} // -p (write to coprocess) — TODO
+                        'p' => {
+                            // Port of print -p from Src/builtin.c bin_print.
+                            // The C source writes to the coproc pipe (coprocout).
+                            // zshrs doesn't have a live coproc fd here, so
+                            // surface an error matching zsh's "no coprocess"
+                            // diagnostic at builtin.c:5474 area when coproc
+                            // isn't running. Real coproc support requires
+                            // the coproc pipe wiring in exec.c we haven't
+                            // ported yet.
+                            eprintln!("zshrs:print:1: no coprocess");
+                            return 1;
+                        }
                         'u' => {
                             // -u n: output to fd n. zsh requires a
                             // numeric argument; non-numeric ->
