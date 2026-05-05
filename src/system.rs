@@ -10,6 +10,10 @@ const SYSREAD_BUFSIZE: usize = 8192;
 
 /// Return values for sysread
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `sysread` outcome variants.
+/// Mirrors the integer return values `bin_sysread()` from
+/// Src/Modules/system.c:72 produces: success / EOF / timeout /
+/// error.
 pub enum SysreadResult {
     Success = 0,
     ParamError = 1,
@@ -21,6 +25,10 @@ pub enum SysreadResult {
 
 /// Options for sysread
 #[derive(Debug, Default)]
+/// `sysread` builtin options.
+/// Port of the `Options ops` flag bag `bin_sysread()`
+/// (Src/Modules/system.c:72) reads — `-i`/`-o` fd, `-s` size,
+/// `-c` count, `-t` timeout.
 pub struct SysreadOptions {
     pub input_fd: Option<i32>,
     pub output_fd: Option<i32>,
@@ -31,6 +39,9 @@ pub struct SysreadOptions {
 }
 
 /// Perform a system read
+/// `sysread` builtin entry point.
+/// Port of `bin_sysread()` from Src/Modules/system.c:72 — wraps
+/// `read(2)` with optional `select(2)` timeout.
 pub fn sysread(options: &SysreadOptions) -> (SysreadResult, Option<Vec<u8>>, usize) {
     let input_fd = options.input_fd.unwrap_or(0);
     let bufsize = options.bufsize.unwrap_or(SYSREAD_BUFSIZE);
@@ -112,12 +123,18 @@ fn wait_for_read(fd: i32, timeout_secs: f64) -> bool {
 
 /// Options for syswrite
 #[derive(Debug, Default)]
+/// `syswrite` builtin options.
+/// Port of the `Options ops` flag bag `bin_syswrite()` from
+/// Src/Modules/system.c:238 reads — `-c` count, `-o` fd.
 pub struct SyswriteOptions {
     pub output_fd: Option<i32>,
     pub count_var: Option<String>,
 }
 
 /// Perform a system write
+/// `syswrite` builtin entry point.
+/// Port of `bin_syswrite()` from Src/Modules/system.c:238 —
+/// wraps `write(2)` with `EINTR` retry.
 pub fn syswrite(data: &[u8], options: &SyswriteOptions) -> (i32, usize) {
     let output_fd = options.output_fd.unwrap_or(1);
 
@@ -155,6 +172,10 @@ pub fn syswrite(data: &[u8], options: &SyswriteOptions) -> (i32, usize) {
 
 /// Open options for sysopen
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `sysopen` flag bits.
+/// Port of the `O_*` set the C source's `bin_sysopen()`
+/// (Src/Modules/system.c:319) maps from `-o` argument tokens to
+/// `open(2)` flag bits.
 pub enum OpenOpt {
     Cloexec,
     Nofollow,
@@ -200,6 +221,9 @@ impl OpenOpt {
 
 /// Options for sysopen
 #[derive(Debug, Default)]
+/// `sysopen` builtin options.
+/// Mirrors the `Options ops` flag bag `bin_sysopen()` reads —
+/// `-r`/`-w`/`-a`/`-u`/`-m` mode bits + the `-o` flag list.
 pub struct SysopenOptions {
     pub read: bool,
     pub write: bool,
@@ -211,6 +235,10 @@ pub struct SysopenOptions {
 }
 
 /// Open a file with system call
+/// `sysopen` builtin entry point.
+/// Port of `bin_sysopen()` from Src/Modules/system.c:319 —
+/// wraps `open(2)` with the assembled flag bag and optional
+/// mode.
 pub fn sysopen(path: &str, options: &SysopenOptions) -> Result<i32, String> {
     #[cfg(unix)]
     {
@@ -277,6 +305,10 @@ pub fn sysopen(path: &str, options: &SysopenOptions) -> Result<i32, String> {
 
 /// Seek whence options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// `sysseek` whence values.
+/// Mirrors the `SEEK_SET` / `SEEK_CUR` / `SEEK_END` constants the
+/// C source's `bin_sysseek()` (Src/Modules/system.c:433) accepts
+/// via the `-w` flag.
 pub enum SeekWhence {
     #[default]
     Start,
@@ -307,12 +339,18 @@ impl SeekWhence {
 
 /// Options for sysseek
 #[derive(Debug, Default)]
+/// `sysseek` builtin options.
+/// Port of the `Options ops` flag bag `bin_sysseek()`
+/// (Src/Modules/system.c:433) reads — `-u` fd, `-w` whence.
 pub struct SysseekOptions {
     pub fd: Option<i32>,
     pub whence: SeekWhence,
 }
 
 /// Seek on a file descriptor
+/// `sysseek` builtin entry point.
+/// Port of `bin_sysseek()` from Src/Modules/system.c:433 —
+/// wraps `lseek(2)`.
 pub fn sysseek(offset: i64, options: &SysseekOptions) -> Result<i64, String> {
     let fd = options.fd.unwrap_or(0);
 
@@ -333,6 +371,10 @@ pub fn sysseek(offset: i64, options: &SysseekOptions) -> Result<i64, String> {
 }
 
 /// Get current position in file descriptor
+/// `systell()` math function.
+/// Port of `math_systell()` from Src/Modules/system.c:467 — the
+/// C source registers it as a math function for `((pos =
+/// systell(fd)))` arithmetic.
 pub fn systell(fd: i32) -> Result<i64, String> {
     #[cfg(unix)]
     {
@@ -389,6 +431,10 @@ pub const ERRNO_NAMES: &[(&str, i32)] = &[
 ];
 
 /// Get error number from name
+/// Resolve an `ERRNO_NAME` to its integer code.
+/// Port of the errno lookup `bin_syserror()` from
+/// Src/Modules/system.c:494 performs against the C source's
+/// per-platform `errnos[]` table.
 pub fn errno_from_name(name: &str) -> Option<i32> {
     ERRNO_NAMES
         .iter()
@@ -397,6 +443,9 @@ pub fn errno_from_name(name: &str) -> Option<i32> {
 }
 
 /// Get error name from number
+/// Inverse of `errno_from_name`.
+/// Port of `errnosgetfn()` from Src/Modules/system.c:832 — used
+/// by `${errnos[N]}` lookup.
 pub fn errno_to_name(errno: i32) -> Option<&'static str> {
     ERRNO_NAMES
         .iter()
@@ -405,6 +454,9 @@ pub fn errno_to_name(errno: i32) -> Option<&'static str> {
 }
 
 /// Get error message for errno
+/// Format an `errno`-aware error message.
+/// Port of `bin_syserror()` from Src/Modules/system.c:494 —
+/// wraps `strerror(3)` with an optional caller-supplied prefix.
 pub fn syserror(errno: i32, prefix: &str) -> String {
     let msg = io::Error::from_raw_os_error(errno).to_string();
     format!("{}{}", prefix, msg)
@@ -412,6 +464,10 @@ pub fn syserror(errno: i32, prefix: &str) -> String {
 
 /// Options for zsystem flock
 #[derive(Debug, Default)]
+/// `zsystem flock` options.
+/// Mirrors the flag bag `bin_zsystem_flock()` from
+/// Src/Modules/system.c:546 reads — `-r`/`-x`/`-e` lock type,
+/// `-t` timeout, `-i` non-blocking, `-f` fd.
 pub struct FlockOptions {
     pub cloexec: bool,
     pub read_lock: bool,
@@ -422,6 +478,9 @@ pub struct FlockOptions {
 
 /// Lock a file
 #[cfg(unix)]
+/// `zsystem flock` subcommand entry point.
+/// Port of `bin_zsystem_flock()` from Src/Modules/system.c:546 —
+/// wraps `flock(2)` (or `fcntl(F_SETLK)` on systems lacking it).
 pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
     use std::ffi::CString;
 
@@ -536,6 +595,9 @@ pub fn flock(path: &str, options: &FlockOptions) -> Result<i32, String> {
 
 /// Unlock a file descriptor
 #[cfg(unix)]
+/// Release a lock acquired by `flock()`.
+/// Port of the `flock(LOCK_UN)` path inside
+/// `bin_zsystem_flock()` (Src/Modules/system.c:546).
 pub fn funlock(fd: i32) -> Result<(), String> {
     // See cross-platform note above flock construction in flock_with_options.
     #[allow(clippy::unnecessary_cast)]
@@ -559,11 +621,18 @@ pub fn funlock(fd: i32) -> Result<(), String> {
 }
 
 /// Check if a zsystem feature is supported
+/// `zsystem supports` subcommand entry point.
+/// Port of `bin_zsystem_supports()` from Src/Modules/system.c:781
+/// — reports which `zsystem` subcommands are compiled in.
 pub fn zsystem_supports(feature: &str) -> bool {
     feature == "supports" || (feature == "flock" && cfg!(unix))
 }
 
 /// System parameters
+/// Fetch the `${sysparams}` map.
+/// Port of `getpmsysparams()` (Src/Modules/system.c:873) +
+/// `scanpmsysparams()` (line 885) — exposes selected `sysconf(3)`
+/// values to shell scripts.
 pub fn get_sysparams() -> HashMap<String, String> {
     let mut params = HashMap::new();
 
@@ -577,6 +646,9 @@ pub fn get_sysparams() -> HashMap<String, String> {
 }
 
 /// Get list of errno names
+/// Snapshot the `${errnos}` array.
+/// Port of the `errnos[]` table the C source builds at module
+/// load (referenced by `errnosgetfn()` Src/Modules/system.c:832).
 pub fn get_errnos() -> Vec<&'static str> {
     ERRNO_NAMES.iter().map(|(n, _)| *n).collect()
 }

@@ -17,6 +17,11 @@ pub const DEFAULT_WATCHFMT_NOHOST: &str = "%n has %a %l.";
 
 /// A utmp/utmpx entry representing a login session
 #[derive(Debug, Clone)]
+/// One utmp/utmpx entry (login session record).
+/// Mirrors the relevant fields of `WATCH_STRUCT_UTMP` from
+/// `<utmp.h>` / `<utmpx.h>` that Src/Modules/watch.c reads via
+/// `readwtab()` (line 537) and dispatches through `watchlog()`
+/// (line 458).
 pub struct UtmpEntry {
     pub user: String,
     pub line: String,
@@ -27,6 +32,11 @@ pub struct UtmpEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Login session classification.
+/// Mirrors the `USER_PROCESS` / `INIT_PROCESS` / `LOGIN_PROCESS`
+/// `ut_type` constants the C source's `watchlog()` (Src/Modules/
+/// watch.c:458) inspects when deciding whether an entry is a
+/// login.
 pub enum SessionType {
     UserProcess,
     DeadProcess,
@@ -44,6 +54,11 @@ impl UtmpEntry {
 
 /// Watch state for tracking login/logout events
 #[derive(Debug, Default)]
+/// Watch-loop running state.
+/// Port of the file-static `wtab` / `wtabsz` / `lastutmp_*` slots
+/// Src/Modules/watch.c keeps — `dowatch()` (line 597) compares
+/// the previous snapshot against the fresh utmp read to detect
+/// login/logout events.
 pub struct WatchState {
     last_check: i64,
     last_watch: i64,
@@ -224,6 +239,9 @@ fn read_utmp_file(_path: &str) -> Vec<UtmpEntry> {
 }
 
 /// Check if a watch pattern matches an entry field
+/// Match a `$watch` pattern against an actual user/host/tty.
+/// Port of `watchlog_match()` from Src/Modules/watch.c:434 — same
+/// `user@host:tty` triple-component matching.
 pub fn watch_match(pattern: &str, value: &str) -> bool {
     if pattern == value {
         return true;
@@ -270,6 +288,10 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 /// Format a watch event
+/// Format a watch event line (login or logout).
+/// Port of `watch3ary()` from Src/Modules/watch.c:206 (the
+/// per-format-character branch of `watchlog2()` line 242) — same
+/// `%n`/`%M`/`%l`/`%a`/`%T`/`%t`/`%w`/`%W`/`%D` directives.
 pub fn format_watch(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
     let mut result = String::new();
     let mut chars = fmt.chars().peekable();
@@ -427,6 +449,10 @@ fn format_time(timestamp: i64, fmt: &str) -> String {
 }
 
 /// Check a watch entry against the watch list
+/// Decide whether an entry should produce a watch event.
+/// Port of the per-entry filter inside `watchlog()` from
+/// Src/Modules/watch.c:458 — checks against `$watch` array
+/// excluding the current user.
 pub fn check_watch_entry(entry: &UtmpEntry, watch_list: &[String], current_user: &str) -> bool {
     if watch_list.is_empty() {
         return false;
@@ -496,6 +522,10 @@ fn matches_watch_pattern(pattern: &str, entry: &UtmpEntry) -> bool {
 }
 
 /// Perform watch check and return login/logout events
+/// Run one tick of the watch loop, returning login/logout events.
+/// Port of `dowatch()` from Src/Modules/watch.c:597 — the C
+/// source diffs the cached `wtab` against a fresh utmp read and
+/// fires `watchlog()` for each new entry / departure.
 pub fn do_watch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bool)> {
     let mut events = Vec::new();
     let new_entries = read_utmp();
@@ -558,6 +588,10 @@ pub fn do_watch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, b
 }
 
 /// Log builtin - force immediate watch check
+/// `log` builtin entry point.
+/// Port of `bin_log()` from Src/Modules/watch.c:681 — emits the
+/// last seen watch events using the user's `$WATCHFMT` (or the
+/// supplied override).
 pub fn builtin_log(state: &mut WatchState, current_user: &str, fmt: Option<&str>) -> String {
     let fmt_str = fmt
         .map(|s| s.to_string())
