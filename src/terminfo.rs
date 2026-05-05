@@ -4,7 +4,11 @@
 
 use std::collections::HashMap;
 
-/// Terminfo capability types
+/// Terminfo capability value union.
+/// Mirrors the three-way split (`bool` / `int` / `char *`) the
+/// `terminfo(5)` ABI exposes — `getterminfo()` from
+/// Src/Modules/terminfo.c:135 walks the matching boolean / number
+/// / string tables to dispatch.
 #[derive(Debug, Clone)]
 pub enum TermCapability {
     Boolean(bool),
@@ -12,7 +16,12 @@ pub enum TermCapability {
     String(String),
 }
 
-/// Terminfo interface - using environment and basic capabilities
+/// Terminfo interface backed by basic ANSI capabilities.
+/// Port of the file-static state Src/Modules/terminfo.c populates
+/// in `boot_()` (line 338) — the C source links against
+/// `libtinfo`/`libcurses` and reads the system terminfo database.
+/// The Rust port computes a minimal subset inline based on `$TERM`
+/// to avoid the libtinfo dependency.
 #[derive(Debug, Default)]
 pub struct Terminfo {
     initialized: bool,
@@ -25,7 +34,10 @@ impl Terminfo {
         Self::default()
     }
 
-    /// Initialize terminfo for the given terminal
+    /// Initialize terminfo for the given terminal name.
+    /// Port of the `setupterm()` call inside `boot_()` from
+    /// Src/Modules/terminfo.c:338 — picks up `$TERM` if no
+    /// argument is supplied.
     pub fn init(&mut self, term: Option<&str>) -> bool {
         let terminal = term
             .map(|s| s.to_string())
@@ -196,7 +208,9 @@ impl Terminfo {
         }
     }
 
-    /// Get any capability (auto-detect type)
+    /// Get any capability (auto-detect type).
+    /// Port of `getterminfo()` from Src/Modules/terminfo.c:135 — the
+    /// `getfn` slot the C source wires for `${terminfo[name]}`.
     pub fn get(&self, name: &str) -> Option<TermCapability> {
         if let Some(n) = self.get_num(name) {
             return Some(TermCapability::Number(n));
@@ -210,7 +224,9 @@ impl Terminfo {
         None
     }
 
-    /// Get all boolean capabilities
+    /// Snapshot all boolean capabilities.
+    /// Port of the boolean half of `scanterminfo()` from
+    /// Src/Modules/terminfo.c:177 — drives `${(kv)terminfo}`.
     pub fn booleans(&self) -> HashMap<String, bool> {
         let mut result = HashMap::new();
         for name in BOOL_NAMES.iter() {
@@ -221,7 +237,8 @@ impl Terminfo {
         result
     }
 
-    /// Get all numeric capabilities
+    /// Snapshot all numeric capabilities.
+    /// Numeric half of `scanterminfo()` (Src/Modules/terminfo.c:177).
     pub fn numbers(&self) -> HashMap<String, i32> {
         let mut result = HashMap::new();
         for name in NUM_NAMES.iter() {
@@ -232,7 +249,8 @@ impl Terminfo {
         result
     }
 
-    /// Get all string capabilities
+    /// Snapshot all string capabilities.
+    /// String half of `scanterminfo()` (Src/Modules/terminfo.c:177).
     pub fn strings(&self) -> HashMap<String, String> {
         let mut result = HashMap::new();
         for name in STR_NAMES.iter() {
@@ -254,21 +272,26 @@ impl Terminfo {
     }
 }
 
-/// Boolean capability names
+/// Boolean terminfo capability names.
+/// Port of the `boolnames[]` table from `term.h` — the canonical
+/// list `getterminfo()` (Src/Modules/terminfo.c:135) walks for
+/// boolean lookups.
 pub static BOOL_NAMES: &[&str] = &[
     "bw", "am", "bce", "ccc", "xhp", "xhpa", "cpix", "crxm", "xt", "xenl", "eo", "gn", "hc",
     "chts", "km", "daisy", "hs", "hls", "in", "lpix", "da", "db", "mir", "msgr", "nxon", "xsb",
     "npc", "ndscr", "nrrmc", "os", "mc5i", "xvpa", "sam", "eslok", "hz", "ul", "xon",
 ];
 
-/// Numeric capability names
+/// Numeric terminfo capability names.
+/// Port of the `numnames[]` table from `term.h`.
 pub static NUM_NAMES: &[&str] = &[
     "cols", "it", "lh", "lw", "lines", "lm", "xmc", "ma", "colors", "pairs", "wnum", "ncv", "nlab",
     "pb", "vt", "wsl", "bitwin", "bitype", "bufsz", "btns", "spinh", "spinv", "maddr", "mjump",
     "mcs", "mls", "npins", "orc", "orhi", "orl", "orvi", "cps", "widcs",
 ];
 
-/// String capability names
+/// String terminfo capability names.
+/// Port of the `strnames[]` table from `term.h`.
 pub static STR_NAMES: &[&str] = &[
     "acsc", "cbt", "bel", "cr", "cpi", "lpi", "chr", "cvr", "csr", "rmp", "tbc", "mgc", "clear",
     "el1", "el", "ed", "hpa", "cmdch", "cwin", "cup", "cud1", "home", "civis", "cub1", "mrcup",
@@ -306,9 +329,12 @@ pub static STR_NAMES: &[&str] = &[
     "evhlm", "sgr1", "slength",
 ];
 
-/// Execute echoti builtin
+/// `echoti` builtin entry point.
+/// Port of `bin_echoti()` from Src/Modules/terminfo.c:64 — the C
+/// source's terminfo-side counterpart of `echotc`. Looks up the
+/// requested capability through `setupterm`/`tigetstr`/`tigetnum`
+/// /`tigetflag`; the Rust port uses our minimal in-memory map.
 pub fn builtin_echoti(args: &[&str]) -> (i32, String) {
-    // Direct port of src/zsh/Src/Modules/terminfo.c:64-127 bin_echoti.
     if args.is_empty() {
         return (1, "echoti: capability name required\n".to_string());
     }
