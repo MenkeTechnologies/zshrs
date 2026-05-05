@@ -49,7 +49,13 @@ pub struct SelectResult {
     pub as_hash: HashMap<String, String>,
 }
 
-/// Perform select/poll on file descriptors
+/// Perform select/poll on file descriptors.
+/// Port of the `select(2)` core of `bin_zselect()` from
+/// Src/Modules/zselect.c:65 — populates the read/write/error fd
+/// sets, runs the kernel call (we use `poll(2)` since it scales past
+/// `FD_SETSIZE`), and surfaces ready fds either as a flag-prefixed
+/// array (`-r 0 -w 1`) or as an `fd → mode-string` hash to mirror
+/// the `-a` / `-A` output forms zsh exposes.
 #[cfg(unix)]
 pub fn zselect(options: &ZselectOptions) -> Result<SelectResult, String> {
     use std::collections::HashSet;
@@ -184,7 +190,12 @@ pub fn zselect(_options: &ZselectOptions) -> Result<SelectResult, String> {
     Err("your system does not implement the select system call".to_string())
 }
 
-/// Parse zselect arguments
+/// Parse zselect arguments.
+/// Port of the option-walk loop inside `bin_zselect()` from
+/// Src/Modules/zselect.c:65 plus `handle_digits()` (line 40) — both
+/// the long form (`-r 0 -w 1`) and the bundled form (`-r0 -w1`) are
+/// accepted, with `-a NAME` / `-A NAME` / `-t HUNDREDTHS` capturing
+/// the same flags the C source's `bin_zselect()` parses.
 pub fn parse_zselect_args(args: &[&str]) -> Result<ZselectOptions, String> {
     let mut options = ZselectOptions::default();
     let mut current_mode = SelectMode::Read;
@@ -289,7 +300,11 @@ pub fn parse_zselect_args(args: &[&str]) -> Result<ZselectOptions, String> {
     Ok(options)
 }
 
-/// Execute zselect builtin
+/// `zselect` builtin entry point.
+/// Port of `bin_zselect()` from Src/Modules/zselect.c:65 — wires
+/// `parse_zselect_args` → `zselect` → exit-status conversion the
+/// same way the C source returns 0 when at least one fd is ready
+/// and 1 otherwise (timeout or empty result).
 pub fn builtin_zselect(args: &[&str]) -> (i32, Vec<String>, HashMap<String, String>) {
     let options = match parse_zselect_args(args) {
         Ok(opts) => opts,
