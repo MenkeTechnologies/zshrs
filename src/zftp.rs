@@ -8,7 +8,10 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
-/// FTP transfer type
+/// FTP transfer type (`TYPE A` / `TYPE I`).
+/// Port of the `ZFTP_TYPE_*` flags Src/Modules/zftp.c uses inside
+/// `zftp_type()` (line 2426) — `A` for ASCII, `I` for binary
+/// (RFC 959 §3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferType {
     Ascii,
@@ -24,7 +27,10 @@ impl TransferType {
     }
 }
 
-/// FTP transfer mode
+/// FTP transfer mode (`MODE S` / `MODE B`).
+/// Port of `zftp_mode()` from Src/Modules/zftp.c:2464 — same
+/// `STREAM`/`BLOCK` selection. The C source also uses these as
+/// drivers for `zfread_block()`/`zfwrite_block()` (lines 1359/1411).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferMode {
     Stream,
@@ -40,7 +46,11 @@ impl TransferMode {
     }
 }
 
-/// FTP response
+/// FTP server response (3-digit code + message).
+/// Port of the response handling inside `zfgetmsg()` from
+/// Src/Modules/zftp.c:702 — same `1xx`/`2xx`/`3xx`/`4xx`/`5xx`
+/// code-class predicates the C source uses to decide whether to
+/// continue, retry, or abort a sequence.
 #[derive(Debug, Clone)]
 pub struct FtpResponse {
     pub code: u32,
@@ -65,7 +75,11 @@ impl FtpResponse {
     }
 }
 
-/// FTP session state
+/// Per-session FTP state.
+/// Port of `struct zftp_session` from Src/Modules/zftp.c — the C
+/// source threads it through every `zftp_*` operation
+/// (`zftp_open` line 1690, `zftp_login` line 2118, etc.). Same
+/// shape (host / port / creds / type / mode / cwd).
 #[derive(Debug)]
 pub struct FtpSession {
     pub name: String,
@@ -505,7 +519,11 @@ fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {
     Ok((ip, port))
 }
 
-/// FTP sessions manager
+/// FTP sessions manager.
+/// Port of the file-static `zfsess_node` linked list +
+/// `zfsess_current` pointer Src/Modules/zftp.c keeps —
+/// `zftp_session()` (line 2889) drives the switch,
+/// `zftp_rmsession()` (line 2915) the removal.
 #[derive(Debug, Default)]
 pub struct Zftp {
     sessions: HashMap<String, FtpSession>,
@@ -573,7 +591,14 @@ impl Zftp {
     }
 }
 
-/// Execute zftp builtin
+/// `zftp` builtin entry point.
+/// Port of `bin_zftp()` from Src/Modules/zftp.c:3002 — the C
+/// source uses a subcommand dispatch table (`zftp_open`,
+/// `zftp_login`, `zftp_dir`, `zftp_cd`, `zftp_type`, `zftp_mode`,
+/// `zftp_local`, `zftp_getput`, `zftp_delete`, `zftp_mkdir`,
+/// `zftp_rename`, `zftp_quote`, `zftp_close`, `zftp_session`,
+/// `zftp_rmsession`, `zftp_params`, `zftp_test`). The Rust port
+/// maps each subcommand string onto a method on `Zftp`.
 pub fn builtin_zftp(args: &[&str], zftp: &mut Zftp) -> (i32, String) {
     if args.is_empty() {
         return (1, "zftp: subcommand required\n".to_string());

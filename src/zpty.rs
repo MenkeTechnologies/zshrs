@@ -177,8 +177,8 @@ pub fn disable_echo(fd: RawFd) -> io::Result<()> {
 }
 
 /// Read from a pty, optionally matching a pattern.
-/// Port of `ptyread()` from Src/Modules/zpty.c:548 — `poll(2)`
-/// + `read(2)` loop that bails when `pattern` is found in the
+/// Port of `ptyread()` from Src/Modules/zpty.c:548 — `poll(2)` +
+/// `read(2)` loop that bails when `pattern` is found in the
 /// accumulated buffer or when EOF/timeout fires.
 pub fn pty_read(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> {
     let mut buffer = vec![0u8; 4096];
