@@ -287,6 +287,50 @@ fn get_builtin_widget(name: &str) -> (fn(&mut Zle), WidgetFlags) {
             WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX | WidgetFlags::LASTCOL,
         ),
 
+        // Word ops (extra) — Src/Zle/zle_word.c
+        "delete-word" => (widget_delete_word, WidgetFlags::empty()),
+        "backward-delete-word" => (widget_backward_delete_word, WidgetFlags::KEEPSUFFIX),
+        "emacs-forward-word" => (widget_emacs_forward_word, WidgetFlags::empty()),
+        "emacs-backward-word" => (widget_emacs_backward_word, WidgetFlags::empty()),
+
+        // Region kill/buffer — Src/Zle/zle_misc.c
+        "kill-region" => (widget_kill_region, WidgetFlags::KILL | WidgetFlags::KEEPSUFFIX),
+        "kill-buffer" => (widget_kill_buffer, WidgetFlags::KILL | WidgetFlags::KEEPSUFFIX),
+
+        // Vi mark widgets — bodies in this file delegate to the existing
+        // Zle::vi_set_mark / Zle::vi_goto_mark methods (Src/Zle/zle_move.c).
+        "vi-set-mark" => (widget_vi_set_mark_widget, WidgetFlags::empty()),
+        "vi-goto-mark" => (widget_vi_goto_mark_widget, WidgetFlags::empty()),
+        "vi-goto-mark-line" => (widget_vi_goto_mark_line_widget, WidgetFlags::empty()),
+        "vi-match-bracket" => (widget_vi_match_bracket, WidgetFlags::empty()),
+        "vi-caps-lock-panic" => (widget_vi_caps_lock_panic, WidgetFlags::empty()),
+
+        // Vi line/yank — Src/Zle/zle_vi.c
+        "vi-kill-line" => (widget_vi_kill_line, WidgetFlags::KILL),
+        "vi-yank-eol" => (widget_vi_yank_eol, WidgetFlags::empty()),
+        "vi-beginning-of-line" => (widget_vi_beginning_of_line, WidgetFlags::empty()),
+        "vi-swap-case" => (widget_vi_swap_case, WidgetFlags::empty()),
+        "vi-oper-swap-case" => (widget_vi_oper_swap_case, WidgetFlags::VIOPER),
+        "vi-undo-change" => (widget_vi_undo_change, WidgetFlags::empty()),
+
+        // Argument prefixes — Src/Zle/zle_misc.c
+        "universal-argument" => (widget_universal_argument, WidgetFlags::NOTCOMMAND),
+        "neg-argument" => (widget_neg_argument, WidgetFlags::NOTCOMMAND),
+
+        // Misc — Src/Zle/zle_main.c, zle_misc.c
+        "recursive-edit" => (widget_recursive_edit, WidgetFlags::empty()),
+        "what-cursor-position" => (
+            widget_what_cursor_position,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX | WidgetFlags::LASTCOL,
+        ),
+        "set-local-history" => (widget_set_local_history_widget, WidgetFlags::empty()),
+        "undefined-key" => (widget_undefined_key, WidgetFlags::empty()),
+
+        // History search variants — Src/Zle/zle_hist.c
+        "history-search-backward" => (widget_history_search_backward, WidgetFlags::empty()),
+        "history-search-forward" => (widget_history_search_forward, WidgetFlags::empty()),
+        "insert-last-word" => (widget_insert_last_word_widget, WidgetFlags::empty()),
+
         // Default: undefined widget
         _ => (widget_undefined, WidgetFlags::empty()),
     }
@@ -1597,6 +1641,310 @@ fn widget_describe_key_briefly(zle: &mut Zle) {
     zle.describe_key_briefly();
 }
 
+fn widget_delete_word(zle: &mut Zle) {
+    // Port of deleteword() from Src/Zle/zle_word.c. Like kill-word but
+    // doesn't put the deleted text on the kill ring.
+    let saved_cs = zle.zlecs;
+    let end = zle.find_word_end(super::word::WordStyle::Emacs);
+    if end > saved_cs {
+        zle.zleline.drain(saved_cs..end);
+        zle.zlell = zle.zleline.len();
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_backward_delete_word(zle: &mut Zle) {
+    // Port of backwarddeleteword() from Src/Zle/zle_word.c. Like
+    // backward-kill-word but no kill-ring update.
+    let end = zle.zlecs;
+    let start = zle.find_word_start(super::word::WordStyle::Emacs);
+    if end > start {
+        zle.zleline.drain(start..end);
+        zle.zlell = zle.zleline.len();
+        zle.zlecs = start;
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_emacs_forward_word(zle: &mut Zle) {
+    // Port of emacsforwardword() from Src/Zle/zle_word.c — same as
+    // forward-word in emacs style; explicit name binding for users who
+    // want it independent of the global word style.
+    zle.zlecs = zle.find_word_end(super::word::WordStyle::Emacs);
+    zle.resetneeded = true;
+}
+
+fn widget_emacs_backward_word(zle: &mut Zle) {
+    // Port of emacsbackwardword() from Src/Zle/zle_word.c.
+    zle.zlecs = zle.find_word_start(super::word::WordStyle::Emacs);
+    zle.resetneeded = true;
+}
+
+fn widget_kill_region(zle: &mut Zle) {
+    // Port of killregion() from Src/Zle/zle_misc.c. Drains the region
+    // (mark..zlecs, normalised) into the kill ring and removes it.
+    let (lo, hi) = if zle.mark <= zle.zlecs {
+        (zle.mark, zle.zlecs)
+    } else {
+        (zle.zlecs, zle.mark)
+    };
+    let lo = lo.min(zle.zlell);
+    let hi = hi.min(zle.zlell);
+    if hi <= lo {
+        return;
+    }
+    let removed: Vec<char> = zle.zleline[lo..hi].to_vec();
+    zle.zleline.drain(lo..hi);
+    zle.zlell = zle.zleline.len();
+    zle.zlecs = lo;
+    zle.killring.push_front(removed);
+    if zle.killring.len() > zle.killringmax {
+        zle.killring.pop_back();
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_kill_buffer(zle: &mut Zle) {
+    // Port of killbuffer() from Src/Zle/zle_misc.c. Cuts the entire line
+    // to the kill ring.
+    if zle.zlell == 0 {
+        return;
+    }
+    let killed: Vec<char> = zle.zleline.clone();
+    zle.zleline.clear();
+    zle.zlell = 0;
+    zle.zlecs = 0;
+    zle.killring.push_front(killed);
+    if zle.killring.len() > zle.killringmax {
+        zle.killring.pop_back();
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_vi_set_mark_widget(zle: &mut Zle) {
+    // Port of visetmark() from Src/Zle/zle_move.c:872. Reads the next
+    // char as the mark name and stores it in vi_marks via the existing
+    // Zle::vi_set_mark method.
+    if let Some(c) = zle.getfullchar(false) {
+        zle.vi_set_mark(c);
+    }
+}
+
+fn widget_vi_goto_mark_widget(zle: &mut Zle) {
+    // Port of vigotomark() from Src/Zle/zle_move.c:887.
+    if let Some(c) = zle.getfullchar(false) {
+        zle.vi_goto_mark(c);
+    }
+}
+
+fn widget_vi_goto_mark_line_widget(zle: &mut Zle) {
+    // Port of vigotomarkline() from Src/Zle/zle_move.c. Same as
+    // vi-goto-mark but lands at first non-blank of the line containing
+    // the mark.
+    if let Some(c) = zle.getfullchar(false) {
+        zle.vi_goto_mark(c);
+        // Move to first non-blank of the line we landed on.
+        let bol = zle.find_bol(zle.zlecs);
+        let mut p = bol;
+        while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
+            p += 1;
+        }
+        zle.zlecs = p;
+        zle.resetneeded = true;
+    }
+}
+
+fn widget_vi_match_bracket(zle: &mut Zle) {
+    // Port of vimatchbracket() from Src/Zle/zle_vi.c. Method already
+    // exists on Zle via vi_match_bracket.
+    zle.vi_match_bracket();
+}
+
+fn widget_vi_caps_lock_panic(zle: &mut Zle) {
+    // Port of vicapslockpanic() from Src/Zle/zle_vi.c. zsh's joke
+    // widget: blocks until you press a non-Caps-Lock key. Practical
+    // port simply beeps once.
+    zle.handle_feep();
+}
+
+fn widget_vi_kill_line(zle: &mut Zle) {
+    // Port of vikillline() from Src/Zle/zle_vi.c. Kills from cursor
+    // back to start of line — different from Emacs kill-line which
+    // kills forward.
+    let bol = zle.find_bol(zle.zlecs);
+    if zle.zlecs > bol {
+        let killed: Vec<char> = zle.zleline.drain(bol..zle.zlecs).collect();
+        zle.zlell = zle.zleline.len();
+        zle.zlecs = bol;
+        zle.killring.push_front(killed);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
+        zle.resetneeded = true;
+    }
+}
+
+fn widget_vi_yank_eol(zle: &mut Zle) {
+    // Port of viyankeol() from Src/Zle/zle_vi.c:537. Copies from cursor
+    // to end of line into the kill ring without removing.
+    let eol = zle.find_eol(zle.zlecs);
+    if eol > zle.zlecs {
+        let region: Vec<char> = zle.zleline[zle.zlecs..eol].to_vec();
+        zle.killring.push_front(region);
+        if zle.killring.len() > zle.killringmax {
+            zle.killring.pop_back();
+        }
+    }
+}
+
+fn widget_vi_beginning_of_line(zle: &mut Zle) {
+    // Port of vibeginningofline() from Src/Zle/zle_move.c:728.
+    zle.zlecs = zle.find_bol(zle.zlecs);
+    zle.resetneeded = true;
+}
+
+fn widget_vi_swap_case(zle: &mut Zle) {
+    // Port of viswapcase() from Src/Zle/zle_vi.c. Swap the case of
+    // the char under the cursor and advance one position; repeat
+    // `mult` times.
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        if zle.zlecs >= zle.zlell {
+            break;
+        }
+        let c = zle.zleline[zle.zlecs];
+        let swapped = if c.is_uppercase() {
+            c.to_lowercase().next().unwrap_or(c)
+        } else if c.is_lowercase() {
+            c.to_uppercase().next().unwrap_or(c)
+        } else {
+            c
+        };
+        zle.zleline[zle.zlecs] = swapped;
+        if zle.zlecs < zle.zlell {
+            zle.zlecs += 1;
+        }
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_vi_oper_swap_case(zle: &mut Zle) {
+    // Port of vioperswapcase() from Src/Zle/zle_vi.c. As an operator,
+    // swaps the case of every char in a vi range. The range read is
+    // delegated to `vi_get_range('~')` (the C source uses the same
+    // operator-pending machinery as d/c/y).
+    if let Some((start, end, _)) = zle.vi_get_range('~') {
+        for i in start..end.min(zle.zlell) {
+            let c = zle.zleline[i];
+            let swapped = if c.is_uppercase() {
+                c.to_lowercase().next().unwrap_or(c)
+            } else if c.is_lowercase() {
+                c.to_uppercase().next().unwrap_or(c)
+            } else {
+                c
+            };
+            zle.zleline[i] = swapped;
+        }
+        zle.zlecs = start;
+        zle.resetneeded = true;
+    }
+}
+
+fn widget_vi_undo_change(zle: &mut Zle) {
+    // Port of viundochange() from Src/Zle/zle_vi.c. zsh's vi-undo-change
+    // walks back to the change boundary recorded at insert-mode entry
+    // (vistartchange) — undo until cur_change drops below that. Our
+    // simpler model: just call undo_widget once, matching the common
+    // behavior of `u` in vi command mode.
+    let _ = zle.undo_widget();
+}
+
+fn widget_universal_argument(zle: &mut Zle) {
+    // Port of universalargument() from Src/Zle/zle_misc.c. The classic
+    // emacs C-u widget: each invocation multiplies the pending count by
+    // 4 (or sets it to 4 on first call). Subsequent digit-arguments
+    // override the count.
+    if zle.zmod.flags.contains(super::main::ModifierFlags::MULT) {
+        zle.zmod.mult *= 4;
+    } else {
+        zle.zmod.flags.insert(super::main::ModifierFlags::MULT);
+        zle.zmod.mult = 4;
+    }
+    zle.prefixflag = true;
+}
+
+fn widget_neg_argument(zle: &mut Zle) {
+    // Port of negargument() from Src/Zle/zle_misc.c. Toggles the
+    // negative-argument flag, mirroring the C `zmod.flags ^= MOD_NEG`.
+    zle.zmod.flags.toggle(super::main::ModifierFlags::NEG);
+    zle.prefixflag = true;
+}
+
+fn widget_recursive_edit(zle: &mut Zle) {
+    // Port of recursiveedit() from Src/Zle/zle_main.c. Method already
+    // exists on Zle via recursive_edit.
+    let _ = zle.recursive_edit();
+}
+
+fn widget_what_cursor_position(zle: &mut Zle) {
+    // Port of whatcursorposition() from Src/Zle/zle_misc.c. Emits a
+    // status-line message describing the cursor position. The C source
+    // formats "Char: X (NNN, 0xHH, 0bBB) Point N of N (PP%) Column N".
+    // Routed to our `show_msg` so the message lands wherever the host
+    // surfaces ZLE diagnostics.
+    let pos = zle.zlecs;
+    let len = zle.zlell;
+    let msg = if pos < len {
+        let c = zle.zleline[pos];
+        let pct = (pos * 100).checked_div(len).unwrap_or(0);
+        format!(
+            "Char: {} ({}, 0x{:X}) Point {} of {} ({}%)",
+            c, c as u32, c as u32, pos, len, pct
+        )
+    } else {
+        format!("Point {} of {} (end of buffer)", pos, len)
+    };
+    zle.show_msg(&msg);
+}
+
+fn widget_set_local_history_widget(zle: &mut Zle) {
+    // Port of setlocalhistory() from Src/Zle/zle_hist.c:794.
+    let has_mult = zle.zmod.flags.contains(super::main::ModifierFlags::MULT);
+    let mult = zle.zmod.mult;
+    let mut hist = std::mem::take(&mut zle.history);
+    zle.set_local_history(&mut hist, has_mult, mult);
+    zle.history = hist;
+}
+
+fn widget_undefined_key(zle: &mut Zle) {
+    // Port of undefinedkey() from Src/Zle/zle_main.c. The C source just
+    // beeps; we route to handle_feep.
+    zle.handle_feep();
+}
+
+fn widget_history_search_backward(zle: &mut Zle) {
+    // Port of historysearchbackward() from Src/Zle/zle_hist.c. Method
+    // exists; this is the dispatch entry.
+    let mut hist = std::mem::take(&mut zle.history);
+    zle.history_search_backward(&mut hist);
+    zle.history = hist;
+}
+
+fn widget_history_search_forward(zle: &mut Zle) {
+    // Port of historysearchforward() from Src/Zle/zle_hist.c.
+    let mut hist = std::mem::take(&mut zle.history);
+    zle.history_search_forward(&mut hist);
+    zle.history = hist;
+}
+
+fn widget_insert_last_word_widget(zle: &mut Zle) {
+    // Port of insertlastword() from Src/Zle/zle_hist.c. Method exists;
+    // this is the dispatch entry.
+    let hist = std::mem::take(&mut zle.history);
+    zle.insert_last_word(&hist);
+    zle.history = hist;
+}
+
 /// Check if a character is a word character
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
@@ -1810,6 +2158,144 @@ mod tests {
         zle.zlecs = 0;
         widget_capitalize_word(&mut zle);
         assert_eq!(zle.zleline.iter().collect::<String>(), "Hello world");
+    }
+
+    #[test]
+    fn delete_word_removes_word_without_kill_ring() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello world".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 0;
+        let kr_before = zle.killring.len();
+        widget_delete_word(&mut zle);
+        // Emacs delete-word removes the word but not the trailing separator
+        // (zle_word.c convention) — leaves a leading space.
+        assert_eq!(zle.zleline.iter().collect::<String>(), " world");
+        assert_eq!(zle.killring.len(), kr_before);
+    }
+
+    #[test]
+    fn kill_region_drains_into_kill_ring() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcdefgh".chars().collect();
+        zle.zlell = 8;
+        zle.mark = 2;
+        zle.zlecs = 6;
+        widget_kill_region(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "abgh");
+        assert_eq!(
+            zle.killring.front().map(|v| v.iter().collect::<String>()),
+            Some("cdef".to_string())
+        );
+    }
+
+    #[test]
+    fn kill_buffer_clears_line_and_pushes_to_kill_ring() {
+        let mut zle = Zle::new();
+        zle.zleline = "echo hi".chars().collect();
+        zle.zlell = 7;
+        widget_kill_buffer(&mut zle);
+        assert!(zle.zleline.is_empty());
+        assert_eq!(zle.zlell, 0);
+        assert_eq!(zle.zlecs, 0);
+        assert_eq!(
+            zle.killring.front().map(|v| v.iter().collect::<String>()),
+            Some("echo hi".to_string())
+        );
+    }
+
+    #[test]
+    fn vi_kill_line_kills_back_to_bol() {
+        let mut zle = Zle::new();
+        zle.zleline = "abc def".chars().collect();
+        zle.zlell = 7;
+        zle.zlecs = 7;
+        widget_vi_kill_line(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "");
+        assert_eq!(
+            zle.killring.front().map(|v| v.iter().collect::<String>()),
+            Some("abc def".to_string())
+        );
+    }
+
+    #[test]
+    fn vi_swap_case_flips_letter_case_under_cursor() {
+        let mut zle = Zle::new();
+        zle.zleline = "Hello".chars().collect();
+        zle.zlell = 5;
+        zle.zlecs = 0;
+        widget_vi_swap_case(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "hello");
+        assert_eq!(zle.zlecs, 1);
+    }
+
+    #[test]
+    fn vi_swap_case_with_count_flips_n_chars() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcdef".chars().collect();
+        zle.zlell = 6;
+        zle.zlecs = 0;
+        zle.mult = 3;
+        widget_vi_swap_case(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "ABCdef");
+        assert_eq!(zle.zlecs, 3);
+    }
+
+    #[test]
+    fn universal_argument_bumps_count_by_4_each_call() {
+        let mut zle = Zle::new();
+        widget_universal_argument(&mut zle);
+        assert_eq!(zle.zmod.mult, 4);
+        widget_universal_argument(&mut zle);
+        assert_eq!(zle.zmod.mult, 16);
+    }
+
+    #[test]
+    fn vi_beginning_of_line_jumps_to_bol() {
+        let mut zle = Zle::new();
+        zle.zleline = "    foo".chars().collect();
+        zle.zlell = 7;
+        zle.zlecs = 5;
+        widget_vi_beginning_of_line(&mut zle);
+        assert_eq!(zle.zlecs, 0);
+    }
+
+    #[test]
+    fn emacs_forward_word_moves_to_word_end() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello world".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 0;
+        widget_emacs_forward_word(&mut zle);
+        // find_word_end (Emacs style) skips non-word + word; "hello" ends
+        // at byte 5.
+        assert!(zle.zlecs >= 5);
+    }
+
+    #[test]
+    fn vi_yank_eol_copies_to_eol() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello world".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 6;
+        widget_vi_yank_eol(&mut zle);
+        // Cursor stays put; killring gets "world".
+        assert_eq!(zle.zleline.iter().collect::<String>(), "hello world");
+        assert_eq!(
+            zle.killring.front().map(|v| v.iter().collect::<String>()),
+            Some("world".to_string())
+        );
+    }
+
+    #[test]
+    fn what_cursor_position_does_not_panic_on_end_of_buffer() {
+        let mut zle = Zle::new();
+        zle.zleline = "abc".chars().collect();
+        zle.zlell = 3;
+        zle.zlecs = 3; // past last char
+        widget_what_cursor_position(&mut zle);
+        // No assertion on stderr — just verifying the EOB branch doesn't
+        // index out of bounds.
     }
 
     #[test]
