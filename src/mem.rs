@@ -8,10 +8,14 @@
 
 use std::cell::RefCell;
 
-/// A memory arena for temporary allocations
+/// A memory arena for temporary allocations.
 ///
-/// This provides push/pop semantics similar to zsh's heap management,
-/// but uses Rust's standard memory management under the hood.
+/// Port of the `heaps` linked-list arena C zsh maintains in
+/// Src/mem.c (see `new_heaps()` line 194 / `old_heaps()` line 220).
+/// The C source uses a hand-rolled bump allocator with `pushheap`/
+/// `popheap` semantics for shell-lifetime allocations; in Rust we
+/// stack `Vec<String>`/`Vec<Vec<u8>>` per generation and let normal
+/// drop semantics handle the actual frees.
 pub struct HeapArena {
     /// Stack of arena generations
     generations: Vec<Generation>,
@@ -40,7 +44,10 @@ impl HeapArena {
         }
     }
 
-    /// Push a new heap state (like zsh's pushheap)
+    /// Push a new heap state.
+    /// Port of `pushheap()` from Src/mem.c:291 — saves the current
+    /// allocation cursor so a matching `pop()` can free everything
+    /// allocated until then.
     pub fn push(&mut self) {
         self.generations.push(Generation {
             strings: Vec::new(),
@@ -48,14 +55,19 @@ impl HeapArena {
         });
     }
 
-    /// Pop and free all allocations since the last push (like zsh's popheap)
+    /// Pop and free all allocations since the last push.
+    /// Port of `popheap()` from Src/mem.c:443 — drops every
+    /// allocation made since the matching `push()` call.
     pub fn pop(&mut self) {
         if self.generations.len() > 1 {
             self.generations.pop();
         }
     }
 
-    /// Free allocations in current generation but keep generation marker (like zsh's freeheap)
+    /// Free allocations in current generation but keep generation
+    /// marker.
+    /// Port of `freeheap()` from Src/mem.c:325 — drops everything
+    /// since the most recent `pushheap()` without popping the marker.
     pub fn free_current(&mut self) {
         if let Some(gen) = self.generations.last_mut() {
             gen.strings.clear();
@@ -63,7 +75,9 @@ impl HeapArena {
         }
     }
 
-    /// Allocate a string in the current generation
+    /// Allocate a string in the current generation.
+    /// Port of the string-shape `zhalloc()` (Src/mem.c:577) call
+    /// pattern the C source uses for all transient string buffers.
     pub fn alloc_string(&mut self, s: String) -> &str {
         if let Some(gen) = self.generations.last_mut() {
             gen.strings.push(s);
@@ -73,7 +87,9 @@ impl HeapArena {
         }
     }
 
-    /// Allocate bytes in the current generation
+    /// Allocate bytes in the current generation.
+    /// Port of the byte-buffer shape of `zhalloc()` (Src/mem.c:577)
+    /// the C source uses for transient binary data.
     pub fn alloc_bytes(&mut self, bytes: Vec<u8>) -> &[u8] {
         if let Some(gen) = self.generations.last_mut() {
             gen.buffers.push(bytes);
@@ -83,7 +99,10 @@ impl HeapArena {
         }
     }
 
-    /// Get current stack depth
+    /// Get current stack depth.
+    /// zshrs-original convenience for context-save/restore — C zsh
+    /// tracks heap nesting indirectly via the `Heap heaps` linked
+    /// list (Src/mem.c).
     pub fn depth(&self) -> usize {
         self.generations.len()
     }
@@ -93,32 +112,45 @@ thread_local! {
     static HEAP: RefCell<HeapArena> = RefCell::new(HeapArena::new());
 }
 
-/// Push heap state
+/// Push heap state.
+/// Port of `pushheap()` from Src/mem.c:291 — the global entry-point
+/// version that operates on the thread-local arena.
 pub fn pushheap() {
     HEAP.with(|h| h.borrow_mut().push());
 }
 
-/// Pop heap state and free allocations
+/// Pop heap state and free allocations.
+/// Port of `popheap()` from Src/mem.c:443.
 pub fn popheap() {
     HEAP.with(|h| h.borrow_mut().pop());
 }
 
-/// Free current heap allocations but keep state
+/// Free current heap allocations but keep state.
+/// Port of `freeheap()` from Src/mem.c:325.
 pub fn freeheap() {
     HEAP.with(|h| h.borrow_mut().free_current());
 }
 
-/// Allocate memory (in Rust, this just uses the normal allocator)
+/// Allocate memory.
+/// Port of `zalloc()` from Src/mem.c:959. In Rust we use `Box`
+/// rather than `malloc(3)`; the type-default initialization stands
+/// in for the C source's uninitialized buffer.
 pub fn zalloc<T: Default>() -> Box<T> {
     Box::default()
 }
 
-/// Allocate zeroed memory
+/// Allocate zeroed memory.
+/// Port of `zshcalloc()` from Src/mem.c:977 — the C source pairs
+/// `zalloc()` with `memset(0)`; Rust's `Box::default()` handles
+/// both.
 pub fn zshcalloc<T: Default>() -> Box<T> {
     Box::default()
 }
 
-/// Reallocate memory (Rust handles this automatically with Vec)
+/// Reallocate memory.
+/// Port of `zrealloc()` from Src/mem.c:994 — Vec::resize fills the
+/// gap with `T::default()`, mirroring the C source's "old contents
+/// preserved, new bytes uninitialized" semantics.
 pub fn zrealloc<T>(v: &mut Vec<T>, new_size: usize)
 where
     T: Default + Clone,
@@ -126,91 +158,127 @@ where
     v.resize(new_size, T::default());
 }
 
-/// Free memory (no-op in Rust, drop handles it).
-///
-/// Takes a `Box<T>` rather than `T` so the C-port call sites read
-/// the same as the original `zfree(ptr)` (an explicit allocator
-/// release on a heap pointer). Without the Box wrapper, callers
-/// would need a syntactically different `drop(value)` call.
+/// Free memory.
+/// Port of `zfree()` from Src/mem.c:1433 (or :1869 in the
+/// MALLOC_DEBUG build). Takes a `Box<T>` rather than `T` so the
+/// C-port call sites read the same as the original `zfree(ptr)`
+/// (an explicit allocator release on a heap pointer). Drop happens
+/// automatically when the Box goes out of scope.
 #[allow(clippy::boxed_local)]
 pub fn zfree<T>(_ptr: Box<T>) {
     // Drop happens automatically
 }
 
-/// Free a string (no-op in Rust)
+/// Free a string.
+/// Port of `zsfree()` from Src/mem.c:1641 — the C source's
+/// `free(NULL)`-tolerant string-specific deallocator. In Rust the
+/// Drop impl on `String` handles the actual free.
 pub fn zsfree(_s: String) {
     // Drop happens automatically
 }
 
-/// Duplicate a string
+/// Duplicate a string into heap storage.
+/// Port of `dupstring()` from Src/string.c:33 — the heap-arena
+/// variant of `ztrdup()`. In Rust both collapse to `String::clone`
+/// since `String` always owns its allocation.
 pub fn dupstring(s: &str) -> String {
     s.to_string()
 }
 
-/// Duplicate a string with length
+/// Duplicate a string with explicit length.
+/// Port of `dupstring_wlen()` from Src/string.c:48 — used when the
+/// source isn't NUL-terminated (e.g. a slice of a larger buffer).
 pub fn dupstring_wlen(s: &str, len: usize) -> String {
     s.chars().take(len).collect()
 }
 
-/// Create a heap-allocated string (in Rust, just creates a String)
+/// Create a heap-allocated string.
+/// Port of the `zhalloc()` + `strcpy()` idiom Src/mem.c:577 callers
+/// use. Distinct from `dupstring` only in the C source's lifetime
+/// tagging; in Rust both produce a `String`.
 pub fn zhalloc_string(s: &str) -> String {
     s.to_string()
 }
 
-/// Check if a pointer is within a memory pool
-/// In Rust, we don't need this - just returns true for any valid reference
+/// Check if a pointer is within the heap arena.
+/// Port of `zheapptr()` from Src/mem.c:561 — the C source uses it
+/// to tell heap-arena strings from permanent ones (the metafy code
+/// has different freeing rules). Rust's borrow-checker subsumes
+/// this distinction; the function is kept for call-site parity but
+/// always returns true.
 pub fn zheapptr<T>(_ptr: &T) -> bool {
     true
 }
 
-/// Reallocate heap memory (from mem.c hrealloc)
+/// Reallocate heap memory.
+/// Port of `hrealloc()` from Src/mem.c:687 — heap-arena
+/// counterpart of `zrealloc()` (Src/mem.c:994).
 pub fn hrealloc(old: Vec<u8>, new_size: usize) -> Vec<u8> {
     let mut v = old;
     v.resize(new_size, 0);
     v
 }
 
-/// Duplicate array of strings (from mem.c zarrdup)
+/// Duplicate an array of strings.
+/// Port of `zarrdup()` from Src/utils.c:4532.
 pub fn zarrdup(arr: &[String]) -> Vec<String> {
     arr.to_vec()
 }
 
-/// Duplicate array with maximum length (from mem.c arrdup_max)
+/// Duplicate an array up to a maximum length.
+/// zshrs-original convenience — closest C analog is the bounded
+/// loops Src/utils.c uses around `zarrdup` when the max is known.
 pub fn arrdup_max(arr: &[String], max: usize) -> Vec<String> {
     arr.iter().take(max).cloned().collect()
 }
 
-/// Get array length (from mem.c arrlen)
+/// Get array length.
+/// Port of `arrlen()` from Src/utils.c:2357 — the C source's
+/// canonical NULL-terminated `char**` length walker. Rust slices
+/// already know their length, so this collapses to `arr.len()`.
 pub fn arrlen<T>(arr: &[T]) -> usize {
     arr.len()
 }
 
-/// Check if array length is less than n (from mem.c arrlen_lt)
+/// Check if array length is less than n.
+/// Port of `arrlen_lt()` from Src/utils.c:2400 — short-circuit
+/// version that stops walking once the bound is exceeded.
 pub fn arrlen_lt<T>(arr: &[T], n: usize) -> bool {
     arr.len() < n
 }
 
-/// Check if array length is less than or equal to n (from mem.c arrlen_le)
+/// Check if array length is less than or equal to n.
+/// Port of `arrlen_le()` from Src/utils.c:2391.
 pub fn arrlen_le<T>(arr: &[T], n: usize) -> bool {
     arr.len() <= n
 }
 
-/// Check if array length equals n (from mem.c arrlen_eq)
+/// Check if array length equals n.
+/// zshrs-original convenience — composed from `arrlen_le`/
+/// `arrlen_ge` in C (Src/utils.c:2369). Rust slice .len() makes
+/// this a one-liner.
 pub fn arrlen_eq<T>(arr: &[T], n: usize) -> bool {
     arr.len() == n
 }
 
-/// Check if array length is greater than n (from mem.c arrlen_gt)
+/// Check if array length is greater than n.
+/// Port of `arrlen_gt()` from Src/utils.c:2382.
 pub fn arrlen_gt<T>(arr: &[T], n: usize) -> bool {
     arr.len() > n
 }
 
-/// Concatenate strings with separator (from mem.c sepjoin)
+/// Concatenate strings with separator.
+/// Port of `sepjoin()` from Src/utils.c:3928 — C source's `IFS`-
+/// driven array→string join. Default separator is space, matching
+/// the C source's `sep ? sep : " "` fallback.
 pub fn sepjoin(arr: &[String], sep: Option<&str>) -> String {
     arr.join(sep.unwrap_or(" "))
 }
 
-/// Split string by separator (from mem.c sepsplit)
+/// Split string by separator.
+/// Port of `sepsplit()` from Src/utils.c:3962 — the C source's
+/// `IFS`-driven splitter. `allow_empty` mirrors the `allownull`
+/// argument the C function takes.
 pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {
     if allow_empty {
         s.split(sep).map(|s| s.to_string()).collect()
@@ -222,52 +290,75 @@ pub fn sepsplit(s: &str, sep: &str, allow_empty: bool) -> Vec<String> {
     }
 }
 
-/// Allocate zeroed buffer (from mem.c zshcalloc)
+/// Allocate a zeroed byte buffer.
+/// Port of the byte-buffer shape of `zshcalloc()` from Src/mem.c:977
+/// — `vec![0u8; size]` matches the C source's `calloc(1, size)`
+/// equivalent.
 pub fn zshcalloc_buf(size: usize) -> Vec<u8> {
     vec![0u8; size]
 }
 
-/// Allocate buffer with size (from mem.c zalloc)
+/// Allocate a byte buffer with reserved capacity.
+/// Port of the byte-buffer shape of `zalloc()` from Src/mem.c:959
+/// — uninitialized capacity, matching the C source's `malloc(size)`.
 pub fn zalloc_buf(size: usize) -> Vec<u8> {
     Vec::with_capacity(size)
 }
 
-/// Duplicate string to permanent storage (from mem.c ztrdup)
+/// Duplicate a string to permanent storage.
+/// Port of `ztrdup()` from Src/string.c:62 — C zsh's canonical
+/// `strdup(3)` analog tied to the zsh allocator. In Rust both heap
+/// and permanent storage are the same (`String` owns its buffer).
 pub fn ztrdup(s: &str) -> String {
     s.to_string()
 }
 
-/// Duplicate n characters (from mem.c ztrncpy / ztrduppfx)
+/// Duplicate the first `n` characters of a string.
+/// Port of `ztrduppfx()` from Src/string.c:172 — same role as
+/// `dupstring_wlen` (Src/string.c:48) but allocated as permanent
+/// rather than heap-arena. Rust collapses both to `String::clone`.
 pub fn ztrduppfx(s: &str, len: usize) -> String {
     s.chars().take(len).collect()
 }
 
-/// Concatenate two strings (from mem.c bicat)
+/// Concatenate two strings into a new permanent string.
+/// Port of `bicat()` from Src/string.c:145.
 pub fn bicat(s1: &str, s2: &str) -> String {
     format!("{}{}", s1, s2)
 }
 
-/// Concatenate three strings (from mem.c tricat)
+/// Concatenate three strings into a new permanent string.
+/// Port of `tricat()` from Src/string.c:98 — used heavily by the
+/// completion machinery for "prefix + match + suffix" assembly.
 pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {
     format!("{}{}{}", s1, s2, s3)
 }
 
-/// Dynamic concatenate on heap (from mem.c dyncat)
+/// Concatenate two strings into a new heap-arena string.
+/// Port of `dyncat()` from Src/string.c:131 — heap-arena variant
+/// of `bicat()`.
 pub fn dyncat(s1: &str, s2: &str) -> String {
     format!("{}{}", s1, s2)
 }
 
-/// Get last character of string (from mem.c strend)
+/// Get the last character of a string.
+/// Port of `strend()` from Src/string.c:196 — C source returns the
+/// pointer to the NUL terminator's predecessor; Rust returns the
+/// char.
 pub fn strend(s: &str) -> Option<char> {
     s.chars().last()
 }
 
-/// Append string (from mem.c appstr)
+/// Append a string in-place.
+/// Port of `appstr()` from Src/string.c:186 — the C source uses
+/// `strcat(3)` with realloc; Rust's `String::push_str` does both.
 pub fn appstr(base: &mut String, append: &str) {
     base.push_str(append);
 }
 
-/// Memory statistics structure
+/// Memory statistics structure.
+/// Port of the per-heap counters Src/mem.c tracks for `bin_mem()`
+/// (line 1722) — the `mem` builtin in `zsh/mem` reports these.
 #[derive(Default, Debug, Clone)]
 pub struct MemStats {
     pub heap_count: usize,
@@ -283,12 +374,19 @@ impl MemStats {
     }
 }
 
-/// Get memory statistics (stub - Rust manages memory automatically)
+/// Get memory statistics.
+/// Port of `bin_mem()` from Src/mem.c:1722. Rust manages memory
+/// automatically so the counters are zero by default; the function
+/// is kept for parity with the `mem` builtin's parameter-shape.
 pub fn get_mem_stats() -> MemStats {
     MemStats::new()
 }
 
-/// Context save/restore for memory (from mem.c zcontext_save/restore)
+/// Context save/restore for memory state.
+/// Port of `zcontext_save()`/`zcontext_restore()` from
+/// Src/init.c. The C source captures the heap stack depth so a
+/// fault deep in eval can unwind to a known-good marker; we
+/// replicate the pattern with the arena depth counter.
 pub struct MemContext {
     heap_depth: usize,
 }
@@ -309,20 +407,30 @@ impl MemContext {
     }
 }
 
-/// Save memory context
+/// Save memory context.
+/// Port of `zcontext_save()` from Src/init.c — entry-point
+/// function form.
 pub fn zcontext_save() -> MemContext {
     MemContext::save()
 }
 
-/// Restore memory context
+/// Restore memory context.
+/// Port of `zcontext_restore()` from Src/init.c — pops every
+/// generation pushed since the saved depth.
 pub fn zcontext_restore(ctx: MemContext) {
     ctx.restore();
 }
 
-/// Queue signals during memory operations (stub in Rust - not needed)
+/// Queue signals during memory operations.
+/// Port of `queue_signals()` from Src/signals.c — defers
+/// `SIGINT`/`SIGCHLD` etc. until the matching `unqueue_signals()`.
+/// Stubbed in Rust because the worker pool isolates each task in
+/// its own thread (see `src/worker.rs`).
 pub fn queue_signals() {}
 
-/// Unqueue signals after memory operations (stub in Rust - not needed)
+/// Unqueue signals after memory operations.
+/// Port of `unqueue_signals()` from Src/signals.c — pair of
+/// `queue_signals`. Stubbed in Rust for the same reason.
 pub fn unqueue_signals() {}
 
 #[cfg(test)]
