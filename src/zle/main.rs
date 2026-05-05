@@ -306,6 +306,14 @@ pub struct Zle {
     /// — the C source dispatches inline via `execzlefunc`, but we can't
     /// reach the executor from this crate, so the host pulls them.
     pub pending_hooks: Vec<(String, Option<String>)>,
+    /// Unexpanded prompt templates supplied at the start of zleread().
+    /// Port of the global `raw_lp`/`raw_rp` slots in Src/Zle/zle_main.c —
+    /// `reexpandprompt()` (zle_main.c) re-runs prompt expansion against
+    /// the originals when something invalidates the expanded form (e.g.
+    /// jobs change, sigwinch). We hold the originals here so we can
+    /// re-expand without the host re-feeding them.
+    pub lprompt_raw: String,
+    pub rprompt_raw: String,
 }
 
 impl Default for Zle {
@@ -382,6 +390,8 @@ impl Zle {
             vi_marks: [None; 27],
             region_active: 0,
             pending_hooks: Vec::new(),
+            lprompt_raw: String::new(),
+            rprompt_raw: String::new(),
         }
     }
 
@@ -638,9 +648,14 @@ impl Zle {
                 f(self);
             }
             super::widget::WidgetFunc::User(name) => {
-                // Call user-defined widget (shell function)
-                // TODO: implement user widget execution
-                let _ = name;
+                // User-defined widget (`zle -N name shell-fn`): the C source
+                // dispatches via execzlefunc() in Src/Zle/zle_main.c, which
+                // calls the bound shell function with the widget's arg list.
+                // We can't reach the executor from this crate, so we queue
+                // the call on pending_hooks; the host drains it after the
+                // key dispatch returns and runs the function with its own
+                // ShellExecutor — the same pattern used by zle_call_hook.
+                self.pending_hooks.push((name.clone(), None));
             }
         }
 
@@ -677,8 +692,15 @@ impl Zle {
         flags: ZleReadFlags,
         context: ZleContext,
     ) -> io::Result<String> {
-        self.lprompt = lprompt.to_string();
-        self.rprompt = rprompt.to_string();
+        // Stash the unexpanded templates so reexpandprompt() can re-run
+        // expansion later. C zsh saves these in the global raw_lp/raw_rp
+        // slots; we keep them on the Zle struct to avoid a global.
+        self.lprompt_raw = lprompt.to_string();
+        self.rprompt_raw = rprompt.to_string();
+        self.lprompt =
+            crate::prompt::expand_prompt(lprompt, &crate::prompt::PromptContext::default());
+        self.rprompt =
+            crate::prompt::expand_prompt(rprompt, &crate::prompt::PromptContext::default());
         self.zlereadflags = flags;
         self.zlecontext = context;
 
@@ -734,9 +756,16 @@ impl Zle {
         self.resetneeded = true;
     }
 
-    /// Re-expand prompt
+    /// Re-run prompt expansion against the saved templates.
+    /// Port of `reexpandprompt()` from Src/Zle/zle_main.c — used after
+    /// events that change values referenced by prompt escapes (PWD,
+    /// command status, jobs count, sigwinch). Re-expands `lprompt_raw`
+    /// and `rprompt_raw` via `prompt::expand_prompt` with a fresh
+    /// `PromptContext` so escapes pick up the latest env / state.
     pub fn reexpandprompt(&mut self) {
-        // TODO: implement prompt expansion
+        let ctx = crate::prompt::PromptContext::default();
+        self.lprompt = crate::prompt::expand_prompt(&self.lprompt_raw, &ctx);
+        self.rprompt = crate::prompt::expand_prompt(&self.rprompt_raw, &ctx);
         self.resetneeded = true;
     }
 
@@ -879,9 +908,14 @@ impl Zle {
         eprintln!("{}", msg);
     }
 
-    /// The prompt string
+    /// The expanded left prompt string (post-`reexpandprompt`).
     pub fn prompt(&self) -> &str {
         &self.lprompt
+    }
+
+    /// The expanded right prompt string (RPS1-equivalent).
+    pub fn rprompt(&self) -> &str {
+        &self.rprompt
     }
 
     /// Set prompt

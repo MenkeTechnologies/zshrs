@@ -725,6 +725,19 @@ mod tests_hooks {
         let drained = zle.drain_hooks();
         assert_eq!(drained, vec![("zle-line-pre-redraw".to_string(), None)]);
     }
+
+    #[test]
+    fn reexpandprompt_re_runs_expansion_against_raw_templates() {
+        let mut zle = Zle::new();
+        // Set raw templates that don't reference dynamic state, so the
+        // expansion is idempotent and easy to assert. %% expands to a
+        // single literal '%' per zsh prompt rules.
+        zle.lprompt_raw = "%% > ".to_string();
+        zle.rprompt_raw = "[%%]".to_string();
+        zle.reexpandprompt();
+        assert_eq!(zle.prompt(), "% > ");
+        assert_eq!(zle.rprompt(), "[%]");
+    }
 }
 
 #[cfg(test)]
