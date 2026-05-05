@@ -18,7 +18,14 @@ pub struct NamedDir {
     pub diff: i32, // strlen(dir) - strlen(name)
 }
 
-/// Named directory hash table
+/// Named directory hash table.
+/// Port of the `nameddirtab` HashTable from Src/hashnameddir.c —
+/// the C source builds it via `createnameddirtable()` (line 59) and
+/// hangs the per-entry hooks (`addnameddirnode`,
+/// `removenameddirnode`, `freenameddirnode`, `printnameddirnode`)
+/// off it. This struct holds the same role on the Rust side; the
+/// `finddir_cache` field mirrors the file-static cache C zsh keeps
+/// in `Src/utils.c:1096`.
 pub struct NamedDirTable {
     table: HashMap<String, NamedDir>,
     all_users_added: bool,
@@ -40,14 +47,21 @@ impl NamedDirTable {
         }
     }
 
-    /// Clear the table
+    /// Empty the table.
+    /// Port of `emptynameddirtable()` from Src/hashnameddir.c:84.
+    /// Drops every entry and clears the `finddir()` cache the same
+    /// way the C source's `finddir(NULL)` call does.
     pub fn clear(&mut self) {
         self.table.clear();
         self.all_users_added = false;
         self.finddir_cache = None;
     }
 
-    /// Add a named directory entry
+    /// Add a named directory entry.
+    /// Port of `addnameddirnode()` from Src/hashnameddir.c:121 — the
+    /// `addnode` slot wired into the hash table. Computes
+    /// `nd->diff = strlen(dir) - strlen(name)` and invalidates the
+    /// finddir cache, matching the C source's `finddir(NULL)` call.
     pub fn add(&mut self, name: &str, dir: &str, flags: u32) {
         let diff = dir.len() as i32 - name.len() as i32;
         self.finddir_cache = None;
@@ -63,7 +77,12 @@ impl NamedDirTable {
         );
     }
 
-    /// Add a user directory (from passwd database)
+    /// Add a user directory (from passwd database).
+    /// Port of the per-passwd-entry insert inside
+    /// `fillnameddirtable()` (Src/hashnameddir.c:96) — the C source
+    /// walks `getpwent(3)` once and inserts each entry with the
+    /// `ND_USERNAME` flag set; `check_first` mirrors the "skip if
+    /// already present" guard.
     pub fn add_user(&mut self, username: &str, homedir: &str, check_first: bool) {
         if check_first && self.table.contains_key(username) {
             return;
@@ -71,12 +90,18 @@ impl NamedDirTable {
         self.add(username, homedir, ND_USERNAME);
     }
 
-    /// Get a named directory entry
+    /// Get a named directory entry.
+    /// Port of the `getnode2`/`gethashnode2` lookup the C source
+    /// uses on `nameddirtab` (Src/hashnameddir.c) for `~name`
+    /// expansion.
     pub fn get(&self, name: &str) -> Option<&NamedDir> {
         self.table.get(name)
     }
 
-    /// Remove a named directory entry
+    /// Remove a named directory entry.
+    /// Port of `removenameddirnode()` from Src/hashnameddir.c:135 —
+    /// the `removenode` slot wired into the hash table. Invalidates
+    /// the finddir cache via the same `finddir(NULL)` mechanism.
     pub fn remove(&mut self, name: &str) -> Option<NamedDir> {
         let result = self.table.remove(name);
         if result.is_some() {
@@ -100,7 +125,12 @@ impl NamedDirTable {
         self.table.is_empty()
     }
 
-    /// Fill table with all users from passwd database
+    /// Fill table with all users from the passwd database.
+    /// Port of `fillnameddirtable()` from Src/hashnameddir.c:96 —
+    /// the C source iterates `setpwent`/`getpwent`/`endpwent` and
+    /// inserts each entry with `ND_USERNAME`. Idempotent: the
+    /// `all_users_added` guard mirrors the C source's static
+    /// `allusersadded` flag.
     #[cfg(unix)]
     pub fn fill_from_passwd(&mut self) {
         if self.all_users_added {
@@ -134,8 +164,14 @@ impl NamedDirTable {
         self.all_users_added = true;
     }
 
-    /// Find the best matching named directory for a path
-    /// Returns (name, matched_portion) or None
+    /// Find the best matching named directory for a path.
+    /// Returns `(name, matched_portion)` or `None`.
+    /// Port of `finddir()` from Src/utils.c:1127 plus its
+    /// `finddir_scan()` helper (line 1106). The C source picks the
+    /// hash entry whose `dir` is the longest prefix of `path` (most
+    /// negative `diff`); we replicate that with the `nd.diff`
+    /// comparison and reuse the same single-entry cache pattern
+    /// (Src/utils.c:1096) keyed on the looked-up path.
     pub fn finddir(&mut self, path: &str) -> Option<(String, String)> {
         // Check cache
         if let Some((cached_path, cached_name)) = &self.finddir_cache {
@@ -168,12 +204,20 @@ impl NamedDirTable {
         }
     }
 
-    /// Iterate over all entries
+    /// Iterate over all entries.
+    /// Port of the `scannode` walk the C source uses on
+    /// `nameddirtab` (Src/hashtable.c `scanhashtable` driving each
+    /// `printnameddirnode`).
     pub fn iter(&self) -> impl Iterator<Item = (&String, &NamedDir)> {
         self.table.iter()
     }
 
-    /// Print a named directory entry
+    /// Print a named directory entry.
+    /// Port of `printnameddirnode()` from Src/hashnameddir.c:161.
+    /// `list_format=true` mirrors the `PRINT_LIST` flag the C source
+    /// honours when called via `hash -d -L`; the leading `--` guard
+    /// for entries that begin with `-` matches the same defensive
+    /// quoting the C source emits.
     pub fn print_entry(&self, name: &str, list_format: bool) -> Option<String> {
         let nd = self.get(name)?;
 

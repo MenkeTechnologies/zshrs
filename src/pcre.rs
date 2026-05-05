@@ -6,7 +6,13 @@
 use regex::Regex;
 use std::collections::HashMap;
 
-/// Compiled PCRE pattern state
+/// Compiled PCRE pattern state.
+/// Port of the file-static `pcre_pattern` / `pcre_extra` /
+/// `pcre_hints` slot Src/Modules/pcre.c keeps to share a compiled
+/// regex between `bin_pcre_compile` (line 70), `bin_pcre_study`
+/// (line 112), and `bin_pcre_match` (line 328). C zsh's source uses
+/// PCRE2's `pcre2_code *`; the Rust `regex` crate gives us an
+/// equivalent compiled handle.
 #[derive(Debug)]
 pub struct PcreState {
     pattern: Option<Regex>,
@@ -82,7 +88,13 @@ impl PcreMatchResult {
     }
 }
 
-/// Compile a PCRE pattern
+/// Compile a PCRE pattern.
+/// Port of the `pcre2_compile_8()` core inside `bin_pcre_compile()`
+/// from Src/Modules/pcre.c:70 — translates the option flag bag
+/// (`-i` caseless, `-x` extended, `-m` multiline, `-s` dotall,
+/// `-a` anchored) into the `(?i)` / `(?x)` / `(?m)` / `(?s)` /
+/// `^` prefixes the Rust `regex` crate accepts and stores the
+/// compiled handle in `state` for later `pcre_match`/`pcre_study`.
 pub fn pcre_compile(
     pattern: &str,
     options: &PcreCompileOptions,
@@ -120,7 +132,12 @@ pub fn pcre_compile(
     }
 }
 
-/// Study a compiled pattern (no-op with Rust regex, but kept for API compat)
+/// Study a compiled pattern.
+/// Port of `bin_pcre_study()` from Src/Modules/pcre.c:112. The C
+/// source calls `pcre2_jit_compile()` to JIT-optimize the compiled
+/// pattern; the Rust `regex` crate already builds an optimal NFA
+/// at compile time, so this is a no-op other than the "no pattern"
+/// guard the C source also returns.
 pub fn pcre_study(state: &PcreState) -> Result<(), String> {
     if state.pattern.is_none() {
         return Err("no pattern has been compiled for study".to_string());
@@ -128,7 +145,13 @@ pub fn pcre_study(state: &PcreState) -> Result<(), String> {
     Ok(())
 }
 
-/// Match a string against the compiled pattern
+/// Match a string against the compiled pattern.
+/// Port of the `pcre2_match_8()` + `zpcre_get_substrings()` core of
+/// `bin_pcre_match()` from Src/Modules/pcre.c:328 — runs the match,
+/// captures numbered groups (the `ovector` walk in
+/// `zpcre_get_substrings()` at line 157), and surfaces named
+/// captures via the same `pcre2_substring_get_byname` lookup the C
+/// source performs.
 pub fn pcre_match(
     text: &str,
     options: &PcreMatchOptions,
@@ -178,7 +201,12 @@ pub fn pcre_match(
     })
 }
 
-/// Conditional test for pcre-match
+/// `[[ s -pcre-match pat ]]` cond-test entry point.
+/// Port of `cond_pcre_match()` from Src/Modules/pcre.c:422 — the
+/// dispatch hook the lexer wires for the `-pcre-match` operator.
+/// Compiles `rhs` on the fly (no shared compile state required) and
+/// returns `(matched, result)` so the caller can decide whether to
+/// install the match-vars side effects.
 pub fn cond_pcre_match(lhs: &str, rhs: &str, caseless: bool) -> (bool, PcreMatchResult) {
     let options = PcreCompileOptions {
         caseless,
@@ -199,7 +227,10 @@ pub fn cond_pcre_match(lhs: &str, rhs: &str, caseless: bool) -> (bool, PcreMatch
     }
 }
 
-/// Execute pcre_compile builtin
+/// `pcre_compile` builtin entry point.
+/// Port of `bin_pcre_compile()` from Src/Modules/pcre.c:70 — wraps
+/// `pcre_compile()` with the same "no args" diagnostic the C source
+/// emits.
 pub fn builtin_pcre_compile(
     args: &[&str],
     options: &PcreCompileOptions,
@@ -215,7 +246,9 @@ pub fn builtin_pcre_compile(
     }
 }
 
-/// Execute pcre_study builtin
+/// `pcre_study` builtin entry point.
+/// Port of `bin_pcre_study()` from Src/Modules/pcre.c:112 — wraps
+/// `pcre_study()` with the same exit-status convention.
 pub fn builtin_pcre_study(state: &PcreState) -> (i32, String) {
     match pcre_study(state) {
         Ok(()) => (0, String::new()),
@@ -223,7 +256,10 @@ pub fn builtin_pcre_study(state: &PcreState) -> (i32, String) {
     }
 }
 
-/// Execute pcre_match builtin
+/// `pcre_match` builtin entry point.
+/// Port of `bin_pcre_match()` from Src/Modules/pcre.c:328 — wraps
+/// `pcre_match()` with the C source's "1 on no-match, 0 on match"
+/// exit-status convention.
 pub fn builtin_pcre_match(
     args: &[&str],
     options: &PcreMatchOptions,
