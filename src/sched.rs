@@ -1,16 +1,24 @@
-//! Scheduled command execution - port of Builtins/sched.c
+//! Scheduled command execution — port of Src/Builtins/sched.c.
 //!
-//! Provides the `sched` builtin for scheduling commands to run at specified times.
+//! Provides the `sched` builtin for running commands at a specified
+//! time. The C source ties into the SIGALRM handler via
+//! `schedaddtimed()` / `scheddeltimed()` to fire `checksched()` at
+//! the next due time; we just keep an in-memory sorted vec.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Flags for scheduled events
+/// Flags for scheduled events.
+/// Port of the `SCHEDFLAG_*` bits Src/Builtins/sched.c uses —
+/// currently only `-o` (trash ZLE state when firing) is exposed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SchedFlags {
     pub trash_zle: bool,
 }
 
-/// A scheduled command
+/// A single scheduled command.
+/// Port of `struct schedcmd` from Src/Builtins/sched.c — the C
+/// source uses a singly-linked list keyed by `time`. Same fields
+/// (cmd / time / flags) here.
 #[derive(Debug, Clone)]
 pub struct SchedCmd {
     pub cmd: String,
@@ -32,7 +40,10 @@ impl SchedCmd {
     }
 }
 
-/// Scheduler for timed commands
+/// Scheduler for timed commands.
+/// Port of the file-static `schedcmds` linked list in
+/// Src/Builtins/sched.c — same insertion-by-time order so
+/// `checksched()` (line 93) can drain commands from the head.
 #[derive(Debug, Default)]
 pub struct Scheduler {
     cmds: Vec<SchedCmd>,
@@ -50,7 +61,10 @@ impl Scheduler {
             .as_secs()
     }
 
-    /// Add a scheduled command, maintaining time order
+    /// Add a scheduled command, keeping the list sorted by time.
+    /// Port of the insert-keeping-order branch inside `bin_sched()`
+    /// (Src/Builtins/sched.c:150) — the C source walks the list
+    /// to find the right slot; same here.
     pub fn add(&mut self, cmd: SchedCmd) {
         let pos = self
             .cmds
@@ -60,7 +74,10 @@ impl Scheduler {
         self.cmds.insert(pos, cmd);
     }
 
-    /// Remove a scheduled command by 1-based index
+    /// Remove a scheduled command by 1-based index.
+    /// Port of the `-N` delete branch inside `bin_sched()`
+    /// (Src/Builtins/sched.c:150) — same 1-based index convention
+    /// the C source's "sched -N" syntax exposes.
     pub fn remove(&mut self, index: usize) -> Option<SchedCmd> {
         if index == 0 || index > self.cmds.len() {
             return None;
@@ -68,12 +85,18 @@ impl Scheduler {
         Some(self.cmds.remove(index - 1))
     }
 
-    /// Get all pending commands
+    /// Get all pending commands.
+    /// Equivalent to walking the C source's `schedcmds` linked list
+    /// for the `sched` builtin's no-arg listing branch
+    /// (Src/Builtins/sched.c:150).
     pub fn list(&self) -> &[SchedCmd] {
         &self.cmds
     }
 
-    /// Check and return any commands due for execution
+    /// Drain and return commands whose scheduled time has passed.
+    /// Port of `checksched()` from Src/Builtins/sched.c:93 — the C
+    /// source's SIGALRM-driven dispatcher fires this between
+    /// commands and pops every entry whose `time <= now`.
     pub fn check(&mut self) -> Vec<SchedCmd> {
         let now = Self::now();
         let mut due = Vec::new();
@@ -89,7 +112,10 @@ impl Scheduler {
         due
     }
 
-    /// Get the time until the next scheduled command (if any)
+    /// Get the time until the next scheduled command, if any.
+    /// Port of the wakeup-time computation `schedaddtimed()` from
+    /// Src/Builtins/sched.c:61 feeds into the SIGALRM-arming code
+    /// — same "head minus now, clamped at zero" formula.
     pub fn next_timeout(&self) -> Option<Duration> {
         self.cmds.first().map(|cmd| {
             let now = Self::now();
@@ -101,22 +127,31 @@ impl Scheduler {
         })
     }
 
-    /// Check if there are any scheduled commands
+    /// Check if there are any scheduled commands.
+    /// Equivalent to the `schedcmds == NULL` test in
+    /// Src/Builtins/sched.c.
     pub fn is_empty(&self) -> bool {
         self.cmds.is_empty()
     }
 
-    /// Get the number of scheduled commands
+    /// Count scheduled commands.
+    /// zshrs convenience — Src/Builtins/sched.c walks the list to
+    /// count.
     pub fn len(&self) -> usize {
         self.cmds.len()
     }
 
-    /// Clear all scheduled commands
+    /// Drop all scheduled commands.
+    /// Port of `scheddeltimed()` follow-up + free-loop in
+    /// `cleanup_()` (Src/Builtins/sched.c:426).
     pub fn clear(&mut self) {
         self.cmds.clear();
     }
 
-    /// Get scheduled events as array (for zsh_scheduled_events parameter)
+    /// Render scheduled events as an array.
+    /// Port of `schedgetfn()` from Src/Builtins/sched.c:341 — the
+    /// `getfn` slot the C source wires for the
+    /// `$zsh_scheduled_events` special parameter.
     pub fn as_array(&self) -> Vec<String> {
         self.cmds
             .iter()
@@ -128,14 +163,19 @@ impl Scheduler {
     }
 }
 
-/// Parse a time specification and return the absolute time
+/// Parse a time specification and return the absolute time.
+/// Port of the time-parsing block at the top of `bin_sched()`
+/// (Src/Builtins/sched.c:150) — recognises the same `+N`, `+H:M`,
+/// `+H:M:S`, `H:M`, `H:Ma`/`H:Mp`, raw-epoch forms the C source
+/// accepts.
+///
 /// Supports:
-/// - `+N` - N seconds from now
-/// - `+H:M` - H hours and M minutes from now
-/// - `+H:M:S` - H hours, M minutes, S seconds from now
-/// - `H:M` - absolute time today (or tomorrow if past)
-/// - `H:Ma` / `H:Mp` - absolute time with am/pm
-/// - `N` - raw Unix timestamp
+/// - `+N` — N seconds from now
+/// - `+H:M` — H hours and M minutes from now
+/// - `+H:M:S` — H hours, M minutes, S seconds from now
+/// - `H:M` — absolute time today (or tomorrow if past)
+/// - `H:Ma` / `H:Mp` — absolute time with am/pm
+/// - `N` — raw Unix timestamp
 pub fn parse_time_spec(s: &str) -> Result<u64, &'static str> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -225,7 +265,10 @@ fn get_today_midnight(now: u64) -> u64 {
     now - secs_since_midnight
 }
 
-/// Format a scheduled command for display
+/// Format a scheduled command for the `sched` listing.
+/// Port of the per-entry print loop inside `bin_sched()`
+/// (Src/Builtins/sched.c:150) — same column layout (`%3d %s
+/// %s%s`).
 pub fn format_sched(index: usize, sch: &SchedCmd) -> String {
     use chrono::{Local, TimeZone};
 
@@ -241,8 +284,10 @@ pub fn format_sched(index: usize, sch: &SchedCmd) -> String {
     format!("{:3} {} {}{}{}", index, dt, flagstr, endstr, sch.cmd)
 }
 
-/// Execute the sched builtin
-/// Returns (exit_status, output)
+/// `sched` builtin entry point.
+/// Port of `bin_sched()` from Src/Builtins/sched.c:150.
+/// Dispatches between list (no args), delete (`-N`), and add
+/// (`time cmd...`) the same way the C source's giant switch does.
 pub fn builtin_sched(args: &[&str], scheduler: &mut Scheduler) -> (i32, String) {
     let mut output = String::new();
     let mut args_iter = args.iter().peekable();
