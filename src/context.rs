@@ -6,12 +6,18 @@
 
 use std::cell::RefCell;
 
-/// Parts of context that can be saved/restored
+/// Bit flags identifying which slices of context to save/restore.
+/// Port of the `ZCONTEXT_*` macros from Src/zsh.h —
+/// `zcontext_save_partial()` / `zcontext_restore_partial()` in
+/// Src/context.c:52/89 take this bit set to control which
+/// subsystem state they snapshot.
 pub const ZCONTEXT_HIST: u32 = 1;
 pub const ZCONTEXT_LEX: u32 = 2;
 pub const ZCONTEXT_PARSE: u32 = 4;
 
-/// History state that gets pushed onto context stack
+/// History state slice pushed onto the context stack.
+/// Port of the history-state fields `zcontext_save_partial()` from
+/// Src/context.c:52 captures (curhist / histsiz / savehistsiz).
 #[derive(Clone, Default)]
 pub struct HistStack {
     pub curhist: usize,
@@ -19,7 +25,10 @@ pub struct HistStack {
     pub savehistsiz: usize,
 }
 
-/// Lexer state that gets pushed onto context stack
+/// Lexer state slice pushed onto the context stack.
+/// Port of the lexer-state fields `zcontext_save_partial()` from
+/// Src/context.c:52 captures (`tok`, `tokstr`, etc.) — same bit
+/// `ZCONTEXT_LEX` controls them.
 #[derive(Clone, Default)]
 pub struct LexStack {
     pub tok: i32,
@@ -27,14 +36,21 @@ pub struct LexStack {
     pub zsession: Option<String>,
 }
 
-/// Parser state that gets pushed onto context stack
+/// Parser state slice pushed onto the context stack.
+/// Port of the parser-state fields `zcontext_save_partial()` from
+/// Src/context.c:52 captures (`ecused`, `ecnpats`) under
+/// `ZCONTEXT_PARSE`.
 #[derive(Clone, Default)]
 pub struct ParseStack {
     pub ecused: usize,
     pub ecnpats: usize,
 }
 
-/// A saved context entry
+/// A single saved context entry.
+/// Port of the per-entry shape on the C source's `zcontext_stack`
+/// linked list — bundles all three subsystem slices so a single
+/// push/pop captures everything `zcontext_save()` (Src/context.c:80)
+/// snapshotted.
 #[derive(Clone, Default)]
 pub struct ContextStack {
     pub hist_stack: HistStack,
@@ -42,7 +58,10 @@ pub struct ContextStack {
     pub parse_stack: ParseStack,
 }
 
-/// Context stack manager
+/// Context stack manager.
+/// Port of the global `zcontext_stack` linked list Src/context.c
+/// keeps — a stack rather than a list since we never traverse it,
+/// only push/pop.
 pub struct ContextManager {
     stack: Vec<ContextStack>,
 }
@@ -63,7 +82,10 @@ impl ContextManager {
         self.stack.is_empty()
     }
 
-    /// Save some or all of current context
+    /// Save some or all of the current context.
+    /// Port of `zcontext_save_partial()` from Src/context.c:52 —
+    /// the C source allocates a fresh `zcontext_stack` node, fills
+    /// the slices selected by `parts`, and pushes onto the stack.
     pub fn save_partial(
         &mut self,
         parts: u32,
@@ -86,7 +108,10 @@ impl ContextManager {
         self.stack.push(ctx);
     }
 
-    /// Save full context
+    /// Save the full context.
+    /// Port of `zcontext_save()` from Src/context.c:80 — wrapper
+    /// over `save_partial(ZCONTEXT_HIST | ZCONTEXT_LEX |
+    /// ZCONTEXT_PARSE, ...)`.
     pub fn save(&mut self, hist: &HistStack, lex: &LexStack, parse: &ParseStack) {
         self.save_partial(
             ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE,
@@ -96,7 +121,10 @@ impl ContextManager {
         );
     }
 
-    /// Restore some or all of context
+    /// Restore some or all of the saved context.
+    /// Port of `zcontext_restore_partial()` from Src/context.c:89
+    /// — pops the top stack node and copies back the slices
+    /// selected by `parts`.
     pub fn restore_partial(&mut self, parts: u32) -> Option<ContextStack> {
         let ctx = self.stack.pop()?;
 
@@ -114,7 +142,10 @@ impl ContextManager {
         Some(result)
     }
 
-    /// Restore full context
+    /// Restore the full context.
+    /// Port of `zcontext_restore()` from Src/context.c:117 —
+    /// wrapper over `restore_partial(ZCONTEXT_HIST | ZCONTEXT_LEX
+    /// | ZCONTEXT_PARSE)`.
     pub fn restore(&mut self) -> Option<ContextStack> {
         self.restore_partial(ZCONTEXT_HIST | ZCONTEXT_LEX | ZCONTEXT_PARSE)
     }
@@ -129,31 +160,39 @@ thread_local! {
     static CONTEXT_STACK: RefCell<ContextManager> = RefCell::new(ContextManager::new());
 }
 
-/// Save context in full (global function)
+/// Save the context in full (global entry point).
+/// Port of `zcontext_save()` from Src/context.c:80 — the global
+/// function the C source's eval/exec/parse paths call.
 pub fn zcontext_save(hist: &HistStack, lex: &LexStack, parse: &ParseStack) {
     CONTEXT_STACK.with(|cs| {
         cs.borrow_mut().save(hist, lex, parse);
     });
 }
 
-/// Save partial context (global function)
+/// Save partial context (global entry point).
+/// Port of `zcontext_save_partial()` from Src/context.c:52.
 pub fn zcontext_save_partial(parts: u32, hist: &HistStack, lex: &LexStack, parse: &ParseStack) {
     CONTEXT_STACK.with(|cs| {
         cs.borrow_mut().save_partial(parts, hist, lex, parse);
     });
 }
 
-/// Restore full context (global function)
+/// Restore the full context (global entry point).
+/// Port of `zcontext_restore()` from Src/context.c:117.
 pub fn zcontext_restore() -> Option<ContextStack> {
     CONTEXT_STACK.with(|cs| cs.borrow_mut().restore())
 }
 
-/// Restore partial context (global function)
+/// Restore partial context (global entry point).
+/// Port of `zcontext_restore_partial()` from Src/context.c:89.
 pub fn zcontext_restore_partial(parts: u32) -> Option<ContextStack> {
     CONTEXT_STACK.with(|cs| cs.borrow_mut().restore_partial(parts))
 }
 
-/// Check if we're at top level (no contexts saved)
+/// Check whether we're at top level (no contexts saved).
+/// Equivalent to the `zcontext_stack == NULL` test the C source's
+/// signal-handler dispatch uses (Src/context.c — implicit checks
+/// after `zcontext_restore()`).
 pub fn zcontext_is_toplevel() -> bool {
     CONTEXT_STACK.with(|cs| cs.borrow().is_empty())
 }
