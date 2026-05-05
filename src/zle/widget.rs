@@ -866,8 +866,8 @@ fn widget_vi_backward_blank_word(zle: &mut Zle) {
 }
 
 fn widget_vi_delete(zle: &mut Zle) {
-    // TODO: implement vi delete operator
-    let _ = zle;
+    // Port of videlete() from Src/Zle/zle_vi.c:384.
+    let _ = zle.vi_delete_op();
 }
 
 fn widget_vi_delete_char(zle: &mut Zle) {
@@ -879,8 +879,8 @@ fn widget_vi_backward_delete_char(zle: &mut Zle) {
 }
 
 fn widget_vi_change(zle: &mut Zle) {
-    // TODO: implement vi change operator
-    let _ = zle;
+    // Port of vichange() from Src/Zle/zle_vi.c:438.
+    let _ = zle.vi_change_op();
 }
 
 fn widget_vi_change_eol(zle: &mut Zle) {
@@ -893,8 +893,8 @@ fn widget_vi_kill_eol(zle: &mut Zle) {
 }
 
 fn widget_vi_yank(zle: &mut Zle) {
-    // TODO: implement vi yank operator
-    let _ = zle;
+    // Port of viyank() from Src/Zle/zle_vi.c:507.
+    let _ = zle.vi_yank_op();
 }
 
 fn widget_vi_yank_whole_line(zle: &mut Zle) {
