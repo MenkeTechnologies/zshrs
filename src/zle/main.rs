@@ -372,6 +372,13 @@ impl Default for Zle {
 }
 
 impl Zle {
+    /// Construct a fresh Zle session with default state.
+    /// Equivalent to the global state initialisation that
+    /// `zleread()` performs at the start of each line edit in
+    /// Src/Zle/zle_main.c:1216 — `zleline = NULL; zlecs = zlell = 0;
+    /// done = 0; eofsent = 0; ...`. Our struct-based approach
+    /// collapses those globals into a single Zle instance so
+    /// callers can hold multiple independent line-edit sessions.
     pub fn new() -> Self {
         Zle {
             zleline: Vec::new(),
@@ -477,12 +484,19 @@ impl Zle {
         Ok(())
     }
 
-    /// Unget a byte back to the input buffer
+    /// Push one byte back to the head of the input queue.
+    /// Port of `ungetbyte()` from Src/Zle/zle_main.c:348. Used by
+    /// keymap-trie resolution and `quoted-insert` to put back a byte
+    /// the loop already read but isn't ready to consume.
     pub fn ungetbyte(&mut self, ch: u8) {
         self.unget_buf.push_front(ch);
     }
 
-    /// Unget multiple bytes
+    /// Push a byte slice back onto the input queue, preserving order.
+    /// Port of `ungetbytes()` from Src/Zle/zle_main.c:357. Iterates
+    /// the slice in reverse so that a subsequent forward read returns
+    /// `s[0]` first — matches the C source's `while(len--) ungetbyte(s[len])`
+    /// pattern.
     pub fn ungetbytes(&mut self, s: &[u8]) {
         for &b in s.iter().rev() {
             self.unget_buf.push_front(b);
@@ -509,7 +523,13 @@ impl Zle {
         }
     }
 
-    /// Read a raw byte from input with optional timeout
+    /// Read one byte from the input queue (or stdin) with optional
+    /// keymap-timeout semantics.
+    /// Port of `raw_getbyte()` from Src/Zle/zle_main.c:506. The C
+    /// source consults `kungetct`/`kungetbuf` (our `unget_buf`) first,
+    /// then drops to a poll/select wait against SHTTY honouring
+    /// `do_keytmout * KEYTIMEOUT`. Returns None on timeout/EOF — the
+    /// C source uses EOF as the same sentinel.
     pub fn raw_getbyte(&mut self, do_keytmout: bool) -> Option<u8> {
         // Check unget buffer first
         if let Some(b) = self.unget_buf.pop_front() {
@@ -577,7 +597,13 @@ impl Zle {
         }
     }
 
-    /// Get a byte from input, handling timeout
+    /// Read one byte from input with the kernel's CR/LF swap reversed.
+    /// Port of `getbyte()` from Src/Zle/zle_main.c:861. The C source's
+    /// `\n` ↔ `\r` swap is the inverse of the IO mapping that
+    /// zsetterm() installs (`tio.c_iflag |= INLCR | ICRNL`) so the
+    /// keymap dispatcher always sees a consistent newline byte. The
+    /// final byte is also stashed in `lastchar` for widgets that
+    /// inspect what triggered them (digit-argument, vi-find-char).
     pub fn getbyte(&mut self, do_keytmout: bool) -> Option<u8> {
         let b = self.raw_getbyte(do_keytmout)?;
 
@@ -595,7 +621,14 @@ impl Zle {
         Some(b)
     }
 
-    /// Get a full (possibly wide) character - always returns char in Rust
+    /// Read one complete (possibly multi-byte) character from input.
+    /// Port of `getfullchar()` from Src/Zle/zle_main.c:967. The C
+    /// source delegates to `getrestchar()` (zle_main.c:990) for the
+    /// wide-char assembly when the lead byte signals a UTF-8 sequence.
+    /// Our Rust port reads continuation bytes directly until the UTF-8
+    /// envelope is complete, then `str::from_utf8` produces the char.
+    /// Updates `lastchar_wide` so widgets can inspect the triggering
+    /// codepoint regardless of byte width.
     pub fn getfullchar(&mut self, do_keytmout: bool) -> Option<char> {
         let b = self.getbyte(do_keytmout)?;
 
@@ -881,7 +914,15 @@ impl Zle {
         self.resetneeded = true;
     }
 
-    /// Main entry point for line reading
+    /// Run a line edit and return the user's accepted line.
+    /// Port of `zleread()` from Src/Zle/zle_main.c:1216 — the
+    /// canonical entry point for "read one line interactively". The C
+    /// source's full chain is: setup tty + signals → run zle-line-init
+    /// hook → zlecore loop until done → run zle-line-finish hook →
+    /// restore tty + return the line. Our Rust port stashes the
+    /// prompt templates, expands them, sets the read flags + context,
+    /// then enters zlecore; the host (bin) handles the line-init /
+    /// line-finish hooks via pending_hooks.
     pub fn zleread(
         &mut self,
         lprompt: &str,
@@ -1349,6 +1390,11 @@ mod termios {
         }
     }
 
+    /// Apply the given termios settings to the fd.
+    /// Thin libc wrapper. Equivalent to the `settyinfo()` helper at
+    /// Src/utils.c which fronts the same `tcsetattr(3)` call zsh
+    /// uses to install / restore tty modes around `zsetterm` and
+    /// `trashzle`.
     pub fn tcsetattr(fd: RawFd, action: i32, termios: &Termios) -> io::Result<()> {
         let ret = unsafe { libc::tcsetattr(fd, action, &termios.inner) };
         if ret != 0 {

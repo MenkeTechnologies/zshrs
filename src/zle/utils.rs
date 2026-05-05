@@ -115,7 +115,12 @@ impl Zle {
         }
     }
 
-    /// Paste from named buffer
+    /// Paste from a named vi cut buffer.
+    /// Port of `pastebuf()` from Src/Zle/zle_misc.c:558. The C source
+    /// looks up `vibuf[zmod.vibuf]` (the vi `"a..z` register table),
+    /// uses `cutbuf` for the unnamed buffer, and inserts at zlecs (or
+    /// zlecs+1 for `after=true`). zshrs models the 36-slot vibuf array
+    /// directly on Zle::vibuf.
     pub fn paste_from_buffer(&mut self, buf: usize, after: bool) {
         if buf < self.vibuf.len() {
             let text = self.vibuf[buf].clone();

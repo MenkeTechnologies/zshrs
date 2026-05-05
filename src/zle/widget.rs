@@ -77,16 +77,30 @@ pub struct Widget {
 }
 
 impl Widget {
-    /// Create a new internal widget
+    /// Build a widget that points at a Rust function pointer with the
+    /// supplied ZLE flags.
+    /// Equivalent to the WIDGET_INT branch of `zalloc(sizeof(*w))` +
+    /// `w->u.fn = ...` in `addzlefunction()` at
+    /// Src/Zle/zle_thingy.c:281. The C source uses this for every
+    /// `iwidgets.list` entry (the static built-in table); we collapse
+    /// "internal" + "builtin" into the same WidgetFunc::Internal
+    /// variant since both end up dispatching a Rust fn ptr.
     pub fn internal(name: &str, func: fn(&mut Zle), flags: WidgetFlags) -> Self {
-        let _ = name; // Would be used for registration
+        let _ = name; // Mirrors addzlefunction's `w->name` field — unused
+                      // here because dispatch is by table lookup, not name.
         Widget {
             flags: flags | WidgetFlags::INT,
             func: WidgetFunc::Internal(func),
         }
     }
 
-    /// Create a builtin widget by name
+    /// Resolve a built-in widget name to a Widget.
+    /// Equivalent to the lookup-by-name path in
+    /// `bin_zle_call`/`getkeycmd` (Src/Zle/zle_thingy.c) when the
+    /// resolved Thingy points at a built-in. Routes through
+    /// `get_builtin_widget` which is the static table corresponding
+    /// to zsh's `intwidget[]` — see `Src/Zle/iwidgets.list` for the
+    /// canonical name → fn mapping.
     pub fn builtin(name: &str) -> Self {
         let (func, flags) = get_builtin_widget(name);
         Widget {
@@ -95,7 +109,11 @@ impl Widget {
         }
     }
 
-    /// Create a user-defined widget
+    /// Build a widget that wraps a user-defined shell function.
+    /// Equivalent to `bin_zle_new()` from Src/Zle/zle_thingy.c:584
+    /// (the `zle -N name [shell-fn]` builtin). The C source allocates
+    /// a fresh Widget without WIDGET_INT, sets `w->u.fnnam` to the
+    /// shell function name, and binds it to a Thingy.
     pub fn user_defined(name: &str, func_name: &str) -> Self {
         let _ = name;
         Widget {
