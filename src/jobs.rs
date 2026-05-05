@@ -30,6 +30,10 @@ pub const MAX_PIPESTATS: usize = 256;
 
 /// Process timing information
 #[derive(Clone, Debug, Default)]
+/// CPU/elapsed time accounting for a job/process.
+/// Port of `child_times_t` (Src/zsh.h) — populated by
+/// `update_process()` (Src/jobs.c:363) from `wait4(2)` /
+/// `getrusage(2)`. Same `user` / `system` / `real` triple.
 pub struct TimeInfo {
     pub user_time: Duration,
     pub sys_time: Duration,
@@ -37,6 +41,9 @@ pub struct TimeInfo {
 
 /// A single process in a pipeline
 #[derive(Clone, Debug)]
+/// One process within a pipeline.
+/// Port of `struct process` from Src/zsh.h — `update_process()`
+/// (Src/jobs.c:363) and `findproc()` (line 191) walk these.
 pub struct Process {
     pub pid: i32,
     pub status: i32,
@@ -90,6 +97,10 @@ impl Process {
 
 /// A job (pipeline)
 #[derive(Clone, Debug)]
+/// A job (one or more processes in a pipeline).
+/// Port of `struct job` from Src/zsh.h — Src/jobs.c keeps the
+/// `jobtab[]` array of these and dispatches every `bg`/`fg`/
+/// `wait`/`disown` builtin through them.
 pub struct Job {
     pub stat: u32,
     pub gleader: i32,           // Process group leader
@@ -155,6 +166,10 @@ impl Default for Job {
 
 /// Simple job info for exec.rs compatibility
 #[derive(Debug)]
+/// Job-info accessor record.
+/// zshrs convenience over `struct job` for read-only listings.
+/// C zsh inlines the same fields when `printjob()`
+/// (Src/jobs.c:1138) renders.
 pub struct JobInfo {
     pub id: usize,
     pub pid: i32,
@@ -165,6 +180,11 @@ pub struct JobInfo {
 }
 
 /// Job table compatible with exec.rs
+/// Job table.
+/// Port of the `jobtab[]` global (Src/zsh.h declares it,
+/// Src/jobs.c maintains it). The `setprevjob()` cursor
+/// (line 698) and `findproc()` lookup (line 191) work against
+/// this shape.
 pub struct JobTable {
     jobs: Vec<Option<JobInfo>>,
     current_id: Option<usize>,
@@ -337,6 +357,10 @@ impl JobTable {
 }
 
 /// Format a job for display
+/// Format a job line for `jobs` builtin output.
+/// Port of `printjob()` from Src/jobs.c:1138 — same column
+/// layout (`[N]`, status, text). Honours the `lng` / `synch`
+/// flags the C source's `printjob` uses.
 pub fn format_job(
     job: &Job,
     job_num: usize,
@@ -447,6 +471,9 @@ pub struct JobEntry {
 
 /// Send a signal to a process
 #[cfg(unix)]
+/// Send a signal to a process.
+/// Port of the `kill(2)` calls Src/signals.c::`killjb()` issues
+/// per-process when terminating a job.
 pub fn send_signal(pid: i32, sig: nix::sys::signal::Signal) -> Result<(), String> {
     use nix::sys::signal::kill;
     use nix::unistd::Pid;
@@ -461,6 +488,10 @@ pub fn send_signal(_pid: i32, _sig: i32) -> Result<(), String> {
 
 /// Continue a stopped job
 #[cfg(unix)]
+/// Continue a stopped process (SIGCONT).
+/// Port of the `bg`/`fg` continuation path (Src/jobs.c
+/// `makerunning()` line 167 + the SIGCONT send `bin_fg()` does
+/// in Src/jobs.c).
 pub fn continue_job(pid: i32) -> Result<(), String> {
     use nix::sys::signal::{kill, Signal};
     use nix::unistd::Pid;
@@ -475,6 +506,10 @@ pub fn continue_job(_pid: i32) -> Result<(), String> {
 
 /// Wait for a job to complete
 #[cfg(unix)]
+/// Wait for a child PID and return its exit status.
+/// Port of the `wait4(2)` / `waitpid(2)` loop inside
+/// `update_job()` (Src/jobs.c:460) the C source uses to reap a
+/// known PID.
 pub fn wait_for_job(pid: i32) -> Result<i32, String> {
     use nix::sys::wait::{waitpid, WaitStatus};
     use nix::unistd::Pid;
@@ -505,6 +540,8 @@ pub fn wait_for_child(child: &mut Child) -> Result<i32, String> {
 }
 
 /// Get clock ticks per second (from jobs.c get_clktck lines 720-748)
+/// Get `_SC_CLK_TCK` for time-conversion math.
+/// Port of `get_clktck()` from Src/jobs.c:721.
 pub fn get_clktck() -> i64 {
     #[cfg(unix)]
     {
@@ -519,6 +556,8 @@ pub fn get_clktck() -> i64 {
 }
 
 /// Format time as hh:mm:ss.xx (from jobs.c printhhmmss lines 752-765)
+/// Format a duration as `H:MM:SS` / `M:SS`.
+/// Port of `printhhmmss()` from Src/jobs.c:752.
 pub fn format_hhmmss(secs: f64) -> String {
     let mins = (secs / 60.0) as i32;
     let hours = mins / 60;
@@ -535,6 +574,10 @@ pub fn format_hhmmss(secs: f64) -> String {
 }
 
 /// Time format specifiers (from jobs.c printtime lines 768-949)
+/// Format a CPU/real time triple per `$TIMEFMT`.
+/// Port of `printtime()` from Src/jobs.c:768 — same
+/// `%U`/`%S`/`%E`/`%P`/`%J`/`%c`/`%R`/etc. directive set the
+/// `time` keyword's output uses.
 pub fn format_time(
     elapsed_secs: f64,
     user_secs: f64,
@@ -605,6 +648,10 @@ pub fn format_time(
 pub const DEFAULT_TIMEFMT: &str = "%J  %U user %S system %P cpu %*E total";
 
 /// Time a command's execution
+/// Per-command timer for the `time` keyword.
+/// Port of the `dtime_tv()` (Src/jobs.c:137) /
+/// `dtime_ts()` (line 152) deltas — measures real / user /
+/// system across one command body.
 pub struct CommandTimer {
     start: std::time::Instant,
     job_name: String,
@@ -643,6 +690,10 @@ impl CommandTimer {
 }
 
 /// Pipestats management (from jobs.c storepipestats lines 420-454)
+/// Per-pipeline stats array.
+/// Port of the `pipestats[]` cache `storepipestats()`
+/// (Src/jobs.c:420) populates so `${pipestatus[N]}` can read
+/// per-stage exit codes.
 pub struct PipeStats {
     stats: Vec<i32>,
 }
@@ -686,6 +737,8 @@ impl PipeStats {
 }
 
 /// Signal message lookup (from jobs.c sigmsg lines 1106-1118)
+/// Render a signal number as a one-line description.
+/// Port of `sigmsg()` from Src/jobs.c:1107.
 pub fn sigmsg(sig: i32) -> &'static str {
     match sig {
         libc::SIGHUP => "hangup",
@@ -750,6 +803,9 @@ pub fn format_process_status(status: i32) -> String {
 }
 
 /// Print job in long format (from jobs.c printjob)
+/// `jobs -l` long-form formatter.
+/// Port of the `lng` branch inside `printjob()`
+/// (Src/jobs.c:1138).
 pub fn format_job_long(
     job_num: usize,
     current: bool,
@@ -762,12 +818,16 @@ pub fn format_job_long(
 }
 
 /// Print job in short format
+/// `jobs` short-form formatter.
+/// Port of the default branch of `printjob()` (Src/jobs.c:1138).
 pub fn format_job_short(job_num: usize, current: bool, status: &str, text: &str) -> String {
     let marker = if current { '+' } else { '-' };
     format!("[{}]  {} {}  {}", job_num, marker, status, text)
 }
 
 /// Background status tracking (from jobs.c bgstatus)
+/// Cached background-job status (for `wait`/$? lookup).
+/// Port of `update_bg_job()` (Src/jobs.c:677) bookkeeping.
 pub struct BgStatus {
     statuses: std::collections::HashMap<i32, i32>,
 }
