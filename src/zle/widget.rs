@@ -621,14 +621,22 @@ fn widget_kill_whole_line(zle: &mut Zle) {
 }
 
 fn widget_kill_word(zle: &mut Zle) {
+    // Port of killword() from Src/Zle/zle_word.c. The C source skips
+    // non-word chars then the word, captures the killed region in the
+    // kill ring, and leaves the cursor at the start. Honours the count
+    // multiplier (mult) — `3M-d` kills three words.
+    let n = zle.mult.max(1);
     let start = zle.zlecs;
-    // Skip non-word characters
-    while zle.zlecs < zle.zlell && !is_word_char(zle.zleline[zle.zlecs]) {
-        zle.zlecs += 1;
-    }
-    // Skip word
-    while zle.zlecs < zle.zlell && is_word_char(zle.zleline[zle.zlecs]) {
-        zle.zlecs += 1;
+    for _ in 0..n {
+        if zle.zlecs >= zle.zlell {
+            break;
+        }
+        while zle.zlecs < zle.zlell && !is_word_char(zle.zleline[zle.zlecs]) {
+            zle.zlecs += 1;
+        }
+        while zle.zlecs < zle.zlell && is_word_char(zle.zleline[zle.zlecs]) {
+            zle.zlecs += 1;
+        }
     }
     let end = zle.zlecs;
     zle.zlecs = start;
@@ -645,14 +653,21 @@ fn widget_kill_word(zle: &mut Zle) {
 }
 
 fn widget_backward_kill_word(zle: &mut Zle) {
+    // Port of backwardkillword() from Src/Zle/zle_word.c. Mirrors
+    // kill-word but in the opposite direction; cursor lands at the
+    // start of the killed range. Count-aware.
+    let n = zle.mult.max(1);
     let end = zle.zlecs;
-    // Skip non-word characters
-    while zle.zlecs > 0 && !is_word_char(zle.zleline[zle.zlecs - 1]) {
-        zle.zlecs -= 1;
-    }
-    // Skip word
-    while zle.zlecs > 0 && is_word_char(zle.zleline[zle.zlecs - 1]) {
-        zle.zlecs -= 1;
+    for _ in 0..n {
+        if zle.zlecs == 0 {
+            break;
+        }
+        while zle.zlecs > 0 && !is_word_char(zle.zleline[zle.zlecs - 1]) {
+            zle.zlecs -= 1;
+        }
+        while zle.zlecs > 0 && is_word_char(zle.zleline[zle.zlecs - 1]) {
+            zle.zlecs -= 1;
+        }
     }
     let start = zle.zlecs;
 
@@ -3186,6 +3201,36 @@ mod tests {
         // position of 'z' in "baz" = index 10 (matches the C source's
         // vibackwardwordend in Src/Zle/zle_word.c:348).
         assert_eq!(zle.zlecs, 10);
+    }
+
+    #[test]
+    fn kill_word_with_count_kills_n_words() {
+        let mut zle = Zle::new();
+        zle.zleline = "foo bar baz qux".chars().collect();
+        zle.zlell = 15;
+        zle.zlecs = 0;
+        zle.mult = 2;
+        widget_kill_word(&mut zle);
+        // 2*kill-word from start removes "foo bar" plus its trailing
+        // separator into the kill ring; remaining buffer starts at " baz".
+        let s: String = zle.zleline.iter().collect();
+        assert_eq!(s, " baz qux");
+        let killed = zle.killring.front().unwrap().iter().collect::<String>();
+        assert_eq!(killed, "foo bar");
+    }
+
+    #[test]
+    fn backward_kill_word_with_count_kills_n_words_back() {
+        let mut zle = Zle::new();
+        zle.zleline = "alpha beta gamma".chars().collect();
+        zle.zlell = 16;
+        zle.zlecs = 16;
+        zle.mult = 2;
+        widget_backward_kill_word(&mut zle);
+        let s: String = zle.zleline.iter().collect();
+        assert_eq!(s, "alpha ");
+        let killed = zle.killring.front().unwrap().iter().collect::<String>();
+        assert_eq!(killed, "beta gamma");
     }
 
     #[test]
