@@ -56,6 +56,11 @@ pub struct History {
 }
 
 impl History {
+    /// Construct an empty history with a max-entry cap.
+    /// Constructor for the History struct that mirrors the live history
+    /// list zsh maintains via `inithist()` in Src/hist.c:1717. The C
+    /// source caps at `histsiz` ($HISTSIZE); the equivalent here is
+    /// `max_size` passed at construction.
     pub fn new(max_size: usize) -> Self {
         History {
             entries: Vec::new(),
@@ -71,7 +76,13 @@ impl History {
         }
     }
 
-    /// Add entry to history
+    /// Append a new entry to the history list.
+    /// Port of `addhistnode()` from Src/hist.c (the inner add path
+    /// invoked by `addhistline`/`hend`). Skips empty input and
+    /// consecutive-duplicate lines (same as zsh's HIST_IGNORE_DUPS
+    /// default behaviour). Trims entries from the front when the
+    /// list exceeds max_size — the C source uses `freehistnode` on
+    /// the LRU end of the hist_ring.
     pub fn add(&mut self, line: String) {
         // Don't add empty or duplicate entries
         if line.is_empty() {
@@ -103,12 +114,18 @@ impl History {
         self.cursor = self.entries.len();
     }
 
-    /// Get entry at cursor
+    /// Look up the entry at a specific 0-based index.
+    /// Port of `quietgethist()` from Src/Zle/zle_hist.c:1712 — that
+    /// fetches by event number; our entries Vec is 0-indexed so
+    /// callers convert via num→index themselves.
     pub fn get(&self, index: usize) -> Option<&HistEntry> {
         self.entries.get(index)
     }
 
-    /// Move cursor up (older)
+    /// Step the history cursor one position older.
+    /// Port of the cursor-decrement portion of `zle_goto_hist()` at
+    /// Src/Zle/zle_hist.c:805 with a fixed n=-1 step. Returns the
+    /// landed entry or None at BoH.
     pub fn up(&mut self) -> Option<&HistEntry> {
         if self.cursor > 0 {
             self.cursor -= 1;
@@ -118,7 +135,10 @@ impl History {
         }
     }
 
-    /// Move cursor down (newer)
+    /// Step the history cursor one position newer.
+    /// Port of `zle_goto_hist()` at Src/Zle/zle_hist.c:805 with a
+    /// fixed n=+1 step. Returns the landed entry or None at EoH
+    /// (the live buffer sentinel).
     pub fn down(&mut self) -> Option<&HistEntry> {
         if self.cursor < self.entries.len() {
             self.cursor += 1;
@@ -128,7 +148,13 @@ impl History {
         }
     }
 
-    /// Search backward for pattern
+    /// Search history for the most recent entry containing `pattern`.
+    /// Substring-match port of the inner loop of `historysearchbackward()`
+    /// from Src/Zle/zle_hist.c:484. The C source supports glob patterns
+    /// via `hist_skip_flags`; our basic substring match is sufficient
+    /// for simple isearch-style lookups but doesn't honour zsh's
+    /// HIST_PATTERN flag — see `historyincrementalpatternsearchbackward`
+    /// for the pattern-mode variant.
     pub fn search_backward(&mut self, pattern: &str) -> Option<&HistEntry> {
         let start = if self.cursor > 0 {
             self.cursor - 1
@@ -146,7 +172,9 @@ impl History {
         None
     }
 
-    /// Search forward for pattern
+    /// Search history forward for the next entry containing `pattern`.
+    /// Mirror of `search_backward` against `historysearchforward()` at
+    /// Src/Zle/zle_hist.c:541.
     pub fn search_forward(&mut self, pattern: &str) -> Option<&HistEntry> {
         for i in (self.cursor + 1)..self.entries.len() {
             if self.entries[i].line.contains(pattern) {
@@ -158,7 +186,12 @@ impl History {
         None
     }
 
-    /// Reset cursor to end
+    /// Reset the cursor to the live-buffer sentinel position and drop
+    /// any saved pre-navigation line.
+    /// Port of the `histline = curhist; saved_line = NULL` reset path
+    /// invoked by `endofhistory()` (Src/Zle/zle_hist.c:478) and after
+    /// accept-line. Used by callers re-entering zleread for a fresh
+    /// edit session.
     pub fn reset(&mut self) {
         self.cursor = self.entries.len();
         self.saved_line = None;
@@ -166,10 +199,13 @@ impl History {
 }
 
 impl Zle {
-    /// Initialize history for ZLE
+    /// Set up history limits at ZLE startup.
+    /// Stub mirroring the role of `inithist()` from Src/hist.c:1717,
+    /// which sizes the global hist_ring at $HISTSIZE. zshrs's history
+    /// lives on `Zle::history` (constructed in `Zle::new`); this method
+    /// is kept for API compatibility — callers can adjust max_size
+    /// post-construction if needed.
     pub fn init_history(&mut self, max_size: usize) {
-        // History would be stored externally and passed in
-        // This is just a stub for the interface
         let _ = max_size;
     }
 
@@ -354,7 +390,12 @@ impl Zle {
         true
     }
 
-    /// Go to previous history entry
+    /// Walk one entry older through the externally-supplied History.
+    /// External-history overload of the widget-callable
+    /// `Zle::zle_goto_hist(-1, false)` — kept for callers that drive a
+    /// separate History instance. Port of `uphistory()` at
+    /// Src/Zle/zle_hist.c:233 (the live-buffer save matches the C
+    /// source's first-navigate-saves-original behaviour).
     pub fn history_up(&mut self, hist: &mut History) {
         if hist.saved_line.is_none() {
             // Save current line
@@ -370,7 +411,11 @@ impl Zle {
         }
     }
 
-    /// Go to next history entry
+    /// Walk one entry newer; if past the last entry, restore the saved
+    /// pre-navigation line.
+    /// External-history overload of `Zle::zle_goto_hist(1, false)`.
+    /// Port of `downhistory()` at Src/Zle/zle_hist.c:434 with the
+    /// saved-line restore from zle_goto_hist's sentinel branch.
     pub fn history_down(&mut self, hist: &mut History) {
         if let Some(entry) = hist.down() {
             self.zleline = entry.line.chars().collect();
@@ -399,7 +444,13 @@ impl Zle {
         hist.search_backward = false;
     }
 
-    /// Search history for prefix
+    /// Search history for an entry containing the buffer text up to
+    /// the cursor.
+    /// Port of `historybeginningsearchbackward()` from
+    /// Src/Zle/zle_hist.c:2039 with substring-match instead of
+    /// prefix-match — useful as an isearch-style helper for callers
+    /// that drive History externally. The strict prefix-match form
+    /// lives in `widget_history_beginning_search_backward`.
     pub fn history_search_prefix(&mut self, hist: &mut History) {
         let prefix: String = self.zleline[..self.zlecs].iter().collect();
 

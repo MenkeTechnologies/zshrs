@@ -150,13 +150,22 @@ impl Zle {
         self.kill_buffer();
     }
 
-    /// Exchange point and mark
+    /// Swap cursor and mark.
+    /// Port of `exchangepointandmark()` from Src/Zle/zle_move.c:496. The
+    /// C source has additional zmult-based behaviour (zmult==0 just
+    /// activates the region without swapping; zmult>0 also activates).
+    /// This bare method only swaps; the widget-level
+    /// `widget_exchange_point_and_mark` honours the count semantics.
     pub fn exchange_point_and_mark(&mut self) {
         std::mem::swap(&mut self.zlecs, &mut self.mark);
         self.resetneeded = true;
     }
 
-    /// Set mark at current position
+    /// Set mark at the current cursor position.
+    /// Port of `setmarkcommand()` from Src/Zle/zle_move.c:483 with the
+    /// activate-region branch elided. The widget-level
+    /// `widget_set_mark_command` covers the negative-count
+    /// deactivate path that the bare C source supports.
     pub fn set_mark_here(&mut self) {
         self.mark = self.zlecs;
     }
@@ -268,7 +277,11 @@ impl Zle {
         }
     }
 
-    /// Capitalize word
+    /// Capitalize the next word: title-case the first letter, lowercase
+    /// the rest of the word.
+    /// Port of `capitalizeword()` from Src/Zle/zle_word.c (the C source
+    /// uses `casemodifyword()` with a CASMOD_CAPS flag). Mirrors emacs's
+    /// M-c convention. Cursor lands past the modified word.
     pub fn capitalize_word(&mut self) {
         while self.zlecs < self.zlell && !self.zleline[self.zlecs].is_alphanumeric() {
             self.zlecs += 1;
@@ -293,7 +306,9 @@ impl Zle {
         self.resetneeded = true;
     }
 
-    /// Downcase word
+    /// Lowercase the next word.
+    /// Port of `downcaseword()` from Src/Zle/zle_word.c — calls
+    /// `casemodifyword()` with the CASMOD_LOWER flag.
     pub fn downcase_word(&mut self) {
         while self.zlecs < self.zlell && !self.zleline[self.zlecs].is_alphanumeric() {
             self.zlecs += 1;
@@ -310,7 +325,9 @@ impl Zle {
         self.resetneeded = true;
     }
 
-    /// Upcase word
+    /// Uppercase the next word.
+    /// Port of `upcaseword()` from Src/Zle/zle_word.c — calls
+    /// `casemodifyword()` with the CASMOD_UPPER flag.
     pub fn upcase_word(&mut self) {
         while self.zlecs < self.zlell && !self.zleline[self.zlecs].is_alphanumeric() {
             self.zlecs += 1;
