@@ -799,6 +799,18 @@ pub fn zshrs_main() {
             no_rcs_flag,
             &option_settings,
         );
+        // Port from Src/init.c:295-306 + Src/init.c:1368-1370.
+        // In script mode the parsed argv is split as:
+        //   argv[0] = shell binary       (from init.c:271)
+        //   argv[1] = runscript          (from init.c:301: `*runscript = *argv`)
+        //   argv[2..] = paramlist        (from init.c:305-306, becomes pparams)
+        // Before running the script, init.c:1369 does
+        //   `argzero = ztrdup(runscript)` — i.e. `$0` becomes the
+        // verbatim script path the user passed (NOT canonicalized).
+        executor
+            .variables
+            .insert("0".to_string(), args[1].clone());
+        executor.positional_params = args.iter().skip(2).cloned().collect();
         if let Err(e) = executor.execute_script_file(&args[1]) {
             eprintln!("zshrs: {}: {}", args[1], e);
             std::process::exit(1);
@@ -1423,48 +1435,18 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
         None
     };
 
-    let mut buffer = String::new();
-    let mut in_multiline = false;
-
-    for line in contents.lines() {
-        let trimmed = line.trim();
-
-        // Skip empty lines and comments (unless in multiline)
-        if !in_multiline && (trimmed.is_empty() || trimmed.starts_with('#')) {
-            continue;
-        }
-
-        // Check for line continuation
-        if let Some(stripped) = line.strip_suffix('\\') {
-            buffer.push_str(stripped);
-            buffer.push(' ');
-            in_multiline = true;
-            continue;
-        }
-
-        // Check for unclosed constructs (heredoc, quotes, braces)
-        if in_multiline {
-            buffer.push_str(line);
-            let open_braces = buffer.matches('{').count();
-            let close_braces = buffer.matches('}').count();
-            let open_parens = buffer.matches('(').count();
-            let close_parens = buffer.matches(')').count();
-
-            if open_braces == close_braces && open_parens == close_parens {
-                process_line(&buffer, executor);
-                buffer.clear();
-                in_multiline = false;
-            } else {
-                buffer.push('\n');
-            }
-        } else {
-            process_line(line, executor);
-        }
-    }
-
-    // Process any remaining buffered content
-    if !buffer.is_empty() {
-        process_line(&buffer, executor);
+    // Parse and execute the entire file as one stream — port of
+    // C `source()` → `loop(0, 0)` (Src/init.c:1551, 1627). The
+    // parser handles multi-line constructs (`if/then/fi`,
+    // `case/esac`, `for/done`, `while/done`, `function {…}`,
+    // heredocs, line continuations) natively because it reads the
+    // full token stream rather than discrete lines. The previous
+    // line-by-line implementation here split `if [[ -r FILE ]]; then`
+    // from its body, so the body executed unconditionally — broke
+    // /etc/zshrc:25 zkbd test, broke `case ARM) c1='…'; …;;` SQ
+    // assignments, broke any function defined across lines.
+    if let Err(e) = executor.execute_script(contents) {
+        eprintln!("zshrs: {}: {}", path.display(), e);
     }
 
     // Restore `$0` per Src/builtin.c:6139-6142.
@@ -1560,6 +1542,51 @@ fn source_logout_files(executor: &mut ShellExecutor, is_login: bool) {
     // /etc/zlogout (only if GLOBAL_RCS is set)
     if executor.options.get("globalrcs").copied().unwrap_or(true) {
         source_file_with_zwc(executor, &PathBuf::from("/etc/zlogout"));
+    }
+}
+
+/// Drain stale terminal-response bytes from stdin before re-entering
+/// the line editor. Mirrors the effective behavior of C ZLE's
+/// byte-input loop: `read(SHTTY, cptr, 1)` at Src/Zle/zle_main.c:838
+/// (called via `getbyte`/`getfullchar` at Src/Zle/zle_main.c:967) reads
+/// one byte at a time and the keymap dispatch silently consumes
+/// escape sequences that have no widget binding — most relevantly
+/// `\e[<row>;<col>R` Cursor Position Report replies left in stdin by
+/// alt-screen programs like `less` after they query cursor state.
+///
+/// reedline's `crossterm::cursor::position()` issues a fresh DSR
+/// (`\e[6n`) and parses the response synchronously; if stale CPR bytes
+/// from the previous foreground program are still buffered it either
+/// reads the wrong reply or times out with "cursor position could not
+/// be read within a normal duration", and the leftover `^[[N;NR` then
+/// leaks onto the next prompt. Polling with timeout=0 + `read(2)`
+/// drops those stale bytes the same way C ZLE's input loop would —
+/// the keymap has no binding for `\e[<n>;<n>R`, so they are consumed
+/// without effect.
+fn drain_stale_terminal_input() {
+    use std::os::unix::io::AsRawFd;
+    let fd = std::io::stdin().as_raw_fd();
+    let mut buf = [0u8; 256];
+    let mut total = 0usize;
+    // Bound the loop so a misbehaving terminal can't pin us forever.
+    for _ in 0..32 {
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let r = unsafe { libc::poll(&mut pfd, 1, 0) };
+        if r <= 0 || (pfd.revents & libc::POLLIN) == 0 {
+            break;
+        }
+        let n = unsafe { libc::read(fd, buf.as_mut_ptr().cast(), buf.len()) };
+        if n <= 0 {
+            break;
+        }
+        total += n as usize;
+    }
+    if total > 0 {
+        tracing::debug!(bytes = total, "drained stale terminal input pre-prompt");
     }
 }
 
@@ -1703,6 +1730,11 @@ fn run_interactive() {
         executor.drain_compinit_bg();
 
         let prompt = ZshrsPrompt::new(&executor);
+        // Drop stale terminal-response bytes (CPR replies, mode-reset
+        // acks, etc.) left over from the previous foreground program
+        // before reedline issues its own cursor-position query. See
+        // `drain_stale_terminal_input` doc — Src/Zle/zle_main.c:838+967.
+        drain_stale_terminal_input();
         match line_editor.read_line(&prompt) {
             Ok(Signal::Success(line)) => {
                 let line = line.trim();

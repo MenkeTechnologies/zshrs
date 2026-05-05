@@ -566,7 +566,37 @@ impl Zle {
                 }
             }
         } else {
-            // Blocking read
+            // No timeout requested. C zsh's `raw_getbyte()` here calls
+            // `read(SHTTY, cptr, 1)` (zle_main.c:560) where SHTTY has
+            // been put into raw mode (VMIN=1, VTIME=0, ICANON cleared)
+            // by `zsetterm()` in zle_main.c:210. In that mode the read
+            // returns one byte per keystroke. Outside ZLE, when stdin
+            // is a TTY in canonical mode (e.g. unit tests, or zshrs not
+            // yet inside a ZLE session), a bare `read` would block
+            // until a full line is typed — which deadlocks tests like
+            // `widget_universal_argument(empty unget_buf)` that expect
+            // None when no input is pending. Detect that case via
+            // `isatty + tcgetattr(ICANON)` and return None instead of
+            // blocking; only honour the C-faithful blocking read when
+            // we know the descriptor is in raw mode.
+            use std::os::unix::io::AsRawFd;
+            let fd = io::stdin().as_raw_fd();
+            let is_tty = unsafe { libc::isatty(fd) } == 1;
+            let in_raw_mode = if is_tty {
+                let mut t: libc::termios = unsafe { std::mem::zeroed() };
+                if unsafe { libc::tcgetattr(fd, &mut t) } == 0 {
+                    (t.c_lflag & libc::ICANON) == 0
+                } else {
+                    false
+                }
+            } else {
+                // Pipe / file / closed — `read` returns Ok(0) on EOF
+                // immediately, so blocking is fine here too.
+                true
+            };
+            if !in_raw_mode {
+                return None;
+            }
             match io::stdin().read(&mut buf) {
                 Ok(1) => Some(buf[0]),
                 _ => None,

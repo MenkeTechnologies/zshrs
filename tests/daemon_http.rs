@@ -27,7 +27,27 @@ fn zshrs_daemon_binary() -> PathBuf {
         return PathBuf::from(p);
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest.join("target").join("debug").join("zshrs-daemon")
+    let path = manifest.join("target").join("debug").join("zshrs-daemon");
+    // Auto-build the daemon if missing. Cargo only injects
+    // `CARGO_BIN_EXE_*` for binaries declared in the SAME package as
+    // the integration test; `zshrs-daemon` lives in a sibling
+    // workspace member, so `cargo test` from the root doesn't pull it
+    // in transitively. Build on first miss instead of failing with
+    // `daemon spawn: NotFound`. Guarded by a `OnceLock` so 21 parallel
+    // tests don't race on cargo's build lock.
+    static BUILT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if !path.exists() {
+        BUILT.get_or_init(|| {
+            let status = Command::new(env!("CARGO"))
+                .args(["build", "-p", "zshrs-daemon", "--bin", "zshrs-daemon"])
+                .current_dir(&manifest)
+                .stdin(Stdio::null())
+                .status()
+                .expect("cargo build -p zshrs-daemon");
+            assert!(status.success(), "cargo build failed for zshrs-daemon");
+        });
+    }
+    path
 }
 
 /// Allocate a kernel-assigned free TCP port by binding 127.0.0.1:0

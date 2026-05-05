@@ -22,6 +22,8 @@
 pub mod aot;
 pub mod arith_compiler;
 pub mod attr;
+pub mod autoload_cache;
+pub mod script_cache;
 pub mod cap;
 pub mod clone;
 pub mod compat;

@@ -24,43 +24,12 @@ use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// On-disk format version for cached fusevm chunks. Bumped when fusevm's
-/// bincode layout changes in a non-backward-compat way. Cached blobs are
-/// stored as `[VERSION_BYTE, bincode_bytes...]`; readers verify the prefix
-/// and treat any mismatch as a cache miss (the source file is recompiled).
-///
-/// Version history:
-///   0  — fusevm 0.10.0 (Phase F baseline; no version prefix in storage)
-///   1  — fusevm 0.10.1 (Tier C: argv-flatten in Op::Exec/ExecBg/CallFunction
-///        + ShellHost::exec_bg; current)
-///
-/// Bumping is a one-line change. Existing caches transparently rebuild — no
-/// migration code needed because the unwrap function returns None on
-/// mismatch and the caller's "cache miss → compile" path takes over.
-pub const BYTECODE_VERSION: u8 = 1;
-
-/// Wrap raw bincode bytes with the format version prefix. Called by
-/// `store_bytecode` (and any other persisted-chunk writer in the future)
-/// before the INSERT.
-#[inline]
-fn wrap_bytecode(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bytes.len() + 1);
-    out.push(BYTECODE_VERSION);
-    out.extend_from_slice(bytes);
-    out
-}
-
-/// Strip and verify the format version prefix. Returns `Some(inner_bytes)`
-/// if the prefix matches the current `BYTECODE_VERSION`, `None` otherwise.
-/// `None` triggers cache miss in the caller, which silently recompiles from
-/// source — no warning, no error (the maintainer's "no nag" rule).
-#[inline]
-fn unwrap_bytecode(bytes: &[u8]) -> Option<Vec<u8>> {
-    if bytes.is_empty() || bytes[0] != BYTECODE_VERSION {
-        return None;
-    }
-    Some(bytes[1..].to_vec())
-}
+// Script bytecode caching used to live here behind the BYTECODE_VERSION
+// prefix + script_bytecode SQLite table. It now lives in the rkyv shard at
+// ~/.cache/zshrs/scripts.rkyv (see `crate::script_cache`). The header in
+// that shard carries its own version pin (`zshrs_version`) so this prefix
+// byte is no longer needed — a zshrs rebuild silently invalidates all
+// cached entries via `binary_mtime_at_cache`.
 
 /// Side effects captured from sourcing a plugin file.
 #[derive(Debug, Clone, Default)]
@@ -201,16 +170,6 @@ impl PluginCache {
                 flags TEXT NOT NULL DEFAULT ''
             );
 
-            -- Bytecode cache: skip lex+parse+compile entirely on cache hit
-            CREATE TABLE IF NOT EXISTS script_bytecode (
-                id INTEGER PRIMARY KEY,
-                path TEXT NOT NULL UNIQUE,
-                mtime_secs INTEGER NOT NULL,
-                mtime_nsecs INTEGER NOT NULL,
-                bytecode BLOB NOT NULL,
-                cached_at INTEGER NOT NULL
-            );
-
             -- compaudit cache: security audit results per fpath directory
             CREATE TABLE IF NOT EXISTS compaudit_cache (
                 id INTEGER PRIMARY KEY,
@@ -224,8 +183,13 @@ impl PluginCache {
             );
 
             CREATE INDEX IF NOT EXISTS idx_plugins_path ON plugins(path);
-            CREATE INDEX IF NOT EXISTS idx_script_bytecode_path ON script_bytecode(path);
             CREATE INDEX IF NOT EXISTS idx_compaudit_path ON compaudit_cache(path);
+
+            -- Migration: legacy script_bytecode table (bytecode now lives in
+            -- the rkyv shard at ~/.cache/zshrs/scripts.rkyv). Drop on open so
+            -- existing DBs reclaim the space and don't carry stale bytecode.
+            DROP INDEX IF EXISTS idx_script_bytecode_path;
+            DROP TABLE IF EXISTS script_bytecode;
         "#,
         )?;
         Ok(())
@@ -569,78 +533,6 @@ impl PluginCache {
         count
     }
 
-    /// Count bytecode cache entries whose file mtime no longer matches.
-    pub fn count_stale_bytecode(&self) -> usize {
-        let mut stmt = match self
-            .conn
-            .prepare("SELECT path, mtime_secs, mtime_nsecs FROM script_bytecode")
-        {
-            Ok(s) => s,
-            Err(_) => return 0,
-        };
-        let rows = match stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        }) {
-            Ok(r) => r,
-            Err(_) => return 0,
-        };
-        let mut count = 0;
-        for (path, cached_s, cached_ns) in rows.flatten() {
-            match file_mtime(std::path::Path::new(&path)) {
-                Some((s, ns)) if s != cached_s || ns != cached_ns => count += 1,
-                None => count += 1,
-                _ => {}
-            }
-        }
-        count
-    }
-
-    // -----------------------------------------------------------------
-    // Script bytecode cache — skip lex+parse+compile entirely
-    // -----------------------------------------------------------------
-
-    /// Check if cached bytecode exists with matching mtime AND a current
-    /// format-version prefix. A prefix mismatch returns None — the caller
-    /// treats this as a cache miss and recompiles from source. No warning is
-    /// printed; the rebuild is silent.
-    pub fn check_bytecode(&self, path: &str, mtime_secs: i64, mtime_nsecs: i64) -> Option<Vec<u8>> {
-        let raw = self.conn.query_row(
-            "SELECT bytecode FROM script_bytecode WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
-            params![path, mtime_secs, mtime_nsecs],
-            |row| row.get::<_, Vec<u8>>(0),
-        ).ok()?;
-        unwrap_bytecode(&raw)
-    }
-
-    /// Store compiled bytecode for a script file. The blob is wrapped with
-    /// the format version prefix so future readers (after a fusevm bump) can
-    /// detect the staleness without parsing the bincode body.
-    pub fn store_bytecode(
-        &self,
-        path: &str,
-        mtime_secs: i64,
-        mtime_nsecs: i64,
-        bytecode: &[u8],
-    ) -> rusqlite::Result<()> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-
-        let wrapped = wrap_bytecode(bytecode);
-        self.conn
-            .execute("DELETE FROM script_bytecode WHERE path = ?1", params![path])?;
-        self.conn.execute(
-            "INSERT INTO script_bytecode (path, mtime_secs, mtime_nsecs, bytecode, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![path, mtime_secs, mtime_nsecs, wrapped, now],
-        )?;
-        Ok(())
-    }
-
     // -----------------------------------------------------------------
     // compaudit cache — security audit results per fpath directory
     // -----------------------------------------------------------------
@@ -779,74 +671,50 @@ pub fn default_cache_path() -> PathBuf {
 }
 
 #[cfg(test)]
-mod version_tests {
+mod migration_tests {
     use super::*;
 
     #[test]
-    fn wrap_unwrap_round_trip() {
-        let raw = b"some-bincode-blob".to_vec();
-        let wrapped = wrap_bytecode(&raw);
-        assert_eq!(wrapped[0], BYTECODE_VERSION);
-        let unwrapped = unwrap_bytecode(&wrapped).expect("matching version unwraps");
-        assert_eq!(unwrapped, raw);
-    }
-
-    #[test]
-    fn unwrap_rejects_old_version() {
-        // Pre-version-byte cache (or a bumped version) should be rejected.
-        // The caller's cache-miss branch then recompiles from source.
-        let mut bogus = vec![0u8]; // version 0 (pre-Tier C)
-        bogus.extend_from_slice(b"old-bincode-blob");
-        assert!(unwrap_bytecode(&bogus).is_none());
-
-        let mut future = vec![BYTECODE_VERSION.wrapping_add(1)];
-        future.extend_from_slice(b"future-bincode-blob");
-        assert!(unwrap_bytecode(&future).is_none());
-    }
-
-    #[test]
-    fn unwrap_rejects_empty_blob() {
-        assert!(unwrap_bytecode(&[]).is_none());
-    }
-
-    #[test]
-    fn store_then_check_round_trips_through_sqlite() {
-        // End-to-end: serialize a tiny chunk-shaped blob, store via the
-        // cache, read it back, confirm it matches. Proves the version byte
-        // is invisible to callers under normal operation.
+    fn opening_an_existing_db_drops_legacy_script_bytecode_table() {
+        // Simulate a pre-migration DB: open with an old schema that still
+        // had script_bytecode, insert a row, close, then re-open via the
+        // current `PluginCache::open` path. The migration in `init_schema`
+        // must leave the table gone so SQLite holds zero bytecode bytes.
         let tmp = tempfile::tempdir().unwrap();
-        let db_path = tmp.path().join("test_cache.db");
-        let cache = PluginCache::open(&db_path).expect("open temp cache");
+        let db_path = tmp.path().join("legacy.db");
 
-        let path = "/fake/script.zsh";
-        let blob = b"bincode-bytes-here".to_vec();
-        cache
-            .store_bytecode(path, 12345, 6789, &blob)
-            .expect("store");
-        let got = cache.check_bytecode(path, 12345, 6789).expect("hit");
-        assert_eq!(got, blob);
-    }
+        // Hand-build the legacy table.
+        let pre = Connection::open(&db_path).unwrap();
+        pre.execute_batch(
+            r#"
+            CREATE TABLE script_bytecode (
+                id INTEGER PRIMARY KEY,
+                path TEXT NOT NULL UNIQUE,
+                mtime_secs INTEGER NOT NULL,
+                mtime_nsecs INTEGER NOT NULL,
+                bytecode BLOB NOT NULL,
+                cached_at INTEGER NOT NULL
+            );
+            CREATE INDEX idx_script_bytecode_path ON script_bytecode(path);
+            INSERT INTO script_bytecode (id, path, mtime_secs, mtime_nsecs, bytecode, cached_at)
+                VALUES (1, '/fake/legacy.zsh', 0, 0, x'00deadbeef', 0);
+            "#,
+        )
+        .unwrap();
+        drop(pre);
 
-    #[test]
-    fn manually_inserted_old_version_invalidates() {
-        // Simulate a pre-Tier-C cache by INSERTing a row with version byte 0.
-        // check_bytecode must return None so the caller falls back to
-        // recompile-from-source.
-        let tmp = tempfile::tempdir().unwrap();
-        let db_path = tmp.path().join("legacy_cache.db");
-        let cache = PluginCache::open(&db_path).expect("open temp cache");
+        // Re-open via the production path — migration runs.
+        let _cache = PluginCache::open(&db_path).expect("open after migration");
 
-        let mut legacy = vec![0u8]; // wrong version
-        legacy.extend_from_slice(b"would-be-bincode");
-        cache
-            .conn
-            .execute(
-                "INSERT INTO script_bytecode (path, mtime_secs, mtime_nsecs, bytecode, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params!["/fake/legacy.zsh", 0i64, 0i64, legacy, 0i64],
+        // Confirm script_bytecode is gone.
+        let post = Connection::open(&db_path).unwrap();
+        let exists: i64 = post
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='script_bytecode'",
+                [],
+                |row| row.get(0),
             )
             .unwrap();
-
-        let result = cache.check_bytecode("/fake/legacy.zsh", 0, 0);
-        assert!(result.is_none(), "legacy bytecode must invalidate");
+        assert_eq!(exists, 0, "legacy script_bytecode must be dropped");
     }
 }

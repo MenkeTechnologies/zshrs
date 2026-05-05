@@ -8,7 +8,7 @@
 //!       ZTST_VERBOSE=1 cargo test -p zsh --test ztst_runner -- --nocapture
 //!
 //! Env vars:
-//!   ZTST_TIMEOUT_MS=N — per-file timeout in milliseconds (default: 5000)
+//!   ZTST_TIMEOUT_MS=N — per-test-case timeout in milliseconds (default: 2000)
 //!   ZTST_VERBOSE=1  — print pass/skip results, not just failures
 
 use std::env;
@@ -482,10 +482,17 @@ fn glob_match_inner(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
 }
 
 fn run_code(zshrs: &Path, code: &str, stdin_data: &str, workdir: &Path) -> (i32, String, String) {
+    // Per-test-case timeout. 200ms (the previous default) is far too tight
+    // for cases that legitimately wait on subprocess work — `sleep`,
+    // `coproc`, `wait`, `kill -STOP/CONT` show up across A05execution,
+    // V08zpty, W02jobs, and several others and routinely need 1–3s of real
+    // time. A05execution end-to-end completes in ~12s with timeout=2000ms
+    // (well under any individual case's clock). Override via env when a
+    // case needs longer.
     let timeout_ms: u64 = env::var("ZTST_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(200);
+        .unwrap_or(2000);
 
     // Sandbox the spawned process so any `~/X` or `$ZTST_tmp/X` writes
     // land in a per-process tempdir instead of the real $HOME. C02cond.ztst
