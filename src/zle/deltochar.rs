@@ -4,11 +4,13 @@
 //!
 //! Implements Emacs-style zap-to-char (M-z) and delete-to-char widgets.
 
-/// Delete from cursor to next occurrence of character (from deltochar.c deltochar)
+/// Compute the (start, end) range to delete from cursor toward the
+/// next occurrence of `target`.
 ///
-/// If `inclusive` is true (zap-to-char), the target character is also deleted.
-/// If `inclusive` is false (delete-to-char), stop before the target character.
-/// If `direction` is positive, search forward; negative, search backward.
+/// Port of `deltochar()` from Src/Zle/deltochar.c. `inclusive=true`
+/// matches zsh's `zaptochar` (M-z) which removes the target char too;
+/// `inclusive=false` is `delete-to-char` which stops just before. The
+/// `direction` arg corresponds to zsh's `zmult` sign.
 pub fn deltochar(
     buffer: &str,
     cursor: usize,
@@ -41,7 +43,13 @@ pub fn deltochar(
     }
 }
 
-/// Apply delete-to-char: returns the new buffer with the range removed
+/// Apply the deltochar range to a buffer, returning the trimmed copy
+/// and the cursor position.
+///
+/// Convenience wrapper around `deltochar` that mirrors the
+/// drain-the-range step the C source does inline at the end of
+/// `deltochar()` in Src/Zle/deltochar.c — kept separate here so
+/// callers can inspect the range first.
 pub fn apply_deltochar(
     buffer: &str,
     cursor: usize,
