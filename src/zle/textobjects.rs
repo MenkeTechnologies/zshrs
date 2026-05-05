@@ -39,7 +39,16 @@ pub struct TextObject {
 }
 
 impl Zle {
-    /// Select a text object
+    /// Compute a vi text object range (`iw`/`aw`/`is`/`as`/`ip`/`ap`)
+    /// at the cursor.
+    ///
+    /// Port of the dispatcher behind `selectinword` / `selectaword`
+    /// at Src/Zle/textobjects.c:41 (`selectword`). The C source
+    /// branches on the bound widget (selectinword, selectaword,
+    /// selectinblankword, selectablankword, selectinshellword,
+    /// selectashellword); this Rust helper takes an explicit kind +
+    /// variant and returns the `(start, end)` range so widget bodies
+    /// can apply the operator-pending semantics themselves.
     pub fn select_text_object(
         &self,
         obj_type: TextObjectType,
