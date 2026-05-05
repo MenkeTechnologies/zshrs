@@ -10,7 +10,11 @@
 
 use std::collections::HashMap;
 
-/// Emulation modes
+/// Shell emulation modes.
+/// Port of the `EMULATE_*` constants from Src/zsh.h —
+/// `emulate()` (Src/options.c:533) maps the `--emulate NAME`
+/// argument onto these and `installemulation()` (line 523) flips
+/// the option flags to match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Emulation {
     Zsh = 1,
@@ -35,7 +39,11 @@ const OPT_EMULATE: u16 = 0x100; // Relevant to emulation
 const OPT_SPECIAL: u16 = 0x200; // Never set by emulate()
 const OPT_ALIAS: u16 = 0x400; // Alias to another option
 
-/// All shell option names
+/// Every recognised shell option.
+/// Port of the `OPT_*` enum from Src/zsh.h — the C source uses
+/// integer constants threaded through `optlookup()`
+/// (Src/options.c:684), `dosetopt()` (line 735), and the option
+/// table built by `createoptiontable()` (line 471).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum ShellOption {
@@ -535,7 +543,11 @@ pub static KSH_LETTERS: &[(char, &str, bool)] = &[
     ('x', "xtrace", false),
 ];
 
-/// Shell options manager
+/// Shell-options manager.
+/// Port of the `optab[]` global Src/options.c keeps populated via
+/// `createoptiontable()` (line 471) — backs every `setopt`/
+/// `unsetopt` mutation through `dosetopt()` (line 735) and every
+/// emulation flip through `installemulation()` (line 523).
 #[derive(Debug, Clone)]
 pub struct ShellOptions {
     /// Current option values (true = set)
@@ -786,6 +798,10 @@ impl ShellOptions {
 }
 
 /// Normalize an option name: lowercase, remove underscores
+/// Lowercase + strip `_` / `-` punctuation from an option name.
+/// Port of the canonicalization `optlookup()` from
+/// Src/options.c:684 performs before hashing — `NO_GLOB_DOTS` and
+/// `noglobdots` resolve to the same option entry.
 pub fn normalize_option_name(name: &str) -> String {
     name.chars()
         .filter(|&c| c != '_')
@@ -794,6 +810,10 @@ pub fn normalize_option_name(name: &str) -> String {
 }
 
 /// Parse option arguments from setopt/unsetopt
+/// Parse `setopt`/`unsetopt`/`set` argv into typed option ops.
+/// Port of the argument-parsing loop inside `bin_setopt()` from
+/// Src/options.c:580 — same `+x`/`-x` per-letter handling and
+/// `setopt NAME` long-form.
 pub fn parse_option_args(
     opts: &mut ShellOptions,
     args: &[&str],
