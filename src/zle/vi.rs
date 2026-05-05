@@ -410,9 +410,19 @@ impl Zle {
         self.vi_chg_buf.clear();
     }
 
-    /// Replay last change (dot command)
+    /// Replay the last vi change ("." in command mode).
+    /// Port of `virepeatchange()` from Src/Zle/zle_vi.c — re-feeds the
+    /// recorded `vi_chg_buf` via `ungetbytes` so the next `zlecore`
+    /// iteration re-runs the captured operator + motion. With nothing
+    /// recorded yet (operator entry/exit don't gate `vi_record_change`
+    /// in this build), the buffer is empty and replay is a no-op,
+    /// matching zsh's behaviour pre-first-change.
     pub fn vi_repeat_change(&mut self) {
-        // TODO: implement change replay
+        if self.vi_chg_buf.is_empty() {
+            return;
+        }
+        let bytes = self.vi_chg_buf.clone();
+        self.ungetbytes(&bytes);
     }
 
     /// Read the next keystroke and treat it as a vi motion to define an
