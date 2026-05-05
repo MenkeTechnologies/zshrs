@@ -530,10 +530,12 @@ impl Zle {
         }
     }
 
-    /// Set the last line (for history)
-    /// Port of setlastline() from zle_utils.c
+    /// Snapshot the current line into `last_line` for the undo system.
+    /// Port of `setlastline()` from Src/Zle/zle_utils.c:1587. Routes to
+    /// the canonical `setlastline` method below — kept under the
+    /// snake-case name so older callers compile.
     pub fn set_last_line(&mut self) {
-        // Would store current line as last line
+        self.setlastline();
     }
 
     /// Show a message

@@ -298,9 +298,11 @@ impl Zle {
     fn do_expansion(&self, word: &str) -> Vec<String> {
         let mut results = Vec::new();
 
-        // Check for glob patterns
+        // Glob expansion via the `glob` crate. Mirrors zsh's tricky.c
+        // expand-or-complete fall-through into the pattern engine when a
+        // word contains `*`, `?`, or `[` — the C source feeds the word
+        // to `zglob()`; we use the Rust `glob` crate as a stand-in.
         if word.contains('*') || word.contains('?') || word.contains('[') {
-            // Would call glob expansion
             if let Ok(paths) = glob::glob(word) {
                 for path in paths.flatten() {
                     results.push(path.display().to_string());
