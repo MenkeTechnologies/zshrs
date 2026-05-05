@@ -352,6 +352,59 @@ impl KeymapManager {
         km.bind_seq(b"\x1bOB", Thingy::builtin("down-line-or-history"));
         km.bind_seq(b"\x1bOC", Thingy::builtin("forward-char"));
         km.bind_seq(b"\x1bOD", Thingy::builtin("backward-char"));
+
+        // Quoted-insert + undo + extra editing — Src/Zle/zle_bindings.c
+        // emacs slots '^V','^Q','^_','^X^U'.
+        km.bind_char(0x16, Thingy::builtin("quoted-insert")); // Ctrl-V
+        km.bind_char(0x11, Thingy::builtin("quoted-insert")); // Ctrl-Q
+        km.bind_char(0x1F, Thingy::builtin("undo")); // Ctrl-_
+        km.bind_seq(b"\x18\x15", Thingy::builtin("undo")); // ^X^U
+
+        // Yank-pop — Src/Zle/zle_bindings.c emacs '\ey'.
+        km.bind_seq(b"\x1by", Thingy::builtin("yank-pop"));
+
+        // History extras — Src/Zle/zle_bindings.c emacs '\e<','\e>',
+        // '\e.','\ep','\en'.
+        km.bind_seq(b"\x1b<", Thingy::builtin("beginning-of-history"));
+        km.bind_seq(b"\x1b>", Thingy::builtin("end-of-history"));
+        km.bind_seq(b"\x1b.", Thingy::builtin("insert-last-word"));
+        km.bind_seq(b"\x1bp", Thingy::builtin("history-search-backward"));
+        km.bind_seq(b"\x1bn", Thingy::builtin("history-search-forward"));
+
+        // Region — Src/Zle/zle_bindings.c emacs '^@','^X^X','\ew'.
+        km.bind_char(0x00, Thingy::builtin("set-mark-command")); // Ctrl-Space / Ctrl-@
+        km.bind_seq(b"\x18\x18", Thingy::builtin("exchange-point-and-mark")); // ^X^X
+        km.bind_seq(b"\x1bw", Thingy::builtin("copy-region-as-kill"));
+
+        // Word ops — Src/Zle/zle_bindings.c emacs '\et','\ec','\el','\eu'.
+        km.bind_seq(b"\x1bt", Thingy::builtin("transpose-words"));
+        km.bind_seq(b"\x1bc", Thingy::builtin("capitalize-word"));
+        km.bind_seq(b"\x1bl", Thingy::builtin("down-case-word"));
+        km.bind_seq(b"\x1bu", Thingy::builtin("up-case-word"));
+
+        // Quote / pound — Src/Zle/zle_bindings.c emacs '\e\'','\e\"','\e#'.
+        km.bind_seq(b"\x1b'", Thingy::builtin("quote-line"));
+        km.bind_seq(b"\x1b\"", Thingy::builtin("quote-region"));
+        km.bind_seq(b"\x1b#", Thingy::builtin("pound-insert"));
+
+        // Argument prefixes — Src/Zle/zle_bindings.c emacs '\e0'..'\e9','\e-'.
+        km.bind_seq(b"\x1b-", Thingy::builtin("neg-argument"));
+        for d in b'0'..=b'9' {
+            km.bind_seq(&[0x1b, d], Thingy::builtin("digit-argument"));
+        }
+
+        // Help / cursor / named — Src/Zle/zle_bindings.c emacs '\eh','\ex',
+        // '\eq','^X='.
+        km.bind_seq(b"\x1bh", Thingy::builtin("run-help"));
+        km.bind_seq(b"\x1bx", Thingy::builtin("execute-named-cmd"));
+        km.bind_seq(b"\x1bq", Thingy::builtin("push-line"));
+        km.bind_seq(b"\x18=", Thingy::builtin("what-cursor-position"));
+
+        // Bracketed paste — Src/Zle/zle_bindings.c emacs '\e[200~'.
+        km.bind_seq(
+            b"\x1b[200~",
+            Thingy::builtin("bracketed-paste"),
+        );
     }
 
     /// Set up viins (vi insert mode) keymap bindings
@@ -375,6 +428,30 @@ impl KeymapManager {
 
         // Ctrl-W
         km.bind_char(0x17, Thingy::builtin("vi-backward-kill-word"));
+
+        // Extra viins bindings — Src/Zle/zle_bindings.c viins ^A,^E,^B,^F,
+        // ^P,^N,^R,^S,^Y,^K,^U,^T,^V,^_.
+        km.bind_char(0x01, Thingy::builtin("beginning-of-line"));
+        km.bind_char(0x05, Thingy::builtin("end-of-line"));
+        km.bind_char(0x02, Thingy::builtin("backward-char"));
+        km.bind_char(0x06, Thingy::builtin("forward-char"));
+        km.bind_char(0x10, Thingy::builtin("up-line-or-history")); // ^P
+        km.bind_char(0x0E, Thingy::builtin("down-line-or-history")); // ^N
+        km.bind_char(0x12, Thingy::builtin("history-incremental-search-backward")); // ^R
+        km.bind_char(0x13, Thingy::builtin("history-incremental-search-forward")); // ^S
+        km.bind_char(0x19, Thingy::builtin("yank")); // ^Y
+        km.bind_char(0x0B, Thingy::builtin("kill-line")); // ^K
+        km.bind_char(0x15, Thingy::builtin("backward-kill-line")); // ^U (was vi-backward-kill-word; replaced)
+        km.bind_char(0x14, Thingy::builtin("transpose-chars")); // ^T
+        km.bind_char(0x16, Thingy::builtin("quoted-insert")); // ^V
+        km.bind_char(0x1F, Thingy::builtin("undo")); // ^_
+        km.bind_char(0x04, Thingy::builtin("delete-char-or-list")); // ^D
+
+        // Arrow keys also useful in viins.
+        km.bind_seq(b"\x1b[A", Thingy::builtin("up-line-or-history"));
+        km.bind_seq(b"\x1b[B", Thingy::builtin("down-line-or-history"));
+        km.bind_seq(b"\x1b[C", Thingy::builtin("forward-char"));
+        km.bind_seq(b"\x1b[D", Thingy::builtin("backward-char"));
     }
 
     /// Set up vicmd (vi command mode) keymap bindings
@@ -454,6 +531,34 @@ impl KeymapManager {
         // Goto
         km.bind_char(b'G', Thingy::builtin("vi-fetch-history"));
         km.bind_char(b'g', Thingy::builtin("vi-goto-column")); // Actually prefix, but simplified
+
+        // Visual / region — Src/Zle/zle_bindings.c vicmd 'v','V'.
+        km.bind_char(b'v', Thingy::builtin("visual-mode"));
+        km.bind_char(b'V', Thingy::builtin("visual-line-mode"));
+
+        // Marks — Src/Zle/zle_bindings.c vicmd 'm','\'',`'.
+        km.bind_char(b'm', Thingy::builtin("vi-set-mark"));
+        km.bind_char(b'\'', Thingy::builtin("vi-goto-mark-line"));
+        km.bind_char(b'`', Thingy::builtin("vi-goto-mark"));
+
+        // Match bracket + swap-case — Src/Zle/zle_bindings.c vicmd '%','~'.
+        km.bind_char(b'%', Thingy::builtin("vi-match-bracket"));
+        km.bind_char(b'~', Thingy::builtin("vi-swap-case"));
+
+        // Indent / unindent — Src/Zle/zle_bindings.c vicmd '>','<'.
+        km.bind_char(b'>', Thingy::builtin("vi-indent"));
+        km.bind_char(b'<', Thingy::builtin("vi-unindent"));
+
+        // Set buffer for paste/yank — Src/Zle/zle_bindings.c vicmd '"'.
+        km.bind_char(b'"', Thingy::builtin("vi-set-buffer"));
+
+        // Search forward via word-under-cursor — Src/Zle/zle_bindings.c
+        // vicmd '*','#'.
+        km.bind_char(b'*', Thingy::builtin("vi-history-search-forward"));
+        km.bind_char(b'#', Thingy::builtin("vi-history-search-backward"));
+
+        // Goto column — Src/Zle/zle_bindings.c vicmd '|'.
+        km.bind_char(b'|', Thingy::builtin("vi-goto-column"));
     }
 
     /// Get a keymap by name
@@ -718,4 +823,100 @@ pub struct BindkeyOpts {
     pub new_keymap: bool,       // -N
     pub keymap: Option<String>, // -M keymap
     pub prefix: Option<String>, // -p prefix
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emacs_default_has_quoted_insert_undo_yank_pop() {
+        let mgr = KeymapManager::new();
+        let km = mgr.keymaps.get("emacs").expect("emacs keymap created");
+        // Ctrl-V quoted-insert (zle_bindings.c emacs '^V').
+        assert_eq!(
+            km.lookup_char(0x16).map(|t| t.name.as_str()),
+            Some("quoted-insert")
+        );
+        // Ctrl-_ undo (zle_bindings.c emacs '^_').
+        assert_eq!(km.lookup_char(0x1F).map(|t| t.name.as_str()), Some("undo"));
+        // \ey yank-pop (zle_bindings.c emacs '\\ey').
+        assert_eq!(
+            km.lookup_seq(b"\x1by").and_then(|kb| kb.bind.as_ref()).map(|t| t.name.as_str()),
+            Some("yank-pop")
+        );
+    }
+
+    #[test]
+    fn emacs_default_has_history_search_and_insert_last_word() {
+        let mgr = KeymapManager::new();
+        let km = mgr.keymaps.get("emacs").expect("emacs keymap created");
+        // \e. insert-last-word.
+        assert_eq!(
+            km.lookup_seq(b"\x1b.").and_then(|kb| kb.bind.as_ref()).map(|t| t.name.as_str()),
+            Some("insert-last-word")
+        );
+        assert_eq!(
+            km.lookup_seq(b"\x1bp").and_then(|kb| kb.bind.as_ref()).map(|t| t.name.as_str()),
+            Some("history-search-backward")
+        );
+        // ^X^X exchange-point-and-mark.
+        assert_eq!(
+            km.lookup_seq(b"\x18\x18")
+                .and_then(|kb| kb.bind.as_ref())
+                .map(|t| t.name.as_str()),
+            Some("exchange-point-and-mark")
+        );
+    }
+
+    #[test]
+    fn vicmd_default_has_visual_marks_indent() {
+        let mgr = KeymapManager::new();
+        let km = mgr.keymaps.get("vicmd").expect("vicmd keymap created");
+        assert_eq!(
+            km.lookup_char(b'v').map(|t| t.name.as_str()),
+            Some("visual-mode")
+        );
+        assert_eq!(
+            km.lookup_char(b'V').map(|t| t.name.as_str()),
+            Some("visual-line-mode")
+        );
+        assert_eq!(
+            km.lookup_char(b'm').map(|t| t.name.as_str()),
+            Some("vi-set-mark")
+        );
+        assert_eq!(
+            km.lookup_char(b'>').map(|t| t.name.as_str()),
+            Some("vi-indent")
+        );
+        assert_eq!(
+            km.lookup_char(b'~').map(|t| t.name.as_str()),
+            Some("vi-swap-case")
+        );
+        assert_eq!(
+            km.lookup_char(b'%').map(|t| t.name.as_str()),
+            Some("vi-match-bracket")
+        );
+    }
+
+    #[test]
+    fn viins_default_has_history_search_and_quoted_insert() {
+        let mgr = KeymapManager::new();
+        let km = mgr.keymaps.get("viins").expect("viins keymap created");
+        // ^R history-incremental-search-backward (zle_bindings.c viins '^R').
+        assert_eq!(
+            km.lookup_char(0x12).map(|t| t.name.as_str()),
+            Some("history-incremental-search-backward")
+        );
+        // ^V quoted-insert.
+        assert_eq!(
+            km.lookup_char(0x16).map(|t| t.name.as_str()),
+            Some("quoted-insert")
+        );
+        // ^A beginning-of-line.
+        assert_eq!(
+            km.lookup_char(0x01).map(|t| t.name.as_str()),
+            Some("beginning-of-line")
+        );
+    }
 }
