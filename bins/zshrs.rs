@@ -1401,6 +1401,28 @@ fn source_startup_files(
 /// Mirrors source_file() logic but skips the fs::read_to_string.
 fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str) {
     tracing::trace!(path = %path.display(), "sourcing startup file from memory");
+
+    // Port of `bin_dot()` argzero-save/restore from
+    // Src/builtin.c:6076-6079 + 6139-6142: when FUNCTION_ARGZERO
+    // is set (default), `$0` becomes the sourced file path during
+    // the source and is restored afterwards. The C source uses
+    // ztrdup(arg0) to copy and zsfree on exit; Rust's String
+    // ownership handles both automatically.
+    let saved_argzero = if executor
+        .options
+        .get("functionargzero")
+        .copied()
+        .unwrap_or(true)
+    {
+        let prev = executor.variables.get("0").cloned();
+        executor
+            .variables
+            .insert("0".to_string(), path.to_string_lossy().to_string());
+        Some(prev)
+    } else {
+        None
+    };
+
     let mut buffer = String::new();
     let mut in_multiline = false;
 
@@ -1443,6 +1465,18 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
     // Process any remaining buffered content
     if !buffer.is_empty() {
         process_line(&buffer, executor);
+    }
+
+    // Restore `$0` per Src/builtin.c:6139-6142.
+    if let Some(prev) = saved_argzero {
+        match prev {
+            Some(v) => {
+                executor.variables.insert("0".to_string(), v);
+            }
+            None => {
+                executor.variables.remove("0");
+            }
+        }
     }
 }
 
