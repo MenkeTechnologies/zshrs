@@ -966,12 +966,18 @@ impl Zle {
         0
     }
 
-    /// Mark line as done (accept)
+    /// Mark the line as accepted; zlecore will exit on the next iteration.
+    /// Port of `acceptline()` from Src/Zle/zle_misc.c:401 — the C source
+    /// just sets the global `done` flag.
     pub fn finish_line(&mut self) {
         self.done = true;
     }
 
-    /// Abort input
+    /// Abort the current line edit and exit zlecore with an empty buffer.
+    /// Port of the Ctrl-C / send-break exit path from Src/Zle/zle_misc.c:1144
+    /// (`sendbreak`) combined with the abort cleanup at zle_main.c:1162
+    /// (the `errflag |= ERRFLAG_ERROR; break;` arm). The C source uses
+    /// errflag globals to communicate the abort; we model it with a bool.
     pub fn abort_line(&mut self) {
         self.zleline.clear();
         self.zlecs = 0;
