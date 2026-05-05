@@ -4,7 +4,11 @@
 
 use std::collections::HashMap;
 
-/// Convert attribute string to escape sequence
+/// Convert an attribute spec to its full ANSI escape sequence.
+/// Port of `convertattr()` from Src/Modules/hlgroup.c:40 with
+/// `sgr=0` — emits each ANSI code wrapped in `\e[...m`. The
+/// `none`/`reset` short forms map onto SGR 0 the same way the C
+/// source's table does.
 pub fn attr_to_escape(attr: &str) -> String {
     let mut result = String::new();
 
@@ -37,7 +41,10 @@ pub fn attr_to_escape(attr: &str) -> String {
     result
 }
 
-/// Convert attribute string to SGR parameter string (no escape sequences)
+/// Convert an attribute spec to a bare SGR parameter string.
+/// Port of `convertattr()` from Src/Modules/hlgroup.c:40 with
+/// `sgr=1` — returns the `;`-joined parameter list without the
+/// `\e[`/`m` framing, matching what `${.zle.sgr[name]}` returns.
 pub fn attr_to_sgr(attr: &str) -> String {
     let mut codes = Vec::new();
 
@@ -74,6 +81,11 @@ pub fn attr_to_sgr(attr: &str) -> String {
     }
 }
 
+/// Resolve a `fg=`/`bg=` colour spec into a full `\e[...m` escape.
+/// Port of the colour-name lookup table inside `convertattr()`
+/// (Src/Modules/hlgroup.c:40) — same name set, plus the
+/// 256-colour numeric codes and `#RRGGBB` truecolor extension the C
+/// source documents in `Doc/Zsh/mod_hlgroup.yo`.
 fn color_to_code(color: &str, fg: bool) -> Option<String> {
     let base = if fg { 30 } else { 40 };
     let bright_base = if fg { 90 } else { 100 };
@@ -122,6 +134,11 @@ fn color_to_code(color: &str, fg: bool) -> Option<String> {
     }
 }
 
+/// Resolve a `fg=`/`bg=` colour spec into its bare SGR parameter
+/// list (no `\e[`/`m` framing).
+/// SGR-only counterpart of `color_to_code()` — same lookup table
+/// as `convertattr()` (Src/Modules/hlgroup.c:40) but emits just the
+/// numeric parameters used by `${.zle.sgr[name]}`.
 fn color_to_sgr_code(color: &str, fg: bool) -> Option<String> {
     let base = if fg { 30 } else { 40 };
     let bright_base = if fg { 90 } else { 100 };
@@ -164,7 +181,12 @@ fn color_to_sgr_code(color: &str, fg: bool) -> Option<String> {
     }
 }
 
-/// Highlight groups table
+/// Highlight groups table.
+/// Port of the `zle_highlight` lookup hash that backs the
+/// `${.zle.esc[*]}` / `${.zle.sgr[*]}` special-parameter pair from
+/// Src/Modules/hlgroup.c. The C source registers the parameters
+/// via `getpmesc()` / `getpmsgr()` (lines 141 / 155) which call
+/// into `getgroup()` (line 82) which is what this struct stores.
 #[derive(Debug, Default)]
 pub struct HlGroups {
     groups: HashMap<String, String>,
@@ -175,14 +197,24 @@ impl HlGroups {
         Self::default()
     }
 
+    /// Install or replace a highlight-group's attribute spec.
+    /// Equivalent to `zle_highlight` array assignment; backs the
+    /// parameter that drives `getgroup()` (Src/Modules/hlgroup.c:82).
     pub fn set(&mut self, name: &str, attr: &str) {
         self.groups.insert(name.to_string(), attr.to_string());
     }
 
+    /// Look up the raw attribute spec stored for a name.
+    /// Convenience read; the C source doesn't expose the spec
+    /// directly — only its `convertattr()` output via `getgroup`.
     pub fn get(&self, name: &str) -> Option<&str> {
         self.groups.get(name).map(|s| s.as_str())
     }
 
+    /// `${.zle.esc[name]}` getter.
+    /// Port of `getpmesc()` from Src/Modules/hlgroup.c:141 — the
+    /// `getfn` slot the C source wires for the `.zle.esc` special
+    /// hash. Calls into `getgroup()` (line 82) with `sgr=0`.
     pub fn get_esc(&self, name: &str) -> String {
         self.groups
             .get(name)
@@ -190,6 +222,10 @@ impl HlGroups {
             .unwrap_or_default()
     }
 
+    /// `${.zle.sgr[name]}` getter.
+    /// Port of `getpmsgr()` from Src/Modules/hlgroup.c:155 — the
+    /// `getfn` slot the C source wires for the `.zle.sgr` special
+    /// hash. Calls into `getgroup()` (line 82) with `sgr=1`.
     pub fn get_sgr(&self, name: &str) -> String {
         self.groups
             .get(name)
@@ -197,14 +233,28 @@ impl HlGroups {
             .unwrap_or_else(|| "0".to_string())
     }
 
+    /// Remove a highlight group.
+    /// Equivalent to clearing the `zle_highlight` entry for `name`;
+    /// the C source rebuilds its lookup on next `getgroup()` call
+    /// (Src/Modules/hlgroup.c:82).
     pub fn remove(&mut self, name: &str) -> bool {
         self.groups.remove(name).is_some()
     }
 
+    /// Iterate over `(name, raw_attr)` pairs.
+    /// Port of `scangroup()` from Src/Modules/hlgroup.c:113 — the
+    /// scan callback the parameter machinery calls when iterating
+    /// the special hash. The Rust version returns the raw spec
+    /// alongside the name; the C version converts on the fly via
+    /// `convertattr()`.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.groups.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
+    /// Snapshot the table as an `attr → escape` map.
+    /// Port of `scanpmesc()` from Src/Modules/hlgroup.c:148 — the
+    /// `.zle.esc` `scanfn` slot. Materializes the entire table the
+    /// way `${(kv).zle.esc}` reads it.
     pub fn to_hash_esc(&self) -> HashMap<String, String> {
         self.groups
             .iter()
@@ -212,6 +262,9 @@ impl HlGroups {
             .collect()
     }
 
+    /// Snapshot the table as an `attr → SGR-string` map.
+    /// Port of `scanpmsgr()` from Src/Modules/hlgroup.c:162 — the
+    /// `.zle.sgr` `scanfn` slot.
     pub fn to_hash_sgr(&self) -> HashMap<String, String> {
         self.groups
             .iter()
