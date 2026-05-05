@@ -292,22 +292,63 @@ impl Zle {
         let _ = self.undo_widget();
     }
 
-    /// Vi visual mode
+    /// Vi visual mode (`v` in command mode).
+    /// Port of visualmode() from Src/Zle/zle_move.c:516. Toggles
+    /// `region_active` between 0 (off), 1 (charwise), and 2 (linewise) per
+    /// the C switch: from inactive enters charwise (sets mark first); from
+    /// charwise turns off; from linewise switches to charwise.
     pub fn vi_visual_mode(&mut self) {
-        self.mark = self.zlecs;
-        // TODO: implement visual mode state
+        match self.region_active {
+            1 => {
+                self.region_active = 0;
+            }
+            0 => {
+                self.mark = self.zlecs;
+                self.region_active = 1;
+            }
+            2 => {
+                self.region_active = 1;
+            }
+            _ => {}
+        }
     }
 
-    /// Vi visual line mode
+    /// Vi visual line mode (`V` in command mode).
+    /// Port of visuallinemode() from Src/Zle/zle_move.c:540. Same toggle
+    /// shape as visualmode but the "active" target is 2 (linewise).
     pub fn vi_visual_line_mode(&mut self) {
-        self.mark = self.zlecs;
-        // TODO: implement visual line mode
+        match self.region_active {
+            2 => {
+                self.region_active = 0;
+            }
+            0 => {
+                self.mark = self.zlecs;
+                self.region_active = 2;
+            }
+            1 => {
+                self.region_active = 2;
+            }
+            _ => {}
+        }
     }
 
-    /// Vi visual block mode
+    /// Vi visual block mode — Rust-side extension; zsh has no built-in
+    /// visual-block widget (not in iwidgets.list). Treat as charwise so the
+    /// caller still gets a usable selection.
+    /// Reference: zsh has `visualmode` (charwise) and `visuallinemode`
+    /// (linewise) only — see Src/Zle/iwidgets.list. This is a behavioural
+    /// extension, not a port.
     pub fn vi_visual_block_mode(&mut self) {
-        self.mark = self.zlecs;
-        // TODO: implement visual block mode
+        if self.region_active == 0 {
+            self.mark = self.zlecs;
+        }
+        self.region_active = 1;
+    }
+
+    /// Deactivate the visual region (`Esc` from visual mode).
+    /// Port of deactivateregion() from Src/Zle/zle_move.c:564.
+    pub fn vi_deactivate_region(&mut self) {
+        self.region_active = 0;
     }
 
     /// Vi set mark (`m{a-z}` in command mode). Port of visetmark() from
@@ -350,10 +391,23 @@ impl Zle {
         self.resetneeded = true;
     }
 
-    /// Record keys for vi repeat
+    /// Append `key` to the vi change-replay buffer.
+    /// Port of the recording side of `virepeatchange()` machinery from
+    /// Src/Zle/zle_vi.c — C zsh tracks this via `vichgflag` + `vichgbuf`
+    /// in zle_main.c, capturing every byte fed during a `c` / `d` / `y`
+    /// operator, between `startvichange()` and the operator completion.
+    /// Callers (the operator entry/exit points) gate when recording is
+    /// active; this method just appends. The buffer is consumed by
+    /// `widget_vi_repeat_change` via `ungetbytes`.
     pub fn vi_record_change(&mut self, key: u8) {
-        // TODO: implement change recording
-        let _ = key;
+        self.vi_chg_buf.push(key);
+    }
+
+    /// Reset the change-replay buffer to start a fresh recording session.
+    /// Mirrors C zsh's `vichgflag = 1; freevichg(); vichgbuf = ...` setup
+    /// inside `startvichange()` (zle_vi.c).
+    pub fn vi_start_change_recording(&mut self) {
+        self.vi_chg_buf.clear();
     }
 
     /// Replay last change (dot command)
@@ -837,6 +891,52 @@ mod tests {
         // vistartchange records the change number we entered insert mode at;
         // it should now equal undo_changeno (zero in this fresh zle).
         assert_eq!(zle.vistartchange, zle.undo_changeno);
+    }
+
+    #[test]
+    fn vi_visual_mode_toggles_charwise() {
+        let mut zle = zle_with("abcd", 2);
+        assert_eq!(zle.region_active, 0);
+        zle.vi_visual_mode();
+        assert_eq!(zle.region_active, 1);
+        assert_eq!(zle.mark, 2);
+        zle.vi_visual_mode();
+        assert_eq!(zle.region_active, 0);
+    }
+
+    #[test]
+    fn vi_visual_line_mode_toggles_linewise_and_swaps_with_charwise() {
+        let mut zle = zle_with("abcd", 0);
+        zle.vi_visual_line_mode();
+        assert_eq!(zle.region_active, 2);
+        // In linewise → charwise via vi_visual_mode().
+        zle.vi_visual_mode();
+        assert_eq!(zle.region_active, 1);
+        // Charwise → linewise via vi_visual_line_mode().
+        zle.vi_visual_line_mode();
+        assert_eq!(zle.region_active, 2);
+        // Linewise → off via vi_visual_line_mode().
+        zle.vi_visual_line_mode();
+        assert_eq!(zle.region_active, 0);
+    }
+
+    #[test]
+    fn vi_deactivate_region_clears_active_state() {
+        let mut zle = zle_with("abcd", 0);
+        zle.region_active = 2;
+        zle.vi_deactivate_region();
+        assert_eq!(zle.region_active, 0);
+    }
+
+    #[test]
+    fn vi_record_change_appends_to_replay_buffer() {
+        let mut zle = zle_with("", 0);
+        zle.vi_start_change_recording();
+        zle.vi_record_change(b'd');
+        zle.vi_record_change(b'w');
+        assert_eq!(zle.vi_chg_buf, vec![b'd', b'w']);
+        zle.vi_start_change_recording();
+        assert!(zle.vi_chg_buf.is_empty());
     }
 
     #[test]
