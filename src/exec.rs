@@ -8637,6 +8637,21 @@ static ZSH_OPTIONS_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "warnnestedvar",
         "xtrace",
         "zle",
+        // bash/ksh-compat aliases — the canonical zsh names live in
+        // src/options.rs OPTION_ALIASES, but for the runtime
+        // `setopt`/`unsetopt` "no such option" check we accept the
+        // alias spellings too so scripts written for bash/ksh (e.g.
+        // p10k's `setopt brace_expand`, `dotglob` users) don't error.
+        "braceexpand",   // alias of `noignorebraces`
+        "dotglob",       // alias of `globdots`
+        "hashall",       // alias of `hashcmds`
+        "histappend",    // alias of `appendhistory`
+        "histexpand",    // alias of `banghist`
+        "log",           // alias of `nohistnofunctions`
+        "mailwarn",      // alias of `mailwarning`
+        "onecmd",        // alias of `singlecommand`
+        "physical",      // alias of `chaselinks`
+        "promptvars",    // alias of `promptsubst`
     ]
     .into_iter()
     .collect()
@@ -21145,17 +21160,17 @@ impl ShellExecutor {
     }
 
     fn builtin_local(&mut self, args: &[String]) -> i32 {
-        // builtin.c bin_typeset BIN_LOCAL path — `local` is only
-        // valid inside a function; called from top-level it errors
-        // `local:1: not in function scope` exit 1. zshrs's previous
-        // pass-through called typeset which silently created a
-        // global variable, masking what zsh would have caught at
-        // the typo level (e.g. `local x=foo` accidentally typed at
-        // a prompt would turn into a permanent global).
-        if self.local_scope_depth == 0 {
-            eprintln!("zshrs:local:1: can only be used in a function");
-            return 1;
-        }
+        // Per zsh's actual behavior (verified against /bin/zsh): a top-
+        // level `local` is silently accepted — `local x=hello` in a
+        // sourced script or script-mode file creates the variable
+        // (effectively `typeset`-equivalent) without any error. This
+        // matches Src/builtin.c bin_typeset BIN_LOCAL: when `locallevel
+        // == 0`, the variable is still declared, just at the outer
+        // scope. The previous "can only be used in a function" diagnostic
+        // here was overzealous and broke real-world scripts that use
+        // top-level `local` as a typeset alias (notably p10k:
+        // `'builtin' 'local' '-a' '__p9k_src_opts'` at the top of
+        // `powerlevel10k.zsh-theme`).
         self.builtin_typeset_named(args, "local")
     }
 
