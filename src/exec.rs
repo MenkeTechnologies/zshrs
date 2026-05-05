@@ -19,6 +19,11 @@ use std::collections::HashSet;
 
 /// AOP advice type — before, after, or around.
 #[derive(Debug, Clone)]
+/// Aspect-oriented advice classification.
+/// zshrs-original — no C zsh counterpart. C zsh's closest
+/// analog is the function-wrapper hook in Src/module.c
+/// (`addwrapper()`, used by `zsh/zprof`), but per-function
+/// before/after/around AOP intercepts are unique to zshrs.
 pub enum AdviceKind {
     /// Run code before the command executes.
     Before,
@@ -30,6 +35,8 @@ pub enum AdviceKind {
 
 /// An intercept registration.
 #[derive(Debug, Clone)]
+/// One AOP intercept registered against a function pattern.
+/// zshrs-original — no C counterpart.
 pub struct Intercept {
     /// Pattern to match command names. Supports glob: "git *", "_*", "*".
     pub pattern: String,
@@ -42,6 +49,9 @@ pub struct Intercept {
 }
 
 /// Result from background compinit thread
+/// Outcome of background `compinit` autoload.
+/// zshrs-original — Src/Modules/complete.c blocks on `compinit`
+/// inline. The Rust port runs it on the worker pool.
 pub struct CompInitBgResult {
     pub result: CompInitResult,
     pub cache: CompsysCache,
@@ -7001,6 +7011,9 @@ fn parse_subscript_arith_assign(expr: &str) -> Option<(String, String, String)> 
 ///   (tab)echo a
 ///   (tab)echo b
 ///   }
+/// Render a function body as zsh source.
+/// Port of `getpermtext()` from Src/text.c:279 specialized for
+/// the function-body subset (used by `functions`, `which -x`).
 pub fn format_function_body_zsh(body: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();
@@ -7059,6 +7072,9 @@ pub fn format_function_body_zsh(body: &str) -> String {
 /// cat/head emit `cat: foo: No such file or directory`, not
 /// `cat: foo: No such file or directory (os error 2)`). Used by all
 /// the in-process coreutils builtins.
+/// Format an `io::Error` for zsh-style diagnostic output.
+/// zshrs convenience around `strerror(3)` — C zsh inlines
+/// `strerror(errno)` at every call site (Src/utils.c).
 pub fn pretty_io_err(e: &std::io::Error) -> String {
     let s = e.to_string();
     match s.find(" (os error") {
@@ -7464,6 +7480,11 @@ pub const BUILTIN_PARAM_FLAG: u16 = 297;
 /// Construct fresh on each VM run (it carries no state itself). The VM
 /// dispatches host method calls during `vm.run()`, and `with_executor`
 /// resolves to the executor pointer set by `ExecutorContext::enter`.
+/// fusevm-host implementation tying bytecode ops to the
+/// shell executor.
+/// zshrs-original — no C counterpart. C zsh has no bytecode VM
+/// to host; everything runs through `execlist()`/`execpline()`
+/// directly (Src/exec.c lines 1349/1668).
 pub struct ZshrsHost;
 
 impl fusevm::ShellHost for ZshrsHost {
@@ -8886,6 +8907,10 @@ use std::process::{Child, Command, Stdio};
 
 /// A completion specification for the `complete` builtin
 #[derive(Debug, Clone, Default)]
+/// One `compdef`/`compctl` completion specification.
+/// Port of the per-command `compspec` shape in
+/// Src/Modules/complete.c — same `pattern` / `action` /
+/// `flags` triplet.
 pub struct CompSpec {
     pub actions: Vec<String>,     // -a, -b, -c, etc.
     pub wordlist: Option<String>, // -W wordlist
@@ -8898,6 +8923,9 @@ pub struct CompSpec {
 
 /// A single completion match for zsh-style completion
 #[derive(Debug, Clone, Default)]
+/// One completion match candidate.
+/// Port of `Cmatch` from Src/Modules/complist.c — the
+/// completion engine produces these for the menu.
 pub struct CompMatch {
     pub word: String,                   // The actual completion word
     pub display: Option<String>,        // Display string (-d)
@@ -8916,6 +8944,9 @@ pub struct CompMatch {
 
 /// Completion group for organizing matches
 #[derive(Debug, Clone, Default)]
+/// Group of completion matches with shared formatting.
+/// Port of `Cmgroup` from Src/Modules/complist.c — used by
+/// `compsys` to layer multiple result sets.
 pub struct CompGroup {
     pub name: String,
     pub matches: Vec<CompMatch>,
@@ -8925,6 +8956,10 @@ pub struct CompGroup {
 
 /// zsh completion state (compstate associative array)
 #[derive(Debug, Clone, Default)]
+/// Per-completion state (current point, prefix, suffix).
+/// Port of the `compstate` array in Src/Modules/complete.c —
+/// the completion engine reads/writes it during `compdef`
+/// callback execution.
 pub struct CompState {
     pub context: String,               // completion context
     pub exact: String,                 // exact match handling
@@ -8955,6 +8990,9 @@ pub struct CompState {
 
 /// zstyle entry for completion configuration
 #[derive(Debug, Clone)]
+/// One `zstyle` entry.
+/// Mirrors `struct stypat` from Src/Modules/zutil.c —
+/// `addstyle()` (zutil.c:403) inserts these.
 pub struct ZStyle {
     pub pattern: String,
     pub style: String,
@@ -8975,6 +9013,9 @@ bitflags::bitflags! {
 }
 
 /// State for a zpty pseudo-terminal
+/// One zpty session.
+/// Port of `struct ptycmd` from Src/Modules/zpty.c — fd, pid,
+/// echo/nonblock flags.
 pub struct ZptyState {
     pub pid: u32,
     pub cmd: String,
@@ -8984,6 +9025,8 @@ pub struct ZptyState {
 }
 
 /// Scheduled command for sched builtin
+/// One scheduled command (`sched` builtin).
+/// Port of `struct schedcmd` from Src/Builtins/sched.c.
 pub struct ScheduledCommand {
     pub id: u32,
     pub run_at: std::time::SystemTime,
@@ -8996,6 +9039,8 @@ pub struct ScheduledCommand {
 
 /// Profiling entry for zprof
 #[derive(Clone, Default)]
+/// One zprof entry.
+/// Port of `struct pfunc` from Src/Modules/zprof.c.
 pub struct ProfileEntry {
     pub calls: u64,
     pub total_time_us: u64,
@@ -9003,6 +9048,9 @@ pub struct ProfileEntry {
 }
 
 /// Unix domain socket state
+/// One zsocket session.
+/// Port of the per-session state Src/Modules/socket.c keeps
+/// (`bin_zsocket()` line 57) — fd / path / role.
 pub struct UnixSocketState {
     pub path: Option<PathBuf>,
     pub listening: bool,
@@ -9015,6 +9063,9 @@ pub struct UnixSocketState {
 /// can't reach the outer loop — set this flag and the outer-loop builtin
 /// drains it after each iteration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Loop control signal from a command body.
+/// Mirrors the `LF_*` set Src/loop.c uses to thread
+/// `break`/`continue`/`return` flags up through the executor.
 pub enum LoopSignal {
     Break,
     Continue,
@@ -9028,6 +9079,11 @@ pub enum LoopSignal {
 /// env table around the subshell. Otherwise `(export y=v)` would leak `y`
 /// to the parent shell, breaking every script that uses a subshell to
 /// scope an env override.
+/// Snapshot of mutable executor state across a subshell
+/// boundary.
+/// Port of the `entersubsh()` save/restore Src/exec.c does at
+/// line 1084 — captures everything that must be replaced when a
+/// `(...)` group fires.
 pub struct SubshellSnapshot {
     pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
@@ -9055,6 +9111,9 @@ pub struct SubshellSnapshot {
 /// the type+flag bitmask zsh tracks per Param. Each instance picks
 /// exactly one base kind plus zero-or-more attribute markers.
 #[derive(Debug, Clone, Default)]
+/// Variable attributes (`typeset` flags + scope).
+/// Mirrors the `PM_*` flag set declared in Src/zsh.h that
+/// `Src/builtin.c::bin_typeset()` consults.
 pub struct VarAttr {
     pub kind: VarKind,
     pub readonly: bool,
@@ -9091,6 +9150,9 @@ pub struct VarAttr {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Variable kind (scalar/integer/float/array/hash).
+/// Mirrors the `PM_TYPE` mask the C source uses to dispatch
+/// `setstrvalue()` / `setaparam()` / etc. (Src/params.c).
 pub enum VarKind {
     #[default]
     Scalar,
@@ -9104,6 +9166,9 @@ pub enum VarKind {
 /// the digit run (right-to-left). Direct port of `convbase_underscore`
 /// in src/zsh/Src/params.c:5645-5680. Operates on the digit suffix only,
 /// preserving any `BASE#` prefix and leading sign.
+/// `${(l:N::_:)num}` underscore-grouping for digits.
+/// Port of the digit-grouping code in `convbase()` (Src/utils.c)
+/// when `setopt OCTAL_ZEROES`/`PRINT_THOUSANDS` apply.
 pub fn underscore_separate_digits(s: &str, group: u32) -> String {
     if group == 0 {
         return s.to_string();
@@ -9139,9 +9204,12 @@ pub fn underscore_separate_digits(s: &str, group: u32) -> String {
     out
 }
 
-/// Format an integer in the given base (2-36) using zsh's `BASE#DIGITS`
-/// form. Bases 2-9 are unsigned-style; uppercase A-Z are used for digits
-/// >= 10. A negative value is output as `-BASE#DIGITS`.
+/// Format an integer in the given base (2-36) using zsh's
+/// `BASE#DIGITS` form.
+/// Port of `convbase()` from Src/utils.c — also exposed via
+/// `crate::utils::convbase`. Bases 2-9 are unsigned-style;
+/// uppercase A-Z are used for digits >= 10. A negative value is
+/// output as `-BASE#DIGITS`.
 pub fn format_int_in_base(n: i64, base: u32) -> String {
     if !(2..=36).contains(&base) {
         return n.to_string();
@@ -9578,6 +9646,14 @@ impl VarAttr {
     }
 }
 
+/// Top-level shell executor state.
+/// Port of the file-static globals + `Estate` chain Src/exec.c
+/// uses — `execlist()` (line 1349) drives every list, with
+/// `execpline()` (line 1668), `execpline2()` (line 1991),
+/// `execsimple()` (line 1290), and the per-`WC_*` `execfuncs[]`
+/// table (line 268) feeding off it. The Rust port collapses
+/// everything into one `ShellExecutor` so we don't need
+/// thread-local globals.
 pub struct ShellExecutor {
     pub aliases: HashMap<String, String>,
     pub global_aliases: HashMap<String, String>, // alias -g: expand anywhere
@@ -47719,6 +47795,8 @@ bitflags::bitflags! {
 
 /// Result of fork operation
 #[derive(Debug)]
+/// `fork()` outcome (parent / child / error).
+/// Mirrors the integer return of `zfork()` from Src/exec.c:349.
 pub enum ForkResult {
     Parent(i32), // Contains child PID
     Child,
@@ -47726,6 +47804,8 @@ pub enum ForkResult {
 
 /// Redirection mode
 #[derive(Debug, Clone, Copy)]
+/// File-redirection mode (`>` / `>>` / `<` / etc.).
+/// Mirrors the `REDIR_*` enum from Src/zsh.h.
 pub enum RedirMode {
     Dup,
     Close,
@@ -47733,6 +47813,9 @@ pub enum RedirMode {
 
 /// Builtin command type
 #[derive(Debug, Clone, Copy)]
+/// Builtin classification.
+/// Mirrors the `BINF_*` flag set Src/builtin.c uses to
+/// classify special vs regular builtins.
 pub enum BuiltinType {
     Normal,
     Disabled,
