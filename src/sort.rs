@@ -14,7 +14,12 @@ pub mod flags {
     pub const NUMERIC_SIGNED: u32 = 1 << 4; // handle negative numbers
 }
 
-/// Sort element with comparison string and length
+/// Sort element with comparison string and length.
+/// Port of `struct sortel` (Src/sort.c lines ~30-40 of the
+/// `eltpcmp()` arena setup) — pairs the original metafied string
+/// with a comparison form (lowercased / no-backslash / etc.) and the
+/// optional explicit length used when the string contains embedded
+/// nulls.
 #[derive(Clone, Debug)]
 pub struct SortElt {
     pub orig: String,
@@ -40,7 +45,12 @@ impl SortElt {
     }
 }
 
-/// Compare two strings according to sort flags (from sort.c eltpcmp)
+/// Compare two strings according to sort flags.
+/// Port of `zstrcmp()` from Src/sort.c:191 — the comparator the
+/// `eltpcmp()` qsort callback (Src/sort.c:44) reduces to once the
+/// per-element tie-breakers have been applied. Honours numeric /
+/// reverse / case-insensitive / no-backslash flags exactly as the
+/// `SORTIT_*` flag set the C source consumes.
 pub fn zstrcmp(a: &str, b: &str, sort_flags: u32) -> Ordering {
     let reverse = (sort_flags & flags::REVERSE) != 0;
     let numeric = (sort_flags & flags::NUMERIC) != 0;
@@ -309,27 +319,43 @@ fn split_at_number(s: &str) -> (&str, &str) {
     (&s[..byte_idx], &s[byte_idx..])
 }
 
-/// Sort an array of strings (from sort.c strmetasort)
+/// Sort an array of strings.
+/// Port of `strmetasort()` from Src/sort.c:234 — the public entry
+/// point that wraps `qsort()` over `eltpcmp` with the same flag
+/// vocabulary (`SORTIT_NUMERICALLY`, `SORTIT_BACKWARDS`, etc.).
 pub fn strmetasort(arr: &mut [String], sort_flags: u32) {
     arr.sort_by(|a, b| zstrcmp(a, b, sort_flags));
 }
 
-/// Sort array in place with natural (numeric) ordering
+/// Sort array in place with natural (numeric) ordering.
+/// Convenience wrapper around `strmetasort()` (Src/sort.c:234) with
+/// the `NUMERIC | NUMERIC_SIGNED` flag pair the C source uses for
+/// `${(n)array}` parameter expansion.
 pub fn natural_sort(arr: &mut [String]) {
     strmetasort(arr, flags::NUMERIC | flags::NUMERIC_SIGNED);
 }
 
-/// Sort array in place with reverse order
+/// Sort array in place with reverse order.
+/// Convenience wrapper around `strmetasort()` (Src/sort.c:234) with
+/// the `SORTIT_BACKWARDS` flag the C source uses for `${(O)array}`
+/// parameter expansion.
 pub fn reverse_sort(arr: &mut [String]) {
     strmetasort(arr, flags::REVERSE);
 }
 
-/// Sort array case-insensitively
+/// Sort array case-insensitively.
+/// Convenience wrapper around `strmetasort()` (Src/sort.c:234) with
+/// the `SORTIT_IGNORING_CASE` flag the C source uses for the
+/// `${(i)array}` parameter expansion.
 pub fn case_insensitive_sort(arr: &mut [String]) {
     strmetasort(arr, flags::CASE_INSENSITIVE);
 }
 
-/// Sort array of SortElt structures
+/// Sort array of `SortElt` structures.
+/// Port of the `eltpcmp()`-driven qsort loop in Src/sort.c:44 —
+/// keeps each element's `cmp` form (lowercased / unbackslashed)
+/// separate from `orig` so the comparator reads the prepared key
+/// while the array still holds the user-visible original strings.
 pub fn sort_elts(elts: &mut [SortElt], sort_flags: u32) {
     let reverse = (sort_flags & flags::REVERSE) != 0;
     let numeric = (sort_flags & flags::NUMERIC) != 0;
@@ -353,7 +379,11 @@ pub fn sort_elts(elts: &mut [SortElt], sort_flags: u32) {
     });
 }
 
-/// Create comparison key for sorting (from sort.c tricat style)
+/// Create comparison key for sorting.
+/// Port of the `tricat()` / `casemodify()` prep step from Src/sort.c
+/// (~line 100, where `eltpcmp` builds `e->cmp` before sorting). The
+/// C source allocates a heap copy with case folding applied; this
+/// Rust version returns the same prepared key.
 pub fn make_sort_key(s: &str, case_insensitive: bool) -> String {
     if case_insensitive {
         s.to_lowercase()

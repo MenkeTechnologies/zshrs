@@ -5,7 +5,9 @@
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Get current time as epoch seconds
+/// Get current time as epoch seconds.
+/// Port of `getcurrentsecs()` from Src/Modules/datetime.c — backs
+/// the `$EPOCHSECONDS` special parameter.
 pub fn epoch_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -13,7 +15,9 @@ pub fn epoch_seconds() -> i64 {
         .as_secs() as i64
 }
 
-/// Get current time as high-resolution epoch time (float)
+/// Get current time as high-resolution epoch time (float).
+/// Port of `getcurrentrealtime()` from Src/Modules/datetime.c —
+/// backs the `$EPOCHREALTIME` special parameter.
 pub fn epoch_realtime() -> f64 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -21,7 +25,9 @@ pub fn epoch_realtime() -> f64 {
     now.as_secs() as f64 + now.subsec_nanos() as f64 * 1e-9
 }
 
-/// Get current time as [seconds, nanoseconds] array
+/// Get current time as `[seconds, nanoseconds]` pair.
+/// Port of `getcurrenttime()` from Src/Modules/datetime.c — backs
+/// the `$epochtime` array parameter.
 pub fn epoch_time() -> (i64, i64) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -29,7 +35,11 @@ pub fn epoch_time() -> (i64, i64) {
     (now.as_secs() as i64, now.subsec_nanos() as i64)
 }
 
-/// Format time using strftime-style format
+/// Format time using strftime-style format.
+/// Port of `output_strftime()` from Src/Modules/datetime.c — the
+/// inner formatter the `strftime` builtin uses once it has resolved
+/// (timestamp, nanoseconds). Honours the same `%N`/`%3N`/`%6N`/`%9N`
+/// nanosecond extensions zsh adds on top of POSIX strftime(3).
 pub fn strftime(
     format: &str,
     timestamp: Option<i64>,
@@ -92,7 +102,11 @@ pub fn strftime(
     Ok(result)
 }
 
-/// Parse a time string using strptime-style format
+/// Parse a time string using strptime-style format.
+/// Port of `reverse_strftime()` from Src/Modules/datetime.c — the
+/// `-r` (reverse) path of the `strftime` builtin which calls
+/// `strptime(3)` and converts the resulting `struct tm` back into an
+/// epoch timestamp.
 pub fn strptime(format: &str, input: &str) -> Result<i64, String> {
     let dt = NaiveDateTime::parse_from_str(input, format)
         .map_err(|e| format!("format not matched: {}", e))?;
@@ -114,7 +128,11 @@ pub struct StrftimeOptions {
     pub scalar: Option<String>,
 }
 
-/// Execute the strftime builtin
+/// Execute the strftime builtin.
+/// Port of `bin_strftime()` from Src/Modules/datetime.c. Dispatches
+/// between the forward (`output_strftime`) and reverse
+/// (`reverse_strftime`) paths based on `options.reverse`, mirroring
+/// the C source's `-r` flag handling.
 pub fn builtin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
     if args.is_empty() {
         return (1, "strftime: format expected\n".to_string());
@@ -192,7 +210,10 @@ pub fn builtin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, Strin
     }
 }
 
-/// Format a duration in human-readable form
+/// Format a duration in human-readable form.
+/// zshrs-original convenience — no direct counterpart in
+/// Src/Modules/datetime.c; closest in spirit to the `%*` time
+/// formatting prompt-expansion C zsh uses for elapsed-time blocks.
 pub fn format_duration(seconds: u64) -> String {
     let days = seconds / 86400;
     let hours = (seconds % 86400) / 3600;
@@ -210,7 +231,10 @@ pub fn format_duration(seconds: u64) -> String {
     }
 }
 
-/// Get current date/time info as a hashmap (for TZ-aware operations)
+/// Get current date/time info as a hashmap (for TZ-aware operations).
+/// zshrs-original convenience — bundles the strftime fields that
+/// `output_strftime()` in Src/Modules/datetime.c emits one at a time
+/// into a single hash so callers can pluck individual components.
 pub fn get_datetime_info() -> std::collections::HashMap<String, String> {
     let now = Local::now();
     let mut info = std::collections::HashMap::new();
@@ -234,7 +258,11 @@ pub fn get_datetime_info() -> std::collections::HashMap<String, String> {
     info
 }
 
-/// Convert between timezones
+/// Convert a timestamp between local time and UTC.
+/// zshrs-original convenience — no exact counterpart in
+/// Src/Modules/datetime.c, but mirrors the `setenv("TZ", ...)`
+/// dance the C source uses internally before calling
+/// `localtime_r(3)` / `gmtime_r(3)` for `output_strftime`.
 pub fn convert_timezone(timestamp: i64, to_utc: bool) -> i64 {
     if to_utc {
         let dt: DateTime<Local> = Local
