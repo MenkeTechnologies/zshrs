@@ -32,7 +32,10 @@ pub struct Thingy {
 }
 
 impl Thingy {
-    /// Create a new thingy with the given name
+    /// Create a thingy with no widget bound — equivalent to a freshly
+    /// allocated entry from `makethingynode()` in
+    /// Src/Zle/zle_thingy.c:108. Callers fill in `widget` later via
+    /// `bindwidget` (zle_thingy.c:199).
     pub fn new(name: &str) -> Self {
         Thingy {
             name: name.to_string(),
@@ -42,7 +45,11 @@ impl Thingy {
         }
     }
 
-    /// Create a builtin thingy (references a builtin widget)
+    /// Create a thingy that wraps a built-in widget.
+    /// Equivalent to the `addzlefunction()` path at
+    /// Src/Zle/zle_thingy.c:281: builds the immortal-flagged Thingy
+    /// and binds it to a Widget produced by the built-in dispatch
+    /// table (`Widget::builtin`).
     pub fn builtin(name: &str) -> Self {
         let widget = Widget::builtin(name);
         Thingy {
@@ -56,7 +63,9 @@ impl Thingy {
         }
     }
 
-    /// Create a user-defined thingy
+    /// Create a thingy that wraps a user-defined shell function.
+    /// Equivalent to `bin_zle_new()` at Src/Zle/zle_thingy.c:584 — the
+    /// `zle -N name fn` builtin path.
     pub fn user_defined(name: &str, func_name: &str) -> Self {
         let widget = Widget::user_defined(name, func_name);
         Thingy {
@@ -67,13 +76,19 @@ impl Thingy {
         }
     }
 
-    /// Check if this thingy is a specific named widget
+    /// Test whether this thingy's name matches `name`.
+    /// Equivalent to the `IS_THINGY(thingy, name)` macro at
+    /// Src/Zle/zle.h — used by widget bodies that special-case their
+    /// own bound name (e.g. select-a-word checking which alias fired).
     pub fn is(&self, name: &str) -> bool {
         self.name == name
     }
 
-    /// Check if this thingy is a specific widget or its dot-prefixed variant
-    /// (Used for checking against both "widget" and ".widget")
+    /// Test whether this thingy is `name` or its dot-prefixed variant.
+    /// The `.foo` form names the underlying built-in when a user has
+    /// aliased `foo` to something else — see `bin_zle_new`'s args[0]
+    /// vs args[1] split at zle_thingy.c:584. Callers use this when
+    /// they want the canonical built-in regardless of user aliasing.
     pub fn is_thingy(&self, name: &str) -> bool {
         self.name == name || self.name == format!(".{}", name)
     }

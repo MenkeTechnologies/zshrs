@@ -92,21 +92,34 @@ impl Default for Keymap {
 }
 
 impl Keymap {
+    /// Construct an empty keymap with no bindings.
+    /// Equivalent to `newkeytab()` from Src/Zle/zle_keymap.c:278 — the
+    /// C source allocates a Keymap with the first[] array zeroed out
+    /// and an empty multi-byte hashtab.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Bind a single character to a thingy
+    /// Bind a 1-byte key to a Thingy via the `first[]` fast-path table.
+    /// Direct port of the single-byte path in `bindkey()` at
+    /// Src/Zle/zle_keymap.c:566; the C source writes into `km->first[c]`
+    /// when `seq` has length 1.
     pub fn bind_char(&mut self, c: u8, thingy: Thingy) {
         self.first[c as usize] = Some(thingy);
     }
 
-    /// Unbind a single character
+    /// Clear a 1-byte binding.
+    /// Equivalent to `bindkey -r` against a single-byte sequence at
+    /// Src/Zle/zle_keymap.c:566 — flips the `first[c]` slot to None.
     pub fn unbind_char(&mut self, c: u8) {
         self.first[c as usize] = None;
     }
 
-    /// Bind a key sequence to a thingy
+    /// Install a multi-byte key sequence binding.
+    /// Direct port of `bindkey()` from Src/Zle/zle_keymap.c:566 for the
+    /// len > 1 path: marks every proper prefix of `seq` as a prefix
+    /// node (prefixct increment) so getkeymapcmd's trie walk knows to
+    /// keep reading bytes when it sees a partial match.
     pub fn bind_seq(&mut self, seq: &[u8], thingy: Thingy) {
         if seq.len() == 1 {
             self.bind_char(seq[0], thingy);
@@ -136,7 +149,13 @@ impl Keymap {
         }
     }
 
-    /// Bind a key sequence to a string (send-string)
+    /// Install a multi-byte key sequence that maps to a literal string.
+    /// Port of the send-string variant of `bindkey()` at
+    /// Src/Zle/zle_keymap.c:566 — the C source stores `str` instead of
+    /// a Thingy when invoked via `bindkey -s 'seq' 'string'`. When the
+    /// trie hits this entry, getkeycmd ungets the string via
+    /// `ungetbytes_unmeta` (zle_keymap.c:1784) so it gets re-resolved
+    /// against the keymap.
     pub fn bind_str(&mut self, seq: &[u8], s: String) {
         if seq.len() == 1 {
             // Single char can't be send-string in first[] table
@@ -166,7 +185,12 @@ impl Keymap {
         );
     }
 
-    /// Unbind a key sequence
+    /// Remove a multi-byte binding and decrement prefix counts on its
+    /// ancestors so the trie shrinks correctly.
+    /// Port of `bindkey -r` against a multi-byte sequence at
+    /// Src/Zle/zle_keymap.c:566 — the C source mirrors the prefix
+    /// reference-count machinery via the same prefixct decrement
+    /// pattern when removing a leaf.
     pub fn unbind_seq(&mut self, seq: &[u8]) {
         if seq.len() == 1 {
             self.unbind_char(seq[0]);
@@ -187,12 +211,19 @@ impl Keymap {
         }
     }
 
-    /// Look up a single character binding
+    /// Fast-path single-byte lookup through `first[]`.
+    /// Equivalent to the 1-byte branch of `keybind()` at
+    /// Src/Zle/zle_keymap.c:659 — the C source's `km->first[*seq]`
+    /// access for single-byte resolution.
     pub fn lookup_char(&self, c: u8) -> Option<&Thingy> {
         self.first[c as usize].as_ref()
     }
 
-    /// Look up a key sequence binding (for multi-char sequences only)
+    /// Multi-byte sequence lookup through the `multi` hashtab.
+    /// Equivalent to the >1-byte branch of `keybind()` at
+    /// zle_keymap.c:659 — returns the KeyBinding entry if `seq`
+    /// matches a leaf, or one carrying `prefixct > 0` if `seq` is a
+    /// prefix of one or more bound sequences.
     pub fn lookup_seq(&self, seq: &[u8]) -> Option<&KeyBinding> {
         if seq.len() == 1 {
             // For single char, use lookup_char instead
@@ -202,7 +233,11 @@ impl Keymap {
         }
     }
 
-    /// Check if a sequence is a prefix
+    /// Test whether `seq` is a prefix of any bound sequence.
+    /// Equivalent to `keyisprefix()` from Src/Zle/zle_keymap.c. Used
+    /// by `getkeymapcmd` to decide whether to keep reading bytes
+    /// during a multi-byte sequence resolve (the trie-walk loop at
+    /// zle_keymap.c:1604).
     pub fn is_prefix(&self, seq: &[u8]) -> bool {
         if seq.len() == 1 {
             // Check if this char is a prefix in multi table
@@ -240,6 +275,13 @@ impl Default for KeymapManager {
 }
 
 impl KeymapManager {
+    /// Construct a freshly-populated keymap manager with the canonical
+    /// emacs / viins / vicmd / isearch / command keymaps installed and
+    /// `main` aliased to emacs.
+    /// Mirrors zsh's keymap-table init sequence in
+    /// Src/Zle/zle_keymap.c:153 (`createkeymapnamtab`) plus the
+    /// per-keymap `default_bindings()` calls fired at module boot —
+    /// see `setup_*_keymap` for the per-keymap binding tables.
     pub fn new() -> Self {
         let mut mgr = KeymapManager {
             keymaps: HashMap::new(),

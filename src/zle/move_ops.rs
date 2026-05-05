@@ -5,21 +5,30 @@
 use super::main::Zle;
 
 impl Zle {
-    /// Move cursor to start of current physical line
+    /// Move cursor to the start of the current logical line.
+    /// Port of `findbol()` from Src/Zle/zle_utils.c:1158 — same scan,
+    /// just mutates zlecs in-place instead of returning the index.
+    /// `find_bol` (in utils.rs) is the side-effect-free equivalent.
     pub fn move_to_bol(&mut self) {
         while self.zlecs > 0 && self.zleline[self.zlecs - 1] != '\n' {
             self.zlecs -= 1;
         }
     }
 
-    /// Move cursor to end of current physical line
+    /// Move cursor to the end of the current logical line.
+    /// Port of `findeol()` from Src/Zle/zle_utils.c:1169 — mutating
+    /// counterpart to `find_eol`.
     pub fn move_to_eol(&mut self) {
         while self.zlecs < self.zlell && self.zleline[self.zlecs] != '\n' {
             self.zlecs += 1;
         }
     }
 
-    /// Move cursor up one line
+    /// Move cursor up one logical line, preserving the column.
+    /// Simplified port of `upline()` from Src/Zle/zle_hist.c:243 with
+    /// fixed n=1 — captures the column-preserve behaviour without the
+    /// lastcol sticky-column tracking the C source uses for repeated
+    /// up/down chains. Returns false at top-of-buffer.
     pub fn move_up(&mut self) -> bool {
         let col = self.current_column();
 
@@ -48,7 +57,9 @@ impl Zle {
         true
     }
 
-    /// Move cursor down one line
+    /// Move cursor down one logical line, preserving the column.
+    /// Simplified port of `downline()` from Src/Zle/zle_hist.c:332
+    /// with fixed n=1. Returns false at end-of-buffer.
     pub fn move_down(&mut self) -> bool {
         let col = self.current_column();
 
@@ -77,7 +88,10 @@ impl Zle {
         true
     }
 
-    /// Get current column (0-indexed)
+    /// Compute the cursor's 0-indexed column on its current logical line.
+    /// Equivalent to `zlecs - findbol()` — the offset zsh's vertical-
+    /// motion code at Src/Zle/zle_hist.c:253 caches in `lastcol` for
+    /// sticky-column behaviour across up/down chains.
     pub fn current_column(&self) -> usize {
         let mut col = 0;
         let mut i = self.zlecs;
@@ -88,7 +102,10 @@ impl Zle {
         col
     }
 
-    /// Get current line number (0-indexed)
+    /// Compute the 0-indexed logical-line number containing the cursor.
+    /// Port of `findline()` from Src/Zle/zle_utils.c:1180 (which fills
+    /// in start/end of the cursor's line) but returning just the line
+    /// number — counts newlines before the cursor.
     pub fn current_line(&self) -> usize {
         self.zleline[..self.zlecs]
             .iter()
@@ -96,7 +113,10 @@ impl Zle {
             .count()
     }
 
-    /// Count total lines
+    /// Count the total number of logical lines in the buffer.
+    /// Used by display code to size the multi-line refresh region —
+    /// mirrors `nlnct` (number of lines counted) tracked by zsh's
+    /// `zrefresh()` in Src/Zle/zle_refresh.c.
     pub fn count_lines(&self) -> usize {
         self.zleline.iter().filter(|&&c| c == '\n').count() + 1
     }
