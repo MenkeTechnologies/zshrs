@@ -323,6 +323,12 @@ pub struct Zle {
     /// surface the request and the host (which depends on both crates)
     /// runs the completion engine and writes the result back.
     pub completion_request: Option<CompletionRequest>,
+    /// Per-region text-attribute overlay applied during refresh.
+    /// Port of `region_highlights` from Src/Zle/zle_refresh.c — the C
+    /// source maintains a Region_highlight* array updated by
+    /// `set_region_highlight()` and consumed by `zrefresh()` when
+    /// painting characters.
+    pub highlight: super::refresh::HighlightManager,
 }
 
 /// What kind of completion the user invoked. Each variant maps to one of
@@ -420,6 +426,7 @@ impl Zle {
             lprompt_raw: String::new(),
             rprompt_raw: String::new(),
             completion_request: None,
+            highlight: super::refresh::HighlightManager::new(),
         }
     }
 
