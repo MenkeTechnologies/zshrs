@@ -913,18 +913,52 @@ fn widget_end_of_buffer_or_history(zle: &mut Zle) {
 }
 
 fn widget_transpose_chars(zle: &mut Zle) {
-    if zle.zlecs > 0 && zle.zlell >= 2 {
-        let pos = if zle.zlecs == zle.zlell {
-            zle.zlecs - 1
-        } else {
-            zle.zlecs
-        };
-        if pos > 0 {
-            zle.zleline.swap(pos - 1, pos);
-            zle.zlecs = pos + 1;
-            zle.resetneeded = true;
-        }
+    // Port of transposechars() from Src/Zle/zle_misc.c:313. The C source
+    // is count-aware (negative count transposes backwards, positive
+    // forwards, default 1) and respects newline boundaries — at BoL or
+    // EoL/EOB, the swap involves the cursor's neighbor on the same
+    // logical line. Cursor lands one past the swapped pair on positive
+    // count, mirroring emacs's `^T` advance.
+    let mut n = zle.mult;
+    let neg = n < 0;
+    if neg {
+        n = -n;
     }
+    for _ in 0..n {
+        let mut ct = zle.zlecs;
+        // BoL (or right after \n) special-case: shift forward so we
+        // can swap (line[ct], line[ct+1]) — only valid if there's at
+        // least one more char before the next newline.
+        if ct == 0 || zle.zleline.get(ct - 1).copied() == Some('\n') {
+            if ct == zle.zlell || zle.zleline.get(ct).copied() == Some('\n') {
+                return;
+            }
+            if !neg {
+                zle.zlecs += 1;
+            }
+            ct += 1;
+        }
+        if neg {
+            if zle.zlecs > 0 && zle.zleline.get(zle.zlecs - 1).copied() != Some('\n') {
+                zle.zlecs -= 1;
+                if ct > 1 && zle.zleline.get(ct - 2).copied() != Some('\n') {
+                    ct -= 1;
+                }
+            }
+        } else if zle.zlecs != zle.zlell
+            && zle.zleline.get(zle.zlecs).copied() != Some('\n')
+        {
+            zle.zlecs += 1;
+        }
+        if ct == zle.zlell || zle.zleline.get(ct).copied() == Some('\n') {
+            ct -= 1;
+        }
+        if ct < 1 || zle.zleline.get(ct - 1).copied() == Some('\n') {
+            return;
+        }
+        zle.zleline.swap(ct - 1, ct);
+    }
+    zle.resetneeded = true;
 }
 
 fn widget_clear_screen(zle: &mut Zle) {
@@ -3477,6 +3511,52 @@ mod tests {
         widget_digit_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, -5);
         assert!(!zle.zmod.flags.contains(crate::zle::main::ModifierFlags::NEG));
+    }
+
+    #[test]
+    fn transpose_chars_swaps_at_cursor() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcd".chars().collect();
+        zle.zlell = 4;
+        zle.zlecs = 2; // between 'b' and 'c'
+        widget_transpose_chars(&mut zle);
+        // Default count=1 swaps line[ct-1]<->line[ct] (= 'b'<->'c').
+        assert_eq!(zle.zleline.iter().collect::<String>(), "acbd");
+        // Cursor advances past the swap.
+        assert_eq!(zle.zlecs, 3);
+    }
+
+    #[test]
+    fn transpose_chars_at_eob_swaps_last_two() {
+        let mut zle = Zle::new();
+        zle.zleline = "ab".chars().collect();
+        zle.zlell = 2;
+        zle.zlecs = 2; // at end-of-buffer
+        widget_transpose_chars(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "ba");
+    }
+
+    #[test]
+    fn transpose_chars_at_bol_returns_without_swap() {
+        let mut zle = Zle::new();
+        zle.zleline = "ab".chars().collect();
+        zle.zlell = 2;
+        zle.zlecs = 0;
+        widget_transpose_chars(&mut zle);
+        // At BoL (ct=0) with content available, advance and swap.
+        assert_eq!(zle.zleline.iter().collect::<String>(), "ba");
+    }
+
+    #[test]
+    fn transpose_chars_with_negative_count_swaps_backwards() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcd".chars().collect();
+        zle.zlell = 4;
+        zle.zlecs = 3;
+        zle.mult = -1;
+        widget_transpose_chars(&mut zle);
+        // Negative count moves cursor back, swaps prior pair.
+        assert_eq!(zle.zleline.iter().collect::<String>(), "acbd");
     }
 
     #[test]
