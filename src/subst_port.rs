@@ -199,6 +199,22 @@ pub struct SubstState {
     /// + replacement contexts in `${var/pat/repl}` where the
     /// leading `~` must stay literal.
     pub skip_filesub: bool,
+    /// Names of all defined shell functions. Populated by
+    /// `from_executor`. Used by `${+functions[name]}` to answer the
+    /// "is this function defined?" question without round-tripping
+    /// through `with_executor`. Same idea as the C zsh-side
+    /// `paramtab` lookup that backs `${functions[name]}` — the
+    /// magic-assoc's getfn just consults the function hashtable.
+    pub function_names: std::collections::HashSet<String>,
+    /// Names of commands resolvable via `$PATH`. Populated lazily
+    /// (empty by default; only filled if the script reads
+    /// `${+commands[name]}` or similar). Backs the magic-assoc set-
+    /// test. Direct analogue of zsh's `cmdhash` / commands special
+    /// parameter (Src/init.c, Src/builtin.c bin_hash).
+    pub command_names: std::collections::HashSet<String>,
+    /// Names of currently-defined aliases. Populated by
+    /// `from_executor`. Backs `${+aliases[name]}`.
+    pub alias_names: std::collections::HashSet<String>,
 }
 
 impl SubstState {
@@ -227,6 +243,20 @@ impl SubstState {
                 )
             })
             .collect();
+        // Snapshot the magic-assoc-backing tables. Cheap clones —
+        // these are typically small (function names ~hundreds at
+        // most for a real shell session).
+        let function_names: std::collections::HashSet<String> = exec
+            .function_names()
+            .into_iter()
+            .collect();
+        let alias_names: std::collections::HashSet<String> =
+            exec.aliases.keys().cloned().collect();
+        // Don't pre-populate command_names — `${+commands[X]}` is
+        // rare enough that a lazy fill via PATH walk on first use
+        // wins over eagerly enumerating every executable on disk.
+        let command_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         SubstState {
             errflag: false,
             opts: SubstOptions::default(),
@@ -234,6 +264,9 @@ impl SubstState {
             arrays: exec.arrays.clone(),
             assoc_arrays,
             skip_filesub: false,
+            function_names,
+            command_names,
+            alias_names,
         }
     }
 
@@ -539,6 +572,27 @@ fn stringsubstquote(strstart: &str, strdpos: usize) -> (String, usize) {
 /// builtins after they've bypassed the lexer's normal tokenization).
 pub fn getkeystring_pub(s: &str) -> String {
     getkeystring(s)
+}
+
+/// Set-test for a magic-assoc subscript: `${+functions[name]}`,
+/// `${+commands[name]}`, `${+aliases[name]}`, etc. zsh treats these
+/// special parameters as live views over the shell's introspection
+/// tables — `${+functions[foo]}` is "1" iff `foo` is a defined
+/// function. Direct port of paramsubst's chkset path when the
+/// parameter is one of the special-name table entries (Src/init.c
+/// special_params + Src/subst.c paramsubst's getfn invocation).
+fn check_magic_assoc_set(name: &str, key: &str, state: &SubstState) -> bool {
+    match name {
+        "functions" | "dis_functions" => state.function_names.contains(key),
+        "aliases" | "dis_aliases" | "galiases" | "saliases" => state.alias_names.contains(key),
+        "commands" => state.command_names.contains(key),
+        // Other magic assocs (parameters, modules, options, …)
+        // could be added here. For now the three most common in
+        // plugin code (functions / aliases / commands) cover the
+        // observed usage. Returns false for unknown names so a
+        // `${+unknown_assoc[k]}` correctly reports unset.
+        _ => false,
+    }
 }
 
 /// Process escape sequences in $'...' strings
@@ -1379,6 +1433,22 @@ fn parse_brace_param(
         pos += 1;
     }
 
+    // Check for `${+name}` — "is parameter set?". Returns "1" if
+    // set, "0" if unset (Src/subst.c:2604-2612 chkset path, and the
+    // value emission at subst.c:3600-3602: `val = dupstring(vunset
+    // ? "0" : "1")`). The `+` only applies when followed by an
+    // identifier-start char or a nested `${`/`(P)` form per the
+    // C source's `itype_end(...) != s+1` check; otherwise the `+`
+    // is literal (e.g. `${+}` standalone is `$+` literal).
+    let mut chkset = false;
+    if chars.get(pos) == Some(&'+') {
+        let next = chars.get(pos + 1).copied().unwrap_or('\0');
+        if next.is_ascii_alphabetic() || next == '_' || next == '{' || next == INBRACE {
+            chkset = true;
+            pos += 1;
+        }
+    }
+
     // Parse variable name. Three shapes:
     //   1. Plain identifier: `FOO`, `_BAR`, `arr` (alnum + `_`)
     //   2. Nested expansion: `${INNER}` — the var-name slot is
@@ -1766,6 +1836,84 @@ fn parse_brace_param(
     } else {
         Vec::new()
     };
+
+    // Handle `${+NAME}` — set-test. Direct port of Src/subst.c:3600-
+    // 3602: `val = dupstring(vunset ? "0" : "1")`. The check is
+    // BEFORE length / operator / flags so a follow-on operator on a
+    // `${+foo}` form treats the result as the literal "0"/"1"
+    // string. zsh's "is set" rule: scalar in variables, indexed in
+    // arrays, OR assoc subscript path means "key exists" (assoc-with-
+    // missing-subscript returns 0).
+    if chkset {
+        let is_set = if let Some(sub) = subscript.as_deref() {
+            // `${+arr[idx]}` — checks element existence.
+            if let Some(arr) = state.arrays.get(&var_name) {
+                if sub == "@" || sub == "*" {
+                    !arr.is_empty()
+                } else if let Ok(idx) = sub.parse::<i64>() {
+                    let real = if idx > 0 {
+                        (idx - 1) as usize
+                    } else if idx < 0 {
+                        let off = arr.len() as i64 + idx;
+                        if off < 0 {
+                            0
+                        } else {
+                            off as usize
+                        }
+                    } else {
+                        return (
+                            chars[..dollar_pos].iter().collect::<String>()
+                                + "0"
+                                + &chars[pos..].iter().collect::<String>(),
+                            dollar_pos + 1,
+                            vec!["0".to_string()],
+                        );
+                    };
+                    real < arr.len()
+                } else {
+                    false
+                }
+            } else if let Some(map) = state.assoc_arrays.get(&var_name) {
+                if sub == "@" || sub == "*" {
+                    !map.is_empty()
+                } else {
+                    map.contains_key(sub)
+                }
+            } else {
+                // Magic special-parameter assoc lookups —
+                // `${+functions[name]}` / `${+commands[name]}` /
+                // `${+aliases[name]}` etc. should return 1 if the
+                // shell's introspection assoc has that key. The
+                // executor knows; route through the bridge that
+                // also handles the regular `${functions[name]}`
+                // read path. Direct port of zsh's chkset logic
+                // when var_name is a special-parameter table entry
+                // (Src/subst.c paramsubst's getindex → vunset
+                // chain ends up testing param->gsu.h->getfn
+                // returning a non-NULL value).
+                let resolved = singsub_no_tilde(sub, state);
+                check_magic_assoc_set(&var_name, &resolved, state)
+            }
+        } else {
+            // Bare `${+NAME}` — set if scalar in variables OR present
+            // in arrays/assoc tables. Mirrors zsh: any kind of
+            // declaration counts as "set". An empty-string scalar
+            // counts as set (matches zsh, where `x=; echo ${+x}`
+            // prints 1).
+            state.variables.contains_key(&var_name)
+                || state.arrays.contains_key(&var_name)
+                || state.assoc_arrays.contains_key(&var_name)
+                || std::env::var(&var_name).is_ok()
+        };
+        let s = if is_set { "1" } else { "0" };
+        let prefix: String = chars[..dollar_pos].iter().collect();
+        let suffix: String = chars[pos..].iter().collect();
+        return (
+            format!("{}{}{}", prefix, s, suffix),
+            dollar_pos + 1,
+            vec![s.to_string()],
+        );
+    }
 
     // Handle length prefix
     if length_prefix {
