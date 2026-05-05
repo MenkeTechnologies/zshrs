@@ -18,7 +18,10 @@ use std::sync::{Mutex, OnceLock};
 /// Maximum size of signal queue
 const MAX_QUEUE_SIZE: usize = 128;
 
-/// Signal trap flags
+/// Signal trap flag bits.
+/// Port of the `ZSIG_*` constants from Src/zsh.h — `ZSIG_TRAPPED`,
+/// `ZSIG_IGNORED`, `ZSIG_FUNC` are the same shape the C source's
+/// `sigtrapped[]` table stores.
 pub mod trap_flags {
     pub const ZSIG_TRAPPED: u32 = 1; // Signal is trapped
     pub const ZSIG_IGNORED: u32 = 2; // Signal is being ignored
@@ -26,7 +29,10 @@ pub mod trap_flags {
     pub const ZSIG_SHIFT: u32 = 3; // Bits to shift for local level
 }
 
-/// Well-known signal numbers (matching libc on most Unix systems)
+/// Well-known signal numbers (matching libc on most Unix systems).
+/// Mirrors the `sigs[]` lookup table Src/signals.c builds for the
+/// `kill -l` / `trap` builtin output. Numeric values come from the
+/// platform's `<signal.h>` via libc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum Signal {
@@ -61,12 +67,19 @@ pub enum Signal {
     SIGSYS = libc::SIGSYS,
 }
 
-/// Pseudo-signals for shell traps
+/// Pseudo-signals for shell traps.
+/// Port of the `SIGEXIT`/`SIGDEBUG`/`SIGZERR` macros from
+/// Src/zsh.h — used by the C source's `trap` builtin to register
+/// non-OS-signal hooks on shell exit / debug stops / errors.
 pub const SIGEXIT: i32 = 0;
 pub const SIGDEBUG: i32 = -1;
 pub const SIGZERR: i32 = -2;
 
-/// Signal names array
+/// Signal name → number lookup table.
+/// Port of the `sigs[]` array Src/signals.c builds at startup —
+/// drives the `kill -l` listing and the `trap NAME` parser. The
+/// `ERR` alias for `ZERR` matches the `trap` builtin's accepted
+/// shorthand.
 pub static SIGNAL_NAMES: &[(&str, i32)] = &[
     ("EXIT", SIGEXIT),
     ("HUP", libc::SIGHUP),
@@ -103,7 +116,10 @@ pub static SIGNAL_NAMES: &[(&str, i32)] = &[
     ("ERR", SIGZERR), // Alias
 ];
 
-/// Get signal number from name
+/// Look up a signal number by name.
+/// Port of `getsignum()` from Src/signals.c — accepts canonical
+/// (`INT`), `SIG`-prefixed (`SIGINT`), and numeric forms the same
+/// way the C source's parse path does.
 pub fn sig_by_name(name: &str) -> Option<i32> {
     let name_upper = name.to_uppercase();
     let lookup = name_upper.strip_prefix("SIG").unwrap_or(&name_upper);
@@ -118,7 +134,9 @@ pub fn sig_by_name(name: &str) -> Option<i32> {
     lookup.parse().ok()
 }
 
-/// Get signal name from number
+/// Look up a signal name by number.
+/// Inverse of `sig_by_name`. Closest C analog is the
+/// `sigmsg()`/`sigs[]` walk Src/signals.c uses for `kill -l`.
 pub fn sig_name(sig: i32) -> Option<&'static str> {
     for (name, num) in SIGNAL_NAMES {
         if *num == sig {
@@ -128,7 +146,11 @@ pub fn sig_name(sig: i32) -> Option<&'static str> {
     None
 }
 
-/// Signal state for queueing
+/// Signal state for queueing.
+/// Port of the `signal_queue[]` ring-buffer + `queueing_enabled`
+/// flag from Src/signals.c (around the `queue_signals()` /
+/// `unqueue_signals()` pair, line 1024 / 1041). Bounded ring
+/// buffer matches the C source's MAX_QUEUE_SIZE shape.
 struct SignalQueue {
     enabled: AtomicBool,
     front: AtomicUsize,
@@ -198,7 +220,11 @@ static TRAP_QUEUE: SignalQueue = SignalQueue::new();
 /// Last signal received
 static LAST_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
-/// Trap handler storage
+/// Trap handler storage.
+/// Port of the `sigtrapped[]`/`sigfuncs[]`/`siglists[]` parallel
+/// arrays Src/signals.c uses to keep per-signal state (flags +
+/// trap code or function name). The Rust struct collapses the
+/// arrays into a single hashmap keyed by signal number.
 pub struct TrapHandler {
     /// Trap code/function for each signal
     traps: Mutex<HashMap<i32, TrapAction>>,
@@ -242,7 +268,11 @@ impl TrapHandler {
         }
     }
 
-    /// Set a trap for a signal
+    /// Set a trap for a signal.
+    /// Port of `settrap()` from Src/signals.c:693 — installs the
+    /// trap handler in the per-signal slot, increments the trapped
+    /// count, and updates the kernel-level disposition via
+    /// `install_handler()` / `signal()`.
     pub fn set_trap(&self, sig: i32, action: TrapAction) -> Result<(), String> {
         // Can't trap SIGKILL or SIGSTOP
         if sig == libc::SIGKILL || sig == libc::SIGSTOP {
@@ -307,17 +337,24 @@ impl TrapHandler {
         Ok(())
     }
 
-    /// Remove a trap
+    /// Remove a trap.
+    /// Port of `unsettrap()` from Src/signals.c:759 — wraps
+    /// `settrap(sig, ZSIG_NONE)` which restores the default
+    /// disposition.
     pub fn unset_trap(&self, sig: i32) {
         let _ = self.set_trap(sig, TrapAction::Default);
     }
 
-    /// Get the trap action for a signal
+    /// Get the trap action for a signal.
+    /// Equivalent to reading the per-signal `sigfuncs[]` /
+    /// `siglists[]` slot Src/signals.c maintains.
     pub fn get_trap(&self, sig: i32) -> Option<TrapAction> {
         self.traps.lock().unwrap().get(&sig).cloned()
     }
 
-    /// Check if a signal is trapped
+    /// Check if a signal is trapped.
+    /// Equivalent to the `sigtrapped[sig] & ZSIG_TRAPPED` test
+    /// Src/signals.c uses inline.
     pub fn is_trapped(&self, sig: i32) -> bool {
         self.flags
             .lock()
@@ -327,7 +364,9 @@ impl TrapHandler {
             .unwrap_or(false)
     }
 
-    /// Check if a signal is ignored
+    /// Check if a signal is ignored.
+    /// Equivalent to the `sigtrapped[sig] & ZSIG_IGNORED` test
+    /// Src/signals.c uses for `trap '' SIG`.
     pub fn is_ignored(&self, sig: i32) -> bool {
         self.flags
             .lock()
@@ -546,12 +585,19 @@ fn run_trap(sig: i32, action: &TrapAction) {
     }
 }
 
-/// Enable signal queueing
+/// Enable signal queueing.
+/// Port of `queue_signals()` from Src/signals.c (the macro form
+/// declared in zsh.h plus the queue toggle inside `zhandler()` line
+/// 399). Used to defer signal handlers across critical sections
+/// (memory allocation, parameter manipulation, etc.).
 pub fn queue_signals() {
     SIGNAL_QUEUE.enable();
 }
 
-/// Disable signal queueing and process queued signals
+/// Disable signal queueing and process queued signals.
+/// Port of `unqueue_signals()` from Src/signals.c — drains the
+/// pending queue by calling `handle_signal()` once per stored
+/// entry, matching the C source's flush-on-disable semantics.
 pub fn unqueue_signals() {
     SIGNAL_QUEUE.disable();
     while let Some(sig) = SIGNAL_QUEUE.pop() {
@@ -559,17 +605,23 @@ pub fn unqueue_signals() {
     }
 }
 
-/// Check if signal queueing is enabled
+/// Check if signal queueing is enabled.
+/// Equivalent to reading the C source's `queueing_enabled` flag
+/// (Src/signals.c).
 pub fn queueing_enabled() -> bool {
     SIGNAL_QUEUE.is_enabled()
 }
 
-/// Enable trap queueing
+/// Enable trap queueing.
+/// Port of `queue_traps()` from Src/signals.c:1024 — defers the
+/// trap-execution side effects until `unqueue_traps()` flushes
+/// them.
 pub fn queue_traps() {
     TRAP_QUEUE.enable();
 }
 
-/// Disable trap queueing and run queued traps
+/// Disable trap queueing and run queued traps.
+/// Port of `unqueue_traps()` from Src/signals.c:1041.
 pub fn unqueue_traps() {
     TRAP_QUEUE.disable();
     while let Some(sig) = TRAP_QUEUE.pop() {
@@ -579,7 +631,10 @@ pub fn unqueue_traps() {
     }
 }
 
-/// Block a signal
+/// Block a single signal.
+/// Port of `signal_block()` from Src/signals.c:175 — the C source
+/// builds a `sigset_t` containing the bit and calls `sigprocmask
+/// (SIG_BLOCK, ...)`. Same here.
 pub fn signal_block(sig: i32) {
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
@@ -589,7 +644,9 @@ pub fn signal_block(sig: i32) {
     }
 }
 
-/// Unblock a signal
+/// Unblock a single signal.
+/// Port of `signal_unblock()` from Src/signals.c:189 — same
+/// `sigprocmask(SIG_UNBLOCK, ...)` shape.
 pub fn signal_unblock(sig: i32) {
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
@@ -849,7 +906,10 @@ mod tests {
 // Missing functions from signals.c
 // ---------------------------------------------------------------------------
 
-/// Install a signal handler (from signals.c install_handler)
+/// Install a signal handler.
+/// Port of `install_handler()` from Src/signals.c:100 — wires
+/// the C source's `signal()` (or `sigaction()` on POSIX) call to
+/// the shared `zhandler` dispatcher.
 #[cfg(unix)]
 pub fn install_handler(sig: i32) {
     unsafe {
@@ -867,7 +927,9 @@ extern "C" fn handler_func(sig: libc::c_int) {
     LAST_SIGNAL.store(sig, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Number of signals (from signals.c SIGCOUNT)
+/// Number of OS signals zsh tracks.
+/// Port of the `SIGCOUNT` macro from Src/signals.c — used by
+/// `dotrap()` and `printsigtable()` to size the per-signal table.
 pub const SIGCOUNT: i32 = 32;
 
 /// Total trap count including EXIT and ERR
@@ -898,7 +960,10 @@ pub fn signal_save_mask_raw() -> libc::sigset_t {
     old
 }
 
-/// Set up default signal handlers for the shell (from signals.c)
+/// Set up default signal handlers for the shell.
+/// Port of the per-signal `install_handler()` calls Src/signals.c
+/// fires from `init_signals()` — sets SIGCHLD/SIGWINCH/SIGALRM
+/// to the shared dispatcher and ignores SIGQUIT/SIGPIPE.
 #[cfg(unix)]
 pub fn signal_default_setup() {
     unsafe {
@@ -917,7 +982,9 @@ pub fn signal_default_setup() {
     }
 }
 
-/// Suspend the current process (from signals.c)
+/// Suspend the current process by raising SIGTSTP.
+/// Port of `signal_suspend()` from Src/signals.c:214 — the C
+/// source's `suspend` builtin entry point.
 #[cfg(unix)]
 pub fn signal_suspend() {
     unsafe {
@@ -925,7 +992,10 @@ pub fn signal_suspend() {
     }
 }
 
-/// Wait for a signal (from signals.c)
+/// Wait for a signal via `sigwait(2)`.
+/// Port of the `sigwait()` call inside `signal_suspend()`
+/// (Src/signals.c:214) plus the `wait_for_processes()` loop
+/// at line 249.
 #[cfg(unix)]
 pub fn signal_wait() -> i32 {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -950,7 +1020,10 @@ pub fn signal_pending(sig: i32) -> bool {
     }
 }
 
-/// Scope-based trap management (from signals.c starttrapscope/endtrapscope)
+/// Scope-based trap management.
+/// Port of `starttrapscope()`/`endtrapscope()` from
+/// Src/signals.c:855/880 — saves and restores trap state across
+/// function-local scopes.
 #[derive(Debug, Default)]
 pub struct TrapScope {
     saved_traps: Vec<(i32, TrapAction)>,
@@ -972,7 +1045,9 @@ impl TrapScope {
     }
 }
 
-/// Signal name list for display (from signals.c)
+/// Build a signal-name list for display.
+/// Port of the `kill -l` output path Src/signals.c builds by
+/// walking `sigs[]` (around `bin_kill()` in Src/jobs.c:bin_kill).
 pub fn signal_names_list() -> Vec<String> {
     let mut names = Vec::with_capacity(SIGCOUNT as usize + 1);
     names.push("EXIT".to_string());
@@ -990,7 +1065,8 @@ pub fn signal_names_list() -> Vec<String> {
 // Remaining 18 missing signals.c functions
 // ---------------------------------------------------------------------------
 
-/// Disable interrupts (from signals.c nointr)
+/// Disable SIGINT delivery.
+/// Port of `nointr()` from Src/signals.c:128.
 #[cfg(unix)]
 pub fn nointr() {
     unsafe {
@@ -998,19 +1074,22 @@ pub fn nointr() {
     }
 }
 
-/// Hold interrupts (save and block) (from signals.c holdintr)
+/// Hold interrupts (save and block SIGINT).
+/// Port of `holdintr()` from Src/signals.c:139.
 #[cfg(unix)]
 pub fn holdintr() {
     signal_block(libc::SIGINT);
 }
 
-/// Release held interrupts (from signals.c noholdintr)
+/// Release held SIGINT.
+/// Port of `noholdintr()` from Src/signals.c:149.
 #[cfg(unix)]
 pub fn noholdintr() {
     signal_unblock(libc::SIGINT);
 }
 
-/// Get current signal mask (from signals.c signal_mask)
+/// Build a sigset containing only the given signal.
+/// Port of `signal_mask()` from Src/signals.c:160.
 #[cfg(unix)]
 pub fn signal_mask(sig: i32) -> libc::sigset_t {
     let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
@@ -1021,7 +1100,8 @@ pub fn signal_mask(sig: i32) -> libc::sigset_t {
     set
 }
 
-/// Set signal mask (from signals.c signal_setmask)
+/// Set the process's signal mask.
+/// Port of `signal_setmask()` from Src/signals.c:203.
 #[cfg(unix)]
 pub fn signal_setmask(mask: &libc::sigset_t) {
     unsafe {
@@ -1029,7 +1109,9 @@ pub fn signal_setmask(mask: &libc::sigset_t) {
     }
 }
 
-/// Wait for child processes with signal handling (from signals.c wait_for_processes)
+/// Reap zombie child processes via non-blocking `waitpid(2)`.
+/// Port of `wait_for_processes()` from Src/signals.c:249 — the
+/// SIGCHLD-driven reaper that updates the job table.
 #[cfg(unix)]
 pub fn wait_for_processes() -> Vec<(i32, i32)> {
     let mut results = Vec::new();
@@ -1044,7 +1126,10 @@ pub fn wait_for_processes() -> Vec<(i32, i32)> {
     results
 }
 
-/// Main signal handler (from signals.c zhandler)
+/// Main signal handler routed via `signal(2)`.
+/// Port of `zhandler()` from Src/signals.c:399 — the C source's
+/// shared dispatcher that records the signal, queues if needed,
+/// and re-installs the handler for non-BSD systems.
 #[cfg(unix)]
 extern "C" fn zhandler(sig: libc::c_int) {
     // Re-install the handler
@@ -1055,7 +1140,8 @@ extern "C" fn zhandler(sig: libc::c_int) {
     LAST_SIGNAL.store(sig, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Kill all running jobs (from signals.c killrunjobs)
+/// Kill all running jobs with the given signal.
+/// Port of `killrunjobs()` from Src/signals.c:506.
 #[cfg(unix)]
 pub fn killrunjobs(sig: i32) {
     // This would need access to the job table
@@ -1063,7 +1149,8 @@ pub fn killrunjobs(sig: i32) {
     let _ = sig;
 }
 
-/// Kill a specific job (from signals.c killjb)
+/// Kill a specific job by process group.
+/// Port of `killjb()` from Src/signals.c:529.
 #[cfg(unix)]
 pub fn killjb(pgrp: i32, sig: i32) -> i32 {
     if pgrp > 0 {
@@ -1073,24 +1160,32 @@ pub fn killjb(pgrp: i32, sig: i32) -> i32 {
     }
 }
 
-/// Save trap state before function call (from signals.c dosavetrap)
+/// Save trap state before a function call.
+/// Port of `dosavetrap()` from Src/signals.c:626 — captures the
+/// outer-scope trap so a function can install its own without
+/// leaking changes back.
 pub fn dosavetrap(sig: i32, handler: &TrapHandler) -> Option<TrapAction> {
     handler.get_trap(sig)
 }
 
-/// Set a trap (from signals.c settrap)
+/// Set a trap (top-level entry point).
+/// Port of `settrap()` from Src/signals.c:693 — see also
+/// `TrapHandler::set_trap` for the per-handler shape.
 pub fn settrap(sig: i32, action: TrapAction) -> Result<(), String> {
     let handler = traps();
     handler.set_trap(sig, action)
 }
 
-/// Unset a trap (from signals.c unsettrap)
+/// Unset a trap (top-level entry point).
+/// Port of `unsettrap()` from Src/signals.c:759.
 pub fn unsettrap(sig: i32) {
     let handler = traps();
     handler.unset_trap(sig);
 }
 
-/// Handle a pending trap (from signals.c handletrap)
+/// Handle a pending trap by signal number.
+/// Port of `handletrap()` from Src/signals.c:972 — looks up the
+/// trap action without executing it (caller drives execution).
 pub fn handletrap(sig: i32) -> Option<String> {
     let handler = traps();
     if let Some(TrapAction::Code(code)) = handler.get_trap(sig) {
@@ -1100,7 +1195,9 @@ pub fn handletrap(sig: i32) -> Option<String> {
     }
 }
 
-/// Execute trap actions for pending signals (from signals.c dotrapargs)
+/// Execute trap actions for a pending signal.
+/// Port of `dotrapargs()` from Src/signals.c:1081 — the inner
+/// trap dispatcher `dotrap()` calls.
 pub fn dotrapargs(sig: i32, handler: &TrapHandler) -> Option<String> {
     match handler.get_trap(sig) {
         Some(TrapAction::Code(code)) => Some(code),
@@ -1108,13 +1205,16 @@ pub fn dotrapargs(sig: i32, handler: &TrapHandler) -> Option<String> {
     }
 }
 
-/// Execute all pending traps (from signals.c dotrap)
+/// Execute all pending traps for a signal.
+/// Port of `dotrap()` from Src/signals.c:1245 — top-level trap
+/// runner.
 pub fn dotrap(sig: i32) -> Option<String> {
     let handler = traps();
     dotrapargs(sig, handler)
 }
 
-/// Remove a trap completely (from signals.c removetrap)
+/// Remove a trap completely and reset to default disposition.
+/// Port of `removetrap()` from Src/signals.c:772.
 pub fn removetrap(sig: i32) {
     unsettrap(sig);
     // Also restore default handler
@@ -1124,7 +1224,9 @@ pub fn removetrap(sig: i32) {
     }
 }
 
-/// Get realtime signal number (from signals.c rtsigno)
+/// Resolve a real-time signal name to its number.
+/// Port of `rtsigno()` from Src/signals.c:1291 — Linux-only;
+/// macOS lacks `SIGRTMIN`/`SIGRTMAX`.
 ///
 /// SIGRTMIN is typically 34 on Linux, not available on macOS
 pub fn rtsigno(offset: i32) -> Option<i32> {
@@ -1147,7 +1249,8 @@ pub fn rtsigno(offset: i32) -> Option<i32> {
     }
 }
 
-/// Get realtime signal name (from signals.c rtsigname)
+/// Resolve a real-time signal number to its `RTMIN+N` name.
+/// Port of `rtsigname()` from Src/signals.c:1317.
 pub fn rtsigname(sig: i32) -> String {
     #[cfg(target_os = "linux")]
     {
