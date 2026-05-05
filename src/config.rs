@@ -1,4 +1,11 @@
-//! zshrs configuration file — `~/.config/zshrs/config.toml`
+//! zshrs configuration file — `~/.config/zshrs/config.toml`.
+//!
+//! **zshrs-original infrastructure — no C source counterpart.** C
+//! zsh has no equivalent because every runtime knob lives in shell
+//! options (Src/options.c) or special parameters
+//! (Src/params.c). This file controls the Rust engine — worker-pool
+//! size, completion-cache enablement, async-history writes — none
+//! of which exist in C zsh.
 //!
 //! Runtime settings that don't belong in .zshrc (shell script).
 //! These control the Rust engine, not the shell language.
@@ -28,7 +35,11 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// Top-level config
+/// Top-level config.
+/// zshrs-original — no C counterpart. Each section maps onto a
+/// Rust subsystem that doesn't exist in C zsh (worker pool,
+/// FTS5-backed completion cache, async history writes, parallel
+/// glob).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 #[derive(Default)]
@@ -118,7 +129,10 @@ impl Default for LogConfig {
 
 // ── Loading ──
 
-/// Config file path: `~/.config/zshrs/config.toml`
+/// Config file path: `~/.config/zshrs/config.toml`.
+/// zshrs-original — C zsh has no analog. Closest C equivalent is
+/// the `ZDOTDIR`/`HOME` lookup chain Src/init.c uses for `.zshrc`,
+/// but that's a shell-script path, not a runtime config.
 pub fn config_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -126,12 +140,16 @@ pub fn config_path() -> PathBuf {
         .join("config.toml")
 }
 
-/// Load config from disk. Returns defaults if file doesn't exist or is invalid.
+/// Load config from disk. Returns defaults if the file doesn't
+/// exist or fails to parse.
+/// zshrs-original — no C counterpart.
 pub fn load() -> ZshrsConfig {
     load_from(&config_path())
 }
 
 /// Load config from a specific path.
+/// zshrs-original — no C counterpart. Defaults preserve startup
+/// silently (per the project's "no startup chatter" rule).
 pub fn load_from(path: &Path) -> ZshrsConfig {
     match std::fs::read_to_string(path) {
         Ok(content) => match toml::from_str(&content) {
@@ -155,8 +173,10 @@ pub fn load_from(path: &Path) -> ZshrsConfig {
     }
 }
 
-/// Resolve worker pool size from config.
-/// 0 = auto = available_parallelism clamped [2, 18].
+/// Resolve the worker pool size from config.
+/// `0` means auto: `available_parallelism` clamped to `[2, 18]`.
+/// zshrs-original — sizes the thread pool (`src/worker.rs`) that
+/// replaces C zsh's per-task `fork(2)` strategy.
 pub fn resolve_pool_size(config: &WorkerPoolConfig) -> usize {
     if config.size > 0 {
         config.size.clamp(1, 64)
