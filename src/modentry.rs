@@ -8,7 +8,11 @@
 
 use crate::module::ModuleLifecycle;
 
-/// Module entry operations (from modentry.c boot parameter)
+/// Module entry operations.
+/// Port of the integer `boot` parameter to `modentry()` from
+/// Src/modentry.c — the C source dispatches `0`/`1`/`2`/`3`/`4`/`5`
+/// to `setup_`/`boot_`/`cleanup_`/`finish_`/`features_`/`enables_`.
+/// We give each integer a typed name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModOp {
     Setup = 0,
@@ -33,7 +37,13 @@ impl ModOp {
     }
 }
 
-/// Dispatch a module lifecycle operation (from modentry.c modentry)
+/// Dispatch a module lifecycle operation.
+/// Port of `modentry()` from Src/modentry.c — the C source's switch
+/// on the `boot` integer that the dlopened module's entry point
+/// uses to route into `setup_` / `boot_` / `cleanup_` / `finish_` /
+/// `features_` / `enables_`. Default branch in the C source emits
+/// `zerr("bad call to modentry")`; we ignore unknown ops as a
+/// no-op since `ModOp` is exhaustive at the type level.
 pub fn modentry(op: ModOp, module: &mut dyn ModuleLifecycle) -> i32 {
     match op {
         ModOp::Setup => module.setup(),

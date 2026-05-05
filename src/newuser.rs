@@ -4,7 +4,12 @@
 
 use std::path::Path;
 
-/// Check if user needs first-run setup
+/// Check whether the user needs the first-run setup wizard.
+/// Port of the dotfile-presence check inside `boot_()` from
+/// Src/Modules/newuser.c:68 (which calls `check_dotfile()` at
+/// line 58 once per startup file). The C source skips the wizard
+/// if any of `.zshrc`/`.zshenv`/`.zprofile`/`.zlogin`/`.zlogout`
+/// already exist; same predicate here.
 pub fn needs_newuser_setup(home: &Path) -> bool {
     let zshrc = home.join(".zshrc");
     let zshenv = home.join(".zshenv");
@@ -19,7 +24,12 @@ pub fn needs_newuser_setup(home: &Path) -> bool {
         && !zlogout.exists()
 }
 
-/// Generate default .zshrc content
+/// Generate default `.zshrc` content for the recommended path.
+/// Port of the `Functions/Newuser/zsh-newuser-install` script the
+/// `newuser` module ships (Src/Modules/newuser.mdd lists it under
+/// `functions=`). The C side just dispatches into the script;
+/// here we inline the same content the script's "recommended"
+/// branch would write.
 pub fn default_zshrc() -> String {
     r#"# Lines configured by zsh-newuser-install
 
@@ -54,7 +64,12 @@ prompt adam1
     .to_string()
 }
 
-/// Generate minimal .zshrc content
+/// Generate a minimal `.zshrc` for the "just give me a working
+/// shell" path.
+/// zshrs-original convenience — the upstream wizard
+/// (`Functions/Newuser/zsh-newuser-install`) only writes the full
+/// recommended file. We expose a smaller alternative for the
+/// `Minimal` setup choice.
 pub fn minimal_zshrc() -> String {
     r#"# Minimal zsh configuration
 HISTFILE=~/.zsh_history
@@ -65,7 +80,12 @@ bindkey -e
     .to_string()
 }
 
-/// First-run setup options
+/// First-run setup choice.
+/// Mirrors the menu items the upstream `zsh-newuser-install`
+/// script (loaded by Src/Modules/newuser.c:68 `boot_()`) presents.
+/// `Recommended` writes the full template, `Minimal` writes a
+/// stripped-down one, `Manual` lets the user edit themselves, and
+/// `Exit` skips the wizard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupChoice {
     Recommended,
@@ -74,7 +94,11 @@ pub enum SetupChoice {
     Manual,
 }
 
-/// Run newuser setup
+/// Run the first-run setup wizard.
+/// Port of the `boot_()` dispatcher from Src/Modules/newuser.c:68
+/// — the C source autoloads and runs `zsh-newuser-install` which
+/// then writes the chosen template to `~/.zshrc`. This Rust path
+/// inlines the file write directly.
 pub fn run_newuser_setup(home: &Path, choice: SetupChoice) -> std::io::Result<()> {
     let zshrc = home.join(".zshrc");
 
