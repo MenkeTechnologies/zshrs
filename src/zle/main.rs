@@ -783,11 +783,27 @@ impl Zle {
         last_match
     }
 
-    /// Execute a widget
+    /// Execute a widget. Port of `execzlefunc()` from Src/Zle/zle_main.c:1420.
+    ///
+    /// The C source manages a few per-widget side effects we replicate
+    /// here:
+    ///   * `lastcol = -1` reset for any widget that isn't flagged
+    ///     `LASTCOL` (zle_main.c:1476). The vertical-motion widgets use
+    ///     this to maintain a sticky column across `up-line` / `down-line`.
+    ///   * `lastcmd = widget.flags` unless the widget is `NOTCOMMAND`
+    ///     (zle_main.c:1497). The yank-pop widget consults this to know
+    ///     whether the previous widget was a yank.
+    ///   * `handleundo()` snapshot pre-call + `mkundoent()` capture
+    ///     post-call (zle_main.c calls `handleundo()` from the zlecore
+    ///     loop after each widget).
     fn execute_widget(&mut self, widget: &Widget) {
-        self.lastcmd = widget.flags;
+        // Reset sticky column unless the widget keeps it.
+        if !widget.flags.contains(super::widget::WidgetFlags::LASTCOL) {
+            self.lastcol = -1;
+        }
+
         // Snapshot the line so mkundoent can diff it post-widget.
-        // Port of zsh's setlastline()/handleundo() framing around widget calls.
+        // Port of setlastline()/handleundo() framing in zle_main.c:1161.
         self.handleundo();
 
         match &widget.func {
@@ -795,15 +811,22 @@ impl Zle {
                 f(self);
             }
             super::widget::WidgetFunc::User(name) => {
-                // User-defined widget (`zle -N name shell-fn`): the C source
-                // dispatches via execzlefunc() in Src/Zle/zle_main.c, which
-                // calls the bound shell function with the widget's arg list.
-                // We can't reach the executor from this crate, so we queue
-                // the call on pending_hooks; the host drains it after the
-                // key dispatch returns and runs the function with its own
-                // ShellExecutor — the same pattern used by zle_call_hook.
+                // User-defined widget (`zle -N name shell-fn`): the C
+                // source dispatches via execzlefunc() at zle_main.c:1502
+                // through executenamedfunc which calls the bound shell
+                // function. We can't reach the executor from this crate,
+                // so we queue the call on pending_hooks; the host drains
+                // it after the key dispatch returns and runs the function
+                // with its own ShellExecutor — the same pattern used by
+                // zle_call_hook.
                 self.pending_hooks.push((name.clone(), None));
             }
+        }
+
+        // Update lastcmd for yank-pop / next-widget chains, unless the
+        // widget is NOTCOMMAND (digit-arg, prefix, etc.) — zle_main.c:1497.
+        if !widget.flags.contains(super::widget::WidgetFlags::NOTCOMMAND) {
+            self.lastcmd = widget.flags;
         }
 
         // Capture the change (if any) into the undo stack. undo/redo widgets
