@@ -1969,6 +1969,12 @@ impl<'a> ZshParser<'a> {
                 self.lexer.zshlex();
             }
             if self.lexer.tok == LexTok::Outpar {
+                // After the `)` of a for-list, the next token is the
+                // body opener — `do`/`{`. zsh's lexer needs incmdpos
+                // set so `{` lexes as Inbrace (not as a literal). C
+                // analogue: parse.c::par_for sets `incmdpos = 1`
+                // after consuming the OUTPAR before the body parse.
+                self.lexer.incmdpos = true;
                 self.lexer.zshlex();
             }
             ForList::Words(words)

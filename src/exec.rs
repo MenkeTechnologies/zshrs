@@ -2915,8 +2915,23 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // `${commands[ls]}`, `${aliases[ll]}`, `${functions[foo]}`,
         // `${options[interactive]}`, etc. None of these are stored in
         // `assoc_arrays`; we generate the value at lookup time.
-        if let Some(v) = magic_assoc_lookup(&name, &idx) {
-            return v;
+        //
+        // BUT: if the user declared `typeset -A NAME` and assigned
+        // values, their declaration wins. This matches zsh's actual
+        // module behavior (verified against /bin/zsh): `typeset -A
+        // langinfo; langinfo[CODESET]=UTF-8; echo $langinfo[CODESET]`
+        // prints `UTF-8` even though `zsh/langinfo` would normally
+        // shadow it with nl_langinfo(3). The C source enforces this
+        // via the module loader: `bin_zmodload` only registers the
+        // special-parameter table entry when no existing assoc with
+        // that name exists. Mirroring: skip the magic path if
+        // `name` is already in `assoc_arrays`.
+        let user_defined_assoc =
+            with_executor(|exec| exec.assoc_arrays.contains_key(&name));
+        if !user_defined_assoc {
+            if let Some(v) = magic_assoc_lookup(&name, &idx) {
+                return v;
+            }
         }
         with_executor(|exec| match idx.as_str() {
             "@" | "*" => {
