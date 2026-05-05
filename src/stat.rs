@@ -8,7 +8,11 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-/// Stat element types
+/// Identifiers for individual stat-result elements.
+/// Port of the `ST_*` enum from Src/Modules/stat.c — the C
+/// source's `statprint()` (line 234) takes an `iwhich` index that
+/// dispatches between these elements; the Rust port keeps the
+/// same set so `zstat -L` selectors still work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatElement {
     Device,
@@ -85,7 +89,11 @@ impl StatElement {
     }
 }
 
-/// Stat flags
+/// `zstat` formatting flags.
+/// Port of the `STF_*` flag set from Src/Modules/stat.c — the C
+/// source threads it through `statprint()` (line 234) and its
+/// per-element printers (`statmodeprint()` line 47, `statuidprint`
+/// line 132, etc.). `-n` / `-N` / `-s` / `-r` / `-o` / `-g` / `-L`.
 #[derive(Debug, Default, Clone)]
 pub struct StatFlags {
     pub show_name: bool,
@@ -97,7 +105,10 @@ pub struct StatFlags {
     pub use_lstat: bool,
 }
 
-/// File stat info
+/// File stat result.
+/// Port of the `struct stat` fields the C source's `statprint()`
+/// (Src/Modules/stat.c:234) dispatches between — every field
+/// corresponds to one `ST_*` selector.
 #[derive(Debug, Clone)]
 pub struct FileStat {
     pub device: u64,
@@ -471,7 +482,11 @@ fn get_groupname(gid: u32) -> Option<String> {
     }
 }
 
-/// Options for stat builtin
+/// `zstat` builtin options.
+/// Mirrors the `Options ops` flag bag `bin_stat()` from
+/// Src/Modules/stat.c:368 reads — `-A`/`-H` array/hash output,
+/// `-L` lstat, `-T`/`-N`/`-n` name/type formatting, `-r`/`-s`/`-o`
+/// raw/string/octal, `-l` list-elements, `-F` time format.
 #[derive(Debug, Default)]
 pub struct StatOptions {
     pub list_elements: bool,
@@ -490,7 +505,10 @@ pub struct StatOptions {
     pub time_format: Option<String>,
 }
 
-/// Execute the stat builtin
+/// `zstat` builtin entry point.
+/// Port of `bin_stat()` from Src/Modules/stat.c:368 — drives the
+/// per-file `statprint()` (line 234) call that walks each
+/// `STAT_ELEMENT` printer in turn.
 pub fn builtin_stat(args: &[&str], options: &StatOptions) -> (i32, String) {
     let mut output = String::new();
 

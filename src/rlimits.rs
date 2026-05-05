@@ -14,7 +14,10 @@ use libc::{
     RLIMIT_NOFILE, RLIMIT_STACK, RLIM_INFINITY,
 };
 
-/// Resource limit type
+/// Resource limit unit type.
+/// Port of the `ZLIMTYPE_*` enum from Src/Builtins/rlimits.c —
+/// `set_resinfo()` (line 194) tags each `RLIMIT_*` with whether
+/// it's measured in KB / blocks / seconds / a count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitType {
     Memory,
@@ -24,7 +27,12 @@ pub enum LimitType {
     Unknown,
 }
 
-/// Resource information
+/// Per-resource metadata.
+/// Port of `struct resinfo` from Src/Builtins/rlimits.c —
+/// `set_resinfo()` (line 194) populates one entry per
+/// `RLIMIT_*` with the libcasm name, opt-letter, descr text, and
+/// scaling unit. `find_resource()` (line 239) searches by
+/// `opt` letter for `ulimit -X`.
 #[derive(Debug, Clone)]
 pub struct ResInfo {
     pub res: i32,
@@ -35,7 +43,8 @@ pub struct ResInfo {
     pub descr: &'static str,
 }
 
-/// Known resource limits.
+/// Known resource limits — the same table `set_resinfo()` from
+/// Src/Builtins/rlimits.c:194 builds at module load.
 ///
 /// `RLIMIT_*` constants are typed `__rlimit_resource_t` (= u32) on glibc
 /// Linux and `c_int` (= i32) on macOS / *BSD. We store as `i32` internally
@@ -104,7 +113,11 @@ pub static KNOWN_RESOURCES: &[ResInfo] = &[
 #[cfg(not(unix))]
 pub static KNOWN_RESOURCES: &[ResInfo] = &[];
 
-/// A resource limit value
+/// A single soft- or hard-limit value.
+/// Port of the `RLIM_INFINITY` sentinel handling
+/// `printrlim()` (Src/Builtins/rlimits.c:253) and
+/// `zstrtorlimt()` (line 272) do — keeps "unlimited" as a
+/// distinct variant rather than a magic max integer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitValue {
     Unlimited,
@@ -168,7 +181,10 @@ impl std::fmt::Display for LimitValue {
     }
 }
 
-/// Resource limits manager
+/// Resource limits cache.
+/// Port of the `limits[]` cache Src/Builtins/rlimits.c keeps —
+/// `do_limit()` (line 431) writes through it on `setrlimit(2)`
+/// success, `showlimits()` (line 346) reads from it.
 #[derive(Debug, Default)]
 pub struct ResourceLimits {
     #[cfg(unix)]
@@ -183,7 +199,10 @@ impl ResourceLimits {
         }
     }
 
-    /// Get resource info by name (prefix match)
+    /// Look up resource info by name (prefix match).
+    /// Port of the resource-name lookup loop inside `bin_limit()`
+    /// (Src/Builtins/rlimits.c:519) — same "ambiguous" rejection
+    /// when more than one entry shares the prefix.
     pub fn find_by_name(&self, name: &str) -> Option<&'static ResInfo> {
         let mut found: Option<&'static ResInfo> = None;
         let mut ambiguous = false;
@@ -215,7 +234,10 @@ impl ResourceLimits {
         KNOWN_RESOURCES.iter().find(|info| info.res == res)
     }
 
-    /// Get current limit (soft and hard)
+    /// Read the current `(soft, hard)` pair via `getrlimit(2)`.
+    /// Port of the `getrlimit()` call inside `do_limit()`
+    /// (Src/Builtins/rlimits.c:431) and `printulimit()` (line 386)
+    /// — same `RLIM_INFINITY` → `Unlimited` mapping.
     #[cfg(unix)]
     pub fn get(&self, res: i32) -> Result<(LimitValue, LimitValue), String> {
         let mut rlim = rlimit {
@@ -241,7 +263,10 @@ impl ResourceLimits {
         Err("resource limits not supported on this platform".to_string())
     }
 
-    /// Set a limit
+    /// Set a `(soft, hard)` pair via `setrlimit(2)`.
+    /// Port of `do_limit()` from Src/Builtins/rlimits.c:431 — same
+    /// soft-must-not-exceed-hard validation, same root-only
+    /// allow-raising-hard rule.
     #[cfg(unix)]
     pub fn set(
         &mut self,
@@ -297,7 +322,9 @@ impl ResourceLimits {
         Err("resource limits not supported on this platform".to_string())
     }
 
-    /// Remove a limit (set to unlimited)
+    /// Remove a limit (set to `RLIM_INFINITY`).
+    /// Port of `do_unlimit()` from Src/Builtins/rlimits.c:622 —
+    /// matches the C source's `-H` (hard) flag handling.
     pub fn unlimit(&mut self, res: i32, hard: bool) -> Result<(), String> {
         if hard {
             self.set(
@@ -327,6 +354,10 @@ impl ResourceLimits {
 }
 
 /// Parse a limit value string
+/// Parse a numeric limit string into a `LimitValue`.
+/// Port of `zstrtorlimt()` from Src/Builtins/rlimits.c:272 — same
+/// `unlimited`/`hard`/`soft`/`Inf` keywords and unit-scaled
+/// numeric form.
 pub fn parse_limit_value(s: &str, info: Option<&ResInfo>) -> Result<LimitValue, String> {
     if s == "unlimited" {
         return Ok(LimitValue::Unlimited);
@@ -387,11 +418,17 @@ pub fn parse_limit_value(s: &str, info: Option<&ResInfo>) -> Result<LimitValue, 
 }
 
 /// Format a limit for display (limit builtin style)
+/// Format a limit for `limit` builtin display.
+/// Port of the `printrlim()` (Src/Builtins/rlimits.c:253) +
+/// `showlimitvalue()` (line 307) printers.
 pub fn format_limit_display(name: &str, val: LimitValue, info: Option<&ResInfo>) -> String {
     format!("{:<16}{}", name, val.format(info))
 }
 
 /// Format a limit for display (ulimit builtin style)
+/// Format a limit for `ulimit` builtin display.
+/// Port of `printulimit()` from Src/Builtins/rlimits.c:386 — same
+/// optional header line, same per-resource scale.
 pub fn format_ulimit_display(info: &ResInfo, val: LimitValue, show_header: bool) -> String {
     let mut result = String::new();
 
@@ -411,6 +448,9 @@ pub fn format_ulimit_display(info: &ResInfo, val: LimitValue, show_header: bool)
 }
 
 /// Execute the limit builtin
+/// `limit` builtin entry point.
+/// Port of `bin_limit()` from Src/Builtins/rlimits.c:519 —
+/// dispatches between list (no args) and set (resource value).
 pub fn builtin_limit(
     args: &[&str],
     limits: &mut ResourceLimits,
@@ -515,6 +555,11 @@ pub fn builtin_limit(
 }
 
 /// Execute the ulimit builtin
+/// `ulimit` builtin entry point.
+/// Port of `bin_ulimit()` from Src/Builtins/rlimits.c:729 — the
+/// POSIX-flavored counterpart of `limit`. Honours `-H`/`-S` and
+/// the per-resource short flag (`-t`/`-f`/`-d`/etc.) the C source
+/// resolves via `find_resource()` (line 239).
 pub fn builtin_ulimit(
     args: &[&str],
     limits: &mut ResourceLimits,
@@ -597,6 +642,10 @@ pub fn builtin_ulimit(
 }
 
 /// Execute the unlimit builtin
+/// `unlimit` builtin entry point.
+/// Port of `bin_unlimit()` from Src/Builtins/rlimits.c:670 —
+/// removes the named limit (or every limit when no args). Calls
+/// `do_unlimit()` (line 622) per resource.
 pub fn builtin_unlimit(args: &[&str], limits: &mut ResourceLimits, hard: bool) -> (i32, String) {
     if args.is_empty() {
         for info in KNOWN_RESOURCES {

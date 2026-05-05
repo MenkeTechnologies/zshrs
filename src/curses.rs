@@ -6,7 +6,12 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 
-/// Window attributes
+/// Curses video attributes.
+/// Port of the attribute-name table Src/Modules/curses.c uses in
+/// `zcurses_attrget()` (line 302) — maps the user-facing names
+/// (`bold`/`dim`/`underline`/`blink`/`reverse`/`standout`) onto
+/// libncurses's `A_BOLD`/etc. We emit the matching ANSI SGR codes
+/// directly since the Rust port doesn't link libncurses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Attribute {
     Normal,
@@ -45,7 +50,10 @@ impl Attribute {
     }
 }
 
-/// Basic colors
+/// Basic curses colors.
+/// Port of the color-name table `zcurses_color()` from
+/// Src/Modules/curses.c:318 maps — same eight-color palette plus
+/// `default` for the terminal-default code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Color {
     Black,
@@ -104,7 +112,11 @@ impl Color {
     }
 }
 
-/// A curses window
+/// A curses window.
+/// Port of `struct ZCWin` from Src/Modules/curses.c — `addwin`
+/// (line 503) creates them, `delwin` (line 564) frees them, and
+/// every other `zccmd_*` works against this shape. Rust port keeps
+/// the same field set (rows/cols/origin/cursor/attrs/colors/etc.).
 #[derive(Debug)]
 pub struct Window {
     pub name: String,
@@ -272,7 +284,10 @@ impl Window {
     }
 }
 
-/// Curses state manager
+/// Curses session state.
+/// Port of the file-static `windows` HashTable + `colorpairs` /
+/// `next_pair` slots Src/Modules/curses.c keeps — `zccmd_init()`
+/// (line 434) populates them, every other `zccmd_*` mutates.
 #[derive(Debug, Default)]
 pub struct Curses {
     windows: HashMap<String, Window>,
@@ -286,6 +301,10 @@ impl Curses {
         Self::default()
     }
 
+    /// Initialize the curses subsystem (alt-screen + clear).
+    /// Port of `zccmd_init()` from Src/Modules/curses.c:434 — the
+    /// C source calls `initscr()` from libncurses; we emit the
+    /// equivalent `\e[?1049h` + `\e[2J` + cursor-home sequence.
     pub fn initscr(&mut self) -> io::Result<()> {
         if self.initialized {
             return Ok(());
@@ -305,6 +324,10 @@ impl Curses {
         Ok(())
     }
 
+    /// Tear down curses and restore the cooked terminal state.
+    /// Port of `zccmd_endwin()` from Src/Modules/curses.c:823 —
+    /// the C source calls libncurses's `endwin()`; we emit the
+    /// matching `\e[?1049l` + `\e[0m` sequence.
     pub fn endwin(&mut self) -> io::Result<()> {
         if !self.initialized {
             return Ok(());
@@ -322,6 +345,10 @@ impl Curses {
         Ok(())
     }
 
+    /// Allocate a new named window.
+    /// Port of `zccmd_addwin()` from Src/Modules/curses.c:503 —
+    /// rejects already-present names matching the C source's
+    /// "duplicate window" diagnostic.
     pub fn newwin(&mut self, name: &str, rows: usize, cols: usize, y: usize, x: usize) -> bool {
         if self.windows.contains_key(name) {
             return false;
@@ -332,6 +359,10 @@ impl Curses {
         true
     }
 
+    /// Free a named window (refusing the special `stdscr`).
+    /// Port of `zccmd_delwin()` from Src/Modules/curses.c:564 —
+    /// uses `zcurses_free_window()` (line 285) for the per-window
+    /// free; rejecting `stdscr` matches the C source's guard.
     pub fn delwin(&mut self, name: &str) -> bool {
         if name == "stdscr" {
             return false;
@@ -380,6 +411,11 @@ impl Curses {
 }
 
 /// Get terminal size
+/// Get current terminal `(cols, rows)` from `TIOCGWINSZ`.
+/// Port of the `getmaxyx(stdscr, ...)` lookup the C source does
+/// via libncurses (Src/Modules/curses.c, embedded in many
+/// `zccmd_*` functions). We `ioctl(TIOCGWINSZ)` directly so the
+/// Rust port doesn't need libncurses.
 pub fn terminal_size() -> Option<(usize, usize)> {
     #[cfg(unix)]
     {
@@ -396,7 +432,10 @@ pub fn terminal_size() -> Option<(usize, usize)> {
         .zip(std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()))
 }
 
-/// Raw mode for input
+/// Enable cbreak mode (raw input, no line buffering).
+/// Port of the `cbreak()` libncurses call `zccmd_init()` invokes
+/// (Src/Modules/curses.c:434). We tweak termios directly via
+/// `tcsetattr(2)` since the Rust port doesn't link libncurses.
 #[cfg(unix)]
 pub fn cbreak() -> io::Result<()> {
     let mut termios: libc::termios = unsafe { std::mem::zeroed() };
@@ -419,7 +458,9 @@ pub fn cbreak() -> io::Result<()> {
     Ok(())
 }
 
-/// Disable echo
+/// Disable terminal echo.
+/// Port of the `noecho()` libncurses call `zccmd_init()` invokes
+/// (Src/Modules/curses.c:434). Same termios path as `cbreak()`.
 #[cfg(unix)]
 pub fn noecho() -> io::Result<()> {
     let mut termios: libc::termios = unsafe { std::mem::zeroed() };
@@ -440,7 +481,10 @@ pub fn noecho() -> io::Result<()> {
     Ok(())
 }
 
-/// Hide cursor
+/// Show or hide the cursor.
+/// Port of the `curs_set()` libncurses call invoked from
+/// `zccmd_init()` (Src/Modules/curses.c:434). The Rust port emits
+/// `\e[?25h` (visible) / `\e[?25l` (hidden) directly.
 pub fn curs_set(visible: bool) -> io::Result<()> {
     let mut stdout = io::stdout();
     if visible {
@@ -451,7 +495,13 @@ pub fn curs_set(visible: bool) -> io::Result<()> {
     stdout.flush()
 }
 
-/// Execute zcurses builtin
+/// `zcurses` builtin entry point.
+/// Port of the `bin_zcurses()` dispatch table in
+/// Src/Modules/curses.c — the C source uses `zccmd_*` callbacks
+/// for `init`/`addwin`/`delwin`/`refresh`/`move`/`clear`/`char`/
+/// `string`/`border`/`endwin`/`attr`/`bg`/`scroll`/`input`/
+/// `timeout`/`mouse`/`position`/`querychar`. The Rust port maps
+/// each subcommand string onto a method on `Curses`.
 pub fn builtin_zcurses(args: &[&str], curses: &mut Curses) -> (i32, String) {
     if args.is_empty() {
         return (1, "zcurses: subcommand required\n".to_string());
