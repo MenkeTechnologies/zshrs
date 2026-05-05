@@ -382,6 +382,70 @@ fn get_builtin_widget(name: &str) -> (fn(&mut Zle), WidgetFlags) {
         "spell-word" => (widget_spell_word, WidgetFlags::empty()),
         "bracketed-paste" => (widget_bracketed_paste, WidgetFlags::empty()),
 
+        // Vi backward word-end (extra) — Src/Zle/zle_word.c
+        "vi-backward-word-end" => (widget_vi_backward_word_end, WidgetFlags::empty()),
+        "vi-backward-blank-word-end" => {
+            (widget_vi_backward_blank_word_end, WidgetFlags::empty())
+        }
+
+        // Text objects (vi `iw`/`aw` etc.) — Src/Zle/textobjects.c
+        "select-in-word" => (widget_select_in_word, WidgetFlags::empty()),
+        "select-a-word" => (widget_select_a_word, WidgetFlags::empty()),
+        "select-in-blank-word" => (widget_select_in_blank_word, WidgetFlags::empty()),
+        "select-a-blank-word" => (widget_select_a_blank_word, WidgetFlags::empty()),
+        "select-in-shell-word" => (widget_select_in_shell_word, WidgetFlags::empty()),
+        "select-a-shell-word" => (widget_select_a_shell_word, WidgetFlags::empty()),
+
+        // Completion menu navigation — Src/Zle/zle_tricky.c (host hooks)
+        "menu-expand-or-complete" => (widget_menu_expand_or_complete, WidgetFlags::MENUCMP),
+        "reverse-menu-complete" => (widget_reverse_menu_complete, WidgetFlags::MENUCMP),
+        "accept-and-menu-complete" => (
+            widget_accept_and_menu_complete,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX,
+        ),
+        "list-expand" => (
+            widget_list_expand,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX,
+        ),
+        "expand-cmd-path" => (widget_expand_cmd_path, WidgetFlags::empty()),
+        "expand-or-complete-prefix" => (widget_expand_or_complete_prefix, WidgetFlags::MENUCMP),
+        "end-of-list" => (
+            widget_end_of_list,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX | WidgetFlags::LASTCOL,
+        ),
+
+        // Suffix handling — Src/Zle/zle_misc.c
+        "auto-suffix-remove" => (widget_auto_suffix_remove, WidgetFlags::NOTCOMMAND),
+        "auto-suffix-retain" => (
+            widget_auto_suffix_retain,
+            WidgetFlags::KEEPSUFFIX | WidgetFlags::NOTCOMMAND,
+        ),
+
+        // Region paste / put — Src/Zle/zle_misc.c
+        "put-replace-selection" => (widget_put_replace_selection, WidgetFlags::YANK),
+
+        // Named-command execution — Src/Zle/zle_thingy.c (host hooks)
+        "execute-named-cmd" => (widget_execute_named_cmd, WidgetFlags::empty()),
+        "execute-last-named-cmd" => (widget_execute_last_named_cmd, WidgetFlags::empty()),
+        "read-command" => (widget_read_command, WidgetFlags::empty()),
+        "where-is" => (
+            widget_where_is,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX | WidgetFlags::LASTCOL,
+        ),
+
+        // Pattern isearch — Src/Zle/zle_hist.c:936/943
+        "history-incremental-pattern-search-backward" => (
+            widget_history_incremental_pattern_search_backward,
+            WidgetFlags::empty(),
+        ),
+        "history-incremental-pattern-search-forward" => (
+            widget_history_incremental_pattern_search_forward,
+            WidgetFlags::empty(),
+        ),
+
+        // Search acceptance — Src/Zle/zle_hist.c
+        "accept-search" => (widget_accept_search, WidgetFlags::empty()),
+
         // Default: undefined widget
         _ => (widget_undefined, WidgetFlags::empty()),
     }
@@ -2305,6 +2369,297 @@ fn widget_bracketed_paste(zle: &mut Zle) {
     zle.call_hook("bracketed-paste", None);
 }
 
+fn widget_vi_backward_word_end(zle: &mut Zle) {
+    // Port of vibackwardwordend() from Src/Zle/zle_word.c:348. Step
+    // backward to the end (last char) of the previous word. Faithful to
+    // the C loop: read class at current position, step back once, walk
+    // back through same-class non-blank chars, then through blanks.
+    let n = zle.mult.max(1);
+    let class_at = |c: char| -> i32 {
+        if c.is_whitespace() {
+            0
+        } else if c.is_alphanumeric() || c == '_' {
+            1
+        } else {
+            2
+        }
+    };
+    for _ in 0..n {
+        if zle.zlecs == 0 {
+            break;
+        }
+        let here = zle.zleline.get(zle.zlecs).copied().unwrap_or(' ');
+        let cc = class_at(here);
+        zle.zlecs -= 1;
+        while zle.zlecs > 0 {
+            let c = zle.zleline[zle.zlecs];
+            if class_at(c) != cc || c.is_whitespace() {
+                break;
+            }
+            zle.zlecs -= 1;
+        }
+        while zle.zlecs > 0 && zle.zleline[zle.zlecs].is_whitespace() {
+            zle.zlecs -= 1;
+        }
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_vi_backward_blank_word_end(zle: &mut Zle) {
+    // Port of vibackwardblankwordend() from Src/Zle/zle_word.c:375.
+    // Same shape as vibackwardwordend but whitespace is the only
+    // separator (no class distinction between alnum and punctuation).
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        if zle.zlecs == 0 {
+            break;
+        }
+        zle.zlecs -= 1;
+        while zle.zlecs > 0 && !zle.zleline[zle.zlecs].is_whitespace() {
+            zle.zlecs -= 1;
+        }
+        while zle.zlecs > 0 && zle.zleline[zle.zlecs].is_whitespace() {
+            zle.zlecs -= 1;
+        }
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_select_in_word(zle: &mut Zle) {
+    // Port of selectinword() from Src/Zle/textobjects.c. Sets a region
+    // containing the inner word at the cursor — different from
+    // Zle::find_word_start (which is a backward-motion helper); here we
+    // expand around the cursor while characters share the iword class.
+    let n = zle.zlell;
+    let pos = zle.zlecs.min(n);
+    if n == 0 {
+        return;
+    }
+    // Pick the class to span. If on a word char, use word-class; else
+    // sit on whitespace and use that class.
+    let cur_char = zle.zleline.get(pos).copied().unwrap_or(' ');
+    let is_word = cur_char.is_alphanumeric() || cur_char == '_';
+    let class = |c: char| -> bool {
+        if c.is_whitespace() {
+            !is_word && c.is_whitespace()
+        } else if is_word {
+            c.is_alphanumeric() || c == '_'
+        } else {
+            !c.is_alphanumeric() && c != '_' && !c.is_whitespace()
+        }
+    };
+    let mut start = pos;
+    while start > 0 && class(zle.zleline[start - 1]) == class(cur_char) {
+        start -= 1;
+    }
+    let mut end = pos;
+    while end < n && class(zle.zleline[end]) == class(cur_char) {
+        end += 1;
+    }
+    zle.mark = start;
+    zle.zlecs = end;
+    zle.region_active = 1;
+    zle.resetneeded = true;
+}
+
+fn widget_select_a_word(zle: &mut Zle) {
+    // Port of selectaword() from Src/Zle/textobjects.c. "around" form —
+    // includes a trailing whitespace separator if any.
+    widget_select_in_word(zle);
+    while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
+        zle.zlecs += 1;
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_select_in_blank_word(zle: &mut Zle) {
+    // Port of selectinblankword() from Src/Zle/textobjects.c. Spans a
+    // run of non-whitespace characters around the cursor.
+    let n = zle.zlell;
+    let pos = zle.zlecs.min(n);
+    if n == 0 || zle.zleline.get(pos).copied().unwrap_or(' ').is_whitespace() {
+        return;
+    }
+    let mut start = pos;
+    while start > 0 && !zle.zleline[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    let mut end = pos;
+    while end < n && !zle.zleline[end].is_whitespace() {
+        end += 1;
+    }
+    zle.mark = start;
+    zle.zlecs = end;
+    zle.region_active = 1;
+    zle.resetneeded = true;
+}
+
+fn widget_select_a_blank_word(zle: &mut Zle) {
+    // Port of selectablankword() from Src/Zle/textobjects.c.
+    widget_select_in_blank_word(zle);
+    while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
+        zle.zlecs += 1;
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_select_in_shell_word(zle: &mut Zle) {
+    // Port of selectinshellword() from Src/Zle/textobjects.c. Uses the
+    // shell-word splitter that respects single/double quotes + escapes.
+    let saved = zle.zlecs;
+    let start = super::word::shell_word_start_before(&zle.zleline[..zle.zlell], saved);
+    let end = super::word::shell_word_end_after(&zle.zleline[..zle.zlell], saved);
+    zle.mark = start;
+    zle.zlecs = end;
+    zle.region_active = 1;
+    zle.resetneeded = true;
+}
+
+fn widget_select_a_shell_word(zle: &mut Zle) {
+    // Port of selectashellword() from Src/Zle/textobjects.c.
+    widget_select_in_shell_word(zle);
+    while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
+        zle.zlecs += 1;
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_accept_search(zle: &mut Zle) {
+    // Port of acceptsearch() from Src/Zle/zle_hist.c. Acceptance handler
+    // inside the isearch sub-loop — outside of isearch it's a no-op,
+    // which matches our design where do_isearch() handles its own loop.
+    let _ = zle;
+}
+
+fn widget_auto_suffix_remove(zle: &mut Zle) {
+    // Port of handlesuffix() (auto-suffix-remove flag) from
+    // Src/Zle/zle_misc.c. The C source clears the auto-removable
+    // suffix from the kill ring's tail. Surface as a hook so the host
+    // updates compsys's pending-suffix state.
+    zle.call_hook("auto-suffix-remove", None);
+}
+
+fn widget_auto_suffix_retain(zle: &mut Zle) {
+    // Port of handlesuffix() (KEEPSUFFIX) from Src/Zle/zle_misc.c.
+    zle.call_hook("auto-suffix-retain", None);
+}
+
+fn widget_put_replace_selection(zle: &mut Zle) {
+    // Port of putreplaceselection() from Src/Zle/zle_misc.c:680. With
+    // an active region, replaces it with the most-recent kill-ring
+    // entry; otherwise pastes at the cursor (same as yank).
+    if zle.region_active == 0 || zle.killring.is_empty() {
+        widget_yank(zle);
+        return;
+    }
+    let (lo, hi) = if zle.mark <= zle.zlecs {
+        (zle.mark, zle.zlecs)
+    } else {
+        (zle.zlecs, zle.mark)
+    };
+    let lo = lo.min(zle.zlell);
+    let hi = hi.min(zle.zlell);
+    zle.zleline.drain(lo..hi);
+    zle.zlell = zle.zleline.len();
+    zle.zlecs = lo;
+    let text: Vec<char> = zle
+        .killring
+        .front()
+        .cloned()
+        .unwrap_or_default();
+    for (i, c) in text.iter().enumerate() {
+        zle.zleline.insert(zle.zlecs + i, *c);
+    }
+    zle.zlecs += text.len();
+    zle.zlell = zle.zleline.len();
+    zle.region_active = 0;
+    zle.resetneeded = true;
+}
+
+fn widget_where_is(zle: &mut Zle) {
+    // Port of whereis() from Src/Zle/zle_thingy.c. The C source prompts
+    // for a widget name and shows what keys it's bound to. Surface as
+    // a hook so the host can prompt + look up in the current keymap.
+    zle.call_hook("where-is", None);
+}
+
+fn widget_execute_named_cmd(zle: &mut Zle) {
+    // Port of executenamedcmd() from Src/Zle/zle_thingy.c. Reads a
+    // widget name and executes it. Host-driven because completion of
+    // the prompt + dispatch live in host land.
+    zle.call_hook("execute-named-cmd", None);
+}
+
+fn widget_execute_last_named_cmd(zle: &mut Zle) {
+    // Port of executelastnamedcmd() from Src/Zle/zle_thingy.c. Same
+    // shape as execute-named-cmd; replays the last one.
+    zle.call_hook("execute-last-named-cmd", None);
+}
+
+fn widget_read_command(zle: &mut Zle) {
+    // Port of readcommand() from Src/Zle/zle_thingy.c. Reads a widget
+    // name from input and stores it for the host's executor.
+    zle.call_hook("read-command", None);
+}
+
+fn widget_menu_expand_or_complete(zle: &mut Zle) {
+    // Port of menuexpandorcomplete() from Src/Zle/zle_tricky.c. Menu
+    // completion variant of expand-or-complete.
+    zle.completion_request = Some(super::main::CompletionRequest::MenuComplete);
+}
+
+fn widget_reverse_menu_complete(zle: &mut Zle) {
+    // Port of reversemenucomplete() from Src/Zle/zle_tricky.c. Steps
+    // the menu backwards. Surfaced via a separate hook so the host's
+    // menu state knows which direction to step.
+    zle.call_hook("reverse-menu-complete", None);
+}
+
+fn widget_accept_and_menu_complete(zle: &mut Zle) {
+    // Port of acceptandmenucomplete() from Src/Zle/zle_tricky.c.
+    zle.call_hook("accept-and-menu-complete", None);
+}
+
+fn widget_list_expand(zle: &mut Zle) {
+    // Port of listexpand() from Src/Zle/zle_tricky.c. Expands current
+    // word and lists the candidates.
+    zle.completion_request = Some(super::main::CompletionRequest::ListChoices);
+}
+
+fn widget_expand_cmd_path(zle: &mut Zle) {
+    // Port of expandcmdpath() from Src/Zle/zle_tricky.c. Expands the
+    // first word into its full path via PATH lookup.
+    zle.call_hook("expand-cmd-path", None);
+}
+
+fn widget_expand_or_complete_prefix(zle: &mut Zle) {
+    // Port of expandorcompleteprefix() from Src/Zle/zle_tricky.c.
+    // Same as expand-or-complete but only considers the prefix before
+    // the cursor.
+    zle.completion_request = Some(super::main::CompletionRequest::ExpandOrComplete);
+}
+
+fn widget_end_of_list(zle: &mut Zle) {
+    // Port of endoflist() from Src/Zle/zle_tricky.c. Used inside the
+    // completion menu to dismiss the listing — host-driven.
+    zle.call_hook("end-of-list", None);
+}
+
+fn widget_history_incremental_pattern_search_backward(zle: &mut Zle) {
+    // Port of historyincrementalpatternsearchbackward() from
+    // Src/Zle/zle_hist.c:936. Pattern-mode variant of isearch — uses
+    // glob-pattern matching instead of plain-substring. Until the
+    // pattern engine is wired in to do_isearch, fall through to the
+    // plain backward isearch.
+    do_isearch(zle, -1);
+}
+
+fn widget_history_incremental_pattern_search_forward(zle: &mut Zle) {
+    // Port of historyincrementalpatternsearchforward() from
+    // Src/Zle/zle_hist.c:943.
+    do_isearch(zle, 1);
+}
+
 /// Check if a character is a word character
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
@@ -2518,6 +2873,60 @@ mod tests {
         zle.zlecs = 0;
         widget_capitalize_word(&mut zle);
         assert_eq!(zle.zleline.iter().collect::<String>(), "Hello world");
+    }
+
+    #[test]
+    fn select_in_word_sets_region_around_current_word() {
+        let mut zle = Zle::new();
+        zle.zleline = "foo bar baz".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 4; // inside "bar"
+        widget_select_in_word(&mut zle);
+        assert_eq!(zle.region_active, 1);
+        // mark/cursor should bracket "bar".
+        let lo = zle.mark.min(zle.zlecs);
+        let hi = zle.mark.max(zle.zlecs);
+        assert_eq!(&zle.zleline[lo..hi].iter().collect::<String>(), "bar");
+    }
+
+    #[test]
+    fn select_in_shell_word_treats_double_quoted_string_as_one_word() {
+        let mut zle = Zle::new();
+        zle.zleline = r#"echo "hello world""#.chars().collect();
+        zle.zlell = zle.zleline.len();
+        zle.zlecs = 8; // inside the quoted string
+        widget_select_in_shell_word(&mut zle);
+        let lo = zle.mark.min(zle.zlecs);
+        let hi = zle.mark.max(zle.zlecs);
+        let span: String = zle.zleline[lo..hi].iter().collect();
+        assert_eq!(span, r#""hello world""#);
+    }
+
+    #[test]
+    fn put_replace_selection_overwrites_active_region() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcdef".chars().collect();
+        zle.zlell = 6;
+        zle.killring.push_front("XYZ".chars().collect());
+        zle.mark = 1;
+        zle.zlecs = 4; // selecting "bcd"
+        zle.region_active = 1;
+        widget_put_replace_selection(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "aXYZef");
+        assert_eq!(zle.region_active, 0);
+    }
+
+    #[test]
+    fn vi_backward_word_end_lands_at_prior_word_end() {
+        let mut zle = Zle::new();
+        zle.zleline = "foo bar baz".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 11; // at EOB (past 'z')
+        widget_vi_backward_word_end(&mut zle);
+        // vim's `ge` from past-EOL lands at the end of the LAST word —
+        // position of 'z' in "baz" = index 10 (matches the C source's
+        // vibackwardwordend in Src/Zle/zle_word.c:348).
+        assert_eq!(zle.zlecs, 10);
     }
 
     #[test]
