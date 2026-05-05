@@ -1,5 +1,13 @@
 //! Daemon-presence detection + per-user config knob.
 //!
+//! **zshrs-original infrastructure — no C source counterpart.** C
+//! zsh has no daemon process. Shell state lives in the running
+//! interpreter and re-initializes on every launch. zshrs ships
+//! `zshrs-daemon` as a separate binary that holds canonical
+//! parameter/option/function state in shared memory; the shell
+//! probes its socket at startup and decides whether to use the
+//! cached state or fall back to vanilla full-init mode.
+//!
 //! Per the `zshrs ↔ zshrs-daemon = independent binaries` rule
 //! (docs/DAEMON.md "Daemon lifecycle"), the shell does NOT spawn the
 //! daemon. It probes once at startup and runs in one of three modes:
@@ -46,6 +54,8 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
+/// Daemon-presence probe result.
+/// zshrs-original — no C counterpart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Mode {
@@ -74,6 +84,7 @@ impl Mode {
 static STATE: AtomicU8 = AtomicU8::new(Mode::Unknown as u8);
 
 /// What the user said in `[daemon].enabled` (or the auto default).
+/// zshrs-original — no C counterpart. C zsh has no daemon to enable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigSetting {
     /// Probe at startup; use the daemon if alive (default).
@@ -88,6 +99,9 @@ pub enum ConfigSetting {
 /// What the user said in `[shell].skip_configs`.
 /// Explicit discriminants pin the AtomicU8 round-trip in
 /// `skip_configs_setting()`.
+/// zshrs-original — no C counterpart. C zsh always sources every
+/// startup file (Src/init.c `source_home_file()` chain); the
+/// canonical-state path that lets us skip those is unique to zshrs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SkipConfigs {
@@ -126,8 +140,10 @@ impl SkipConfigs {
 }
 
 /// Both knobs from `~/.zshrs/zshrs.toml`. Missing file / section
-/// / key returns the safe defaults (`daemon=auto`, `skip_configs=off`).
-/// Unrecognized values fall back with a log warning.
+/// / key returns the safe defaults (`daemon=auto`,
+/// `skip_configs=off`). Unrecognized values fall back with a log
+/// warning.
+/// zshrs-original — no C counterpart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Config {
     pub daemon: ConfigSetting,
@@ -243,9 +259,10 @@ fn config_file_path() -> Option<std::path::PathBuf> {
     Some(root.join("zshrs.toml"))
 }
 
-/// Cheap probe — connect-only, no handshake — does the daemon socket
-/// answer? Sets the global state so subsequent `is_present()` checks
-/// are O(1) atomic loads.
+/// Cheap probe — connect-only, no handshake — does the daemon
+/// socket answer?
+/// zshrs-original — no C counterpart. Sets the global state so
+/// subsequent `is_present()` checks are O(1) atomic loads.
 ///
 /// Honors `[daemon].enabled`:
 ///   - `Off` → state = Disabled, no probe
@@ -353,9 +370,11 @@ fn daemon_has_zshrs_rows() -> bool {
     false
 }
 
-/// Should the shell-init path skip every /etc/zsh* + ~/.zsh* dotfile
-/// and apply canonical state from the daemon instead? O(1) atomic
-/// load — set by `probe()` at startup.
+/// Should the shell-init path skip every `/etc/zsh*` + `~/.zsh*`
+/// dotfile and apply canonical state from the daemon instead? O(1)
+/// atomic load — set by `probe()` at startup.
+/// zshrs-original — no C counterpart. C zsh's Src/init.c always
+/// sources every startup file unconditionally.
 #[inline]
 pub fn should_skip_configs() -> bool {
     SHOULD_SKIP_CONFIGS.load(Ordering::Relaxed) != 0
@@ -390,13 +409,15 @@ fn probe_socket() -> bool {
 
 /// O(1) read of the cached probe result. Returns `Unknown` until
 /// `probe()` has run.
+/// zshrs-original — no C counterpart.
 #[inline]
 pub fn current() -> Mode {
     Mode::from_u8(STATE.load(Ordering::Relaxed))
 }
 
-/// Convenience: did the probe see a live daemon? `false` for any
-/// other state (Unknown / Absent / Disabled).
+/// Did the probe see a live daemon? `false` for any other state
+/// (`Unknown` / `Absent` / `Disabled`).
+/// zshrs-original — no C counterpart.
 #[inline]
 pub fn is_present() -> bool {
     current() == Mode::Present

@@ -1,6 +1,16 @@
 //! Apply daemon canonical state to a freshly-built ShellExecutor —
 //! by reading the daemon's rkyv shard directly from disk. No IPC.
 //!
+//! **zshrs-original infrastructure — no C source counterpart.** C
+//! zsh always runs `Src/init.c::source_startup_files()` to set up
+//! a fresh shell from the user's dotfiles. zshrs adds a fast path:
+//! if `zshrs-daemon` has a canonical-state shard on disk
+//! (`~/.zshrs/images/*-recorder.rkyv`), we mmap and apply it
+//! directly into the executor's `pub` HashMaps, skipping the
+//! `.zshenv`/`.zprofile`/`.zshrc`/`.zlogin` source pass entirely.
+//! The shard format is rkyv (zero-copy archived structs) so the
+//! cold-start cost is ~1ms instead of ~150ms.
+//!
 //! **Why direct shard read, not IPC.** The original spec
 //! (`docs/DAEMON.md` "NO WALKING IN CLIENTS" + cache-architecture
 //! memory) calls for thin clients that mmap the daemon's pre-built
@@ -30,9 +40,12 @@ use crate::daemon::paths::CachePaths;
 use crate::daemon::shard::{list_shards, read_canonical_shard, CanonicalShard};
 use crate::exec::{AutoloadFlags, ShellExecutor, ZStyle};
 
-/// Read the latest recorder shard from disk and apply its canonical
-/// state to the executor. Returns total rows applied (0 if no shard
-/// or read failure → caller falls back).
+/// Read the latest recorder shard and apply its canonical state to
+/// the executor. Returns total rows applied (`0` if no shard or
+/// read failure → caller falls back to vanilla dotfile source).
+/// zshrs-original — no C counterpart. C zsh's
+/// `source_startup_files()` (Src/init.c) is the only path; this is
+/// a faster alternative built on top of the daemon shard.
 pub fn apply_all(executor: &mut ShellExecutor) -> usize {
     let t0 = std::time::Instant::now();
 
@@ -74,9 +87,9 @@ pub fn apply_all(executor: &mut ShellExecutor) -> usize {
     total
 }
 
-/// Walk `~/.zshrs/images/` for `*-recorder.rkyv` and return the
-/// newest by mtime. None if the dir doesn't exist or has no recorder
-/// shard.
+/// Walk `~/.zshrs/images/` and return the newest
+/// `*-recorder.rkyv` shard by mtime.
+/// zshrs-original — no C counterpart.
 fn latest_recorder_shard(paths: &CachePaths) -> Option<PathBuf> {
     let entries = list_shards(paths).ok()?;
     entries
@@ -94,6 +107,12 @@ fn latest_recorder_shard(paths: &CachePaths) -> Option<PathBuf> {
         })
 }
 
+/// Bulk-copy every subsystem from a deserialized canonical shard
+/// into the executor's mutable tables.
+/// zshrs-original — no C counterpart. The closest C analog is the
+/// per-subsystem builtin dispatch each dotfile triggers
+/// (`alias`/`bindkey`/`zstyle`/`compdef`/etc.) but compressed into
+/// a single in-memory copy.
 fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
     let mut total = 0;
 
@@ -304,6 +323,10 @@ fn apply_shard(executor: &mut ShellExecutor, shard: CanonicalShard) -> usize {
 /// Unknown keymap names fall back to `Main` (matches what zsh's
 /// `bindkey` does for unrecognized -M targets — a safer default than
 /// silently dropping the binding).
+/// Parse a `bindkey` shard value into `(keymap, sequence)`.
+/// zshrs-original — splits the canonical form `"keymap:sequence"`
+/// the recorder writes back into the two arguments
+/// `bindkey` (Src/Zle/zle_keymap.c) takes at the C builtin layer.
 fn parse_bindkey_value(value: &str) -> (crate::zle::KeymapName, &str) {
     use crate::zle::KeymapName;
     if let Some(rest) = value.strip_prefix('[') {
