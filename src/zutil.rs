@@ -61,7 +61,11 @@ impl MatchData {
     }
 }
 
-/// Style pattern with associated values
+/// One pattern→values entry for a `zstyle` style.
+/// Port of `struct stypat` from Src/Modules/zutil.c — `setstypat()`
+/// (line 295) creates entries, `addstyle()` (line 403) inserts them
+/// into the style table, `lookupstyle()` (line 443) walks them in
+/// weight order. Same `weight` formula as the C source.
 #[derive(Debug, Clone)]
 pub struct StylePattern {
     pub pattern: String,
@@ -146,7 +150,11 @@ fn glob_to_regex(pattern: &str) -> String {
     result
 }
 
-/// Style storage - maps style names to patterns
+/// `zstyle` storage table.
+/// Port of the `zstyletab` HashTable Src/Modules/zutil.c builds —
+/// `newzstyletable()` (line 270) creates it, `bin_zstyle()`
+/// (line 487) drives every mutation. Same per-style insertion
+/// semantics: weight-sorted so the most specific pattern wins.
 #[derive(Debug, Default)]
 pub struct StyleTable {
     styles: HashMap<String, Vec<StylePattern>>,
@@ -270,6 +278,11 @@ impl StyleTable {
 }
 
 /// Format a string with specifications
+/// `zformat` builtin entry point.
+/// Port of `bin_zformat()` from Src/Modules/zutil.c:955 — same
+/// `%X:value` substitution + width / left/right-align / repeat
+/// flag handling the C source's `zformat_substring()` (line 814)
+/// implements.
 pub fn zformat(format: &str, specs: &HashMap<char, String>, presence: bool) -> String {
     // Direct port of src/zsh/Src/Modules/zutil.c:814-952
     // zformat_substring. Recursive walker that handles:
@@ -493,6 +506,11 @@ fn zformat_recurse(
 
 /// Option description for zparseopts
 #[derive(Debug, Clone)]
+/// `zparseopts` option descriptor.
+/// Port of the per-option entries `bin_zparseopts()` from
+/// Src/Modules/zutil.c builds while parsing the `-D`/`-K`/`-E`/
+/// `-M` argument set — the C source uses inline locals; we wrap
+/// them in a struct.
 pub struct OptDesc {
     pub name: String,
     pub takes_arg: bool,
@@ -562,6 +580,10 @@ impl OptDesc {
 
 /// Parse options from arguments
 #[allow(clippy::type_complexity)]
+/// `zparseopts` builtin entry point.
+/// Port of `bin_zparseopts()` from Src/Modules/zutil.c — the
+/// option-parser the C source ships for completion-system use
+/// (`-D` consume, `-K` keep, `-E` non-strict, `-M` aliasing).
 pub fn zparseopts(
     args: &[String],
     specs: &[OptDesc],
@@ -706,6 +728,10 @@ pub fn zparseopts(
 }
 
 /// Align array values with a separator
+/// `zformat -a` align mode entry point.
+/// Port of the `-a` branch of `bin_zformat()` from
+/// Src/Modules/zutil.c:955 — splits each input on `sep`, pads the
+/// left half to the longest key length, then re-joins.
 pub fn zformat_align(sep: &str, values: &[&str]) -> Vec<String> {
     let mut max_pre = 0;
 
