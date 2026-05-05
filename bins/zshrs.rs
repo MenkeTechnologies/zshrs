@@ -1829,6 +1829,43 @@ fn setup_editor(compsys_cache: Option<(CompsysCache, PathBuf)>) -> Option<Reedli
         ]),
     );
 
+    // Zsh-style daily-driver bindings missing from reedline's emacs default.
+    // Each cites the matching default in Src/Zle/zle_bindings.c (the emacs
+    // bindkey table) so the lineage is traceable.
+    //
+    // Ctrl-_ → undo. zle_bindings.c maps `^_` to `z_undo` in the emacs
+    // table. Reedline's default uses Ctrl-z for undo, but Ctrl-_ is the
+    // muscle-memory key for zsh users.
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('_'),
+        ReedlineEvent::Edit(vec![reedline::EditCommand::Undo]),
+    );
+    // Ctrl-r → reverse-incremental-search-history. zle_bindings.c maps
+    // `^R` to `z_historyincrementalsearchbackward`.
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('r'),
+        ReedlineEvent::SearchHistory,
+    );
+    // Ctrl-s — forward isearch. zle_bindings.c → z_historyincrementalsearchforward.
+    // Reedline only has SearchHistory (one direction), so we still surface
+    // the menu — useful even without the C two-direction split.
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('s'),
+        ReedlineEvent::SearchHistory,
+    );
+    // Alt-. → insert-last-word. zle_bindings.c maps `\e.` to
+    // `z_insertlastword`. Reedline lacks a literal "insert last argument
+    // from prior history", but HistoryHintComplete is the closest behavior
+    // (accepts the suggested completion of a prior history match).
+    keybindings.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Char('.'),
+        ReedlineEvent::HistoryHintComplete,
+    );
+
     let edit_mode = Box::new(Emacs::new(keybindings));
 
     let mut editor = Reedline::create()
