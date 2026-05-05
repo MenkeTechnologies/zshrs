@@ -7,14 +7,20 @@
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
-/// A node in the linked list
+/// A node in the linked list.
+/// Port of `struct linknode` from Src/linklist.c — same `next`/
+/// `prev`/`dat` triple, except `dat: void*` is replaced by a typed
+/// `T` so misuse is caught at compile time.
 pub struct LinkNode<T> {
     pub data: T,
     next: Option<NonNull<LinkNode<T>>>,
     prev: Option<NonNull<LinkNode<T>>>,
 }
 
-/// A doubly-linked list
+/// A doubly-linked list.
+/// Port of `struct linklist` from Src/linklist.c — head/tail
+/// pointers + element count, the same shape the C source uses for
+/// argument lists, file lists, and history.
 pub struct LinkList<T> {
     head: Option<NonNull<LinkNode<T>>>,
     tail: Option<NonNull<LinkNode<T>>>,
@@ -29,7 +35,11 @@ impl<T> Default for LinkList<T> {
 }
 
 impl<T> LinkList<T> {
-    /// Create a new empty linked list
+    /// Create a new empty linked list.
+    /// Port of `znewlinklist()` from Src/linklist.c:116 — the
+    /// permanent-storage variant; the heap-arena variant is
+    /// `newlinklist()` (line 103) which we don't model here because
+    /// Rust's `Drop` already handles arena lifetime.
     pub fn new() -> Self {
         LinkList {
             head: None,
@@ -39,17 +49,27 @@ impl<T> LinkList<T> {
         }
     }
 
-    /// Check if the list is empty
+    /// Check if the list is empty.
+    /// Port of the C macro `empty(list)` (`firstnode(list) == NULL`)
+    /// the C source uses inline throughout Src/linklist.c.
     pub fn is_empty(&self) -> bool {
         self.head.is_none()
     }
 
-    /// Get the length of the list
+    /// Get the length of the list.
+    /// Port of `countlinknodes()` from Src/linklist.c:304 — but O(1)
+    /// instead of O(n) because we keep the count in the header. The
+    /// C source uses an O(n) walk because its `LinkList` header
+    /// doesn't carry a length field.
     pub fn len(&self) -> usize {
         self.len
     }
 
-    /// Add an element to the front of the list
+    /// Add an element to the front of the list.
+    /// Port of `pushnode()` (Src/zsh.h macro) which expands to
+    /// `zinsertlinknode(list, &list->node, dat)` (Src/linklist.c:151)
+    /// — inserts a new permanent-storage node ahead of the current
+    /// head.
     pub fn push_front(&mut self, data: T) {
         let new_node = Box::new(LinkNode {
             data,
@@ -69,7 +89,10 @@ impl<T> LinkList<T> {
         self.len += 1;
     }
 
-    /// Add an element to the back of the list
+    /// Add an element to the back of the list.
+    /// Port of `addlinknode()` (Src/zsh.h macro) which expands to
+    /// `zinsertlinknode(list, list->last, dat)` — the C source's
+    /// most-used insertion path (every shell argv build uses it).
     pub fn push_back(&mut self, data: T) {
         let new_node = Box::new(LinkNode {
             data,
@@ -89,7 +112,10 @@ impl<T> LinkList<T> {
         self.len += 1;
     }
 
-    /// Remove and return the first element
+    /// Remove and return the first element.
+    /// Port of `getlinknode()` from Src/linklist.c:210 — pulls the
+    /// head node off, frees the wrapper, returns the contained
+    /// datum.
     pub fn pop_front(&mut self) -> Option<T> {
         self.head.map(|node| unsafe {
             let node = Box::from_raw(node.as_ptr());
@@ -105,7 +131,10 @@ impl<T> LinkList<T> {
         })
     }
 
-    /// Remove and return the last element
+    /// Remove and return the last element.
+    /// Port of the `remnode(list, lastnode(list))` idiom the C
+    /// source uses (`remnode()` lives at Src/linklist.c:251). We
+    /// inline the tail unlink here for O(1) operation.
     pub fn pop_back(&mut self) -> Option<T> {
         self.tail.map(|node| unsafe {
             let node = Box::from_raw(node.as_ptr());
@@ -121,27 +150,36 @@ impl<T> LinkList<T> {
         })
     }
 
-    /// Get a reference to the first element
+    /// Get a reference to the first element.
+    /// Equivalent to dereferencing `firstnode(list)` (Src/zsh.h)
+    /// when the list is non-empty.
     pub fn front(&self) -> Option<&T> {
         self.head.map(|node| unsafe { &(*node.as_ptr()).data })
     }
 
-    /// Get a mutable reference to the first element
+    /// Get a mutable reference to the first element.
+    /// Equivalent to writing through `(void**)&firstnode(list)->dat`
+    /// in Src/linklist.c.
     pub fn front_mut(&mut self) -> Option<&mut T> {
         self.head.map(|node| unsafe { &mut (*node.as_ptr()).data })
     }
 
-    /// Get a reference to the last element
+    /// Get a reference to the last element.
+    /// Equivalent to dereferencing `lastnode(list)` (Src/zsh.h).
     pub fn back(&self) -> Option<&T> {
         self.tail.map(|node| unsafe { &(*node.as_ptr()).data })
     }
 
-    /// Get a mutable reference to the last element
+    /// Get a mutable reference to the last element.
+    /// Mutable counterpart of `back()`.
     pub fn back_mut(&mut self) -> Option<&mut T> {
         self.tail.map(|node| unsafe { &mut (*node.as_ptr()).data })
     }
 
-    /// Create an iterator over references
+    /// Create an iterator over references.
+    /// Port of the head-to-tail walk pattern the C source uses with
+    /// `for (n = firstnode(list); n; incnode(n))` everywhere it
+    /// scans a list.
     pub fn iter(&self) -> Iter<'_, T> {
         Iter {
             current: self.head,
@@ -149,7 +187,9 @@ impl<T> LinkList<T> {
         }
     }
 
-    /// Create an iterator over mutable references
+    /// Create an iterator over mutable references.
+    /// Mutable counterpart of `iter()` — same C-source walk pattern
+    /// (`firstnode`/`incnode`).
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
         IterMut {
             current: self.head,
@@ -157,7 +197,11 @@ impl<T> LinkList<T> {
         }
     }
 
-    /// Append another list to the end of this one
+    /// Append another list to the end of this one.
+    /// Port of `joinlists()` from Src/linklist.c:360 — splices
+    /// `other` onto our tail and zeroes `other`'s head/tail/count
+    /// so the moved-from list is left empty (matches the C source's
+    /// post-condition).
     pub fn append(&mut self, other: &mut LinkList<T>) {
         if other.is_empty() {
             return;
@@ -183,12 +227,18 @@ impl<T> LinkList<T> {
         other.len = 0;
     }
 
-    /// Convert to a Vec
+    /// Convert to a `Vec`.
+    /// Port of `zlinklist2array()` from Src/linklist.c:449 — the C
+    /// source materializes the list as a NULL-terminated `char **`
+    /// for callers that want random-access; we use `Vec<T>`.
     pub fn to_vec(self) -> Vec<T> {
         self.into_iter().collect()
     }
 
-    /// Clear the list
+    /// Clear the list.
+    /// Port of `freelinklist(list, NULL)` (Src/linklist.c:287) —
+    /// drops every node. The C source's `freefunc` parameter is
+    /// satisfied by Rust's `Drop` for `T`.
     pub fn clear(&mut self) {
         while self.pop_front().is_some() {}
     }
@@ -283,12 +333,19 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
     }
 }
 
-/// Convert a linked list of strings to a Vec
+/// Convert a linked list of strings to a `Vec`.
+/// Port of `hlinklist2array()` from Src/linklist.c:423 — the
+/// heap-arena variant of the list-to-array conversion. The Rust
+/// version doesn't need the `copy` flag because `Vec<String>` always
+/// owns its strings.
 pub fn linklist_to_vec(list: &LinkList<String>) -> Vec<String> {
     list.iter().cloned().collect()
 }
 
-/// Convert a Vec to a linked list
+/// Convert a `Vec` to a linked list.
+/// Inverse of `hlinklist2array` / `zlinklist2array` — no direct C
+/// counterpart (the C source builds lists incrementally with
+/// `addlinknode`); this helper batches a one-shot conversion.
 pub fn vec_to_linklist<T>(vec: Vec<T>) -> LinkList<T> {
     vec.into_iter().collect()
 }
