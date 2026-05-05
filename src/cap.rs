@@ -26,7 +26,10 @@ mod ffi {
     }
 }
 
-/// Get process capabilities
+/// Get the calling process's POSIX.1e capability set as a text string.
+/// Port of the `cap_get_proc()` + `cap_to_text()` pair the C source's
+/// `bin_cap()` (Src/Modules/cap.c:36) calls when invoked with no
+/// arguments — backs `cap` with no args.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 pub fn get_proc_caps() -> io::Result<String> {
     use std::ffi::CStr;
@@ -59,7 +62,11 @@ pub fn get_proc_caps() -> io::Result<String> {
     ))
 }
 
-/// Set process capabilities
+/// Set the calling process's POSIX.1e capability set from a text
+/// representation.
+/// Port of the `cap_from_text()` + `cap_set_proc()` pair the C
+/// source's `bin_cap()` (Src/Modules/cap.c:36) calls when invoked
+/// with one argument — backs `cap STRING`.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 pub fn set_proc_caps(cap_string: &str) -> io::Result<()> {
     use std::ffi::CString;
@@ -95,7 +102,10 @@ pub fn set_proc_caps(_cap_string: &str) -> io::Result<()> {
     ))
 }
 
-/// Get file capabilities
+/// Get a file's POSIX.1e capability set as a text string.
+/// Port of the `cap_get_file()` + `cap_to_text()` pair the C
+/// source's `bin_getcap()` (Src/Modules/cap.c:68) calls per file
+/// argument — backs `getcap FILE...`.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 pub fn get_file_caps(path: &str) -> io::Result<String> {
     use std::ffi::{CStr, CString};
@@ -131,7 +141,10 @@ pub fn get_file_caps(_path: &str) -> io::Result<String> {
     ))
 }
 
-/// Set file capabilities
+/// Set a file's POSIX.1e capability set from a text representation.
+/// Port of the `cap_from_text()` + `cap_set_file()` pair the C
+/// source's `bin_setcap()` (Src/Modules/cap.c:91) calls per file
+/// argument — backs `setcap STRING FILE...`.
 #[cfg(all(target_os = "linux", feature = "libcap"))]
 pub fn set_file_caps(cap_string: &str, path: &str) -> io::Result<()> {
     use std::ffi::CString;
@@ -169,7 +182,10 @@ pub fn set_file_caps(_cap_string: &str, _path: &str) -> io::Result<()> {
     ))
 }
 
-/// Execute cap builtin
+/// `cap` builtin entry point.
+/// Port of `bin_cap()` from Src/Modules/cap.c:36. With no args
+/// prints `cap_get_proc()`; with one arg calls `cap_set_proc()` on
+/// the parsed capability string.
 pub fn builtin_cap(args: &[&str]) -> (i32, String) {
     if args.is_empty() {
         match get_proc_caps() {
@@ -184,7 +200,10 @@ pub fn builtin_cap(args: &[&str]) -> (i32, String) {
     }
 }
 
-/// Execute getcap builtin
+/// `getcap` builtin entry point.
+/// Port of `bin_getcap()` from Src/Modules/cap.c:68. Reports each
+/// argument's file capabilities; missing-args case matches the C
+/// source's "file required" error.
 pub fn builtin_getcap(args: &[&str]) -> (i32, String) {
     if args.is_empty() {
         return (1, "getcap: file required\n".to_string());
@@ -206,7 +225,10 @@ pub fn builtin_getcap(args: &[&str]) -> (i32, String) {
     (status, output)
 }
 
-/// Execute setcap builtin
+/// `setcap` builtin entry point.
+/// Port of `bin_setcap()` from Src/Modules/cap.c:91. Applies the
+/// shared capability string (first arg) to every remaining file
+/// argument.
 pub fn builtin_setcap(args: &[&str]) -> (i32, String) {
     if args.len() < 2 {
         return (
