@@ -158,23 +158,36 @@ const COND_OR: u32 = 2;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+/// Top-level decoded `.zwc` program.
+/// Mirrors `Eprog` from Src/zsh.h — the C source treats this as
+/// the canonical compiled-form, dispatched by `execlist()` in
+/// Src/exec.c.
 pub struct WcProgram {
     pub lists: Vec<WcList>,
 }
 
 #[derive(Debug, Clone)]
+/// One semicolon-separated list within a program.
+/// Port of the `WC_LIST` opcode shape from Src/parse.c:771
+/// `par_list()`.
 pub struct WcList {
     pub flags: WcListFlags,
     pub sublist: WcSublist,
 }
 
 #[derive(Debug, Clone, Copy)]
+/// List execution flags (`Sync`/`Async`/`Disown`).
+/// Port of the `Z_*` flag bits in `WC_LIST` data —
+/// `set_list_code()` (Src/parse.c:738) packs them.
 pub struct WcListFlags {
     pub async_: bool,
     pub disown: bool,
 }
 
 #[derive(Debug, Clone)]
+/// One `&&`/`||` chain inside a list.
+/// Port of the `WC_SUBLIST` opcode shape from Src/parse.c
+/// `par_sublist2()`.
 pub struct WcSublist {
     pub flags: WcSublistFlags,
     pub pipe: WcPipe,
@@ -182,24 +195,38 @@ pub struct WcSublist {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Sublist flags (`Not`/`Coproc`).
+/// Port of the C source's `WC_SUBLIST_*` flag bits —
+/// `set_sublist_code()` (Src/parse.c:755) packs them.
 pub struct WcSublistFlags {
     pub not: bool,
     pub coproc: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Connector between sublists.
+/// Mirrors the `WC_SUBLIST_END`/`WC_SUBLIST_AND`/
+/// `WC_SUBLIST_OR` constants from Src/zsh.h.
 pub enum WcSublistOp {
     And,
     Or,
 }
 
 #[derive(Debug, Clone)]
+/// One pipe-connected command sequence.
+/// Port of the `WC_PIPE` opcode shape from Src/parse.c
+/// `par_pline()`.
 pub struct WcPipe {
     pub cmd: WcCommand,
     pub next: Option<Box<WcPipe>>,
 }
 
 #[derive(Debug, Clone)]
+/// One command node inside a pipe.
+/// Port of the `WC_*` per-command opcodes (`WC_SIMPLE`,
+/// `WC_SUBSH`, `WC_FOR`, `WC_CASE`, `WC_IF`, `WC_WHILE`,
+/// `WC_REPEAT`, `WC_FUNCDEF`, `WC_TIME`, `WC_COND`, `WC_ARITH`,
+/// `WC_TRY`) from Src/zsh.h.
 pub enum WcCommand {
     Simple(WcSimple),
     Subsh(Box<WcProgram>),
@@ -219,6 +246,9 @@ pub enum WcCommand {
 }
 
 #[derive(Debug, Clone, Default)]
+/// Simple command (assigns + words + redirs).
+/// Port of the `WC_SIMPLE` opcode shape from Src/parse.c
+/// `par_simple()`.
 pub struct WcSimple {
     pub assigns: Vec<WcAssign>,
     pub words: Vec<String>,
@@ -226,6 +256,8 @@ pub struct WcSimple {
 }
 
 #[derive(Debug, Clone)]
+/// Variable assignment within a simple command.
+/// Port of the `WC_ASSIGN` opcode shape from Src/parse.c.
 pub struct WcAssign {
     pub name: String,
     pub value: WcAssignValue,
@@ -233,12 +265,17 @@ pub struct WcAssign {
 }
 
 #[derive(Debug, Clone)]
+/// Assignment value (scalar / array).
+/// Port of the `WC_ASSIGN_*` opcode flag bits.
 pub enum WcAssignValue {
     Scalar(String),
     Array(Vec<String>),
 }
 
 #[derive(Debug, Clone)]
+/// Redirection record.
+/// Port of `struct redir` from Src/zsh.h — `WC_REDIR` opcodes
+/// in the wordcode stream.
 pub struct WcRedir {
     pub rtype: u32,
     pub fd: i32,
@@ -248,6 +285,10 @@ pub struct WcRedir {
 }
 
 #[derive(Debug, Clone)]
+/// Heredoc body record.
+/// Port of the heredoc-handling inside `parse_redir()`
+/// (Src/parse.c) — body is captured separately from the
+/// surrounding command.
 pub struct WcHeredoc {
     pub terminator: String,
     pub quoted: bool,
@@ -255,6 +296,9 @@ pub struct WcHeredoc {
 }
 
 #[derive(Debug, Clone)]
+/// `for` loop opcode shape.
+/// Port of the `WC_FOR`/`WC_SELECT` opcode from Src/parse.c
+/// `par_for()`.
 pub struct WcFor {
     pub var: String,
     pub list: WcForList,
@@ -263,6 +307,9 @@ pub struct WcFor {
 }
 
 #[derive(Debug, Clone)]
+/// `for` loop iteration source.
+/// Mirrors the `WC_FOR_*` flag bits — word-list / arithmetic /
+/// implicit `"$@"`.
 pub enum WcForList {
     Words(Vec<String>),
     CStyle {
@@ -274,12 +321,16 @@ pub enum WcForList {
 }
 
 #[derive(Debug, Clone)]
+/// `case` statement opcode shape.
+/// Port of the `WC_CASE` opcode from Src/parse.c `par_case()`.
 pub struct WcCase {
     pub word: String,
     pub arms: Vec<WcCaseArm>,
 }
 
 #[derive(Debug, Clone)]
+/// One `pat) body ;;` arm of a case statement.
+/// Port of the per-arm shape Src/parse.c `par_case()` builds.
 pub struct WcCaseArm {
     pub patterns: Vec<String>,
     pub body: WcProgram,
@@ -287,6 +338,8 @@ pub struct WcCaseArm {
 }
 
 #[derive(Debug, Clone)]
+/// `if`/`elif`/`else` opcode shape.
+/// Port of the `WC_IF` opcode from Src/parse.c `par_if()`.
 pub struct WcIf {
     pub cond: WcProgram,
     pub then: WcProgram,
@@ -295,24 +348,36 @@ pub struct WcIf {
 }
 
 #[derive(Debug, Clone)]
+/// `while`/`until` opcode shape.
+/// Port of the `WC_WHILE` opcode from Src/parse.c
+/// `par_while()`.
 pub struct WcWhile {
     pub cond: WcProgram,
     pub body: WcProgram,
 }
 
 #[derive(Debug, Clone)]
+/// `repeat` loop opcode shape.
+/// Port of the `WC_REPEAT` opcode from Src/parse.c
+/// `par_repeat()`.
 pub struct WcRepeat {
     pub count: String,
     pub body: WcProgram,
 }
 
 #[derive(Debug, Clone)]
+/// Function-definition opcode shape.
+/// Port of the `WC_FUNCDEF` opcode from Src/parse.c
+/// `par_funcdef()`.
 pub struct WcFuncDef {
     pub names: Vec<String>,
     pub body: WcProgram,
 }
 
 #[derive(Debug, Clone)]
+/// `[[ ... ]]` conditional opcode tree.
+/// Port of the `WC_COND` opcode tree the C source builds via
+/// `par_cond_*` in Src/parse.c.
 pub enum WcCond {
     Not(Box<WcCond>),
     And(Box<WcCond>, Box<WcCond>),
@@ -322,6 +387,9 @@ pub enum WcCond {
 }
 
 #[derive(Debug, Clone)]
+/// `try { ... } always { ... }` opcode shape.
+/// Port of the `WC_TRY` opcode from Src/parse.c
+/// `par_try()`.
 pub struct WcTry {
     pub try_block: WcProgram,
     pub always: WcProgram,
@@ -1228,6 +1296,11 @@ fn cond_op_name(t: u32) -> &'static str {
 
 /// Decode the wordcode of a single function (or top-level script) into
 /// a `WcProgram` tree. Reuses `zwc.rs::ZwcFile::load` for file structure.
+/// Decode an entire `.zwc` file into typed `WcProgram`s.
+/// zshrs-original tooling — used by the parity harness to
+/// compare zsh's wordcode output against zshrs's parser. C zsh
+/// has no equivalent decoder; it just re-evaluates from
+/// wordcode.
 pub fn decode_zwc_file<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<(String, WcProgram)>> {
     let zwc = ZwcFile::load(path)?;
     let mut out = Vec::new();
@@ -1255,6 +1328,8 @@ pub fn decode_zwc_file<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<(String, 
 /// Convenience: load and decode the FIRST function (typical for a
 /// `zcompile out.zwc input.zsh` script-style dump where there's exactly
 /// one synthetic top-level function).
+/// Decode the first function out of a `.zwc` file.
+/// zshrs-original tooling — convenience for fixtures.
 pub fn decode_zwc_first<P: AsRef<Path>>(path: P) -> std::io::Result<Option<WcProgram>> {
     let all = decode_zwc_file(path)?;
     Ok(all.into_iter().next().map(|(_, p)| p))
@@ -1264,6 +1339,10 @@ pub fn decode_zwc_first<P: AsRef<Path>>(path: P) -> std::io::Result<Option<WcPro
 // Canonical sexp emitter — must produce IDENTICAL output to ast_sexp
 // ---------------------------------------------------------------------------
 
+/// Render a `WcProgram` as canonical sexp.
+/// zshrs-original — used by the parity harness so the wordcode-
+/// derived AST emits identical bytes to the parser-derived AST
+/// in `crate::ast_sexp`.
 pub fn wc_to_sexp(prog: &WcProgram) -> String {
     let mut out = String::new();
     emit_program(prog, &mut out);
