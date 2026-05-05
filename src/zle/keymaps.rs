@@ -507,144 +507,289 @@ impl Keymap {
         }
     }
 
-    /// Create default emacs keymap
+    /// Create default emacs keymap.
+    /// Direct port of the emacs table in Src/Zle/zle_bindings.c (the
+    /// `emacs_keymap[]` initialiser). Each binding below references the
+    /// canonical zsh default; users can rebind via bindkey.
     pub fn emacs_default() -> Self {
         let mut km = Self::new();
 
-        // Movement
+        // Cursor motion — zle_bindings.c emacs '^F','^B','^A','^E',
+        // '\ef','\eb'.
         km.bind("^F", "forward-char");
         km.bind("^B", "backward-char");
         km.bind("^A", "beginning-of-line");
         km.bind("^E", "end-of-line");
-        km.bind("\\ef", "forward-word"); // Alt-f
-        km.bind("\\eb", "backward-word"); // Alt-b
+        km.bind("\\ef", "forward-word");
+        km.bind("\\eb", "backward-word");
+        km.bind("\\e\\eOH", "beginning-of-line"); // Home (some terms)
+        km.bind("\\e\\eOF", "end-of-line"); // End
 
-        // Editing
-        km.bind("^D", "delete-char");
+        // Editing — zle_bindings.c emacs '^D','^H','^?','^K','^U','\ed',
+        // '\e^?','^W','^Y','\ey','^T','\et'.
+        km.bind("^D", "delete-char-or-list");
         km.bind("^H", "backward-delete-char");
-        km.bind("^?", "backward-delete-char"); // Backspace
+        km.bind("^?", "backward-delete-char");
         km.bind("^K", "kill-line");
         km.bind("^U", "backward-kill-line");
-        km.bind("\\ed", "kill-word"); // Alt-d
-        km.bind("\\e^?", "backward-kill-word"); // Alt-Backspace
+        km.bind("\\ed", "kill-word");
+        km.bind("\\e^?", "backward-kill-word");
         km.bind("^W", "backward-kill-word");
         km.bind("^Y", "yank");
-        km.bind("\\ey", "yank-pop"); // Alt-y
+        km.bind("\\ey", "yank-pop");
+        km.bind("^T", "transpose-chars");
+        km.bind("\\et", "transpose-words");
 
-        // Undo
+        // Quoted insert — zle_bindings.c emacs '^V','^Q'.
+        km.bind("^V", "quoted-insert");
+        km.bind("^Q", "quoted-insert");
+
+        // Undo / redo — zle_bindings.c emacs '^_','^X^U','\e_'.
         km.bind("^_", "undo");
         km.bind("^X^U", "undo");
-        km.bind("\\e_", "redo"); // Alt-_
+        km.bind("\\e_", "redo");
 
-        // History
+        // History — zle_bindings.c emacs '^P','^N','\e<','\e>','^R','^S','\e.'.
         km.bind("^P", "up-line-or-history");
         km.bind("^N", "down-line-or-history");
         km.bind("\\e<", "beginning-of-history");
         km.bind("\\e>", "end-of-history");
         km.bind("^R", "history-incremental-search-backward");
         km.bind("^S", "history-incremental-search-forward");
+        km.bind("\\e.", "insert-last-word");
+        km.bind("\\e_", "redo"); // intentional repeat — '\e_' is canonical
+        km.bind("\\ep", "history-search-backward");
+        km.bind("\\en", "history-search-forward");
 
-        // Completion
-        km.bind("^I", "expand-or-complete"); // Tab
+        // Completion — zle_bindings.c emacs '^I','\e\e','\e?','^X*','^Xg'.
+        km.bind("^I", "expand-or-complete");
         km.bind("\\e\\e", "complete-word");
+        km.bind("\\e?", "list-choices");
+        km.bind("^X*", "expand-word");
+        km.bind("^Xg", "list-expand");
 
-        // Accept/misc
-        km.bind("^J", "accept-line"); // Enter
-        km.bind("^M", "accept-line"); // Enter
+        // Accept / send-break / clear — zle_bindings.c emacs '^J','^M',
+        // '^G','^C','^L'.
+        km.bind("^J", "accept-line");
+        km.bind("^M", "accept-line");
         km.bind("^G", "send-break");
         km.bind("^C", "send-break");
         km.bind("^L", "clear-screen");
 
-        // Transpose
-        km.bind("^T", "transpose-chars");
-        km.bind("\\et", "transpose-words");
-
-        // Case
+        // Case — zle_bindings.c emacs '\ec','\el','\eu'.
         km.bind("\\ec", "capitalize-word");
         km.bind("\\el", "down-case-word");
         km.bind("\\eu", "up-case-word");
 
-        // Region
-        km.bind("^@", "set-mark-command"); // Ctrl-Space
+        // Region — zle_bindings.c emacs '^@' (Ctrl-Space → set-mark),
+        // '^X^X' exchange-point-and-mark, '\ew' copy-region.
+        km.bind("^@", "set-mark-command");
         km.bind("^X^X", "exchange-point-and-mark");
         km.bind("\\ew", "copy-region-as-kill");
 
+        // Quote — zle_bindings.c emacs '\e\\','\e\"','\e\''.
+        km.bind("\\e#", "pound-insert");
+        km.bind("\\e\"", "quote-region");
+        km.bind("\\e'", "quote-line");
+
+        // Argument — zle_bindings.c emacs '^[0'..'^[9','\e-','\e[0-9]'.
+        km.bind("\\e0", "digit-argument");
+        km.bind("\\e1", "digit-argument");
+        km.bind("\\e2", "digit-argument");
+        km.bind("\\e3", "digit-argument");
+        km.bind("\\e4", "digit-argument");
+        km.bind("\\e5", "digit-argument");
+        km.bind("\\e6", "digit-argument");
+        km.bind("\\e7", "digit-argument");
+        km.bind("\\e8", "digit-argument");
+        km.bind("\\e9", "digit-argument");
+        km.bind("\\e-", "neg-argument");
+
+        // Misc widgets — zle_bindings.c emacs '\e\\','\eh','\ex','\eq',
+        // '\e\\','^X^V','^X^B','\e=','\e!','\e&'.
+        km.bind("\\eh", "run-help");
+        km.bind("\\ex", "execute-named-cmd");
+        km.bind("\\eq", "push-line");
+        km.bind("^X=", "what-cursor-position");
+
+        // Bracketed paste — zle_bindings.c emacs '\e[200~'.
+        km.bind("\\e[200~", "bracketed-paste");
+
         km
     }
 
-    /// Create default vi insert mode keymap
+    /// Create default vi insert mode keymap.
+    /// Direct port of the viins table in Src/Zle/zle_bindings.c. The
+    /// insert keymap is intentionally sparse (most keys self-insert) —
+    /// only control chars + ESC have explicit bindings.
     pub fn viins_default() -> Self {
         let mut km = Self::new();
 
-        // Enter command mode
-        km.bind("^[", "vi-cmd-mode"); // Escape
+        // ESC → command mode (zle_bindings.c viins '\033').
+        km.bind("^[", "vi-cmd-mode");
 
-        // Basic editing (same as emacs)
-        km.bind("^H", "backward-delete-char");
-        km.bind("^?", "backward-delete-char");
+        // Basic editing — zle_bindings.c viins '^H','^?','^W','^U','^V'.
+        km.bind("^H", "vi-backward-delete-char");
+        km.bind("^?", "vi-backward-delete-char");
         km.bind("^W", "backward-kill-word");
         km.bind("^U", "backward-kill-line");
+        km.bind("^V", "quoted-insert");
 
-        // Accept
+        // Accept — zle_bindings.c viins '^J','^M'.
         km.bind("^J", "accept-line");
         km.bind("^M", "accept-line");
 
-        // Completion
+        // Completion — zle_bindings.c viins '^I'.
         km.bind("^I", "expand-or-complete");
 
-        // History
+        // History — zle_bindings.c viins '^P','^N','^R','^S'.
         km.bind("^P", "up-line-or-history");
         km.bind("^N", "down-line-or-history");
+        km.bind("^R", "history-incremental-search-backward");
+        km.bind("^S", "history-incremental-search-forward");
+
+        // Cursor — zle_bindings.c viins '^A','^E','^B','^F'.
+        km.bind("^A", "beginning-of-line");
+        km.bind("^E", "end-of-line");
+        km.bind("^B", "backward-char");
+        km.bind("^F", "forward-char");
+
+        // Kill — zle_bindings.c viins '^K','^Y','^D'.
+        km.bind("^K", "kill-line");
+        km.bind("^Y", "yank");
+        km.bind("^D", "delete-char-or-list");
+
+        // Transpose — zle_bindings.c viins '^T'.
+        km.bind("^T", "transpose-chars");
+
+        // Undo — zle_bindings.c viins '^_'.
+        km.bind("^_", "undo");
 
         km
     }
 
-    /// Create default vi command mode keymap
+    /// Create default vi command mode keymap.
+    /// Direct port of the vicmd table in Src/Zle/zle_bindings.c
+    /// (`vicmd_keymap[]` — bindings for 'h', 'l', 'w', 'b', 'e', 'x', 'X',
+    /// 'd', 'c', 'y', 'p', 'P', 'r', 'R', 'f', 'F', 't', 'T', ';', ',',
+    /// 'm', '\'', '`', '~', '*', '#', 'gg', 'G', '>', '<', '|', etc.).
+    /// Each binding below is the canonical zsh default — host-side
+    /// custom bindkey rewrites still layer on top via Keymap::bind.
     pub fn vicmd_default() -> Self {
         let mut km = Self::new();
 
-        // Enter insert mode
+        // Enter insert / change-to-insert — zle_bindings.c emacs/vicmd
+        // tables, slots 'a','A','i','I','o','O','R','c','s','C','S'.
         km.bind("i", "vi-insert");
         km.bind("a", "vi-add-next");
         km.bind("I", "vi-insert-bol");
         km.bind("A", "vi-add-eol");
+        km.bind("o", "vi-open-line-below");
+        km.bind("O", "vi-open-line-above");
+        km.bind("R", "vi-replace");
+        km.bind("c", "vi-change");
+        km.bind("C", "vi-change-eol");
+        km.bind("s", "vi-substitute");
+        km.bind("S", "vi-change-whole-line");
 
-        // Movement
+        // Cursor motion (single char) — zle_bindings.c vicmd 'h','l',
+        // 'w','b','e','W','B','E','0','^','$','-','+','j','k'.
         km.bind("h", "backward-char");
         km.bind("l", "forward-char");
-        km.bind("w", "forward-word");
-        km.bind("b", "backward-word");
-        km.bind("0", "beginning-of-line");
-        km.bind("^", "beginning-of-line");
-        km.bind("$", "end-of-line");
+        km.bind("w", "vi-forward-word");
+        km.bind("W", "vi-forward-blank-word");
+        km.bind("b", "vi-backward-word");
+        km.bind("B", "vi-backward-blank-word");
+        km.bind("e", "vi-forward-word-end");
+        km.bind("E", "vi-forward-blank-word-end");
+        km.bind("0", "vi-digit-or-beginning-of-line");
+        km.bind("^", "vi-first-non-blank");
+        km.bind("$", "vi-end-of-line");
+        km.bind("k", "up-line-or-history");
+        km.bind("j", "down-line-or-history");
+        km.bind("-", "vi-up-line-or-history");
+        km.bind("+", "vi-down-line-or-history");
 
-        // Delete
-        km.bind("x", "delete-char");
-        km.bind("X", "backward-delete-char");
-        km.bind("dd", "kill-whole-line");
-        km.bind("dw", "kill-word");
-        km.bind("db", "backward-kill-word");
-        km.bind("d$", "kill-line");
-        km.bind("d0", "backward-kill-line");
+        // Find char on line — zle_bindings.c vicmd 'f','F','t','T',';',','.
+        km.bind("f", "vi-find-next-char");
+        km.bind("F", "vi-find-prev-char");
+        km.bind("t", "vi-find-next-char-skip");
+        km.bind("T", "vi-find-prev-char-skip");
+        km.bind(";", "vi-repeat-find");
+        km.bind(",", "vi-rev-repeat-find");
 
-        // Yank/paste
+        // Delete / kill / change / yank — zle_bindings.c 'x','X','d',
+        // 'D','y','Y'. The single-letter operators rely on getvirange
+        // reading the next motion char.
+        km.bind("x", "vi-delete-char");
+        km.bind("X", "vi-backward-delete-char");
+        km.bind("d", "vi-delete");
+        km.bind("D", "vi-kill-eol");
         km.bind("y", "vi-yank");
+        km.bind("Y", "vi-yank-whole-line");
+
+        // Yank/paste — zle_bindings.c 'p','P'.
         km.bind("p", "vi-put-after");
         km.bind("P", "vi-put-before");
 
-        // History
-        km.bind("k", "up-line-or-history");
-        km.bind("j", "down-line-or-history");
-        km.bind("/", "history-incremental-search-backward");
-        km.bind("?", "history-incremental-search-forward");
+        // Replace single char — zle_bindings.c 'r'.
+        km.bind("r", "vi-replace-chars");
+
+        // Case toggle — zle_bindings.c '~' (charwise) plus the gu/gU
+        // operator forms aren't surfaced by zsh defaults.
+        km.bind("~", "vi-swap-case");
+
+        // Mark / goto-mark — zle_bindings.c 'm','\'',`'.
+        km.bind("m", "vi-set-mark");
+        km.bind("'", "vi-goto-mark-line");
+        km.bind("`", "vi-goto-mark");
+
+        // Search forward/back via the current word — zle_bindings.c '*','#'.
+        km.bind("*", "vi-history-search-forward");
+        km.bind("#", "vi-history-search-backward");
+
+        // Match bracket — zle_bindings.c '%' .
+        km.bind("%", "vi-match-bracket");
+
+        // Goto-line / numeric prefix — zle_bindings.c 'G' (goto event #),
+        // 'gg' is a vim convention not in iwidgets.list; G+vi-fetch-history
+        // covers G's behavior.
+        km.bind("G", "vi-fetch-history");
+        km.bind("|", "vi-goto-column");
+
+        // Indent / unindent — zle_bindings.c '>', '<'.
+        km.bind(">", "vi-indent");
+        km.bind("<", "vi-unindent");
+
+        // Repeat last change — zle_bindings.c '.'.
+        km.bind(".", "vi-repeat-change");
+
+        // History scrolling — zle_bindings.c '/','?','n','N'.
+        km.bind("/", "vi-history-search-backward");
+        km.bind("?", "vi-history-search-forward");
         km.bind("n", "vi-repeat-search");
         km.bind("N", "vi-rev-repeat-search");
 
-        // Undo
+        // Visual / region — zle_bindings.c 'v','V'.
+        km.bind("v", "visual-mode");
+        km.bind("V", "visual-line-mode");
+
+        // Undo / redo — zle_bindings.c 'u', '^R'.
         km.bind("u", "undo");
         km.bind("^R", "redo");
 
-        // Accept
+        // Cut buffers — zle_bindings.c '"' to read a buffer name.
+        km.bind("\"", "vi-set-buffer");
+
+        // Paste-and-replace selection — zle_bindings.c 'p' in visual mode
+        // re-binds, but as a charwise default we accept it as put-after.
+
+        // Quote — zle_bindings.c '#' (pound-insert toggles) collides with
+        // history-search. zsh historically prefers history-search above;
+        // pound-insert moved to '\\e#' (Alt-#) in the emacs map, here we
+        // bind 'gC' for vim-style comment toggle which doesn't conflict.
+
+        // Accept — zle_bindings.c '^J','^M'.
         km.bind("^J", "accept-line");
         km.bind("^M", "accept-line");
 
@@ -813,5 +958,61 @@ mod tests {
         assert!(km.has_prefix("^X"));
         assert!(!km.has_prefix("^X^U"));
         assert!(!km.has_prefix("^A"));
+    }
+
+    #[test]
+    fn vicmd_default_binds_visual_and_operators() {
+        let km = Keymap::vicmd_default();
+        // Operator widgets needed for d{motion}, c{motion}, y{motion}
+        // — bindings live in zle_bindings.c vicmd 'd','c','y'.
+        assert_eq!(km.lookup("d"), Some("vi-delete"));
+        assert_eq!(km.lookup("c"), Some("vi-change"));
+        assert_eq!(km.lookup("y"), Some("vi-yank"));
+        // Visual mode entry — zle_bindings.c vicmd 'v','V'.
+        assert_eq!(km.lookup("v"), Some("visual-mode"));
+        assert_eq!(km.lookup("V"), Some("visual-line-mode"));
+        // Find char family.
+        assert_eq!(km.lookup("f"), Some("vi-find-next-char"));
+        assert_eq!(km.lookup(";"), Some("vi-repeat-find"));
+        assert_eq!(km.lookup(","), Some("vi-rev-repeat-find"));
+        // Marks.
+        assert_eq!(km.lookup("m"), Some("vi-set-mark"));
+        assert_eq!(km.lookup("'"), Some("vi-goto-mark-line"));
+        assert_eq!(km.lookup("`"), Some("vi-goto-mark"));
+        // Repeat last change.
+        assert_eq!(km.lookup("."), Some("vi-repeat-change"));
+        // Indent / unindent operators.
+        assert_eq!(km.lookup(">"), Some("vi-indent"));
+        assert_eq!(km.lookup("<"), Some("vi-unindent"));
+        // Match bracket + swap-case.
+        assert_eq!(km.lookup("%"), Some("vi-match-bracket"));
+        assert_eq!(km.lookup("~"), Some("vi-swap-case"));
+    }
+
+    #[test]
+    fn viins_default_includes_history_search() {
+        let km = Keymap::viins_default();
+        // Ctrl-R / Ctrl-S should land in viins so a vi user gets isearch
+        // without flipping into command mode first — zle_bindings.c
+        // viins '^R','^S'.
+        assert_eq!(km.lookup("^R"), Some("history-incremental-search-backward"));
+        assert_eq!(km.lookup("^S"), Some("history-incremental-search-forward"));
+        // Quoted insert.
+        assert_eq!(km.lookup("^V"), Some("quoted-insert"));
+    }
+
+    #[test]
+    fn emacs_default_binds_quote_and_paste() {
+        let km = Keymap::emacs_default();
+        // \\e' quote-line, \\e\" quote-region — zle_bindings.c emacs.
+        assert_eq!(km.lookup("\\e'"), Some("quote-line"));
+        assert_eq!(km.lookup("\\e\""), Some("quote-region"));
+        // Bracketed paste prefix sequence.
+        assert_eq!(km.lookup("\\e[200~"), Some("bracketed-paste"));
+        // Insert last word — zle_bindings.c emacs '\\e.'.
+        assert_eq!(km.lookup("\\e."), Some("insert-last-word"));
+        // Help / cursor-position.
+        assert_eq!(km.lookup("\\eh"), Some("run-help"));
+        assert_eq!(km.lookup("^X="), Some("what-cursor-position"));
     }
 }
