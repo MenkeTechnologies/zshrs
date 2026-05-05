@@ -14,17 +14,24 @@ use crate::parser::{
     SimpleCommand,
 };
 
-/// Binary operators in conditions (order matches COND_STREQ et seq.)
+/// Binary operators in `[[ ... ]]` conditions (order matches the
+/// `COND_*` enum from Src/zsh.h).
+/// Port of the `cond_ops[]` literals Src/text.c references inside
+/// `gettext2()` (line 415) when rendering condition expressions.
 pub static COND_BINARY_OPS: &[&str] = &[
     "=", "==", "!=", "<", ">", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-gt", "-le", "-ge", "=~",
 ];
 
-/// Check if a string is a condition binary operator
+/// Check whether a token is a binary `[[ ... ]]` operator.
+/// Port of `is_cond_binary_op()` from Src/text.c:58.
 pub fn is_cond_binary_op(s: &str) -> bool {
     COND_BINARY_OPS.contains(&s)
 }
 
-/// Text formatter configuration
+/// Text formatter configuration.
+/// Port of the formatting flags `getpermtext()` (Src/text.c:279)
+/// and `getjobtext()` (line 315) accept — newline vs single-line,
+/// job-abbreviated, expand-tab indent.
 #[derive(Debug, Clone)]
 pub struct TextConfig {
     /// Expand tabs to this many spaces (0 = use actual tabs)
@@ -68,7 +75,11 @@ impl TextConfig {
     }
 }
 
-/// Text formatter for shell commands
+/// Text formatter for shell-command rendering.
+/// Port of the `tbuf` / `tindent` / `tpending` file-statics
+/// Src/text.c keeps for assembling output — `taddchr()` (line 128),
+/// `taddstr()` (line 146), `taddnl()` (line 227),
+/// `taddpending()` (line 89) all mutate them.
 pub struct TextFormatter {
     config: TextConfig,
     buffer: String,
@@ -714,11 +725,19 @@ impl TextFormatter {
 }
 
 /// Get a permanent textual representation of a command
+/// Render a parsed command back as zsh source text.
+/// Port of `getpermtext()` from Src/text.c:279 — the C source's
+/// canonical AST→source renderer used by `which -x` / `functions`
+/// / `whence -f`.
 pub fn getpermtext(cmd: &ShellCommand) -> String {
     TextFormatter::new(TextConfig::default()).format(cmd)
 }
 
 /// Get a permanent textual representation with custom indent
+/// Render a command back as zsh source with explicit start indent.
+/// Port of the third-arg branch of `getpermtext()` from
+/// Src/text.c:279 — the C source's `start_indent` parameter
+/// controls leading whitespace.
 pub fn getpermtext_indent(cmd: &ShellCommand, indent: usize) -> String {
     TextFormatter::new(TextConfig::default())
         .with_indent(indent)
@@ -726,16 +745,25 @@ pub fn getpermtext_indent(cmd: &ShellCommand, indent: usize) -> String {
 }
 
 /// Get a representation suitable for job text (abbreviated, single line)
+/// Render a command for `jobs` builtin output.
+/// Port of `getjobtext()` from Src/text.c:315 — single-line,
+/// truncated to the typical `jobs` column budget.
 pub fn getjobtext(cmd: &ShellCommand) -> String {
     TextFormatter::new(TextConfig::job_text()).format(cmd)
 }
 
 /// Get a single-line representation
+/// Render a command on a single line, no newlines.
+/// zshrs convenience over `getpermtext()` (Src/text.c:279) — used
+/// by callers that want compact rendering for diagnostics.
 pub fn getsingleline(cmd: &ShellCommand) -> String {
     TextFormatter::new(TextConfig::single_line()).format(cmd)
 }
 
 /// Format a list of commands
+/// Render a sequence of commands.
+/// zshrs convenience — Src/text.c renders each top-level command
+/// individually via `getpermtext()` then joins with newlines.
 pub fn format_commands(cmds: &[ShellCommand], config: TextConfig) -> String {
     TextFormatter::new(config).format_list(cmds)
 }
