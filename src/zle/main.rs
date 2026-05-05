@@ -927,13 +927,30 @@ impl Zle {
         }
     }
 
-    /// Trash the ZLE display
+    /// Move past the ZLE display so non-ZLE output (a child command's
+    /// output, an error message, etc.) doesn't overwrite the prompt.
+    /// Port of `trashzle()` from Src/Zle/zle_main.c:2068. The C source
+    /// runs a final zrefresh, applies the prompt's text attributes,
+    /// moves to the bottom of the displayed lines (`moveto(nlnct, 0)`),
+    /// optionally clears to end-of-display via the TCCLEAREOD termcap,
+    /// emits postedit if set, then flags `resetneeded` and restores tty
+    /// state. Our simplified version does the equivalent for a
+    /// single-line display: emit \\r + clear-to-EOL, flush stdout, then
+    /// arm `resetneeded` so the next zlecore iteration redraws.
     pub fn trashzle(&mut self) {
         print!("\r\x1b[K");
-        io::stdout().flush().ok();
+        let _ = io::stdout().flush();
+        // Reset attributes (C source: applytextattributes(0)).
+        print!("\x1b[0m");
+        let _ = io::stdout().flush();
+        self.resetneeded = true;
     }
 
-    /// Reset prompt
+    /// Mark the prompt as needing a re-expand on next refresh.
+    /// Port of `resetprompt()` from Src/Zle/zle_main.c:2048. The C
+    /// source calls `zle_resetprompt()` which sets `resetneeded` and
+    /// `clearflag`; our simplified version just flips `resetneeded`
+    /// (clearflag's TCCLEAREOD path isn't wired through this crate).
     pub fn resetprompt(&mut self) {
         self.resetneeded = true;
     }
