@@ -307,10 +307,20 @@ impl Zle {
     pub fn compute_render_attrs(&self) -> Vec<Option<TextAttr>> {
         let buf_len = self.zleline.len();
         let mut attrs: Vec<Option<TextAttr>> = vec![None; buf_len];
-        let visual_attr = TextAttr {
-            standout: true,
-            ..TextAttr::default()
-        };
+
+        // Visual-region attr: prefer the user's `region:` setting from
+        // $zle_highlight (populated by zle_set_highlight); fall back to
+        // standout per zsh's default at zle_refresh.c:397.
+        let visual_attr = self
+            .highlight
+            .category_attrs
+            .get(&HighlightCategory::Region)
+            .copied()
+            .unwrap_or(TextAttr {
+                standout: true,
+                ..TextAttr::default()
+            });
+
         if self.region_active != 0 {
             let (lo, hi) = if self.mark <= self.zlecs {
                 (self.mark, self.zlecs)
@@ -909,6 +919,28 @@ mod tests {
         ] {
             let attr = mgr.category_attrs[&cat];
             assert_eq!(attr, TextAttr::default());
+        }
+    }
+
+    #[test]
+    fn compute_render_attrs_visual_uses_zle_highlight_region_attr() {
+        // When the user sets `zle_highlight=(region:fg=red,bold)` via
+        // zle_set_highlight, vi visual-mode should paint the region
+        // with that attr instead of the default standout.
+        let mut zle = Zle::new();
+        zle.zleline = "abcde".chars().collect();
+        zle.zlell = 5;
+        zle.mark = 1;
+        zle.zlecs = 4;
+        zle.region_active = 1;
+        zle_set_highlight(&mut zle.highlight, &["region:fg=red,bold"]);
+        let attrs = zle.compute_render_attrs();
+        for slot in attrs.iter().take(4).skip(1) {
+            let a = slot.expect("region painted");
+            assert!(a.bold);
+            assert_eq!(a.fg_color, Some(1));
+            // Standout shouldn't be auto-set when user overrode.
+            assert!(!a.standout);
         }
     }
 
