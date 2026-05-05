@@ -951,19 +951,41 @@ impl Zle {
         self.resetneeded = true;
     }
 
-    /// Recursive edit
+    /// Run a nested edit session — used by user widgets to invoke the
+    /// editor recursively (e.g. read a sub-line for completion search).
+    ///
+    /// Port of `recursiveedit()` from Src/Zle/zle_main.c:1974. The C
+    /// source increments `zle_recursive`, calls `redrawhook()` +
+    /// `zrefresh()` to ensure the screen reflects current state,
+    /// re-enters `zlecore()`, then resets `errflag`/`done`/`eofsent`
+    /// so the parent edit session continues after the recursive call
+    /// returns. Returns 1 if the inner edit aborted with errflag set,
+    /// matching the C `locerror` path at zle_main.c:1992.
     pub fn recursive_edit(&mut self) -> i32 {
         self.zle_recursive += 1;
-
         let old_done = self.done;
-        self.done = false;
+        let old_eofsent = self.eofsent;
 
+        // Mirror zle_main.c:1984-1986 — refresh before entering the
+        // sub-loop so the user sees current state on enter.
+        self.redrawhook();
+        self.zrefresh();
+
+        self.done = false;
+        self.eofsent = false;
         self.zlecore();
 
+        // C source resets errflag/done/eofsent on exit (zle_main.c:1993)
+        // so the outer loop continues. We don't have an errflag global,
+        // so the local-error signal collapses to "did the inner exit
+        // via abort_line?" — approximated by checking eofsent.
+        let locerror = if self.eofsent { 1 } else { 0 };
+
         self.done = old_done;
+        self.eofsent = old_eofsent;
         self.zle_recursive -= 1;
 
-        0
+        locerror
     }
 
     /// Mark the line as accepted; zlecore will exit on the next iteration.
