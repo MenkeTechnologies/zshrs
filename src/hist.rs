@@ -12,6 +12,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// History entry
 #[derive(Clone, Debug)]
+/// One history record.
+/// Port of `struct histent` from Src/zsh.h — `addhistnum()`
+/// (Src/hist.c) bumps history counts; `hgetline()` (Src/hist.c)
+/// renders.
 pub struct HistEntry {
     pub histnum: i64,               // History event number
     pub text: String,               // Command text
@@ -66,6 +70,10 @@ pub const HA_NOINC: u32 = 2; // Don't store, curhist not incremented
 pub const HA_INWORD: u32 = 4; // We're inside a word
 
 /// History state
+/// In-memory history list.
+/// Port of the `histlist` global Src/hist.c maintains —
+/// `addhistnum()`/`histreduceblanks()` mutate; `getargspec()`
+/// (line 798) walks for `!:N` substitution.
 pub struct History {
     /// History entries indexed by event number
     entries: HashMap<i64, HistEntry>,
@@ -474,6 +482,10 @@ impl History {
 
 /// Save history context (from hist.c hist_context_save/restore)
 #[derive(Clone, Default)]
+/// Saved history-substitution state for nested input contexts.
+/// Port of `struct hist_stack` from Src/hist.c —
+/// `hist_context_save()` (line 248) / `hist_context_restore()`
+/// (line 296) push/pop these around `eval`, `source`, etc.
 pub struct HistStack {
     pub histactive: u32,
     pub histdone: i32,
@@ -494,6 +506,10 @@ pub const HISTFLAG_SETTY: i32 = 8;
 
 /// Case modification types (from hist.c casemodify)
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Case-modification kind for `:U`/`:L`/`:C` modifiers.
+/// Port of the `CASMOD_*` flag bits Src/hist.c uses inside
+/// `casemodify()` (line ~504 in this Rust port; Src/utils.c on
+/// the C side).
 pub enum CaseMod {
     Lower,
     Upper,
@@ -501,6 +517,8 @@ pub enum CaseMod {
 }
 
 /// Case modify a string (from hist.c casemodify lines 2194-2323)
+/// Apply a `:U`/`:L`/`:C` case modifier.
+/// Port of `casemodify()` from Src/utils.c.
 pub fn casemodify(s: &str, how: CaseMod) -> String {
     let mut result = String::with_capacity(s.len());
     let mut nextupper = true;
@@ -528,6 +546,8 @@ pub fn casemodify(s: &str, how: CaseMod) -> String {
 }
 
 /// Remove trailing path component (from hist.c remtpath lines 2056-2117)
+/// Remove trailing path components (`:t` / `:h` modifiers).
+/// Port of the `:t` arm inside `applymod()` (Src/utils.c).
 pub fn remtpath(s: &str, count: i32) -> String {
     let s = s.trim_end_matches('/');
 
@@ -566,6 +586,8 @@ pub fn remtpath(s: &str, count: i32) -> String {
 }
 
 /// Remove leading path components (from hist.c remlpaths lines 2151-2186)
+/// Remove leading path components.
+/// Port of the `:h` arm inside `applymod()` (Src/utils.c).
 pub fn remlpaths(s: &str, count: i32) -> String {
     let s = s.trim_end_matches('/');
 
@@ -597,6 +619,8 @@ pub fn remlpaths(s: &str, count: i32) -> String {
 }
 
 /// Remove extension (from hist.c remtext lines 2122-2131)
+/// `:r` modifier — remove trailing extension.
+/// Port of the `:r` arm inside `applymod()` (Src/utils.c).
 pub fn remtext(s: &str) -> String {
     if let Some(slash_pos) = s.rfind('/') {
         let after_slash = &s[slash_pos + 1..];
@@ -617,6 +641,8 @@ pub fn remtext(s: &str) -> String {
 }
 
 /// Get extension (from hist.c rembutext lines 2136-2148)
+/// `:e` modifier — keep only trailing extension.
+/// Port of the `:e` arm inside `applymod()` (Src/utils.c).
 pub fn rembutext(s: &str) -> String {
     if let Some(slash_pos) = s.rfind('/') {
         let after_slash = &s[slash_pos + 1..];
@@ -633,6 +659,9 @@ pub fn rembutext(s: &str) -> String {
 }
 
 /// Convert to absolute path (from hist.c chabspath lines 1877-1955)
+/// `:A` / `:a` modifier — canonicalize path.
+/// Port of `xsymlinks()` (Src/utils.c) — same `realpath(3)`
+/// fallback the C source uses on systems without it.
 pub fn chabspath(s: &str) -> std::io::Result<String> {
     if s.is_empty() {
         return Ok(String::new());
@@ -670,6 +699,8 @@ pub fn chabspath(s: &str) -> std::io::Result<String> {
 }
 
 /// Quote a string for shell (from hist.c quote lines 2486-2523)
+/// `:q` modifier — backslash-quote the string.
+/// Port of `bslashquote()` from Src/utils.c.
 pub fn quote(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 10);
     result.push('\'');
@@ -687,6 +718,8 @@ pub fn quote(s: &str) -> String {
 }
 
 /// Quote with word breaking (from hist.c quotebreak lines 2527-2556)
+/// Backslash-quote shell metachars including word breaks.
+/// Port of `quotebreak()` from Src/utils.c.
 pub fn quotebreak(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 10);
     result.push('\'');
@@ -708,6 +741,9 @@ pub fn quotebreak(s: &str) -> String {
 }
 
 /// Perform history substitution (from hist.c subst lines 2336-2391)
+/// `:s/old/new/` modifier — substitute pattern.
+/// Port of `getsubsargs()` (Src/hist.c:518) + the inline
+/// substitution loop `histsubchar()` (Src/hist.c:595) drives.
 pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String {
     // Direct port of src/zsh/Src/hist.c:2336-2391 subst.
     // - Empty pattern means "use whole string as the pattern"
@@ -795,6 +831,8 @@ fn convamps(out: &str, in_pattern: &str) -> String {
 }
 
 /// Get argument specification (from hist.c getargspec lines 1792-1829)
+/// Resolve a `!`/`*`/`-N`/`^`/`$`/word designator.
+/// Port of `getargspec()` from Src/hist.c:563.
 pub fn getargspec(argc: usize, c: char, marg: Option<usize>, evset: bool) -> Option<usize> {
     match c {
         '0' => Some(0),
@@ -1071,6 +1109,9 @@ impl History {
 }
 
 /// History file write mode
+/// History-file write mode.
+/// Mirrors the `HFILE_*` flag bits Src/hist.c uses inside
+/// `savehistfile()` to decide append / overwrite / merge.
 pub enum WriteMode {
     Overwrite,
     Append,
@@ -1092,6 +1133,9 @@ pub enum WriteMode {
 ///   l (lowercase), u (uppercase), s/old/new/ (substitute), & (repeat subst),
 ///   g (global modifier), p (print, don't execute), q (quote), Q (unquote),
 ///   x (quote words), a (absolute path)
+/// Apply a word designator (`:N`/`:^`/`:$`/`:*`/etc.).
+/// Port of the word-designator dispatch inside `histsubchar()`
+/// (Src/hist.c:595).
 pub fn apply_word_designator(text: &str, designator: &str) -> Option<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.is_empty() {
@@ -1143,6 +1187,9 @@ pub fn apply_word_designator(text: &str, designator: &str) -> Option<String> {
 }
 
 /// Apply a single history modifier to text
+/// Apply a `:` modifier chain (`:t:r:s/x/y/`...).
+/// Port of the modifier-loop inside `histsubchar()`
+/// (Src/hist.c:595).
 pub fn apply_hist_modifier(
     text: &str,
     modifier: char,
@@ -1244,12 +1291,17 @@ pub fn apply_hist_modifier(
 }
 
 /// Remove duplicate history entries (from hist.c histremovedups)
+/// Drop duplicate consecutive entries.
+/// Port of the dedup pass inside `addhistnode()` (Src/hist.c)
+/// driven by `setopt HIST_IGNORE_DUPS`.
 pub fn histremovedups(entries: &mut Vec<HistEntry>) {
     let mut seen = std::collections::HashSet::new();
     entries.retain(|e| seen.insert(e.text.clone()));
 }
 
 /// Reduce blanks in history text (from hist.c histreduceblanks)
+/// Collapse runs of whitespace per `setopt HIST_REDUCE_BLANKS`.
+/// Port of `histreduceblanks()` from Src/hist.c.
 pub fn histreduceblanks(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prev_space = false;
@@ -1268,11 +1320,16 @@ pub fn histreduceblanks(text: &str) -> String {
 }
 
 /// Get a history line as a complete string (from hist.c hgetline)
+/// Render a history entry as a single line.
+/// Port of `hgetline()`-related rendering inside Src/hist.c.
 pub fn hgetline(entry: &HistEntry) -> String {
     entry.text.clone()
 }
 
 /// History word replacement (from hist.c hwrep)
+/// Replace word N of a history entry's text.
+/// Port of the `hwrep` step inside `histsubchar()`
+/// (Src/hist.c:595) — used by `^old^new` quick subst.
 pub fn hwrep(entry: &HistEntry, replacement: &str, word_idx: usize) -> String {
     let words: Vec<&str> = entry.text.split_whitespace().collect();
     if word_idx >= words.len() {
@@ -1284,11 +1341,17 @@ pub fn hwrep(entry: &HistEntry, replacement: &str, word_idx: usize) -> String {
 }
 
 /// Move forward in history (from hist.c addhistnum)
+/// Increment a history-event number with wrap protection.
+/// Port of the `addhistnum()` arithmetic Src/hist.c uses to
+/// keep `$HISTCMD` monotonic.
 pub fn addhistnum(base: i64, n: i64) -> i64 {
     base + n
 }
 
 /// Check if history line should be ignored (starts with space, duplicate, etc.)
+/// Apply HIST_IGNORE_* policies before recording an entry.
+/// Port of the `setopt HIST_IGNORE_*` checks inside
+/// `addhistnode()` (Src/hist.c).
 pub fn should_ignore_line(
     text: &str,
     ignorespace: bool,
@@ -1381,6 +1444,10 @@ mod tests {
 // ---------------------------------------------------------------------------
 
 /// Input stack management for history (from hist.c strinbeg/strinend)
+/// Nested-input stack for history substitution.
+/// Port of the `hist_stack` linked list Src/hist.c maintains
+/// across `hist_context_save`/`hist_context_restore` (lines
+/// 248/296).
 pub struct HistInputStack {
     stack: Vec<HistInputState>,
 }
@@ -1417,6 +1484,8 @@ impl HistInputStack {
 }
 
 /// History line linkage (from hist.c linkcurline/unlinkcurline)
+/// One link in the history-line ring.
+/// Mirrors the `histent` linked-list node from Src/zsh.h.
 pub struct HistLineLink {
     pub linked: bool,
     pub line: String,
@@ -1495,6 +1564,10 @@ impl History {
 }
 
 /// History word buffer operations (from hist.c ihwbegin/ihwabort/ihwend)
+/// Per-character history-word buffer.
+/// Port of the `hwbuf` global Src/hist.c keeps for the
+/// `ihwaddc()` (line 357) word-tracker — used by `!:N`
+/// designator lookup.
 pub struct HistWordBuffer {
     buf: String,
     active: bool,
@@ -1550,6 +1623,9 @@ impl HistWordBuffer {
 }
 
 /// History backward word scan (from hist.c histbackword)
+/// Walk back one word in a history line.
+/// Port of the `iaddtoline()` (Src/hist.c:397) word-boundary
+/// detection.
 pub fn histbackword(line: &str, pos: usize) -> usize {
     if pos == 0 {
         return 0;
@@ -1569,6 +1645,9 @@ pub fn histbackword(line: &str, pos: usize) -> usize {
 }
 
 /// Unget character for history (from hist.c ihungetc)
+/// One-character pushback for history-substitution lexer.
+/// Port of `safeinungetc()` (Src/hist.c:467) +
+/// `ihungetc()` (line 989) — same single-slot ungetc model.
 pub struct HistUnget {
     chars: Vec<char>,
 }
@@ -1604,11 +1683,15 @@ impl HistUnget {
 // ---------------------------------------------------------------------------
 
 /// Add character to history word during lexing (from hist.c ihwaddc)
+/// Push a character into the word buffer.
+/// Port of `ihwaddc()` from Src/hist.c:357.
 pub fn ihwaddc(hwbuf: &mut HistWordBuffer, c: char) {
     hwbuf.add(c);
 }
 
 /// Add character to current line during lexing (from hist.c iaddtoline)
+/// Push a character into the in-progress history line.
+/// Port of `iaddtoline()` from Src/hist.c:397.
 pub fn iaddtoline(line: &mut String, c: char) {
     line.push(c);
 }

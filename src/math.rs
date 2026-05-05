@@ -17,7 +17,8 @@
 
 use std::collections::HashMap;
 
-/// Math number - can be integer or float
+/// Math number — integer, float, or unset.
+/// Port of `mnumber` from Src/zsh.h — the C source's union of\n/// `MN_INTEGER` (zlong) and `MN_FLOAT` (double). The `Unset`\n/// variant captures the C source's NULL-pointer return on math\n/// errors.
 #[derive(Debug, Clone, Copy)]
 pub enum MathNum {
     Integer(i64),
@@ -352,7 +353,8 @@ impl Default for MathValue {
     }
 }
 
-/// Math evaluator state
+/// Math evaluator state.
+/// Port of the per-evaluation locals `mathevall()` (Src/math.c:367)\n/// keeps — input cursor, operator stack, value stack. Drives\n/// `zzlex()` (line 617), `push()` / `pop()` (lines 916/931), and\n/// `op()` / `bop()` (lines 1154/1454).
 pub struct MathEval<'a> {
     input: &'a str,
     pos: usize,
@@ -1940,17 +1942,23 @@ impl<'a> MathEval<'a> {
 }
 
 /// Convenience function to evaluate a math expression
+/// Top-level math-expression evaluator.
+/// Port of `matheval()` from Src/math.c:1480 — wraps `mathevall()`\n/// (line 367) with the C source's standard error-message\n/// formatting.
 pub fn matheval(expr: &str) -> Result<MathNum, String> {
     let mut eval = MathEval::new(expr);
     eval.evaluate()
 }
 
 /// Evaluate and return integer
+/// Math evaluator that coerces the result to integer.
+/// Port of `mathevali()` from Src/math.c:1505.
 pub fn mathevali(expr: &str) -> Result<i64, String> {
     matheval(expr).map(|n| n.to_int())
 }
 
 /// Evaluate and return float
+/// Math evaluator that coerces the result to float.
+/// zshrs convenience — the C source uses inline `MN_FLOAT` checks\n/// after `matheval()` instead of a dedicated float wrapper.
 pub fn mathevalf(expr: &str) -> Result<f64, String> {
     matheval(expr).map(|n| n.to_float())
 }
