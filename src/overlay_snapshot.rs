@@ -1,9 +1,17 @@
 //! Shell-side overlay enumeration for `zsync up --all`.
 //!
+//! **zshrs-original infrastructure — no C source counterpart.** C
+//! zsh has no concept of pushing shell state to a daemon. Every
+//! shell process owns its own parameter / option / alias / function
+//! tables (Src/params.c, Src/options.c, Src/hashtable.c) and they
+//! die with the process. zshrs adds the `zsync` builtin which
+//! snapshots a running shell's mutable state into the daemon's
+//! canonical store so other shells can pull it on startup.
+//!
 //! Snapshots every mutable executor table that has a corresponding
-//! daemon-side canonical subsystem, so a single `zsync up --all` call
-//! pushes the entire shell's overlay state up to the daemon (where
-//! other shells can `zsync pull` it). The daemon-crate `zsync` builtin
+//! daemon-side canonical subsystem, so a single `zsync up --all`
+//! call pushes the entire shell's overlay state up to the daemon
+//! (where other shells can `zsync pull` it). The daemon-crate `zsync` builtin
 //! invokes [`enumerate_all_overlays`] through the trampoline registered
 //! at [`crate::daemon::zsync_builtin::register_overlay_enumerator`].
 //!
@@ -32,10 +40,14 @@
 
 use serde_json::{json, Value};
 
-/// Build the full overlay snapshot. One entry per non-empty
-/// subsystem; empty subsystems are omitted to keep the wire payload
-/// minimal. Called by daemon-crate `zsync up --all` through the
-/// registered trampoline.
+/// Build the full overlay snapshot.
+/// One entry per non-empty subsystem; empty subsystems are omitted
+/// to keep the wire payload minimal. Called by daemon-crate `zsync
+/// up --all` through the registered trampoline.
+/// zshrs-original — no C counterpart. C zsh's nearest analog is
+/// the `typeset`/`alias`/`hash`/`set` listing builtins
+/// (Src/builtin.c) which dump state to stdout; this serializes the
+/// same kind of data into JSON for the canonical-state daemon.
 pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
     let mut out: Vec<(String, Value)> = Vec::new();
 
@@ -175,6 +187,9 @@ pub fn enumerate_all_overlays() -> Vec<(String, Value)> {
     out
 }
 
+/// Serialize a `HashMap<String, String>` as a JSON object.
+/// zshrs-original convenience for the wire format `enumerate_all_overlays`
+/// produces. No C counterpart.
 fn map_to_json(m: &std::collections::HashMap<String, String>) -> Value {
     let map: serde_json::Map<String, Value> = m
         .iter()
