@@ -5,7 +5,11 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Profile data for a single function
+/// Profile data for a single function.
+/// Port of `struct pfunc` from Src/Modules/zprof.c — same fields
+/// (name / calls / total / self) the C source's `findpfunc()`
+/// (line 97) produces and `cmpsfuncs` / `cmptfuncs` (lines 121/127)
+/// sort by.
 #[derive(Debug, Clone)]
 pub struct ProfFunc {
     pub name: String,
@@ -43,7 +47,11 @@ impl ProfFunc {
     }
 }
 
-/// Call arc between two functions
+/// A caller→callee arc with aggregated timing.
+/// Port of `struct parc` from Src/Modules/zprof.c — what
+/// `findparc()` (line 109) returns and `cmpparcs` (line 133) sorts.
+/// Used to render the per-function "callers/callees" section of
+/// the report.
 #[derive(Debug, Clone)]
 pub struct ProfArc {
     pub from: String,
@@ -65,14 +73,21 @@ impl ProfArc {
     }
 }
 
-/// Stack frame for tracking function calls
+/// Stack frame for tracking function entry timing.
+/// Port of the per-call accounting `zprof_wrapper()` from
+/// Src/Modules/zprof.c:236 keeps on the C source's call stack —
+/// records the function name and entry time so `exit_function`
+/// can compute `self_time`.
 #[derive(Debug)]
 struct StackFrame {
     func_name: String,
     start_time: Instant,
 }
 
-/// Profiler state
+/// Profiler state.
+/// Port of the file-static `pfuncs` / `parcs` tables Src/Modules/
+/// zprof.c keeps to aggregate timing across calls (`zprof_wrapper`
+/// at line 236 mutates them; `bin_zprof` at line 139 reads them).
 #[derive(Debug, Default)]
 pub struct Profiler {
     functions: HashMap<String, ProfFunc>,
@@ -91,7 +106,11 @@ impl Profiler {
         }
     }
 
-    /// Start profiling a function call
+    /// Begin profiling a function call.
+    /// Port of the entry path of `zprof_wrapper()` from
+    /// Src/Modules/zprof.c:236 — increments the function's call
+    /// count, records the caller→callee arc, and pushes a frame
+    /// with the start time.
     pub fn enter_function(&mut self, name: &str) {
         if !self.enabled {
             return;
@@ -118,7 +137,12 @@ impl Profiler {
         });
     }
 
-    /// End profiling a function call
+    /// End profiling a function call.
+    /// Port of the exit path of `zprof_wrapper()` from
+    /// Src/Modules/zprof.c:236 — pops the matching frame, computes
+    /// elapsed time, and updates `self_time` / `total_time` on the
+    /// function and the caller arc. Recursion is detected via the
+    /// stack walk to avoid double-counting `total_time`.
     pub fn exit_function(&mut self, name: &str) {
         if !self.enabled {
             return;
@@ -151,55 +175,80 @@ impl Profiler {
         }
     }
 
-    /// Clear all profiling data
+    /// Clear all profiling data.
+    /// Port of the `-c` (clear) branch inside `bin_zprof()` from
+    /// Src/Modules/zprof.c:139 — the C source frees the pfuncs and
+    /// parcs lists via `freepfuncs()` (line 74) and `freeparcs()`
+    /// (line 86); Rust's `clear()` handles both.
     pub fn clear(&mut self) {
         self.functions.clear();
         self.arcs.clear();
         self.stack.clear();
     }
 
-    /// Enable profiling
+    /// Enable profiling.
+    /// Equivalent to the implicit "loaded" state Src/Modules/zprof.c
+    /// is in after `boot_()` (line 355) installs `zprof_wrapper`.
     pub fn enable(&mut self) {
         self.enabled = true;
     }
 
-    /// Disable profiling
+    /// Disable profiling.
+    /// Equivalent to the C source's `cleanup_()` (line 367)
+    /// detaching the wrapper, but kept resettable via `enable()`.
     pub fn disable(&mut self) {
         self.enabled = false;
     }
 
-    /// Check if profiling is enabled
+    /// Check whether profiling is enabled.
+    /// zshrs-original convenience — Src/Modules/zprof.c uses module
+    /// load state instead of a flag.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// Get total time across all functions
+    /// Sum self_time across every recorded function.
+    /// Used by `report()` to compute the percentage column the C
+    /// source emits in `bin_zprof()` (Src/Modules/zprof.c:139).
     pub fn total_time(&self) -> f64 {
         self.functions.values().map(|f| f.self_time).sum()
     }
 
-    /// Get functions sorted by self time (descending)
+    /// Get functions sorted by self time, descending.
+    /// Port of the `cmpsfuncs()` qsort comparator from
+    /// Src/Modules/zprof.c:121 — used for the primary listing
+    /// `bin_zprof()` (line 139) prints first.
     pub fn functions_by_self(&self) -> Vec<&ProfFunc> {
         let mut funcs: Vec<_> = self.functions.values().collect();
         funcs.sort_by(|a, b| b.self_time.partial_cmp(&a.self_time).unwrap());
         funcs
     }
 
-    /// Get functions sorted by total time (descending)
+    /// Get functions sorted by total time, descending.
+    /// Port of the `cmptfuncs()` qsort comparator from
+    /// Src/Modules/zprof.c:127 — drives the second pass of
+    /// `bin_zprof()` that prints the per-function callers/callees
+    /// blocks in total-time order.
     pub fn functions_by_total(&self) -> Vec<&ProfFunc> {
         let mut funcs: Vec<_> = self.functions.values().collect();
         funcs.sort_by(|a, b| b.total_time.partial_cmp(&a.total_time).unwrap());
         funcs
     }
 
-    /// Get arcs sorted by time (descending)
+    /// Get arcs sorted by total time, descending.
+    /// Port of the `cmpparcs()` comparator from Src/Modules/
+    /// zprof.c:133.
     pub fn arcs_by_time(&self) -> Vec<&ProfArc> {
         let mut arcs: Vec<_> = self.arcs.values().collect();
         arcs.sort_by(|a, b| b.total_time.partial_cmp(&a.total_time).unwrap());
         arcs
     }
 
-    /// Generate profile report
+    /// Render the profile report as a string.
+    /// Port of the print path inside `bin_zprof()` from
+    /// Src/Modules/zprof.c:139 — emits a self-time-sorted summary
+    /// followed by per-function callers/callees blocks. Column
+    /// layout matches the C source's `printf` format strings.
     pub fn report(&mut self) -> String {
         let mut output = String::new();
         let total = self.total_time();
@@ -324,13 +373,19 @@ impl Profiler {
     }
 }
 
-/// Options for zprof builtin
+/// `zprof` builtin options.
+/// Mirrors the flags `bin_zprof()` from Src/Modules/zprof.c:139
+/// parses — currently only `-c` (clear) is supported in the
+/// upstream C version; the `compare` and `name` flags exist as
+/// future extension hooks.
 #[derive(Debug, Default)]
 pub struct ZprofOptions {
     pub clear: bool,
 }
 
-/// Execute zprof builtin
+/// `zprof` builtin entry point.
+/// Port of `bin_zprof()` from Src/Modules/zprof.c:139 — `-c`
+/// clears the tables, no-arg prints the report.
 pub fn builtin_zprof(profiler: &mut Profiler, options: &ZprofOptions) -> (i32, String) {
     if options.clear {
         profiler.clear();

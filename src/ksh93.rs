@@ -6,7 +6,14 @@
 
 use std::collections::HashMap;
 
-/// Ksh93 special parameters (.sh.*)
+/// Ksh93 special parameters (`${.sh.*}`).
+/// Port of the parameter table Src/Modules/ksh93.c installs in
+/// `setup_()` (line 236) and `boot_()` (line 258) — the C source
+/// registers `.sh.file`, `.sh.lineno`, `.sh.fun`, `.sh.level`,
+/// `.sh.subshell`, `.sh.version`, `.sh.name`, `.sh.subscript`,
+/// `.sh.edchar`, `.sh.edmode`, `.sh.edcol`, `.sh.edtext`,
+/// `.sh.command`, `.sh.value`, `.sh.match`. The Rust struct holds
+/// the same field set.
 #[derive(Debug, Default)]
 pub struct Ksh93Params {
     pub file: Option<String>,
@@ -34,7 +41,10 @@ impl Ksh93Params {
         }
     }
 
-    /// Get a parameter by name
+    /// Get a `.sh.*` parameter by name.
+    /// Port of the `getfn` slot Src/Modules/ksh93.c installs for
+    /// each of the `.sh.*` parameters (`matchgetfn` at line 60 for
+    /// `.sh.match`, plus the auto-generated getters).
     pub fn get(&self, name: &str) -> Option<String> {
         match name {
             ".sh.file" => self.file.clone(),
@@ -62,7 +72,10 @@ impl Ksh93Params {
         }
     }
 
-    /// Set a parameter by name
+    /// Set a `.sh.*` parameter by name.
+    /// Port of the `setfn` slots Src/Modules/ksh93.c installs —
+    /// only `.sh.edchar` (via `edcharsetfn` line 47) and `.sh.value`
+    /// are writable in the C source; others are read-only.
     pub fn set(&mut self, name: &str, value: &str) -> bool {
         match name {
             ".sh.edchar" => {
@@ -77,7 +90,11 @@ impl Ksh93Params {
         }
     }
 
-    /// Update function context
+    /// Update parameters on function entry.
+    /// Port of the function-context update inside `ksh93_wrapper()`
+    /// (Src/Modules/ksh93.c:143) — bumps `.sh.level`, sets
+    /// `.sh.fun`, `.sh.file`, `.sh.lineno` so the function body
+    /// sees the matching ksh93 frame view.
     pub fn enter_function(&mut self, name: &str, file: Option<&str>, lineno: i64) {
         self.level += 1;
         self.fun = Some(name.to_string());
@@ -85,23 +102,34 @@ impl Ksh93Params {
         self.lineno = lineno;
     }
 
-    /// Exit function context
+    /// Update parameters on function exit.
+    /// Counterpart to `enter_function` — same `ksh93_wrapper()`
+    /// path (Src/Modules/ksh93.c:143) restores `.sh.level` /
+    /// `.sh.fun` after the call returns.
     pub fn exit_function(&mut self) {
         self.level = (self.level - 1).max(0);
         self.fun = None;
     }
 
-    /// Enter subshell
+    /// Increment `.sh.subshell` on subshell entry.
+    /// Mirrors the `subsh++` step C zsh performs in `entersubsh()`
+    /// (Src/exec.c) — the ksh93 module exposes the depth via the
+    /// `.sh.subshell` parameter.
     pub fn enter_subshell(&mut self) {
         self.subshell += 1;
     }
 
-    /// Exit subshell
+    /// Decrement `.sh.subshell` on subshell exit.
+    /// Counterpart of `enter_subshell` — keeps the parameter in
+    /// sync as nested subshells unwind.
     pub fn exit_subshell(&mut self) {
         self.subshell = (self.subshell - 1).max(0);
     }
 
-    /// Set match array
+    /// Populate `.sh.match` from a regex result.
+    /// Port of the `matchgetfn()` getter at Src/Modules/ksh93.c:60
+    /// — the C source builds the array on demand from the `MATCH`
+    /// / `match[]` parameters; we cache the values here.
     pub fn set_match(&mut self, full: Option<&str>, captures: &[Option<String>]) {
         self.match_arr.clear();
         if let Some(m) = full {
@@ -112,7 +140,9 @@ impl Ksh93Params {
         }
     }
 
-    /// Get all parameters as hash
+    /// Snapshot every supported `.sh.*` parameter into a name→value map.
+    /// Equivalent to scanning the parameter table the C source
+    /// installs in `boot_()` (Src/Modules/ksh93.c:258).
     pub fn to_hash(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
         for name in &[
@@ -140,7 +170,11 @@ impl Ksh93Params {
     }
 }
 
-/// Nameref options
+/// `nameref` builtin options.
+/// Mirrors the flag set the upstream `nameref` builtin parses —
+/// the C source's `zsh/ksh93` module wires `nameref` as an alias
+/// for `typeset -n`. `-g` (global), `-p` (print), `-r` (readonly),
+/// `-u` (unset).
 #[derive(Debug, Default, Clone)]
 pub struct NamerefOptions {
     pub global: bool,
@@ -149,7 +183,11 @@ pub struct NamerefOptions {
     pub unset: bool,
 }
 
-/// Execute nameref builtin
+/// `nameref` builtin entry point.
+/// Equivalent to `typeset -n` (Src/builtin.c) which the
+/// `zsh/ksh93` module aliases as `nameref`. Validates the variable
+/// name and reference target the same way the C source's
+/// `bin_typeset()` does.
 pub fn builtin_nameref(args: &[&str], options: &NamerefOptions) -> (i32, String) {
     if args.is_empty() {
         if options.print {

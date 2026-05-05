@@ -12,7 +12,12 @@ pub struct XattrOptions {
     pub no_dereference: bool,
 }
 
-/// Get an extended attribute value
+/// Read an extended attribute value.
+/// Port of `xgetxattr()` from Src/Modules/attr.c:37 — the C source
+/// abstracts the macOS / Linux / FreeBSD `getxattr(2)` ABI
+/// differences behind a single helper. The `symlink` flag in the C
+/// source maps onto our `options.no_dereference` (macOS:
+/// `XATTR_NOFOLLOW`, Linux: `lgetxattr`).
 #[cfg(target_os = "macos")]
 pub fn getxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Vec<u8>> {
     let path_c = CString::new(path)
@@ -125,7 +130,9 @@ pub fn getxattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Result
     ))
 }
 
-/// Set an extended attribute value
+/// Write an extended attribute value.
+/// Port of `xsetxattr()` from Src/Modules/attr.c:67 — the C
+/// source's wrapper over `setxattr(2)` / `lsetxattr(2)`.
 #[cfg(target_os = "macos")]
 pub fn setxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) -> io::Result<()> {
     let path_c = CString::new(path)
@@ -206,7 +213,9 @@ pub fn setxattr(
     ))
 }
 
-/// Remove an extended attribute
+/// Remove an extended attribute.
+/// Port of `xremovexattr()` from Src/Modules/attr.c:83 — wrapper
+/// over `removexattr(2)` / `lremovexattr(2)`.
 #[cfg(target_os = "macos")]
 pub fn removexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<()> {
     let path_c = CString::new(path)
@@ -257,7 +266,10 @@ pub fn removexattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Res
     ))
 }
 
-/// List extended attributes
+/// List a file's extended-attribute names.
+/// Port of `xlistxattr()` from Src/Modules/attr.c:52 — wrapper
+/// over `listxattr(2)` / `llistxattr(2)`. The C source returns the
+/// raw NUL-terminated buffer; we parse it into a `Vec<String>`.
 #[cfg(target_os = "macos")]
 pub fn listxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>> {
     let path_c = CString::new(path)
@@ -353,6 +365,10 @@ pub fn listxattr(_path: &str, _options: &XattrOptions) -> io::Result<Vec<String>
     ))
 }
 
+/// Split the kernel's NUL-terminated xattr-name buffer into names.
+/// zshrs-original convenience — Src/Modules/attr.c walks the
+/// buffer inline inside `bin_listattr()` (line 169). Factored here
+/// so it can be unit-tested.
 fn parse_xattr_list(buf: &[u8]) -> io::Result<Vec<String>> {
     let mut names = Vec::new();
     let mut start = 0;
@@ -370,7 +386,10 @@ fn parse_xattr_list(buf: &[u8]) -> io::Result<Vec<String>> {
     Ok(names)
 }
 
-/// Execute zgetattr builtin
+/// `zgetattr` builtin entry point.
+/// Port of `bin_getattr()` from Src/Modules/attr.c:98 — calls
+/// `xgetxattr()` and surfaces the value as a string. Honours
+/// `-h` (no-dereference) the same way the C source does.
 pub fn builtin_zgetattr(file: &str, attr: &str, options: &XattrOptions) -> (i32, Option<String>) {
     match getxattr(file, attr, options) {
         Ok(value) => {
@@ -381,7 +400,8 @@ pub fn builtin_zgetattr(file: &str, attr: &str, options: &XattrOptions) -> (i32,
     }
 }
 
-/// Execute zsetattr builtin
+/// `zsetattr` builtin entry point.
+/// Port of `bin_setattr()` from Src/Modules/attr.c:133.
 pub fn builtin_zsetattr(
     file: &str,
     attr: &str,
@@ -394,7 +414,10 @@ pub fn builtin_zsetattr(
     }
 }
 
-/// Execute zdelattr builtin
+/// `zdelattr` builtin entry point.
+/// Port of `bin_delattr()` from Src/Modules/attr.c:150 — removes
+/// each named xattr and bails on the first error, matching the C
+/// source's loop.
 pub fn builtin_zdelattr(file: &str, attrs: &[&str], options: &XattrOptions) -> (i32, String) {
     for attr in attrs {
         if let Err(e) = removexattr(file, attr, options) {
@@ -404,7 +427,8 @@ pub fn builtin_zdelattr(file: &str, attrs: &[&str], options: &XattrOptions) -> (
     (0, String::new())
 }
 
-/// Execute zlistattr builtin
+/// `zlistattr` builtin entry point.
+/// Port of `bin_listattr()` from Src/Modules/attr.c:169.
 pub fn builtin_zlistattr(file: &str, options: &XattrOptions) -> (i32, Vec<String>, String) {
     match listxattr(file, options) {
         Ok(attrs) => (0, attrs, String::new()),
