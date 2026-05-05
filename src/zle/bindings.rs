@@ -5,20 +5,27 @@
 use super::keymap::KeymapManager;
 use super::thingy::Thingy;
 
-/// Initialize default key bindings
+/// Populate the canonical default bindings on a fresh KeymapManager.
+/// Equivalent to `default_bindings()` from Src/Zle/zle_keymap.c plus
+/// the per-table default tables (`emacs_keymap[]`, `viins_keymap[]`,
+/// `vicmd_keymap[]` in zle_bindings.c) — combined here as a single
+/// post-construction call instead of split per-keymap setup helpers.
 pub fn init_default_bindings(km: &mut KeymapManager) {
     // The default bindings are set up in KeymapManager::create_default_keymaps
     // This function is for additional runtime binding setup
     let _ = km;
 }
 
-/// Parse a key sequence string
-/// Supports:
-/// - ^X for control characters
-/// - \e for escape
-/// - \M- for meta (escape prefix)
-/// - \C- for control
-/// - Literal characters
+/// Parse a bindkey-style key sequence string into raw bytes.
+///
+/// Port of `getkeystring()` from Src/utils.c (which zsh also uses for
+/// `bindkey 'seq' widget` parsing) restricted to the key-sequence
+/// vocabulary documented at `man zshzle` BINDKEY:
+///   - `^X` → control character (X & 0x1F)
+///   - `\\e` → ESC (0x1B)
+///   - `\\M-X` → ESC + X (zsh's meta encoding for the keymap-trie)
+///   - `\\C-X` → control character
+///   - everything else → literal byte
 pub fn parse_key_sequence(s: &str) -> Vec<u8> {
     let mut result = Vec::new();
     let mut chars = s.chars().peekable();
@@ -114,7 +121,10 @@ pub fn parse_key_sequence(s: &str) -> Vec<u8> {
     result
 }
 
-/// Format a key sequence for display
+/// Format a raw key-sequence byte slice for human-readable display.
+/// Equivalent to `printbind()` from Src/Zle/zle_utils.c:1283 — used
+/// by `bindkey -L` and the `where-is` widget to show key bindings
+/// in the same `^X` / `\\eX` form parse_key_sequence accepts.
 pub fn format_key_sequence(seq: &[u8]) -> String {
     let mut result = String::new();
     let mut i = 0;
@@ -176,7 +186,10 @@ pub fn unbind_key(km: &mut KeymapManager, keymap: &str, seq: &str) -> bool {
     true
 }
 
-/// List bindings in a keymap
+/// Enumerate every (key-sequence, widget-name) pair in `keymap`.
+/// Port of `bindkey -L` listing from Src/Zle/zle_keymap.c (the
+/// listing branch of `bin_bindkey`). Both 1-byte fast-path entries
+/// (`first[]`) and multi-byte trie entries (`multi`) are included.
 pub fn list_bindings(km: &KeymapManager, keymap: &str) -> Vec<(String, String)> {
     let mut bindings = Vec::new();
 
