@@ -20,6 +20,11 @@ pub enum MathNumber {
 }
 
 impl MathNumber {
+    /// Coerce to `f64`, widening integers when needed.
+    /// Equivalent to the implicit int→float promotion zsh's
+    /// `mathfunc.c` does inside `callmathfunc()` when a function
+    /// expects floating-point arguments. Used by all the
+    /// `unary_float` / `binary_float` dispatch helpers below.
     pub fn as_float(&self) -> f64 {
         match self {
             MathNumber::Integer(i) => *i as f64,
@@ -27,6 +32,10 @@ impl MathNumber {
         }
     }
 
+    /// Coerce to `i64`, truncating floats toward zero (C `(int64_t)f`).
+    /// Equivalent to the float→int truncation `mathfunc.c` performs
+    /// when an integer-only function (e.g. `ldexp`'s exponent arg)
+    /// receives a floating-point value.
     pub fn as_int(&self) -> i64 {
         match self {
             MathNumber::Integer(i) => *i,
@@ -34,6 +43,10 @@ impl MathNumber {
         }
     }
 
+    /// Whether this number is the integer variant.
+    /// Equivalent to checking `mn.type == MN_INTEGER` on the
+    /// `mnumber` union in Src/Modules/mathfunc.c — zsh's math
+    /// engine carries both an integer and float slot per number.
     pub fn is_integer(&self) -> bool {
         matches!(self, MathNumber::Integer(_))
     }
@@ -55,7 +68,11 @@ impl From<f64> for MathNumber {
 pub struct MathFunctions;
 
 impl MathFunctions {
-    /// Evaluate a math function by name
+    /// Look up a math function by name and dispatch its argument list.
+    /// Port of `callmathfunc()` from Src/Modules/mathfunc.c. The C
+    /// source consults a static `MathFunc` table registering each
+    /// builtin (`abs`, `sin`, `cos`, …); this Rust dispatch matches
+    /// the same names + argument-count contract.
     pub fn call(name: &str, args: &[MathNumber]) -> Result<MathNumber, String> {
         match name {
             "abs" => Self::abs(args),
@@ -113,7 +130,11 @@ impl MathFunctions {
         }
     }
 
-    /// List all available functions
+    /// Enumerate every registered math function name.
+    /// Equivalent to the `MathFunc` table in
+    /// Src/Modules/mathfunc.c — kept in sync with the dispatch in
+    /// `call()` above so `${(k)mathfuncs}` round-trips against
+    /// what's actually callable.
     pub fn list() -> Vec<&'static str> {
         vec![
             "abs",
