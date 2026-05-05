@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-/// Completion description set (from computil.c CDSet)
+/// Completion description set Port of `CDSet` from Src/Zle/computil.c.
 #[derive(Debug, Clone)]
 pub struct CompDescSet {
     pub tag: String,
@@ -56,7 +56,7 @@ impl Default for CompDescSet {
     }
 }
 
-/// Parse "word:description" format (from computil.c cd_get)
+/// Parse "word:description" format Port of `cd_get` from Src/Zle/computil.c.
 pub fn cd_get(spec: &str) -> CompDescItem {
     if let Some((word, desc)) = spec.split_once(':') {
         CompDescItem {
@@ -73,7 +73,7 @@ pub fn cd_get(spec: &str) -> CompDescItem {
     }
 }
 
-/// Parse multiple specs into a description set (from computil.c cd_init)
+/// Parse multiple specs into a description set Port of `cd_init` from Src/Zle/computil.c.
 pub fn cd_init(specs: &[String], tag: &str, group: &str) -> CompDescSet {
     let items: Vec<CompDescItem> = specs.iter().map(|s| cd_get(s)).collect();
     CompDescSet {
@@ -84,19 +84,19 @@ pub fn cd_init(specs: &[String], tag: &str, group: &str) -> CompDescSet {
     }
 }
 
-/// Sort items in a description set (from computil.c cd_sort)
+/// Sort items in a description set Port of `cd_sort` from Src/Zle/computil.c.
 pub fn cd_sort(set: &mut CompDescSet) {
     set.items.sort_by(|a, b| a.word.cmp(&b.word));
 }
 
-/// Calculate display widths (from computil.c cd_calc)
+/// Calculate display widths Port of `cd_calc` from Src/Zle/computil.c.
 pub fn cd_calc(items: &[CompDescItem], separator: &str) -> (usize, usize) {
     let max_word = items.iter().map(|i| i.word.len()).max().unwrap_or(0);
     let max_desc = items.iter().map(|i| i.description.len()).max().unwrap_or(0);
     (max_word, max_word + separator.len() + max_desc)
 }
 
-/// Format items for display (from computil.c cd_prep)
+/// Format items for display Port of `cd_prep` from Src/Zle/computil.c.
 pub fn cd_prep(items: &[CompDescItem], separator: &str) -> Vec<String> {
     let (max_word, _) = cd_calc(items, separator);
     items
@@ -117,27 +117,27 @@ pub fn cd_prep(items: &[CompDescItem], separator: &str) -> Vec<String> {
         .collect()
 }
 
-/// Check if groups want sorting (from computil.c cd_groups_want_sorting)
+/// Check if groups want sorting Port of `cd_groups_want_sorting` from Src/Zle/computil.c.
 pub fn cd_groups_want_sorting(sets: &[CompDescSet]) -> bool {
     sets.iter().all(|s| s.options.sort)
 }
 
-/// Concatenate arrays from description sets (from computil.c cd_arrcat)
+/// Concatenate arrays from description sets Port of `cd_arrcat` from Src/Zle/computil.c.
 pub fn cd_arrcat(sets: &[CompDescSet]) -> Vec<String> {
     sets.iter()
         .flat_map(|s| s.items.iter().map(|i| i.word.clone()))
         .collect()
 }
 
-/// Duplicate description set arrays (from computil.c cd_arrdup)
+/// Duplicate description set arrays Port of `cd_arrdup` from Src/Zle/computil.c.
 pub fn cd_arrdup(set: &CompDescSet) -> CompDescSet {
     set.clone()
 }
 
-/// Free description sets (from computil.c freecdsets) — no-op in Rust
+/// Free description sets Port of `freecdsets` from Src/Zle/computil.c. — no-op in Rust
 pub fn freecdsets(_sets: Vec<CompDescSet>) {}
 
-/// Group items by description (from computil.c cd_group)
+/// Group items by description Port of `cd_group` from Src/Zle/computil.c.
 pub fn cd_group(items: &[CompDescItem]) -> HashMap<String, Vec<CompDescItem>> {
     let mut groups: HashMap<String, Vec<CompDescItem>> = HashMap::new();
     for item in items {
@@ -151,14 +151,14 @@ pub fn cd_group(items: &[CompDescItem]) -> HashMap<String, Vec<CompDescItem>> {
     groups
 }
 
-/// Compare arrays for equality (from computil.c arrcmp)
+/// Compare arrays for equality Port of `arrcmp` from Src/Zle/computil.c.
 pub fn arrcmp(a: &[String], b: &[String]) -> bool {
     a == b
 }
 
-// --- _arguments support (from computil.c parse_caarg / alloc_cadef / set_cadef_opts) ---
+// --- _arguments support Port of `parse_caarg / alloc_cadef / set_cadef_opts` from Src/Zle/computil.c. ---
 
-/// Completion argument definition (from computil.c Caarg)
+/// Completion argument definition Port of `Caarg` from Src/Zle/computil.c.
 #[derive(Debug, Clone)]
 pub struct CompArgDef {
     pub num: i32,       // Argument position (1-based, -1 for rest)
@@ -168,7 +168,7 @@ pub struct CompArgDef {
     pub repeated: bool,
 }
 
-/// Completion option definition (from computil.c Caopt)
+/// Completion option definition Port of `Caopt` from Src/Zle/computil.c.
 #[derive(Debug, Clone)]
 pub struct CompOptDef {
     pub name: String, // Option name (e.g., "-v", "--verbose")
@@ -178,7 +178,7 @@ pub struct CompOptDef {
     pub exclusive: Vec<String>, // Mutually exclusive options
 }
 
-/// Full completion definition for a command (from computil.c Cadef)
+/// Full completion definition for a command Port of `Cadef` from Src/Zle/computil.c.
 #[derive(Debug, Clone, Default)]
 pub struct CompCommandDef {
     pub options: Vec<CompOptDef>,
@@ -186,7 +186,7 @@ pub struct CompCommandDef {
     pub subcommands: HashMap<String, CompCommandDef>,
 }
 
-/// Parse a _arguments spec string (from computil.c parse_caarg)
+/// Parse a _arguments spec string Port of `parse_caarg` from Src/Zle/computil.c.
 pub fn parse_caarg(spec: &str) -> Option<CompArgDef> {
     // Format: "N:description:action" or "*:description:action"
     let parts: Vec<&str> = spec.splitn(3, ':').collect();
@@ -211,7 +211,7 @@ pub fn parse_caarg(spec: &str) -> Option<CompArgDef> {
     })
 }
 
-/// Parse an option spec (from computil.c set_cadef_opts)
+/// Parse an option spec Port of `set_cadef_opts` from Src/Zle/computil.c.
 pub fn parse_caopt(spec: &str) -> Option<CompOptDef> {
     // Format: "-o[description]" or "--option[description]:arg_desc:action"
     // or "(-a -b)-c[description]"
@@ -281,22 +281,22 @@ pub fn parse_caopt(spec: &str) -> Option<CompOptDef> {
     })
 }
 
-/// Remove backslash-escaped colons (from computil.c rembslashcolon)
+/// Remove backslash-escaped colons Port of `rembslashcolon` from Src/Zle/computil.c.
 pub fn rembslashcolon(s: &str) -> String {
     s.replace("\\:", ":")
 }
 
-/// Add backslash before colons (from computil.c bslashcolon)
+/// Add backslash before colons Port of `bslashcolon` from Src/Zle/computil.c.
 pub fn bslashcolon(s: &str) -> String {
     s.replace(':', "\\:")
 }
 
-/// Single index lookup (from computil.c single_index)
+/// Single index lookup Port of `single_index` from Src/Zle/computil.c.
 pub fn single_index(arr: &[String], val: &str) -> Option<usize> {
     arr.iter().position(|s| s == val)
 }
 
-/// Free completion argument definitions (from computil.c freecaargs/freecadef) — no-op
+/// Free completion argument definitions Port of `freecaargs/freecadef` from Src/Zle/computil.c. — no-op
 pub fn freecaargs(_args: Vec<CompArgDef>) {}
 pub fn freecadef(_def: CompCommandDef) {}
 

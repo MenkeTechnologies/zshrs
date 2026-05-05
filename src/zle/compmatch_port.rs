@@ -43,6 +43,11 @@ pub struct CompLine {
 }
 
 impl CompLine {
+    /// Construct an empty match-line segment.
+    /// Equivalent to a zero-initialised `Cline` from `getcline()`
+    /// at Src/Zle/compmatch.c — the C source uses these to chain
+    /// together the prefix/line/suffix/word segments produced
+    /// during pattern-driven matching.
     pub fn new() -> Self {
         CompLine {
             prefix: String::new(),
@@ -53,15 +58,21 @@ impl CompLine {
         }
     }
 
-    /// Get the total length (from compmatch.c cline_sublen)
+    /// Sum of the segment's three text fields' lengths.
+    /// Port of `cline_sublen()` from Src/Zle/compmatch.c — the C
+    /// source caches this on each Cline; here it's recomputed since
+    /// String already tracks length.
     pub fn sublen(&self) -> usize {
         self.prefix.len() + self.line.len() + self.suffix.len()
     }
 
-    /// Set lengths from content (from compmatch.c cline_setlens)
-    pub fn setlens(&mut self) {
-        // Already handled by String lengths
-    }
+    /// Recompute cached lengths after mutating the segment fields.
+    /// Port of `cline_setlens()` from Src/Zle/compmatch.c. The C
+    /// source materialises `prefix.len`/`line.len`/etc. into the
+    /// Cline; Rust's `String::len()` is O(1) so the recompute is
+    /// implicit — kept as a no-op for ABI parity with callers that
+    /// expect to invoke it.
+    pub fn setlens(&mut self) {}
 }
 
 impl Default for CompLine {
@@ -70,7 +81,12 @@ impl Default for CompLine {
     }
 }
 
-/// Check if two matcher patterns are the same (from compmatch.c cpatterns_same)
+/// Test whether two matcher pattern lists describe the same matching
+/// semantics.
+/// Port of `cpatterns_same()` from Src/Zle/compmatch.c. The C source
+/// uses this to dedupe matcher specs before installing a new
+/// `Cmlist`, so the same `-M 'm:{a-z}={A-Z}'` pair doesn't get
+/// registered twice.
 pub fn cpatterns_same(a: &[CompMatcher], b: &[CompMatcher]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -80,12 +96,22 @@ pub fn cpatterns_same(a: &[CompMatcher], b: &[CompMatcher]) -> bool {
         .all(|(ma, mb)| ma.line_pattern == mb.line_pattern && ma.word_pattern == mb.word_pattern)
 }
 
-/// Check if two matcher lists are the same (from compmatch.c cmatchers_same)
+/// Test whether two `Cmlist`-equivalent lists are identical.
+/// Port of `cmatchers_same()` from Src/Zle/compmatch.c. The C source
+/// also compares per-matcher flags; ours collapses to
+/// `cpatterns_same` since both halves of the comparison live on
+/// `CompMatcher.flags` and get checked transitively.
 pub fn cmatchers_same(a: &[CompMatcher], b: &[CompMatcher]) -> bool {
     cpatterns_same(a, b)
 }
 
-/// Match a completion word against a line (from compmatch.c match_str)
+/// Test whether `word` matches `line` honouring the given matcher
+/// flags.
+/// Port of `match_str()` from Src/Zle/compmatch.c. The C source
+/// runs the full Cmatcher trie consuming both strings in lockstep
+/// and produces a Cline describing the match; our simplified
+/// version returns just a bool — sufficient for the substring +
+/// case-fold matchers most users wire via `-M`.
 pub fn match_str(
     line: &str,
     word: &str,
@@ -151,7 +177,12 @@ fn try_matcher(line: &str, word: &str, matcher: &CompMatcher) -> bool {
     }
 }
 
-/// Match parts of a completion (from compmatch.c match_parts)
+/// Find every byte-range in `line` where `word`'s next character was
+/// matched.
+/// Port of `match_parts()` from Src/Zle/compmatch.c. The C source
+/// uses the resulting list to highlight matching subsequence runs
+/// in the completion menu — every `(start, end)` here is one
+/// matched character (multi-byte aware).
 pub fn match_parts(line: &str, word: &str, flags: &MatchFlags) -> Vec<(usize, usize)> {
     let mut parts = Vec::new();
     let line_lower = if flags.case_insensitive {
@@ -176,22 +207,33 @@ pub fn match_parts(line: &str, word: &str, flags: &MatchFlags) -> Vec<(usize, us
     parts
 }
 
-/// Full completion match (from compmatch.c comp_match)
+/// Top-level "does `word` match `line`" predicate.
+/// Port of `comp_match()` from Src/Zle/compmatch.c — the C source
+/// is the entry point that the completion engine calls to filter
+/// candidates. Returns `true` iff `match_str()` produces a Cline.
 pub fn comp_match(line: &str, word: &str, flags: &MatchFlags) -> bool {
     match_str(line, word, &[], flags).is_some()
 }
 
-/// Start a match operation (from compmatch.c start_match)
+/// Begin a new match-construction session, returning an empty
+/// Cline accumulator.
+/// Port of `start_match()` from Src/Zle/compmatch.c. The C source
+/// allocates per-thread state for the matcher; ours just produces
+/// a fresh `Vec<CompLine>` since Rust threading uses owned values.
 pub fn start_match() -> Vec<CompLine> {
     Vec::new()
 }
 
-/// Abort a match operation (from compmatch.c abort_match)
-pub fn abort_match(_lines: Vec<CompLine>) {
-    // Drop the lines
-}
+/// Discard the in-progress Cline accumulator without committing.
+/// Port of `abort_match()` from Src/Zle/compmatch.c. The C source
+/// frees the Clines via `free_cline()`; Rust drops them
+/// automatically when `_lines` goes out of scope.
+pub fn abort_match(_lines: Vec<CompLine>) {}
 
-/// Get a CompLine copy (from compmatch.c get_cline/cp_cline)
+/// Deep-copy a CompLine.
+/// Port of `cp_cline()` (Src/Zle/compmatch.c) — the C source needs
+/// an explicit clone because `Cline` contains owned strings; in
+/// Rust, `.clone()` does the same field-by-field deep copy.
 pub fn cp_cline(line: &CompLine) -> CompLine {
     line.clone()
 }

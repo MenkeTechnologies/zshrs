@@ -35,7 +35,12 @@ pub enum CompResult {
     },
 }
 
-/// Insert a match into the buffer (from compresult.c instmatch)
+/// Replace `[word_start, word_end)` in `buffer` with `replacement`,
+/// returning the new buffer plus updated cursor position.
+/// Port of `instmatch()` from Src/Zle/compresult.c. The C source
+/// uses this as the lowest-level "swap the partial word for the
+/// chosen completion" primitive used by every other inserter
+/// (`do_single`, `do_ambiguous`, `do_allmatches`).
 pub fn instmatch(
     buffer: &str,
     cursor: usize,
@@ -51,7 +56,12 @@ pub fn instmatch(
     (result, new_cursor)
 }
 
-/// Compute the longest unambiguous prefix of matches (from compresult.c unambig_data)
+/// Find the longest common prefix of every match — the substring the
+/// completion engine inserts on the first Tab press when matches
+/// are ambiguous.
+/// Port of `unambig_data()` from Src/Zle/compresult.c. The C source
+/// also tracks cursor placement within the prefix; ours returns
+/// just the common-prefix string.
 pub fn unambig_data(matches: &[String]) -> String {
     if matches.is_empty() {
         return String::new();
@@ -80,7 +90,12 @@ pub fn unambig_data(matches: &[String]) -> String {
         .to_string()
 }
 
-/// Case-insensitive unambiguous prefix
+/// Case-insensitive variant of `unambig_data` — returns the common
+/// prefix using the *first* match's casing for any case-folded
+/// match.
+/// Port of the case-insensitive branch of `unambig_data()` from
+/// Src/Zle/compresult.c (the C source toggles based on the
+/// `CASE_HACK` matcher flag).
 pub fn unambig_data_icase(matches: &[String]) -> String {
     if matches.is_empty() {
         return String::new();
@@ -112,7 +127,11 @@ pub fn unambig_data_icase(matches: &[String]) -> String {
         .to_string()
 }
 
-/// Handle a single unambiguous match (from compresult.c do_single)
+/// Insert the single chosen match, optionally appending a space.
+/// Port of `do_single()` from Src/Zle/compresult.c — fired when
+/// completion produced exactly one match. The trailing space is
+/// the `AUTO_REMOVE_SLASH`-aware insertion that distinguishes
+/// finished-completion from prefix-completion.
 pub fn do_single(
     buffer: &str,
     cursor: usize,
@@ -126,7 +145,11 @@ pub fn do_single(
     instmatch(buffer, cursor, word_start, word_end, &replacement)
 }
 
-/// Handle ambiguous matches (from compresult.c do_ambiguous)
+/// Build the result for an ambiguous completion (multiple matches).
+/// Port of `do_ambiguous()` from Src/Zle/compresult.c. The C source
+/// inserts the unambiguous prefix into the buffer and triggers the
+/// listing display; our Rust port returns a `CompResult` enum so
+/// the caller decides whether to insert + list.
 pub fn do_ambiguous(matches: &[String]) -> CompResult {
     let prefix = unambig_data(matches);
     if prefix.is_empty() && matches.is_empty() {
@@ -139,7 +162,10 @@ pub fn do_ambiguous(matches: &[String]) -> CompResult {
     }
 }
 
-/// Insert all matches (from compresult.c do_allmatches)
+/// Insert every match into the buffer joined by `separator`.
+/// Port of `do_allmatches()` from Src/Zle/compresult.c — fires for
+/// the `all-matches` widget and for the implicit case when no
+/// listing fits.
 pub fn do_allmatches(
     buffer: &str,
     cursor: usize,
@@ -152,7 +178,10 @@ pub fn do_allmatches(
     instmatch(buffer, cursor, word_start, word_end, &all)
 }
 
-/// Menu completion: get next match (from compresult.c do_menucmp)
+/// Step the menu cursor forward or backward, wrapping at the ends.
+/// Port of `do_menucmp()` from Src/Zle/compresult.c. The C source
+/// also handles per-group menu wrap; this Rust port treats the
+/// match list as flat for the host's menu loop.
 pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, &str) {
     if matches.is_empty() {
         return (0, "");
@@ -169,7 +198,11 @@ pub fn do_menucmp(matches: &[String], current: usize, forward: bool) -> (usize, 
     (next, &matches[next])
 }
 
-/// Accept current menu selection (from compresult.c accept_last)
+/// Accept the currently-selected menu match and finalise it into
+/// the buffer.
+/// Port of `accept_last()` from Src/Zle/compresult.c. Acts the same
+/// as `do_single` with `add_space=true` since a confirmed selection
+/// always wants a trailing space.
 pub fn accept_last(
     buffer: &str,
     cursor: usize,
@@ -180,22 +213,34 @@ pub fn accept_last(
     do_single(buffer, cursor, word_start, word_end, selected, true)
 }
 
-/// Check if a match is valid (has required prefix/suffix) (from compresult.c valid_match)
+/// Test whether `word` satisfies the required prefix and suffix
+/// constraints (the `compadd -P pre -S suf` requirements).
+/// Port of `valid_match()` from Src/Zle/compresult.c.
 pub fn valid_match(word: &str, prefix: &str, suffix: &str) -> bool {
     word.starts_with(prefix) && (suffix.is_empty() || word.ends_with(suffix))
 }
 
-/// Check if match has a brace prefix/suffix (from compresult.c hasbrpsfx)
+/// Detect whether a string contains brace-expansion metacharacters
+/// that would need quoting on insertion.
+/// Port of `hasbrpsfx()` from Src/Zle/compresult.c — used by the
+/// brace-suffix tracking that compsys keeps for menu completion.
 pub fn hasbrpsfx(s: &str) -> bool {
     s.contains('{') || s.contains('}')
 }
 
-/// Build position string for display (from compresult.c build_pos_string)
+/// Render the "n/total" position label shown in the menu status
+/// line.
+/// Port of the position-string formatting in
+/// Src/Zle/compresult.c (the `clprintm` group-header path).
 pub fn build_pos_string(current: usize, total: usize) -> String {
     format!("{}/{}", current + 1, total)
 }
 
-/// Cut completion line for insertion (from compresult.c cut_cline)
+/// Truncate a long completion line with `...` so it fits a column
+/// budget.
+/// Port of `cut_cline()` from Src/Zle/compresult.c. The C source
+/// truncates the Cline's display field to `max_len`; ours emits
+/// `…` (three ASCII dots) when truncation is needed.
 pub fn cut_cline(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -204,12 +249,20 @@ pub fn cut_cline(s: &str, max_len: usize) -> String {
     }
 }
 
-/// Build string from completion line (from compresult.c cline_str)
+/// Concatenate the three text fields of a Cline back into a single
+/// display string.
+/// Port of `cline_str()` from Src/Zle/compresult.c. The C source
+/// emits prefix + matched-region + suffix during list rendering;
+/// the result here is what `compprintlist` writes to the screen.
 pub fn cline_str(prefix: &str, line: &str, suffix: &str) -> String {
     format!("{}{}{}", prefix, line, suffix)
 }
 
-/// Determine number of lines needed to display list (from compresult.c list_lines)
+/// Compute how many rows the list will take given a fixed column
+/// count.
+/// Port of `list_lines()` from Src/Zle/compresult.c — the listing
+/// path uses this to decide whether to invoke the more-prompt
+/// (`asklistscroll`).
 pub fn list_lines(matches: &[String], columns: usize) -> usize {
     if columns == 0 {
         return matches.len();
@@ -217,14 +270,20 @@ pub fn list_lines(matches: &[String], columns: usize) -> usize {
     matches.len().div_ceil(columns)
 }
 
-/// Check if listing should be skipped (from compresult.c skipnolist)
+/// Decide whether the listing exceeds `LISTMAX` and should be
+/// suppressed.
+/// Port of `skipnolist()` from Src/Zle/compresult.c. The C source
+/// also consults `LISTMAX` in lines (negative LISTMAX); ours
+/// honours just the "more than N matches" form.
 pub fn skipnolist(matches: &[String], list_max: usize) -> bool {
     matches.len() > list_max && list_max > 0
 }
 
-/// Determine completion list layout (from compresult.c comp_list)
+/// Decide whether the match list fits on screen without scrolling.
+/// Port of `comp_list()` from Src/Zle/compresult.c — the C source
+/// is part of the "should we list inline or paginate?" branch in
+/// `compprintlist()`.
 pub fn comp_list(nmatches: usize, term_lines: usize) -> bool {
-    // Return true if list fits on screen
     nmatches < term_lines
 }
 
