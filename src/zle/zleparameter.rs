@@ -7,7 +7,12 @@
 
 use std::collections::HashMap;
 
-/// Widget type description (from zleparameter.c widgetstr)
+/// Format a widget's type label as `$widgets[name]` would show it.
+/// Port of `widgetstr()` from Src/Zle/zleparameter.c. The C source
+/// emits "builtin" for `iwidgets.list` entries, "user:fnname" for
+/// `zle -N` widgets, and "completion:fnname" for `zle -C` ones —
+/// matched here verbatim so shell scripts that grep `$widgets`
+/// keep working.
 pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
     if is_completion {
         format!("completion:{}", name)
@@ -18,10 +23,12 @@ pub fn widgetstr(name: &str, is_user: bool, is_completion: bool) -> String {
     }
 }
 
-/// Get the $widgets associative array (from zleparameter.c getpmwidgets)
-///
-/// Returns a hash mapping widget names to their type strings:
-/// "builtin", "user:funcname", or "completion:funcname"
+/// Build the `$widgets` associative array — the snapshot consulted by
+/// shell-side `${(k)widgets}` enumeration.
+/// Port of `getpmwidgets()` from Src/Zle/zleparameter.c. The C source
+/// walks `thingytab` (zle_thingy.c:60 `createthingytab`); we union
+/// the static built-in slice with the user + completion widget maps
+/// and emit the same per-entry type label widgetstr() produces.
 pub fn getpmwidgets(
     builtin_widgets: &[&str],
     user_widgets: &HashMap<String, String>,
@@ -44,7 +51,12 @@ pub fn getpmwidgets(
     result
 }
 
-/// Scan the widgets parameter (from zleparameter.c scanpmwidgets)
+/// Iterate over every widget for the parameter scan path (used by
+/// `${(kv)widgets}` and zsh's `print -l ${(k)widgets}`).
+/// Port of `scanpmwidgets()` from Src/Zle/zleparameter.c. The C
+/// source walks the same thingytab the getpmwidgets path uses but
+/// invokes the parameter-scan callback on each entry instead of
+/// allocating the full hash.
 pub fn scanpmwidgets<F>(
     builtin_widgets: &[&str],
     user_widgets: &HashMap<String, String>,
@@ -64,9 +76,11 @@ pub fn scanpmwidgets<F>(
     }
 }
 
-/// Get the $keymaps parameter (from zleparameter.c keymapsgetfn)
-///
-/// Returns a list of available keymap names
+/// Build the `$keymaps` array — list of every named keymap.
+/// Port of `keymapsgetfn()` from Src/Zle/zleparameter.c. The C
+/// source walks `keymapnamtab` (zle_keymap.c:153
+/// `createkeymapnamtab`); we surface the host-supplied slice
+/// directly since our keymap registry already exposes a Vec view.
 pub fn keymapsgetfn(keymaps: &[&str]) -> Vec<String> {
     keymaps.iter().map(|s| s.to_string()).collect()
 }
