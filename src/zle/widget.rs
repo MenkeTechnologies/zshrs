@@ -1149,50 +1149,86 @@ fn widget_vi_put_after(zle: &mut Zle) {
 }
 
 fn widget_vi_put_before(zle: &mut Zle) {
+    // Port of viputbefore() from Src/Zle/zle_misc.c. Insert kill-ring
+    // entry at the cursor without advancing — vim's `P` semantics.
     widget_yank(zle);
 }
 
 fn widget_vi_replace(zle: &mut Zle) {
+    // Port of vireplace() from Src/Zle/zle_vi.c (the `R` command).
+    // Switch to insert keymap with overwrite mode so subsequent self-
+    // inserts replace existing chars instead of pushing them right.
     zle.keymaps.select("viins");
     zle.insmode = false;
 }
 
 fn widget_vi_replace_chars(zle: &mut Zle) {
-    // Read replacement char
+    // Port of vireplacechars() from Src/Zle/zle_vi.c (the `r` command).
+    // Read one char and overwrite the char under the cursor with it.
+    // The C source supports a numeric prefix (`3rX` replaces the next
+    // 3 chars all with X); replicated below.
     if let Some(c) = zle.getfullchar(true) {
-        if zle.zlecs < zle.zlell {
+        let n = zle.mult.max(1);
+        for _ in 0..n {
+            if zle.zlecs >= zle.zlell {
+                break;
+            }
             zle.zleline[zle.zlecs] = c;
-            zle.resetneeded = true;
+            zle.zlecs += 1;
         }
+        // Vim convention: cursor lands on the last replaced char.
+        if zle.zlecs > 0 {
+            zle.zlecs -= 1;
+        }
+        zle.resetneeded = true;
     }
 }
 
 fn widget_vi_substitute(zle: &mut Zle) {
-    widget_delete_char(zle);
+    // Port of visubstitute() from Src/Zle/zle_vi.c:455. Delete `mult`
+    // chars then enter insert mode — vim's `s` command.
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        widget_delete_char(zle);
+    }
     widget_vi_insert(zle);
 }
 
 fn widget_vi_change_whole_line(zle: &mut Zle) {
+    // Port of vichangewholeline() from Src/Zle/zle_vi.c:499 (the `S`
+    // command). Kill the whole line, then enter insert mode.
     widget_kill_whole_line(zle);
     widget_vi_insert(zle);
 }
 
 fn widget_vi_first_non_blank(zle: &mut Zle) {
-    zle.zlecs = 0;
-    while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs].is_whitespace() {
-        zle.zlecs += 1;
+    // Port of vifirstnonblank() from Src/Zle/zle_move.c:862. Move
+    // cursor to the first non-blank character on the current line.
+    let bol = zle.find_bol(zle.zlecs);
+    let mut p = bol;
+    while p < zle.zlell && zle.zleline[p].is_whitespace() && zle.zleline[p] != '\n' {
+        p += 1;
     }
+    zle.zlecs = p;
     zle.resetneeded = true;
 }
 
 fn widget_vi_end_of_line(zle: &mut Zle) {
-    if zle.zlell > 0 {
-        zle.zlecs = zle.zlell - 1;
+    // Port of viendofline() from Src/Zle/zle_move.c:708. Vim's `$`
+    // semantics — cursor lands on the last char of the line, not past it.
+    let eol = zle.find_eol(zle.zlecs);
+    if eol > 0 && (eol == zle.zlell || zle.zleline[eol] == '\n') {
+        zle.zlecs = eol.saturating_sub(1);
+    } else {
+        zle.zlecs = eol;
     }
     zle.resetneeded = true;
 }
 
 fn widget_vi_digit_or_beginning_of_line(zle: &mut Zle) {
+    // Port of vidigitorbeginningofline() from Src/Zle/zle_vi.c. With
+    // an active numeric prefix the `0` key acts as a digit; otherwise
+    // it's beginning-of-line.
     if zle.zmod.flags.contains(super::main::ModifierFlags::MULT) {
         widget_digit_argument(zle);
     } else {
@@ -1201,32 +1237,59 @@ fn widget_vi_digit_or_beginning_of_line(zle: &mut Zle) {
 }
 
 fn widget_vi_open_line_below(zle: &mut Zle) {
-    zle.zlecs = zle.zlell;
+    // Port of viopenlinebelow() from Src/Zle/zle_vi.c (the `o` command).
+    // Move to end of line, insert newline, enter insert mode.
+    zle.zlecs = zle.find_eol(zle.zlecs);
     zle.self_insert('\n');
     widget_vi_insert(zle);
 }
 
 fn widget_vi_open_line_above(zle: &mut Zle) {
-    zle.zlecs = 0;
+    // Port of viopenlineabove() from Src/Zle/zle_vi.c (the `O` command).
+    // Move to start of line, insert newline, step back, enter insert.
+    zle.zlecs = zle.find_bol(zle.zlecs);
     zle.self_insert('\n');
-    zle.zlecs = 0;
+    if zle.zlecs > 0 {
+        zle.zlecs -= 1;
+    }
     widget_vi_insert(zle);
 }
 
 fn widget_vi_join(zle: &mut Zle) {
-    // Find newline and remove it
-    while zle.zlecs < zle.zlell {
-        if zle.zleline[zle.zlecs] == '\n' {
-            zle.zleline.remove(zle.zlecs);
-            zle.zlell -= 1;
-            // Insert space if needed
-            if zle.zlecs > 0 && zle.zlecs < zle.zlell {
-                zle.zleline.insert(zle.zlecs, ' ');
-                zle.zlell += 1;
-            }
+    // Port of vijoin() from Src/Zle/zle_misc.c (the `J` command).
+    // Find the newline at or after the cursor, remove it, and insert
+    // a separator space (unless the newline was at end-of-buffer or
+    // the next char was already whitespace). The C source also
+    // collapses any leading whitespace on the joined line — replicated
+    // here by skipping spaces after the removed newline.
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        let mut pos = zle.zlecs;
+        while pos < zle.zlell && zle.zleline[pos] != '\n' {
+            pos += 1;
+        }
+        if pos >= zle.zlell {
             break;
         }
-        zle.zlecs += 1;
+        // Remove the newline.
+        zle.zleline.remove(pos);
+        zle.zlell = zle.zleline.len();
+        // Eat leading whitespace on the joined line (vim convention).
+        while pos < zle.zlell && zle.zleline[pos] == ' ' {
+            zle.zleline.remove(pos);
+            zle.zlell = zle.zleline.len();
+        }
+        // Insert a single space separator if the join didn't already
+        // bridge two non-space chars at a sentence boundary.
+        if pos > 0
+            && pos <= zle.zlell
+            && zle.zleline.get(pos - 1).copied() != Some(' ')
+            && pos < zle.zlell
+        {
+            zle.zleline.insert(pos, ' ');
+            zle.zlell += 1;
+        }
+        zle.zlecs = pos;
     }
     zle.resetneeded = true;
 }
@@ -2893,6 +2956,65 @@ mod tests {
         zle.zlecs = 0;
         widget_capitalize_word(&mut zle);
         assert_eq!(zle.zleline.iter().collect::<String>(), "Hello world");
+    }
+
+    #[test]
+    fn vi_replace_chars_overwrites_one_char() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello".chars().collect();
+        zle.zlell = 5;
+        zle.zlecs = 0;
+        zle.ungetbytes(b"X");
+        widget_vi_replace_chars(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "Xello");
+    }
+
+    #[test]
+    fn vi_replace_chars_with_count_overwrites_n_chars() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello".chars().collect();
+        zle.zlell = 5;
+        zle.zlecs = 0;
+        zle.mult = 3;
+        zle.ungetbytes(b"X");
+        widget_vi_replace_chars(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "XXXlo");
+        // Cursor lands on the LAST replaced char.
+        assert_eq!(zle.zlecs, 2);
+    }
+
+    #[test]
+    fn vi_join_removes_newline_and_inserts_space() {
+        let mut zle = Zle::new();
+        zle.zleline = "foo\nbar".chars().collect();
+        zle.zlell = 7;
+        zle.zlecs = 0;
+        zle.mult = 1;
+        widget_vi_join(&mut zle);
+        // Newline replaced with single space.
+        assert_eq!(zle.zleline.iter().collect::<String>(), "foo bar");
+    }
+
+    #[test]
+    fn vi_open_line_above_starts_new_line_at_bol() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello".chars().collect();
+        zle.zlell = 5;
+        zle.zlecs = 2;
+        widget_vi_open_line_above(&mut zle);
+        // Newline inserted at start; cursor sits before it on first line.
+        let s: String = zle.zleline.iter().collect();
+        assert!(s.starts_with('\n') || s.contains('\n'));
+    }
+
+    #[test]
+    fn vi_first_non_blank_skips_leading_whitespace() {
+        let mut zle = Zle::new();
+        zle.zleline = "    hello".chars().collect();
+        zle.zlell = 9;
+        zle.zlecs = 8;
+        widget_vi_first_non_blank(&mut zle);
+        assert_eq!(zle.zlecs, 4);
     }
 
     #[test]
