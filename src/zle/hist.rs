@@ -532,19 +532,30 @@ impl Zle {
         }
     }
 
-    /// Push current line to buffer stack
-    /// Port of pushline() from zle_hist.c
+    /// Push the current line onto the buffer stack and clear the editor.
+    /// Port of `pushline()` from Src/Zle/zle_hist.c:832. The C source
+    /// pushes the assembled line, then `mult - 1` empty strings (so a
+    /// numeric prefix repeats the push), saves zlecs to stackcs, and
+    /// blanks the line. The buffer stack is then drained on the next
+    /// zleread() so the user gets to compose a quick command and have
+    /// the prior text restored afterwards.
     pub fn push_line(&mut self) {
-        // Save line to a stack (not history)
-        let line: String = self.zleline.iter().collect();
-        if !line.is_empty() {
-            // Would push to buffer stack
-            // For now, just clear the line
-            self.zleline.clear();
-            self.zlell = 0;
-            self.zlecs = 0;
-            self.resetneeded = true;
+        let n = self.mult;
+        if n < 0 {
+            return;
         }
+        let line: String = self.zleline.iter().collect();
+        self.bufstack.push(line);
+        let mut remaining = n - 1;
+        while remaining > 0 {
+            self.bufstack.push(String::new());
+            remaining -= 1;
+        }
+        self.stackcs = self.zlecs;
+        self.zleline.clear();
+        self.zlell = 0;
+        self.zlecs = 0;
+        self.resetneeded = true;
     }
 
     /// Accept line and go to next history (for walking through history executing each)
@@ -808,6 +819,48 @@ mod tests {
         let mut zle = Zle::new();
         zle.setlastline();
         assert_eq!(zle.undo_widget(), 1);
+    }
+
+    #[test]
+    fn push_line_pushes_buffer_and_clears_editor() {
+        let mut zle = zle_with_history(&[]);
+        zle.zleline = "in flight".chars().collect();
+        zle.zlell = 9;
+        zle.zlecs = 4;
+        zle.mult = 1;
+        zle.push_line();
+        assert_eq!(zle.bufstack, vec!["in flight".to_string()]);
+        assert!(zle.zleline.is_empty());
+        assert_eq!(zle.zlell, 0);
+        assert_eq!(zle.zlecs, 0);
+        // stackcs records where the cursor was so a return-from-push can
+        // restore it.
+        assert_eq!(zle.stackcs, 4);
+    }
+
+    #[test]
+    fn push_line_with_count_pushes_extra_empty_strings() {
+        let mut zle = zle_with_history(&[]);
+        zle.zleline = "x".chars().collect();
+        zle.zlell = 1;
+        zle.mult = 3;
+        zle.push_line();
+        // mult=3 → push line then 2 empties.
+        assert_eq!(zle.bufstack.len(), 3);
+        assert_eq!(zle.bufstack[0], "x");
+        assert_eq!(zle.bufstack[1], "");
+        assert_eq!(zle.bufstack[2], "");
+    }
+
+    #[test]
+    fn push_line_negative_count_is_no_op() {
+        let mut zle = zle_with_history(&[]);
+        zle.zleline = "abc".chars().collect();
+        zle.zlell = 3;
+        zle.mult = -1;
+        zle.push_line();
+        assert!(zle.bufstack.is_empty());
+        assert_eq!(zle.zleline.iter().collect::<String>(), "abc");
     }
 
     #[test]
