@@ -1528,23 +1528,8 @@ fn widget_digit_argument(zle: &mut Zle) {
     // and accumulates it into zmod.tmult with sign tracking. After
     // neg-argument has fired (MOD_NEG set), the first digit replaces
     // the placeholder -1 so `M-- 5` ends up as -5, matching C zsh.
-    let inkey = zle.lastchar as u8 as i32;
     let base = zle.zmod.base;
-    let new_digit = if base > 10 {
-        if (b'a' as i32..b'a' as i32 + base - 10).contains(&inkey) {
-            inkey - b'a' as i32 + 10
-        } else if (b'A' as i32..b'A' as i32 + base - 10).contains(&inkey) {
-            inkey - b'A' as i32 + 10
-        } else if (b'0' as i32..=b'9' as i32).contains(&inkey) {
-            inkey - b'0' as i32
-        } else {
-            -1
-        }
-    } else if (b'0' as i32..b'0' as i32 + base).contains(&inkey) {
-        inkey - b'0' as i32
-    } else {
-        -1
-    };
+    let new_digit = parse_digit_in_base(zle.lastchar as u8, base);
     if new_digit < 0 {
         zle.handle_feep();
         return;
@@ -1570,6 +1555,31 @@ fn widget_digit_argument(zle: &mut Zle) {
 fn widget_undefined(zle: &mut Zle) {
     // Beep or do nothing
     let _ = zle;
+}
+
+/// Parse a single byte as a digit in `base`. Returns `-1` if the byte
+/// isn't a valid digit in that base.
+/// Port of `parsedigit()` from Src/Zle/zle_misc.c:919. Used by
+/// digit-argument and universal-argument to honour zmod.base ∈ [2, 36].
+fn parse_digit_in_base(b: u8, base: i32) -> i32 {
+    let inkey = b as i32 & 0x7f;
+    if base > 10 {
+        if (b'a' as i32..b'a' as i32 + base - 10).contains(&inkey) {
+            return inkey - b'a' as i32 + 10;
+        }
+        if (b'A' as i32..b'A' as i32 + base - 10).contains(&inkey) {
+            return inkey - b'A' as i32 + 10;
+        }
+        if (b'0' as i32..=b'9' as i32).contains(&inkey) {
+            return inkey - b'0' as i32;
+        }
+        return -1;
+    }
+    if (b'0' as i32..b'0' as i32 + base).contains(&inkey) {
+        inkey - b'0' as i32
+    } else {
+        -1
+    }
 }
 
 // =============================================================================
@@ -2165,21 +2175,7 @@ fn widget_universal_argument(zle: &mut Zle) {
             digcnt += 1;
             continue;
         }
-        let new_digit = if base > 10 {
-            if (b'a'..b'a' + (base - 10) as u8).contains(&b) {
-                (b - b'a') as i32 + 10
-            } else if (b'A'..b'A' + (base - 10) as u8).contains(&b) {
-                (b - b'A') as i32 + 10
-            } else if b.is_ascii_digit() {
-                (b - b'0') as i32
-            } else {
-                -1
-            }
-        } else if (b'0'..b'0' + base as u8).contains(&b) {
-            (b - b'0') as i32
-        } else {
-            -1
-        };
+        let new_digit = parse_digit_in_base(b, base);
         if new_digit >= 0 {
             pref = pref * base + new_digit;
             digcnt += 1;
@@ -3481,6 +3477,18 @@ mod tests {
         widget_digit_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, -5);
         assert!(!zle.zmod.flags.contains(crate::zle::main::ModifierFlags::NEG));
+    }
+
+    #[test]
+    fn parse_digit_in_base_handles_decimal_and_hex_and_invalid() {
+        assert_eq!(parse_digit_in_base(b'7', 10), 7);
+        assert_eq!(parse_digit_in_base(b'a', 16), 10);
+        assert_eq!(parse_digit_in_base(b'F', 16), 15);
+        assert_eq!(parse_digit_in_base(b'g', 16), -1); // out of range
+        assert_eq!(parse_digit_in_base(b'5', 8), 5);
+        assert_eq!(parse_digit_in_base(b'9', 8), -1); // 9 is not a base-8 digit
+        assert_eq!(parse_digit_in_base(b'z', 36), 35);
+        assert_eq!(parse_digit_in_base(b'!', 10), -1);
     }
 
     #[test]
