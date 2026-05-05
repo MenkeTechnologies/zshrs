@@ -18,6 +18,11 @@ pub struct TextAttr {
 }
 
 impl TextAttr {
+    /// Render this attribute set as the corresponding ANSI SGR escape.
+    /// Mirrors `tsetcap()` from Src/Zle/zle_refresh.c which the C
+    /// source uses to emit termcap-derived attribute changes — we
+    /// emit the literal CSI codes since modern terminals handle them
+    /// uniformly.
     pub fn to_ansi(&self) -> String {
         let mut codes = Vec::new();
         if self.bold {
@@ -55,6 +60,11 @@ pub struct RefreshElement {
 }
 
 impl RefreshElement {
+    /// Construct a refresh cell holding a single character with default
+    /// attributes. Equivalent to a freshly-zeroed `REFRESH_ELEMENT`
+    /// from Src/Zle/zle_refresh.h — the C source uses this struct to
+    /// represent each on-screen cell during the diff/paint cycle in
+    /// zrefresh.
     pub fn new(chr: char) -> Self {
         let width = unicode_width::UnicodeWidthChar::width(chr).unwrap_or(1) as u8;
         RefreshElement {
@@ -64,6 +74,12 @@ impl RefreshElement {
         }
     }
 
+    /// Construct a refresh cell with explicit text attributes.
+    /// Used by callers painting attributed regions (visual-mode
+    /// standout, isearch underline, etc.) directly into a
+    /// VideoBuffer — same shape as the per-cell attr write that
+    /// `zrefresh()` performs at Src/Zle/zle_refresh.c when applying
+    /// region_highlights[] to each cell.
     pub fn with_attr(chr: char, atr: TextAttr) -> Self {
         let width = unicode_width::UnicodeWidthChar::width(chr).unwrap_or(1) as u8;
         RefreshElement { chr, atr, width }
@@ -82,11 +98,20 @@ pub struct VideoBuffer {
 }
 
 impl VideoBuffer {
+    /// Allocate a fresh video buffer of `cols × rows` filled with
+    /// blank cells.
+    /// Equivalent to `resetvideo()` at Src/Zle/zle_refresh.c:725 —
+    /// the C source allocates `nlnct * winw` cells for the `nbuf`
+    /// array each refresh.
     pub fn new(cols: usize, rows: usize) -> Self {
         let lines = vec![vec![RefreshElement::new(' '); cols]; rows];
         VideoBuffer { lines, cols, rows }
     }
 
+    /// Reset every cell to a blank-attribute space.
+    /// Used by `zrefresh()` between frames to wipe the working buffer
+    /// before the new paint pass — see the loop at zle_refresh.c around
+    /// `freevideo()` (zle_refresh.c:700) which serves the same role.
     pub fn clear(&mut self) {
         for line in &mut self.lines {
             for elem in line.iter_mut() {
@@ -95,6 +120,10 @@ impl VideoBuffer {
         }
     }
 
+    /// Reshape the buffer for a new terminal size.
+    /// Equivalent to the cols/lines update + `nbuf`/`obuf` reallocation
+    /// chain in zle_refresh.c that fires on SIGWINCH (see the
+    /// `winw`/`winh` re-read in `zrefresh()` at zle_refresh.c:975).
     pub fn resize(&mut self, cols: usize, rows: usize) {
         self.cols = cols;
         self.rows = rows;
@@ -105,12 +134,18 @@ impl VideoBuffer {
         }
     }
 
+    /// Write a single cell into the buffer; out-of-range writes are
+    /// silently dropped (matches the C source's bounds check before
+    /// `nbuf[row][col] = ...` in zle_refresh.c).
     pub fn set(&mut self, row: usize, col: usize, elem: RefreshElement) {
         if row < self.rows && col < self.cols {
             self.lines[row][col] = elem;
         }
     }
 
+    /// Read a single cell. Returns None for out-of-range coords —
+    /// the C source's index path is unchecked (uses winw/nlnct
+    /// invariants), but our safe variant lets host code probe.
     pub fn get(&self, row: usize, col: usize) -> Option<&RefreshElement> {
         self.lines.get(row).and_then(|line| line.get(col))
     }
@@ -154,6 +189,11 @@ pub struct RefreshState {
 }
 
 impl RefreshState {
+    /// Build the initial refresh state at zleread() entry.
+    /// Equivalent to the global `nbuf`/`obuf`/`vln`/`vcs` allocation +
+    /// reset performed by `resetvideo()` at Src/Zle/zle_refresh.c:725
+    /// — terminal size queried once, both video buffers allocated,
+    /// `need_full_redraw` set so the first paint touches every cell.
     pub fn new() -> Self {
         let (cols, rows) = get_terminal_size();
         RefreshState {
@@ -166,6 +206,11 @@ impl RefreshState {
         }
     }
 
+    /// Reallocate the video buffers for the current terminal size and
+    /// arm a full redraw on the next paint.
+    /// Port of `resetvideo()` from Src/Zle/zle_refresh.c:725 invoked
+    /// after SIGWINCH (the C source calls it from
+    /// `adjustwinsize()` in Src/init.c).
     pub fn reset_video(&mut self) {
         let (cols, rows) = get_terminal_size();
         self.columns = cols;
@@ -175,11 +220,18 @@ impl RefreshState {
         self.need_full_redraw = true;
     }
 
+    /// Drop both video buffers — used at ZLE shutdown.
+    /// Port of `freevideo()` from Src/Zle/zle_refresh.c:700.
     pub fn free_video(&mut self) {
         self.old_video = None;
         self.new_video = None;
     }
 
+    /// Promote the freshly-painted buffer to "previously displayed" and
+    /// clear the new-buffer slate for the next frame.
+    /// Port of `bufswap()` from Src/Zle/zle_refresh.c:946 — the C
+    /// source swaps `nbuf` and `obuf` pointers and zeroes the new
+    /// nbuf so the diff loop has a clean target.
     pub fn swap_buffers(&mut self) {
         std::mem::swap(&mut self.old_video, &mut self.new_video);
         if let Some(ref mut new) = self.new_video {
