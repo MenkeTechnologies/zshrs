@@ -1,4 +1,15 @@
-//! SQLite-backed command history for zshrs
+//! SQLite-backed command history for zshrs.
+//!
+//! **zshrs-original infrastructure with strong C-zsh ancestry.** C
+//! zsh keeps history in a flat file (`Src/hist.c::savehistfile()`)
+//! and an in-memory linked list of `Histent` entries. zshrs
+//! replaces both with a SQLite database for two reasons: (1) FTS5
+//! full-text search makes fzf-style fuzzy matching microsecond-
+//! latency vs zsh's `O(N)` linear scan, (2) frequency / recency /
+//! per-directory tracking can layer on top of the same row without
+//! parallel files. The interactive surface (the `fc` builtin,
+//! `$HISTFILE` semantics, `setopt SHARE_HISTORY` etc.) preserves
+//! the C source's behavior — we just swap the storage backend.
 //!
 //! Features:
 //! - Persistent history across sessions
@@ -11,10 +22,20 @@ use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// SQLite-backed history engine.
+/// Replaces the in-memory `histent` doubly-linked list +
+/// `histfile` flat-file pair from Src/hist.c — same logical
+/// history but with FTS5 search, frequency tracking, and
+/// per-directory context.
 pub struct HistoryEngine {
     conn: Connection,
 }
 
+/// One history record.
+/// Port of `struct histent` from Src/zsh.h (`text` / `stim` /
+/// `ftim` fields) plus zshrs additions (`exit_code`, `cwd`,
+/// `frequency`, `duration_ms`) the SQLite schema captures from
+/// the `precmd`/`preexec` hooks.
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
     pub id: i64,
@@ -615,7 +636,11 @@ fn rewrite_last_text_line(ts: i64, duration_secs: i64, command: &str) -> std::io
     Ok(())
 }
 
-/// Reedline history adapter
+/// Adapter exposing `HistoryEngine` to the line editor.
+/// zshrs-original — bridges the SQLite engine into the line-editor
+/// crate. C zsh's equivalent is the per-key history-search /
+/// up-arrow plumbing in Src/Zle/zle_hist.c that walks the
+/// `histent` linked list directly.
 pub struct ReedlineHistory {
     engine: HistoryEngine,
     session_history: Vec<String>,
