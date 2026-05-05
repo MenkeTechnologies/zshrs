@@ -38803,12 +38803,45 @@ impl ShellExecutor {
                     return 0;
                 }
                 "-R" => {
-                    // Redisplay
+                    // Port of bin_zle_refresh from Src/Zle/zle_thingy.c:418.
+                    // The C source: "zle -R [-c] [STATUS [LIST...]]"
+                    //   - Without -c or args: just rerun zrefresh.
+                    //   - With STATUS: set the status line, then refresh.
+                    //   - With LIST...: display the list below the prompt.
+                    //   - With -c: clear the prior list before refresh.
+                    // C errors with `not bound` when zleactive is false; we
+                    // approximate that by silently no-oping (the bin holds
+                    // the live ZLE session, which we don't reach from
+                    // here). For consistency: parse remaining args
+                    // (status + list elems) and discard, then return 0.
+                    let mut clear = false;
+                    let mut status: Option<String> = None;
+                    let mut list_items: Vec<String> = Vec::new();
+                    for arg in iter.by_ref() {
+                        match arg.as_str() {
+                            "-c" => clear = true,
+                            s if status.is_none() => status = Some(s.to_string()),
+                            s => list_items.push(s.to_string()),
+                        }
+                    }
+                    let _ = (clear, status, list_items);
                     return 0;
                 }
                 "-U" => {
-                    // Unget characters - stub
-                    return 0;
+                    // Port of bin_zle_unget from Src/Zle/zle_thingy.c:473.
+                    // The C source ungets each byte of args[0] back into
+                    // the input stream. zsh errors when zleactive==0 with
+                    // "can only be called from widget function". We don't
+                    // hold the live ZLE state here; emit the same
+                    // diagnostic + exit 1 instead of silently dropping.
+                    if iter.next().is_none() {
+                        eprintln!("zshrs:zle:1: -U requires a string argument");
+                        return 1;
+                    }
+                    eprintln!(
+                        "zshrs:zle:1: can only be called from widget function"
+                    );
+                    return 1;
                 }
                 "-K" => {
                     // zle -K NAME: select active keymap. zsh:
