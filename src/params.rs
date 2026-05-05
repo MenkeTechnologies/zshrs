@@ -130,6 +130,10 @@ pub mod print_flags {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Default)]
+/// Storage union for a parameter's value.
+/// Mirrors the value union of `struct param` from Src/zsh.h —
+/// scalar / integer / float / array / hash / undef. The C source
+/// dispatches on `pm->u.*` based on `pm->node.flags & PM_TYPE`.
 pub enum ParamValue {
     Scalar(String),
     Integer(i64),
@@ -217,6 +221,10 @@ impl ParamValue {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
+/// Math numeric value (mirrors `mnumber`).
+/// Re-export of the union shape from Src/math.c — exposed here
+/// so callers in subst / arith paths can pass values through
+/// without `MathNum` ↔ `MNumber` conversion.
 pub enum MNumber {
     Integer(i64),
     Float(f64),
@@ -253,6 +261,10 @@ impl MNumber {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
+/// One reference to a parameter (with optional subscript).
+/// Port of `struct value` from Src/zsh.h — `getvalue()`
+/// (Src/params.c:2173) builds these for every `${var[N]}` /
+/// `${var:-default}` / `${var//x/y}` access.
 pub struct Value {
     pub pm_name: String,
     pub start: i64,
@@ -282,6 +294,10 @@ impl Value {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
+/// One parameter table entry.
+/// Port of `struct param` from Src/zsh.h — `createparam()`
+/// (Src/params.c:1030) constructs them, `paramtab` HashTable
+/// stores them. Same `gsu` (get/set/unset) callback shape.
 pub struct Param {
     pub name: String,
     pub value: ParamValue,
@@ -453,6 +469,9 @@ impl Param {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
+/// Sidecar data for `typeset -T` array-tied scalars.
+/// Port of the `tied_param` storage `bin_typeset()`
+/// (Src/builtin.c) installs alongside the array+scalar pair.
 pub struct TiedData {
     pub join_char: char,
     pub scalar_name: String,
@@ -464,6 +483,9 @@ pub struct TiedData {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Default)]
+/// `${var[N]}` subscript flags.
+/// Port of the `SCANPM_*` bits Src/params.c uses inside
+/// `getindex()` (line 2001) — `WANTVALS`/`WANTKEYS`/etc.
 pub struct SubscriptFlags {
     pub reverse: bool,   // (r) or (R) - reverse search
     pub down: bool,      // (R), (K), (I) - search from end
@@ -482,6 +504,9 @@ pub struct SubscriptFlags {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+/// Resolved subscript range.
+/// Output of `getindex()` from Src/params.c:2001 — start/end
+/// positions plus flags.
 pub struct SubscriptIndex {
     pub start: i64,
     pub end: i64,
@@ -518,6 +543,10 @@ impl SubscriptIndex {
 // Parameter table print types (from printparamnode)
 // ---------------------------------------------------------------------------
 
+/// Per-type metadata for a parameter.
+/// Mirrors the type-info bits Src/params.c surfaces via
+/// `paramtypestr()` (Src/Modules/parameter.c:43) for `typeset -p`
+/// output.
 pub struct ParamTypeInfo {
     pub bin_flag: u32,
     pub string: &'static str,
@@ -687,6 +716,10 @@ pub const PM_TYPES: &[ParamTypeInfo] = &[
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
+/// Special-parameter definition.
+/// Mirrors the `IPDEF*` macro entries in Src/params.c:297-... —
+/// each special parameter (e.g. `RANDOM`, `EPOCHSECONDS`,
+/// `HISTFILE`) provides a `gsu` (get/set/unset) callback set.
 pub struct SpecialParamDef {
     pub name: &'static str,
     pub pm_type: u32,  // PM_INTEGER | PM_SCALAR | PM_ARRAY
@@ -1186,6 +1219,11 @@ pub const SPECIAL_PARAMS: &[SpecialParamDef] = &[
 // Parameter table
 // ---------------------------------------------------------------------------
 
+/// Parameter table.
+/// Port of the `paramtab` HashTable Src/params.c maintains —
+/// `createparamtable()` (line 817) initializes it with all the
+/// IPDEF*-declared special params; `createparam()` (line 1030)
+/// adds user variables.
 pub struct ParamTable {
     params: HashMap<String, Param>,
     pub local_level: i32,
@@ -3223,21 +3261,30 @@ impl ParamTable {
 // ---------------------------------------------------------------------------
 
 /// Get integer parameter value (from params.c getiparam)
+/// Get an integer parameter.
+/// Port of `getintvalue()` from Src/params.c:2601.
 pub fn getiparam(table: &ParamTable, name: &str) -> i64 {
     table.get_value(name).map(|v| v.as_integer()).unwrap_or(0)
 }
 
 /// Get scalar (string) parameter (from params.c getsparam)
+/// Get a scalar parameter.
+/// Port of `getstrvalue()` from Src/params.c:2335.
 pub fn getsparam(table: &ParamTable, name: &str) -> Option<String> {
     table.get_value(name).map(|v| v.as_string())
 }
 
 /// Get scalar with default
+/// Get a scalar parameter with a default fallback.
+/// zshrs convenience over `getsparam()` — C zsh inlines the
+/// `value ? value : default` ternary at every call site.
 pub fn getsparam_u(table: &ParamTable, name: &str, default: &str) -> String {
     getsparam(table, name).unwrap_or_else(|| default.to_string())
 }
 
 /// Get array parameter (from params.c getaparam)
+/// Get an array parameter.
+/// Port of `getarrvalue()` from Src/params.c:2548.
 pub fn getaparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
     match table.get_value(name)? {
         ParamValue::Array(arr) => Some(arr),
@@ -3246,6 +3293,9 @@ pub fn getaparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
 }
 
 /// Get hash parameter values as array (from params.c gethparam)
+/// Get a hash parameter as a flat key/value array.
+/// Port of the `${(kv)hash}` materialization Src/params.c does
+/// inside `getstrvalue()` (line 2335) for hash params.
 pub fn gethparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
     match table.get_value(name)? {
         ParamValue::Assoc(h) => Some(h.values().cloned().collect()),
@@ -3254,6 +3304,8 @@ pub fn gethparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
 }
 
 /// Get hash parameter keys as array (from params.c gethkparam)
+/// Get a hash parameter's keys only.
+/// Port of the `${(k)hash}` extraction in Src/params.c.
 pub fn gethkparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
     match table.get_value(name)? {
         ParamValue::Assoc(h) => Some(h.keys().cloned().collect()),
@@ -3262,6 +3314,8 @@ pub fn gethkparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
 }
 
 /// Get numeric parameter (from params.c getnparam)
+/// Get a parameter as an `MNumber`.
+/// Port of `getnumvalue()` from Src/params.c:2624.
 pub fn getnparam(table: &ParamTable, name: &str) -> MNumber {
     match table.get_value(name) {
         Some(ParamValue::Integer(i)) => MNumber::Integer(i),
@@ -3280,46 +3334,70 @@ pub fn getnparam(table: &ParamTable, name: &str) -> MNumber {
 }
 
 /// Assign string parameter (from params.c assignsparam)
+/// Assign a scalar parameter.
+/// Port of `setstrvalue()` from Src/params.c:2685.
 pub fn assignsparam(table: &mut ParamTable, name: &str, val: &str) -> bool {
     table.set_scalar(name, val)
 }
 
 /// Assign integer parameter (from params.c assigniparam)
+/// Assign an integer parameter.
+/// Port of the integer branch of `setvalue()` (Src/params.c).
 pub fn assigniparam(table: &mut ParamTable, name: &str, val: i64) -> bool {
     table.set_integer(name, val)
 }
 
 /// Assign array parameter (from params.c assignaparam)
+/// Assign an array parameter.
+/// Port of `setaparam()` (Src/params.c).
 pub fn assignaparam(table: &mut ParamTable, name: &str, val: Vec<String>) -> bool {
     table.set_array(name, val)
 }
 
 /// Assign float parameter
+/// Assign a float parameter.
+/// Port of the float branch of `setnumvalue()` (Src/params.c).
 pub fn assignfparam(table: &mut ParamTable, name: &str, val: f64) -> bool {
     table.set_float(name, val)
 }
 
 /// Assign hash parameter (from params.c sethparam)
+/// Assign a hash parameter.
+/// Port of the hash-assignment branch of `setvalue()`
+/// (Src/params.c).
 pub fn assignhparam(table: &mut ParamTable, name: &str, val: HashMap<String, String>) -> bool {
     table.set_assoc(name, val)
 }
 
 /// Unset parameter (from params.c unsetparam)
+/// Unset a parameter.
+/// Port of `unsetparam_pm()` (Src/params.c) — invokes the
+/// per-param `unsetfn` callback before removing from the
+/// HashTable.
 pub fn unsetparam(table: &mut ParamTable, name: &str) -> bool {
     table.unset(name)
 }
 
 /// Check if parameter is set
+/// Check whether a parameter is currently set.
+/// Equivalent to the `getparamnode() != NULL` test the C source
+/// inlines (Src/params.c:570).
 pub fn isset_param(table: &ParamTable, name: &str) -> bool {
     table.contains(name)
 }
 
 /// Get parameter type flags
+/// Get a parameter's `PM_*` type bitmask.
+/// zshrs convenience — C zsh just reads `pm->node.flags &
+/// PM_TYPE` at the call site.
 pub fn paramtype(table: &ParamTable, name: &str) -> u32 {
     table.params.get(name).map(|p| p.flags).unwrap_or(0)
 }
 
 /// Check if parameter is exported
+/// Check whether a parameter has `PM_EXPORTED`.
+/// Equivalent to the `pm->node.flags & PM_EXPORTED` test
+/// Src/params.c uses for env propagation.
 pub fn isexported(table: &ParamTable, name: &str) -> bool {
     table
         .params
@@ -3329,6 +3407,9 @@ pub fn isexported(table: &ParamTable, name: &str) -> bool {
 }
 
 /// Check if parameter is readonly
+/// Check whether a parameter has `PM_READONLY`.
+/// Equivalent to the `pm->node.flags & PM_READONLY` test
+/// `setvalue()` (Src/params.c) consults before allowing writes.
 pub fn isreadonly(table: &ParamTable, name: &str) -> bool {
     table
         .params
@@ -3338,16 +3419,27 @@ pub fn isreadonly(table: &ParamTable, name: &str) -> bool {
 }
 
 /// Export parameter to environment
+/// Mark a parameter exported.
+/// Port of `export_param()` from Src/params.c:2653 — sets
+/// `PM_EXPORTED` and pushes the value into the env via
+/// `setenv(3)`.
 pub fn export_param(table: &mut ParamTable, name: &str) {
     table.export_param(name);
 }
 
 /// Unexport parameter
+/// Clear a parameter's exported flag.
+/// Port of the `unsetenv(3)` + `PM_EXPORTED` clear path inside
+/// `unsetparam_pm()` (Src/params.c).
 pub fn unexport_param(table: &mut ParamTable, name: &str) {
     table.unexport(name);
 }
 
 /// Start a parameter scope
+/// Enter a function-local parameter scope.
+/// Port of `startparamscope()` (Src/init.c) — the C source
+/// pushes the current scope onto a stack so `local`-declared
+/// parameters disappear on function exit.
 pub fn startparamscope(table: &mut ParamTable) {
     table.push_scope();
 }

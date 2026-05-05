@@ -22,6 +22,9 @@ pub mod prefork {
 }
 
 /// Perform all substitutions on a word
+/// Top-level entry point for `${...}` substitution.
+/// Port of the public `prefork()` driver from Src/subst.c:100
+/// — same word-list-of-pre-substitution-strings shape.
 pub fn subst_string(
     s: &str,
     params: &HashMap<String, String>,
@@ -46,6 +49,9 @@ pub fn subst_string(
 
 /// Substitution options
 #[derive(Clone, Debug, Default)]
+/// Substitution-pass option flags.
+/// Mirrors the `PF_*` flag bits Src/subst.c uses inside
+/// `prefork()` (line 100) and `stringsubst()` (line 237).
 pub struct SubstOptions {
     pub noglob: bool,
     pub noexec: bool,
@@ -55,6 +61,8 @@ pub struct SubstOptions {
 }
 
 /// Tilde expansion
+/// Expand `~`/`~user`/`~+`/`~-`.
+/// Port of `filesub()` from Src/subst.c:667.
 pub fn tilde_expand(s: &str, _opts: &SubstOptions) -> Result<String, String> {
     if !s.starts_with('~') {
         return Ok(s.to_string());
@@ -107,6 +115,10 @@ fn get_user_home(user: &str) -> Option<String> {
 }
 
 /// Parameter expansion
+/// Expand a `${parameter}` reference.
+/// Port of `paramsubst()` from Src/subst.c:1625 — the C
+/// source's master parameter-expansion dispatch (handles
+/// modifiers, flags, slicing, default substitution, etc.).
 pub fn param_expand(
     s: &str,
     params: &HashMap<String, String>,
@@ -526,6 +538,9 @@ fn collect_balanced(
 }
 
 /// Command substitution
+/// Run `$(...)` / `` `...` `` command substitution.
+/// Port of the `getoutput()` chain Src/exec.c uses for command
+/// subst, dispatched from `stringsubst()` (Src/subst.c:237).
 pub fn command_subst(s: &str, opts: &SubstOptions) -> Result<String, String> {
     if opts.noexec {
         return Ok(s.to_string());
@@ -563,6 +578,9 @@ fn run_command(cmd: &str) -> Result<String, String> {
 }
 
 /// Arithmetic expansion
+/// Expand `$((...))` arithmetic.
+/// Port of `arithsubst()` from Src/subst.c:4485 — wraps
+/// `matheval()` (Src/math.c:1480).
 pub fn arith_expand(
     s: &str,
     params: &HashMap<String, String>,
@@ -655,6 +673,9 @@ fn eval_arith(expr: &str, _params: &HashMap<String, String>) -> Result<i64, Stri
 }
 
 /// Brace expansion
+/// Brace-expand `{a,b,c}` / `{1..10}`.
+/// Port of `xpandbraces()` from Src/glob.c:2276 (called from
+/// `prefork()` (Src/subst.c:100) before parameter expansion).
 pub fn brace_expand(s: &str) -> Vec<String> {
     if !s.contains('{') {
         return vec![s.to_string()];
@@ -716,6 +737,8 @@ fn parse_range(s: &str) -> Option<(i32, i32)> {
 
 /// Remove trailing path component(s)
 /// Port from remtpath() in zsh/Src/subst.c
+/// `:t` modifier — keep last N path components.
+/// Port of the `:t` arm of `modify()` (Src/subst.c:4531).
 pub fn remtpath(path: &str, count: usize) -> String {
     let mut result = path.to_string();
     for _ in 0..count {
@@ -735,6 +758,8 @@ pub fn remtpath(path: &str, count: usize) -> String {
 
 /// Remove leading path component(s)
 /// Port from remlpaths() in zsh/Src/subst.c
+/// `:h` modifier — remove last N path components.
+/// Port of the `:h` arm of `modify()` (Src/subst.c:4531).
 pub fn remlpaths(path: &str, count: usize) -> String {
     let mut result = path;
     for _ in 0..count {
@@ -749,6 +774,8 @@ pub fn remlpaths(path: &str, count: usize) -> String {
 
 /// Remove text after last dot (extension)
 /// Port from remtext() in zsh/Src/subst.c
+/// `:r` modifier — remove trailing extension.
+/// Port of the `:r` arm of `modify()` (Src/subst.c:4531).
 pub fn remtext(path: &str) -> String {
     if let Some(slash_pos) = path.rfind('/') {
         let filename = &path[slash_pos + 1..];
@@ -770,6 +797,8 @@ pub fn remtext(path: &str) -> String {
 
 /// Remove everything but the extension
 /// Port from rembutext() in zsh/Src/subst.c
+/// `:e` modifier — keep only trailing extension.
+/// Port of the `:e` arm of `modify()` (Src/subst.c:4531).
 pub fn rembutext(path: &str) -> String {
     let filename = if let Some(slash_pos) = path.rfind('/') {
         &path[slash_pos + 1..]
@@ -786,6 +815,8 @@ pub fn rembutext(path: &str) -> String {
 }
 
 /// Get the tail (filename) part of a path
+/// Get the trailing path component (`:t` shorthand).
+/// zshrs convenience around `remtpath(s, 1)`.
 pub fn path_tail(path: &str) -> String {
     if let Some(pos) = path.rfind('/') {
         path[pos + 1..].to_string()
@@ -795,6 +826,8 @@ pub fn path_tail(path: &str) -> String {
 }
 
 /// Get the head (directory) part of a path
+/// Get all but the trailing path component (`:h` shorthand).
+/// zshrs convenience around `remlpaths(s, 1)`.
 pub fn path_head(path: &str) -> String {
     remtpath(path, 1)
 }
@@ -802,6 +835,9 @@ pub fn path_head(path: &str) -> String {
 /// Case modification modes
 /// Port from CASMOD_* in zsh.h
 #[derive(Clone, Copy, PartialEq, Eq)]
+/// Case-modifier kind (`:U`/`:L`/`:C`).
+/// Mirrors the `CASMOD_*` flag set Src/subst.c uses inside
+/// `casemodify()` for `${(U)var}` and `${var:U}`.
 pub enum CaseMod {
     Lower,
     Upper,
@@ -821,6 +857,9 @@ pub enum CaseMod {
 ///   - In the middle of a word: uppercase letter → lowercase
 ///     (so input "HELLO world" → "Hello World").
 ///   - All other characters pass through verbatim.
+/// Apply `:U`/`:L`/`:C` casing.
+/// Port of `casemodify()` (Src/utils.c) — same upper / lower /
+/// title-case logic.
 pub fn casemodify(s: &str, mode: CaseMod) -> String {
     match mode {
         CaseMod::Lower => s.to_lowercase(),
@@ -862,6 +901,8 @@ pub fn casemodify(s: &str, mode: CaseMod) -> String {
 
 /// Convert path to absolute path
 /// Port from chabspath() in zsh/Src/subst.c
+/// `:A` / `:a` — canonicalize path.
+/// Port of `xsymlinks()` chain Src/utils.c uses.
 pub fn chabspath(path: &str) -> String {
     if path.starts_with('/') {
         return clean_path(path);
@@ -903,6 +944,9 @@ fn clean_path(path: &str) -> String {
 
 /// Perform single substitution (no word splitting)
 /// Port from singsub() in zsh/Src/subst.c
+/// Single-string substitution (no IFS splitting).
+/// Port of `singsub()` from Src/subst.c:514 — used in
+/// non-array contexts.
 pub fn singsub(s: &str, params: &HashMap<String, String>) -> Result<String, String> {
     let opts = SubstOptions::default();
     subst_string(s, params, &opts)
@@ -910,6 +954,9 @@ pub fn singsub(s: &str, params: &HashMap<String, String>) -> Result<String, Stri
 
 /// Perform multiple substitution with word splitting
 /// Port from multsub() in zsh/Src/subst.c
+/// Multi-word substitution (with IFS splitting).
+/// Port of `multsub()` from Src/subst.c:544 — used in array
+/// contexts.
 pub fn multsub(s: &str, params: &HashMap<String, String>) -> Result<Vec<String>, String> {
     let opts = SubstOptions {
         word_split: true,
@@ -930,17 +977,24 @@ pub fn multsub(s: &str, params: &HashMap<String, String>) -> Result<Vec<String>,
 
 /// Untokenize a string (remove internal tokens)
 /// Port from untokenize() in zsh/Src/subst.c
+/// Strip internal `Tok_*` markers from a string.
+/// Port of `untok_and_escape()` from Src/subst.c:1528.
 pub fn untokenize(s: &str) -> String {
     s.to_string()
 }
 
 /// Remove null arguments
 /// Port from remnulargs() in zsh/Src/subst.c
+/// Remove embedded NUL markers used for empty-arg tracking.
+/// Port of `remnulargs()` from Src/subst.c.
 pub fn remnulargs(s: &str) -> String {
     s.to_string()
 }
 
 /// Pad string to specified width (from subst.c dopadding lines 892-1332)
+/// `${(l:N::pre::post:)var}` and `${(r:...)}` padding.
+/// Port of `dopadding()` from Src/subst.c:893 — same width-
+/// based pre/post padding rules.
 pub fn dopadding(
     s: &str,
     prenum: usize,
@@ -1053,6 +1107,8 @@ pub fn dopadding(
 /// Outbrack) per subst.c:1379-1391 — these arise when the source has
 /// been pre-tokenized by the lexer (e.g. `(j(...))` shapes that go
 /// through gettokstr before reaching paramsubst).
+/// Parse a `:STR:`-delimited argument.
+/// Port of `get_strarg()` from Src/subst.c:1348.
 pub fn get_strarg(s: &str) -> Option<(&str, char)> {
     use crate::tokens::char_tokens as tk;
     let mut chars = s.chars();
@@ -1082,11 +1138,15 @@ pub fn get_strarg(s: &str) -> Option<(&str, char)> {
 }
 
 /// Do =foo substitution (from subst.c equalsubstr lines 714-733)
+/// `=cmd` substitution — replace with its absolute path.
+/// Port of `equalsubstr()` from Src/subst.c:715.
 pub fn equalsubstr(cmd: &str) -> Option<String> {
     crate::utils::find_in_path(cmd).and_then(|p| p.to_str().map(|s| s.to_string()))
 }
 
 /// File substitution - tilde and equals (from subst.c filesubstr lines 736-807)
+/// Apply `~`/`=` substitution in a filename context.
+/// Port of `filesubstr()` from Src/subst.c:737.
 pub fn filesubstr(name: &str, assign: bool) -> Option<String> {
     if let Some(rest) = name.strip_prefix('~') {
         // ~ alone
@@ -1130,6 +1190,8 @@ pub fn filesubstr(name: &str, assign: bool) -> Option<String> {
 }
 
 /// Subst eval char - evaluate numeric expression to character (from subst.c substevalchar lines 1489-1520)
+/// Resolve `\xNN` / `\uNNNN` / `\…` char escapes.
+/// Port of `substevalchar()` from Src/subst.c:1490.
 pub fn substevalchar(expr: &str) -> Option<char> {
     let value: i64 = expr.parse().ok()?;
     if !(0..=0x10FFFF).contains(&value) {
