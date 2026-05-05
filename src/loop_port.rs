@@ -13,16 +13,29 @@
 
 use std::sync::atomic::{AtomicI32, Ordering};
 
-/// Number of nested loops (from loop.c `loops`)
+/// Number of nested loops.
+/// Port of the global `loops` counter from Src/loop.c — every
+/// `execfor`/`execwhile`/`execrepeat`/`execselect` entry bumps it
+/// and decrements on exit.
 static LOOP_DEPTH: AtomicI32 = AtomicI32::new(0);
 
-/// Continue flag / level (from loop.c `contflag`)
+/// Continue flag / level.
+/// Port of the global `contflag` from Src/loop.c — set by the
+/// `continue` builtin (Src/builtin.c:bin_break) and consumed by
+/// the loop body's exit check.
 static CONT_FLAG: AtomicI32 = AtomicI32::new(0);
 
-/// Break level (from loop.c `breaks`)
+/// Break level.
+/// Port of the global `breaks` counter from Src/loop.c — set by
+/// the `break` builtin (Src/builtin.c:bin_break) and tested by
+/// each enclosing loop on exit.
 static BREAK_LEVEL: AtomicI32 = AtomicI32::new(0);
 
-/// Loop state for the executor
+/// Loop state for the executor.
+/// Port of the (`loops`, `breaks`, `contflag`) globals Src/loop.c
+/// uses to coordinate `break`/`continue` with the loop bodies.
+/// Bundling them into a struct gives us a single owner per executor
+/// thread instead of file-static globals.
 #[derive(Debug, Clone, Default)]
 pub struct LoopState {
     /// Current nesting depth
@@ -38,13 +51,19 @@ impl LoopState {
         Self::default()
     }
 
-    /// Enter a loop (from loop.c loops++)
+    /// Enter a loop.
+    /// Port of the `loops++` increment Src/loop.c performs at the
+    /// top of every `execfor`/`execwhile`/etc. body before running
+    /// any iterations.
     pub fn enter(&mut self) {
         self.depth += 1;
         LOOP_DEPTH.store(self.depth, Ordering::Relaxed);
     }
 
-    /// Exit a loop (from loop.c loops--)
+    /// Exit a loop.
+    /// Port of the `loops--` decrement Src/loop.c performs at the
+    /// end of each loop body. Also decrements pending `break` /
+    /// `continue` levels so the next-outer loop sees them satisfied.
     pub fn exit(&mut self) {
         self.depth -= 1;
         if self.depth < 0 {
@@ -63,64 +82,84 @@ impl LoopState {
         CONT_FLAG.store(self.contflag, Ordering::Relaxed);
     }
 
-    /// Request break (from builtin break)
+    /// Request break.
+    /// Port of the `breaks = nlevels` write inside `bin_break()`
+    /// (Src/builtin.c) — the C source clamps the level to the
+    /// active loop depth.
     pub fn do_break(&mut self, levels: i32) {
         self.breaks = levels.min(self.depth);
         BREAK_LEVEL.store(self.breaks, Ordering::Relaxed);
     }
 
-    /// Request continue (from builtin continue)
+    /// Request continue.
+    /// Port of the `contflag = nlevels` write inside `bin_break()`
+    /// (Src/builtin.c) — same clamp to active loop depth.
     pub fn do_continue(&mut self, levels: i32) {
         self.contflag = levels.min(self.depth);
         CONT_FLAG.store(self.contflag, Ordering::Relaxed);
     }
 
-    /// Check if break is active
+    /// Check if break is active.
+    /// Equivalent to the `breaks > 0` test inside `execfor`/etc.
+    /// (Src/loop.c) that triggers loop-body teardown.
     pub fn should_break(&self) -> bool {
         self.breaks > 0
     }
 
-    /// Check if continue is active
+    /// Check if continue is active.
+    /// Equivalent to the `contflag > 0` test Src/loop.c uses to
+    /// skip the rest of the iteration body.
     pub fn should_continue(&self) -> bool {
         self.contflag > 0
     }
 
-    /// Check if we're inside any loop
+    /// Check if we're inside any loop.
+    /// Equivalent to the `loops > 0` test `bin_break()` uses to
+    /// reject `break`/`continue` outside of a loop.
     pub fn in_loop(&self) -> bool {
         self.depth > 0
     }
 
-    /// Reset break/continue (after handling)
+    /// Reset break/continue (after handling).
+    /// Port of the `contflag = 0` reset Src/loop.c performs at the
+    /// top of each loop iteration — the body has consumed the
+    /// continue request and is about to start fresh.
     pub fn reset_flow(&mut self) {
         self.contflag = 0;
         CONT_FLAG.store(0, Ordering::Relaxed);
     }
 
-    /// Get current nesting depth
+    /// Get current nesting depth.
+    /// Returns the equivalent of the C source's `loops` value.
     pub fn current_depth(&self) -> i32 {
         self.depth
     }
 }
 
-/// Get global loop depth
+/// Get global loop depth.
+/// Returns the live `loops` value (Src/loop.c) for callers that
+/// don't carry a `LoopState` reference.
 pub fn loop_depth() -> i32 {
     LOOP_DEPTH.load(Ordering::Relaxed)
 }
 
-/// Get global break level
+/// Get global break level.
+/// Returns the live `breaks` value (Src/loop.c).
 pub fn break_level() -> i32 {
     BREAK_LEVEL.load(Ordering::Relaxed)
 }
 
-/// Get global continue flag
+/// Get global continue flag.
+/// Returns the live `contflag` value (Src/loop.c).
 pub fn cont_flag() -> i32 {
     CONT_FLAG.load(Ordering::Relaxed)
 }
 
-/// Select menu display (from loop.c selectlist)
-///
-/// Prints a numbered menu for `select var in words` loops.
-/// Returns the formatted menu string.
+/// Select-menu display.
+/// Port of `selectlist()` from Src/loop.c:347 — formats the
+/// numbered menu the C source uses for `select var in words`. Picks
+/// columns automatically when `columns == 0`, mirroring the C
+/// source's terminal-width auto-detection.
 pub fn selectlist(items: &[String], prompt: &str, columns: usize) -> String {
     let mut output = String::new();
     let max_width = items.iter().map(|s| s.len()).max().unwrap_or(0);
@@ -152,10 +191,12 @@ pub fn selectlist(items: &[String], prompt: &str, columns: usize) -> String {
     output
 }
 
-/// Parse select reply (from loop.c execselect)
-///
-/// Given the user's input and the item list, returns the selected item
-/// or None if the input is invalid.
+/// Parse a `select` reply.
+/// Port of the input-parsing block of `execselect()` from
+/// Src/loop.c:217 — accepts a 1-based numeric index that maps onto
+/// the original word list. Empty / out-of-range / non-numeric
+/// replies return `None`, matching the C source's "redisplay menu"
+/// fallback.
 pub fn select_parse_reply(reply: &str, items: &[String]) -> Option<String> {
     let reply = reply.trim();
     if reply.is_empty() {
@@ -172,7 +213,11 @@ pub fn select_parse_reply(reply: &str, items: &[String]) -> Option<String> {
     None
 }
 
-/// For loop variable iteration helpers
+/// `for` loop variable iteration helper.
+/// Port of the word-list walk inside `execfor()` (Src/loop.c:50)
+/// plus the integer-range walk inside `execfor`'s C-style branch.
+/// The Rust struct exposes both shapes through a single `Iterator`
+/// impl.
 pub struct ForIterator {
     items: Vec<String>,
     pos: usize,
@@ -225,7 +270,11 @@ impl Iterator for ForIterator {
     }
 }
 
-/// C-style for loop state ((init; cond; advance))
+/// C-style `for` loop state (`(( init; cond; advance ))`).
+/// Port of the `cs` (C-style) branch flags inside `execfor()`
+/// (Src/loop.c:50). The C source threads init/cond/advance through
+/// the bytecode walker; we keep a tiny init-done flag for the
+/// equivalent first-iteration guard.
 pub struct CForState {
     pub init_done: bool,
 }
@@ -242,7 +291,11 @@ impl Default for CForState {
     }
 }
 
-/// Try/always block state (from loop.c exectry)
+/// Try/always block state.
+/// Port of the `try_errflag` / `try_retval` machinery
+/// `exectry()` from Src/loop.c:735 saves and restores around the
+/// `always { ... }` block. The C source uses globals here; we
+/// scope them per executor instance.
 #[derive(Debug, Clone, Default)]
 pub struct TryState {
     pub in_try: bool,
