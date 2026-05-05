@@ -9873,6 +9873,18 @@ impl ShellExecutor {
             "zsh-5.9-0-g73d3173".to_string(),
         );
         variables.insert("ZSH_NAME".to_string(), "zsh".to_string());
+        // $ZSH_ARGZERO mirrors `posixzero` from Src/init.c:271
+        // (`argv0 = argzero = posixzero = *argv++`). Src/params.c:971
+        // does the actual `setsparam("ZSH_ARGZERO", ztrdup(posixzero))`
+        // at the same setup phase Rust handles here. For -c / runscript
+        // invocations the bin entrypoint overrides this with the
+        // script path (Src/init.c:297).
+        variables.insert(
+            "ZSH_ARGZERO".to_string(),
+            std::env::args()
+                .next()
+                .unwrap_or_else(|| "zsh".to_string()),
+        );
         // ZLE word boundary chars — matches mainline zsh's default.
         variables.insert(
             "WORDCHARS".to_string(),
@@ -19825,6 +19837,18 @@ impl ShellExecutor {
             psvar: self.get_psvar(),
             term_width: self.get_term_width(),
             lineno: 1,
+            // `%N` resolution per Src/prompt.c:554-556: scriptname
+            // wins over argzero. The currently-running source file
+            // lives in `$0`; the binary's argv[0] lives in
+            // `$ZSH_ARGZERO`.
+            scriptname: self.variables.get("0").cloned(),
+            argzero: self
+                .variables
+                .get("ZSH_ARGZERO")
+                .cloned()
+                .unwrap_or_else(|| {
+                    std::env::args().next().unwrap_or_else(|| "zsh".to_string())
+                }),
         }
     }
 

@@ -1390,7 +1390,7 @@ fn get_param_with_subscript(
 }
 
 /// Apply parameter flags to value
-fn apply_param_flags(value: &[String], flags: &ParamFlags, _state: &SubstState) -> Vec<String> {
+fn apply_param_flags(value: &[String], flags: &ParamFlags, state: &SubstState) -> Vec<String> {
     let mut result: Vec<String> = value.to_vec();
 
     // Split operations
@@ -1478,6 +1478,32 @@ fn apply_param_flags(value: &[String], flags: &ParamFlags, _state: &SubstState) 
                     s.to_string()
                 }
             })
+            .collect();
+    }
+
+    // (%) flag — run prompt expansion on each value.
+    // Port of the `presc` arm of `paramsubst()` from
+    // Src/subst.c:3977-4018: when the `%` flag was seen, the C
+    // source temporarily forces `PROMPTPERCENT=1`, disables
+    // `PROMPTSUBST`/`PROMPTBANG`, and runs `promptexpand()` on
+    // every (array element or scalar) value. The Rust equivalent
+    // calls `crate::prompt::expand_prompt()` which already has
+    // `prompt_bang=false` by default; the `(%)` flag does NOT
+    // enable `!`-history expansion.
+    if flags.prompt_percent {
+        let mut ctx = crate::prompt::PromptContext::default();
+        // `%N` defaults to scriptname → argzero per
+        // Src/prompt.c:554-556. The currently-sourced script
+        // path lives in `$0`; argzero is `$ZSH_ARGZERO`.
+        if let Some(zero) = state.variables.get("0") {
+            ctx.scriptname = Some(zero.clone());
+        }
+        if let Some(az) = state.variables.get("ZSH_ARGZERO") {
+            ctx.argzero = az.clone();
+        }
+        result = result
+            .iter()
+            .map(|s| crate::prompt::expand_prompt(s, &ctx))
             .collect();
     }
 

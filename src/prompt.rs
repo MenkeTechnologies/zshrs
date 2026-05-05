@@ -205,6 +205,16 @@ pub struct PromptContext {
     pub psvar: Vec<String>,
     pub term_width: usize,
     pub lineno: i64,
+    /// Name of the currently-sourced script.
+    /// Mirrors the file-static `scriptname` from Src/init.c that
+    /// `%N` consults in Src/prompt.c:554. `None` falls back to
+    /// `argzero` per the C source's `scriptname ? scriptname :
+    /// argzero` ternary.
+    pub scriptname: Option<String>,
+    /// `argzero` — argv[0] of the running binary.
+    /// Backs the `%N` fallback per Src/prompt.c:555 when no
+    /// scriptname is in scope.
+    pub argzero: String,
 }
 
 impl Default for PromptContext {
@@ -249,6 +259,12 @@ impl Default for PromptContext {
             psvar: Vec::new(),
             term_width: 80,
             lineno: 1,
+            // `scriptname` defaults to None — top-level shell
+            // invocations have no in-scope script. Sourced files
+            // populate this before expanding `%N` per
+            // Src/prompt.c:554.
+            scriptname: None,
+            argzero: env::args().next().unwrap_or_else(|| "zsh".to_string()),
         }
     }
 }
@@ -616,6 +632,27 @@ impl<'a> PromptExpander<'a> {
                 self.output.push_str(&path);
             }
 
+            // Script name (or argzero fallback) — port of
+            // Src/prompt.c:554-556 `case 'N': promptpath(scriptname
+            // ? scriptname : argzero, arg, 0)`. The `arg` selects N
+            // trailing path components (0 = full path).
+            'N' => {
+                let name = self
+                    .ctx
+                    .scriptname
+                    .as_deref()
+                    .unwrap_or(&self.ctx.argzero);
+                let n = if arg <= 0 {
+                    0
+                } else {
+                    arg.unsigned_abs() as usize
+                };
+                if n == 0 {
+                    self.output.push_str(name);
+                } else {
+                    self.output.push_str(&self.trailing_path(name, n, false));
+                }
+            }
             // User/host
             'n' => self.output.push_str(&self.ctx.user),
             'M' => self.output.push_str(&self.ctx.host),
@@ -1552,6 +1589,8 @@ mod tests {
             psvar: vec!["one".to_string(), "two".to_string()],
             term_width: 80,
             lineno: 10,
+            scriptname: None,
+            argzero: "zsh".to_string(),
         }
     }
 
