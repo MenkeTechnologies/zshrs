@@ -11453,38 +11453,34 @@ impl ShellExecutor {
             .to_string_lossy()
             .to_string();
 
-        // Try bytecode cache first
-        if let Some(ref cache) = self.plugin_cache {
-            if let Some((mt_s, mt_ns)) = crate::plugin_cache::file_mtime(path) {
-                if let Some(bc_blob) = cache.check_bytecode(&abs_path, mt_s, mt_ns) {
-                    if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
-                        if !chunk.ops.is_empty() {
-                            tracing::trace!(
-                                path = %abs_path,
-                                ops = chunk.ops.len(),
-                                "execute_script_file: bytecode cache hit"
-                            );
-                            let mut vm = fusevm::VM::new(chunk);
-                            register_builtins(&mut vm);
-                            let _ctx = ExecutorContext::enter(self);
-                            match vm.run() {
-                                fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
-                                    self.last_status = vm.last_status;
-                                }
-                                fusevm::VMResult::Error(e) => {
-                                    return Err(format!("VM error: {}", e));
-                                }
-                            }
-                            return Ok(self.last_status);
+        // Try bytecode cache first — rkyv shard at ~/.cache/zshrs/scripts.rkyv.
+        // The cache validates path + mtime + zshrs binary mtime; on any miss
+        // we fall through to lex/parse/compile.
+        if let Some(bc_blob) = crate::script_cache::try_load_bytes(path) {
+            if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
+                if !chunk.ops.is_empty() {
+                    tracing::trace!(
+                        path = %abs_path,
+                        ops = chunk.ops.len(),
+                        "execute_script_file: bytecode cache hit"
+                    );
+                    let mut vm = fusevm::VM::new(chunk);
+                    register_builtins(&mut vm);
+                    let _ctx = ExecutorContext::enter(self);
+                    match vm.run() {
+                        fusevm::VMResult::Ok(_) | fusevm::VMResult::Halted => {
+                            self.last_status = vm.last_status;
+                        }
+                        fusevm::VMResult::Error(e) => {
+                            return Err(format!("VM error: {}", e));
                         }
                     }
+                    return Ok(self.last_status);
                 }
             }
         }
 
         // Cache miss — read, parse, compile, execute, then cache.
-        // Parse via ZshParser + compile via ZshCompiler. The cached
-        // chunk format (fusevm::Chunk) is gated by BYTECODE_VERSION.
         let content =
             std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
         let expanded = self.expand_history(&content);
@@ -11498,18 +11494,15 @@ impl ShellExecutor {
         let compiler = crate::compile_zsh::ZshCompiler::new();
         let chunk = compiler.compile(&program);
 
-        // Cache the bytecode for next time
-        if let Some(ref cache) = self.plugin_cache {
-            if let Some((mt_s, mt_ns)) = crate::plugin_cache::file_mtime(path) {
-                if let Ok(blob) = bincode::serialize(&chunk) {
-                    let _ = cache.store_bytecode(&abs_path, mt_s, mt_ns, &blob);
-                    tracing::trace!(
-                        path = %abs_path,
-                        bytes = blob.len(),
-                        "execute_script_file: bytecode cached"
-                    );
-                }
-            }
+        // Cache the bytecode for next time. Best-effort — failures don't
+        // block execution since the chunk is already in hand.
+        if let Ok(blob) = bincode::serialize(&chunk) {
+            let _ = crate::script_cache::try_save_bytes(path, &blob);
+            tracing::trace!(
+                path = %abs_path,
+                bytes = blob.len(),
+                "execute_script_file: bytecode cached"
+            );
         }
 
         // Execute
@@ -24802,33 +24795,35 @@ impl ShellExecutor {
 
     /// Load an autoloaded function from fpath - reads file and parses it
     fn load_autoload_function(&mut self, name: &str) {
-        // FAST PATH: Try SQLite cache first (no filesystem access)
-        // Skip in zsh_compat mode - use traditional fpath scanning only
+        // FAST PATH: Try caches first.
+        // Skip in zsh_compat mode - use traditional fpath scanning only.
         if !self.zsh_compat {
-            if let Some(ref cache) = self.compsys_cache {
-                // FASTEST: try cached bytecodes (skip lex+parse+compile entirely)
-                // FASTEST: cached fusevm::Chunk — skip lex+parse+compile.
-                // Insert into functions_compiled; the caller's outer dispatch
-                // runs the chunk with proper positional params + local-scope
-                // save/restore, identical to a freshly-loaded function.
-                if let Ok(Some(bc_blob)) = cache.get_autoload_bytecode(name) {
-                    if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
-                        if !chunk.ops.is_empty() {
-                            tracing::trace!(
-                                name,
-                                bytes = bc_blob.len(),
-                                ops = chunk.ops.len(),
-                                "autoload: bytecode cache hit"
-                            );
-                            self.functions_compiled.insert(name.to_string(), chunk);
+            // FASTEST: cached `fusevm::Chunk` from the rkyv autoload shard
+            // (~/.cache/zshrs/autoloads.rkyv). Skip lex+parse+compile entirely.
+            // Insert into functions_compiled; the caller's outer dispatch
+            // runs the chunk with proper positional params + local-scope
+            // save/restore, identical to a freshly-loaded function.
+            if let Some(bc_blob) = crate::autoload_cache::try_load(name) {
+                if let Ok(chunk) = bincode::deserialize::<fusevm::Chunk>(&bc_blob) {
+                    if !chunk.ops.is_empty() {
+                        tracing::trace!(
+                            name,
+                            bytes = bc_blob.len(),
+                            ops = chunk.ops.len(),
+                            "autoload: bytecode cache hit"
+                        );
+                        self.functions_compiled.insert(name.to_string(), chunk);
+                        if let Some(ref cache) = self.compsys_cache {
                             if let Ok(Some(body)) = cache.get_autoload_body(name) {
                                 self.function_source.insert(name.to_string(), body);
                             }
-                            return;
                         }
+                        return;
                     }
                 }
+            }
 
+            if let Some(ref cache) = self.compsys_cache {
                 // FAST: cached source text — parse + compile + cache the chunk.
                 // ksh-style autoload files (`name() { body }`) need their
                 // inner FuncDef body unwrapped before compile so the chunk
@@ -24840,7 +24835,7 @@ impl ShellExecutor {
                                 Self::ksh_autoload_body(&program, name).unwrap_or(&program);
                             let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
                             if let Ok(blob) = bincode::serialize(&chunk) {
-                                let _ = cache.set_autoload_bytecode(name, &blob);
+                                let _ = crate::autoload_cache::try_save_one(name, &blob);
                                 tracing::trace!(
                                     name,
                                     bytes = blob.len(),
@@ -27798,9 +27793,12 @@ impl ShellExecutor {
             let count = compsys::cache_entry_count(cache);
             println!("  compsys:     {} completions  {}", count, green("OK"));
 
-            // Check bytecode blob coverage
-            if let Ok(missing) = cache.get_autoloads_missing_bytecode() {
-                if missing.is_empty() {
+            // Bytecode coverage = bodies-with-source minus rkyv-shard-keys.
+            // The rkyv autoload cache lives at ~/.cache/zshrs/autoloads.rkyv.
+            if let Ok(total_bodies) = cache.count_autoloads_with_body() {
+                let cached = crate::autoload_cache::entry_count();
+                let missing = total_bodies.saturating_sub(cached);
+                if missing == 0 {
                     println!(
                         "  bytecode cache:   {}",
                         green("all functions compiled to bytecode")
@@ -27808,7 +27806,7 @@ impl ShellExecutor {
                 } else {
                     println!(
                         "  bytecode cache:   {} functions {}",
-                        missing.len(),
+                        missing,
                         yellow("missing bytecode blobs")
                     );
                 }
@@ -27988,11 +27986,11 @@ impl ShellExecutor {
                                 "  body:     {} bytes",
                                 stub.body.as_ref().map(|b| b.len()).unwrap_or(0)
                             );
-                            match cache.get_autoload_bytecode(name) {
-                                Ok(Some(blob)) => {
+                            match crate::autoload_cache::try_load(name) {
+                                Some(blob) => {
                                     println!("  bytecode: {} {} bytes", green("YES"), blob.len())
                                 }
-                                _ => println!("  bytecode: {}", yellow("NULL")),
+                                None => println!("  bytecode: {}", yellow("NULL")),
                             }
                             // Show first few lines of body
                             if let Some(ref body) = stub.body {
@@ -30734,10 +30732,16 @@ impl ShellExecutor {
                             result.patcomps.into_iter().collect(),
                         );
 
-                        // Background: fill bytecode blobs for any autoloads that have body but no ast.
-                        // This populates the cache so subsequent autoload calls skip parsing.
+                        // Background: fill bytecode blobs for any autoloads that have body but no chunk.
+                        // Sources of missing entries: (1) brand-new SQLite cache, (2) zshrs binary
+                        // mtime advanced and invalidated previously-cached chunks. The rkyv shard
+                        // at ~/.cache/zshrs/autoloads.rkyv is additive — we compute the delta and
+                        // merge_in once at the end (single read + single write of the shard,
+                        // even for 16k entries).
                         if let Some(ref cache) = self.compsys_cache {
-                            if let Ok(missing) = cache.count_autoloads_missing_bytecode() {
+                            if let Ok(total_with_body) = cache.count_autoloads_with_body() {
+                                let cached_now = crate::autoload_cache::entry_count();
+                                let missing = total_with_body.saturating_sub(cached_now);
                                 if missing > 0 {
                                     tracing::info!(
                                         count = missing,
@@ -30746,46 +30750,43 @@ impl ShellExecutor {
                                     let cache_path = compsys::cache::default_cache_path();
                                     let total_missing = missing;
                                     self.worker_pool.submit(move || {
-                                        let mut cache = match compsys::cache::CompsysCache::open(&cache_path) {
+                                        let cache = match compsys::cache::CompsysCache::open(&cache_path) {
                                             Ok(c) => c,
                                             Err(_) => return,
                                         };
-                                        // Loop in batches of 100: fetch 100 bodies from SQLite,
-                                        // parse them, write bytecode blobs back, repeat until none left.
-                                        // Peak memory: ~100 function bodies + ASTs at a time.
-                                        let mut total_cached = 0usize;
-                                        loop {
-                                            let stubs = match cache.get_autoloads_missing_bytecode_batch(100) {
-                                                Ok(s) if !s.is_empty() => s,
-                                                _ => break,
-                                            };
-                                            let mut batch: Vec<(String, Vec<u8>)> = Vec::with_capacity(stubs.len());
-                                            for (name, body) in &stubs {
-                                                let mut parser = crate::parser::ZshParser::new(body);
-                                                if let Ok(program) = parser.parse() {
-                                                    if !program.lists.is_empty() {
-                                                        let target =
-                                                            ShellExecutor::ksh_autoload_body(&program, name)
-                                                                .unwrap_or(&program);
-                                                        let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
-                                                        if let Ok(blob) = bincode::serialize(&chunk) {
-                                                            batch.push((name.clone(), blob));
-                                                        }
+                                        // One pass: pull every body whose name isn't already in
+                                        // the rkyv shard, parse+compile, accumulate into a
+                                        // HashMap, merge_in once at the end.
+                                        let exclude = crate::autoload_cache::cached_names();
+                                        let bodies = match cache.get_autoload_bodies_excluding(&exclude, usize::MAX) {
+                                            Ok(b) => b,
+                                            Err(e) => {
+                                                tracing::warn!(error = %e, "compinit: body fetch failed");
+                                                return;
+                                            }
+                                        };
+                                        let mut batch: std::collections::HashMap<String, Vec<u8>> =
+                                            std::collections::HashMap::with_capacity(bodies.len());
+                                        for (name, body) in &bodies {
+                                            let mut parser = crate::parser::ZshParser::new(body);
+                                            if let Ok(program) = parser.parse() {
+                                                if !program.lists.is_empty() {
+                                                    let target =
+                                                        ShellExecutor::ksh_autoload_body(&program, name)
+                                                            .unwrap_or(&program);
+                                                    let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
+                                                    if let Ok(blob) = bincode::serialize(&chunk) {
+                                                        batch.insert(name.clone(), blob);
                                                     }
                                                 }
                                             }
-                                            total_cached += batch.len();
-                                            if let Err(e) = cache.set_autoload_bytecodes_bulk(&batch) {
-                                                tracing::warn!(error = %e, "compinit: bytecode backfill batch failed");
-                                                break;
-                                            }
-                                            // If we got fewer than 100 results, we're done
-                                            if stubs.len() < 100 {
-                                                break;
-                                            }
+                                        }
+                                        let cached = batch.len();
+                                        if let Err(e) = crate::autoload_cache::try_merge_in(batch) {
+                                            tracing::warn!(error = %e, "compinit: rkyv merge_in failed");
                                         }
                                         tracing::info!(
-                                            cached = total_cached,
+                                            cached,
                                             total = total_missing,
                                             "compinit: bytecode backfill complete"
                                         );
@@ -30848,15 +30849,22 @@ impl ShellExecutor {
                 "compinit: background scan complete"
             );
 
-            // Pre-parse function bodies and cache bytecode blobs.
-            // Stream: parse one → serialize → write → drop. Never accumulate.
-            // 16k functions × ~10KB AST = OOM if held in memory.
+            // Pre-parse function bodies and cache bytecode blobs into the
+            // rkyv autoload shard. Whole-shard replace at the end — for 16k
+            // entries that's exactly one rkyv serialize + atomic-rename,
+            // versus the per-batch SQLite-era pattern that wrote 160 times.
+            //
+            // Memory: 16k chunks × ~10KB = ~160MB resident during this loop.
+            // That's the same envelope as the SQLite path which held the
+            // 100-batch buffer + the in-flight rusqlite transaction. If
+            // this turns out to be a problem on memory-tight hosts we can
+            // switch to incremental merge_in with smaller batches.
             let parse_start = std::time::Instant::now();
             let mut parse_ok = 0usize;
             let mut parse_fail = 0usize;
             let mut no_body = 0usize;
-            let batch_size = 100;
-            let mut batch: Vec<(String, Vec<u8>)> = Vec::with_capacity(batch_size);
+            let mut all_entries: std::collections::HashMap<String, Vec<u8>> =
+                std::collections::HashMap::with_capacity(result.files.len());
 
             for file in &result.files {
                 if let Some(ref body) = file.body {
@@ -30870,12 +30878,8 @@ impl ShellExecutor {
                                 .unwrap_or(&program);
                             let chunk = crate::compile_zsh::ZshCompiler::new().compile(target);
                             if let Ok(blob) = bincode::serialize(&chunk) {
-                                batch.push((file.name.clone(), blob));
+                                all_entries.insert(file.name.clone(), blob);
                                 parse_ok += 1;
-                                if batch.len() >= batch_size {
-                                    let _ = cache.set_autoload_bytecodes_bulk(&batch);
-                                    batch.clear();
-                                }
                             }
                         }
                         Ok(_) => {
@@ -30889,10 +30893,9 @@ impl ShellExecutor {
                     no_body += 1;
                 }
             }
-            // Flush remaining
-            if !batch.is_empty() {
-                let _ = cache.set_autoload_bytecodes_bulk(&batch);
-                batch.clear();
+            // Whole-shard replace — one read+write covers all entries.
+            if let Err(e) = crate::autoload_cache::try_replace_all(all_entries) {
+                tracing::warn!(error = %e, "compinit: rkyv replace_all failed");
             }
 
             tracing::info!(

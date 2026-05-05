@@ -77,18 +77,67 @@ impl CompsysCache {
     }
 
     fn init_schema(&self) -> rusqlite::Result<()> {
+        // Migration: drop the legacy `bytecode BLOB` column from `autoloads`
+        // if and only if the table already exists with that schema. Bytecode
+        // now lives in the rkyv shard at ~/.cache/zshrs/autoloads.rkyv (see
+        // `crate::autoload_cache`); SQLite holds only the body/source
+        // metadata. The user's directive: "delete all sqlite columns related
+        // to bytecode, sqlite3 is read only mirror".
+        //
+        // SQLite ≥3.35 supports `ALTER TABLE … DROP COLUMN`. Older runtimes
+        // need the recreate-table dance. We use the recreate path here for
+        // portability and gate it on a table-existence + column-existence
+        // probe so a fresh DB never tries to SELECT from a missing
+        // `autoloads`. Cost: one full table rewrite the first time a
+        // post-migration zshrs opens an old DB; bodies/sources/offsets/sizes
+        // are preserved.
+        let has_legacy_bytecode_col = {
+            let exists: i64 = self.conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='autoloads'",
+                [],
+                |row| row.get(0),
+            )?;
+            if exists == 0 {
+                false
+            } else {
+                let mut stmt = self.conn.prepare("PRAGMA table_info(autoloads)")?;
+                let cols: Vec<String> = stmt
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<rusqlite::Result<_>>()?;
+                cols.iter().any(|c| c == "bytecode")
+            }
+        };
+        if has_legacy_bytecode_col {
+            self.conn.execute_batch(
+                r#"
+                BEGIN;
+                CREATE TABLE autoloads_new (
+                    name TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    offset INTEGER NOT NULL,
+                    size INTEGER NOT NULL,
+                    body TEXT
+                ) WITHOUT ROWID;
+                INSERT OR IGNORE INTO autoloads_new (name, source, offset, size, body)
+                    SELECT name, source, offset, size, body FROM autoloads;
+                DROP TABLE autoloads;
+                ALTER TABLE autoloads_new RENAME TO autoloads;
+                COMMIT;
+                "#,
+            )?;
+        }
         self.conn.execute_batch(
             r#"
             -- Autoloads: flat table, PRIMARY KEY = clustered index
             -- body stores actual function definition - NO filesystem access on autoload -Xz
-            -- compinit reads from .zwc or plain files ONCE, stores body here
+            -- compinit reads from .zwc or plain files ONCE, stores body here.
+            -- bytecode is held separately in the rkyv autoload-cache shard.
             CREATE TABLE IF NOT EXISTS autoloads (
                 name TEXT PRIMARY KEY,
                 source TEXT NOT NULL,
                 offset INTEGER NOT NULL,
                 size INTEGER NOT NULL,
-                body TEXT,
-                bytecode BLOB
+                body TEXT
             ) WITHOUT ROWID;
 
             -- zstyle: flat lookup by pattern+style
@@ -184,25 +233,35 @@ impl CompsysCache {
     }
 
     /// Schema migrations for existing databases.
+    ///
+    /// The legacy `bytecode BLOB` re-add path was removed when bytecode moved
+    /// to the rkyv shard (~/.cache/zshrs/autoloads.rkyv). The pre-v0.8.16
+    /// `ast` column is still detected here and dropped — its data was the
+    /// same kind of bytecode and is now obsolete.
     fn migrate(&self) -> rusqlite::Result<()> {
-        // Add bytecode BLOB column to autoloads if missing (pre-v0.8.16 databases)
-        let has_bytecode: bool = self
+        let has_ast: bool = self
             .conn
-            .prepare("SELECT bytecode FROM autoloads LIMIT 0")
+            .prepare("SELECT ast FROM autoloads LIMIT 0")
             .is_ok();
-        if !has_bytecode {
-            // Try renaming old ast column, or add new one
-            let has_ast: bool = self
-                .conn
-                .prepare("SELECT ast FROM autoloads LIMIT 0")
-                .is_ok();
-            if has_ast {
-                self.conn
-                    .execute_batch("ALTER TABLE autoloads RENAME COLUMN ast TO bytecode")?;
-            } else {
-                self.conn
-                    .execute_batch("ALTER TABLE autoloads ADD COLUMN bytecode BLOB")?;
-            }
+        if has_ast {
+            // Recreate-table dance to drop the `ast` column.
+            self.conn.execute_batch(
+                r#"
+                BEGIN;
+                CREATE TABLE autoloads_no_ast (
+                    name TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    offset INTEGER NOT NULL,
+                    size INTEGER NOT NULL,
+                    body TEXT
+                ) WITHOUT ROWID;
+                INSERT OR IGNORE INTO autoloads_no_ast (name, source, offset, size, body)
+                    SELECT name, source, offset, size, body FROM autoloads;
+                DROP TABLE autoloads;
+                ALTER TABLE autoloads_no_ast RENAME TO autoloads;
+                COMMIT;
+                "#,
+            )?;
         }
         Ok(())
     }
@@ -306,71 +365,49 @@ impl CompsysCache {
             .optional()
     }
 
-    /// Get pre-parsed AST blob for a function (skip lex+parse on cache hit).
-    /// Returns None if no AST is cached — caller falls back to parsing the body.
-    pub fn get_autoload_bytecode(&self, name: &str) -> rusqlite::Result<Option<Vec<u8>>> {
-        self.conn
-            .query_row(
-                "SELECT bytecode FROM autoloads WHERE name = ?1 AND bytecode IS NOT NULL",
-                params![name],
-                |row| row.get(0),
-            )
-            .optional()
-    }
-
-    /// Store pre-parsed AST blob for a function.
-    pub fn set_autoload_bytecode(&self, name: &str, ast: &[u8]) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE autoloads SET bytecode = ?2 WHERE name = ?1",
-            params![name, ast],
-        )?;
-        Ok(())
-    }
-
-    /// Get a batch of autoloads that have a body but no cached AST blob.
-    /// Returns up to `limit` entries to avoid loading all 16k bodies into RAM.
-    /// Caller should loop until this returns an empty vec.
-    pub fn get_autoloads_missing_bytecode(&self) -> rusqlite::Result<Vec<(String, String)>> {
-        self.get_autoloads_missing_bytecode_batch(100)
-    }
-
-    /// Get a batch of autoloads missing AST blobs, with configurable limit.
-    pub fn get_autoloads_missing_bytecode_batch(
-        &self,
-        limit: usize,
-    ) -> rusqlite::Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name, body FROM autoloads WHERE body IS NOT NULL AND bytecode IS NULL LIMIT ?1",
-        )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect()
-    }
-
-    /// Count autoloads missing AST blobs (cheap — no body data loaded).
-    pub fn count_autoloads_missing_bytecode(&self) -> rusqlite::Result<usize> {
+    /// Count autoloads with a non-NULL body. Replaces the legacy
+    /// `count_autoloads_missing_bytecode` — bytecode coverage is now derived
+    /// by subtracting the rkyv shard's `cached_names` set from this count
+    /// (caller-side, see [`zsh::autoload_cache`]).
+    pub fn count_autoloads_with_body(&self) -> rusqlite::Result<usize> {
         self.conn.query_row(
-            "SELECT COUNT(*) FROM autoloads WHERE body IS NOT NULL AND bytecode IS NULL",
+            "SELECT COUNT(*) FROM autoloads WHERE body IS NOT NULL",
             [],
             |row| row.get::<_, i64>(0).map(|n| n as usize),
         )
     }
 
-    /// Bulk store AST blobs during compinit (one transaction for all functions).
-    pub fn set_autoload_bytecodes_bulk(
-        &mut self,
-        entries: &[(String, Vec<u8>)], // (name, ast_blob)
-    ) -> rusqlite::Result<()> {
-        let tx = self.conn.transaction()?;
-        {
-            let mut stmt = tx.prepare("UPDATE autoloads SET bytecode = ?2 WHERE name = ?1")?;
-            for (name, ast) in entries {
-                stmt.execute(params![name, ast])?;
+    /// Get a batch of `(name, body)` pairs for autoloads with a non-NULL
+    /// body, excluding any whose name is in `exclude` (e.g. names already
+    /// present in the rkyv autoload-bytecode shard). Used by compinit's
+    /// background backfill: SQLite supplies the source bodies, the caller
+    /// parses+compiles, then writes results to the rkyv shard.
+    ///
+    /// Returns up to `limit` entries; caller iterates until the empty vec
+    /// or counts what was returned.
+    pub fn get_autoload_bodies_excluding(
+        &self,
+        exclude: &std::collections::HashSet<String>,
+        limit: usize,
+    ) -> rusqlite::Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, body FROM autoloads WHERE body IS NOT NULL ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut out = Vec::with_capacity(limit.min(256));
+        for row in rows {
+            let (name, body) = row?;
+            if exclude.contains(&name) {
+                continue;
+            }
+            out.push((name, body));
+            if out.len() >= limit {
+                break;
             }
         }
-        tx.commit()?;
-        Ok(())
+        Ok(out)
     }
 
     /// Get function body with ZWC fallback
