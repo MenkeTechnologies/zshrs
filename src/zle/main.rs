@@ -299,6 +299,13 @@ pub struct Zle {
     /// by visualmode/visuallinemode/deactivateregion in zle_move.c:516-568
     /// and by killregion / textobjects to know the selection shape).
     pub region_active: u8,
+    /// Hook calls queued by `zle_call_hook` / `redrawhook` for the host
+    /// (the binary owning the ShellExecutor) to drain after the ZLE call
+    /// returns. Each entry is `(widget_name, optional_arg)`.
+    /// Port of the call side of `zlecallhook()` from Src/Zle/zle_utils.c:1755
+    /// — the C source dispatches inline via `execzlefunc`, but we can't
+    /// reach the executor from this crate, so the host pulls them.
+    pub pending_hooks: Vec<(String, Option<String>)>,
 }
 
 impl Default for Zle {
@@ -374,6 +381,7 @@ impl Zle {
             yank_ring_idx: None,
             vi_marks: [None; 27],
             region_active: 0,
+            pending_hooks: Vec::new(),
         }
     }
 
@@ -562,10 +570,16 @@ impl Zle {
         None
     }
 
-    /// Redraw hook
+    /// Run the registered redraw hook (`zle-line-pre-redraw` in zsh).
+    /// Port of `redrawhook()` from Src/Zle/zle_main.c — the C version looks
+    /// up `Th(z_redrawhook)` and executes via `execzlefunc`. This Rust port
+    /// queues the hook name on `pending_hooks` for the host to dispatch
+    /// after the ZLE call returns; the comment at zle_utils.c:1764
+    /// ("If anything here needs changing, see also redrawhook()") is the
+    /// reason this matches `zle_call_hook`'s queueing approach exactly.
     pub fn redrawhook(&mut self) {
-        // Call redraw hook functions
-        // TODO: implement hook system
+        self.pending_hooks
+            .push(("zle-line-pre-redraw".to_string(), None));
     }
 
     /// Core ZLE loop

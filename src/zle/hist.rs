@@ -41,6 +41,18 @@ pub struct History {
     pub search_pattern: String,
     /// Last search direction (true = backward)
     pub search_backward: bool,
+    /// Originals of edited entries: when `remember_edits` mutates
+    /// `entries[i].line`, the pre-edit text lands here at index `i`.
+    /// `forget_edits` restores them. Port of zsh's `Histent->zle_text`
+    /// shadow string + the global `have_edits` flag in Src/Zle/zle_hist.c.
+    pub originals: Vec<Option<String>>,
+    /// True if any entry has a recorded original — port of `have_edits`
+    /// in Src/Zle/zle_hist.c:76.
+    pub have_edits: bool,
+    /// History skip-flags state. Bit-equivalent of zsh's `hist_skip_flags`
+    /// in Src/Zle/zle_hist.c:794: `HIST_FOREIGN` (1) hides entries from
+    /// other sessions when set; `setlocalhistory` toggles this.
+    pub hist_skip_flags: u32,
 }
 
 impl History {
@@ -53,6 +65,9 @@ impl History {
             saved_cs: 0,
             search_pattern: String::new(),
             search_backward: true,
+            originals: Vec::new(),
+            have_edits: false,
+            hist_skip_flags: 0,
         }
     }
 
@@ -619,28 +634,63 @@ impl Zle {
         }
     }
 
-    /// Set local history mode
-    /// Port of setlocalhistory() from zle_hist.c
-    pub fn set_local_history(&mut self, _local: bool) {
-        // Local history restricts to current session
-        // TODO: implement session-based history filtering
-    }
-
-    /// Remember current line edits for history navigation
-    /// Port of remember_edits() from zle_hist.c
-    pub fn remember_edits(&mut self, hist: &mut History) {
-        if hist.cursor < hist.entries.len() {
-            // Store modified version of history entry
-            let line: String = self.zleline.iter().collect();
-            hist.entries[hist.cursor].line = line;
+    /// Toggle session-local history filtering.
+    /// Port of `setlocalhistory()` from Src/Zle/zle_hist.c:794. With an
+    /// explicit count: `mult` non-zero turns the foreign-skip filter on
+    /// (`hist_skip_flags = HIST_FOREIGN = 1`), zero turns it off. With
+    /// no count: XOR-toggle the bit. Call sites that walk history can
+    /// consult `hist.hist_skip_flags & 1` to decide whether to surface
+    /// entries from other sessions.
+    pub fn set_local_history(&mut self, hist: &mut History, has_mult: bool, mult: i32) {
+        const HIST_FOREIGN: u32 = 1;
+        if has_mult {
+            hist.hist_skip_flags = if mult != 0 { HIST_FOREIGN } else { 0 };
+        } else {
+            hist.hist_skip_flags ^= HIST_FOREIGN;
         }
     }
 
-    /// Forget remembered edits
-    /// Port of forget_edits() from zle_hist.c
-    pub fn forget_edits(&mut self, _hist: &mut History) {
-        // Would restore original history entries
-        // TODO: implement edit restoration
+    /// Snapshot the current line into the history entry at `cursor`,
+    /// preserving the original on first edit.
+    /// Port of `remember_edits()` from Src/Zle/zle_hist.c:80. The C source
+    /// stashes the in-flight text in `Histent->zle_text` (a separate field
+    /// from the canonical history line) and sets `have_edits = 1`. We
+    /// model `zle_text` by keeping the edited text in `entries[i].line`
+    /// directly and saving the canonical version into `originals[i]`
+    /// on first edit so `forget_edits` can restore it.
+    pub fn remember_edits(&mut self, hist: &mut History) {
+        if hist.cursor < hist.entries.len() {
+            if hist.originals.len() < hist.entries.len() {
+                hist.originals.resize(hist.entries.len(), None);
+            }
+            let new_line: String = self.zleline.iter().collect();
+            if hist.entries[hist.cursor].line != new_line {
+                if hist.originals[hist.cursor].is_none() {
+                    hist.originals[hist.cursor] = Some(hist.entries[hist.cursor].line.clone());
+                }
+                hist.entries[hist.cursor].line = new_line;
+                hist.have_edits = true;
+            }
+        }
+    }
+
+    /// Restore every edited history entry to its original text.
+    /// Port of `forget_edits()` from Src/Zle/zle_hist.c:99. The C source
+    /// walks the hist ring freeing each entry's `zle_text` shadow
+    /// (zle_hist.c:107-112) and clears `have_edits`. We restore from
+    /// `originals` and clear it.
+    pub fn forget_edits(&mut self, hist: &mut History) {
+        if !hist.have_edits {
+            return;
+        }
+        for (i, original) in hist.originals.iter_mut().enumerate() {
+            if let Some(text) = original.take() {
+                if let Some(entry) = hist.entries.get_mut(i) {
+                    entry.line = text;
+                }
+            }
+        }
+        hist.have_edits = false;
     }
 }
 
@@ -758,6 +808,54 @@ mod tests {
         let mut zle = Zle::new();
         zle.setlastline();
         assert_eq!(zle.undo_widget(), 1);
+    }
+
+    #[test]
+    fn remember_edits_saves_original_then_forget_restores() {
+        let mut zle = zle_with_history(&["echo a", "echo b"]);
+        zle.history.cursor = 0;
+        zle.zleline = "echo Z".chars().collect();
+        zle.zlell = 6;
+        // Snapshot — borrow-check: take History out, mutate, put back.
+        let mut hist = std::mem::take(&mut zle.history);
+        zle.remember_edits(&mut hist);
+        zle.history = hist;
+        assert!(zle.history.have_edits);
+        assert_eq!(zle.history.entries[0].line, "echo Z");
+        assert_eq!(zle.history.originals[0].as_deref(), Some("echo a"));
+        // Restore.
+        let mut hist = std::mem::take(&mut zle.history);
+        zle.forget_edits(&mut hist);
+        zle.history = hist;
+        assert!(!zle.history.have_edits);
+        assert_eq!(zle.history.entries[0].line, "echo a");
+        assert!(zle.history.originals[0].is_none());
+    }
+
+    #[test]
+    fn set_local_history_mult_sets_or_clears_foreign_skip() {
+        let mut zle = zle_with_history(&[]);
+        let mut hist = std::mem::take(&mut zle.history);
+        // mult=2 with has_mult=true → set HIST_FOREIGN.
+        zle.set_local_history(&mut hist, true, 2);
+        assert_eq!(hist.hist_skip_flags, 1);
+        // mult=0 with has_mult=true → clear.
+        zle.set_local_history(&mut hist, true, 0);
+        assert_eq!(hist.hist_skip_flags, 0);
+        zle.history = hist;
+    }
+
+    #[test]
+    fn set_local_history_no_mult_xor_toggles() {
+        let mut zle = zle_with_history(&[]);
+        let mut hist = std::mem::take(&mut zle.history);
+        // From 0, no-mult toggle → 1.
+        zle.set_local_history(&mut hist, false, 0);
+        assert_eq!(hist.hist_skip_flags, 1);
+        // Toggle again → 0.
+        zle.set_local_history(&mut hist, false, 0);
+        assert_eq!(hist.hist_skip_flags, 0);
+        zle.history = hist;
     }
 
     #[test]

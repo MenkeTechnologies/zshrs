@@ -664,11 +664,67 @@ pub fn print_bind(seq: &[u8]) -> String {
     result
 }
 
-/// Call ZLE hook
-/// Port of zlecallhook() from zle_utils.c
+/// Call ZLE hook (freestanding form). The C source `zlecallhook()` from
+/// Src/Zle/zle_utils.c:1755 looks up the named widget via `rthingy_nocreate`
+/// and dispatches it through `execzlefunc`. This Rust freestanding form
+/// has no Zle handle and cannot queue, so it stays a no-op; use
+/// `Zle::call_hook` (below) for the queueing version.
 pub fn zle_call_hook(_name: &str, _args: &[&str]) -> i32 {
-    // Would call user-defined hook function
     0
+}
+
+impl Zle {
+    /// Queue a hook for the host to dispatch.
+    /// Port of `zlecallhook()` from Src/Zle/zle_utils.c:1755 — the C source
+    /// resolves the widget via `rthingy_nocreate` and runs it inline via
+    /// `execzlefunc(thingy, args, 1, 0)`. The Rust port can't reach the
+    /// executor from this crate, so it appends to `pending_hooks`; the
+    /// host (the binary owning a `ShellExecutor`) drains the list after
+    /// each ZLE call and runs each named widget against its current
+    /// dispatch table — matching the same order zsh would have run them
+    /// in. `errflag` / `retflag` save/restore (zle_utils.c:1766/1775) is
+    /// the host's responsibility.
+    pub fn call_hook(&mut self, name: &str, arg: Option<&str>) {
+        self.pending_hooks
+            .push((name.to_string(), arg.map(|s| s.to_string())));
+    }
+
+    /// Drain the queued hook calls. Returns the list and resets the queue.
+    /// Mirrors zsh's pattern of clearing pending hooks after dispatch
+    /// (see the implicit reset by `unrefthingy` plus the per-call save
+    /// of errflag/retflag in zle_utils.c:1766-1776).
+    pub fn drain_hooks(&mut self) -> Vec<(String, Option<String>)> {
+        std::mem::take(&mut self.pending_hooks)
+    }
+}
+
+#[cfg(test)]
+mod tests_hooks {
+    use super::Zle;
+
+    #[test]
+    fn call_hook_queues_for_host_dispatch() {
+        let mut zle = Zle::new();
+        zle.call_hook("zle-line-init", None);
+        zle.call_hook("zle-keymap-select", Some("vicmd"));
+        let drained = zle.drain_hooks();
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0], ("zle-line-init".to_string(), None));
+        assert_eq!(
+            drained[1],
+            ("zle-keymap-select".to_string(), Some("vicmd".to_string()))
+        );
+        // Buffer is empty after drain.
+        assert!(zle.drain_hooks().is_empty());
+    }
+
+    #[test]
+    fn redrawhook_queues_pre_redraw_hook() {
+        let mut zle = Zle::new();
+        zle.redrawhook();
+        let drained = zle.drain_hooks();
+        assert_eq!(drained, vec![("zle-line-pre-redraw".to_string(), None)]);
+    }
 }
 
 #[cfg(test)]
