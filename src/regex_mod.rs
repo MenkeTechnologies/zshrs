@@ -39,7 +39,11 @@ pub struct RegexOptions {
     pub ksh_arrays: bool,
 }
 
-/// Perform a regex match
+/// Compile and run a regex against `text`, returning match metadata.
+/// Port of `bin_regexparse` / `zcond_regex_match` from
+/// Src/Modules/regex.c. The C source uses the system POSIX
+/// `regcomp(3)`/`regexec(3)`; Rust's `regex` crate covers the same
+/// PCRE-like dialect zsh exposes via `[[ s =~ pat ]]`.
 pub fn regex_match(
     text: &str,
     pattern: &str,
@@ -93,7 +97,13 @@ fn byte_to_char_offset(s: &str, byte_offset: usize) -> usize {
     s[..byte_offset].chars().count()
 }
 
-/// Get match variables in zsh format
+/// Surface match groups into the canonical `$MATCH` / `$MBEGIN` /
+/// `$MEND` / `$match` / `$mbegin` / `$mend` parameter set zsh's
+/// `[[ s =~ pat ]]` populates.
+/// Port of the per-match parameter installation done by
+/// `regex_match()` in Src/Modules/regex.c. Honours `bash_rematch`
+/// (BASH_REMATCH array) and `ksh_arrays` (1-based vs 0-based)
+/// flag toggles the C source also tracks.
 pub fn get_match_variables(
     result: &RegexMatch,
     text: &str,
@@ -165,7 +175,11 @@ pub fn get_match_variables(
     vars
 }
 
-/// Conditional test for regex-match
+/// `[[ lhs =~ rhs ]]` cond-test entry point.
+/// Port of `cond_regex_match()` from Src/Modules/regex.c — the
+/// dispatch hook the lexer wires for the `=~` operator. Returns
+/// `(matched, match-record)` so the caller can decide whether to
+/// install the match-vars side effects.
 pub fn cond_regex_match(lhs: &str, rhs: &str, options: &RegexOptions) -> (bool, RegexMatch) {
     match regex_match(lhs, rhs, options) {
         Ok(result) => (result.matched, result),
