@@ -38861,7 +38861,55 @@ impl ShellExecutor {
                     return 0;
                 }
                 "-F" => {
-                    // Install file descriptor handler - stub
+                    // Port of bin_zle_fd from Src/Zle/zle_thingy.c:857.
+                    //   zle -F [-L|-w] [FD [HANDLER]]
+                    // The C source tracks watch_fds globally so zselect
+                    // can dispatch to user handlers when fds become
+                    // readable. Without a live ZLE event loop, we still
+                    // need to parse args correctly so -L (list) returns
+                    // empty cleanly and add/remove forms validate the
+                    // fd argument.
+                    let mut list = false;
+                    let mut widget_mode = false;
+                    let mut fd_arg: Option<String> = None;
+                    let mut handler: Option<String> = None;
+                    for arg in iter.by_ref() {
+                        match arg.as_str() {
+                            "-L" => list = true,
+                            "-w" => widget_mode = true,
+                            s if fd_arg.is_none() => fd_arg = Some(s.to_string()),
+                            s if handler.is_none() => handler = Some(s.to_string()),
+                            _ => {
+                                eprintln!("zshrs:zle:1: too many arguments for -F");
+                                return 1;
+                            }
+                        }
+                    }
+                    let _ = widget_mode;
+                    // Validate fd if supplied (mirrors zle_thingy.c:865).
+                    if let Some(ref s) = fd_arg {
+                        match s.parse::<i32>() {
+                            Ok(n) if n >= 0 => {}
+                            _ => {
+                                eprintln!(
+                                    "zshrs:zle:1: bad file descriptor number for -F: {}",
+                                    s
+                                );
+                                return 1;
+                            }
+                        }
+                    }
+                    // Listing path: no watch_fds tracked here → exit 0
+                    // for empty list, exit 1 if a specific fd was asked
+                    // for and "not found" (matches zle_thingy.c:886
+                    // `*args && !found`).
+                    if list || (fd_arg.is_some() && handler.is_none()) {
+                        return if fd_arg.is_some() { 1 } else { 0 };
+                    }
+                    // Add/remove path: silently no-op since the watch
+                    // dispatch lives in the ZLE main loop we don't run
+                    // from script context. Future port will wire watch
+                    // registration through a host-side hook.
                     return 0;
                 }
                 "-M" => {
