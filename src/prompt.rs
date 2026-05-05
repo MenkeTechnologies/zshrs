@@ -1021,10 +1021,10 @@ pub fn prompt_width(s: &str) -> usize {
 // Missing functions from prompt.c
 // ---------------------------------------------------------------------------
 
-/// Truncate prompt to max width (from prompt.c prompttrunc)
-///
-/// Supports: %N>string> (right truncate) and %N<string< (left truncate)
-/// N is the max width, string is the replacement indicator (default "...")
+/// Truncate the prompt to a maximum width.
+/// Port of `prompttrunc()` from Src/prompt.c:1276 — the C source
+/// implements the `%N>string>` (right-truncate) and `%N<string<`
+/// (left-truncate) sequences with a configurable indicator.
 pub fn prompt_truncate(s: &str, max_width: usize, from_right: bool, indicator: &str) -> String {
     let visible_len = prompt_width(s);
     if visible_len <= max_width {
@@ -1074,15 +1074,20 @@ pub fn prompt_truncate(s: &str, max_width: usize, from_right: bool, indicator: &
     }
 }
 
-/// Count visible prompt characters and compute cursor position
-/// (from prompt.c countprompt)
+/// Count visible prompt width and line count.
+/// Port of `countprompt()` from Src/prompt.c:1140 — used by ZLE
+/// to position the cursor relative to the start of the prompt.
 pub fn countprompt(s: &str) -> (usize, usize) {
     let width = prompt_width(s);
     let lines = s.chars().filter(|&c| c == '\n').count();
     (width, lines)
 }
 
-/// Command stack operations for %_ (from prompt.c cmdpush/cmdpop)
+/// Command stack for the `%_` prompt escape.
+/// Port of the `cmdpush()`/`cmdpop()` pair from Src/prompt.c:1624
+/// /1632 — tracks the active compound-command tokens (`for`,
+/// `while`, etc.) so prompts can render the unfinished syntax
+/// when the parser stalls mid-statement.
 pub struct CmdStack {
     stack: Vec<CmdState>,
 }
@@ -1119,7 +1124,10 @@ impl Default for CmdStack {
     }
 }
 
-/// Parse a color name to ANSI code (from prompt.c match_named_colour)
+/// Resolve a color name to an ANSI base index.
+/// Port of `match_named_colour()` from Src/prompt.c:1915 —
+/// recognises the same eight-name palette plus `default`, then
+/// falls through to numeric parsing.
 pub fn match_named_colour(name: &str) -> Option<u8> {
     match name.to_lowercase().as_str() {
         "black" => Some(0),
@@ -1135,7 +1143,8 @@ pub fn match_named_colour(name: &str) -> Option<u8> {
     }
 }
 
-/// Output a colour escape sequence (from prompt.c output_colour)
+/// Build an ANSI escape for an indexed colour.
+/// Port of `output_colour()` from Src/prompt.c:2136.
 pub fn output_colour(colour: u8, is_fg: bool) -> String {
     let base = if is_fg { 30 } else { 40 };
     if colour < 8 {
@@ -1154,7 +1163,10 @@ pub fn output_truecolor(r: u8, g: u8, b: u8, is_fg: bool) -> String {
     format!("\x1b[{};2;{};{};{}m", mode, r, g, b)
 }
 
-/// Parse highlight specification (from prompt.c parsehighlight)
+/// Parse a `,`-separated highlight specification.
+/// Port of `parsehighlight()` from Src/prompt.c:285 — handles
+/// `bold` / `underline` / `standout` / `none` plus `fg=NAME` and
+/// `bg=NAME` color targets.
 pub fn parsehighlight(spec: &str) -> TextAttrs {
     let mut attrs = TextAttrs::default();
     for part in spec.split(',') {
@@ -1184,7 +1196,9 @@ pub fn parsehighlight(spec: &str) -> TextAttrs {
     attrs
 }
 
-/// Apply text attributes as ANSI escape sequences (from prompt.c applytextattributes)
+/// Apply text attributes as a single ANSI SGR escape.
+/// Port of `applytextattributes()` from Src/prompt.c:1645 —
+/// builds one SGR sequence with all active codes joined.
 pub fn apply_text_attributes(attrs: &TextAttrs) -> String {
     let mut codes = Vec::new();
     if attrs.bold {
@@ -1218,7 +1232,8 @@ pub fn reset_text_attributes() -> &'static str {
     "\x1b[0m"
 }
 
-/// Set default colour sequences (from prompt.c set_default_colour_sequences)
+/// Compute the default-colour reset sequences.
+/// Port of `set_default_colour_sequences()` from Src/prompt.c:2341.
 pub fn set_default_colour_sequences() -> (String, String) {
     // Default: use ANSI sequences
     ("\x1b[0m".to_string(), "\x1b[0m".to_string())
@@ -1249,7 +1264,10 @@ pub fn transient_prompt(_original: &str) -> String {
 // Remaining missing functions from prompt.c
 // ---------------------------------------------------------------------------
 
-/// Get prompt path with tilde substitution (from prompt.c promptpath)
+/// Get a prompt-friendly path with optional tilde substitution.
+/// Port of `promptpath()` from Src/prompt.c:134 — used for `%~`,
+/// `%/`, `%c`, etc. The `npath` argument trims to the last N
+/// components.
 pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
     let display = if tilde && !home.is_empty() && path.starts_with(home) {
         let rest = &path[home.len()..];
@@ -1274,12 +1292,17 @@ pub fn promptpath(path: &str, npath: usize, tilde: bool, home: &str) -> String {
     components[components.len() - npath..].join("/")
 }
 
-/// Full prompt expansion with namespace marker support (from prompt.c promptexpand)
+/// Full prompt expansion entry point.
+/// Port of `promptexpand()` from Src/prompt.c:182 — top-level
+/// driver that walks the input and dispatches every `%` escape
+/// through `putpromptchar()`.
 pub fn promptexpand(s: &str, ctx: &PromptContext) -> String {
     expand_prompt(s, ctx)
 }
 
-/// Escape attributes to string (from prompt.c zattrescape)
+/// Escape text attributes back to a `%`-prefixed prompt string.
+/// Port of `zattrescape()` from Src/prompt.c:257 — inverse of
+/// `parsehighlight()`; used by the `print -P` output path.
 pub fn zattrescape(attrs: &TextAttrs) -> String {
     let mut result = String::new();
     if attrs.bold {
@@ -1316,7 +1339,8 @@ fn color_name(c: &Color) -> String {
     }
 }
 
-/// Parse color character from number or name (from prompt.c parsecolorchar)
+/// Parse a single colour character from a `%F{...}` argument.
+/// Port of `parsecolorchar()` from Src/prompt.c:318.
 pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {
     let color = Color::from_name(arg)?;
     let ansi = if is_fg {
@@ -1327,24 +1351,32 @@ pub fn parsecolorchar(arg: &str, is_fg: bool) -> Option<(Color, String)> {
     Some((color, ansi))
 }
 
-/// Internal prompt char output (from prompt.c pputc)
-/// In Rust, this is handled by the PromptExpander writing to its output buffer
+/// Internal prompt char output.
+/// Port of `pputc()` from Src/prompt.c:976 — the C source's
+/// per-character buffer-append helper. Rust's `String::push`
+/// covers it directly; this wrapper exists for call-site parity.
 pub fn pputc(buf: &mut String, c: char) {
     buf.push(c);
 }
 
-/// Ensure buffer has space (from prompt.c addbufspc)
-/// No-op in Rust since String grows automatically
+/// Ensure the prompt buffer has at least `need` bytes free.
+/// Port of `addbufspc()` from Src/prompt.c:991 — the C source
+/// reallocates the heap buffer; Rust's `String` does this
+/// automatically so this is a no-op.
 pub fn addbufspc(_buf: &mut String, _need: usize) {
     // Rust String handles allocation automatically
 }
 
-/// Add string to prompt buffer (from prompt.c stradd)
+/// Append a string to the prompt buffer.
+/// Port of `stradd()` from Src/prompt.c:1016.
 pub fn stradd(buf: &mut String, s: &str) {
     buf.push_str(s);
 }
 
-/// Set terminal capability (from prompt.c tsetcap)
+/// Look up a terminal capability and emit its escape.
+/// Port of `tsetcap()` from Src/prompt.c:1083 — the C source
+/// resolves termcap/terminfo names; we map the most-common ones
+/// directly onto ANSI sequences.
 pub fn tsetcap(cap: &str) -> String {
     // Map common capability names to ANSI sequences
     match cap {
@@ -1358,12 +1390,15 @@ pub fn tsetcap(cap: &str) -> String {
     }
 }
 
-/// Put string from capability (from prompt.c putstr)
+/// Output a string from a terminal capability.
+/// Port of `putstr()` from Src/prompt.c:1121.
 pub fn putstr(cap: &str) -> String {
     tsetcap(cap)
 }
 
-/// Replace text attributes (from prompt.c treplaceattrs)
+/// Replace one set of text attributes with another.
+/// Port of `treplaceattrs()` from Src/prompt.c:1719 — emits the
+/// minimal SGR delta between two attribute states.
 pub fn treplaceattrs(old: &TextAttrs, new: &TextAttrs) -> String {
     let mut result = String::new();
 
@@ -1416,12 +1451,14 @@ pub fn treplaceattrs(old: &TextAttrs, new: &TextAttrs) -> String {
     result
 }
 
-/// Set text attributes (from prompt.c tsetattrs)
+/// Set text attributes (full apply).
+/// Port of `tsetattrs()` from Src/prompt.c:1737.
 pub fn tsetattrs(attrs: &TextAttrs) -> String {
     apply_text_attributes(attrs)
 }
 
-/// Unset text attributes (from prompt.c tunsetattrs)
+/// Unset (clear) text attributes via SGR-22/24/27 + 39/49.
+/// Port of `tunsetattrs()` from Src/prompt.c:1755.
 pub fn tunsetattrs(attrs: &TextAttrs) -> String {
     let mut result = String::new();
     if attrs.bold {
@@ -1442,7 +1479,9 @@ pub fn tunsetattrs(attrs: &TextAttrs) -> String {
     result
 }
 
-/// Match colour by name or number (from prompt.c match_colour)
+/// Match a `%F`/`%K` argument as a colour spec.
+/// Port of `match_colour()` from Src/prompt.c:1957 — accepts
+/// named, numeric, and `#RRGGBB` truecolor forms.
 pub fn match_colour(spec: &str, is_fg: bool) -> Option<String> {
     // Try named colour
     if let Some(code) = match_named_colour(spec) {
@@ -1462,7 +1501,10 @@ pub fn match_colour(spec: &str, is_fg: bool) -> Option<String> {
     None
 }
 
-/// Match highlight specification (from prompt.c match_highlight)
+/// Match a highlight specification, returning attrs + mask.
+/// Port of `match_highlight()` from Src/prompt.c:2031 — the
+/// mask records which fields were explicitly set so callers can
+/// merge against a default.
 pub fn match_highlight(spec: &str) -> (TextAttrs, TextAttrs) {
     let attrs = parsehighlight(spec);
     let mask = TextAttrs {
@@ -1483,7 +1525,8 @@ pub fn match_highlight(spec: &str) -> (TextAttrs, TextAttrs) {
     (attrs, mask)
 }
 
-/// Output highlight attributes as escape string (from prompt.c output_highlight)
+/// Emit highlight attributes as an ANSI escape string.
+/// Port of `output_highlight()` from Src/prompt.c:2179.
 pub fn output_highlight(attrs: &TextAttrs) -> String {
     apply_text_attributes(attrs)
 }
@@ -1596,11 +1639,11 @@ mod tests {
 // Remaining 7 missing prompt.c functions
 // ---------------------------------------------------------------------------
 
-/// Core character-by-character prompt renderer (from prompt.c putpromptchar)
-///
-/// This is the main 600-line function in C that processes each % escape.
-/// In Rust, this is implemented as PromptExpander::expand() which handles
-/// all % sequences. This wrapper provides the C-compatible entry point.
+/// Core character-by-character prompt renderer.
+/// Port of `putpromptchar()` from Src/prompt.c:359 — the ~600-line
+/// `%` escape dispatcher in the C source. The actual dispatch
+/// lives in `PromptExpander::expand()`; this exists for call-site
+/// parity with C callers.
 pub fn putpromptchar(c: char, ctx: &PromptContext, buf: &mut String) {
     if c == '%' {
         // The full handling is in PromptExpander::expand()
@@ -1612,10 +1655,9 @@ pub fn putpromptchar(c: char, ctx: &PromptContext, buf: &mut String) {
     }
 }
 
-/// Mix two sets of text attributes (from prompt.c mixattrs)
-///
-/// Combines primary and secondary attributes using a mask.
-/// Attributes set in primary take precedence; unset ones fall through to secondary.
+/// Mix two sets of text attributes through a mask.
+/// Port of `mixattrs()` from Src/prompt.c:1802 — primary wins
+/// where the mask says "set"; secondary fills the rest.
 pub fn mixattrs(primary: &TextAttrs, mask: &TextAttrs, secondary: &TextAttrs) -> TextAttrs {
     TextAttrs {
         bold: if mask.bold {
@@ -1646,7 +1688,8 @@ pub fn mixattrs(primary: &TextAttrs, mask: &TextAttrs, secondary: &TextAttrs) ->
     }
 }
 
-/// Detect if terminal supports true color (from prompt.c truecolor_terminal)
+/// Detect whether the terminal supports true color (24-bit).
+/// Port of `truecolor_terminal()` from Src/prompt.c:1935.
 pub fn truecolor_terminal() -> bool {
     // Check COLORTERM environment variable
     if let Ok(ct) = std::env::var("COLORTERM") {
@@ -1663,22 +1706,28 @@ pub fn truecolor_terminal() -> bool {
     false
 }
 
-/// Set a colour code string from specification (from prompt.c set_colour_code)
+/// Build a colour escape string from a specification.
+/// Port of `set_colour_code()` from Src/prompt.c:2353.
 pub fn set_colour_code(spec: &str) -> Option<String> {
     match_colour(spec, true)
 }
 
-/// Allocate colour buffer (from prompt.c allocate_colour_buffer) - no-op in Rust
+/// Allocate the colour-buffer working space.
+/// Port of `allocate_colour_buffer()` from Src/prompt.c:2367 —
+/// no-op in Rust because `String` allocates lazily.
 pub fn allocate_colour_buffer() {
     // Rust String handles allocation automatically
 }
 
-/// Free colour buffer (from prompt.c free_colour_buffer) - no-op in Rust
+/// Free the colour-buffer working space.
+/// Port of `free_colour_buffer()` from Src/prompt.c:2417 — no-op
+/// in Rust because `Drop` handles it.
 pub fn free_colour_buffer() {
     // Rust Drop handles this
 }
 
-/// Set a colour attribute from parsed value (from prompt.c set_colour_attribute)
+/// Apply a parsed colour attribute as an ANSI escape.
+/// Port of `set_colour_attribute()` from Src/prompt.c:2440.
 pub fn set_colour_attribute(color: &Color, is_fg: bool) -> String {
     if is_fg {
         color.to_ansi_fg()
