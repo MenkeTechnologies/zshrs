@@ -4,7 +4,12 @@
 
 use std::collections::HashMap;
 
-/// Private parameter state
+/// Private parameter state.
+/// Port of the per-parameter private wrapper Src/Modules/
+/// param_private.c installs via `makeprivate()` (line 80) — keeps
+/// the original parameter alongside its private level so
+/// `scopeprivate()` (line 512) can restore the outer scope on
+/// function exit.
 #[derive(Debug, Clone)]
 pub struct PrivateParam {
     pub name: String,
@@ -13,7 +18,12 @@ pub struct PrivateParam {
     pub readonly: bool,
 }
 
-/// Parameter value types
+/// Parameter value types.
+/// Mirrors the `PM_*` flags + value union Src/zsh.h declares for
+/// `Param`. Each variant lines up with one of the private-getter
+/// pairs Src/Modules/param_private.c installs (`pps_*` for scalar,
+/// `ppi_*` for integer, `ppf_*` for float, `ppa_*` for array,
+/// `pph_*` for hash).
 #[derive(Debug, Clone)]
 pub enum ParamValue {
     Scalar(String),
@@ -23,7 +33,12 @@ pub enum ParamValue {
     Hash(HashMap<String, String>),
 }
 
-/// Private scope manager
+/// Private scope manager.
+/// Port of the function-local scope tracking
+/// Src/Modules/param_private.c keeps via `locallevel` (provided by
+/// the C source's `scopeprivate()` hook, line 512). Each function
+/// invocation enters a new scope; exit purges every parameter
+/// tagged at that level.
 #[derive(Debug, Default)]
 pub struct PrivateScope {
     params: HashMap<String, PrivateParam>,
@@ -35,24 +50,35 @@ impl PrivateScope {
         Self::default()
     }
 
-    /// Enter a new scope level
+    /// Enter a new scope level.
+    /// Port of the `locallevel++` step `scopeprivate()` from
+    /// Src/Modules/param_private.c:512 fires on function entry.
     pub fn enter(&mut self) {
         self.level += 1;
     }
 
-    /// Exit current scope level
+    /// Exit current scope level.
+    /// Port of the `locallevel--` + per-parameter unset step
+    /// `scopeprivate()` from Src/Modules/param_private.c:512 fires
+    /// on function exit. Drops every parameter whose level matches
+    /// the leaving scope.
     pub fn exit(&mut self) {
         let level = self.level;
         self.params.retain(|_, p| p.level < level);
         self.level = self.level.saturating_sub(1);
     }
 
-    /// Current scope level
+    /// Current scope level.
+    /// Equivalent to reading the global `locallevel` in
+    /// Src/Modules/param_private.c.
     pub fn level(&self) -> usize {
         self.level
     }
 
-    /// Add a private parameter
+    /// Add a private parameter.
+    /// Port of `makeprivate()` from Src/Modules/param_private.c:80
+    /// — installs the private getter/setter pair on a parameter so
+    /// the outer scope can't see writes inside the function body.
     pub fn add(&mut self, name: &str, value: ParamValue, readonly: bool) -> bool {
         if let Some(existing) = self.params.get(name) {
             if existing.readonly {
@@ -73,12 +99,21 @@ impl PrivateScope {
         true
     }
 
-    /// Get a private parameter
+    /// Get a private parameter.
+    /// Port of the `*_getfn` slot Src/Modules/param_private.c
+    /// installs for each type (`pps_getfn` line 287, `ppi_getfn`
+    /// line 328, etc.). Returns the value the function currently
+    /// sees, hiding any outer-scope shadow.
     pub fn get(&self, name: &str) -> Option<&PrivateParam> {
         self.params.get(name)
     }
 
-    /// Get a private parameter mutably
+    /// Get a private parameter mutably.
+    /// Port of the `*_setfn` slot Src/Modules/param_private.c
+    /// installs (`pps_setfn` line 300, `ppi_setfn` line 340, etc.).
+    /// Honours `PM_READONLY` by returning `None` for read-only
+    /// entries — the C source raises an error via `setfn_error()`
+    /// (line 260).
     pub fn get_mut(&mut self, name: &str) -> Option<&mut PrivateParam> {
         let param = self.params.get_mut(name)?;
         if param.readonly {
@@ -87,7 +122,8 @@ impl PrivateScope {
         Some(param)
     }
 
-    /// Check if a parameter is private at current scope
+    /// Check if a parameter is private at current scope.
+    /// Port of `is_private()` from Src/Modules/param_private.c:181.
     pub fn is_private(&self, name: &str) -> bool {
         self.params
             .get(name)
@@ -95,7 +131,10 @@ impl PrivateScope {
             .unwrap_or(false)
     }
 
-    /// Set parameter value if not readonly
+    /// Set parameter value if not readonly.
+    /// Convenience over `get_mut` + assign — mirrors the
+    /// `*_setfn` slot dispatch Src/Modules/param_private.c performs
+    /// during normal `name=value` assignment.
     pub fn set(&mut self, name: &str, value: ParamValue) -> bool {
         if let Some(param) = self.params.get_mut(name) {
             if param.readonly {
@@ -107,7 +146,11 @@ impl PrivateScope {
         false
     }
 
-    /// Remove a private parameter
+    /// Remove a private parameter.
+    /// Port of the `*_unsetfn` slot Src/Modules/param_private.c
+    /// installs for each type (`pps_unsetfn` line 312, `ppi_unsetfn`
+    /// line 352, etc.). Honours `PM_READONLY` the same way the C
+    /// source does.
     pub fn remove(&mut self, name: &str) -> bool {
         if let Some(param) = self.params.get(name) {
             if param.readonly {
@@ -117,7 +160,10 @@ impl PrivateScope {
         self.params.remove(name).is_some()
     }
 
-    /// List all private parameters at current level
+    /// List all private parameters at current level.
+    /// Equivalent to the `bin_private()`-with-no-args walk in
+    /// Src/Modules/param_private.c:217 — the C source `scanhashtable`s
+    /// `paramtab` and prints private entries at the current level.
     pub fn list_current(&self) -> Vec<&PrivateParam> {
         self.params
             .values()
@@ -125,13 +171,20 @@ impl PrivateScope {
             .collect()
     }
 
-    /// List all private parameters
+    /// List all private parameters across every scope level.
+    /// Closest C analog is the full `paramtab` walk Src/Modules/
+    /// param_private.c does internally for the `private -p` debug
+    /// path; mostly used for tests.
     pub fn list_all(&self) -> Vec<&PrivateParam> {
         self.params.values().collect()
     }
 }
 
-/// Execute private builtin
+/// `private` builtin entry point.
+/// Port of `bin_private()` from Src/Modules/param_private.c:217.
+/// With no args lists private parameters at the current scope;
+/// with args parses `-i`/`-F`/`-a`/`-A`/`-r` flags and installs
+/// each named parameter via `makeprivate()` (line 80).
 pub fn builtin_private(args: &[&str], scope: &mut PrivateScope) -> (i32, String) {
     if args.is_empty() {
         let params = scope.list_current();
