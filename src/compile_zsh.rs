@@ -728,18 +728,33 @@ impl ZshCompiler {
         // zsh prefixes "no such variable" errors with the builtin name the
         // user actually typed. Route `declare` to BUILTIN_DECLARE so the
         // distinct error-format path fires.
-        let builtin_id = if first == "shopt" {
+        //
+        // The lookup uses the UNTOKENIZED first word so quoted command
+        // names (`'builtin'`, `"echo"`) resolve to their builtins. zsh
+        // strips quotes before the builtin/function dispatch, only
+        // disabling alias expansion. Without this untokenize, p10k's
+        // `'builtin' 'local' '-a' 'arr'` failed with `command not found:
+        // builtin` because the lookup table didn't contain the SNULL-
+        // wrapped form `\u{9d}builtin\u{9d}`.
+        let first_clean = crate::lexer::untokenize(first);
+        let builtin_id = if first == "shopt" || first_clean == "shopt" {
             None
-        } else if first == "declare" {
+        } else if first == "declare" || first_clean == "declare" {
             Some(fusevm::shell_builtins::BUILTIN_DECLARE)
         } else {
+            // Try the raw form first (handles already-untokenized inputs
+            // from internal callers); fall back to the cleaned form so
+            // quoted command names resolve.
             fusevm::shell_builtins::builtin_id(first)
+                .or_else(|| fusevm::shell_builtins::builtin_id(&first_clean))
         };
         if let Some(builtin_id) = builtin_id {
             self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
             // `return`/`exit` short-circuit.
-            if first == "return" || first == "exit" {
+            if first == "return" || first == "exit"
+                || first_clean == "return" || first_clean == "exit"
+            {
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
             } else {
@@ -1067,23 +1082,27 @@ impl ZshCompiler {
             }
         }
         // Single-quoted: word contains SNULL markers wrapping a literal
-        // segment. Two cases:
+        // segment. Three shapes — only the first two take the literal
+        // shortcut:
         //
         //   1. The whole value is one single-quoted span — e.g.
         //      `y='hello'` → `<SNULL>hello<SNULL>`. Take the literal
         //      shortcut: no expansion needed, no $/glob/brace meta.
         //
-        //   2. Mixed: a single-quoted segment is embedded INSIDE a
-        //      larger unquoted/expansion-bearing word — e.g.
-        //      `y=${x:-'foo'}` → `${x:-<SNULL>foo<SNULL>}`. Here the
-        //      SNULLs only mark the inner literal; the surrounding
-        //      `${...}` still needs runtime parameter expansion.
-        //      Falling through to the literal shortcut would emit
-        //      `${x:-foo}` as the variable value with no expansion.
+        //   2. `NAME=<SNULL>…<SNULL>` — a `typeset`/`local`/`export`
+        //      argument (or any arg shaped like an assignment) where
+        //      the value is fully single-quoted. zsh preserves the
+        //      quoting semantics across the `=`; the value after `=`
+        //      stays verbatim regardless of `$VAR` content. Without
+        //      this, `typeset -gr x='$VAR'` emitted `x=` (the `$VAR`
+        //      got expanded as if unquoted) — broke p10k's
+        //      `typeset -gr __p9k_intro_locale='[[ $langinfo... ]]'`.
         //
-        // Distinguish by checking whether the SNULLs span the entire
-        // value (start AND end with SNULL, no other unquoted content).
-        // If yes → literal. Otherwise → fall through to expand path.
+        //   3. Mixed: a single-quoted segment embedded INSIDE a
+        //      larger unquoted/expansion-bearing word — e.g.
+        //      `y=${x:-'foo'}` → `${x:-<SNULL>foo<SNULL>}`. Falls
+        //      through to the runtime expand path so the surrounding
+        //      `${…}` still resolves while the SQ body stays literal.
         if s.contains('\u{9d}') {
             let trimmed = s.trim_matches(|c: char| c.is_whitespace());
             let whole_sq = trimmed.starts_with('\u{9d}')
@@ -1094,6 +1113,56 @@ impl ZshCompiler {
                 let idx = self.builder.add_constant(Value::str(cleaned.as_str()));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 return;
+            }
+            // `NAME=<SNULL>…<SNULL>` — assignment-arg shape with a
+            // fully-SQ value. The lexer represents the `=` either as
+            // its META code (EQUALS = `\u{8d}`) or as a literal `=`
+            // depending on context; accept both. Char-aware scan so
+            // the multi-byte SNULL/EQUALS markers don't trip the
+            // byte-index slice path.
+            let trimmed_chars: Vec<char> = trimmed.chars().collect();
+            let eq_pos = trimmed_chars
+                .iter()
+                .position(|&c| c == '=' || c == '\u{8d}');
+            if let Some(eq_idx) = eq_pos {
+                let prefix: String = trimmed_chars[..eq_idx].iter().collect();
+                let value: String = trimmed_chars[eq_idx + 1..].iter().collect();
+                // Optional `+` for `+=` append form.
+                let (prefix_clean, append) = if let Some(p) = prefix.strip_suffix('+') {
+                    (p.to_string(), true)
+                } else {
+                    (prefix.clone(), false)
+                };
+                let prefix_is_ident = !prefix_clean.is_empty()
+                    && prefix_clean
+                        .chars()
+                        .next()
+                        .map(|c| c == '_' || c.is_ascii_alphabetic())
+                        .unwrap_or(false)
+                    && prefix_clean
+                        .chars()
+                        .all(|c| c == '_' || c.is_ascii_alphanumeric());
+                let value_chars: Vec<char> = value.chars().collect();
+                let value_is_whole_sq = value_chars.len() >= 2
+                    && value_chars[0] == '\u{9d}'
+                    && *value_chars.last().unwrap() == '\u{9d}'
+                    && value_chars.iter().filter(|&&c| c == '\u{9d}').count() == 2;
+                if prefix_is_ident && value_is_whole_sq {
+                    // Strip the SNULLs from the value, keep `name=` /
+                    // `name+=` literal, emit the joined string as one
+                    // constant.
+                    let inner: String = value_chars[1..value_chars.len() - 1].iter().collect();
+                    let mut out = String::with_capacity(prefix_clean.len() + 2 + inner.len());
+                    out.push_str(&prefix_clean);
+                    if append {
+                        out.push('+');
+                    }
+                    out.push('=');
+                    out.push_str(&inner);
+                    let idx = self.builder.add_constant(Value::str(out.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    return;
+                }
             }
             // Mixed: fall through. The runtime expand path needs to
             // see the SNULL-bounded segments as literal islands while
