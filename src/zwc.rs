@@ -174,16 +174,24 @@ pub(crate) fn untokenize(bytes: &[u8]) -> String {
     result
 }
 
+/// Extract the opcode portion of a wordcode word.
+/// Port of the `wc_code()` macro from Src/zsh.h.
 #[inline]
 pub fn wc_code(c: u32) -> u32 {
     c & ((1 << WC_CODEBITS) - 1)
 }
 
+/// Extract the data portion of a wordcode word.
+/// Port of the `wc_data()` macro from Src/zsh.h.
 #[inline]
 pub fn wc_data(c: u32) -> u32 {
     c >> WC_CODEBITS
 }
 
+/// `.zwc` file header.
+/// Port of `struct fdhead` from Src/parse.c — the C source's
+/// `bld_eprog()` (line 547) writes this layout when persisting a
+/// compiled function to a `.zwc` cache file.
 #[derive(Debug)]
 pub struct ZwcHeader {
     pub magic: u32,
@@ -193,6 +201,10 @@ pub struct ZwcHeader {
     pub other_offset: u32,
 }
 
+/// One function's directory entry inside a `.zwc` file.
+/// Port of `struct fdname` from Src/parse.c — `bld_eprog()`
+/// (line 547) emits one entry per function autoloaded from the
+/// cache.
 #[derive(Debug)]
 pub struct ZwcFunction {
     pub name: String,
@@ -203,6 +215,10 @@ pub struct ZwcFunction {
     pub flags: u32,
 }
 
+/// A loaded `.zwc` file.
+/// Aggregates the header / function-table / wordcode / strings the
+/// C source's `try_source_file()` (Src/init.c) reads from a `.zwc`
+/// before caching the parsed eprog.
 #[derive(Debug)]
 pub struct ZwcFile {
     pub header: ZwcHeader,
@@ -383,7 +399,10 @@ impl ZwcFile {
     }
 }
 
-/// Builder for creating ZWC files
+/// Builder for emitting `.zwc` files.
+/// Port of `bld_eprog()` from Src/parse.c:547 — accumulates
+/// function source / wordcode / strings, then writes them out in
+/// the canonical layout `try_source_file()` (Src/init.c) reads.
 #[derive(Debug)]
 pub struct ZwcBuilder {
     functions: Vec<(String, Vec<u8>)>, // (name, source code)
@@ -493,12 +512,21 @@ impl ZwcBuilder {
     }
 }
 
+/// Decoded function body (one entry per `.zwc` directory entry).
+/// zshrs convenience for tooling (`zshrs zwc dump`); C zsh just
+/// re-eprogs from the wordcode (Src/parse.c) without exposing the
+/// per-op tree.
 #[derive(Debug, Clone)]
 pub struct DecodedFunction {
     pub name: String,
     pub body: Vec<DecodedOp>,
 }
 
+/// Decoded wordcode op variants.
+/// Mirrors the `WC_*` opcode dispatch tree the C source uses
+/// across Src/exec.c (`exectree()`) and Src/text.c
+/// (`gettext2()`). Each variant corresponds to one of the C
+/// source's `WC_*` opcodes.
 #[derive(Debug, Clone)]
 pub enum DecodedOp {
     End,
@@ -608,6 +636,10 @@ pub enum DecodedOp {
     },
 }
 
+/// Wordcode-byte cursor for decoding `.zwc` blobs.
+/// Inverse of the C source's `bld_eprog()` (Src/parse.c:547) —
+/// walks the same WC_* dispatch tree as `gettext2()` (Src/text.c)
+/// but emits the typed `DecodedOp` AST instead of source text.
 pub struct WordcodeDecoder<'a> {
     code: &'a [u32],
     strings: &'a [u8],
@@ -1127,6 +1159,10 @@ impl<'a> WordcodeDecoder<'a> {
     }
 }
 
+/// Dump the function table + header info from a `.zwc` file.
+/// zshrs-original tooling — C zsh has no `zcompile -t` for this;
+/// `zsh -c '. file.zwc'` is the only consumer. The `zshrs zwc`
+/// dump path was added so test scaffolding can inspect zwc layout.
 pub fn dump_zwc_info<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let zwc = ZwcFile::load(&path)?;
 
@@ -1155,6 +1191,8 @@ pub fn dump_zwc_info<P: AsRef<Path>>(path: P) -> io::Result<()> {
     Ok(())
 }
 
+/// Dump one named function's decoded body from a `.zwc` file.
+/// zshrs-original tooling.
 pub fn dump_zwc_function<P: AsRef<Path>>(path: P, func_name: &str) -> io::Result<()> {
     let zwc = ZwcFile::load(&path)?;
 

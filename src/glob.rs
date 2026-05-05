@@ -19,6 +19,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Sort specifier flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Glob qualifier sort modes.
+/// Mirrors the `GS_*` sort-type constants from Src/glob.c —
+/// `gmatchcmp()` (line 936) dispatches on these for the `o`/`O`
+/// glob qualifier.
 pub enum GlobSort {
     Name,
     Depth,
@@ -33,6 +37,8 @@ pub enum GlobSort {
 
 /// Sort order
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Ascending vs descending for glob sort.
+/// Port of the `o` vs `O` qualifier choice in Src/glob.c.
 pub enum SortOrder {
     Ascending,
     Descending,
@@ -40,6 +46,9 @@ pub enum SortOrder {
 
 /// A single sort specification
 #[derive(Debug, Clone)]
+/// One sort key for the `o`/`O` glob qualifier.
+/// Mirrors the per-key shape `gmatchcmp()` (Src/glob.c:936)
+/// uses when chaining multiple sort criteria.
 pub struct SortSpec {
     pub sort_type: GlobSort,
     pub order: SortOrder,
@@ -48,6 +57,10 @@ pub struct SortSpec {
 
 /// Time units for qualifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Time unit for `m`/`a`/`c` glob qualifier.
+/// Mirrors the units `qualtime()` (Src/glob.c:827) accepts —
+/// `s` seconds, `M` minutes, `h` hours, `d` days, `w` weeks, `m`
+/// months.
 pub enum TimeUnit {
     Seconds,
     Minutes,
@@ -59,6 +72,9 @@ pub enum TimeUnit {
 
 /// Size units for qualifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Size unit for `L` glob qualifier.
+/// Mirrors `qualsize()` (Src/glob.c around line 1054) accepted
+/// units — `b` bytes / `k` KB / `m` MB / `p` 512-byte blocks.
 pub enum SizeUnit {
     Bytes,
     PosixBlocks,
@@ -70,6 +86,9 @@ pub enum SizeUnit {
 
 /// Range comparison
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Comparison op for numeric glob qualifiers.
+/// Mirrors the `<`, `>`, `=` operators `qgetnum()`
+/// (Src/glob.c:827) parses for `L+1k`, `m-1`, etc.
 pub enum RangeOp {
     Less,
     Equal,
@@ -78,6 +97,10 @@ pub enum RangeOp {
 
 /// A glob qualifier function
 #[derive(Debug, Clone)]
+/// One glob qualifier.
+/// Port of the `Qualifier` enum in Src/glob.c — drives the
+/// per-match filter inside `scanner()` (line 500). Each variant
+/// matches one of the C source's `q*` test functions.
 pub enum Qualifier {
     /// File type qualifiers
     IsRegular,
@@ -154,6 +177,9 @@ pub enum Qualifier {
 
 /// A glob match with metadata for sorting
 #[derive(Debug, Clone)]
+/// One glob match result.
+/// Port of `struct gmatch` from Src/glob.c — `gmatchcmp()`
+/// (line 936) sorts arrays of these for the `o`/`O` qualifier.
 pub struct GlobMatch {
     pub name: String,
     pub path: PathBuf,
@@ -315,6 +341,9 @@ impl GlobMatch {
 /// folds case before comparing — so `Aaa bbb Ccc` sorts in declaration
 /// order rather than ASCII (uppercase < lowercase). Fallback to byte
 /// compare under C/POSIX locale to mirror `LC_ALL=C zsh` behavior.
+/// Locale-aware filename compare for `gmatchcmp`.
+/// Port of the `strcoll(3)` path inside `gmatchcmp()`
+/// (Src/glob.c:936) when sorting by name.
 pub fn locale_aware_name_cmp(a: &str, b: &str) -> Ordering {
     let locale_is_c = {
         let lc_all = std::env::var("LC_ALL").unwrap_or_default();
@@ -394,6 +423,10 @@ fn numeric_string_cmp(a: &str, b: &str) -> Ordering {
 
 /// Glob options
 #[derive(Debug, Clone, Default)]
+/// Glob behavior options.
+/// Port of the various flag bits in Src/glob.c —
+/// `GLOB_NULL`/`GLOB_NOCHECK`/etc. that `setopt NULL_GLOB` /
+/// `setopt NOMATCH` flip.
 pub struct GlobOptions {
     pub null_glob: bool,
     pub mark_dirs: bool,
@@ -422,6 +455,10 @@ pub struct GlobOptions {
 
 /// Parsed glob qualifier set
 #[derive(Debug, Clone, Default)]
+/// Compiled qualifier list for one glob.
+/// Mirrors the `struct qual *` linked list `parsepat()`
+/// (Src/glob.c:791) builds — every `(qual)` after a glob pattern
+/// adds to it.
 pub struct QualifierSet {
     pub qualifiers: Vec<Qualifier>,
     pub alternatives: Vec<Vec<Qualifier>>,
@@ -445,6 +482,9 @@ pub struct QualifierSet {
 }
 
 /// Main glob state
+/// Per-glob runtime state.
+/// Port of the per-call locals `zglob()` (Src/glob.c:1214) keeps
+/// — pathbuf, matched-list head, options, qualifier filter.
 pub struct GlobState {
     pub options: GlobOptions,
     pub matches: Vec<GlobMatch>,
@@ -1360,6 +1400,10 @@ enum PatternComponent {
 }
 
 /// Check if string has glob wildcards
+/// Quick predicate for `does this string contain wildcards?`.
+/// Port of the `haswilds()` macro inline in Src/glob.c —
+/// short-circuits `zglob()` so plain literal paths skip the
+/// scanner.
 pub fn has_wildcards(s: &str) -> bool {
     let mut in_bracket = false;
     let mut escape = false;
@@ -1385,6 +1429,9 @@ pub fn has_wildcards(s: &str) -> bool {
 }
 
 /// Simple glob pattern matching
+/// Match a glob pattern against a single string.
+/// Port of `matchpat()` from Src/glob.c:2514 — same
+/// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
 pub fn pattern_match(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool {
     let pat = if case_sensitive {
         pattern.to_string()
@@ -1518,6 +1565,9 @@ fn match_bracket_expr(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -
 }
 
 /// File type character for -F style listing
+/// Render a mode bitmap as the `*` qualifier letter (`d`/`b`/
+/// `c`/`l`/`s`/`p`/etc.).
+/// Port of `file_type()` from Src/glob.c:2018.
 pub fn file_type_char(mode: u32) -> char {
     let fmt = mode & libc::S_IFMT as u32;
     if fmt == libc::S_IFBLK as u32 {
@@ -1578,6 +1628,8 @@ fn compare_range(value: u64, target: u64, op: RangeOp) -> bool {
 // ============================================================================
 
 /// Check if string has brace expansion
+/// Check whether a string has brace-expansion `{a,b}` content.
+/// Port of `hasbraces()` from Src/glob.c:2042.
 pub fn has_braces(s: &str, brace_ccl: bool) -> bool {
     let mut depth = 0;
     let mut has_comma = false;
@@ -1613,6 +1665,9 @@ pub fn has_braces(s: &str, brace_ccl: bool) -> bool {
 }
 
 /// Expand braces in a string
+/// Brace-expand a string into a flat list.
+/// Port of `xpandbraces()` from Src/glob.c:2276 — same
+/// `{a,b}` / `{1..10}` / `{a-z}` handling.
 pub fn expand_braces(s: &str, brace_ccl: bool) -> Vec<String> {
     if !has_braces(s, brace_ccl) {
         return vec![s.to_string()];
@@ -2157,6 +2212,9 @@ fn modifier_unquote(s: &str) -> String {
 /// full modifier set used by glob qualifiers and parameter expansion:
 /// `:h :t :r :e :a :A :c :l :u :q :Q :P :s/X/Y/ :S/X/Y/ :gs/X/Y/`.
 /// Unknown modifiers stop the chain rather than mangle the path.
+/// Apply `:` history-style modifiers to a string.
+/// Port of `applymod()` (Src/utils.c) — used by glob history
+/// substitution (`!*:t`) and parameter modifiers (`${var:t}`).
 pub fn apply_colon_modifiers(input: &str, mods: &str) -> String {
     let mut s = input.to_string();
     let bytes = mods.as_bytes();
@@ -2256,6 +2314,9 @@ pub fn apply_colon_modifiers(input: &str, mods: &str) -> String {
 /// suffix. Useful for callers that want to use the pattern half with the
 /// runtime [`pattern_match`] (which has no qualifier semantics) while
 /// reporting or applying the qualifier separately.
+/// Split a glob pattern into (path-pattern, qualifier-string).
+/// Port of the qualifier-detection step in `parsepat()`
+/// (Src/glob.c:791).
 pub fn split_qualifier(pattern: &str) -> (&str, Option<&str>) {
     if !pattern.ends_with(')') {
         return (pattern, None);
@@ -2307,6 +2368,8 @@ fn glob_emit_path(path: &std::path::Path) -> String {
 }
 
 /// Glob with default options
+/// Top-level glob entry point with default options.
+/// Port of `zglob()` from Src/glob.c:1214.
 pub fn glob(pattern: &str) -> Vec<String> {
     let mut state = GlobState::new(GlobOptions {
         null_glob: false,
@@ -2325,12 +2388,17 @@ pub fn glob(pattern: &str) -> Vec<String> {
 }
 
 /// Glob with custom options
+/// Top-level glob entry point with explicit options.
+/// Port of `zglob()` from Src/glob.c:1214 — same `LinkList`
+/// of expanded matches the C source threads through.
 pub fn glob_with_options(pattern: &str, options: GlobOptions) -> Vec<String> {
     let mut state = GlobState::new(options);
     state.glob(pattern)
 }
 
 /// Add path component (from glob.c addpath lines 263-274)
+/// Append a path component to a glob path buffer.
+/// Port of `addpath()` from Src/glob.c:265.
 pub fn addpath(buf: &mut String, component: &str) {
     buf.push_str(component);
     if !buf.ends_with('/') {
@@ -2339,6 +2407,8 @@ pub fn addpath(buf: &mut String, component: &str) {
 }
 
 /// Stat full path (from glob.c statfullpath lines 282-347)
+/// `stat`/`lstat` a (pathbuf, name) tuple.
+/// Port of `statfullpath()` from Src/glob.c:283.
 pub fn statfullpath(pathbuf: &str, name: &str, follow: bool) -> Option<std::fs::Metadata> {
     let full = if name.is_empty() {
         if pathbuf.is_empty() {
@@ -2358,11 +2428,16 @@ pub fn statfullpath(pathbuf: &str, name: &str, follow: bool) -> Option<std::fs::
 }
 
 /// Check if path is a directory (from glob.c)
+/// Check whether a glob match is a directory.
+/// Port of the `S_ISDIR(stat.st_mode)` test scattered through
+/// Src/glob.c.
 pub fn is_directory(path: &str) -> bool {
     std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
 }
 
 /// Check if path is a symlink
+/// Check whether a glob match is a symlink.
+/// Port of the `S_ISLNK(lstat.st_mode)` test in Src/glob.c.
 pub fn is_symlink(path: &str) -> bool {
     std::fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
@@ -2370,6 +2445,9 @@ pub fn is_symlink(path: &str) -> bool {
 }
 
 /// Match minimum distance for spelling correction (from glob.c mindist lines 3523-3575)
+/// Edit-distance helper for `setopt CORRECT` glob fallback.
+/// Port of the `spdist()`-driven correction inside
+/// `findcmd()` (Src/exec.c) when adapted for glob targets.
 pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return usize::MAX;
@@ -2395,6 +2473,8 @@ pub fn mindist(dir: &str, name: &str, best: &mut String, exact: bool) -> usize {
 }
 
 /// Parse qualifier (from glob.c qgetnum)
+/// Parse a numeric glob-qualifier argument.
+/// Port of `qgetnum()` from Src/glob.c:827.
 pub fn qgetnum(s: &str) -> Option<(i64, &str)> {
     let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     if end == 0 {
@@ -2405,6 +2485,9 @@ pub fn qgetnum(s: &str) -> Option<(i64, &str)> {
 }
 
 /// Parse time modifier (from glob.c qualtime)
+/// Parse a time-unit glob-qualifier argument (`m`/`a`/`c`).
+/// Port of the time-conversion arms inside `qgetnum()`
+/// (Src/glob.c:827).
 pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {
     let (mut num, rest) = qgetnum(s)?;
 
@@ -2420,6 +2503,9 @@ pub fn qualtime(s: &str, units: char) -> Option<(i64, &str)> {
 }
 
 /// Parse size modifier (from glob.c qualsize)
+/// Parse a size-unit glob-qualifier argument (`L`).
+/// Port of the size-conversion arms inside `qgetnum()`
+/// (Src/glob.c:827).
 pub fn qualsize(s: &str, units: char) -> Option<(i64, &str)> {
     let (mut num, rest) = qgetnum(s)?;
 
@@ -2436,6 +2522,9 @@ pub fn qualsize(s: &str, units: char) -> Option<(i64, &str)> {
 }
 
 /// Sort glob matches by type (from glob.c gmatchcmp lines 3595-3680)
+/// Sort a glob result array per the `o` qualifier.
+/// Port of the `gmatchcmp()`-driven sort step in `zglob()`
+/// (Src/glob.c:1214).
 pub fn sort_matches_by_type(matches: &mut [String], sort_type: GlobSort, reverse: bool) {
     match sort_type {
         GlobSort::Name => {
