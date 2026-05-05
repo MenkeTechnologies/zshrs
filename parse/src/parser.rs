@@ -355,6 +355,12 @@ pub enum VarModifier {
     RemoveSuffixLong(ShellWord),
     Replace(ShellWord, ShellWord),
     ReplaceAll(ShellWord, ShellWord),
+    /// `${var/#pat/repl}` — anchored at start (prefix only).
+    /// Per Src/subst.c paramsubst's `/`-arm with SUB_START.
+    ReplacePrefix(ShellWord, ShellWord),
+    /// `${var/%pat/repl}` — anchored at end (suffix only).
+    /// Per Src/subst.c paramsubst's `/`-arm with SUB_END.
+    ReplaceSuffix(ShellWord, ShellWord),
     Upper,
     Lower,
 }

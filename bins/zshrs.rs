@@ -705,13 +705,43 @@ pub fn zshrs_main() {
         // passing argv[0] through unchanged (was previously
         // basename-stripped, which lost the full path zsh exposes).
         let zero = args[0].clone();
-        executor.variables.insert("0".to_string(), zero);
+        executor.variables.insert("0".to_string(), zero.clone());
 
-        // Skip-configs apply: same gate as the interactive path.
-        // `-c` doesn't source dotfiles in vanilla zsh either, but
-        // when the daemon is up + has zshrs canonical state, we
-        // apply it here so `zshrs -c 'gst'` resolves the alias the
-        // same way an interactive shell would.
+        // Per Src/init.c:479 — `-c` mode hardcodes
+        //   `scriptname = scriptfilename = ztrdup("zsh")`
+        // (literal short name, NOT argzero). Mirror with the binary
+        // basename so prompt-expansion `%N` / `%x` produce `zshrs`
+        // instead of the full debug-binary path. `$0` is unaffected
+        // — it stays as argv[0] full path, matching zsh.
+        let basename = std::path::Path::new(&zero)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.trim_start_matches('-').to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "zshrs".to_string());
+        executor.scriptname = Some(basename);
+
+        // Source zshenv per Src/init.c:1473 (GLOBAL_ZSHENV) +
+        // Src/init.c:1489 (`sourcehome(".zshenv")`). C zsh sources
+        // both /etc/zshenv (always) and ~/.zshenv (when RCS is set
+        // and not PRIVILEGED) BEFORE running the `-c` cmd through
+        // `execstring(cmd, …)` at init.c:1535. Skipping zshenv broke
+        // any user setup that exports env (PS4, PATH, locale, …)
+        // from .zshenv — a `zshrs -fx -c '…'` invocation showed the
+        // C-default `+%N:%i> ` prefix instead of the user's PS4.
+        //
+        // login + interactive RC files (zprofile / zshrc / zlogin)
+        // are NOT sourced in `-c` mode, matching the C source's
+        // `if (islogin)` / `if (interact)` gates at init.c:1491,
+        // 1499, 1507 — `-c` is non-interactive non-login.
+        source_startup_files(&mut executor, false, false, no_rcs_flag);
+
+        // Skip-configs apply: when the daemon is up + has zshrs
+        // canonical state, apply it here so `zshrs -c 'gst'`
+        // resolves the alias the same way an interactive shell
+        // would. This runs AFTER zshenv so user env wins on
+        // collision (canonical state seeds defaults; `.zshenv` is
+        // the user's authoritative source).
         #[cfg(feature = "daemon")]
         if zsh::daemon_presence::should_skip_configs() {
             let _applied = zsh::canonical_apply::apply_all(&mut executor);
@@ -1193,6 +1223,17 @@ fn run_non_interactive() {
     if is_posix_mode() {
         executor.enter_posix_mode();
     }
+    // Apply -x / -v from argv. Same wiring as the `-c` and
+    // script-file paths — without this, `cmd | zshrs -x` (stdin
+    // pipe, no -c, no script) silently runs without xtrace because
+    // stdin-not-tty bypasses run_interactive.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.iter().any(|a| a == "-x" || a == "--xtrace") {
+        executor.options.insert("xtrace".to_string(), true);
+    }
+    if argv.iter().any(|a| a == "-v" || a == "--verbose") {
+        executor.options.insert("verbose".to_string(), true);
+    }
     // Read all of stdin at once so multi-line constructs (heredocs, functions,
     // loops, etc.) are parsed correctly — line-by-line breaks them.
     let mut script = String::new();
@@ -1434,6 +1475,14 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
     } else {
         None
     };
+    // Port of `source()` scriptname swap from Src/init.c:1591
+    // (`scriptname = s; scriptfilename = s;`). Drives `%N` / `%x`
+    // prompt expansion (and the corresponding xtrace prefix line)
+    // to show the sourced file path during the source body, then
+    // restore the prior value on exit. The C source pairs this
+    // with the argzero swap above — both are in flight together.
+    let saved_scriptname = executor.scriptname.take();
+    executor.scriptname = Some(path.to_string_lossy().to_string());
 
     // Parse and execute the entire file as one stream — port of
     // C `source()` → `loop(0, 0)` (Src/init.c:1551, 1627). The
@@ -1460,6 +1509,8 @@ fn source_from_memory(executor: &mut ShellExecutor, path: &Path, contents: &str)
             }
         }
     }
+    // Restore scriptname per Src/init.c source() exit path.
+    executor.scriptname = saved_scriptname;
 }
 
 /// Source a file
@@ -1680,6 +1731,21 @@ fn run_interactive() {
 
     // -f: don't source startup files (except /etc/zshenv which is ALWAYS read)
     let no_rcs = args.iter().any(|a| a == "-f" || a == "--no-rcs");
+
+    // -x / --xtrace: print each command before executing. zsh's
+    // `setopt XTRACE` is wired identically across `-c`, script-file,
+    // and interactive modes; the previous interactive-only branch
+    // skipped this flag so `zshrs -x` (no -c, no script) silently
+    // ran without xtrace. Mirror what apply_cli_flags does in the
+    // other modes — set the option BEFORE source_startup_files so
+    // every line of `.zshenv` / `.zshrc` is also traced, matching
+    // `zsh -x` (which sets XTRACE before init scripts run).
+    if args.iter().any(|a| a == "-x" || a == "--xtrace") {
+        executor.options.insert("xtrace".to_string(), true);
+    }
+    if args.iter().any(|a| a == "-v" || a == "--verbose") {
+        executor.options.insert("verbose".to_string(), true);
+    }
 
     // Login shell detection:
     // - explicit -l or --login flag

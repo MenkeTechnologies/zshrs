@@ -126,7 +126,12 @@ pub mod stat;
 pub mod string_port;
 pub mod stringsort;
 pub mod subscript;
-pub mod subst;
+// `pub mod subst` removed — the adhoc `subst.rs` was a parallel
+// re-implementation of paramsubst that bypassed `subst_port.rs`
+// (the actual C port). Per the "subst_port is the only paramsubst"
+// directive, the adhoc file is deleted; `casemodify` / `CaseMod`
+// (the only utilities other code imported from `subst::`) now live
+// in `subst_port`.
 pub mod subst_port;
 pub mod system;
 pub mod tcp;

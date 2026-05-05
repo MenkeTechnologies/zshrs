@@ -373,19 +373,35 @@ fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<String> {
 /// If no flag block is present, the input pattern is returned unchanged
 /// with all flags off.
 fn parse_pattern_flags(pat: &str) -> (String, bool, bool, Option<usize>) {
+    let (rest, case_i, l, approx, _backref) = parse_pattern_flags_full(pat);
+    (rest, case_i, l, approx)
+}
+
+/// Full pattern-flag parser that also reports the `(#b)` backref-
+/// capture flag in addition to the four flags `parse_pattern_flags`
+/// returns. Used by `BUILTIN_PARAM_REPLACE` to enable
+/// `${match[N]}` backreference population. Per zshexpn(1):
+///   `(#b)` — capture each `(...)` group in the pattern; on match,
+///            $match[N] holds capture N (1-based), $mbegin / $mend
+///            hold start/end positions.
+///   `(#B)` — turn it off (default).
+fn parse_pattern_flags_full(
+    pat: &str,
+) -> (String, bool, bool, Option<usize>, bool) {
     if !pat.starts_with("(#") {
-        return (pat.to_string(), false, false, None);
+        return (pat.to_string(), false, false, None, false);
     }
     let after = &pat[2..];
     let close = match after.find(')') {
         Some(i) => i,
-        None => return (pat.to_string(), false, false, None),
+        None => return (pat.to_string(), false, false, None, false),
     };
     let flag_str = &after[..close];
     let rest = &after[close + 1..];
     let mut case_i = false;
     let mut l = false;
     let mut approx: Option<usize> = None;
+    let mut backref = false;
     let bytes = flag_str.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -402,9 +418,15 @@ fn parse_pattern_flags(pat: &str) -> (String, bool, bool, Option<usize>) {
                 l = true;
                 i += 1;
             }
+            b'b' => {
+                backref = true;
+                i += 1;
+            }
+            b'B' => {
+                backref = false;
+                i += 1;
+            }
             b'a' => {
-                // `a` may be followed by digits indicating max errors;
-                // bare `a` defaults to 1.
                 i += 1;
                 let start = i;
                 while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -418,13 +440,11 @@ fn parse_pattern_flags(pat: &str) -> (String, bool, bool, Option<usize>) {
                 approx = Some(n);
             }
             _ => {
-                // Unknown flag — bail out, treat the whole thing as
-                // literal pattern (don't strip).
-                return (pat.to_string(), false, false, None);
+                return (pat.to_string(), false, false, None, false);
             }
         }
     }
-    (rest.to_string(), case_i, l, approx)
+    (rest.to_string(), case_i, l, approx, backref)
 }
 
 /// Approximate match: returns true if `s` matches `pat` with up to `n`
@@ -3658,17 +3678,17 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 'C' => {
                     // `(C)` — capitalize. Direct port of
                     // src/zsh/Src/hist.c:2239-2256 CASMOD_CAPS via
-                    // crate::subst::casemodify. Treats any non-
+                    // crate::subst_port::casemodify. Treats any non-
                     // alphanumeric (including punctuation, control
                     // chars, NOT just whitespace) as a word boundary
                     // and lowercases mid-word uppercase letters.
                     state = match state {
                         St::S(s) => {
-                            St::S(crate::subst::casemodify(&s, crate::subst::CaseMod::Caps))
+                            St::S(crate::subst_port::casemodify(&s, crate::subst_port::CaseMod::Caps))
                         }
                         St::A(a) => St::A(
                             a.into_iter()
-                                .map(|s| crate::subst::casemodify(&s, crate::subst::CaseMod::Caps))
+                                .map(|s| crate::subst_port::casemodify(&s, crate::subst_port::CaseMod::Caps))
                                 .collect(),
                         ),
                     };
@@ -5871,12 +5891,67 @@ fn register_builtins(vm: &mut fusevm::VM) {
         });
         let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
         if on {
-            let prefix = with_executor(|exec| {
-                exec.variables
-                    .get("PS4")
-                    .cloned()
-                    .unwrap_or_else(|| "+ ".to_string())
+            // Port of `printprompt4()` from Src/utils.c:1718-1735. The C
+            // source: take `prompt4`, temporarily clear opt[XTRACE] so
+            // the expansion itself doesn't recurse into xtrace
+            // (`opts[XTRACE] = 0; promptexpand(...); opts[XTRACE] = t`),
+            // then write the expanded result to xtrerr (stderr).
+            //
+            // Default `prompt4` per Src/init.c:1192-1193:
+            //   ksh / sh emulation → `+ `
+            //   zsh (default)      → `+%N:%i> `
+            //
+            // `%N` resolves via PromptContext.scriptname (or argzero
+            // fallback per Src/prompt.c:554-556); `%i` is the current
+            // input line number (PromptContext.lineno).
+            let (prefix_template, ctx, posix_mode) = with_executor(|exec| {
+                let posix = exec
+                    .options
+                    .get("kshemulation")
+                    .copied()
+                    .unwrap_or(false)
+                    || exec.options.get("shemulation").copied().unwrap_or(false)
+                    || exec.posix_mode;
+                // C zsh aliases `PS4` and `PROMPT4` to the same
+                // underlying `&prompt4` global (Src/params.c:381 +
+                // 421 — `IPDEF7R("PS4", &prompt4)` and
+                // `IPDEF7("PROMPT4", &prompt4)`). Until zshrs grows a
+                // generic parameter-alias mechanism, mirror the
+                // C-source semantics here by checking both names in
+                // both the in-shell variables hash and the OS env.
+                // Otherwise an exported `PROMPT4=…` from the parent
+                // shell silently fails to set PS4 and xtrace falls
+                // back to the C-default `+%N:%i> ` prefix.
+                let lookup = |name: &str| -> Option<String> {
+                    exec.variables
+                        .get(name)
+                        .cloned()
+                        .or_else(|| std::env::var(name).ok())
+                };
+                let template = lookup("PS4")
+                    .or_else(|| lookup("PROMPT4"))
+                    .unwrap_or_else(|| {
+                        if posix {
+                            "+ ".to_string()
+                        } else {
+                            "+%N:%i> ".to_string()
+                        }
+                    });
+                (template, exec.build_prompt_context(), posix)
             });
+            // Suppress recursion: the prompt expander runs subshells
+            // for `%(?...)`, `${...}` etc.; with XTRACE still on we'd
+            // emit a trace of every expanded sub-command.
+            let saved = with_executor(|exec| {
+                let s = exec.options.get("xtrace").copied().unwrap_or(false);
+                exec.options.insert("xtrace".to_string(), false);
+                s
+            });
+            let prefix = crate::prompt::expand_prompt(&prefix_template, &ctx);
+            with_executor(|exec| {
+                exec.options.insert("xtrace".to_string(), saved);
+            });
+            let _ = posix_mode; // captured for symmetry; default already branched
             eprintln!("{}{}", prefix, cmd_text);
         }
         fusevm::Value::Status(0)
@@ -6525,12 +6600,6 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // `${var/%pat/repl}` — Pops [name, pattern, replacement, op_byte].
     // op: 0=first, 1=all, 2=anchor-prefix (`/#`), 3=anchor-suffix (`/%`).
     vm.register_builtin(BUILTIN_PARAM_REPLACE, |vm, _argc| {
-        // The compiler now passes `dq_flag` as the 5th arg so the
-        // runtime can distinguish DQ-wrapped (join-then-replace)
-        // from unquoted (per-element on arrays). Mirrors the same
-        // split as BUILTIN_PARAM_STRIP — zsh's pattern.c routes
-        // through getmatch (joined scalar) in DQ vs getmatcharr
-        // (per-element) otherwise.
         let dq_flag = vm.pop().to_int() != 0;
         let op = vm.pop().to_int() as u8;
         let repl_raw = vm.pop().to_str();
@@ -6540,7 +6609,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // arith expansion before use (zsh semantics — `${s/$pat/X}`
         // resolves $pat).
         let pattern = with_executor(|exec| exec.expand_string(&pattern_raw));
-        let repl = with_executor(|exec| exec.expand_string(&repl_raw));
+        // Replacement: parameter-substitute `$VAR` / `${VAR}` only,
+        // BUT preserve a leading `~` literal. Per zsh, the
+        // replacement in `${var/#pat/~}` is NOT tilde-expanded
+        // (otherwise the very idiom of replacing `$HOME` with `~`
+        // — used by p10k, oh-my-zsh, etc. — would produce the
+        // un-canonicalized path).
+        let repl = with_executor(|exec| expand_no_tilde(exec, &repl_raw));
         // Strip backslash escapes from the pattern. zsh: `\X` in a
         // ${var/pat/repl} pattern means "literal X" — the backslash
         // is removed and X is used as a literal char (regardless of
@@ -6576,13 +6651,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
             out
         };
-        // Inline pattern flags `(#i)` / `(#l)` / `(#I)` etc. apply
-        // to ${var//pat/repl} too, not just `[[ ... = pat ]]`.
-        // Direct port of zsh's pattern.c (compswitch) — same
-        // helper used by glob_match_static. Strip the prefix here
-        // and apply the flag(s) to the regex below.
-        let (pattern, case_insensitive_repl, _l_flag_repl, _approx_repl) =
-            parse_pattern_flags(&pattern);
+        // Inline pattern flags `(#i)` / `(#l)` / `(#I)` / `(#b)` apply
+        // to ${var//pat/repl}. `(#b)` enables backref capture: each
+        // `(...)` group in the pattern becomes accessible via
+        // `${match[N]}` (1-based) in the replacement. Per
+        // Src/pattern.c — the C source uses `pat_pure` flags +
+        // `pat_subme` arrays; the Rust port plumbs through
+        // `regex::Captures` and writes `state.arrays["match"]`
+        // before each replacement-string expansion.
+        let (pattern, case_insensitive_repl, _l_flag_repl, _approx_repl, backref_mode) =
+            parse_pattern_flags_full(&pattern);
         // zsh patterns in ${var/pat/repl} support `?`, `*`, `[...]`,
         // anchored `#`/`%` (handled via op codes 2/3). Compile to a
         // regex for the actual matching; falls back to plain string
@@ -6660,29 +6738,97 @@ fn register_builtins(vm: &mut fusevm::VM) {
         };
         let one = |val: String| -> String {
             if let Some(ref rx) = glob_re {
+                // Helper that runs ONE replacement: takes the
+                // captures, populates `state.arrays["match"]`
+                // (1-based indexing), then expands the replacement
+                // template via `expand_string` so `$match[N]` in
+                // the template resolves to the just-captured group.
+                // Mirrors C zsh's pat_subme + addbackref handling
+                // around Src/pattern.c (pattry, patmatch).
+                let expand_repl_with_caps = |caps: &regex::Captures| -> String {
+                    if backref_mode {
+                        with_executor(|exec| {
+                            let mut arr = Vec::with_capacity(caps.len());
+                            for i in 1..caps.len() {
+                                arr.push(
+                                    caps.get(i)
+                                        .map(|m| m.as_str().to_string())
+                                        .unwrap_or_default(),
+                                );
+                            }
+                            exec.arrays.insert("match".to_string(), arr);
+                        });
+                        with_executor(|exec| exec.expand_string(&repl_raw))
+                    } else {
+                        repl.clone()
+                    }
+                };
                 match op {
-                    0 => rx.replacen(&val, 1, repl.as_str()).to_string(),
-                    1 => rx.replace_all(&val, repl.as_str()).to_string(),
+                    0 => {
+                        if backref_mode {
+                            // `replacen` doesn't expose Captures —
+                            // reimplement: find first match, expand
+                            // replacement from its caps, splice.
+                            if let Some(caps) = rx.captures(&val) {
+                                let m = caps.get(0).unwrap();
+                                let r = expand_repl_with_caps(&caps);
+                                return format!("{}{}{}", &val[..m.start()], r, &val[m.end()..]);
+                            }
+                            val
+                        } else {
+                            rx.replacen(&val, 1, repl.as_str()).to_string()
+                        }
+                    }
+                    1 => {
+                        if backref_mode {
+                            // Iterate each match, build output piecewise.
+                            let mut out = String::with_capacity(val.len());
+                            let mut last = 0usize;
+                            for caps in rx.captures_iter(&val) {
+                                let m = caps.get(0).unwrap();
+                                out.push_str(&val[last..m.start()]);
+                                let r = expand_repl_with_caps(&caps);
+                                out.push_str(&r);
+                                last = m.end();
+                            }
+                            out.push_str(&val[last..]);
+                            out
+                        } else {
+                            rx.replace_all(&val, repl.as_str()).to_string()
+                        }
+                    }
                     2 => {
                         // Anchored prefix: only match at start.
-                        if let Some(m) = rx.find(&val) {
+                        if let Some(caps) = rx.captures(&val) {
+                            let m = caps.get(0).unwrap();
                             if m.start() == 0 {
-                                return format!("{}{}", repl, &val[m.end()..]);
+                                let r = if backref_mode {
+                                    expand_repl_with_caps(&caps)
+                                } else {
+                                    repl.clone()
+                                };
+                                return format!("{}{}", r, &val[m.end()..]);
                             }
                         }
                         val
                     }
                     3 => {
-                        // Anchored suffix: only match at end.
-                        // Find the LAST match whose end == val.len().
-                        let mut last_start: Option<usize> = None;
-                        for m in rx.find_iter(&val) {
+                        // Anchored suffix: last match whose end is val.len().
+                        let mut last_caps: Option<regex::Captures> = None;
+                        for caps in rx.captures_iter(&val) {
+                            let m = caps.get(0).unwrap();
                             if m.end() == val.len() {
-                                last_start = Some(m.start());
+                                last_caps = Some(caps);
                             }
                         }
-                        if let Some(s) = last_start {
-                            return format!("{}{}", &val[..s], repl);
+                        if let Some(caps) = last_caps {
+                            let m = caps.get(0).unwrap();
+                            let r = if backref_mode {
+                                expand_repl_with_caps(&caps)
+                            } else {
+                                repl.clone()
+                            };
+                            return format!("{}{}", &val[..m.start()], r);
                         }
                         val
                     }
@@ -6771,6 +6917,59 @@ fn register_builtins(vm: &mut fusevm::VM) {
 }
 
 /// Base64 decoder used by BUILTIN_REGISTER_COMPILED_FN.
+/// Parameter-only substitution that preserves a leading `~`
+/// literal. Used for the replacement side of `${var/pat/repl}`
+/// where zsh keeps `~` un-tilde-expanded. Resolves `$VAR` and
+/// `${VAR}` references; leaves everything else untouched.
+fn expand_no_tilde(exec: &mut ShellExecutor, s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '$' && i + 1 < chars.len() {
+            let nxt = chars[i + 1];
+            if nxt == '{' {
+                // Find matching `}`.
+                let mut depth = 1;
+                let mut j = i + 2;
+                while j < chars.len() && depth > 0 {
+                    match chars[j] {
+                        '{' => depth += 1,
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                    if depth == 0 {
+                        break;
+                    }
+                    j += 1;
+                }
+                let body: String = chars[i + 2..j].iter().collect();
+                // Recursively expand the body via the regular path
+                // — this isn't the replacement, it's a sub-expression.
+                let inner = exec.expand_string(&format!("${{{}}}", body));
+                out.push_str(&inner);
+                i = j + 1;
+                continue;
+            }
+            if nxt.is_ascii_alphabetic() || nxt == '_' {
+                // `$VAR` form.
+                let mut j = i + 1;
+                while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
+                    j += 1;
+                }
+                let var: String = chars[i + 1..j].iter().collect();
+                out.push_str(&exec.get_variable(&var));
+                i = j;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 fn base64_decode(s: &str) -> Vec<u8> {
     let decode_char = |c: u8| -> Option<u8> {
         match c {
@@ -9655,6 +9854,15 @@ impl VarAttr {
 /// everything into one `ShellExecutor` so we don't need
 /// thread-local globals.
 pub struct ShellExecutor {
+    /// Mirrors C zsh's file-static `scriptname` (Src/init.c) — the
+    /// short name used for `%N` / `%x` prompt expansion + the
+    /// `scriptname:line: …` prefix on error messages. Decoupled from
+    /// `$0` (which holds the full `argzero` path). Init sets this in
+    /// `-c` mode to the binary basename per Src/init.c:479
+    /// (`scriptname = scriptfilename = ztrdup("zsh")`); when sourcing
+    /// a file via `source`/`bin_dot`, it becomes the resolved file
+    /// path; otherwise it falls back through `$0` → `$ZSH_ARGZERO`.
+    pub scriptname: Option<String>,
     pub aliases: HashMap<String, String>,
     pub global_aliases: HashMap<String, String>, // alias -g: expand anywhere
     pub suffix_aliases: HashMap<String, String>, // alias -s: expand by file extension
@@ -9934,6 +10142,7 @@ impl ShellExecutor {
                 a.insert("which-command".to_string(), "whence".to_string());
                 a
             },
+            scriptname: None,
             global_aliases: HashMap::new(),
             suffix_aliases: HashMap::new(),
             expanding_aliases: std::collections::HashSet::new(),
@@ -14890,8 +15099,11 @@ impl ShellExecutor {
                         }
                     }
 
-                    // Not an array expansion, use normal expansion
-                    current.push_str(&self.expand_braced_variable(&brace_content));
+                    // Not an array expansion, route through the C-port
+                    // `${…}` engine in `crate::subst_port`. Replaces the
+                    // adhoc `expand_braced_variable` per the
+                    // "subst_port.rs is the only paramsubst" directive.
+                    current.push_str(&crate::subst_port::substitute_brace(&brace_content, self));
                 } else {
                     // Simple variable like $var
                     let mut var_name = String::new();
@@ -15065,1710 +15277,6 @@ impl ShellExecutor {
         String::new()
     }
 
-    fn expand_braced_variable(&mut self, content: &str) -> String {
-        // Helper for the negative-offset disambiguator inside the
-        // ${var:...} branch ladder below — pulled out so the if-else
-        // chain doesn't hide a multi-statement closure inside its
-        // condition (clippy::blocks_in_conditions).
-        fn is_substring_form_disambig(rest: &str) -> bool {
-            let stripped = rest.trim_start_matches(' ');
-            let next = stripped.chars().next();
-            stripped.starts_with(':')
-                || next.is_some_and(|c| c.is_ascii_digit() || c == '-')
-        }
-        // `${a:|b}` (subtract) and `${a:*b}` (intersect) — array set
-        // operators. Direct port of src/zsh/Src/subst.c:3522-3584.
-        // zsh's flow:
-        //   1. Build a hash from `compare = getaparam(b)`.
-        //   2. For each element of `aval` (the lhs), test presence.
-        //   3. `:*` keeps elements present in `b`; `:|` keeps absent.
-        // Returns space-joined scalar (since this function returns
-        // String); array context is provided by the caller's splice
-        // (echo / for-loop) which re-splits on whitespace as a
-        // pragmatic approximation. Both operands must be plain
-        // identifiers — more elaborate shapes fall through.
-        let is_ident = |s: &str| -> bool {
-            !s.is_empty()
-                && s.chars()
-                    .next()
-                    .map(|c| c == '_' || c.is_ascii_alphabetic())
-                    .unwrap_or(false)
-                && s.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
-        };
-        for (op_str, intersect) in &[(":|", false), (":*", true)] {
-            if let Some(colon_pos) = content.find(*op_str) {
-                let lhs_name = &content[..colon_pos];
-                let rhs_name = &content[colon_pos + 2..];
-                if is_ident(lhs_name) && is_ident(rhs_name) {
-                    let a: Vec<String> = self.arrays.get(lhs_name).cloned().unwrap_or_default();
-                    let b: Vec<String> = self.arrays.get(rhs_name).cloned().unwrap_or_default();
-                    use std::collections::HashSet;
-                    let bset: HashSet<&str> = b.iter().map(|s| s.as_str()).collect();
-                    let kept: Vec<String> = a
-                        .into_iter()
-                        .filter(|elem| {
-                            let present = bset.contains(elem.as_str());
-                            if *intersect {
-                                present
-                            } else {
-                                !present
-                            }
-                        })
-                        .collect();
-                    return kept.join(" ");
-                }
-            }
-        }
-
-        // `${a:^b}` / `${a:^^b}` — array zip operators. zsh subst.c
-        // SUB_ZIP_SHORT (`^`) interleaves up to min(len). SUB_ZIP_LONG
-        // (`^^`) cycles the shorter array. Both yield space-joined
-        // output. Detect first because the `:^` shape would otherwise
-        // get misread as a substring offset.
-        if let Some(colon_pos) = content.find(":^") {
-            let lhs_name = &content[..colon_pos];
-            let rest_after = &content[colon_pos + 2..];
-            let (cycle, rhs_name) = if let Some(r) = rest_after.strip_prefix('^') {
-                (true, r)
-            } else {
-                (false, rest_after)
-            };
-            // Both names must be plain identifiers — `${a:^b}` only.
-            // More elaborate forms (with modifiers, flags) fall
-            // through to the general path below.
-            let is_ident = |s: &str| {
-                !s.is_empty()
-                    && s.chars()
-                        .next()
-                        .map(|c| c == '_' || c.is_ascii_alphabetic())
-                        .unwrap_or(false)
-                    && s.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
-            };
-            if is_ident(lhs_name) && is_ident(rhs_name) {
-                let a: Vec<String> = self.arrays.get(lhs_name).cloned().unwrap_or_default();
-                let b: Vec<String> = self.arrays.get(rhs_name).cloned().unwrap_or_default();
-                let pairs = if cycle {
-                    let n = a.len().max(b.len());
-                    let mut out = Vec::with_capacity(n * 2);
-                    for i in 0..n {
-                        if a.is_empty() && b.is_empty() {
-                            break;
-                        }
-                        if !a.is_empty() {
-                            out.push(a[i % a.len()].clone());
-                        }
-                        if !b.is_empty() {
-                            out.push(b[i % b.len()].clone());
-                        }
-                    }
-                    out
-                } else {
-                    let n = a.len().min(b.len());
-                    let mut out = Vec::with_capacity(n * 2);
-                    for i in 0..n {
-                        out.push(a[i].clone());
-                        out.push(b[i].clone());
-                    }
-                    out
-                };
-                return pairs.join(" ");
-            }
-        }
-
-        // Handle nested expansion: ${${inner}[subscript]} or ${${inner}modifier}
-        if content.starts_with("${") {
-            // Find matching closing brace for inner expansion
-            let mut depth = 0;
-            let mut inner_end = 0;
-            for (i, c) in content.char_indices() {
-                match c {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            inner_end = i;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            if inner_end > 0 {
-                // Expand the inner ${...}
-                let inner_content = &content[2..inner_end];
-                let inner_result = self.expand_braced_variable(inner_content);
-
-                // Check for subscript or modifier after the inner expansion
-                let rest = &content[inner_end + 1..];
-                if rest.starts_with('[') {
-                    // Apply subscript to result: ${${...}[idx]}
-                    if let Some(bracket_end) = rest.find(']') {
-                        let index = &rest[1..bracket_end];
-                        if let Ok(idx) = index.parse::<i64>() {
-                            let chars: Vec<char> = inner_result.chars().collect();
-                            let actual_idx = if idx < 0 {
-                                (chars.len() as i64 + idx).max(0) as usize
-                            } else if idx > 0 {
-                                (idx - 1) as usize
-                            } else {
-                                0
-                            };
-                            return chars
-                                .get(actual_idx)
-                                .map(|c| c.to_string())
-                                .unwrap_or_default();
-                        }
-                    }
-                }
-
-                // History modifier chain after inner expansion:
-                // `${${a:l}:r}` lowercases then strips extension.
-                // Direct port of zsh's hist.c modifier dispatch
-                // for `${${...}:MOD}`. Without this, the outer
-                // modifier was silently dropped and the inner
-                // result returned as-is. is_history_modifier
-                // checks the FIRST char so we strip the leading
-                // `:` before testing.
-                if let Some(after_colon) = rest.strip_prefix(':') {
-                    if self.is_history_modifier(after_colon) {
-                        return self.apply_history_modifiers(&inner_result, rest);
-                    }
-                }
-
-                // Strip operators after inner expansion: ${${a%.txt}#hel}
-                // shapes apply outer #/##/%/%% to the inner result. zsh
-                // subst.c reuses the same getarg machinery for inner and
-                // outer; we mirror by dispatching to strip_match_op.
-                // Order matters: check `##`/`%%` before `#`/`%`.
-                if rest.starts_with("##") || rest.starts_with("%%") {
-                    let op = if rest.starts_with("##") { 1u8 } else { 3u8 };
-                    let pat = &rest[2..];
-                    return strip_match_op(&inner_result, op, pat, false);
-                }
-                if rest.starts_with('#') || rest.starts_with('%') {
-                    let op = if rest.starts_with('#') { 0u8 } else { 2u8 };
-                    let pat = &rest[1..];
-                    return strip_match_op(&inner_result, op, pat, false);
-                }
-
-                // `/pat/repl` substitution after inner expansion.
-                // `${${a}//l/L}` for a=hello -> heLLo. Direct port
-                // of zsh's substitution dispatch when the outer
-                // operator is `//` or `/`. Reuse the strip/replace
-                // helpers via a fast manual scan.
-                if rest.starts_with('/') {
-                    // Distinguish `//` (global) from `/` (first).
-                    let (global, body) = if let Some(b) = rest.strip_prefix("//") {
-                        (true, b)
-                    } else {
-                        (false, rest.strip_prefix('/').unwrap_or(rest))
-                    };
-                    // Find the unescaped delimiter `/` separating
-                    // pattern and replacement.
-                    let mut pat = String::new();
-                    let mut chars = body.chars().peekable();
-                    while let Some(&c) = chars.peek() {
-                        if c == '/' {
-                            chars.next();
-                            break;
-                        }
-                        if c == '\\' {
-                            chars.next();
-                            if let Some(&nx) = chars.peek() {
-                                pat.push(nx);
-                                chars.next();
-                            }
-                            continue;
-                        }
-                        pat.push(c);
-                        chars.next();
-                    }
-                    let mut repl = String::new();
-                    while let Some(&c) = chars.peek() {
-                        if c == '\\' {
-                            chars.next();
-                            if let Some(&nx) = chars.peek() {
-                                repl.push(nx);
-                                chars.next();
-                            }
-                            continue;
-                        }
-                        repl.push(c);
-                        chars.next();
-                    }
-                    // zsh expands $-refs in both the pattern and the
-                    // replacement. Without this, `${${a:-foo}/foo/$b}`
-                    // left `$b` literal instead of substituting.
-                    let pat = self.expand_string(&pat);
-                    let repl = self.expand_string(&repl);
-                    if global {
-                        return inner_result.replace(&pat, &repl);
-                    } else {
-                        return inner_result.replacen(&pat, &repl, 1);
-                    }
-                }
-
-                return inner_result;
-            }
-        }
-
-        // Handle zsh-style parameter expansion flags ${(flags)var}
-        if content.starts_with('(') {
-            if let Some(close_paren) = content.find(')') {
-                let flags_str = &content[1..close_paren];
-                let rest = &content[close_paren + 1..];
-                let mut flags = self.parse_zsh_flags(flags_str);
-
-                // Cmd-subst as the operand: `${(flags)$(...)}`. zsh
-                // subst.c runs the cmd-subst first, then applies flags
-                // to the captured output. Without this, the rest was
-                // treated as a literal var name and returned empty.
-                if rest.starts_with("$(") && rest.ends_with(')') {
-                    let cmd_text = &rest[2..rest.len() - 1];
-                    let inner_str = self.run_command_substitution(cmd_text);
-                    // (P) — indirect: treat the inner result as a name
-                    // and look up THAT variable's value. zsh:
-                    // `a=hi; ${(P)$(echo a)}` → "hi" (NOT "a").
-                    let has_p_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::Parameter));
-                    let mut out = if has_p_flag {
-                        let n = inner_str.trim();
-                        self.get_variable(n)
-                    } else {
-                        inner_str.clone()
-                    };
-                    // Apply flags. Same dispatch as the ${...} branch.
-                    for f in &flags {
-                        match f {
-                            ZshParamFlag::Parameter => {} // already applied
-                            ZshParamFlag::Upper => {
-                                out = out.to_uppercase();
-                            }
-                            ZshParamFlag::Lower => {
-                                out = out.to_lowercase();
-                            }
-                            ZshParamFlag::Split(sep) => {
-                                let parts: Vec<&str> = if sep.is_empty() {
-                                    out.split_whitespace().collect()
-                                } else {
-                                    out.split(sep.as_str()).collect()
-                                };
-                                out = parts.join(" ");
-                            }
-                            ZshParamFlag::Join(sep) => {
-                                // (j:sep:) on a scalar is a no-op in
-                                // zsh — only fires when the operand is
-                                // an array. Cmd-subst returns a single
-                                // captured string; without splitting
-                                // first, joining is a no-op. Earlier
-                                // we split on whitespace which over-
-                                // applied for newline-separated output.
-                                let _ = sep;
-                            }
-                            ZshParamFlag::SplitWords => {
-                                // (z) — tokenize via shell lex. Approximate
-                                // by collapsing whitespace then re-joining
-                                // by single space; full lex would handle
-                                // quotes/escapes but that's rare in DQ.
-                                let parts: Vec<&str> = out.split_whitespace().collect();
-                                out = parts.join(" ");
-                            }
-                            ZshParamFlag::SplitLines => {
-                                let parts: Vec<&str> = out.lines().collect();
-                                out = parts.join(" ");
-                            }
-                            _ => {}
-                        }
-                    }
-                    return out;
-                }
-
-                // Nested expansion as the operand: `${(flags)${...}}`.
-                // zsh subst.c paramsubst recursively evaluates the inner
-                // ${...} first, then applies the outer flags to the
-                // resulting string/array. Without this, the outer flag
-                // path treated `${(j. .)a}` as a literal var name and
-                // returned empty.
-                if rest.starts_with("${") {
-                    // Find matching `}` for the inner expansion.
-                    let mut depth = 0i32;
-                    let mut inner_close: Option<usize> = None;
-                    for (i, b) in rest.bytes().enumerate() {
-                        if b == b'{' {
-                            depth += 1;
-                        } else if b == b'}' {
-                            depth -= 1;
-                            if depth == 0 {
-                                inner_close = Some(i);
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(end) = inner_close {
-                        // Recurse on inner contents (sans `${` `}`).
-                        let inner_content = &rest[2..end];
-                        let inner_str = self.expand_braced_variable(inner_content);
-                        // Apply outer flags to the inner string. (s::)
-                        // splits the scalar on a delimiter; (j::) joins
-                        // an array (no-op on scalar); (U)/(L)/(C) case
-                        // transforms; (q*)/Q quoting handled below.
-                        let mut out = inner_str.clone();
-                        for f in &flags {
-                            match f {
-                                ZshParamFlag::Upper => {
-                                    out = out.to_uppercase();
-                                }
-                                ZshParamFlag::Lower => {
-                                    out = out.to_lowercase();
-                                }
-                                ZshParamFlag::Capitalize => {
-                                    out =
-                                        crate::subst::casemodify(&out, crate::subst::CaseMod::Caps);
-                                }
-                                ZshParamFlag::Split(sep) => {
-                                    // Split scalar on sep, return space-joined
-                                    // (DQ context) or array-spliced. Here we
-                                    // return space-joined since we collapsed
-                                    // already.
-                                    let parts: Vec<&str> = if sep.is_empty() {
-                                        out.split_whitespace().collect()
-                                    } else {
-                                        out.split(sep.as_str()).collect()
-                                    };
-                                    out = parts.join(" ");
-                                }
-                                ZshParamFlag::Join(sep) => {
-                                    // Join is a no-op on a scalar; the inner
-                                    // already collapsed an array via space.
-                                    // Replace any single-space joins by sep.
-                                    let parts: Vec<&str> = out.split_whitespace().collect();
-                                    out = parts.join(sep);
-                                }
-                                _ => {}
-                            }
-                        }
-                        // [idx] subscript after the inner ${...}. zsh
-                        // treats the inner-with-flags-applied result as
-                        // an array (when (s::) split or (j::) etc.) and
-                        // `[N]` selects the Nth element. We collapsed
-                        // to space-joined scalar; recover by splitting
-                        // back on spaces and indexing.
-                        let after = &rest[end + 1..];
-                        if let Some(rest_after) = after.strip_prefix('[') {
-                            if let Some(close_b) = rest_after.find(']') {
-                                let idx_str = &rest_after[..close_b];
-                                let idx_resolved = self.expand_string(idx_str);
-                                if let Ok(idx) = idx_resolved.trim().parse::<i64>() {
-                                    let parts: Vec<&str> = out.split_whitespace().collect();
-                                    let len = parts.len() as i64;
-                                    let pos = if idx < 0 { len + idx } else { idx - 1 };
-                                    let picked = if pos >= 0 && (pos as usize) < parts.len() {
-                                        parts[pos as usize].to_string()
-                                    } else {
-                                        String::new()
-                                    };
-                                    // Re-apply case-transform flags to
-                                    // the picked element (parser puts
-                                    // U/L/C in `flags` already; my
-                                    // earlier loop applied them to the
-                                    // joined `out` — re-apply here so
-                                    // the subscript-after-flag form
-                                    // returns the cased element).
-                                    let mut picked = picked;
-                                    for f in &flags {
-                                        match f {
-                                            ZshParamFlag::Upper => {
-                                                picked = picked.to_uppercase();
-                                            }
-                                            ZshParamFlag::Lower => {
-                                                picked = picked.to_lowercase();
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    return picked;
-                                }
-                            }
-                        }
-                        // Strip / replace operators after the inner ${...}.
-                        if after.starts_with("##") || after.starts_with("%%") {
-                            let op = if after.starts_with("##") { 1u8 } else { 3u8 };
-                            return strip_match_op(&out, op, &after[2..], false);
-                        }
-                        if after.starts_with('#') || after.starts_with('%') {
-                            let op = if after.starts_with('#') { 0u8 } else { 2u8 };
-                            return strip_match_op(&out, op, &after[1..], false);
-                        }
-                        return out;
-                    }
-                }
-
-                // In double-quoted context, array-only flags are
-                // no-ops per zsh. Strip them so the join-as-scalar
-                // path returns the original element order. (M) stays
-                // — it modifies `:#pat` filter behavior on the
-                // joined scalar.
-                // In DQ context, the array-only flags become no-ops on
-                // an unsplit scalar — UNLESS the user explicitly used
-                // the `@` array-context flag (`(@)`) OR the rest has
-                // `[@]` / `[*]` subscript (which also triggers array
-                // context). zsh: `"${(@o)arr}"` and `"${(o)arr[@]}"`
-                // both sort and splice element-by-element.
-                let has_at_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::At))
-                    || rest.ends_with("[@]")
-                    || rest.ends_with("[*]");
-                if self.in_dq_context > 0 && !has_at_flag {
-                    flags.retain(|f| {
-                        !matches!(
-                            f,
-                            ZshParamFlag::Sort
-                                | ZshParamFlag::Reverse
-                                | ZshParamFlag::NumericSort
-                                | ZshParamFlag::IndexSort
-                                | ZshParamFlag::Unique
-                        )
-                    });
-                }
-
-                // Check for (M) match flag
-                let has_match_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::Match));
-
-                // Handle ${(M)var:#pattern} - pattern filter with flags
-                if let Some(filter_pos) = rest.find(":#") {
-                    let var_name = &rest[..filter_pos];
-                    let pattern = &rest[filter_pos + 2..];
-
-                    // Array path: filter each element against pattern
-                    if let Some(arr) = self.arrays.get(var_name).cloned() {
-                        let filtered: Vec<String> = if arr.len() >= 1000 {
-                            tracing::trace!(
-                                count = arr.len(),
-                                pattern,
-                                "using parallel filter (rayon) for large array"
-                            );
-                            use rayon::prelude::*;
-                            let pattern = pattern.to_string();
-                            arr.into_par_iter()
-                                .filter(|elem| {
-                                    let m = extendedglob_match(elem, &pattern);
-                                    if has_match_flag {
-                                        m
-                                    } else {
-                                        !m
-                                    }
-                                })
-                                .collect()
-                        } else {
-                            arr.into_iter()
-                                .filter(|elem| {
-                                    let m = extendedglob_match(elem, pattern);
-                                    if has_match_flag {
-                                        m
-                                    } else {
-                                        !m
-                                    }
-                                })
-                                .collect()
-                        };
-                        return filtered.join(" ");
-                    }
-
-                    // Scalar path: original behavior
-                    let val = self.get_variable(var_name);
-                    let matches = extendedglob_match(&val, pattern);
-
-                    return if has_match_flag {
-                        if matches {
-                            val
-                        } else {
-                            String::new()
-                        }
-                    } else {
-                        if matches {
-                            String::new()
-                        } else {
-                            val
-                        }
-                    };
-                }
-
-                // ${(flags)#name} — flag-modified length form. zsh:
-                //   (c)#name → char count (= ${#name} for ASCII)
-                //   (w)#name → word count (split-on-IFS then len)
-                // Without this, the # got swallowed by the var-name
-                // extractor below (`#a` parsed as empty name → 0).
-                if let Some(name) = rest.strip_prefix('#') {
-                    let val = self.get_variable(name);
-                    let has_word_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::Words));
-                    if has_word_flag {
-                        return val.split_whitespace().count().to_string();
-                    }
-                    // Default for # is char count (also what (c)
-                    // requests). Honors unicode codepoints.
-                    return val.chars().count().to_string();
-                }
-                // Handle ${(%):-%n} style - empty var with default after flags
-                // rest could be ":-%n" or ":-default" or "var:-default" or just "var"
-                // Also supports `${(flags)var-default}` (no colon → default
-                // only when var is unset; zsh distinguishes from `:-`).
-                let (var_name, default_val, default_unset_only) = if let Some(after) = rest.strip_prefix(":-") {
-                    // Empty variable name with default: ${(%):-default}
-                    ("", Some(after), false)
-                } else if let Some(pos) = rest.find(":-") {
-                    // Variable with default: ${(%)var:-default}
-                    (&rest[..pos], Some(&rest[pos + 2..]), false)
-                } else if rest.starts_with(':') {
-                    // Just ":" means empty var name, no default
-                    ("", None, false)
-                } else if let Some(dash_pos) = rest.find('-') {
-                    // `${(flags)NAME-default}` — only-if-unset default.
-                    // Verify the prefix is a valid identifier, otherwise
-                    // fall back to the all-of-rest var name path.
-                    let pre = &rest[..dash_pos];
-                    if !pre.is_empty()
-                        && pre
-                            .chars()
-                            .next()
-                            .map(|c| c == '_' || c.is_alphabetic())
-                            .unwrap_or(false)
-                        && pre.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
-                    {
-                        (pre, Some(&rest[dash_pos + 1..]), true)
-                    } else {
-                        let vn = rest
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .next()
-                            .unwrap_or("");
-                        (vn, None, false)
-                    }
-                } else {
-                    // Normal variable reference
-                    let vn = rest
-                        .split(|c: char| !c.is_alphanumeric() && c != '_')
-                        .next()
-                        .unwrap_or("");
-                    (vn, None, false)
-                };
-
-                let mut val = self.get_variable(var_name);
-
-                // Decide whether the default should fire. For `:-`, on
-                // empty (or unset). For `-` (no colon), only when the
-                // var is genuinely unset — empty value keeps the empty.
-                // zsh-special "always set" params: SECONDS, EPOCHSECONDS,
-                // RANDOM, LINENO, $$, $? etc. Their getter computes the
-                // value; the contains_key check fails because we don't
-                // store them. Treat them as set.
-                let is_zsh_special = matches!(
-                    var_name,
-                    "SECONDS"
-                        | "EPOCHSECONDS"
-                        | "EPOCHREALTIME"
-                        | "RANDOM"
-                        | "LINENO"
-                        | "HISTCMD"
-                        | "PPID"
-                        | "UID"
-                        | "EUID"
-                        | "GID"
-                        | "EGID"
-                        | "SHLVL"
-                );
-                let var_is_set = !var_name.is_empty()
-                    && (self.variables.contains_key(var_name)
-                        || self.arrays.contains_key(var_name)
-                        || self.assoc_arrays.contains_key(var_name)
-                        || std::env::var(var_name).is_ok()
-                        || is_zsh_special);
-                let needs_default = if default_unset_only {
-                    !var_is_set
-                } else {
-                    val.is_empty()
-                };
-                let default_fired = if needs_default {
-                    if let Some(def) = default_val {
-                        val = self.expand_string(def);
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                // Strip operators (`#`/`##`/`%`/`%%`) after the var
-                // name. Direct port of zsh's get_match_ret() in
-                // Src/glob.c (line 2550): the SUB_MATCH flag (set by
-                // `(M)`) inverts the return — instead of the
-                // unmatched portion (default), return the matched
-                // portion. zshrs's flag path used to extract the
-                // var name as the longest leading-alphanumeric run
-                // and silently drop the strip operator that
-                // followed; `${(M)a##*o}` returned the full
-                // unstripped value because the strip never ran.
-                if !default_fired {
-                    let rest_after_var = &rest[var_name.len()..];
-                    // Reject bash-only case modifiers `^`/`^^`/
-                    // `,`/`,,` after the var name. zsh: errors
-                    // "bad substitution". Without this rejection,
-                    // `${(L)a^^}` silently dropped `^^` and
-                    // returned the lowercased value (bash compat
-                    // creep). zsh's parser bin_paramsubst rejects
-                    // these tokens with the standard error.
-                    if rest_after_var.starts_with('^') || rest_after_var.starts_with(',') {
-                        eprintln!("zshrs:1: bad substitution");
-                        std::process::exit(1);
-                    }
-                    let (op, pat_str) = if let Some(p) = rest_after_var.strip_prefix("##") {
-                        (Some(1u8), p)
-                    } else if let Some(p) = rest_after_var.strip_prefix("%%") {
-                        (Some(3u8), p)
-                    } else if let Some(p) = rest_after_var.strip_prefix('#') {
-                        (Some(0u8), p)
-                    } else if let Some(p) = rest_after_var.strip_prefix('%') {
-                        (Some(2u8), p)
-                    } else {
-                        (None, "")
-                    };
-                    if let Some(op) = op {
-                        let pat_expanded = self.expand_string(pat_str);
-                        // Array-valued name + (@) flag: strip
-                        // applies PER-ELEMENT (matches zsh's
-                        // pattern.c getmatcharr path called from
-                        // subst.c when nojoin/(@) is set). Without
-                        // (@) on a bare name in DQ, zsh joins
-                        // first then strips the joined scalar.
-                        // Direct port: route to per-element when
-                        // the var is an array AND (@) is in the
-                        // flag run; otherwise fall back to the
-                        // joined-scalar strip on `val`.
-                        let has_at_flag = flags.iter().any(|f| matches!(f, ZshParamFlag::At));
-                        if has_at_flag {
-                            if let Some(arr) = self.arrays.get(var_name).cloned() {
-                                let stripped: Vec<String> = arr
-                                    .iter()
-                                    .map(|e| strip_match_op(e, op, &pat_expanded, has_match_flag))
-                                    .collect();
-                                val = stripped.join(" ");
-                            } else {
-                                val = strip_match_op(&val, op, &pat_expanded, has_match_flag);
-                            }
-                        } else {
-                            val = strip_match_op(&val, op, &pat_expanded, has_match_flag);
-                        }
-                    }
-                }
-
-                // Apply flags in order. Skip the (P) parameter-indirect
-                // flag when the default fired — zsh: `${(P):-test}` →
-                // `test` (the default is the literal result, not a
-                // parameter name to dereference).
-                for flag in &flags {
-                    if default_fired && matches!(flag, ZshParamFlag::Parameter) {
-                        continue;
-                    }
-                    val = self.apply_zsh_param_flag(&val, var_name, flag);
-                }
-                return val;
-            }
-        }
-
-        // Handle ${#arr[@]} - array length
-        if let Some(rest) = content.strip_prefix('#') {
-            // ${#@} / ${#*} / ${#argv} / ${#argv[@]} — positional
-            // param count. Without these special cases, `@`/`*`/`argv`
-            // fell through to get_variable which returns the IFS-
-            // joined string ("a b c"), and `.len()` counted bytes
-            // (5 instead of 3). `argv` is zsh's named alias for the
-            // positional array.
-            if rest == "@"
-                || rest == "*"
-                || rest == "argv"
-                || rest == "argv[@]"
-                || rest == "argv[*]"
-            {
-                return self.positional_params.len().to_string();
-            }
-            if let Some(bracket_start) = rest.find('[') {
-                let var_name = &rest[..bracket_start];
-                let bracket_content = &rest[bracket_start + 1..];
-                if let Some(bracket_end) = bracket_content.find(']') {
-                    let index = &bracket_content[..bracket_end];
-                    if index == "@" || index == "*" {
-                        // ${#arr[@]} - return array length
-                        return self
-                            .arrays
-                            .get(var_name)
-                            .map(|arr| arr.len().to_string())
-                            .unwrap_or_else(|| "0".to_string());
-                    }
-                    // `${#arr[N]}` — character length of the Nth array
-                    // element (zsh: `a=(hello world); ${#a[1]}` → 5).
-                    // Was returning 0 because the `[N]` numeric subscript
-                    // path wasn't reached for the # length form.
-                    let elem = self.lookup_array_element(var_name, index);
-                    return elem.chars().count().to_string();
-                }
-            }
-            // ${#arr} - if rest is an array name, return array length
-            if self.arrays.contains_key(rest) {
-                return self
-                    .arrays
-                    .get(rest)
-                    .map(|arr| arr.len().to_string())
-                    .unwrap_or_else(|| "0".to_string());
-            }
-            // ${#assoc} - if rest is an assoc array name, return assoc length
-            if self.assoc_arrays.contains_key(rest) {
-                return self
-                    .assoc_arrays
-                    .get(rest)
-                    .map(|h| h.len().to_string())
-                    .unwrap_or_else(|| "0".to_string());
-            }
-            // `${#var:-default}` / `${#var-default}` — length of the
-            // var-or-default expansion. zsh: `${#NONEXIST:-default}` →
-            // 7 (length of "default"). Without this, zshrs always
-            // returned 0 because the `-default` text was passed
-            // through to get_variable and silently ignored.
-            // Detect the colon/dash form: identifier-then-`:-` or
-            // identifier-then-`-`.
-            let chars: Vec<char> = rest.chars().collect();
-            let mut name_end = 0usize;
-            let first_ok = chars
-                .first()
-                .map(|c| c.is_alphabetic() || *c == '_')
-                .unwrap_or(false);
-            if first_ok {
-                while name_end < chars.len()
-                    && (chars[name_end] == '_' || chars[name_end].is_ascii_alphanumeric())
-                {
-                    name_end += 1;
-                }
-                if name_end > 0 && name_end < chars.len() {
-                    let next = chars[name_end];
-                    let after = &chars[name_end..];
-                    let (op_len, dash_kind) = if after.starts_with(&[':', '-']) {
-                        (2, Some(false)) // :-, fires on empty OR unset
-                    } else if next == '-' {
-                        (1, Some(true)) // -, fires on unset only
-                    } else {
-                        (0, None)
-                    };
-                    if let Some(unset_only) = dash_kind {
-                        let var_name: String = chars[..name_end].iter().collect();
-                        let default_text: String = chars[name_end + op_len..].iter().collect();
-                        let val = self.get_variable(&var_name);
-                        // Same zsh-special "always set" treatment as
-                        // the flag-aware path above (line ~14430).
-                        let is_zsh_special = matches!(
-                            var_name.as_str(),
-                            "SECONDS"
-                                | "EPOCHSECONDS"
-                                | "EPOCHREALTIME"
-                                | "RANDOM"
-                                | "LINENO"
-                                | "HISTCMD"
-                                | "PPID"
-                                | "UID"
-                                | "EUID"
-                                | "GID"
-                                | "EGID"
-                                | "SHLVL"
-                        );
-                        let var_is_set = self.variables.contains_key(&var_name)
-                            || self.arrays.contains_key(&var_name)
-                            || self.assoc_arrays.contains_key(&var_name)
-                            || std::env::var(&var_name).is_ok()
-                            || is_zsh_special;
-                        let needs_default = if unset_only {
-                            !var_is_set
-                        } else {
-                            val.is_empty()
-                        };
-                        let final_val = if needs_default {
-                            self.expand_string(&default_text)
-                        } else {
-                            val
-                        };
-                        return final_val.chars().count().to_string();
-                    }
-                }
-            }
-            // ${#var} - string char length (NOT byte length, so unicode
-            // counts as 1 char each — `${#héllo}` should be 5, not 6).
-            let val = self.get_variable(rest);
-            return val.chars().count().to_string();
-        }
-
-        // Handle ${+var} and ${+arr[key]} - test if variable/element is set (returns 1 if set, 0 if not)
-        if let Some(rest) = content.strip_prefix('+') {
-            // Check for array/assoc access: ${+arr[key]}
-            if let Some(bracket_start) = rest.find('[') {
-                let var_name = &rest[..bracket_start];
-                let bracket_content = &rest[bracket_start + 1..];
-                if let Some(bracket_end) = bracket_content.find(']') {
-                    let key = &bracket_content[..bracket_end];
-
-                    // Check special arrays first
-                    if let Some(val) = self.get_special_array_value(var_name, key) {
-                        return if val.is_empty() {
-                            "0".to_string()
-                        } else {
-                            "1".to_string()
-                        };
-                    }
-
-                    // Check user assoc arrays
-                    if self.assoc_arrays.contains_key(var_name) {
-                        let expanded_key = self.expand_string(key);
-                        let has_key = self
-                            .assoc_arrays
-                            .get(var_name)
-                            .map(|a| a.contains_key(&expanded_key))
-                            .unwrap_or(false);
-                        return if has_key {
-                            "1".to_string()
-                        } else {
-                            "0".to_string()
-                        };
-                    }
-
-                    // Check regular arrays
-                    if let Some(arr) = self.arrays.get(var_name) {
-                        if let Ok(idx) = key.parse::<usize>() {
-                            let actual_idx = if idx > 0 { idx - 1 } else { 0 };
-                            return if arr.get(actual_idx).is_some() {
-                                "1".to_string()
-                            } else {
-                                "0".to_string()
-                            };
-                        }
-                    }
-
-                    return "0".to_string();
-                }
-            }
-
-            // Simple variable: ${+var}
-            let is_set = self.variables.contains_key(rest)
-                || self.arrays.contains_key(rest)
-                || self.assoc_arrays.contains_key(rest)
-                || std::env::var(rest).is_ok()
-                || self.function_exists(rest);
-            return if is_set {
-                "1".to_string()
-            } else {
-                "0".to_string()
-            };
-        }
-
-        // Handle ${arr[idx]} or ${assoc[key]}
-        if let Some(bracket_start) = content.find('[') {
-            let var_name = &content[..bracket_start];
-            let bracket_content = &content[bracket_start + 1..];
-            if let Some(bracket_end) = bracket_content.find(']') {
-                let index = &bracket_content[..bracket_end];
-                // Anything after the closing `]` is a parameter modifier
-                // applied to the looked-up element. Honor `${arr[N]:-d}`
-                // (default-if-empty) and friends. Skip range/all forms
-                // (`[2,3]`, `[@]`, `[*]`) — those need full subscript
-                // logic, not the simple OOB-fallback. Without this gate,
-                // string-subscript ranges like `${a[2,3]:-default}`
-                // wrongly returned the default.
-                let is_range_or_all = index.contains(',') || index == "@" || index == "*";
-                let after_bracket = &bracket_content[bracket_end + 1..];
-                if !after_bracket.is_empty() && !is_range_or_all {
-                    let elem = self.lookup_array_element(var_name, index);
-                    // `${a[1][2]}` — chained subscript. Look up the
-                    // first-level element, then character-subscript on
-                    // the resulting scalar. zsh: array-first then
-                    // string-on-element. Without this, the `[2]` was
-                    // treated as a noise suffix and the full element
-                    // returned untouched.
-                    if after_bracket.starts_with('[') {
-                        if let Some(end) = after_bracket.find(']') {
-                            let sub_idx = &after_bracket[1..end];
-                            // Resolve numeric / range subscript on the
-                            // scalar `elem`. 1-based, comma form for
-                            // ranges. Negative indexes count from end.
-                            let chars: Vec<char> = elem.chars().collect();
-                            let total = chars.len() as i64;
-                            let pos = |n: i64| -> usize {
-                                if n == 0 {
-                                    0
-                                } else if n > 0 {
-                                    ((n - 1) as usize).min(chars.len())
-                                } else {
-                                    ((total + n).max(0) as usize).min(chars.len())
-                                }
-                            };
-                            if let Some((s_str, e_str)) = sub_idx.split_once(',') {
-                                let s = s_str.trim().parse::<i64>().unwrap_or(1);
-                                let e = e_str.trim().parse::<i64>().unwrap_or(total);
-                                let start = pos(s);
-                                let end_pos = if e >= 0 {
-                                    (e as usize).min(chars.len())
-                                } else {
-                                    pos(e) + 1
-                                };
-                                let result: String = chars[start.min(end_pos)..end_pos.max(start)]
-                                    .iter()
-                                    .collect();
-                                return result;
-                            }
-                            if let Ok(n) = sub_idx.parse::<i64>() {
-                                let i = pos(n);
-                                return chars.get(i).map(|c| c.to_string()).unwrap_or_default();
-                            }
-                        }
-                    }
-                    // `${a[N]:r}` / `:e` / `:t` / `:h` / `:l` / `:u`
-                    // / `:q` / `:Q` / `:A` — history-style modifiers
-                    // applied to the resolved element. zsh:
-                    // `a=(file.txt); ${a[1]:r}` → `file`. zshrs's
-                    // bracket handler routed `:` modifiers through
-                    // the colon-default branch which only handles
-                    // `:-`/`:=`/`:?`/`:+`. Apply per-element when
-                    // the after-bracket suffix is a known modifier.
-                    if let Some(modifier) = after_bracket.strip_prefix(':') {
-                        if !modifier.is_empty() && self.is_history_modifier(modifier) {
-                            return self.apply_history_modifiers(&elem, modifier);
-                        }
-                    }
-                    // `${a[N]:offset:length}` — substring on the
-                    // resolved element. zsh: `a=(hello); ${a[1]:0:1}`
-                    // → `h`. Detect `:DIGIT[:DIGIT]` after the
-                    // bracket. Note: ONLY digit (not `-`); `:-` is
-                    // the default-if-empty modifier (`${a[N]:-d}`)
-                    // and must fall through to that branch. zsh
-                    // requires a space for the negative-offset form:
-                    // `${a: -3:2}`.
-                    if after_bracket.starts_with(':')
-                        && after_bracket
-                            .chars()
-                            .nth(1)
-                            .map(|c| c.is_ascii_digit())
-                            .unwrap_or(false)
-                    {
-                        let body = &after_bracket[1..];
-                        let parts: Vec<&str> = body.splitn(2, ':').collect();
-                        let off: i64 = parts[0].trim().parse().unwrap_or(0);
-                        let chars: Vec<char> = elem.chars().collect();
-                        let len_total = chars.len() as i64;
-                        let start = if off < 0 {
-                            (len_total + off).max(0) as usize
-                        } else {
-                            (off as usize).min(chars.len())
-                        };
-                        if let Some(len_str) = parts.get(1) {
-                            let len: i64 = len_str.trim().parse().unwrap_or(len_total);
-                            let take = if len < 0 {
-                                let neg_idx = (len_total + len).max(start as i64);
-                                (neg_idx as usize).saturating_sub(start)
-                            } else {
-                                (len as usize).min(chars.len().saturating_sub(start))
-                            };
-                            return chars[start..start + take].iter().collect();
-                        }
-                        return chars[start..].iter().collect();
-                    }
-                    if let Some(rest) = after_bracket.strip_prefix(":-") {
-                        return if elem.is_empty() {
-                            self.expand_string(rest)
-                        } else {
-                            elem
-                        };
-                    }
-                    if let Some(rest) = after_bracket.strip_prefix(":+") {
-                        return if elem.is_empty() {
-                            String::new()
-                        } else {
-                            self.expand_string(rest)
-                        };
-                    }
-                    if let Some(rest) = after_bracket.strip_prefix(":?") {
-                        if elem.is_empty() {
-                            let msg = self.expand_string(rest);
-                            eprintln!("zshrs:1: {}[{}]: {}", var_name, index, msg);
-                            return String::new();
-                        }
-                        return elem;
-                    }
-                    if let Some(rest) = after_bracket.strip_prefix(":=") {
-                        if elem.is_empty() {
-                            let v = self.expand_string(rest);
-                            // Set the array element back. Best-effort:
-                            // only writes back to indexed arrays at
-                            // numeric-positive indices.
-                            if let Ok(idx) = index.parse::<i64>() {
-                                if let Some(arr) = self.arrays.get_mut(var_name) {
-                                    let pos = if idx > 0 { (idx - 1) as usize } else { 0 };
-                                    if pos >= arr.len() {
-                                        arr.resize(pos + 1, String::new());
-                                    }
-                                    arr[pos] = v.clone();
-                                }
-                            }
-                            return v;
-                        }
-                        return elem;
-                    }
-                    // `${arr[N]/pat/repl}` — pattern replace on the
-                    // resolved element. Mirror the scalar `${var/.../...}`
-                    // forms (`/`, `//`, `/#`, `/%`). Without this,
-                    // `${a[1]/.txt/.bak}` returned the unmodified
-                    // element because the bracket-modifier path skipped
-                    // pattern replacement.
-                    if let Some(rest) = after_bracket.strip_prefix('/') {
-                        let (op, body) = if let Some(b) = rest.strip_prefix('/') {
-                            (1u8, b) // // = global
-                        } else if let Some(b) = rest.strip_prefix('#') {
-                            (2u8, b) // /# = anchor at start
-                        } else if let Some(b) = rest.strip_prefix('%') {
-                            (3u8, b) // /% = anchor at end
-                        } else {
-                            (0u8, rest) // / = first match only
-                        };
-                        let (pat, repl) = match body.find('/') {
-                            Some(slash) => (&body[..slash], &body[slash + 1..]),
-                            None => (body, ""),
-                        };
-                        let pat_expanded = self.expand_string(pat);
-                        let repl_expanded = self.expand_string(repl);
-                        return zsh_pattern_replace(&elem, &pat_expanded, &repl_expanded, op);
-                    }
-                    // No-colon variants `${arr[N]-d}` / `${arr[N]+set}` /
-                    // `${arr[N]?msg}` — same as colon forms but the test
-                    // is "is the element SET" rather than "is empty".
-                    // For an indexed array, `set` means the index is in
-                    // bounds; for an assoc, the key is present.
-                    let elem_is_set = self.array_element_is_set(var_name, index);
-                    if let Some(rest) = after_bracket.strip_prefix('-') {
-                        return if elem_is_set {
-                            elem
-                        } else {
-                            self.expand_string(rest)
-                        };
-                    }
-                    if let Some(rest) = after_bracket.strip_prefix('+') {
-                        return if elem_is_set {
-                            self.expand_string(rest)
-                        } else {
-                            String::new()
-                        };
-                    }
-                    if let Some(rest) = after_bracket.strip_prefix('?') {
-                        if !elem_is_set {
-                            let msg = self.expand_string(rest);
-                            eprintln!("zshrs:1: {}[{}]: {}", var_name, index, msg);
-                            return String::new();
-                        }
-                        return elem;
-                    }
-                }
-
-                // Check for zsh/parameter special associative arrays (options, commands, etc.)
-                if let Some(val) = self.get_special_array_value(var_name, index) {
-                    return val;
-                }
-
-                // Check if it's a user-defined associative array
-                if self.assoc_arrays.contains_key(var_name) {
-                    if index == "@" || index == "*" {
-                        // ${assoc[@]} - return all values
-                        return self
-                            .assoc_arrays
-                            .get(var_name)
-                            .map(|a| a.values().cloned().collect::<Vec<_>>().join(" "))
-                            .unwrap_or_default();
-                    } else {
-                        // ${assoc[key]} - return value for key
-                        let key = self.expand_string(index);
-                        return self
-                            .assoc_arrays
-                            .get(var_name)
-                            .and_then(|a| a.get(&key).cloned())
-                            .unwrap_or_default();
-                    }
-                }
-
-                // Regular indexed array
-                if index == "@" || index == "*" {
-                    // `${arr[@]:modifier}` — apply the path-modifier
-                    // (`:h`/`:t`/`:r`/`:e`/`:l`/`:u`/`:q`/`:Q`/`:A`/`:a`)
-                    // per-element. Without this, the join-then-return
-                    // path collapsed the array into a scalar and the
-                    // colon-modifier branch never fired, so `${a[@]:h}`
-                    // for `(/foo/x /bar/y)` returned the joined string
-                    // unchanged instead of `/foo /bar`.
-                    let modifier = after_bracket.strip_prefix(':').unwrap_or(after_bracket);
-                    if !modifier.is_empty() && self.is_history_modifier(modifier) {
-                        if let Some(arr) = self.arrays.get(var_name).cloned() {
-                            return arr
-                                .iter()
-                                .map(|e| self.apply_history_modifiers(e, modifier))
-                                .collect::<Vec<_>>()
-                                .join(" ");
-                        }
-                    }
-                    // ${arr[@]} - return all elements
-                    return self
-                        .arrays
-                        .get(var_name)
-                        .map(|arr| arr.join(" "))
-                        .unwrap_or_default();
-                }
-
-                // Use the ported subscript module for comprehensive index parsing
-                use crate::subscript::{
-                    get_array_by_subscript, get_array_element_by_subscript, getindex,
-                };
-                let ksh_arrays = self.options.get("ksh_arrays").copied().unwrap_or(false);
-                // Index can be `$var`, arithmetic, or a literal integer.
-                // Expand parameter refs first so `${a[$i]}` resolves the
-                // current value of `i`. expand_string handles `$N`/`${N}`/
-                // `$((expr))`/`$(cmd)` uniformly.
-                let expanded_index = self.expand_string(index);
-                let index = expanded_index.as_str();
-
-                if let Ok(v) = getindex(index, false, ksh_arrays) {
-                    // Check if it's an array first
-                    if let Some(arr) = self.arrays.get(var_name) {
-                        if v.is_all() {
-                            return arr.join(" ");
-                        }
-                        // Check if this is a range (comma in subscript) vs single element
-                        // For a single element, v.end == v.start + 1 after adjustment
-                        // But for negative single indices, we need to handle specially
-                        let is_range = index.contains(',');
-                        if is_range {
-                            // Range: ${arr[2,4]} returns elements 2 through 4
-                            return get_array_by_subscript(arr, &v, ksh_arrays).join(" ");
-                        } else {
-                            // Single element (including negative indices like -1)
-                            return get_array_element_by_subscript(arr, &v, ksh_arrays)
-                                .unwrap_or_default();
-                        }
-                    }
-
-                    // Not an array - treat as string subscripting.
-                    // `v.start` from getindex is ALREADY 0-indexed (it
-                    // converted the user's 1-based input via `start-1`),
-                    // so we use it directly. Only negative indices need
-                    // length-relative resolution.
-                    let val = self.get_variable(var_name);
-                    if !val.is_empty() {
-                        let chars: Vec<char> = val.chars().collect();
-                        let actual_idx = if v.start < 0 {
-                            (chars.len() as i64 + v.start).max(0) as usize
-                        } else {
-                            v.start as usize
-                        };
-                        if v.end > v.start + 1 {
-                            // String range
-                            let end_idx = if v.end < 0 {
-                                (chars.len() as i64 + v.end + 1).max(0) as usize
-                            } else {
-                                v.end as usize
-                            };
-                            let end_idx = end_idx.min(chars.len());
-                            return chars[actual_idx..end_idx].iter().collect();
-                        } else {
-                            return chars
-                                .get(actual_idx)
-                                .map(|c| c.to_string())
-                                .unwrap_or_default();
-                        }
-                    }
-                    return String::new();
-                }
-
-                // Non-numeric index on non-assoc - return empty
-                return String::new();
-            }
-        }
-
-        // `${var@OP}` is a bash-only modifier (Q/E/U/L/A/a/K/k). zsh
-        // rejects with "bad substitution". Emit zsh's error format and
-        // return empty so scripts that accidentally rely on these forms
-        // see the same diagnostic.
-        if let Some(at_pos) = content.find('@') {
-            let prefix = &content[..at_pos];
-            if !prefix.is_empty()
-                && prefix
-                    .chars()
-                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
-            {
-                eprintln!("zshrs:1: bad substitution");
-                return String::new();
-            }
-        }
-
-        // Handle ${var:-default}, ${var:=default}, ${var:?error}, ${var:+alternate}
-        if let Some(colon_pos) = content.find(':') {
-            let var_name = &content[..colon_pos];
-            let rest = &content[colon_pos + 1..];
-            let val = self.get_variable(var_name);
-            let val_opt = if val.is_empty() {
-                None
-            } else {
-                Some(val.clone())
-            };
-
-            if let Some(default) = rest.strip_prefix('-') {
-                // ${var:-default}
-                return match val_opt {
-                    Some(v) if !v.is_empty() => v,
-                    _ => self.expand_string(default),
-                };
-            } else if let Some(default_expr) = rest.strip_prefix('=') {
-                // ${var:=default}
-                return match val_opt {
-                    Some(v) if !v.is_empty() => v,
-                    _ => {
-                        let default = self.expand_string(default_expr);
-                        self.variables.insert(var_name.to_string(), default.clone());
-                        default
-                    }
-                };
-            } else if let Some(msg_expr) = rest.strip_prefix('?') {
-                // ${var:?error}
-                return match val_opt {
-                    Some(v) if !v.is_empty() => v,
-                    _ => {
-                        let msg = self.expand_string(msg_expr);
-                        eprintln!("zshrs: {}: {}", var_name, msg);
-                        String::new()
-                    }
-                };
-            } else if let Some(alt_expr) = rest.strip_prefix('+') {
-                // ${var:+alternate}
-                return match val_opt {
-                    Some(v) if !v.is_empty() => self.expand_string(alt_expr),
-                    _ => String::new(),
-                };
-            } else if let Some(pattern) = rest.strip_prefix('#') {
-                // ${var:#pattern} - filter: remove elements matching pattern
-                // With (M) flag, keep only matching elements
-                // For scalars, return empty if matches, value if not
-                if self.glob_match(&val, pattern) {
-                    return String::new();
-                } else {
-                    return val;
-                }
-            } else if self.is_history_modifier(rest) {
-                // Handle history-style modifiers: :A, :h, :t, :r, :e, :l, :u, :q, :Q
-                // These can be chained: ${var:A:h:h}
-                // For `${arr[@]:h}` / `${arr[*]:h}` (or the `(@)`-flag
-                // form we already stripped above) iterate per-element
-                // so each path gets its own :h/:t/:r truncation.
-                let (base_name, has_at_subscript) =
-                    if var_name.ends_with("[@]") || var_name.ends_with("[*]") {
-                        (&var_name[..var_name.len() - 3], true)
-                    } else {
-                        (var_name, false)
-                    };
-                if has_at_subscript {
-                    if let Some(arr) = self.arrays.get(base_name).cloned() {
-                        return arr
-                            .iter()
-                            .map(|e| self.apply_history_modifiers(e, rest))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                    }
-                    if base_name == "@" || base_name == "*" || base_name.is_empty() {
-                        return self
-                            .positional_params
-                            .iter()
-                            .map(|e| self.apply_history_modifiers(e, rest))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                    }
-                }
-                return self.apply_history_modifiers(&val, rest);
-            } else if rest
-                .chars()
-                .next()
-                .map(|c| c.is_ascii_alphabetic())
-                .unwrap_or(false)
-            {
-                // `${var:X}` where X is a single letter NOT recognised as a
-                // modifier (history-style A/a/h/t/r/e/l/u/q/Q/P/s/g caught
-                // at is_history_modifier above; bash-style U/L/V/X also
-                // caught and routed to "unrecognized modifier" there).
-                // Anything else starting with a letter is an unknown
-                // modifier — emit zsh's "unrecognized modifier `X'" error
-                // and return empty. Without this the call fell through
-                // to the slash/percent paths and silently returned "".
-                let bad = rest.chars().next().unwrap();
-                eprintln!("zshrs:1: unrecognized modifier `{}'", bad);
-                return String::new();
-            } else if is_substring_form_disambig(rest) {
-                // ${var:offset} or ${var:offset:length} — also accepts
-                // ${var::length} (empty offset → 0).
-                let rest_trimmed = rest.trim_start_matches(' ');
-                let parts: Vec<&str> = rest_trimmed.splitn(2, ':').collect();
-                let offset: i64 = if parts[0].trim().is_empty() {
-                    0
-                } else {
-                    parts[0].trim().parse().unwrap_or(0)
-                };
-                let length: Option<i64> = parts.get(1).and_then(|s| s.trim().parse().ok());
-
-                // Positionals (`@`/`*`) and arrays slice ELEMENTS,
-                // not chars (1-based, inclusive offset). Matches zsh.
-                if var_name == "@" || var_name == "*" {
-                    let len = length.unwrap_or(-1);
-                    let sliced = slice_positionals(self, offset, len);
-                    return sliced.join(" ");
-                }
-                if let Some(arr) = self.arrays.get(var_name).cloned() {
-                    let len = length.unwrap_or(-1);
-                    let sliced = slice_array_zero_based(&arr, offset, len);
-                    return sliced.join(" ");
-                }
-
-                let start = if offset < 0 {
-                    (val.len() as i64 + offset).max(0) as usize
-                } else {
-                    (offset as usize).min(val.len())
-                };
-
-                return if let Some(len) = length {
-                    if len < 0 {
-                        // Negative length: take all chars from start
-                        // up to (total - |len|) — `${a::-1}` skips the
-                        // last char. zsh's bash-compat behavior.
-                        let total = val.chars().count();
-                        let end = (total as i64 + len).max(start as i64) as usize;
-                        let take = end.saturating_sub(start);
-                        val.chars().skip(start).take(take).collect()
-                    } else {
-                        let len = len as usize;
-                        val.chars().skip(start).take(len).collect()
-                    }
-                } else {
-                    val.chars().skip(start).collect()
-                };
-            }
-        }
-
-        // Handle the no-colon ${var-default}, ${var=default}, ${var?error},
-        // ${var+alternate} forms. These behave like the colon variants but
-        // distinguish UNSET from EMPTY: only `unset` triggers the default.
-        // Without these arms, `${a-default}` returned empty when `a` was
-        // unset, and nested forms like `${a-${b-default}}` couldn't reach
-        // the inner expansion at all.
-        if !content.is_empty() {
-            // Locate a name-terminator that is `-`, `=`, `?`, or `+` (NOT
-            // `:` which is handled above). Walk char-by-char so we don't
-            // pick up `-` inside the var name (which can't happen) or
-            // `=` inside an `==` token (also can't appear here).
-            let chars: Vec<char> = content.chars().collect();
-            // A valid var name is the leading identifier-chars run.
-            let mut name_end = 0usize;
-            let first_ok = chars
-                .first()
-                .map(|c| c.is_alphabetic() || *c == '_')
-                .unwrap_or(false);
-            if first_ok {
-                while name_end < chars.len()
-                    && (chars[name_end] == '_' || chars[name_end].is_ascii_alphanumeric())
-                {
-                    name_end += 1;
-                }
-                if name_end > 0 && name_end < chars.len() {
-                    let op = chars[name_end];
-                    if matches!(op, '-' | '=' | '?' | '+') {
-                        let var_name: String = chars[..name_end].iter().collect();
-                        let rest: String = chars[name_end + 1..].iter().collect();
-                        let is_set = self.variables.contains_key(&var_name)
-                            || self.arrays.contains_key(&var_name)
-                            || self.assoc_arrays.contains_key(&var_name)
-                            || std::env::var(&var_name).is_ok();
-                        let val = if is_set {
-                            self.get_variable(&var_name)
-                        } else {
-                            String::new()
-                        };
-                        match op {
-                            '-' => {
-                                return if is_set {
-                                    val
-                                } else {
-                                    self.expand_string(&rest)
-                                };
-                            }
-                            '=' => {
-                                return if is_set {
-                                    val
-                                } else {
-                                    let v = self.expand_string(&rest);
-                                    self.variables.insert(var_name, v.clone());
-                                    v
-                                };
-                            }
-                            '?' => {
-                                return if is_set {
-                                    val
-                                } else {
-                                    let msg = self.expand_string(&rest);
-                                    eprintln!("zshrs:1: {}: {}", var_name, msg);
-                                    String::new()
-                                };
-                            }
-                            '+' => {
-                                return if is_set {
-                                    self.expand_string(&rest)
-                                } else {
-                                    String::new()
-                                };
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-
-        // Handle ${var/pattern/replacement} and ${var//pattern/replacement}
-        // Only if the part before / is a valid variable name
-        if let Some(slash_pos) = content.find('/') {
-            let var_name = &content[..slash_pos];
-            // Variable names must start with letter/underscore and contain only alnum/_
-            if !var_name.is_empty()
-                && var_name
-                    .chars()
-                    .next()
-                    .map(|c| c.is_alphabetic() || c == '_')
-                    .unwrap_or(false)
-                && var_name.chars().all(|c| c.is_alphanumeric() || c == '_')
-            {
-                let rest = &content[slash_pos + 1..];
-                let val = self.get_variable(var_name);
-
-                let replace_all = rest.starts_with('/');
-                let rest = if replace_all { &rest[1..] } else { rest };
-
-                // Find the FIRST unescaped `/` separating pattern from
-                // replacement. zsh: `${HOME//\//_}` should split into
-                // pattern=`/` and replacement=`_`. Naive `splitn(2, '/')`
-                // split on the escaped `\/` and produced `\\` as pattern.
-                let (pattern_owned, replacement_owned): (String, String) = {
-                    let chars: Vec<char> = rest.chars().collect();
-                    let mut sep = None;
-                    let mut i = 0;
-                    while i < chars.len() {
-                        if chars[i] == '\\' && i + 1 < chars.len() {
-                            i += 2;
-                            continue;
-                        }
-                        if chars[i] == '/' {
-                            sep = Some(i);
-                            break;
-                        }
-                        i += 1;
-                    }
-                    let (pat, rep) = match sep {
-                        Some(p) => {
-                            let pat: String = chars[..p].iter().collect();
-                            let rep: String = chars[p + 1..].iter().collect();
-                            (pat, rep)
-                        }
-                        None => (rest.to_string(), String::new()),
-                    };
-                    // De-escape `\/` → `/` in BOTH pattern and replacement.
-                    let unesc = |s: &str| -> String {
-                        let mut out = String::with_capacity(s.len());
-                        let mut it = s.chars().peekable();
-                        while let Some(c) = it.next() {
-                            if c == '\\' {
-                                if let Some(&nx) = it.peek() {
-                                    if nx == '/' {
-                                        out.push('/');
-                                        it.next();
-                                        continue;
-                                    }
-                                }
-                            }
-                            out.push(c);
-                        }
-                        out
-                    };
-                    (unesc(&pat), unesc(&rep))
-                };
-                let pattern = pattern_owned.as_str();
-                let replacement = replacement_owned.as_str();
-
-                // Anchor support: `${v/#pre/repl}` matches only at start;
-                // `${v/%suf/repl}` matches only at end. The single-vs-all
-                // distinction collapses for anchors (an anchor matches at
-                // most once), so `replace_all` doesn't change behavior.
-                if let Some(rest) = pattern.strip_prefix('#') {
-                    return if let Some(suffix) = val.strip_prefix(rest) {
-                        format!("{}{}", replacement, suffix)
-                    } else {
-                        val
-                    };
-                }
-                if let Some(rest) = pattern.strip_prefix('%') {
-                    return if let Some(prefix) = val.strip_suffix(rest) {
-                        format!("{}{}", prefix, replacement)
-                    } else {
-                        val
-                    };
-                }
-
-                return if replace_all {
-                    val.replace(pattern, replacement)
-                } else {
-                    val.replacen(pattern, replacement, 1)
-                };
-            }
-        }
-
-        // Handle ${var#pattern} and ${var##pattern} - remove prefix
-        // But only if the # is not at the start (which would be length)
-        if let Some(hash_pos) = content.find('#') {
-            if hash_pos > 0 {
-                let var_name = &content[..hash_pos];
-                // Make sure var_name looks like a valid variable name
-                if var_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    let rest = &content[hash_pos + 1..];
-                    let val = self.get_variable(var_name);
-
-                    let long = rest.starts_with('#');
-                    let pattern = if long { &rest[1..] } else { rest };
-
-                    // Glob → regex translation. For SHORTEST match, use
-                    // non-greedy `*` (`.*?`); for LONGEST, greedy `.*`. The
-                    // anchor `^` keeps the match anchored to the start.
-                    let star = if long { ".*" } else { ".*?" };
-                    let pattern_regex = regex::escape(pattern)
-                        .replace(r"\*", star)
-                        .replace(r"\?", ".");
-                    let full_pattern = format!("^{}", pattern_regex);
-
-                    if let Some(re) = cached_regex(&full_pattern) {
-                        if long {
-                            // Longest match — `find` with greedy `.*` already
-                            // returns the longest from the start.
-                            if let Some(m) = re.find(&val) {
-                                return val[m.end()..].to_string();
-                            }
-                        } else {
-                            // Shortest match — non-greedy regex finds the
-                            // shortest prefix that satisfies the pattern.
-                            if let Some(m) = re.find(&val) {
-                                return val[m.end()..].to_string();
-                            }
-                        }
-                    }
-                    return val;
-                }
-            }
-        }
-
-        // Handle ${var%pattern} and ${var%%pattern} - remove suffix
-        if let Some(pct_pos) = content.find('%') {
-            if pct_pos > 0 {
-                let var_name = &content[..pct_pos];
-                if var_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    let rest = &content[pct_pos + 1..];
-                    let val = self.get_variable(var_name);
-
-                    let long = rest.starts_with('%');
-                    let pattern = if long { &rest[1..] } else { rest };
-
-                    // Use glob pattern matching for suffix removal
-                    if let Ok(glob) = glob::Pattern::new(pattern) {
-                        if long {
-                            // Remove longest suffix match - find earliest matching position
-                            for i in 0..=val.len() {
-                                if glob.matches(&val[i..]) {
-                                    return val[..i].to_string();
-                                }
-                            }
-                        } else {
-                            // Remove shortest suffix match - find latest matching position
-                            for i in (0..=val.len()).rev() {
-                                if glob.matches(&val[i..]) {
-                                    return val[..i].to_string();
-                                }
-                            }
-                        }
-                    }
-                    return val;
-                }
-            }
-        }
-
-        // `${var^}` / `${var^^}` (uppercase) and `${var,}` / `${var,,}`
-        // (lowercase) are bash-only forms — zsh rejects them as "bad
-        // substitution". Match zsh's behavior: print the error to stderr
-        // and return empty. Note: these MUST run BEFORE the comma-aware
-        // PE flag parsing (e.g. `${(j:,:)…}` uses commas legitimately) —
-        // we only flag a bare `^` or `,` that's the operator suffix on a
-        // plain identifier name, not commas inside `(…)` flag groups.
-        if !content.starts_with('(') {
-            if let Some(caret_pos) = content.find('^') {
-                let prefix = &content[..caret_pos];
-                if prefix
-                    .chars()
-                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
-                {
-                    eprintln!("zshrs:1: bad substitution");
-                    return String::new();
-                }
-            }
-            if let Some(comma_pos) = content.find(',') {
-                let prefix = &content[..comma_pos];
-                if prefix
-                    .chars()
-                    .all(|c| c == '_' || c.is_ascii_alphanumeric())
-                {
-                    eprintln!("zshrs:1: bad substitution");
-                    return String::new();
-                }
-            }
-        }
-
-        // Handle ${!prefix*} and ${!prefix@} - expand to variable names with prefix
-        if let Some(rest) = content.strip_prefix('!') {
-            // `${!prefix*}` and `${!prefix@}` — list variable names
-            // matching prefix. THIS one is bash-only too BUT zsh
-            // accepts it as `${(k)var}`-style; keep working until a
-            // clearer divergence test forces a stricter gate.
-            if rest.ends_with('*') || rest.ends_with('@') {
-                let prefix = &rest[..rest.len() - 1];
-                let mut matches: Vec<String> = self
-                    .variables
-                    .keys()
-                    .filter(|k| k.starts_with(prefix))
-                    .cloned()
-                    .collect();
-                // Also check arrays
-                for k in self.arrays.keys() {
-                    if k.starts_with(prefix) && !matches.contains(k) {
-                        matches.push(k.clone());
-                    }
-                }
-                matches.sort();
-                return matches.join(" ");
-            }
-
-            // ${!var} bash-style indirect expansion is NOT a valid zsh
-            // form — zsh emits "bad substitution". The zsh-native indirect
-            // is `${(P)var}`. zshrs previously implemented bash semantics;
-            // align with zsh by emitting the error.
-            eprintln!("zshrs:1: bad substitution");
-            return String::new();
-        }
-
-        // Default: just get the variable
-        self.get_variable(content)
-    }
 
     #[tracing::instrument(level = "trace", skip_all)]
     fn expand_string(&mut self, s: &str) -> String {
@@ -16791,6 +15299,40 @@ impl ShellExecutor {
                 // to "" — eating the dollar sign.
                 if chars.peek().is_none() {
                     result.push('$');
+                    continue;
+                }
+                // `$'...'` — ANSI-C quoting. Per zsh docs (zshmisc),
+                // the contents are processed for backslash escapes
+                // (`\e`, `\n`, `\xNN`, `\uNNNN`, …) and the result is
+                // single-quoted (no further parameter substitution).
+                // The lexer normally resolves this earlier, but the
+                // raw `${var/$'\e'/…}` operand reaches expand_string
+                // without prior tokenization, so handle it here.
+                if chars.peek() == Some(&'\'') {
+                    chars.next(); // consume opening `'`
+                    let mut content = String::new();
+                    let mut escaped = false;
+                    while let Some(&pc) = chars.peek() {
+                        if escaped {
+                            content.push(pc);
+                            chars.next();
+                            escaped = false;
+                            continue;
+                        }
+                        if pc == '\\' {
+                            content.push(pc);
+                            chars.next();
+                            escaped = true;
+                            continue;
+                        }
+                        if pc == '\'' {
+                            chars.next(); // consume closing `'`
+                            break;
+                        }
+                        content.push(pc);
+                        chars.next();
+                    }
+                    result.push_str(&crate::subst_port::getkeystring_pub(&content));
                     continue;
                 }
                 if chars.peek() == Some(&'(') {
@@ -16825,7 +15367,7 @@ impl ShellExecutor {
                             brace_content.push(c);
                         }
                     }
-                    result.push_str(&self.expand_braced_variable(&brace_content));
+                    result.push_str(&crate::subst_port::substitute_brace(&brace_content, self));
                 } else {
                     // Check for single-char special vars first: $$, $!, $-
                     if matches!(chars.peek(), Some(&'$') | Some(&'!') | Some(&'-')) {
@@ -18810,6 +17352,29 @@ impl ShellExecutor {
                 }
             }
 
+            // ${var/#pattern/replacement} — anchored prefix
+            Some(VarModifier::ReplacePrefix(pattern, replacement)) => {
+                let v = val.unwrap_or_default();
+                let pat = self.expand_word(pattern);
+                let repl = self.expand_word(replacement);
+                if let Some(rest) = v.strip_prefix(&*pat) {
+                    format!("{}{}", repl, rest)
+                } else {
+                    v
+                }
+            }
+            // ${var/%pattern/replacement} — anchored suffix
+            Some(VarModifier::ReplaceSuffix(pattern, replacement)) => {
+                let v = val.unwrap_or_default();
+                let pat = self.expand_word(pattern);
+                let repl = self.expand_word(replacement);
+                if let Some(head) = v.strip_suffix(&*pat) {
+                    format!("{}{}", head, repl)
+                } else {
+                    v
+                }
+            }
+
             // ${var^} or ${var^^} - uppercase
             Some(VarModifier::Upper) => val.map(|v| v.to_uppercase()).unwrap_or_default(),
 
@@ -18959,11 +17524,11 @@ impl ShellExecutor {
                     // with CASMOD_LOWER. Use the faithful
                     // casemodify port instead of plain to_lowercase
                     // for Unicode-correct multibyte handling.
-                    result = crate::subst::casemodify(&result, crate::subst::CaseMod::Lower);
+                    result = crate::subst_port::casemodify(&result, crate::subst_port::CaseMod::Lower);
                 }
                 'u' => {
                     // `:u` uppercase. Port of src/zsh/Src/hist.c:934-936.
-                    result = crate::subst::casemodify(&result, crate::subst::CaseMod::Upper);
+                    result = crate::subst_port::casemodify(&result, crate::subst_port::CaseMod::Upper);
                 }
                 'C' => {
                     // `:C` capitalize. zsh-only modifier per
@@ -18973,7 +17538,7 @@ impl ShellExecutor {
                     // `(C)` parameter flag did. Same semantics:
                     // word-aware capitalization with mid-word
                     // lowercase enforcement.
-                    result = crate::subst::casemodify(&result, crate::subst::CaseMod::Caps);
+                    result = crate::subst_port::casemodify(&result, crate::subst_port::CaseMod::Caps);
                 }
                 'q' => {
                     // zsh `:q` uses backslash quoting, not single-quote
@@ -19408,7 +17973,7 @@ impl ShellExecutor {
                 // The naive split_whitespace+title-case approach
                 // collapsed multi-space runs and missed mid-word
                 // lowercasing of non-leading uppercases.
-                crate::subst::casemodify(val, crate::subst::CaseMod::Caps)
+                crate::subst_port::casemodify(val, crate::subst_port::CaseMod::Caps)
             }
             ZshParamFlag::Join(sep) => {
                 if let Some(arr) = self.arrays.get(name) {
@@ -19829,12 +18394,34 @@ impl ShellExecutor {
             cmd_stack: Vec::new(),
             psvar: self.get_psvar(),
             term_width: self.get_term_width(),
-            lineno: 1,
-            // `%N` resolution per Src/prompt.c:554-556: scriptname
-            // wins over argzero. The currently-running source file
-            // lives in `$0`; the binary's argv[0] lives in
-            // `$ZSH_ARGZERO`.
-            scriptname: self.variables.get("0").cloned(),
+            // `$LINENO` is updated by `BUILTIN_SET_LINENO` before
+            // every top-level pipe (compile_zsh.rs:142), carrying
+            // the parser's `ZshPipe.lineno`. Reading it here lets
+            // `%i` / `%I` / `%h` prompt expansion (and the xtrace
+            // prefix that wraps each command) reflect the source
+            // line currently executing — matching zsh's
+            // `printprompt4()` reading the `lineno` C global before
+            // it expands `prompt4`. Falls back to 1 only on the very
+            // first dispatch before any SET_LINENO has fired.
+            lineno: self
+                .variables
+                .get("LINENO")
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(1),
+            // `%N` / `%x` resolution per Src/prompt.c:541-556:
+            // scriptname wins over argzero. C zsh keeps a separate
+            // `scriptname` global (Src/init.c) — set to the binary
+            // basename in `-c` mode (init.c:479), to the resolved
+            // path when sourcing a file (init.c:1591), and to the
+            // function name during a function call (exec.c:5903).
+            // The dedicated `self.scriptname` field tracks that. Fall
+            // back through $0 then $ZSH_ARGZERO if it's unset (e.g.
+            // a script-file invocation that hasn't pushed a frame
+            // yet).
+            scriptname: self
+                .scriptname
+                .clone()
+                .or_else(|| self.variables.get("0").cloned()),
             argzero: self
                 .variables
                 .get("ZSH_ARGZERO")
