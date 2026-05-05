@@ -18,7 +18,12 @@ pub enum WordStyle {
 }
 
 impl Zle {
-    /// Find the start of the current/previous word
+    /// Find the start of the current (or preceding) word at the cursor.
+    /// Port of the backward-word scan logic in `backwardword()` at
+    /// Src/Zle/zle_word.c:240, parameterised over four word-class
+    /// styles: Emacs (iword), Vi (alnum + same-class), Shell
+    /// (quote-aware via shell_words), BlankDelimited (whitespace only).
+    /// Returns the index of the first char of the located word.
     pub fn find_word_start(&self, style: WordStyle) -> usize {
         let mut pos = self.zlecs;
 
@@ -75,7 +80,10 @@ impl Zle {
         pos
     }
 
-    /// Find the end of the current/next word
+    /// Find the end (exclusive) of the current (or following) word.
+    /// Port of the forward-word scan logic in `forwardword()` at
+    /// Src/Zle/zle_word.c:45. Returns one-past-the-last-char index;
+    /// callers wanting "land on last char" (vim `e`) subtract one.
     pub fn find_word_end(&self, style: WordStyle) -> usize {
         let mut pos = self.zlecs;
 
@@ -125,7 +133,10 @@ impl Zle {
         pos
     }
 
-    /// Get the current word
+    /// Slice out the word containing the cursor.
+    /// Convenience helper combining `find_word_start` + `find_word_end`.
+    /// Mirrors the lexical pair zsh's word-motion code uses to compute
+    /// kill/yank ranges (e.g. `killword` at Src/Zle/zle_word.c).
     pub fn get_current_word(&self, style: WordStyle) -> &[ZleChar] {
         let start = self.find_word_start(style);
         let end = self.find_word_end(style);
