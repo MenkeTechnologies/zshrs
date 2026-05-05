@@ -39827,7 +39827,16 @@ impl ShellExecutor {
         0
     }
 
-    /// vared - visually edit a variable
+    /// vared - visually edit a variable.
+    /// Port of bin_vared() from Src/Zle/zle_main.c:1678. The C source
+    /// runs zleread() with a vared context flag (ZLCON_VARED), which
+    /// drops down a full ZLE session bound to the named variable's
+    /// current value. zshrs's lib-side vared can't reach the live
+    /// editor (no host-side dispatch from this crate), so we fall back
+    /// to a stdin read_line — sufficient for non-interactive scripts
+    /// like `var=hi vared var <<<edited` but missing the line-editor
+    /// keybindings, history navigation (-h), and array editing (-a/-A)
+    /// the C source supports.
     fn builtin_vared(&mut self, args: &[String]) -> i32 {
         if args.is_empty() {
             eprintln!("zshrs:vared:1: not enough arguments");
@@ -39837,7 +39846,11 @@ impl ShellExecutor {
         let mut var_name = String::new();
         let mut prompt = String::new();
         let mut rprompt = String::new();
-        let mut _history = false; // TODO: implement history completion
+        // -h: would queue history into bufstack so up-arrow walks it
+        // (zle_main.c:1678's vared launches zleread(ZLRF_HISTORY)). Our
+        // stdin read_line doesn't support arrow keys, so the flag is
+        // accepted for compat but no editing-time history is offered.
+        let mut _history = false;
         let mut i = 0;
 
         while i < args.len() {
