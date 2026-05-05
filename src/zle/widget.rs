@@ -454,7 +454,10 @@ fn get_builtin_widget(name: &str) -> (fn(&mut Zle), WidgetFlags) {
 // Widget implementations
 
 fn widget_accept_line(zle: &mut Zle) {
-    zle.accept_line();
+    // Port of acceptline() from Src/Zle/zle_misc.c:401. The C source is
+    // a one-liner: `done = 1`; everything else (return current line,
+    // history append, hooks) happens in zleread() after zlecore returns.
+    zle.done = true;
 }
 
 fn widget_accept_and_hold(zle: &mut Zle) {
@@ -910,24 +913,41 @@ fn widget_transpose_chars(zle: &mut Zle) {
 }
 
 fn widget_clear_screen(zle: &mut Zle) {
-    print!("\x1b[2J\x1b[H");
-    zle.resetneeded = true;
+    // Port of clearscreen() from Src/Zle/zle_refresh.c. Routes through
+    // the existing Zle::clearscreen helper which emits the CSI clear +
+    // home, then forces a refresh on the next zlecore iteration.
+    zle.clearscreen();
 }
 
 fn widget_redisplay(zle: &mut Zle) {
+    // Port of redisplay() from Src/Zle/zle_refresh.c. Just sets the
+    // reset flag — the next zlecore iteration calls zrefresh.
     zle.resetneeded = true;
 }
 
 fn widget_send_break(zle: &mut Zle) {
-    zle.send_break();
+    // Port of sendbreak() from Src/Zle/zle_misc.c:1144. The C source
+    // sets errflag |= ERRFLAG_ERROR | ERRFLAG_INT and returns 1, which
+    // causes the zlecore loop at zle_main.c:1128 to exit. Our
+    // abort_line() clears the buffer and sets done=true — same outward
+    // effect, no errflag needed because we don't carry it through to
+    // the caller. (send_break() exists separately for non-widget
+    // callers that want just the buffer clear.)
+    zle.abort_line();
 }
 
 fn widget_overwrite_mode(zle: &mut Zle) {
+    // Port of overwritemode() from Src/Zle/zle_misc.c. Toggles between
+    // insert (default) and overwrite. Insert mode appends at the cursor;
+    // overwrite replaces the char under the cursor.
     zle.insmode = !zle.insmode;
 }
 
 fn widget_quoted_insert(zle: &mut Zle) {
-    // Read next char literally
+    // Port of quotedinsert() from Src/Zle/zle_misc.c. Reads the next
+    // input char and inserts it literally (bypassing keymap dispatch),
+    // letting the user enter control chars verbatim — the canonical
+    // Ctrl-V binding.
     if let Some(c) = zle.getfullchar(true) {
         zle.self_insert(c);
     }
@@ -2873,6 +2893,40 @@ mod tests {
         zle.zlecs = 0;
         widget_capitalize_word(&mut zle);
         assert_eq!(zle.zleline.iter().collect::<String>(), "Hello world");
+    }
+
+    #[test]
+    fn accept_line_widget_marks_done() {
+        let mut zle = Zle::new();
+        zle.zleline = "echo hi".chars().collect();
+        zle.zlell = 7;
+        widget_accept_line(&mut zle);
+        assert!(zle.done);
+        // accept-line keeps the buffer intact for the caller to read.
+        assert_eq!(zle.zleline.iter().collect::<String>(), "echo hi");
+    }
+
+    #[test]
+    fn send_break_widget_clears_buffer_and_marks_done() {
+        let mut zle = Zle::new();
+        zle.zleline = "abc".chars().collect();
+        zle.zlell = 3;
+        zle.zlecs = 2;
+        widget_send_break(&mut zle);
+        assert!(zle.done);
+        assert!(zle.zleline.is_empty());
+        assert_eq!(zle.zlell, 0);
+        assert_eq!(zle.zlecs, 0);
+    }
+
+    #[test]
+    fn overwrite_mode_widget_toggles_insmode() {
+        let mut zle = Zle::new();
+        let initial = zle.insmode;
+        widget_overwrite_mode(&mut zle);
+        assert_eq!(zle.insmode, !initial);
+        widget_overwrite_mode(&mut zle);
+        assert_eq!(zle.insmode, initial);
     }
 
     #[test]
