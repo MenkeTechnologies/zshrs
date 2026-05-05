@@ -488,84 +488,167 @@ fn widget_accept_line_and_down_history(zle: &mut Zle) {
 }
 
 fn widget_self_insert(zle: &mut Zle) {
+    // Port of selfinsert() from Src/Zle/zle_misc.c:113. Insert the
+    // last-read char at the cursor (`zmult` times — count-aware).
+    let n = zle.mult.max(1);
     #[cfg(feature = "multibyte")]
-    if let Some(c) = char::from_u32(zle.lastchar as u32) {
-        zle.self_insert(c);
-    }
+    let c_opt = char::from_u32(zle.lastchar as u32);
     #[cfg(not(feature = "multibyte"))]
-    if zle.lastchar >= 0 && zle.lastchar <= 127 {
-        zle.self_insert(zle.lastchar as u8 as char);
+    let c_opt = if (0..=127).contains(&zle.lastchar) {
+        Some(zle.lastchar as u8 as char)
+    } else {
+        None
+    };
+    if let Some(c) = c_opt {
+        for _ in 0..n {
+            zle.self_insert(c);
+        }
     }
 }
 
 fn widget_self_insert_unmeta(zle: &mut Zle) {
+    // Port of selfinsertunmeta() from Src/Zle/zle_misc.c:149. Strip the
+    // 0x80 meta bit from lastchar before inserting — used when the user
+    // bound an Esc-prefixed key (e.g. `\\eA`) to literally insert 'A'.
+    let n = zle.mult.max(1);
     let c = (zle.lastchar & 0x7f) as u8 as char;
-    zle.self_insert(c);
+    for _ in 0..n {
+        zle.self_insert(c);
+    }
 }
 
 fn widget_forward_char(zle: &mut Zle) {
-    if zle.zlecs < zle.zlell {
-        zle.zlecs += 1;
-        zle.resetneeded = true;
+    // Port of forwardchar() from Src/Zle/zle_move.c:441. Count-aware;
+    // negative count delegates to backward-char (mirrors the C source's
+    // recursive flip at zle_move.c:445).
+    let mut n = zle.mult;
+    if n < 0 {
+        zle.mult = -n;
+        widget_backward_char(zle);
+        zle.mult = n;
+        return;
     }
+    while zle.zlecs < zle.zlell && n > 0 {
+        zle.zlecs += 1;
+        n -= 1;
+    }
+    zle.resetneeded = true;
 }
 
 fn widget_backward_char(zle: &mut Zle) {
-    if zle.zlecs > 0 {
-        zle.zlecs -= 1;
-        zle.resetneeded = true;
+    // Port of backwardchar() from Src/Zle/zle_move.c:464.
+    let mut n = zle.mult;
+    if n < 0 {
+        zle.mult = -n;
+        widget_forward_char(zle);
+        zle.mult = n;
+        return;
     }
+    while zle.zlecs > 0 && n > 0 {
+        zle.zlecs -= 1;
+        n -= 1;
+    }
+    zle.resetneeded = true;
 }
 
 fn widget_forward_word(zle: &mut Zle) {
-    // Skip current word
-    while zle.zlecs < zle.zlell && is_word_char(zle.zleline[zle.zlecs]) {
-        zle.zlecs += 1;
-    }
-    // Skip non-word characters
-    while zle.zlecs < zle.zlell && !is_word_char(zle.zleline[zle.zlecs]) {
-        zle.zlecs += 1;
+    // Port of forwardword() from Src/Zle/zle_word.c:45. Count-aware;
+    // skips the current word (iword chars) then trailing non-iword
+    // chars, repeated `mult` times.
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        if zle.zlecs >= zle.zlell {
+            break;
+        }
+        while zle.zlecs < zle.zlell && is_word_char(zle.zleline[zle.zlecs]) {
+            zle.zlecs += 1;
+        }
+        while zle.zlecs < zle.zlell && !is_word_char(zle.zleline[zle.zlecs]) {
+            zle.zlecs += 1;
+        }
     }
     zle.resetneeded = true;
 }
 
 fn widget_backward_word(zle: &mut Zle) {
-    // Skip non-word characters
-    while zle.zlecs > 0 && !is_word_char(zle.zleline[zle.zlecs - 1]) {
-        zle.zlecs -= 1;
-    }
-    // Skip word
-    while zle.zlecs > 0 && is_word_char(zle.zleline[zle.zlecs - 1]) {
-        zle.zlecs -= 1;
+    // Port of backwardword() from Src/Zle/zle_word.c:240. Count-aware
+    // mirror of forward-word.
+    let n = zle.mult.max(1);
+    for _ in 0..n {
+        if zle.zlecs == 0 {
+            break;
+        }
+        while zle.zlecs > 0 && !is_word_char(zle.zleline[zle.zlecs - 1]) {
+            zle.zlecs -= 1;
+        }
+        while zle.zlecs > 0 && is_word_char(zle.zleline[zle.zlecs - 1]) {
+            zle.zlecs -= 1;
+        }
     }
     zle.resetneeded = true;
 }
 
 fn widget_beginning_of_line(zle: &mut Zle) {
-    zle.zlecs = 0;
+    // Port of beginningofline() from Src/Zle/zle_move.c. Cursor moves
+    // to the start of the current logical line — find_bol respects
+    // embedded newlines.
+    zle.zlecs = zle.find_bol(zle.zlecs);
     zle.resetneeded = true;
 }
 
 fn widget_end_of_line(zle: &mut Zle) {
-    zle.zlecs = zle.zlell;
+    // Port of endofline() from Src/Zle/zle_move.c.
+    zle.zlecs = zle.find_eol(zle.zlecs);
     zle.resetneeded = true;
 }
 
 fn widget_delete_char(zle: &mut Zle) {
-    if zle.zlecs < zle.zlell {
+    // Port of deletechar() from Src/Zle/zle_misc.c:157. Count-aware;
+    // negative count delegates to backward-delete-char. The C source
+    // returns 1 (failure) if it can't delete `mult` chars (cursor hit
+    // EoB before completing); we beep instead since we don't propagate
+    // widget return codes through the zlecore.
+    let mut n = zle.mult;
+    if n < 0 {
+        zle.mult = -n;
+        widget_backward_delete_char(zle);
+        zle.mult = n;
+        return;
+    }
+    while n > 0 {
+        if zle.zlecs >= zle.zlell {
+            zle.handle_feep();
+            return;
+        }
         zle.zleline.remove(zle.zlecs);
         zle.zlell -= 1;
-        zle.resetneeded = true;
+        n -= 1;
     }
+    zle.resetneeded = true;
 }
 
 fn widget_backward_delete_char(zle: &mut Zle) {
-    if zle.zlecs > 0 {
+    // Port of backwarddeletechar() from Src/Zle/zle_misc.c:180.
+    // Count-aware; negative count delegates to delete-char. C clamps
+    // count to zlecs (zle_misc.c:189) so deleting past BoB stops at 0
+    // rather than erroring.
+    let mut n = zle.mult;
+    if n < 0 {
+        zle.mult = -n;
+        widget_delete_char(zle);
+        zle.mult = n;
+        return;
+    }
+    if (n as usize) > zle.zlecs {
+        n = zle.zlecs as i32;
+    }
+    while n > 0 && zle.zlecs > 0 {
         zle.zlecs -= 1;
         zle.zleline.remove(zle.zlecs);
         zle.zlell -= 1;
-        zle.resetneeded = true;
+        n -= 1;
     }
+    zle.resetneeded = true;
 }
 
 fn widget_delete_char_or_list(zle: &mut Zle) {
@@ -582,10 +665,37 @@ fn widget_delete_char_or_list(zle: &mut Zle) {
 }
 
 fn widget_kill_line(zle: &mut Zle) {
-    if zle.zlecs < zle.zlell {
-        let killed: Vec<char> = zle.zleline.drain(zle.zlecs..).collect();
-        zle.zlell = zle.zlecs;
-        // Push to kill ring
+    // Port of killline() from Src/Zle/zle_misc.c:419. Count-aware:
+    // killing N lines from the cursor — for each iteration, if the
+    // cursor sits on a newline consume just that newline, otherwise
+    // kill from cursor to the next newline (or EoB). Final kill goes
+    // on the kill ring as one entry. Negative count delegates to
+    // backward-kill-line (zle_misc.c:423).
+    let mut n = zle.mult;
+    if n < 0 {
+        zle.mult = -n;
+        widget_backward_kill_line(zle);
+        zle.mult = n;
+        return;
+    }
+    let start = zle.zlecs;
+    while n > 0 {
+        if zle.zlecs >= zle.zlell {
+            break;
+        }
+        if zle.zleline[zle.zlecs] == '\n' {
+            zle.zlecs += 1;
+        } else {
+            while zle.zlecs < zle.zlell && zle.zleline[zle.zlecs] != '\n' {
+                zle.zlecs += 1;
+            }
+        }
+        n -= 1;
+    }
+    if zle.zlecs > start {
+        let killed: Vec<char> = zle.zleline.drain(start..zle.zlecs).collect();
+        zle.zlell -= zle.zlecs - start;
+        zle.zlecs = start;
         zle.killring.push_front(killed);
         if zle.killring.len() > zle.killringmax {
             zle.killring.pop_back();
@@ -595,10 +705,34 @@ fn widget_kill_line(zle: &mut Zle) {
 }
 
 fn widget_backward_kill_line(zle: &mut Zle) {
-    if zle.zlecs > 0 {
-        let killed: Vec<char> = zle.zleline.drain(..zle.zlecs).collect();
-        zle.zlell -= zle.zlecs;
-        zle.zlecs = 0;
+    // Port of backwardkillline() from Src/Zle/zle_misc.c:225. Mirror of
+    // kill-line: per iteration, consume a leading \\n if present;
+    // otherwise back up to the previous \\n (or BoB). Negative count
+    // delegates to kill-line (zle_misc.c:229).
+    let mut n = zle.mult;
+    if n < 0 {
+        zle.mult = -n;
+        widget_kill_line(zle);
+        zle.mult = n;
+        return;
+    }
+    let end = zle.zlecs;
+    while n > 0 {
+        if zle.zlecs == 0 {
+            break;
+        }
+        if zle.zleline[zle.zlecs - 1] == '\n' {
+            zle.zlecs -= 1;
+        } else {
+            while zle.zlecs > 0 && zle.zleline[zle.zlecs - 1] != '\n' {
+                zle.zlecs -= 1;
+            }
+        }
+        n -= 1;
+    }
+    if end > zle.zlecs {
+        let killed: Vec<char> = zle.zleline.drain(zle.zlecs..end).collect();
+        zle.zlell -= end - zle.zlecs;
         zle.killring.push_front(killed);
         if zle.killring.len() > zle.killringmax {
             zle.killring.pop_back();
@@ -3511,6 +3645,76 @@ mod tests {
         widget_digit_argument(&mut zle);
         assert_eq!(zle.zmod.tmult, -5);
         assert!(!zle.zmod.flags.contains(crate::zle::main::ModifierFlags::NEG));
+    }
+
+    #[test]
+    fn forward_char_with_count_advances_n() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcdef".chars().collect();
+        zle.zlell = 6;
+        zle.zlecs = 0;
+        zle.mult = 3;
+        widget_forward_char(&mut zle);
+        assert_eq!(zle.zlecs, 3);
+    }
+
+    #[test]
+    fn forward_char_with_negative_count_delegates_backwards() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcdef".chars().collect();
+        zle.zlell = 6;
+        zle.zlecs = 5;
+        zle.mult = -2;
+        widget_forward_char(&mut zle);
+        assert_eq!(zle.zlecs, 3);
+    }
+
+    #[test]
+    fn backward_delete_char_count_clamped_to_cursor() {
+        // C source: zle_misc.c:189 clamps mult to zlecs.
+        let mut zle = Zle::new();
+        zle.zleline = "ab".chars().collect();
+        zle.zlell = 2;
+        zle.zlecs = 1;
+        zle.mult = 5; // ask to delete 5 but only 1 char available before cursor
+        widget_backward_delete_char(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "b");
+        assert_eq!(zle.zlecs, 0);
+    }
+
+    #[test]
+    fn forward_word_with_count_skips_n_words() {
+        let mut zle = Zle::new();
+        zle.zleline = "a b c d".chars().collect();
+        zle.zlell = 7;
+        zle.zlecs = 0;
+        zle.mult = 2;
+        widget_forward_word(&mut zle);
+        // After 2 word skips: a→b, b→c, lands at c's start (index 4).
+        assert_eq!(zle.zlecs, 4);
+    }
+
+    #[test]
+    fn kill_line_with_count_kills_n_lines() {
+        let mut zle = Zle::new();
+        zle.zleline = "first\nsecond\nthird".chars().collect();
+        zle.zlell = 18;
+        zle.zlecs = 0;
+        zle.mult = 2;
+        widget_kill_line(&mut zle);
+        // 2 iterations: kill "first", then \n. Buffer: "second\nthird".
+        assert_eq!(zle.zleline.iter().collect::<String>(), "second\nthird");
+    }
+
+    #[test]
+    fn beginning_of_line_uses_find_bol_for_multiline() {
+        let mut zle = Zle::new();
+        zle.zleline = "first\nsecond".chars().collect();
+        zle.zlell = 12;
+        zle.zlecs = 9; // mid-"second"
+        widget_beginning_of_line(&mut zle);
+        // Should land at start of the SECOND logical line, not 0.
+        assert_eq!(zle.zlecs, 6);
     }
 
     #[test]
