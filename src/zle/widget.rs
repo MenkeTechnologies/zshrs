@@ -236,6 +236,57 @@ fn get_builtin_widget(name: &str) -> (fn(&mut Zle), WidgetFlags) {
         // Digit argument
         "digit-argument" => (widget_digit_argument, WidgetFlags::NOTCOMMAND),
 
+        // Region / mark — ports cited in each widget body docstring
+        // against Src/Zle/zle_move.c (set-mark / exchange-point /
+        // visual / deactivate) and zle_misc.c (quote-line / quote-region
+        // / copy-region-as-kill / pound-insert / copy-prev-word).
+        "set-mark-command" => (
+            widget_set_mark_command,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX | WidgetFlags::LASTCOL,
+        ),
+        "exchange-point-and-mark" => (widget_exchange_point_and_mark, WidgetFlags::empty()),
+        "deactivate-region" => (widget_deactivate_region, WidgetFlags::empty()),
+        "visual-mode" => (widget_visual_mode, WidgetFlags::empty()),
+        "visual-line-mode" => (widget_visual_line_mode, WidgetFlags::empty()),
+        "copy-region-as-kill" => (widget_copy_region_as_kill, WidgetFlags::KEEPSUFFIX),
+        "copy-prev-word" => (widget_copy_prev_word, WidgetFlags::KEEPSUFFIX),
+        "quote-line" => (widget_quote_line, WidgetFlags::empty()),
+        "quote-region" => (widget_quote_region, WidgetFlags::empty()),
+        "pound-insert" => (widget_pound_insert, WidgetFlags::empty()),
+        "vi-pound-insert" => (widget_pound_insert, WidgetFlags::empty()),
+
+        // Case changes — bodies in this file delegate to the existing
+        // capitalize/down/upcase methods on Zle (Src/Zle/zle_misc.c).
+        "capitalize-word" => (widget_capitalize_word, WidgetFlags::empty()),
+        "down-case-word" => (widget_down_case_word, WidgetFlags::empty()),
+        "up-case-word" => (widget_up_case_word, WidgetFlags::empty()),
+        "vi-down-case" => (
+            widget_down_case_word,
+            WidgetFlags::LASTCOL | WidgetFlags::VIOPER,
+        ),
+        "vi-up-case" => (
+            widget_up_case_word,
+            WidgetFlags::LASTCOL | WidgetFlags::VIOPER,
+        ),
+
+        // History (additional registrations) — bodies cite zle_hist.c.
+        "beginning-of-history" => (widget_beginning_of_history, WidgetFlags::empty()),
+        "end-of-history" => (widget_end_of_history, WidgetFlags::empty()),
+        "history-beginning-search-backward" => {
+            (widget_history_beginning_search_backward, WidgetFlags::empty())
+        }
+        "history-beginning-search-forward" => {
+            (widget_history_beginning_search_forward, WidgetFlags::empty())
+        }
+        "push-line" => (widget_push_line, WidgetFlags::empty()),
+        "push-line-or-edit" => (widget_push_line, WidgetFlags::empty()),
+        "transpose-words" => (widget_transpose_words, WidgetFlags::empty()),
+        "beep" => (widget_beep, WidgetFlags::empty()),
+        "describe-key-briefly" => (
+            widget_describe_key_briefly,
+            WidgetFlags::MENUCMP | WidgetFlags::KEEPSUFFIX | WidgetFlags::LASTCOL,
+        ),
+
         // Default: undefined widget
         _ => (widget_undefined, WidgetFlags::empty()),
     }
@@ -1189,6 +1240,363 @@ fn widget_undefined(zle: &mut Zle) {
     let _ = zle;
 }
 
+// =============================================================================
+// Section: misc widget ports added after the initial table — every widget
+// body in this section cites the C source it ports. Bodies may delegate to
+// existing Zle methods or inline the small ones; either way the docstring
+// pins the Src/Zle/*.c origin.
+// =============================================================================
+
+fn widget_beep(zle: &mut Zle) {
+    // Port of beep / handlefeep() from Src/Zle/zle_utils.c. Just emits the
+    // bell — `handle_feep` already does the right thing.
+    zle.handle_feep();
+}
+
+fn widget_set_mark_command(zle: &mut Zle) {
+    // Port of setmarkcommand() from Src/Zle/zle_move.c:483. Negative count
+    // disables the region; otherwise marks the current cursor and turns
+    // on the visual region (charwise).
+    if zle.mult < 0 {
+        zle.region_active = 0;
+        return;
+    }
+    zle.mark = zle.zlecs;
+    zle.region_active = 1;
+}
+
+fn widget_exchange_point_and_mark(zle: &mut Zle) {
+    // Port of exchangepointandmark() from Src/Zle/zle_move.c:496. With
+    // mult==0 the C source just turns the region on without swapping;
+    // with mult>0 swaps cursor↔mark and clamps cursor.
+    if zle.mult == 0 {
+        zle.region_active = 1;
+        return;
+    }
+    let new_cs = zle.mark;
+    zle.mark = zle.zlecs;
+    zle.zlecs = new_cs.min(zle.zlell);
+    if zle.mult > 0 {
+        zle.region_active = 1;
+    }
+    zle.resetneeded = true;
+}
+
+fn widget_deactivate_region(zle: &mut Zle) {
+    // Port of deactivateregion() from Src/Zle/zle_move.c:564.
+    zle.vi_deactivate_region();
+}
+
+fn widget_visual_mode(zle: &mut Zle) {
+    // Port of visualmode() from Src/Zle/zle_move.c:516.
+    zle.vi_visual_mode();
+}
+
+fn widget_visual_line_mode(zle: &mut Zle) {
+    // Port of visuallinemode() from Src/Zle/zle_move.c:540.
+    zle.vi_visual_line_mode();
+}
+
+fn widget_capitalize_word(zle: &mut Zle) {
+    // Port of capitalizeword() from Src/Zle/zle_misc.c. Method already
+    // exists on Zle; this is the dispatch entry.
+    zle.capitalize_word();
+}
+
+fn widget_down_case_word(zle: &mut Zle) {
+    // Port of downcaseword() from Src/Zle/zle_misc.c.
+    zle.downcase_word();
+}
+
+fn widget_up_case_word(zle: &mut Zle) {
+    // Port of upcaseword() from Src/Zle/zle_misc.c.
+    zle.upcase_word();
+}
+
+fn widget_pound_insert(zle: &mut Zle) {
+    // Port of poundinsert() from Src/Zle/zle_misc.c:369. Toggle a leading
+    // `#` on every logical line so the entire input is commented out
+    // (or uncommented). Common keybinding: M-#.
+    zle.zlecs = 0;
+    let toggle_off = zle.zleline.first().copied() == Some('#');
+    if toggle_off {
+        // Walk every logical line, removing one leading '#' if present
+        // (C source: zle_misc.c:384-394).
+        let mut p = 0;
+        loop {
+            let bol = zle.find_bol(p);
+            if zle.zleline.get(bol).copied() == Some('#') {
+                zle.zleline.remove(bol);
+                if zle.zlell > 0 {
+                    zle.zlell -= 1;
+                }
+            }
+            let eol = zle.find_eol(bol);
+            if eol >= zle.zlell {
+                break;
+            }
+            p = eol + 1;
+        }
+    } else {
+        // Insert '#' at start of every logical line (zle_misc.c:373-383).
+        let mut p = 0;
+        loop {
+            let bol = zle.find_bol(p);
+            zle.zleline.insert(bol, '#');
+            zle.zlell += 1;
+            let eol = zle.find_eol(bol);
+            if eol >= zle.zlell {
+                break;
+            }
+            p = eol + 1;
+        }
+    }
+    zle.zlecs = 0;
+    zle.done = true; // C zsh accepts the line after a pound-insert.
+}
+
+fn widget_quote_line(zle: &mut Zle) {
+    // Port of quoteline() from Src/Zle/zle_misc.c:1187. Wrap the entire
+    // buffer in single quotes, escaping any embedded single quote as
+    // `'\''` (the C source's makequote routine).
+    let inner: String = zle.zleline.iter().collect();
+    let escaped = inner.replace('\'', r"'\''");
+    let new_line = format!("'{}'", escaped);
+    zle.zleline = new_line.chars().collect();
+    zle.zlell = zle.zleline.len();
+    zle.zlecs = zle.zlell;
+    zle.resetneeded = true;
+}
+
+fn widget_quote_region(zle: &mut Zle) {
+    // Port of quoteregion() from Src/Zle/zle_misc.c:1152. Wrap the
+    // currently-selected region (mark..zlecs, normalised) in single
+    // quotes with embedded-quote escaping.
+    let (lo, hi) = if zle.mark <= zle.zlecs {
+        (zle.mark, zle.zlecs)
+    } else {
+        (zle.zlecs, zle.mark)
+    };
+    let lo = lo.min(zle.zlell);
+    let hi = hi.min(zle.zlell);
+    if hi <= lo {
+        return;
+    }
+    let inner: String = zle.zleline[lo..hi].iter().collect();
+    let escaped = inner.replace('\'', r"'\''");
+    let wrapped = format!("'{}'", escaped);
+    let wrapped_chars: Vec<char> = wrapped.chars().collect();
+    zle.zleline.splice(lo..hi, wrapped_chars.iter().copied());
+    zle.zlell = zle.zleline.len();
+    zle.zlecs = lo + wrapped_chars.len();
+    zle.resetneeded = true;
+}
+
+fn widget_copy_region_as_kill(zle: &mut Zle) {
+    // Port of copyregionaskill() from Src/Zle/zle_misc.c:494. Copies
+    // mark..zlecs (normalised) onto the kill ring without removing it.
+    let (lo, hi) = if zle.mark <= zle.zlecs {
+        (zle.mark, zle.zlecs)
+    } else {
+        (zle.zlecs, zle.mark)
+    };
+    let lo = lo.min(zle.zlell);
+    let hi = hi.min(zle.zlell);
+    if hi <= lo {
+        return;
+    }
+    let region: Vec<char> = zle.zleline[lo..hi].to_vec();
+    zle.killring.push_front(region);
+    if zle.killring.len() > zle.killringmax {
+        zle.killring.pop_back();
+    }
+}
+
+fn widget_copy_prev_word(zle: &mut Zle) {
+    // Port of copyprevword() from Src/Zle/zle_misc.c:1066. Inserts the
+    // previous word (per ZC_iword) at the cursor. The full C version
+    // walks `zmult` words back; we replicate that by scanning backward
+    // through `mult` word-boundaries.
+    let n = zle.mult.max(1) as usize;
+    let mut end = zle.zlecs;
+    let mut start;
+    let mut word: Option<(usize, usize)> = None;
+    for _ in 0..n {
+        // Skip whitespace going backward.
+        while end > 0 && zle.zleline[end - 1].is_whitespace() {
+            end -= 1;
+        }
+        if end == 0 {
+            break;
+        }
+        start = end;
+        while start > 0 && !zle.zleline[start - 1].is_whitespace() {
+            start -= 1;
+        }
+        word = Some((start, end));
+        end = start;
+    }
+    if let Some((s, e)) = word {
+        let copied: Vec<char> = zle.zleline[s..e].to_vec();
+        for (i, c) in copied.iter().enumerate() {
+            zle.zleline.insert(zle.zlecs + i, *c);
+        }
+        zle.zlecs += copied.len();
+        zle.zlell = zle.zleline.len();
+        zle.resetneeded = true;
+    }
+}
+
+fn widget_transpose_words(zle: &mut Zle) {
+    // Port of transposewords() from Src/Zle/zle_word.c:652. The C source
+    // is a multi-step pointer dance; this Rust port recreates the
+    // common-case behavior: swap the two whitespace-separated words
+    // around (or before) the cursor. Multi-line + edge-case handling
+    // matches the C pattern of "fall back to nearest two prior words"
+    // when the cursor is past the last word on the line.
+    let n = zle.zlell;
+    if n == 0 {
+        return;
+    }
+    // Find the word containing or following the cursor (`p4` in C).
+    let mut p4 = zle.zlecs.min(n);
+    while p4 < n && !zle.zleline[p4].is_alphanumeric() && zle.zleline[p4] != '_' {
+        p4 += 1;
+    }
+    // If we landed past EOL, slide back to find the prior word.
+    if p4 == n {
+        let mut x = zle.zlecs;
+        while x > 0 && (!zle.zleline[x - 1].is_alphanumeric() && zle.zleline[x - 1] != '_') {
+            x -= 1;
+        }
+        if x == 0 {
+            return;
+        }
+        p4 = x;
+    }
+    let p3 = {
+        let mut x = p4;
+        while x < n && (zle.zleline[x].is_alphanumeric() || zle.zleline[x] == '_') {
+            x += 1;
+        }
+        x
+    };
+    let p4 = {
+        let mut x = p4;
+        while x > 0 && (zle.zleline[x - 1].is_alphanumeric() || zle.zleline[x - 1] == '_') {
+            x -= 1;
+        }
+        x
+    };
+    let p2 = {
+        let mut x = p4;
+        while x > 0 && !zle.zleline[x - 1].is_alphanumeric() && zle.zleline[x - 1] != '_' {
+            x -= 1;
+        }
+        x
+    };
+    let p1 = {
+        let mut x = p2;
+        while x > 0 && (zle.zleline[x - 1].is_alphanumeric() || zle.zleline[x - 1] == '_') {
+            x -= 1;
+        }
+        x
+    };
+    if p1 == p2 || p4 == p3 {
+        return;
+    }
+    let word1: Vec<char> = zle.zleline[p1..p2].to_vec();
+    let word2: Vec<char> = zle.zleline[p4..p3].to_vec();
+    let mut new_buf: Vec<char> = Vec::with_capacity(zle.zlell);
+    new_buf.extend_from_slice(&zle.zleline[..p1]);
+    new_buf.extend_from_slice(&word2);
+    new_buf.extend_from_slice(&zle.zleline[p2..p4]);
+    new_buf.extend_from_slice(&word1);
+    new_buf.extend_from_slice(&zle.zleline[p3..]);
+    zle.zleline = new_buf;
+    zle.zlell = zle.zleline.len();
+    zle.zlecs = p1 + word2.len() + (p4 - p2) + word1.len();
+    zle.resetneeded = true;
+}
+
+fn widget_history_beginning_search_backward(zle: &mut Zle) {
+    // Port of historybeginningsearchbackward() from Src/Zle/zle_hist.c:2039.
+    // Searches history for entries that start with the text *before* the
+    // cursor (the prefix), keeping the cursor where it is on a match.
+    let prefix: String = zle.zleline[..zle.zlecs.min(zle.zleline.len())]
+        .iter()
+        .collect();
+    if zle.history.cursor == 0 {
+        return;
+    }
+    let saved_cs = zle.zlecs;
+    let mut i = zle.history.cursor.min(zle.history.entries.len()).saturating_sub(1);
+    loop {
+        if zle.history.entries[i].line.starts_with(&prefix) {
+            if zle.history.saved_line.is_none() {
+                zle.history.saved_line = Some(zle.zleline.clone());
+                zle.history.saved_cs = saved_cs;
+            }
+            zle.history.cursor = i;
+            zle.zleline = zle.history.entries[i].line.chars().collect();
+            zle.zlell = zle.zleline.len();
+            zle.zlecs = saved_cs.min(zle.zlell);
+            zle.resetneeded = true;
+            return;
+        }
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+}
+
+fn widget_history_beginning_search_forward(zle: &mut Zle) {
+    // Port of historybeginningsearchforward() — same shape as the
+    // backward variant (zle_hist.c:2039 area) but stepping forward.
+    let prefix: String = zle.zleline[..zle.zlecs.min(zle.zleline.len())]
+        .iter()
+        .collect();
+    let saved_cs = zle.zlecs;
+    let len = zle.history.entries.len();
+    for i in (zle.history.cursor + 1)..len {
+        if zle.history.entries[i].line.starts_with(&prefix) {
+            zle.history.cursor = i;
+            zle.zleline = zle.history.entries[i].line.chars().collect();
+            zle.zlell = zle.zleline.len();
+            zle.zlecs = saved_cs.min(zle.zlell);
+            zle.resetneeded = true;
+            return;
+        }
+    }
+}
+
+fn widget_beginning_of_history(zle: &mut Zle) {
+    // Port of beginningofhistory() from Src/Zle/zle_hist.c:464.
+    let mut hist = std::mem::take(&mut zle.history);
+    zle.beginning_of_history(&mut hist);
+    zle.history = hist;
+}
+
+fn widget_end_of_history(zle: &mut Zle) {
+    // Port of endofhistory() from Src/Zle/zle_hist.c:478.
+    let mut hist = std::mem::take(&mut zle.history);
+    zle.end_of_history(&mut hist);
+    zle.history = hist;
+}
+
+fn widget_push_line(zle: &mut Zle) {
+    // Port of pushline() from Src/Zle/zle_hist.c:832.
+    zle.push_line();
+    zle.done = true;
+}
+
+fn widget_describe_key_briefly(zle: &mut Zle) {
+    // Port of describekeybriefly() from Src/Zle/zle_thingy.c. Existing
+    // method on Zle handles the input read + lookup loop.
+    zle.describe_key_briefly();
+}
+
 /// Check if a character is a word character
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
@@ -1278,6 +1686,148 @@ mod tests {
         // No completion request: it should have done a delete-char.
         assert_eq!(zle.completion_request, None);
         assert_eq!(zle.zleline.iter().collect::<String>(), "ac");
+    }
+
+    #[test]
+    fn set_mark_command_sets_mark_and_activates_region() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcdef".chars().collect();
+        zle.zlell = 6;
+        zle.zlecs = 3;
+        widget_set_mark_command(&mut zle);
+        assert_eq!(zle.mark, 3);
+        assert_eq!(zle.region_active, 1);
+    }
+
+    #[test]
+    fn set_mark_command_negative_count_deactivates() {
+        let mut zle = Zle::new();
+        zle.region_active = 1;
+        zle.mult = -1;
+        widget_set_mark_command(&mut zle);
+        assert_eq!(zle.region_active, 0);
+    }
+
+    #[test]
+    fn exchange_point_and_mark_swaps() {
+        let mut zle = Zle::new();
+        zle.zleline = "abcdef".chars().collect();
+        zle.zlell = 6;
+        zle.zlecs = 4;
+        zle.mark = 1;
+        zle.mult = 1;
+        widget_exchange_point_and_mark(&mut zle);
+        assert_eq!(zle.zlecs, 1);
+        assert_eq!(zle.mark, 4);
+    }
+
+    #[test]
+    fn copy_region_as_kill_pushes_region_without_removing() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello world".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 5;
+        zle.mark = 0;
+        widget_copy_region_as_kill(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "hello world");
+        assert_eq!(
+            zle.killring.front().map(|v| v.iter().collect::<String>()),
+            Some("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn copy_prev_word_inserts_previous_word_at_cursor() {
+        let mut zle = Zle::new();
+        zle.zleline = "echo hello ".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 11;
+        zle.mult = 1;
+        widget_copy_prev_word(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "echo hello hello");
+    }
+
+    #[test]
+    fn quote_line_wraps_buffer_in_single_quotes() {
+        let mut zle = Zle::new();
+        zle.zleline = "echo hi".chars().collect();
+        zle.zlell = 7;
+        widget_quote_line(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "'echo hi'");
+    }
+
+    #[test]
+    fn quote_line_escapes_embedded_single_quote() {
+        let mut zle = Zle::new();
+        zle.zleline = "it's".chars().collect();
+        zle.zlell = 4;
+        widget_quote_line(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), r"'it'\''s'");
+    }
+
+    #[test]
+    fn quote_region_wraps_only_marked_span() {
+        let mut zle = Zle::new();
+        zle.zleline = "echo hi there".chars().collect();
+        zle.zlell = 13;
+        zle.mark = 5;
+        zle.zlecs = 7; // "hi"
+        widget_quote_region(&mut zle);
+        assert_eq!(
+            zle.zleline.iter().collect::<String>(),
+            "echo 'hi' there"
+        );
+    }
+
+    #[test]
+    fn pound_insert_toggles_leading_hash() {
+        let mut zle = Zle::new();
+        zle.zleline = "echo hi".chars().collect();
+        zle.zlell = 7;
+        widget_pound_insert(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "#echo hi");
+        // Toggle off.
+        zle.done = false;
+        widget_pound_insert(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "echo hi");
+    }
+
+    #[test]
+    fn transpose_words_swaps_two_words() {
+        let mut zle = Zle::new();
+        zle.zleline = "foo bar".chars().collect();
+        zle.zlell = 7;
+        zle.zlecs = 7; // at end of line
+        widget_transpose_words(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "bar foo");
+    }
+
+    #[test]
+    fn capitalize_word_widget_capitalizes_at_cursor() {
+        let mut zle = Zle::new();
+        zle.zleline = "hello world".chars().collect();
+        zle.zlell = 11;
+        zle.zlecs = 0;
+        widget_capitalize_word(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "Hello world");
+    }
+
+    #[test]
+    fn history_beginning_search_backward_walks_to_matching_prefix() {
+        let mut zle = Zle::new();
+        zle.history.add("git commit".to_string());
+        zle.history.add("ls -la".to_string());
+        zle.history.add("git push".to_string());
+        zle.history.cursor = 3; // sentinel
+        zle.zleline = "git ".chars().collect();
+        zle.zlell = 4;
+        zle.zlecs = 4;
+        widget_history_beginning_search_backward(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "git push");
+        // Cursor stays where it was on the prefix.
+        assert_eq!(zle.zlecs, 4);
+        widget_history_beginning_search_backward(&mut zle);
+        assert_eq!(zle.zleline.iter().collect::<String>(), "git commit");
     }
 
     #[test]
