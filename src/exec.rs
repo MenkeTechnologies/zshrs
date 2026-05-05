@@ -38922,19 +38922,56 @@ impl ShellExecutor {
                     }
                     return 0;
                 }
-                "-U" => {
-                    // zle -U string: push string back onto the input
-                    // queue so the editor reads it as the next typed
-                    // chars. Outside ZLE there's no input queue; push
-                    // onto the buffer stack so getln/read -z can pick
-                    // it up — same shared queue used by print -z.
-                    if let Some(s) = iter.next() {
-                        self.buffer_stack.push(s.clone());
-                    }
-                    return 0;
-                }
                 "-I" => {
-                    // Invalidate completion - stub
+                    // Port of bin_zle_invalidate from Src/Zle/zle_thingy.c:830.
+                    // The C source: if zleactive, calls trashzle() to move
+                    // past the prompt and arms fetchttyinfo for a
+                    // settyinfo restore on next zsetterm; if zleactive==0
+                    // it returns 1. Without a live ZLE here we always
+                    // take the inactive branch — return 1 to mirror
+                    // zsh's exit status when no live editor is up.
+                    return 1;
+                }
+                "-C" => {
+                    // Port of bin_zle_complete from Src/Zle/zle_thingy.c:600.
+                    //   zle -C completion-name builtin-widget shell-fn
+                    // Defines a *completion* widget — a user-named widget
+                    // that wraps a built-in completion widget but runs a
+                    // shell function for the actual match generation.
+                    // Used to define plugin completion widgets:
+                    //   zle -C my-comp expand-or-complete _my_comp_fn
+                    let name = match iter.next() {
+                        Some(s) => s.clone(),
+                        None => {
+                            eprintln!("zshrs:zle:1: -C requires a name");
+                            return 1;
+                        }
+                    };
+                    let target = match iter.next() {
+                        Some(s) => s.clone(),
+                        None => {
+                            eprintln!(
+                                "zshrs:zle:1: -C requires a target completion widget"
+                            );
+                            return 1;
+                        }
+                    };
+                    let func = match iter.next() {
+                        Some(s) => s.clone(),
+                        None => {
+                            eprintln!("zshrs:zle:1: -C requires a shell function");
+                            return 1;
+                        }
+                    };
+                    // The C source validates that `target` is a
+                    // completion widget (ZLE_ISCOMP flag). Our widget
+                    // table doesn't carry that flag yet — accept any
+                    // target and register the user widget pointing to
+                    // the func. zinit's _zinit and compsys's _* widgets
+                    // depend on this for plugin loading.
+                    let mut zle = zle();
+                    zle.define_widget(&name, &func);
+                    let _ = target; // referenced for future ZLE_ISCOMP check
                     return 0;
                 }
                 "-f" => {
