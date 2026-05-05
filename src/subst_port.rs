@@ -103,12 +103,19 @@ pub mod prefork_flags {
 
 /// Linked list node - mirrors zsh LinkNode
 #[derive(Debug, Clone)]
+/// Linked-list node for the substitution pipeline.
+/// Mirrors `struct linknode` from Src/zsh.h — `prefork()`
+/// (Src/subst.c:100) walks a `LinkList` of these.
 pub struct LinkNode {
     pub data: String,
 }
 
 /// Linked list - mirrors zsh LinkList
 #[derive(Debug, Clone, Default)]
+/// Substitution pipeline word list.
+/// Mirrors `struct linklist` (Src/zsh.h) — the C source threads
+/// it through `prefork()`/`stringsubst()`/`paramsubst()` (lines
+/// 100/237/1625).
 pub struct LinkList {
     pub nodes: VecDeque<LinkNode>,
     pub flags: u32,
@@ -178,6 +185,9 @@ impl LinkList {
 
 /// Global state for substitution (mirrors zsh global variables)
 #[derive(Default)]
+/// Per-pass substitution state.
+/// Bundles the locals `prefork()` (Src/subst.c:100) keeps —
+/// IFS, glob options, parameter table reference, depth counters.
 pub struct SubstState {
     pub errflag: bool,
     pub opts: SubstOptions,
@@ -188,6 +198,9 @@ pub struct SubstState {
 
 /// Options that affect substitution behavior
 #[derive(Debug, Clone, Default)]
+/// Substitution-pass option flags.
+/// Mirrors the `PF_*` flag bag the C source's `prefork()`
+/// (Src/subst.c:100) takes.
 pub struct SubstOptions {
     pub sh_file_expansion: bool,
     pub sh_word_split: bool,
@@ -256,6 +269,10 @@ fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> {
 
 /// Do substitutions before fork
 /// Port of prefork() from subst.c lines 94-183
+/// Phase-1 word-list substitution (tilde/equal/brace/param/cmd/arith).
+/// Port of `prefork()` from Src/subst.c:100 — runs ahead of
+/// glob expansion to fully resolve `${...}` / `$(...)` /
+/// `$((...))` / `~user` / `=cmd` / `{a,b}`.
 pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut SubstState) {
     let mut node_idx = 0;
     let mut stop_idx: Option<usize> = None;
@@ -1953,6 +1970,8 @@ pub mod multsub_flags {
 
 /// Perform substitution on a single word
 /// Port of singsub() from subst.c lines 513-525
+/// Single-string substitution.
+/// Port of `singsub()` from Src/subst.c:514.
 pub fn singsub(s: &str, state: &mut SubstState) -> String {
     let mut list = LinkList::from_string(s);
     let mut ret_flags = 0u32;
@@ -1968,6 +1987,8 @@ pub fn singsub(s: &str, state: &mut SubstState) -> String {
 
 /// Substitution with possible multiple results
 /// Port of multsub() from subst.c lines 540-621
+/// Multi-word substitution with IFS splitting.
+/// Port of `multsub()` from Src/subst.c:544.
 pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<String>, bool, u32) {
     let mut x = s.to_string();
     let mut ms_flags = 0u32;
@@ -2091,6 +2112,9 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
 
 /// Case modification modes (from subst.c)
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// Case-modifier kind (`:U`/`:L`/`:C`).
+/// Mirrors the `CASMOD_*` flag set Src/utils.c uses inside
+/// `casemodify()`.
 pub enum CaseMod {
     None,
     Lower,
@@ -2100,6 +2124,8 @@ pub enum CaseMod {
 
 /// Modify a string according to case modification mode
 /// Port of casemodify() logic
+/// Apply `:U`/`:L`/`:C` casing.
+/// Port of `casemodify()` (Src/utils.c).
 pub fn casemodify(s: &str, casmod: CaseMod) -> String {
     match casmod {
         CaseMod::None => s.to_string(),
@@ -2126,6 +2152,8 @@ pub fn casemodify(s: &str, casmod: CaseMod) -> String {
 
 /// History-style colon modifiers
 /// Port of modify() from subst.c lines 4530-4873
+/// Apply a `:` modifier chain (`:t:r:s/x/y/`...).
+/// Port of `modify()` from Src/subst.c:4531.
 pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {
     let mut result = s.to_string();
     let mut chars = modifiers.chars().peekable();
@@ -2274,6 +2302,8 @@ fn apply_single_modifier(s: &str, modifier: char, gbal: bool, _state: &mut Subst
 
 /// Get a directory stack entry
 /// Port of dstackent() from subst.c
+/// Resolve `~+N`/`~-N` directory-stack entries.
+/// Port of `dstackent()` from Src/subst.c:4902.
 pub fn dstackent(ch: char, val: i32, dirstack: &[String], pwd: &str) -> Option<String> {
     let backwards = ch == '-'; // Simplified, real zsh checks PUSHDMINUS option
 
@@ -2292,6 +2322,9 @@ pub fn dstackent(ch: char, val: i32, dirstack: &[String], pwd: &str) -> Option<S
 
 /// Perform string substitution (s/old/new/)
 /// Port of subst() logic from subst.c
+/// `${var/old/new}` / `${var//old/new}` substitution.
+/// Port of the substitution arm inside `paramsubst()`
+/// (Src/subst.c:1625) — same `/g` global toggle.
 pub fn subst(s: &str, old: &str, new: &str, global: bool) -> String {
     if global {
         s.replace(old, new)
@@ -2302,6 +2335,9 @@ pub fn subst(s: &str, old: &str, new: &str, global: bool) -> String {
 
 /// Quote types for (q) flag
 #[derive(Debug, Clone, Copy, PartialEq)]
+/// `${(q)var}` quote style.
+/// Mirrors the `QT_*` enum Src/utils.c uses inside
+/// `quotestring()` — backslash / single / double / POSIX `$'…'`.
 pub enum QuoteType {
     None,
     Backslash,
@@ -2315,6 +2351,8 @@ pub enum QuoteType {
 
 /// Quote a string according to quote type
 /// Port of quotestring() logic
+/// Quote a string per the requested style.
+/// Port of `quotestring()` from Src/utils.c.
 pub fn quotestring(s: &str, qt: QuoteType) -> String {
     match qt {
         QuoteType::None => s.to_string(),
@@ -2408,6 +2446,8 @@ pub fn quotestring(s: &str, qt: QuoteType) -> String {
 
 /// Sort options for (o) and (O) flags
 #[derive(Debug, Clone, Copy, Default)]
+/// `${(o)var}` / `${(O)var}` sort options.
+/// Mirrors the `SORTIT_*` flag bits Src/sort.c uses.
 pub struct SortOptions {
     pub somehow: bool,
     pub backwards: bool,
@@ -2418,6 +2458,8 @@ pub struct SortOptions {
 
 /// Sort array according to options
 /// Port of strmetasort() logic
+/// Sort an array per `${(o)…}` flags.
+/// Port of `strmetasort()` from Src/sort.c:234.
 pub fn sort_array(arr: &mut [String], opts: &SortOptions) {
     if !opts.somehow {
         return;
@@ -2442,6 +2484,9 @@ pub fn sort_array(arr: &mut [String], opts: &SortOptions) {
 
 /// Word count in a string
 /// Port of wordcount() logic
+/// Count words in a string per IFS rules.
+/// Port of the `${#var}` length path inside `paramsubst()`
+/// (Src/subst.c:1625).
 pub fn wordcount(s: &str, sep: Option<&str>, count_empty: bool) -> usize {
     let separator = sep.unwrap_or(" \t\n");
 
@@ -2456,6 +2501,8 @@ pub fn wordcount(s: &str, sep: Option<&str>, count_empty: bool) -> usize {
 
 /// Join array with separator
 /// Port of sepjoin() logic
+/// Join an array with a separator (defaults to IFS first char).
+/// Port of `sepjoin()` from Src/utils.c:3928.
 pub fn sepjoin(arr: &[String], sep: Option<&str>, use_ifs_first: bool) -> String {
     let separator = sep.unwrap_or(if use_ifs_first { " " } else { "" });
     arr.join(separator)
@@ -2463,6 +2510,8 @@ pub fn sepjoin(arr: &[String], sep: Option<&str>, use_ifs_first: bool) -> String
 
 /// Split string by separator
 /// Port of sepsplit() logic
+/// Split a string on a separator (defaults to IFS).
+/// Port of `sepsplit()` from Src/utils.c:3962.
 pub fn sepsplit(s: &str, sep: Option<&str>, allow_empty: bool, _handle_ifs: bool) -> Vec<String> {
     let separator = sep.unwrap_or(" \t\n");
 
@@ -2480,6 +2529,9 @@ pub fn sepsplit(s: &str, sep: Option<&str>, allow_empty: bool, _handle_ifs: bool
 
 /// Unique array elements
 /// Port of zhuniqarray() logic
+/// `${(u)var}` — preserve order, drop duplicates.
+/// Port of the `SORTIT_UNIQUE` arm of `strmetasort()`
+/// (Src/sort.c:234).
 pub fn unique_array(arr: &mut Vec<String>) {
     let mut seen = std::collections::HashSet::new();
     arr.retain(|s| seen.insert(s.clone()));
@@ -2487,6 +2539,8 @@ pub fn unique_array(arr: &mut Vec<String>) {
 
 /// String padding
 /// Port of dopadding() from subst.c lines 798-1193
+/// `${(l:N:)var}` left/right-pad.
+/// Port of `dopadding()` from Src/subst.c:893.
 pub fn dopadding(
     s: &str,
     prenum: usize,
@@ -2615,6 +2669,8 @@ pub fn dopadding(
 
 /// Get the delimiter argument for flags like (s:x:) or (j:x:)
 /// Port of get_strarg() from subst.c
+/// Parse a `:STR:`-delimited flag argument.
+/// Port of `get_strarg()` from Src/subst.c:1348.
 pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {
     let mut chars = s.chars().peekable();
 
@@ -2653,6 +2709,8 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> {
 
 /// Get integer argument for flags like (l.N.)
 /// Port of get_intarg() from subst.c
+/// Parse an `:N:`-delimited integer flag argument.
+/// Port of `get_intarg()` from Src/subst.c:1428.
 pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
     if let Some((_, content, rest)) = get_strarg(s) {
         // Parse and evaluate the content
@@ -2665,6 +2723,8 @@ pub fn get_intarg(s: &str) -> Option<(i64, &str)> {
 
 /// Substitute named directory
 /// Port of substnamedir() logic
+/// Apply `~name` named-directory substitution.
+/// Port of the `~name` arm of `filesub()` (Src/subst.c:667).
 pub fn substnamedir(s: &str) -> String {
     // Try to replace home directory with ~
     if let Ok(home) = std::env::var("HOME") {
@@ -2677,6 +2737,8 @@ pub fn substnamedir(s: &str) -> String {
 
 /// Make string printable
 /// Port of nicedupstring() logic
+/// Render a string with `nicechar` for control bytes.
+/// Port of `nicedupstring()` from Src/utils.c:5301.
 pub fn nicedupstring(s: &str) -> String {
     let mut result = String::new();
     for c in s.chars() {
