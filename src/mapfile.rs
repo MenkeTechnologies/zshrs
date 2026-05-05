@@ -14,7 +14,11 @@ use std::path::Path;
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 
-/// Mapfile associative array emulation
+/// Mapfile associative array emulation.
+/// Port of the `mapfile` HashTable special-parameter shape from
+/// Src/Modules/mapfile.c — the C source registers `$mapfile[k]`
+/// with `getpmmapfile()`/`setpmmapfile()`/`scanpmmapfile()`
+/// callbacks; this struct wraps the same public surface.
 #[derive(Debug, Default)]
 pub struct Mapfile {
     readonly: bool,
@@ -33,12 +37,18 @@ impl Mapfile {
         self.readonly
     }
 
-    /// Get file contents by filename (key)
+    /// Get file contents by filename (key).
+    /// Port of `getpmmapfile()` from Src/Modules/mapfile.c:217 —
+    /// the `getfn` slot of the per-key Param the C source builds on
+    /// the fly when `$mapfile[KEY]` is dereferenced.
     pub fn get(&self, filename: &str) -> Option<String> {
         get_file_contents(filename).ok()
     }
 
-    /// Set file contents by filename (key)
+    /// Set file contents by filename (key).
+    /// Port of `setpmmapfile()` from Src/Modules/mapfile.c:68 — the
+    /// `setfn` slot the C source wires for `$mapfile[KEY]=VALUE`
+    /// assignment.
     pub fn set(&self, filename: &str, contents: &str) -> io::Result<()> {
         if self.readonly {
             return Err(io::Error::new(
@@ -49,7 +59,10 @@ impl Mapfile {
         set_file_contents(filename, contents)
     }
 
-    /// Unset (delete) a file by filename (key)
+    /// Unset (delete) a file by filename (key).
+    /// Port of `unsetpmmapfile()` from Src/Modules/mapfile.c:126 —
+    /// the `unsetfn` slot the C source wires for `unset
+    /// 'mapfile[KEY]'`.
     pub fn unset(&self, filename: &str) -> io::Result<()> {
         if self.readonly {
             return Err(io::Error::new(
@@ -60,12 +73,19 @@ impl Mapfile {
         fs::remove_file(filename)
     }
 
-    /// Scan current directory for files
+    /// Scan current directory for files.
+    /// Port of the directory-walk half of `scanpmmapfile()` from
+    /// Src/Modules/mapfile.c:241 — the C source uses a hash-scan
+    /// callback; this returns the key set as a Vec.
     pub fn keys(&self) -> io::Result<Vec<String>> {
         scan_directory(".")
     }
 
-    /// Get all files in current directory as hash
+    /// Get all files in current directory as hash.
+    /// Port of `scanpmmapfile()` from Src/Modules/mapfile.c:241 —
+    /// the C source invokes a per-entry callback with each (key,
+    /// contents) pair; here we materialize them into a HashMap so
+    /// callers can drive the scan iteratively.
     pub fn to_hash(&self) -> io::Result<HashMap<String, String>> {
         let mut result = HashMap::new();
         for filename in self.keys()? {
@@ -76,7 +96,10 @@ impl Mapfile {
         Ok(result)
     }
 
-    /// Set multiple files from a hash
+    /// Set multiple files from a hash.
+    /// Port of `setpmmapfiles()` from Src/Modules/mapfile.c:141 —
+    /// the bulk-assignment slot the C source wires for `mapfile=(
+    /// k1 v1 k2 v2 ... )`.
     pub fn from_hash(&self, files: &HashMap<String, String>) -> io::Result<()> {
         if self.readonly {
             return Err(io::Error::new(
@@ -91,7 +114,10 @@ impl Mapfile {
     }
 }
 
-/// Read file contents using mmap when available
+/// Read file contents using mmap when available.
+/// Port of `get_contents()` from Src/Modules/mapfile.c:167 — uses
+/// the same `open(2)` + `mmap(2, MAP_PRIVATE)` fast-path the C
+/// source uses, with a `read(2)` fallback when mmap fails.
 #[cfg(unix)]
 pub fn get_file_contents(filename: &str) -> io::Result<String> {
     use std::os::unix::fs::MetadataExt;
@@ -134,12 +160,20 @@ pub fn get_file_contents(filename: &str) -> io::Result<String> {
     Ok(contents)
 }
 
+/// Non-Unix fallback for `get_file_contents` — `mmap(2)` is POSIX-
+/// only, so on Windows / WASI we fall through to a plain
+/// `read_to_string`. Mirrors the `#ifndef HAVE_MMAP` branch in
+/// Src/Modules/mapfile.c.
 #[cfg(not(unix))]
 pub fn get_file_contents(filename: &str) -> io::Result<String> {
     fs::read_to_string(filename)
 }
 
-/// Write file contents using mmap when available
+/// Write file contents using mmap when available.
+/// Port of the write half of `setpmmapfile()` from
+/// Src/Modules/mapfile.c:68 — `ftruncate(2)` to the new length,
+/// `mmap(2, MAP_SHARED)` write, `msync(2)`. C source falls back to
+/// `write(2)` on mmap failure; same here.
 #[cfg(unix)]
 pub fn set_file_contents(filename: &str, contents: &str) -> io::Result<()> {
     let file = OpenOptions::new()
@@ -190,12 +224,18 @@ pub fn set_file_contents(filename: &str, contents: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Non-Unix fallback for `set_file_contents` — `mmap(2)` is POSIX-
+/// only. Mirrors the `#ifndef HAVE_MMAP` branch in
+/// Src/Modules/mapfile.c.
 #[cfg(not(unix))]
 pub fn set_file_contents(filename: &str, contents: &str) -> io::Result<()> {
     fs::write(filename, contents)
 }
 
-/// Scan directory for regular files
+/// Scan directory for regular files.
+/// Port of the directory-walk loop inside `scanpmmapfile()` from
+/// Src/Modules/mapfile.c:241 — only regular files are surfaced; the
+/// C source uses `lstat(2)` + `S_ISREG` for the same filter.
 pub fn scan_directory(dir: &str) -> io::Result<Vec<String>> {
     let mut files = Vec::new();
 
@@ -215,12 +255,18 @@ pub fn scan_directory(dir: &str) -> io::Result<Vec<String>> {
     Ok(files)
 }
 
-/// Check if a file exists
+/// Check if a file exists.
+/// zshrs-original convenience — Src/Modules/mapfile.c implicitly
+/// reports "missing" by returning NULL from `getpmmapfile()`; this
+/// helper exposes the existence check directly.
 pub fn file_exists(filename: &str) -> bool {
     Path::new(filename).exists()
 }
 
-/// Get file size
+/// Get file size.
+/// zshrs-original convenience — `get_contents()` (Src/Modules/
+/// mapfile.c:167) reads size via `fstat(2)` only as a precursor to
+/// `mmap(2)`. This helper exposes the size as a standalone query.
 pub fn file_size(filename: &str) -> io::Result<u64> {
     Ok(fs::metadata(filename)?.len())
 }
