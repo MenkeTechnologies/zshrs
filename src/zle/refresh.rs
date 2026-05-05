@@ -518,16 +518,40 @@ pub struct RegionHighlight {
     pub memo: Option<String>,
 }
 
+/// Highlight category — fixed slots that mirror zsh's
+/// `region_highlights[N_SPECIAL_HIGHLIGHTS]` indices in
+/// Src/Zle/zle_refresh.c (0=region, 1=isearch, 2=suffix, 3=paste) plus
+/// the standalone `default` / `special` / `ellipsis` attrs that the C
+/// source tracks as separate globals (`default_attr`, `special_attr`,
+/// `ellipsis_attr`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HighlightCategory {
+    Region,
+    Isearch,
+    Suffix,
+    Paste,
+    Default,
+    Special,
+    Ellipsis,
+}
+
 /// Highlight manager
 #[derive(Debug, Default)]
 pub struct HighlightManager {
     pub regions: Vec<RegionHighlight>,
+    /// Per-category attrs from `$zle_highlight`. Index by `HighlightCategory`.
+    /// Port of the per-slot atr storage in `region_highlights[]` and the
+    /// `default_attr`/`special_attr`/`ellipsis_attr` globals in
+    /// Src/Zle/zle_refresh.c — populated by `zle_set_highlight()` (the
+    /// freestanding port in this file).
+    pub category_attrs: std::collections::HashMap<HighlightCategory, TextAttr>,
 }
 
 impl HighlightManager {
     pub fn new() -> Self {
         HighlightManager {
             regions: Vec::new(),
+            category_attrs: std::collections::HashMap::new(),
         }
     }
 
@@ -598,11 +622,147 @@ pub fn zle_refresh_finish(state: &mut RefreshState) {
     state.free_video();
 }
 
-/// Set ZLE highlight
-/// Port of zle_set_highlight() from zle_refresh.c
-pub fn zle_set_highlight(_highlight: &str) {
-    // Parse highlight specification and apply
-    // Format: "region:standout" or "special:fg=red,bg=blue"
+/// Parse a highlight attribute spec (the part after the `category:` prefix)
+/// into a `TextAttr`. Accepts a comma-separated list of:
+///   * `bold` / `nobold`,
+///   * `underline` / `nounderline`,
+///   * `standout` / `nostandout`,
+///   * `blink` / `noblink`,
+///   * `fg=N` / `bg=N` where N is 0..=255 (256-colour palette index) or
+///     one of the named ANSI colours below,
+///   * `none` (clears every attr).
+///
+/// Port of `match_highlight()` from Src/prompt.c:2031, restricted to the
+/// subset zsh users actually set in `$zle_highlight`. The `hl=`/`layer=`/
+/// `opacity=` clauses (prompt.c:2042-2094) are not surfaced here — those
+/// are prompt-system hooks that don't apply to ZLE region paint.
+pub fn parse_highlight_spec(spec: &str) -> TextAttr {
+    let mut attr = TextAttr::default();
+    for token in spec.split(',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        match token {
+            "none" => {
+                attr = TextAttr::default();
+            }
+            "bold" => attr.bold = true,
+            "nobold" => attr.bold = false,
+            "underline" => attr.underline = true,
+            "nounderline" => attr.underline = false,
+            "standout" => attr.standout = true,
+            "nostandout" => attr.standout = false,
+            "blink" => attr.blink = true,
+            "noblink" => attr.blink = false,
+            other => {
+                if let Some(rest) = other.strip_prefix("fg=") {
+                    attr.fg_color = parse_color_token(rest);
+                } else if let Some(rest) = other.strip_prefix("bg=") {
+                    attr.bg_color = parse_color_token(rest);
+                }
+                // Anything else (hl=, layer=, opacity=, unknown name) is
+                // silently dropped — same as the C source's "found = 0"
+                // exit path at prompt.c:2122 when no clause matched.
+            }
+        }
+    }
+    attr
+}
+
+/// Parse a colour token (named or numeric) into a 256-colour palette index.
+/// Mirrors the eight ANSI base names + 256-colour numeric form supported
+/// by `match_colour()` (Src/prompt.c, called from `match_highlight`). The
+/// 24-bit `#rrggbb` form and `bright-foo` aliases are not surfaced.
+fn parse_color_token(name: &str) -> Option<u8> {
+    match name {
+        "black" => Some(0),
+        "red" => Some(1),
+        "green" => Some(2),
+        "yellow" => Some(3),
+        "blue" => Some(4),
+        "magenta" => Some(5),
+        "cyan" => Some(6),
+        "white" => Some(7),
+        "default" => None,
+        n => n.parse::<u8>().ok(),
+    }
+}
+
+/// Apply a `$zle_highlight` array to the manager.
+/// Port of `zle_set_highlight()` from Src/Zle/zle_refresh.c:322. Walks
+/// each `category:spec` entry, parses the spec via `parse_highlight_spec`,
+/// and stores it in `category_attrs`. Categories not mentioned keep the
+/// zsh defaults, applied here on first call: `region` and `special`
+/// default to `standout`, `isearch` to `underline`, `suffix` to `bold`
+/// — direct ports of zle_refresh.c:395-402.
+pub fn zle_set_highlight(manager: &mut HighlightManager, atrs: &[&str]) {
+    use HighlightCategory as HC;
+
+    let mut seen = std::collections::HashSet::new();
+    for entry in atrs {
+        if entry.is_empty() {
+            continue;
+        }
+        if *entry == "none" {
+            // zle_refresh.c:355-360 — `none` clears every category.
+            for cat in [
+                HC::Region,
+                HC::Isearch,
+                HC::Suffix,
+                HC::Paste,
+                HC::Default,
+                HC::Special,
+                HC::Ellipsis,
+            ] {
+                manager.category_attrs.insert(cat, TextAttr::default());
+                seen.insert(cat);
+            }
+            continue;
+        }
+        let (prefix, rest) = match entry.split_once(':') {
+            Some(t) => t,
+            None => continue,
+        };
+        let cat = match prefix {
+            "region" => HC::Region,
+            "isearch" => HC::Isearch,
+            "suffix" => HC::Suffix,
+            "paste" => HC::Paste,
+            "default" => HC::Default,
+            "special" => HC::Special,
+            "ellipsis" => HC::Ellipsis,
+            _ => continue,
+        };
+        manager.category_attrs.insert(cat, parse_highlight_spec(rest));
+        seen.insert(cat);
+    }
+
+    // Defaults for unset slots — zle_refresh.c:395-402.
+    let default_standout = TextAttr {
+        standout: true,
+        ..TextAttr::default()
+    };
+    let default_underline = TextAttr {
+        underline: true,
+        ..TextAttr::default()
+    };
+    let default_bold = TextAttr {
+        bold: true,
+        ..TextAttr::default()
+    };
+    if !seen.contains(&HC::Region) {
+        manager.category_attrs.insert(HC::Region, default_standout);
+    }
+    if !seen.contains(&HC::Isearch) {
+        manager.category_attrs.insert(HC::Isearch, default_underline);
+    }
+    if !seen.contains(&HC::Suffix) {
+        manager.category_attrs.insert(HC::Suffix, default_bold);
+    }
+    if !seen.contains(&HC::Special) {
+        manager.category_attrs.insert(HC::Special, default_standout);
+    }
 }
 
 #[cfg(test)]
@@ -685,6 +845,71 @@ mod tests {
             assert!(slot.unwrap().standout);
         }
         assert!(attrs[5].is_none());
+    }
+
+    #[test]
+    fn parse_highlight_spec_handles_combined_attrs() {
+        let attr = parse_highlight_spec("bold,fg=red,underline");
+        assert!(attr.bold);
+        assert!(attr.underline);
+        assert_eq!(attr.fg_color, Some(1));
+    }
+
+    #[test]
+    fn parse_highlight_spec_named_and_numeric_colors() {
+        assert_eq!(parse_highlight_spec("fg=cyan").fg_color, Some(6));
+        assert_eq!(parse_highlight_spec("bg=42").bg_color, Some(42));
+        // Out-of-range numeric → ignored (parse fails for u8).
+        assert_eq!(parse_highlight_spec("fg=999").fg_color, None);
+    }
+
+    #[test]
+    fn parse_highlight_spec_negation_clears_attr() {
+        let attr = parse_highlight_spec("bold,nobold,underline");
+        assert!(!attr.bold);
+        assert!(attr.underline);
+    }
+
+    #[test]
+    fn parse_highlight_spec_none_resets_everything() {
+        let attr = parse_highlight_spec("bold,fg=red,none,underline");
+        // After `none` the only thing surviving is the trailing `underline`.
+        assert!(!attr.bold);
+        assert!(attr.underline);
+        assert_eq!(attr.fg_color, None);
+    }
+
+    #[test]
+    fn zle_set_highlight_populates_categories_and_defaults() {
+        let mut mgr = HighlightManager::new();
+        let entries = ["region:fg=red,bold", "isearch:fg=blue"];
+        zle_set_highlight(&mut mgr, &entries);
+        let region = mgr.category_attrs[&HighlightCategory::Region];
+        assert!(region.bold);
+        assert_eq!(region.fg_color, Some(1));
+        let isearch = mgr.category_attrs[&HighlightCategory::Isearch];
+        assert_eq!(isearch.fg_color, Some(4));
+        // Suffix wasn't set: defaults to bold (zle_refresh.c:401).
+        let suffix = mgr.category_attrs[&HighlightCategory::Suffix];
+        assert!(suffix.bold);
+        // Special wasn't set: defaults to standout (zle_refresh.c:396).
+        let special = mgr.category_attrs[&HighlightCategory::Special];
+        assert!(special.standout);
+    }
+
+    #[test]
+    fn zle_set_highlight_none_clears_every_slot() {
+        let mut mgr = HighlightManager::new();
+        zle_set_highlight(&mut mgr, &["none"]);
+        for cat in [
+            HighlightCategory::Region,
+            HighlightCategory::Isearch,
+            HighlightCategory::Suffix,
+            HighlightCategory::Paste,
+        ] {
+            let attr = mgr.category_attrs[&cat];
+            assert_eq!(attr, TextAttr::default());
+        }
     }
 
     #[test]
