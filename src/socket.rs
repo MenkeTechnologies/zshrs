@@ -33,7 +33,10 @@ impl UnixSocket {
     }
 }
 
-/// Create a listening Unix socket
+/// Create a listening Unix-domain stream socket bound to `path`.
+/// Port of the `-l` branch of `bin_zsocket()` from
+/// Src/Modules/socket.c:57 — `socket(PF_UNIX, SOCK_STREAM, 0)` →
+/// `bind(2)` → `listen(2, 1)`. Backlog of 1 matches the C source.
 #[cfg(unix)]
 pub fn socket_listen(path: &str) -> io::Result<RawFd> {
     let fd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) };
@@ -76,7 +79,11 @@ pub fn socket_listen(path: &str) -> io::Result<RawFd> {
     Ok(fd)
 }
 
-/// Accept a connection on a listening Unix socket
+/// Accept a connection on a listening Unix-domain socket.
+/// Port of the `-a` branch of `bin_zsocket()` from
+/// Src/Modules/socket.c:57 — `accept(2)` with `EINTR` retry, returns
+/// `(connected_fd, peer_path)` so the verbose path can print the
+/// peer the same way the C source does.
 #[cfg(unix)]
 pub fn socket_accept(listen_fd: RawFd) -> io::Result<(RawFd, String)> {
     let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
@@ -112,7 +119,11 @@ pub fn socket_accept(listen_fd: RawFd) -> io::Result<(RawFd, String)> {
     Ok((fd, path))
 }
 
-/// Test if a socket has pending connections
+/// Test if a listening socket has a pending connection without
+/// blocking.
+/// Port of the `-t` polling step inside `bin_zsocket()`'s `-a -t`
+/// path (Src/Modules/socket.c:57). Uses `poll(2)` with a zero
+/// timeout so the caller can fast-fail when no client is waiting.
 #[cfg(unix)]
 pub fn socket_test(fd: RawFd) -> io::Result<bool> {
     let mut pfd = libc::pollfd {
@@ -129,7 +140,10 @@ pub fn socket_test(fd: RawFd) -> io::Result<bool> {
     Ok(result > 0)
 }
 
-/// Connect to a Unix socket
+/// Connect to a Unix-domain socket bound at `path`.
+/// Port of the no-flag branch of `bin_zsocket()` from
+/// Src/Modules/socket.c:57 — `socket(PF_UNIX, SOCK_STREAM, 0)` →
+/// `connect(2)`.
 #[cfg(unix)]
 pub fn socket_connect(path: &str) -> io::Result<RawFd> {
     let fd = unsafe { libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0) };
@@ -165,7 +179,10 @@ pub fn socket_connect(path: &str) -> io::Result<RawFd> {
     Ok(fd)
 }
 
-/// Close a socket
+/// Close a socket file descriptor.
+/// Cleanup helper used by every `bin_zsocket()` failure path in
+/// Src/Modules/socket.c:57 — wraps `close(2)` with errno → io::Error
+/// promotion.
 #[cfg(unix)]
 pub fn socket_close(fd: RawFd) -> io::Result<()> {
     let result = unsafe { libc::close(fd) };
@@ -175,7 +192,11 @@ pub fn socket_close(fd: RawFd) -> io::Result<()> {
     Ok(())
 }
 
-/// Execute zsocket builtin
+/// `zsocket` builtin entry point.
+/// Port of `bin_zsocket()` from Src/Modules/socket.c:57. Dispatches
+/// between `-l` (listen), `-a` (accept), and the no-flag connect
+/// path; honours `-v` (verbose), `-t` (test-only) the same way the C
+/// source's `Options ops` flag bag does.
 pub fn builtin_zsocket(args: &[&str], options: &ZsocketOptions) -> (i32, String, Option<RawFd>) {
     let mut output = String::new();
 
