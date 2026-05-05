@@ -24,6 +24,10 @@ pub mod flags {
 }
 
 /// Generic hash function (zsh's hasher)
+/// Compute the canonical zsh hash for a string.
+/// Port of `hasher()` from Src/hashtable.c:86 — uses the same
+/// `hash * 33 + char` polynomial the C source uses for every
+/// HashTable lookup.
 pub fn hasher(s: &str) -> u32 {
     let mut hashval: u32 = 0;
     for c in s.bytes() {
@@ -33,6 +37,9 @@ pub fn hasher(s: &str) -> u32 {
 }
 
 /// History-specific hash function (normalizes whitespace)
+/// Hasher tuned for the history table.
+/// Port of the per-history hash specialization Src/hist.c uses
+/// — the C source bypasses leading whitespace before mixing.
 pub fn hist_hasher(s: &str) -> u32 {
     let mut hashval: u32 = 0;
     let mut chars = s.chars().peekable();
@@ -67,6 +74,9 @@ pub fn hist_hasher(s: &str) -> u32 {
 /// Compare strings with normalized whitespace (for history)
 /// Multiple whitespace sequences are treated as equivalent to single spaces.
 /// Trailing whitespace is ignored when comparing.
+/// Compare two history entries with optional blank-reduction.
+/// Port of the comparator the C source's `addhistnode()` from
+/// Src/hist.c uses to detect duplicate history lines.
 pub fn hist_strcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Ordering {
     let s1 = s1.trim_start();
     let s2 = s2.trim_start();
@@ -146,6 +156,10 @@ pub fn hist_strcmp(s1: &str, s2: &str, reduce_blanks: bool) -> std::cmp::Orderin
 
 /// Command name entry
 #[derive(Debug, Clone)]
+/// One entry in the command-name (`$cmdtab`) table.
+/// Port of `struct cmdnam` from Src/zsh.h — `addhashnode()` /
+/// `gethashnode()` (Src/hashtable.c lines 157/231) wrap entries
+/// of this shape for `hash`/`rehash`/`unhash` builtin use.
 pub struct CmdName {
     pub name: String,
     pub flags: u32,
@@ -192,6 +206,10 @@ impl CmdName {
 
 /// Command name hash table
 #[derive(Debug)]
+/// `$cmdtab` table of cached executable lookups.
+/// Port of `cmdnamtab` from Src/hashtable.c — `createcmdnamtable()`
+/// (line 601), `emptycmdnamtable()` (line 623), and `hashdir()`
+/// (line 634) drive populate/clear/fill cycles.
 pub struct CmdNameTable {
     table: HashMap<String, CmdName>,
     path_checked_index: usize,
@@ -346,6 +364,9 @@ fn is_executable(path: &Path) -> bool {
 
 /// Shell function entry
 #[derive(Debug, Clone)]
+/// Shell function table entry.
+/// Port of `struct shfunc` from Src/zsh.h — referenced via
+/// `shfunctab` HashTable across Src/builtin.c and Src/exec.c.
 pub struct ShFunc {
     pub name: String,
     pub flags: u32,
@@ -396,6 +417,10 @@ impl ShFunc {
 
 /// Shell function hash table
 #[derive(Debug)]
+/// `$shfunctab` shell function table.
+/// Port of the `shfunctab` HashTable Src/hashtable.c builds —
+/// `printshfuncnode` / `freeshfuncnode` (Src/builtin.c) hang off
+/// the same shape.
 pub struct ShFuncTable {
     table: HashMap<String, ShFunc>,
 }
@@ -477,6 +502,10 @@ impl Default for ShFuncTable {
 /// Reserved word token types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
+/// Reserved-word token IDs.
+/// Port of the `LX1_*` reserved-word constants the C source's
+/// reserved-word table (`reswdtab` HashTable, Src/lex.c) uses to
+/// classify tokens like `if`/`while`/`function`/etc.
 pub enum ReswdToken {
     Bang,
     DinBrack,
@@ -507,6 +536,10 @@ pub enum ReswdToken {
 
 /// Reserved word entry
 #[derive(Debug, Clone)]
+/// Reserved-word table entry.
+/// Port of `struct reswd` from Src/zsh.h — populated via
+/// `addreswords()` (Src/lex.c) at startup and consulted on every
+/// lex.
 pub struct Reswd {
     pub name: String,
     pub flags: u32,
@@ -529,6 +562,9 @@ impl Reswd {
 
 /// Reserved word hash table
 #[derive(Debug)]
+/// `$reswdtab` reserved-word table.
+/// Port of the `reswdtab` HashTable from Src/hashtable.c — used
+/// by Src/lex.c to recognize keywords like `if`/`while`/`do`.
 pub struct ReswdTable {
     table: HashMap<String, Reswd>,
 }
@@ -621,6 +657,10 @@ impl Default for ReswdTable {
 
 /// Alias entry
 #[derive(Debug, Clone)]
+/// Alias table entry.
+/// Port of `struct alias` from Src/zsh.h — used by both
+/// `aliastab` and `sufaliastab` HashTables (regular vs. suffix
+/// aliases).
 pub struct Alias {
     pub name: String,
     pub flags: u32,
@@ -671,6 +711,10 @@ impl Alias {
 
 /// Alias hash table
 #[derive(Debug)]
+/// `$aliastab` alias hash.
+/// Port of the `aliastab` HashTable from Src/hashtable.c —
+/// `bin_alias()` (Src/builtin.c) drives every mutation. Suffix
+/// aliases live in a separate `sufaliastab` instance.
 pub struct AliasTable {
     table: HashMap<String, Alias>,
 }
@@ -768,6 +812,10 @@ struct DirCacheEntry {
 
 /// Directory cache for efficient storage of function directories
 #[derive(Debug)]
+/// Cached directory listings for `$cmdtab` rehash.
+/// Port of the dir-listing cache `hashdir()` (Src/hashtable.c:634)
+/// builds when populating `cmdnamtab` from `$PATH` — caches the
+/// readdir() result so successive lookups skip syscalls.
 pub struct DirCache {
     entries: Vec<DirCacheEntry>,
     last_entry: Option<usize>,
@@ -854,6 +902,9 @@ pub mod print_flags {
 }
 
 /// Format a command name entry for output
+/// Format a `$cmdtab` entry for `hash` listing.
+/// Port of `printcmdnamnode()` from Src/hashtable.c (the C
+/// source's per-command formatter `bin_hash()` invokes).
 pub fn format_cmdnam(cmd: &CmdName, path: &[String], print_flags: u32) -> String {
     let name = &cmd.name;
 
@@ -920,6 +971,10 @@ pub fn format_cmdnam(cmd: &CmdName, path: &[String], print_flags: u32) -> String
 }
 
 /// Format a shell function for output
+/// Format a `$shfunctab` entry for `functions` listing.
+/// Port of `printshfuncnode()` from Src/builtin.c — emits the
+/// declaration / source-text combination `functions -t`/`-T`/
+/// `+/-`/etc. variants produce.
 pub fn format_shfunc(func: &ShFunc, print_flags: u32) -> String {
     let name = &func.name;
 
@@ -978,6 +1033,9 @@ pub fn format_shfunc(func: &ShFunc, print_flags: u32) -> String {
 }
 
 /// Format a reserved word for output
+/// Format a reserved-word entry.
+/// Port of `printreswdnode()` from Src/lex.c (the C source's
+/// formatter for the `reswdtab` HashTable).
 pub fn format_reswd(rw: &Reswd, print_flags: u32) -> String {
     let name = &rw.name;
 

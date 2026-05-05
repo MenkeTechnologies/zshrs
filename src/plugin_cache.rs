@@ -1,9 +1,23 @@
-//! Plugin source cache — stores side effects of `source`/`.` in SQLite.
+//! Plugin source cache — stores side effects of `source`/`.` in
+//! SQLite.
 //!
-//! First source: execute normally, capture state delta, write cache on worker thread.
-//! Subsequent sources: check mtime, replay cached side effects in microseconds.
+//! **zshrs-original infrastructure with strong C-zsh ancestry.** C
+//! zsh has `bin_zcompile()` (Src/parse.c) which writes a parsed
+//! AST to a `.zwc` file alongside the source so subsequent reads
+//! skip parsing. zshrs takes the idea further: rather than caching
+//! the AST and still re-running it, we capture the *side effects*
+//! (params/aliases/options/funcs set) and replay those directly —
+//! microseconds instead of milliseconds for plugin startup. The
+//! key/invalidation model (canonical-path + mtime) matches the
+//! `.zwc` invalidation scheme C zsh uses in `try_source_file()`
+//! (Src/init.c:1551).
 //!
-//! Cache key: (canonical_path, mtime_secs, mtime_nsecs)
+//! First source: execute normally, capture state delta, write
+//! cache on worker thread.
+//! Subsequent sources: check mtime, replay cached side effects in
+//! microseconds.
+//!
+//! Cache key: `(canonical_path, mtime_secs, mtime_nsecs)`.
 //! Cache invalidation: mtime mismatch → re-source, update cache.
 
 use rusqlite::{params, Connection};
