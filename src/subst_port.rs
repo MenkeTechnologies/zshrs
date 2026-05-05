@@ -932,11 +932,19 @@ fn stringsubst(
 /// caller (exec::expand_braced_variable) is itself joining at the
 /// `${…}` level, so a string is the right shape for now.
 pub fn substitute_brace(content: &str, exec: &mut crate::exec::ShellExecutor) -> String {
+    // Bump paramsubst-recursion depth so nested `${${…}…}` flag
+    // builtins (BUILTIN_PARAM_FLAG) can detect they're inside an
+    // outer expansion and skip the DQ-collapse-to-scalar step.
+    // Direct C analogue: subst.c paramsubst's recursive aval
+    // threading where the inner call returns aval and the outer
+    // continues operating on the array before emission.
+    exec.in_paramsubst_nest += 1;
     let mut state = SubstState::from_executor(exec);
     let wrapped = format!("${{{}}}", content);
     let (result, _pos, _nodes) =
         paramsubst(&wrapped, 0, false, 0, &mut 0, &mut state);
     state.commit_to_executor(exec);
+    exec.in_paramsubst_nest -= 1;
     // `paramsubst` returns the full string with the `${…}` replaced
     // in place. Strip any residual prefix/suffix the caller didn't
     // ask for — for a wrapped input the result is the substituted
@@ -1644,7 +1652,50 @@ fn parse_brace_param(
     // Pre-resolved value from a nested `${${…}…}` form short-circuits
     // the by-name lookup — operators / flags apply to that value.
     let mut value = if let Some(v) = nested_value.take() {
-        v
+        // Direct port of Src/subst.c paramsubst's `${${…}[idx]}` path:
+        // when the var-name slot is itself an inner ${…}, the outer
+        // `[subscript]` applies to the inner's aval. C source threads
+        // this through `getindex(s, &v, …)` after the recursive
+        // multsub call returns; if it set `aval`, the subscript runs
+        // against the array. Without this dispatch, `${${(f)x}[2]}`
+        // landed in the operator path with the joined scalar already
+        // stringified and `[2]` was lost.
+        if let Some(sub) = subscript.as_deref() {
+            // Reuse the array-subscript logic that the by-name path
+            // gets via `get_param_with_subscript`. We have the array
+            // directly — interpret the subscript as numeric or `@`/`*`
+            // / negative-index per zsh's normal subscript rules.
+            let resolved_sub = singsub_no_tilde(sub, state);
+            if resolved_sub == "@" || resolved_sub == "*" {
+                v
+            } else if let Ok(idx) = resolved_sub.parse::<i64>() {
+                let arr = &v;
+                let n = arr.len() as i64;
+                let real = if idx > 0 {
+                    (idx - 1) as usize
+                } else if idx < 0 {
+                    let off = n + idx;
+                    if off < 0 {
+                        return (
+                            chars[..dollar_pos].iter().collect::<String>()
+                                + &chars[pos..].iter().collect::<String>(),
+                            dollar_pos,
+                            Vec::new(),
+                        );
+                    }
+                    off as usize
+                } else {
+                    0
+                };
+                arr.get(real).cloned().into_iter().collect()
+            } else {
+                // Non-numeric / non-`@`/`*` subscript on an inner-
+                // anonymous array — zsh treats this as no match.
+                Vec::new()
+            }
+        } else {
+            v
+        }
     } else if flags.keys && flags.values && state.assoc_arrays.contains_key(&var_name) {
         // `${(kv)assoc}` → alternating key/value pairs in insertion
         // order. Per Src/subst.c paramsubst's PM_HASHED + (k|v)
@@ -1785,7 +1836,22 @@ fn parse_brace_param(
     let prefix: String = chars[..dollar_pos].iter().collect();
     let suffix: String = chars[pos..].iter().collect();
     let result = format!("{}{}{}", prefix, joined, suffix);
-    result_nodes.push(result.clone());
+
+    // Preserve the array shape via `result_nodes` so nested
+    // `${${(f)x}[N]}` recursion can subscript the original elements
+    // instead of operating on the joined scalar. Direct port of
+    // Src/subst.c's recursive aval threading: the inner paramsubst
+    // call hands aval back to the outer, which decides whether to
+    // subscript / re-flag / sepjoin. Without this, the outer saw
+    // only the joined text and `[2]` subscripted the joined string
+    // by character position. The top-level emission point still
+    // gets `result` (joined) — it's only the multi-element case
+    // that populates `result_nodes` for the outer to pick up.
+    if value.len() > 1 {
+        result_nodes.extend(value.iter().cloned());
+    } else {
+        result_nodes.push(result.clone());
+    }
 
     (result, prefix.len() + joined.len(), result_nodes)
 }

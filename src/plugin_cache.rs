@@ -23,6 +23,24 @@
 use rusqlite::{params, Connection};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+/// Mtime (seconds since epoch) of the running zshrs binary. Same
+/// helper as `script_cache::current_binary_mtime_secs` — we duplicate
+/// it here so plugin_cache doesn't need to take a script_cache dep
+/// and so the OnceLock is per-cache (the value is identical anyway
+/// since it's process-global). Returns None if the executable's
+/// metadata can't be read (extremely rare — usually only if the
+/// binary was deleted out from under us mid-run).
+fn current_binary_mtime() -> Option<i64> {
+    use std::os::unix::fs::MetadataExt;
+    static BIN_MTIME: OnceLock<Option<i64>> = OnceLock::new();
+    *BIN_MTIME.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let meta = std::fs::metadata(&exe).ok()?;
+        Some(meta.mtime())
+    })
+}
 
 // Script bytecode caching used to live here behind the BYTECODE_VERSION
 // prefix + script_bytecode SQLite table. It now lives in the rkyv shard at
@@ -98,7 +116,8 @@ impl PluginCache {
                 mtime_secs INTEGER NOT NULL,
                 mtime_nsecs INTEGER NOT NULL,
                 source_time_ms INTEGER NOT NULL,
-                cached_at INTEGER NOT NULL
+                cached_at INTEGER NOT NULL,
+                binary_mtime INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS plugin_functions (
@@ -122,6 +141,16 @@ impl PluginCache {
             );
 
             CREATE TABLE IF NOT EXISTS plugin_arrays (
+                plugin_id INTEGER NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                value_json TEXT NOT NULL
+            );
+
+            -- Associative-array deltas (e.g. ZINIT[BIN_DIR]=...). Stored
+            -- as JSON {key: value} so insertion order isn't load-bearing
+            -- (matches HashMap semantics on the Rust side). Direct
+            -- analogue of plugin_arrays for assoc shape.
+            CREATE TABLE IF NOT EXISTS plugin_assoc_arrays (
                 plugin_id INTEGER NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
                 name TEXT NOT NULL,
                 value_json TEXT NOT NULL
@@ -192,19 +221,48 @@ impl PluginCache {
             DROP TABLE IF EXISTS script_bytecode;
         "#,
         )?;
+        // Migrate pre-binary_mtime DBs (column added 2026-05): the
+        // CREATE-IF-NOT-EXISTS above only adds the column for fresh
+        // dbs. ALTER TABLE on an existing db is a one-time no-op
+        // wrapped in an ignored-if-already-applied check. Mirrors the
+        // C analogue of zsh's $ZSH_VERSION-keyed compdump rebuild —
+        // any binary change invalidates the plugin replay shard so
+        // we don't replay deltas captured under the old runtime
+        // semantics. Without this, fixes to paramsubst / option
+        // handling don't take effect until the user manually
+        // `rm ~/.zshrs/plugins.db`.
+        let _ = self
+            .conn
+            .execute("ALTER TABLE plugins ADD COLUMN binary_mtime INTEGER NOT NULL DEFAULT 0", []);
         Ok(())
     }
 
-    /// Check if a cached entry exists with matching mtime.
-    /// Returns the plugin id if cache is valid, None if miss.
+    /// Check if a cached entry exists with matching mtime AND the
+    /// running zshrs binary's mtime is no newer than when the entry
+    /// was cached. Direct port of script_cache.rs's invalidation
+    /// logic (lines 188-194): any zshrs rebuild silently invalidates
+    /// plugin-cached deltas because runtime semantics may have
+    /// shifted (paramsubst flags, option aliases, builtin
+    /// resolution, …). Without this guard, a new build reads stale
+    /// deltas and replays them with the new engine — visible
+    /// regression where `zinit.zsh`'s `${ZINIT[BIN_DIR]}` returned
+    /// empty after re-source until the cache was manually cleared.
     pub fn check(&self, path: &str, mtime_secs: i64, mtime_nsecs: i64) -> Option<i64> {
-        self.conn
+        let row: Option<(i64, i64)> = self
+            .conn
             .query_row(
-                "SELECT id FROM plugins WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
+                "SELECT id, binary_mtime FROM plugins WHERE path = ?1 AND mtime_secs = ?2 AND mtime_nsecs = ?3",
                 params![path, mtime_secs, mtime_nsecs],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .ok()
+            .ok();
+        let (id, cached_bin_mtime) = row?;
+        if let Some(bin_mtime) = current_binary_mtime() {
+            if cached_bin_mtime < bin_mtime {
+                return None;
+            }
+        }
+        Some(id)
     }
 
     /// Load cached delta for a plugin by id.
@@ -274,6 +332,21 @@ impl PluginCache {
                 .filter(|s| !s.is_empty())
                 .collect();
             delta.arrays.push((name, vals));
+        }
+
+        // Associative arrays (key→value JSON object). Falls back to
+        // an empty map on parse failure rather than a load error so
+        // a malformed row doesn't break the whole replay path.
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, value_json FROM plugin_assoc_arrays WHERE plugin_id = ?1")?;
+        let rows = stmt.query_map(params![plugin_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for r in rows {
+            let (name, json) = r?;
+            let map: HashMap<String, String> = serde_json::from_str(&json).unwrap_or_default();
+            delta.assoc_arrays.push((name, map));
         }
 
         // Completions
@@ -380,9 +453,10 @@ impl PluginCache {
         self.conn
             .execute("DELETE FROM plugins WHERE path = ?1", params![path])?;
 
+        let bin_mtime = current_binary_mtime().unwrap_or(0);
         self.conn.execute(
-            "INSERT INTO plugins (path, mtime_secs, mtime_nsecs, source_time_ms, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![path, mtime_secs, mtime_nsecs, source_time_ms as i64, now],
+            "INSERT INTO plugins (path, mtime_secs, mtime_nsecs, source_time_ms, cached_at, binary_mtime) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![path, mtime_secs, mtime_nsecs, source_time_ms as i64, now, bin_mtime],
         )?;
         let plugin_id = self.conn.last_insert_rowid();
 
@@ -427,6 +501,19 @@ impl PluginCache {
             );
             self.conn.execute(
                 "INSERT INTO plugin_arrays (plugin_id, name, value_json) VALUES (?1, ?2, ?3)",
+                params![plugin_id, name, json],
+            )?;
+        }
+
+        // Associative arrays — JSON-encode the key/value map. Use
+        // serde_json so quotes / backslashes / unicode round-trip
+        // correctly through the cache (the simple `["a","b"]`
+        // hand-format used for indexed arrays above doesn't escape
+        // properly for arbitrary-content keys/values).
+        for (name, map) in &delta.assoc_arrays {
+            let json = serde_json::to_string(map).unwrap_or_else(|_| "{}".to_string());
+            self.conn.execute(
+                "INSERT INTO plugin_assoc_arrays (plugin_id, name, value_json) VALUES (?1, ?2, ?3)",
                 params![plugin_id, name, json],
             )?;
         }

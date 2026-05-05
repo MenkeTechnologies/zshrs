@@ -4409,6 +4409,53 @@ fn register_builtins(vm: &mut fusevm::VM) {
             }
         }
 
+        // Direct port of Src/subst.c:3901-3933. When the caller is in
+        // DQ context AND the state landed in `St::A` (e.g. via `(f)`
+        // line-split, `(s:…:)` arbitrary split, or assoc/array seed
+        // with no `[@]` splice), zsh's paramsubst joins the array back
+        // into a single scalar via `sepjoin(aval, sep, 1)`:
+        //
+        //   • If `sep` is non-NULL (set by `(F)` / `(j:…:)`), join
+        //     with that exact separator.
+        //   • Else if `spsep` is non-NULL (set by `(f)` / `(s:…:)`),
+        //     `sepjoin` falls back to the first IFS char (space by
+        //     default for `IFS=$' \t\n'`).
+        //
+        // Without this, `echo "[${(f)x}]"` (DQ) would word-split the
+        // array into 3 separate echo args (`[line1] [line2] [line3]`)
+        // instead of zsh's `[line1 line2 line3]`. The explicit `[@]`
+        // splice operator OR `(@)` flag suppresses this collapse —
+        // both already covered by `has_at_subscript` above.
+        //
+        // Skip the collapse when nested inside ANOTHER `${...}` —
+        // `${${(f)x}[2]}` needs the inner `(f)` to keep its array
+        // shape so the outer `[2]` can subscript element-2. C zsh
+        // tracks this through paramsubst's recursion (the inner call
+        // returns aval; outer operates on aval before any sepjoin).
+        // We detect the same condition via `in_paramsubst_nest`,
+        // bumped by every BUILTIN_PARAM_FLAG / BUILTIN_PARAM_*
+        // recursion entry.
+        let is_nested = with_executor(|exec| exec.in_paramsubst_nest > 1);
+        if (dq_compile || dq_runtime) && !has_at_subscript && !is_nested {
+            if let St::A(a) = state {
+                // Pick the join separator. `(F)` (the last F seen) is
+                // tracked via `flags.contains('F')`; `(j:str:)` runs
+                // earlier in the loop and stores the result already
+                // joined as `St::S(_)`, so we only see `St::A` here
+                // for split-style flags. The default is the first
+                // char of $IFS (space when IFS is the zsh default).
+                let sep = if flags.contains('F') {
+                    "\n".to_string()
+                } else {
+                    with_executor(|exec| {
+                        let ifs = exec.get_variable("IFS");
+                        ifs.chars().next().map(|c| c.to_string()).unwrap_or_else(|| " ".to_string())
+                    })
+                };
+                return Value::str(a.join(&sep));
+            }
+        }
+
         match state {
             St::S(s) => Value::str(s),
             St::A(a) => Value::Array(a.into_iter().map(Value::str).collect()),
@@ -9956,6 +10003,16 @@ pub struct ShellExecutor {
     /// (`(o)`/`(O)`/`(n)`/`(i)`/`(M)`/`(u)`) — zsh's behaviour: those
     /// flags only fire in array context.
     pub in_dq_context: u32,
+    /// Nesting depth of `${...}` (paramsubst) recursion. Bumped by
+    /// every `substitute_brace` / nested-paramsubst entry in the
+    /// engine. `BUILTIN_PARAM_FLAG` consults `> 1` to decide whether
+    /// to collapse a split-result array back to scalar (top-level
+    /// DQ) or pass through (nested — outer subscript / second-level
+    /// substitution still needs the array shape). Direct port of
+    /// zsh paramsubst's recursive aval threading (Src/subst.c:3245+
+    /// where the inner call returns aval; outer continues without
+    /// re-joining until its own emission point).
+    pub in_paramsubst_nest: u32,
     /// IDs of history entries explicitly added during this session
     /// via `print -s`. `fc -l` uses this to scope listings to just
     /// the script-added entries (matches zsh's `-c` semantics where
@@ -10207,6 +10264,7 @@ impl ShellExecutor {
             local_scope_depth: 0,
             pending_underscore: None,
             in_dq_context: 0,
+            in_paramsubst_nest: 0,
             session_history_ids: Vec::new(),
             autoload_pending: HashMap::new(),
             hook_functions: HashMap::new(),
@@ -11384,7 +11442,20 @@ impl ShellExecutor {
         // `<a->` / `<-b>` for one-sided ranges) — translate to a
         // capture group and remember the bounds for a post-match check.
         let mut regex_pattern = String::from("^");
-        let mut numeric_ranges: Vec<(Option<i64>, Option<i64>)> = Vec::new();
+        // Numeric ranges paired with the regex capture-group index they
+        // correspond to. Required because user-written `(...)` groups
+        // in the pattern (esp. alternation `(a|b)`) shift capture
+        // indices, so we can't assume each `<N-M>` is at numeric_ranges
+        // index + 1. Direct port of the bookkeeping zsh's pattern.c
+        // does via `pat_captures` — each numeric atom remembers its
+        // own group offset. Without this, `[[ 5.9 == (5.<1->*|<6->.*) ]]`
+        // applied the lo/hi check against the OUTER alternation's
+        // capture (the literal "5.9") and parse-as-int failed.
+        let mut numeric_ranges: Vec<(usize, Option<i64>, Option<i64>)> = Vec::new();
+        // Track the capture-group index. Increments on every `(` that
+        // OPENS a new group in the emitted regex. Starts at 0 because
+        // the outer `^...$` anchors don't add a group.
+        let mut capture_group_count: usize = 0;
         let mut chars = pattern.chars().peekable();
         // Helper: after emitting any atom, check for zsh extendedglob
         // postfix `#` (zero-or-more) / `##` (one-or-more) and append
@@ -11463,7 +11534,8 @@ impl ShellExecutor {
                     // match, fall back to literal `<`.
                     if let Some((lo, hi, consumed)) = parse_numeric_range(&mut chars) {
                         regex_pattern.push_str("(\\d+)");
-                        numeric_ranges.push((lo, hi));
+                        capture_group_count += 1;
+                        numeric_ranges.push((capture_group_count, lo, hi));
                         let _ = consumed;
                     } else {
                         regex_pattern.push('<');
@@ -11561,6 +11633,7 @@ impl ShellExecutor {
                         }
                     } else {
                         regex_pattern.push('(');
+                        capture_group_count += 1;
                     }
                 }
                 ')' => {
@@ -11638,12 +11711,17 @@ impl ShellExecutor {
                 Some(c) => c,
                 None => return false,
             };
-            for (i, (lo, hi)) in numeric_ranges.iter().enumerate() {
-                let cap = match caps.get(i + 1) {
+            for (group_idx, lo, hi) in numeric_ranges.iter() {
+                // A numeric-range `<N-M>` inside an alternation branch
+                // that didn't fire (e.g. branch B of `(A|B)` when A
+                // matched) won't have a populated capture. Skip the
+                // bounds check for those — the alternation's match
+                // already commits to the branch that DID fire.
+                let cap_str = match caps.get(*group_idx) {
                     Some(m) => m.as_str(),
-                    None => return false,
+                    None => continue,
                 };
-                let n: i64 = match cap.parse() {
+                let n: i64 = match cap_str.parse() {
                     Ok(n) => n,
                     Err(_) => return false,
                 };
@@ -20076,6 +20154,28 @@ impl ShellExecutor {
             }
         }
 
+        // New / changed associative arrays. zinit creates `ZINIT[…]`
+        // entries during sourcing; without this capture, the cache
+        // replay path saw an empty ZINIT and `${ZINIT[BIN_DIR]}`
+        // returned "" on every subsequent shell start. Direct port of
+        // zsh's plugin-replay model — assoc deltas are first-class
+        // captures alongside scalars and arrays.
+        let mut assoc_keys: Vec<&String> = self.assoc_arrays.keys().collect();
+        assoc_keys.sort();
+        for name in assoc_keys {
+            if !snap.assoc_arrays.contains(name) {
+                let map = self.assoc_arrays.get(name).unwrap();
+                // Executor's assoc storage is IndexMap (insertion-
+                // ordered, required by `(kv)` etc.). The plugin_cache
+                // delta uses a plain HashMap since the cache replay
+                // reseeds the assoc and order is reconstructed by
+                // the script's own typeset ordering. Convert here.
+                let plain: HashMap<String, String> =
+                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                delta.assoc_arrays.push((name.clone(), plain));
+            }
+        }
+
         // New fpath entries
         for p in &self.fpath {
             if !snap.fpath.contains(p) {
@@ -20154,6 +20254,29 @@ impl ShellExecutor {
         // Arrays
         for (name, values) in &delta.arrays {
             self.arrays.insert(name.clone(), values.clone());
+        }
+
+        // Associative arrays — restore plugin-defined assocs (e.g.
+        // ZINIT, ZINIT_SNIPPETS, ZINIT_REPORTS) so subsequent shells
+        // see the same `${ZINIT[BIN_DIR]}` etc. that the original
+        // sourcing established. Mirrors the diff_state capture above.
+        for (name, map) in &delta.assoc_arrays {
+            // Plugin cache uses HashMap; executor uses IndexMap.
+            // Reseed by inserting key-by-key so the IndexMap variant
+            // is constructed without needing a HashMap→IndexMap
+            // From impl that may not be available.
+            let mut idx_map: indexmap::IndexMap<String, String> =
+                indexmap::IndexMap::with_capacity(map.len());
+            // Sort for deterministic order (the diff_state stored
+            // a HashMap which has no defined order; the original
+            // insertion order was lost). Sort is the simplest
+            // reproducible choice — matches `(o)`-flag default.
+            let mut entries: Vec<(&String, &String)> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            for (k, v) in entries {
+                idx_map.insert(k.clone(), v.clone());
+            }
+            self.assoc_arrays.insert(name.clone(), idx_map);
         }
 
         // Fpath additions
