@@ -10,8 +10,11 @@
 
 // Pattern matching support - uses crate::pattern module when needed
 
-/// Scan flags for parameter matching
-/// Port from zsh.h SCANPM_* constants
+/// Scan flags for parameter matching.
+/// Port of the `SCANPM_*` constants from Src/zsh.h —
+/// `getindex()` / `getarg()` (Src/params.c:2001/1367) carry these
+/// bits to control the search (wantvals / wantkeys / matchkey /
+/// keymatch / etc.). Same set, same bit values for parity.
 pub mod scanflags {
     pub const WANTVALS: u32 = 1 << 0;
     pub const WANTKEYS: u32 = 1 << 1;
@@ -26,15 +29,19 @@ pub mod scanflags {
     pub const CHECKING: u32 = 1 << 10;
 }
 
-/// Value flags
-/// Port from zsh.h VALFLAG_* constants  
+/// Value flags.
+/// Port of the `VALFLAG_*` constants from Src/zsh.h — `getindex()`
+/// (Src/params.c:2001) sets `INV` for inverse-indexing
+/// (`(i)`/`(I)` flags) and `EMPTY` for empty-result subscripts.
 pub mod valflags {
     pub const INV: u32 = 1 << 0;
     pub const EMPTY: u32 = 1 << 1;
 }
 
-/// Subscript value result
-/// Port from zsh Value struct fields relevant to subscripting
+/// Subscript value result.
+/// Port of the subscript-relevant fields of `struct value` from
+/// Src/zsh.h — `getindex()` (Src/params.c:2001) populates the
+/// `start`/`end`/`flags` slots; we mirror those.
 #[derive(Debug, Clone, Default)]
 pub struct SubscriptValue {
     pub start: i64,
@@ -80,8 +87,11 @@ impl SubscriptValue {
     }
 }
 
-/// Subscript argument parsing context
-/// Port from getarg() local variables
+/// Subscript argument parsing context.
+/// Port of the local-variable bag `getarg()` from
+/// Src/params.c:1367 carries on the C source's stack — `inv` /
+/// `rev` / `ind` / `down` / `word` / `keymatch` / `hasbeg` /
+/// `num` / `beg` / `sep` map onto the same names in C.
 struct GetArgContext<'a> {
     s: &'a str,
     pos: usize,
@@ -134,8 +144,12 @@ impl<'a> GetArgContext<'a> {
     }
 }
 
-/// Parse subscription flags like (r), (R), (k), (K), (i), (I), (w), (f), etc.
-/// Port from getarg() flag parsing section (lines 1389-1487)
+/// Parse subscript flags like `(r)`, `(R)`, `(k)`, `(K)`, `(i)`,
+/// `(I)`, `(w)`, `(f)`, etc.
+/// Port of the flag-parsing section inside `getarg()` from
+/// Src/params.c:1367 (lines ~1389-1487 in upstream) — same letter
+/// → flag-bit mapping the C source uses for `${a[(r)pat]}` /
+/// `${a[(i)str]}` / `${a[(n:N:)pat]}` syntax.
 fn parse_subscript_flags(ctx: &mut GetArgContext) {
     let c = match ctx.current() {
         Some(c) => c,
@@ -256,7 +270,9 @@ fn parse_subscript_flags(ctx: &mut GetArgContext) {
     }
 }
 
-/// Parse a delimited number like :123:
+/// Parse a delimited number like `:123:`.
+/// Port of the `:N:` argument-parser inside `getarg()` (Src/params.c:1367)
+/// — used for `(n:N:)` / `(b:N:)` flag arguments.
 fn parse_delimited_number(ctx: &mut GetArgContext) -> Option<i64> {
     let c = ctx.current()?;
     if c != ':' {
@@ -282,7 +298,9 @@ fn parse_delimited_number(ctx: &mut GetArgContext) -> Option<i64> {
     num_str.parse().ok()
 }
 
-/// Parse a delimited string like :sep:
+/// Parse a delimited string like `:sep:`.
+/// Port of the `:STR:` argument-parser inside `getarg()`
+/// (Src/params.c:1367) — used for the `(s:SEP:)` flag.
 fn parse_delimited_string(ctx: &mut GetArgContext) -> Option<String> {
     let c = ctx.current()?;
     if c != ':' {
@@ -308,8 +326,10 @@ fn parse_delimited_string(ctx: &mut GetArgContext) -> Option<String> {
     Some(s)
 }
 
-/// Parse subscript expression and find the closing bracket
-/// Port from getarg() main parsing loop (lines 1513-1546)
+/// Find the closing bracket of a subscript expression.
+/// Port of the bracket-tracking loop inside `getarg()` from
+/// Src/params.c:1367 (lines ~1513-1546 upstream) — same depth
+/// counter for nested `[`/`(` pairs.
 fn find_subscript_end(s: &str) -> Option<usize> {
     let mut depth = 0;
     let mut paren_depth = 0;
@@ -330,8 +350,11 @@ fn find_subscript_end(s: &str) -> Option<usize> {
     None
 }
 
-/// Evaluate subscript expression as integer
-/// Port from mathevalarg() call in getarg()
+/// Evaluate a subscript expression to an integer.
+/// Port of the `mathevalarg()` call inside `getarg()`
+/// (Src/params.c:1367) — the C source feeds the index expression
+/// through the math evaluator (Src/math.c). Currently this Rust
+/// port handles bare integer literals; arithmetic eval is a TODO.
 fn eval_subscript_expr(expr: &str, ksh_arrays: bool) -> i64 {
     let expr = expr.trim();
 
@@ -349,11 +372,14 @@ fn eval_subscript_expr(expr: &str, ksh_arrays: bool) -> i64 {
     0
 }
 
-/// Parse array index subscript
-/// Port from getindex() in zsh/Src/params.c (lines 2001-2168)
+/// Parse an array index subscript.
+/// Port of `getindex()` from Src/params.c:2001 — the C source's
+/// top-level subscript parser. Handles the `@`/`*` all-elements
+/// shorthand, flag expressions like `(r)pat`, single indices,
+/// and `start,end` ranges. Returns a `SubscriptValue` with
+/// resolved start/end positions and any flag bits.
 ///
-/// Takes a subscript string like "1", "1,5", "@", "(r)pattern"
-/// Returns SubscriptValue with start/end positions
+/// Takes a subscript string like `"1"`, `"1,5"`, `"@"`, `"(r)pattern"`.
 pub fn getindex(
     subscript: &str,
     is_hash: bool,
@@ -433,7 +459,10 @@ pub fn getindex(
     Ok(v)
 }
 
-/// Find comma position in subscript, respecting brackets
+/// Find the comma separator in a subscript, respecting brackets.
+/// Port of the comma-search loop inside `getindex()` (Src/params.c:2001)
+/// — the C source walks past nested `[]`/`()` before treating
+/// `,` as the start/end separator.
 fn find_comma_position(s: &str, is_hash: bool) -> Option<usize> {
     let mut depth = 0;
     let mut paren_depth = 0;
@@ -457,8 +486,10 @@ fn find_comma_position(s: &str, is_hash: bool) -> Option<usize> {
     None
 }
 
-/// Get array elements by subscript
-/// Port from array access logic in params.c
+/// Get array elements covered by a `SubscriptValue` range.
+/// Port of the array-slice access logic inside `getvalue()` from
+/// Src/params.c:2173 — the C source uses the resolved start/end
+/// indices to take a slice of the underlying `char **`.
 pub fn get_array_by_subscript(arr: &[String], v: &SubscriptValue, ksh_arrays: bool) -> Vec<String> {
     if v.is_all() {
         return arr.to_vec();
@@ -486,7 +517,10 @@ pub fn get_array_by_subscript(arr: &[String], v: &SubscriptValue, ksh_arrays: bo
     arr[start..end].to_vec()
 }
 
-/// Get single array element by subscript
+/// Get a single array element by subscript.
+/// Convenience over `get_array_by_subscript` for the common
+/// `${a[N]}` case — equivalent to the C source's single-element
+/// branch inside `getvalue()` (Src/params.c:2173).
 pub fn get_array_element_by_subscript(
     arr: &[String],
     v: &SubscriptValue,
@@ -506,7 +540,10 @@ pub fn get_array_element_by_subscript(
     arr.get(idx as usize).cloned()
 }
 
-/// Normalize array index (handle negative indices, 1-indexing)
+/// Normalize an array index (resolves negatives and 1-indexing).
+/// Port of the index-normalization arithmetic inside `getvalue()`
+/// from Src/params.c:2173 — same `len + idx` rule for negatives,
+/// same `ksh_arrays` adjustment for the 0-vs-1-based offset.
 fn normalize_index(idx: i64, len: i64, ksh_arrays: bool) -> i64 {
     if idx < 0 {
         // Negative index counts from end
