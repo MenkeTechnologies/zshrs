@@ -68,7 +68,12 @@ impl ZleState {
         }
     }
 
-    /// Save current state for undo
+    /// Snapshot the current (buffer, cursor) for the undo stack.
+    /// Port of the snapshot side of `mkundoent()` from
+    /// Src/Zle/zle_utils.c:1532 simplified to a pair-stack model. The
+    /// C source diff-encodes changes; this ZleState path stores the
+    /// full buffer per snapshot — coarser but matches the host's
+    /// per-edit checkpoint pattern.
     pub fn save_undo(&mut self) {
         self.undo_history.push((self.buffer.clone(), self.cursor));
         if self.undo_history.len() > 100 {
@@ -76,7 +81,10 @@ impl ZleState {
         }
     }
 
-    /// Undo last change
+    /// Pop the most recent undo snapshot back into the buffer.
+    /// Port of `undo()` at Src/Zle/zle_utils.c:1601 against the
+    /// pair-stack model — pushes the current state to the redo stack
+    /// before restoring.
     pub fn undo(&mut self) -> bool {
         if let Some((buffer, cursor)) = self.undo_history.pop() {
             self.undo_stack.push((self.buffer.clone(), self.cursor));
@@ -88,7 +96,10 @@ impl ZleState {
         }
     }
 
-    /// Redo last undone change
+    /// Pop the most recent redo snapshot.
+    /// Port of `redo()` at Src/Zle/zle_utils.c:1661 — mirrors the
+    /// pair-stack version of undo, pushing the current state back to
+    /// the undo stack before restoring.
     pub fn redo(&mut self) -> bool {
         if let Some((buffer, cursor)) = self.undo_stack.pop() {
             self.undo_history.push((self.buffer.clone(), self.cursor));
@@ -100,7 +111,11 @@ impl ZleState {
         }
     }
 
-    /// Add text to kill ring
+    /// Push text onto the kill ring (newest-first).
+    /// Port of `cuttext()` at Src/Zle/zle_utils.c:946 simplified to a
+    /// front-push without the CUT_FRONT/CUT_REPLACE/CUT_RAW flag
+    /// machinery the C source uses. Trims to kill_ring_max via the
+    /// LRU pop_back, mirroring zsh's `KILL_RING_SIZE` cap.
     pub fn kill_add(&mut self, text: &str) {
         self.kill_ring.push_front(text.to_string());
         if self.kill_ring.len() > self.kill_ring_max {
@@ -108,7 +123,10 @@ impl ZleState {
         }
     }
 
-    /// Yank from kill ring
+    /// Insert the most-recent kill-ring entry at the cursor.
+    /// Port of `yank()` from Src/Zle/zle_misc.c:533 against the
+    /// String-buffer ZleState model. Records the inserted span in
+    /// `last_yank_pos` so a subsequent yank-pop can replace it.
     pub fn yank(&mut self) -> Option<String> {
         if let Some(text) = self.kill_ring.front().cloned() {
             let start = self.cursor;
@@ -133,7 +151,11 @@ impl ZleState {
         }
     }
 
-    /// Yank-pop: replace last yank with next kill ring entry
+    /// Replace the just-yanked region with the previous kill-ring entry.
+    /// Port of `yankpop()` from Src/Zle/zle_misc.c:728 against the
+    /// String-buffer model. Drains the prior yank's span and pastes the
+    /// next ring entry; the C source rotates `kct` through the
+    /// kill-ring + kctbuf pair in the same fashion.
     pub fn yank_pop(&mut self) -> Option<String> {
         if let Some((start, end)) = self.last_yank_pos {
             // Remove the previous yank
@@ -159,12 +181,19 @@ impl ZleState {
         }
     }
 
-    /// Get text from kill ring (without inserting)
+    /// Peek at the most-recent kill-ring entry without inserting.
+    /// Helper around the kill-ring read path zsh's yank() inspects
+    /// before calling pastebuf — see Src/Zle/zle_misc.c:533. Used by
+    /// host code that wants to display the kill-ring contents for a
+    /// preview UI.
     pub fn kill_yank(&self) -> Option<&str> {
         self.kill_ring.front().map(|s| s.as_str())
     }
 
-    /// Rotate kill ring
+    /// Cycle the kill ring's read position one entry older.
+    /// Equivalent to advancing `kct` (kill-ring read counter) by one in
+    /// the C source's `yankpop()` rotation at Src/Zle/zle_misc.c:737.
+    /// Used by yank-pop to walk through prior kills.
     pub fn kill_rotate(&mut self) {
         if let Some(front) = self.kill_ring.pop_front() {
             self.kill_ring.push_back(front);
@@ -268,7 +297,11 @@ impl ZleManager {
         true
     }
 
-    /// Get a widget by name (returns the function name if user-defined)
+    /// Resolve a widget name to its function (user-defined) or to itself
+    /// (built-in). Returns None for unknown names.
+    /// Equivalent to `rthingy_nocreate()` from Src/Zle/zle_thingy.c:169
+    /// — the C source returns a Thingy pointer; we collapse to the
+    /// underlying function name.
     pub fn get_widget<'a>(&'a self, name: &'a str) -> Option<&'a str> {
         // Check user widgets first
         if let Some(func) = self.user_widgets.get(name) {
@@ -281,21 +314,32 @@ impl ZleManager {
         None
     }
 
-    /// Bind a key in a keymap
+    /// Bind a key sequence to a widget in a named keymap.
+    /// Port of `bindkey()` from Src/Zle/zle_keymap.c:566 against the
+    /// KeymapName-keyed table. The key string accepts the canonical
+    /// zsh escape forms (^X, \\eX, etc.) — see `Keymap::normalize_keys`
+    /// for the conversion.
     pub fn bind_key(&mut self, keymap: KeymapName, key: &str, widget: &str) {
         if let Some(km) = self.keymaps.get_mut(&keymap) {
             km.bind(key, widget);
         }
     }
 
-    /// Unbind a key from a keymap
+    /// Remove a binding from a named keymap.
+    /// Port of `bindkey -r` (Src/Zle/zle_keymap.c bin_bindkey 'r' branch)
+    /// — clears the entry without touching the rest of the keymap.
     pub fn unbind_key(&mut self, keymap: KeymapName, key: &str) {
         if let Some(km) = self.keymaps.get_mut(&keymap) {
             km.unbind(key);
         }
     }
 
-    /// Execute a widget (stub - actual execution handled elsewhere)
+    /// Look up a widget name and report whether dispatch would succeed.
+    /// Stub for the dispatch portion of `execzlefunc()` at
+    /// Src/Zle/zle_main.c:1420; the actual run-the-widget machinery
+    /// lives on `Zle::execute_widget` (which has the lastcol/lastcmd
+    /// bookkeeping) and the `widget_*` function table. This method is
+    /// kept on ZleManager for callers querying availability.
     pub fn execute_widget(
         &mut self,
         name: &str,
@@ -308,7 +352,11 @@ impl ZleManager {
         }
     }
 
-    /// List all widget names
+    /// List every registered widget name (built-in + user).
+    /// Port of `bin_zle_list()` at Src/Zle/zle_thingy.c:393 (the
+    /// listing branch of `zle -l` / `zle -la`). The C source iterates
+    /// the thingytab hashtable; we union the static BUILTIN_WIDGETS
+    /// slice with the user_widgets map.
     pub fn list_widgets(&self) -> Vec<&str> {
         let mut widgets: Vec<&str> = BUILTIN_WIDGETS.to_vec();
 
