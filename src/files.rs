@@ -9,12 +9,20 @@ use std::path::Path;
 
 /// Options for mkdir
 #[derive(Debug, Default)]
+/// `mkdir` option flags.
+/// Mirrors the `Options ops` flag bag `bin_mkdir()` from
+/// Src/Modules/files.c:63 reads — `-p` (create parents), `-m`
+/// (mode).
 pub struct MkdirOptions {
     pub parents: bool,
     pub mode: Option<u32>,
 }
 
 /// Create a directory
+/// `mkdir` builtin.
+/// Port of `bin_mkdir()` + `domkdir()` from
+/// Src/Modules/files.c:63/115 — same `mkdir(2)`-with-mode
+/// logic and the same `-p` parent-creation walk.
 pub fn mkdir(path: &Path, options: &MkdirOptions) -> Result<(), String> {
     let mode = options.mode.unwrap_or(0o777);
 
@@ -73,12 +81,19 @@ fn mkdir_parents(path: &Path, mode: u32) -> Result<(), String> {
 }
 
 /// Remove a directory
+/// `rmdir` builtin.
+/// Port of `bin_rmdir()` from Src/Modules/files.c:150 — wraps
+/// `rmdir(2)` with errno → diagnostic conversion.
 pub fn rmdir(path: &Path) -> Result<(), String> {
     fs::remove_dir(path).map_err(|e| format!("cannot remove directory '{}': {}", path.display(), e))
 }
 
 /// Options for link operations
 #[derive(Debug, Default)]
+/// `ln` option flags.
+/// Mirrors the `Options ops` flag bag `bin_ln()` from
+/// Src/Modules/files.c:200 reads — `-s` (symbolic), `-f`
+/// (force), `-d` (allow superuser to link dirs).
 pub struct LinkOptions {
     pub symbolic: bool,
     pub force: bool,
@@ -88,6 +103,11 @@ pub struct LinkOptions {
 }
 
 /// Create a link (hard or symbolic)
+/// `ln` builtin.
+/// Port of `bin_ln()` from Src/Modules/files.c:200 —
+/// dispatches between hardlink and symlink based on options,
+/// then calls into `domove()` (line 298) for force-replace
+/// semantics.
 pub fn link(source: &Path, target: &Path, options: &LinkOptions) -> Result<(), String> {
     let target_path = if target.is_dir() && !options.no_dereference {
         let filename = source
@@ -134,12 +154,20 @@ pub fn link(source: &Path, target: &Path, options: &LinkOptions) -> Result<(), S
 
 /// Options for move/rename
 #[derive(Debug, Default)]
+/// `mv` option flags.
+/// Mirrors the flag bag `bin_ln()` (Src/Modules/files.c:200)
+/// dispatches when `func == BIN_MV` — `-f` / `-i` interactivity
+/// and the no-clobber path.
 pub struct MoveOptions {
     pub force: bool,
     pub interactive: bool,
 }
 
 /// Move/rename a file
+/// `mv` builtin.
+/// Port of the rename-or-copy path inside `domove()` from
+/// Src/Modules/files.c:298 — wraps `rename(2)` with the C
+/// source's interactive-prompt and force-overwrite logic.
 pub fn mv(source: &Path, target: &Path, options: &MoveOptions) -> Result<(), String> {
     let target_path = if target.is_dir() {
         let filename = source
@@ -169,6 +197,9 @@ pub fn mv(source: &Path, target: &Path, options: &MoveOptions) -> Result<(), Str
 
 /// Options for remove
 #[derive(Debug, Default)]
+/// `rm` option flags.
+/// Mirrors the `Options ops` flag bag `bin_rm()` from
+/// Src/Modules/files.c:616 reads — `-f` / `-i` / `-r` / `-s`.
 pub struct RemoveOptions {
     pub force: bool,
     pub recursive: bool,
@@ -177,6 +208,10 @@ pub struct RemoveOptions {
 }
 
 /// Remove a file or directory
+/// `rm` builtin.
+/// Port of `bin_rm()` from Src/Modules/files.c:616 — drives
+/// the `recursivecmd()` walker (line 378) with
+/// `rm_leaf` (line 546) / `rm_dirpost` (line 594) callbacks.
 pub fn rm(path: &Path, options: &RemoveOptions) -> Result<(), String> {
     if !path.exists() {
         if options.force {
@@ -222,6 +257,10 @@ fn rm_recursive(path: &Path, options: &RemoveOptions) -> Result<(), String> {
 }
 
 /// Change file permissions
+/// `chmod` builtin.
+/// Port of `bin_chmod()` + `chmod_dochmod()` from
+/// Src/Modules/files.c:655/642 — same `chmod(2)` per-file
+/// dispatch, walked recursively via `recursivecmd()` when `-R`.
 pub fn chmod(path: &Path, mode: u32, recursive: bool) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -259,6 +298,11 @@ pub fn chmod(path: &Path, mode: u32, recursive: bool) -> Result<(), String> {
 
 /// Change file owner/group
 #[cfg(unix)]
+/// `chown`/`chgrp` builtin.
+/// Port of `bin_chown()` + `chown_dochown()` /
+/// `chown_dolchown()` from Src/Modules/files.c (~line 700) —
+/// `chown(2)` / `lchown(2)` per file, walked recursively when
+/// `-R`.
 pub fn chown(
     path: &Path,
     uid: Option<u32>,
@@ -306,6 +350,10 @@ pub fn chown(
 
 /// Get user ID from username
 #[cfg(unix)]
+/// Look up a uid by username.
+/// zshrs convenience over `getpwnam(3)` — the C source inlines
+/// this lookup inside `parse_chown_spec` equivalents in
+/// Src/Modules/files.c.
 pub fn get_uid(username: &str) -> Option<u32> {
     use std::ffi::CString;
 
@@ -326,6 +374,8 @@ pub fn get_uid(username: &str) -> Option<u32> {
 
 /// Get group ID from group name
 #[cfg(unix)]
+/// Look up a gid by group name.
+/// zshrs convenience over `getgrnam(3)`.
 pub fn get_gid(groupname: &str) -> Option<u32> {
     use std::ffi::CString;
 
@@ -346,6 +396,10 @@ pub fn get_gid(groupname: &str) -> Option<u32> {
 
 /// Parse chown spec (user:group or user.group)
 #[cfg(unix)]
+/// Parse a `user[:group]` chown spec.
+/// Port of the chown-arg parser inside `bin_chown()`
+/// (Src/Modules/files.c) — accepts `user`, `:group`,
+/// `user:group`, plus the legacy `user.group` form.
 pub fn parse_chown_spec(spec: &str) -> Result<(Option<u32>, Option<u32>), String> {
     let (user_part, group_part) = if let Some(pos) = spec.find(':') {
         let (u, g) = spec.split_at(pos);
@@ -385,6 +439,9 @@ pub fn parse_chown_spec(spec: &str) -> Result<(Option<u32>, Option<u32>), String
 }
 
 /// Sync filesystem
+/// Force a filesystem sync.
+/// Port of `bin_sync()` from Src/Modules/files.c:53 — wraps
+/// `sync(2)`.
 pub fn sync_fs() {
     #[cfg(unix)]
     unsafe {
@@ -393,6 +450,9 @@ pub fn sync_fs() {
 }
 
 /// Convert octal mode to display string
+/// Render a Unix mode bitmask as a 10-char `ls -l` string.
+/// zshrs convenience — Src/Modules/files.c emits the same
+/// shape inline for diagnostic output.
 pub fn mode_to_string(mode: u32) -> String {
     let mut result = String::with_capacity(10);
 
@@ -445,6 +505,10 @@ pub fn mode_to_string(mode: u32) -> String {
 }
 
 /// Parse octal mode string
+/// Parse an `ls -l`-style mode string back to a u32 bitmask.
+/// zshrs-original convenience — used by tests / format
+/// round-trips. C source's parser lives in `chmod`'s symbolic
+/// mode parser.
 pub fn parse_mode(s: &str) -> Option<u32> {
     u32::from_str_radix(s, 8).ok()
 }

@@ -17,6 +17,11 @@ pub enum TcpSessionType {
 
 /// A TCP session
 #[derive(Debug)]
+/// A live TCP socket session.
+/// Port of `struct ztcp_session` from Src/Modules/tcp.c — the C
+/// source threads it through `zts_alloc()` (line 215),
+/// `zts_delete()` (line 253), `zts_byfd()` (line 271). Same fd /
+/// peer / local layout.
 pub struct TcpSession {
     pub fd: RawFd,
     pub session_type: TcpSessionType,
@@ -59,6 +64,9 @@ impl TcpSession {
 
 /// TCP sessions manager
 #[derive(Debug, Default)]
+/// TCP session table.
+/// Port of the `ztcp_sessions` linked list Src/Modules/tcp.c
+/// keeps — `bin_ztcp()` (line 342) reads/mutates it.
 pub struct TcpSessions {
     sessions: HashMap<RawFd, TcpSession>,
 }
@@ -125,6 +133,11 @@ fn close_fd(fd: RawFd) -> io::Result<()> {
 
 /// Options for ztcp builtin
 #[derive(Debug, Default)]
+/// `ztcp` builtin option flags.
+/// Mirrors the `Options ops` flag bag `bin_ztcp()` from
+/// Src/Modules/tcp.c:342 reads — `-l` listen, `-a` accept,
+/// `-c` close, `-d` fd, `-f` force, `-L` list, `-t` test,
+/// `-v` verbose.
 pub struct ZtcpOptions {
     pub close: bool,
     pub listen: bool,
@@ -138,11 +151,19 @@ pub struct ZtcpOptions {
 
 /// Connect to a TCP host with timeout on DNS and connect (default 10s).
 /// DNS resolution runs on a background thread so it can't hang the shell.
+/// Connect to a host:port and return (fd, peer, local).
+/// Port of `tcp_connect()` from Src/Modules/tcp.c:316 — wraps
+/// `socket(2)` + `connect(2)` and resolves both endpoints.
 pub fn tcp_connect(host: &str, port: u16) -> io::Result<(RawFd, SocketAddr, SocketAddr)> {
     tcp_connect_timeout(host, port, std::time::Duration::from_secs(10))
 }
 
 /// Connect with explicit timeout.
+/// Connect with an explicit timeout.
+/// zshrs convenience over `tcp_connect()` from
+/// Src/Modules/tcp.c:316 — the C source's connect blocks
+/// until kernel default timeout; this exposes a configurable
+/// one.
 pub fn tcp_connect_timeout(
     host: &str,
     port: u16,
@@ -200,6 +221,9 @@ pub fn tcp_connect_timeout(
 }
 
 /// Create a listening TCP socket
+/// Open a listening TCP socket bound to the given port.
+/// Port of the `-l` branch of `bin_ztcp()` (Src/Modules/tcp.c:342)
+/// — `socket(2)` → `bind(2)` → `listen(2, 5)`.
 pub fn tcp_listen(port: u16) -> io::Result<(RawFd, SocketAddr)> {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port);
     let listener = TcpListener::bind(addr)?;
@@ -210,6 +234,9 @@ pub fn tcp_listen(port: u16) -> io::Result<(RawFd, SocketAddr)> {
 }
 
 /// Accept a connection on a listening socket
+/// Accept a connection on a listening socket.
+/// Port of the `-a` branch of `bin_ztcp()` (Src/Modules/tcp.c:342)
+/// — `accept(2)` with EINTR retry, returns peer + local sockaddrs.
 pub fn tcp_accept(listen_fd: RawFd) -> io::Result<(RawFd, SocketAddr, SocketAddr)> {
     let listener = unsafe { TcpListener::from_raw_fd(listen_fd) };
     let result = listener.accept();
@@ -223,6 +250,9 @@ pub fn tcp_accept(listen_fd: RawFd) -> io::Result<(RawFd, SocketAddr, SocketAddr
 }
 
 /// Check if a socket has pending connections (for -t option)
+/// Probe whether a listening socket has a pending connection.
+/// Port of the `-t` branch of `bin_ztcp()` (Src/Modules/tcp.c:342)
+/// — `poll(2)` with zero timeout for non-blocking probe.
 pub fn tcp_test_accept(listen_fd: RawFd) -> io::Result<bool> {
     #[cfg(unix)]
     {
@@ -247,6 +277,11 @@ pub fn tcp_test_accept(listen_fd: RawFd) -> io::Result<bool> {
 }
 
 /// Close a TCP session
+/// Close a TCP session.
+/// Port of `tcp_close()` from Src/Modules/tcp.c:295 — closes
+/// the fd, removes the session from the table, frees the
+/// allocation. The C source uses `ztcp_free_session()` (line
+/// 245) for the per-entry free.
 pub fn tcp_close(sessions: &mut TcpSessions, fd: RawFd, force: bool) -> Result<(), String> {
     if let Some(session) = sessions.get(fd) {
         if session.is_zftp && !force {
@@ -263,6 +298,10 @@ pub fn tcp_close(sessions: &mut TcpSessions, fd: RawFd, force: bool) -> Result<(
 }
 
 /// Resolve a service name to port number
+/// Resolve a service name (or numeric string) to a port.
+/// Port of the `getservbyname(3)` lookup `bin_ztcp()` does
+/// (Src/Modules/tcp.c:342) — also accepts a bare numeric
+/// string for direct port specification.
 pub fn resolve_port(service: &str) -> Option<u16> {
     if let Ok(port) = service.parse::<u16>() {
         return Some(port);
@@ -291,6 +330,10 @@ pub fn resolve_port(service: &str) -> Option<u16> {
 }
 
 /// Resolve hostname to IP address
+/// Resolve a hostname to an IP address.
+/// Port of `zsh_gethostbyname2()` from Src/Modules/tcp.c:146
+/// (with `zsh_getipnodebyname()` line 170 fallback) — wraps
+/// `getaddrinfo(3)`.
 pub fn resolve_host(host: &str) -> io::Result<IpAddr> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(ip);
@@ -304,6 +347,10 @@ pub fn resolve_host(host: &str) -> io::Result<IpAddr> {
 }
 
 /// Reverse DNS lookup
+/// Reverse-DNS an IP address back to a hostname.
+/// Port of the `gethostbyaddr(3)` lookup the C source uses
+/// for `-v` verbose listing in `bin_ztcp()`
+/// (Src/Modules/tcp.c:342).
 pub fn reverse_lookup(addr: &IpAddr) -> Option<String> {
     let socket_addr = SocketAddr::new(*addr, 0);
 
@@ -315,6 +362,11 @@ fn dns_lookup_reverse(_addr: &SocketAddr) -> Option<String> {
 }
 
 /// Format a socket address for display
+/// Render a SocketAddr as `host:port`, optionally
+/// reverse-resolving the host.
+/// Port of the `zsh_inet_ntop()` (Src/Modules/tcp.c:72) +
+/// optional reverse-DNS path the C source uses for
+/// human-readable session listings.
 pub fn format_addr(addr: &SocketAddr, resolve: bool) -> String {
     if resolve {
         if let Some(hostname) = reverse_lookup(&addr.ip()) {
@@ -325,6 +377,9 @@ pub fn format_addr(addr: &SocketAddr, resolve: bool) -> String {
 }
 
 /// Execute ztcp builtin
+/// `ztcp` builtin entry point.
+/// Port of `bin_ztcp()` from Src/Modules/tcp.c:342 — same big
+/// switch over `-l`/`-a`/`-c`/`-d`/`-f`/`-L`/`-t`/`-v`.
 pub fn builtin_ztcp(
     args: &[&str],
     options: &ZtcpOptions,
