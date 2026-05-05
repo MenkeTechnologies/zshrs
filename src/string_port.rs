@@ -6,29 +6,38 @@
 //! (zhalloc vs zalloc) and metafied string encoding. In Rust, String
 //! handles all allocation and UTF-8 natively, so these become thin wrappers.
 
-/// Duplicate a string (from string.c dupstring)
-/// In Rust: String::clone() or .to_string()
+/// Duplicate a string into heap storage.
+/// Port of `dupstring()` from Src/string.c:33 — in C the heap-arena
+/// variant of `ztrdup()`. Rust's `String` always owns its allocation
+/// so the heap/permanent distinction collapses to `to_string()`.
 pub fn dupstring(s: &str) -> String {
     s.to_string()
 }
 
-/// Duplicate string with known length (from string.c dupstring_wlen)
+/// Duplicate a string with explicit length.
+/// Port of `dupstring_wlen()` from Src/string.c:48 — used when the
+/// source isn't NUL-terminated (slice of a larger buffer).
 pub fn dupstring_wlen(s: &str, len: usize) -> String {
     s[..len.min(s.len())].to_string()
 }
 
-/// Duplicate string on permanent storage (from string.c ztrdup)
-/// In Rust there's no heap/permanent distinction
+/// Duplicate a string into permanent storage.
+/// Port of `ztrdup()` from Src/string.c:62 — C zsh's canonical
+/// `strdup(3)` analog. Rust collapses this to `to_string()`.
 pub fn ztrdup(s: &str) -> String {
     s.to_string()
 }
 
-/// Duplicate wide string (from string.c wcs_ztrdup)
+/// Duplicate a wide-character string into permanent storage.
+/// Port of `wcs_ztrdup()` from Src/string.c:77 — wide-char
+/// counterpart of `ztrdup`. In Rust UTF-8 strings cover both.
 pub fn wcs_ztrdup(s: &str) -> String {
     s.to_string()
 }
 
-/// Concatenate three strings (from string.c tricat)
+/// Concatenate three strings into a new permanent string.
+/// Port of `tricat()` from Src/string.c:98 — used heavily by the
+/// completion machinery for prefix+match+suffix assembly.
 pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {
     let mut result = String::with_capacity(s1.len() + s2.len() + s3.len());
     result.push_str(s1);
@@ -37,37 +46,47 @@ pub fn tricat(s1: &str, s2: &str, s3: &str) -> String {
     result
 }
 
-/// Concatenate three strings on heap (from string.c zhtricat)
+/// Concatenate three strings into a new heap-arena string.
+/// Port of `zhtricat()` from Src/string.c:114 — heap-arena
+/// variant of `tricat`.
 pub fn zhtricat(s1: &str, s2: &str, s3: &str) -> String {
     tricat(s1, s2, s3)
 }
 
-/// Concatenate two strings on heap (from string.c dyncat)
+/// Concatenate two strings into a new heap-arena string.
+/// Port of `dyncat()` from Src/string.c:131.
 pub fn dyncat(s1: &str, s2: &str) -> String {
     format!("{}{}", s1, s2)
 }
 
-/// Concatenate two strings on permanent storage (from string.c bicat)
+/// Concatenate two strings into a new permanent string.
+/// Port of `bicat()` from Src/string.c:145.
 pub fn bicat(s1: &str, s2: &str) -> String {
     format!("{}{}", s1, s2)
 }
 
-/// Duplicate string prefix of given length (from string.c dupstrpfx)
+/// Duplicate the first `len` chars into a heap-arena string.
+/// Port of `dupstrpfx()` from Src/string.c:161.
 pub fn dupstrpfx(s: &str, len: usize) -> String {
     s[..len.min(s.len())].to_string()
 }
 
-/// Duplicate string prefix on permanent storage (from string.c ztrduppfx)
+/// Duplicate the first `len` chars into permanent storage.
+/// Port of `ztrduppfx()` from Src/string.c:172.
 pub fn ztrduppfx(s: &str, len: usize) -> String {
     dupstrpfx(s, len)
 }
 
-/// Append string to allocated string (from string.c appstr)
+/// Append a string in-place.
+/// Port of `appstr()` from Src/string.c:186 — the C source uses
+/// `strcat(3)` after realloc; Rust's `push_str` does both.
 pub fn appstr(base: &mut String, append: &str) {
     base.push_str(append);
 }
 
-/// Return pointer to last character (from string.c strend)
+/// Get the last character of a string.
+/// Port of `strend()` from Src/string.c:196 — C source returns
+/// the pointer to the NUL predecessor; Rust returns the char.
 pub fn strend(s: &str) -> Option<char> {
     s.chars().next_back()
 }

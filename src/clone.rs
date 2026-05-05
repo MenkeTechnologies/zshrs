@@ -128,9 +128,13 @@ pub fn clone_shell(_tty_path: &str) -> io::Result<CloneOutcome> {
     ))
 }
 
-/// Execute clone builtin. Direct port of clone.c:43-107 entry point.
-/// Returns (status, error_text_for_caller, child_pid).
-/// child_pid > 0 in parent, 0 in child, None on failure.
+/// `clone` builtin entry point.
+/// Port of `bin_clone()` from Src/Modules/clone.c:44 — wraps
+/// `clone_shell()` with the C source's "terminal required"
+/// diagnostic and surfaces `(status, error_text, child_pid)` so
+/// the caller can wire `$!`. `child_pid > 0` in parent, `0` in
+/// child, `None` on failure (matches the C source's exit-status
+/// convention).
 pub fn builtin_clone(args: &[&str]) -> (i32, String, Option<u32>) {
     if args.is_empty() {
         return (1, "clone: terminal required\n".to_string(), None);
