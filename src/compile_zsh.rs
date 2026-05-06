@@ -2075,8 +2075,40 @@ impl ZshCompiler {
         // the `${(f)mapfile[/path]}` and `${(s:,:)assoc[k]}` shapes.
         if !has_bnull {
             if let Some((flags, base, key)) = parse_zsh_flag_subscript(&untoked) {
+                // If the only flag is `(@)`, skip the
+                // BUILTIN_PARAM_FLAG round-trip — the sentinel/Concat
+                // machinery collapses a Value::Array result back to
+                // scalar before the @-handler runs, defeating the
+                // splat. Direct port: `(@)`'s sole effect is nojoin=1
+                // (Src/subst.c:1813), and BUILTIN_ARRAY_INDEX already
+                // honors that via the `\u{05}` force-array sentinel.
+                // For mixed flag chains (`@` + sort/uniq/etc.) we still
+                // need the BUILTIN_PARAM_FLAG pass; route through the
+                // sentinel-then-flag form there.
+                let only_at_flag = flags.chars().all(|c| c == '@');
+                if only_at_flag && flags.contains('@') {
+                    let key_with_sentinel = format!("\u{05}{}", key);
+                    let name_const = self.builder.add_constant(Value::str(base));
+                    let key_const = self.builder.add_constant(Value::str(key_with_sentinel));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    return;
+                }
+                // Sentinel `\u{05}` on the key signals BUILTIN_ARRAY_INDEX
+                // that the surrounding flag chain has explicit `@` —
+                // override the DQ-join behavior so a slice like `[1,3]`
+                // stays as Value::Array even inside `"…"`. Direct port
+                // of zsh's nojoin gating: `(@)` in subst.c sets nojoin=1
+                // so even DQ context preserves array shape.
+                let key_with_sentinel = if flags.contains('@') {
+                    format!("\u{05}{}", key)
+                } else {
+                    key.to_string()
+                };
                 let name_const = self.builder.add_constant(Value::str(base));
-                let key_const = self.builder.add_constant(Value::str(key));
+                let key_const = self.builder.add_constant(Value::str(key_with_sentinel));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
