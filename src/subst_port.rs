@@ -1622,12 +1622,24 @@ fn parse_brace_param(
         };
         pos = p;
     } else {
-        while pos < chars.len() {
-            let c = chars[pos];
-            if c.is_ascii_alphanumeric() || c == '_' {
-                pos += 1;
-            } else {
-                break;
+        // Single-char special parameter names: `@`, `*`, `#`, `?`,
+        // `$`, `!`, `0` (when alone). Direct port of paramsubst's
+        // single-char-name dispatch in Src/subst.c. Without this,
+        // `${#@}` saw an empty var_name (the alnum loop below
+        // skipped `@`), looked up "" → empty value, and length
+        // returned 0 instead of $#.
+        if pos < chars.len()
+            && matches!(chars[pos], '@' | '*' | '#' | '?' | '$' | '!')
+        {
+            pos += 1;
+        } else {
+            while pos < chars.len() {
+                let c = chars[pos];
+                if c.is_ascii_alphanumeric() || c == '_' {
+                    pos += 1;
+                } else {
+                    break;
+                }
             }
         }
     }
