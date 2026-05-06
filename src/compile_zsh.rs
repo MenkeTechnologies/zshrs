@@ -3633,7 +3633,35 @@ impl ZshCompiler {
                 } else {
                     self.compile_word_str(right);
                 }
-                self.emit_binary_test(&op_clean);
+                // Detect DQ-wrapped RHS — when the source pattern is
+                // entirely inside `"..."`, the resolved value is a
+                // LITERAL string and pattern metas (including `\X`
+                // escapes) must be treated literally. zsh manual: a
+                // quoted variable expansion produces literal text for
+                // `[[ == ]]` matching; only an unquoted RHS is
+                // pattern-interpreted. Switch StrMatch → StrEq for
+                // these cases, mirroring the difference between
+                // `[[ x == "$pat" ]]` (literal) and `[[ x == $pat ]]`
+                // (pattern). Skip for `=~` (regex), file tests, etc.
+                let rhs_is_pure_dq = right.starts_with('\u{9e}')
+                    && right.ends_with('\u{9e}')
+                    && {
+                        // No unquoted glob meta outside the DQ wrap.
+                        // The DQ pair brackets the whole word — count
+                        // DNULL markers; if exactly 2, the whole word
+                        // is one DQ span.
+                        right.chars().filter(|&c| c == '\u{9e}').count() == 2
+                    };
+                if is_pattern_op && op_clean != "=~" && rhs_is_pure_dq {
+                    if op_clean == "!=" {
+                        self.builder.emit(Op::StrEq, 0);
+                        self.builder.emit(Op::LogNot, 0);
+                    } else {
+                        self.builder.emit(Op::StrEq, 0);
+                    }
+                } else {
+                    self.emit_binary_test(&op_clean);
+                }
             }
             ZshCond::Regex(left, regex) => {
                 self.compile_word_str(left);

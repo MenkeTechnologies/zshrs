@@ -202,11 +202,13 @@ impl Color {
             Color::Cyan => "\x1b[36m".to_string(),
             Color::White => "\x1b[37m".to_string(),
             Color::Default => "\x1b[39m".to_string(),
-            // Basic 8 colors (0-7) use the standard ANSI codes
-            // (30-37); the 256-color escape `\e[38;5;N` is reserved
-            // for indexes 8-255. zsh: `%F{1}` outputs `\e[31m`, not
-            // `\e[38;5;1m` — match the basic-color path.
+            // Basic 8 colors (0-7) use ANSI 30-37; bright 8 colors
+            // (8-15) use ANSI 90-97 (high-intensity); 16-255 use the
+            // 256-color escape `\e[38;5;N`. Direct port of zsh's
+            // setcolor in Src/utils.c — zsh emits `%F{1}` as `\e[31m`
+            // and `%F{8}` as `\e[90m`, not the 256-color form.
             Color::Numbered(n) if *n <= 7 => format!("\x1b[3{}m", n),
+            Color::Numbered(n) if *n <= 15 => format!("\x1b[{}m", 90 + (n - 8)),
             Color::Numbered(n) => format!("\x1b[38;5;{}m", n),
             Color::Rgb(r, g, b) => format!("\x1b[38;2;{};{};{}m", r, g, b),
         }
@@ -223,8 +225,10 @@ impl Color {
             Color::Cyan => "\x1b[46m".to_string(),
             Color::White => "\x1b[47m".to_string(),
             Color::Default => "\x1b[49m".to_string(),
-            // Basic 8 colors use 40-47, not the 256-color form.
+            // Basic 8 colors use 40-47; bright 8 (8-15) use 100-107
+            // (high-intensity bg); 16-255 use 256-color form.
             Color::Numbered(n) if *n <= 7 => format!("\x1b[4{}m", n),
+            Color::Numbered(n) if *n <= 15 => format!("\x1b[{}m", 100 + (n - 8)),
             Color::Numbered(n) => format!("\x1b[48;5;{}m", n),
             Color::Rgb(r, g, b) => format!("\x1b[48;2;{};{};{}m", r, g, b),
         }
