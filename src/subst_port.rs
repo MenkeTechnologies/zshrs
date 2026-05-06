@@ -1517,15 +1517,33 @@ fn paramsubst(
             (result, prefix.len() + value.len(), result_nodes)
         }
         '0'..='9' => {
-            let digit = c.to_digit(10).unwrap() as usize;
-            let value = state
-                .arrays
-                .get("@")
-                .and_then(|a| a.get(digit))
-                .cloned()
-                .unwrap_or_default();
+            // `$0` reads variables["0"] (script/function name, writable
+            // via plain `0=value`). `$1`..`$9` index into positional
+            // params 1-based: digit N → arrays["@"][N-1]. Direct port
+            // of Src/params.c which exposes "0" as a SPECIALPMDEF
+            // backed by `argzero`, and digit-N as positional N.
+            // Multi-digit numerics ($10, $11, ...) need lookahead to
+            // capture trailing digits — collect them into the name
+            // before the lookup.
+            let mut digit_str = String::from(c);
+            let mut nx = pos + 1;
+            while nx < chars.len() && chars[nx].is_ascii_digit() {
+                digit_str.push(chars[nx]);
+                nx += 1;
+            }
+            let digit: usize = digit_str.parse().unwrap_or(0);
+            let value = if digit == 0 {
+                get_param_value("0", state)
+            } else {
+                state
+                    .arrays
+                    .get("@")
+                    .and_then(|a| a.get(digit.saturating_sub(1)))
+                    .cloned()
+                    .unwrap_or_default()
+            };
             let prefix: String = chars[..start_pos].iter().collect();
-            let suffix: String = chars[pos + 1..].iter().collect();
+            let suffix: String = chars[nx..].iter().collect();
             let result = format!("{}{}{}", prefix, value, suffix);
             result_nodes.push(result.clone());
             (result, prefix.len() + value.len(), result_nodes)
