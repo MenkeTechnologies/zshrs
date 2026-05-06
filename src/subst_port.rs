@@ -2196,6 +2196,21 @@ fn parse_brace_param(
     // arrays, OR assoc subscript path means "key exists" (assoc-with-
     // missing-subscript returns 0).
     if chkset {
+        // `(P)+NAME` — indirect set-test. Resolve NAME's scalar value
+        // first, then check if THAT name is set. Per Src/subst.c
+        // paramsubst's aspar arm running before chkset, the target of
+        // `+` becomes the indirected name, not the original.
+        let effective_name = if flags.prompt_expand {
+            let target = if let Some(v) = nested_value.take() {
+                v.first().cloned().unwrap_or_default()
+            } else {
+                get_param_value(&var_name, state)
+            };
+            if target.is_empty() { var_name.clone() } else { target }
+        } else {
+            var_name.clone()
+        };
+        let var_name = effective_name;
         let is_set = if let Some(sub) = subscript.as_deref() {
             // `${+arr[idx]}` — checks element existence.
             if let Some(arr) = state.arrays.get(&var_name) {
@@ -2479,6 +2494,116 @@ fn get_param_value(name: &str, state: &SubstState) -> String {
 }
 
 /// Get parameter value with subscript
+/// Expand a subscript pattern (e.g. `(I)$1`'s `$1` slot) the way zsh's
+/// getindex() does — single-pass, no IFS-split, no glob, no tilde.
+/// Handles `$N` digit positionals via state.arrays["@"], `${NAME}` and
+/// `$NAME` via state.variables. Falls back to singsub for cmd-subst /
+/// nested expansions. Direct port of Src/subst.c paramsubst's
+/// pre-getindex `singsub(&s)` step.
+fn expand_subscript_pat(s: &str, state: &mut SubstState) -> String {
+    if !s.contains('$') && !s.contains('`') {
+        return s.to_string();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '$' && i + 1 < chars.len() {
+            let nxt = chars[i + 1];
+            // ${NAME} / ${NAME[…]} / ${NAME:op…}: full braced form —
+            // delegate to substitute_brace's logic indirectly by
+            // capturing the balanced braces and recursing through
+            // singsub_no_tilde on just that fragment.
+            if nxt == '{' {
+                let mut depth = 1;
+                let mut j = i + 2;
+                while j < chars.len() && depth > 0 {
+                    if chars[j] == '{' {
+                        depth += 1;
+                    } else if chars[j] == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    j += 1;
+                }
+                if j < chars.len() && depth == 0 {
+                    let frag: String = chars[i..=j].iter().collect();
+                    out.push_str(&singsub_no_tilde(&frag, state));
+                    i = j + 1;
+                    continue;
+                }
+            }
+            // $N — digit positional
+            if nxt.is_ascii_digit() {
+                let mut j = i + 1;
+                let mut num = String::new();
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    num.push(chars[j]);
+                    j += 1;
+                }
+                if let Ok(n) = num.parse::<usize>() {
+                    if n == 0 {
+                        // $0 — fall through to variable lookup
+                    } else if let Some(arr) = state.arrays.get("@") {
+                        if let Some(v) = arr.get(n - 1) {
+                            out.push_str(v);
+                            i = j;
+                            continue;
+                        }
+                        i = j;
+                        continue;
+                    }
+                }
+            }
+            // $NAME (alpha/_ start)
+            if nxt.is_ascii_alphabetic() || nxt == '_' {
+                let mut j = i + 1;
+                while j < chars.len()
+                    && (chars[j].is_ascii_alphanumeric() || chars[j] == '_')
+                {
+                    j += 1;
+                }
+                let name: String = chars[i + 1..j].iter().collect();
+                if let Some(v) = state.variables.get(&name) {
+                    out.push_str(v);
+                } else if let Some(arr) = state.arrays.get(&name) {
+                    out.push_str(&arr.join(" "));
+                }
+                i = j;
+                continue;
+            }
+            // $$ / $? / $# / $! / $- / $@ / $* — single-char specials
+            // not commonly used as subscript-pat inputs, but cover the
+            // basics so e.g. `(I)$#` doesn't silently drop the `$#`.
+            if matches!(nxt, '$' | '?' | '#' | '!' | '-' | '@' | '*') {
+                let frag: String = chars[i..=i + 1].iter().collect();
+                out.push_str(&singsub_no_tilde(&frag, state));
+                i += 2;
+                continue;
+            }
+        }
+        // Backtick cmd-subst — defer to singsub.
+        if c == '`' {
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] != '`' {
+                j += 1;
+            }
+            if j < chars.len() {
+                let frag: String = chars[i..=j].iter().collect();
+                out.push_str(&singsub_no_tilde(&frag, state));
+                i = j + 1;
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 fn get_param_with_subscript(
     name: &str,
     subscript: Option<&str>,
@@ -2515,6 +2640,15 @@ fn get_param_with_subscript(
                     // `$0` is the script name, not the first positional.
                     // Fall through to env / variables lookup.
                 } else if let Some(v) = arr.get(n - 1) {
+                    // `${1[N,M]}` — char-slice on the positional value
+                    // (zsh treats it as a scalar). Without this branch
+                    // the [...] subscript was silently dropped on
+                    // digit-name positionals, so a function like
+                    //   fn() { echo "${1[1,3]}"; }; fn abcdefg
+                    // returned the full string instead of "abc".
+                    if let Some(sub) = real_sub {
+                        return scalar_char_subscript(v, sub);
+                    }
                     return vec![v.clone()];
                 } else {
                     return Vec::new();
@@ -2526,8 +2660,32 @@ fn get_param_with_subscript(
     // Check if it's an array
     if let Some(arr) = state.arrays.get(name) {
         if let Some(flags) = sub_flags {
-            let pat = real_sub.unwrap_or("");
-            return apply_array_subscript_flags(arr, flags, pat);
+            // Expand $-references in the pattern before matching.
+            // zsh's getindex() runs the subscript through singsub
+            // before pattern-compilation (Src/subst.c paramsubst's
+            // pre-getindex pass) — without this, `${arr[(I)$1]}`
+            // matches the literal string "$1" and never finds an
+            // element, so add-zsh-hook's `${hooktypes[(I)$1]} == 0`
+            // returned 0 (treated as "not found") and tripped the
+            // wrong branch.
+            let raw_pat = real_sub.unwrap_or("");
+            let mut substate_mut = SubstState {
+                errflag: state.errflag,
+                opts: state.opts.clone(),
+                variables: state.variables.clone(),
+                arrays: state.arrays.clone(),
+                assoc_arrays: state.assoc_arrays.clone(),
+                skip_filesub: state.skip_filesub,
+                function_names: state.function_names.clone(),
+                command_names: state.command_names.clone(),
+                alias_names: state.alias_names.clone(),
+            };
+            let expanded_pat = if raw_pat.contains('$') || raw_pat.contains('`') {
+                expand_subscript_pat(raw_pat, &mut substate_mut)
+            } else {
+                raw_pat.to_string()
+            };
+            return apply_array_subscript_flags(arr, flags, &expanded_pat);
         }
         if let Some(sub) = real_sub {
             if sub == "@" || sub == "*" {
@@ -2555,12 +2713,31 @@ fn get_param_with_subscript(
             // C source: subst.c handles these via the same flag
             // bits as arrays but interprets the source as
             // values-by-default.
-            let pat = real_sub.unwrap_or("");
+            // Expand $-refs in pat (mirror the indexed-array path
+            // immediately above) so `${assoc[(r)$key]}` finds the
+            // element zsh would.
+            let raw_pat = real_sub.unwrap_or("");
+            let mut substate_mut = SubstState {
+                errflag: state.errflag,
+                opts: state.opts.clone(),
+                variables: state.variables.clone(),
+                arrays: state.arrays.clone(),
+                assoc_arrays: state.assoc_arrays.clone(),
+                skip_filesub: state.skip_filesub,
+                function_names: state.function_names.clone(),
+                command_names: state.command_names.clone(),
+                alias_names: state.alias_names.clone(),
+            };
+            let expanded_pat = if raw_pat.contains('$') || raw_pat.contains('`') {
+                expand_subscript_pat(raw_pat, &mut substate_mut)
+            } else {
+                raw_pat.to_string()
+            };
             let pairs: Vec<(String, String)> = assoc
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            return apply_assoc_subscript_flags(&pairs, flags, pat);
+            return apply_assoc_subscript_flags(&pairs, flags, &expanded_pat);
         }
         if let Some(sub) = real_sub {
             if sub == "@" || sub == "*" {
@@ -2623,46 +2800,56 @@ fn get_param_with_subscript(
         return Vec::new();
     }
     if let Some(sub) = real_sub {
-        let chars: Vec<char> = value.chars().collect();
-        let n = chars.len() as i64;
-        let to_idx = |i: i64| -> usize {
-            if i > 0 {
-                ((i - 1) as usize).min(chars.len())
-            } else if i < 0 {
-                ((n + i).max(0)) as usize
-            } else {
-                0
-            }
-        };
-        if let Some(comma) = sub.find(',') {
-            if let (Ok(a), Ok(b)) = (
-                sub[..comma].trim().parse::<i64>(),
-                sub[comma + 1..].trim().parse::<i64>(),
-            ) {
-                let start = to_idx(a);
-                let end = if b > 0 {
-                    (b as usize).min(chars.len())
-                } else if b < 0 {
-                    ((n + b + 1).max(0)) as usize
-                } else {
-                    0
-                };
-                if start < chars.len() && start < end {
-                    let slice: String = chars[start..end.min(chars.len())].iter().collect();
-                    return vec![slice];
-                }
-                return Vec::new();
-            }
-        }
-        if let Ok(idx) = sub.parse::<i64>() {
-            let real = to_idx(idx);
-            return chars
-                .get(real)
-                .map(|c| vec![c.to_string()])
-                .unwrap_or_default();
-        }
+        return scalar_char_subscript(&value, sub);
     }
     vec![value]
+}
+
+/// `${var[N]}` / `${var[N,M]}` on a scalar — char-index / char-slice.
+/// Direct port of paramsubst's scalar-subscript handling. Negative
+/// indices count from end (1-based same as zsh: `[-1]` is last char).
+/// Returns the original scalar untouched if `sub` doesn't parse as
+/// a numeric index or `N,M` range.
+fn scalar_char_subscript(value: &str, sub: &str) -> Vec<String> {
+    let chars: Vec<char> = value.chars().collect();
+    let n = chars.len() as i64;
+    let to_idx = |i: i64| -> usize {
+        if i > 0 {
+            ((i - 1) as usize).min(chars.len())
+        } else if i < 0 {
+            ((n + i).max(0)) as usize
+        } else {
+            0
+        }
+    };
+    if let Some(comma) = sub.find(',') {
+        if let (Ok(a), Ok(b)) = (
+            sub[..comma].trim().parse::<i64>(),
+            sub[comma + 1..].trim().parse::<i64>(),
+        ) {
+            let start = to_idx(a);
+            let end = if b > 0 {
+                (b as usize).min(chars.len())
+            } else if b < 0 {
+                ((n + b + 1).max(0)) as usize
+            } else {
+                0
+            };
+            if start < chars.len() && start < end {
+                let slice: String = chars[start..end.min(chars.len())].iter().collect();
+                return vec![slice];
+            }
+            return Vec::new();
+        }
+    }
+    if let Ok(idx) = sub.parse::<i64>() {
+        let real = to_idx(idx);
+        return chars
+            .get(real)
+            .map(|c| vec![c.to_string()])
+            .unwrap_or_default();
+    }
+    vec![value.to_string()]
 }
 
 /// Bitmask of subscript flag bits parsed from the leading `(...)`.
