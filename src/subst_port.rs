@@ -6745,6 +6745,49 @@ fn populate_match_array(caps: &regex::Captures, state: &mut SubstState) {
     state.arrays.insert("match".to_string(), arr);
 }
 
+/// Strip one level of `\`-escaping from a replacement string. Mirrors
+/// the `untokenize()` step C zsh runs after `singsub` on the replstr
+/// (Src/glob.c::compgetmatch line 2687-2688) — `\X` becomes literal
+/// `X`, `\\` collapses to one `\`. In backref mode `\1`..`\9` and `\&`
+/// are kept verbatim so the match-substitution pass downstream can
+/// expand them.
+fn untokenize_replstr(s: &str, backref_mode: bool) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' && i + 1 < chars.len() {
+            let next = chars[i + 1];
+            if backref_mode && (next == '&' || next.is_ascii_digit()) {
+                out.push('\\');
+                out.push(next);
+            } else {
+                out.push(next);
+            }
+            i += 2;
+            continue;
+        }
+        // Strip Bnull / Bnullkeep markers too. In zshrs the parser
+        // emits BNULL (`\u{9f}`) for `\X` escapes, but the runtime
+        // also produces a NUL byte (`\u{0}`) marker in some
+        // expand-string paths to encode "next char is literal" — see
+        // exec.rs::expand_dq's `\\` handling. Drop either form and
+        // keep the next char verbatim. Without this, `${s/b/X\\Y}`
+        // came in as `X\u{0}\Y` (NUL injected before the literal `\`)
+        // and untokenize_replstr left the NUL in the output, which
+        // rendered as a stray space/null.
+        if (c == '\u{9f}' || c == '\u{0}') && i + 1 < chars.len() {
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 /// One-value replacement helper used by the `${var/…/…}` family.
 /// Pulled out to keep the operator arm short.
 #[allow(clippy::too_many_arguments)]
@@ -6764,7 +6807,7 @@ fn do_replace_one(
                 if backref_mode {
                     populate_match_array(&caps, state);
                 }
-                let r = singsub_no_tilde(raw_rep, state);
+                let r = untokenize_replstr(&singsub_no_tilde(raw_rep, state), backref_mode);
                 return format!("{}{}{}", &s[..m.start()], r, &s[m.end()..]);
             }
             s.to_string()
@@ -6778,7 +6821,7 @@ fn do_replace_one(
                 if backref_mode {
                     populate_match_array(&caps, state);
                 }
-                let r = singsub_no_tilde(raw_rep, state);
+                let r = untokenize_replstr(&singsub_no_tilde(raw_rep, state), backref_mode);
                 out.push_str(&r);
                 last = m.end();
             }
@@ -6792,7 +6835,7 @@ fn do_replace_one(
                     if backref_mode {
                         populate_match_array(&caps, state);
                     }
-                    let r = singsub_no_tilde(raw_rep, state);
+                    let r = untokenize_replstr(&singsub_no_tilde(raw_rep, state), backref_mode);
                     return format!("{}{}", r, &s[m.end()..]);
                 }
             }
@@ -6810,14 +6853,14 @@ fn do_replace_one(
                 if backref_mode {
                     populate_match_array(&caps, state);
                 }
-                let r = singsub_no_tilde(raw_rep, state);
+                let r = untokenize_replstr(&singsub_no_tilde(raw_rep, state), backref_mode);
                 return format!("{}{}", &s[..m.start()], r);
             }
             s.to_string()
         }
         // No regex (literal-string path).
         _ => {
-            let replacement = singsub_no_tilde(raw_rep, state);
+            let replacement = untokenize_replstr(&singsub_no_tilde(raw_rep, state), backref_mode);
             match op {
                 "/" => s.replacen(pattern_lit, &replacement, 1),
                 "//" => s.replace(pattern_lit, &replacement),
