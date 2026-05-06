@@ -650,6 +650,23 @@ impl ZshCompiler {
     }
 
     fn compile_simple(&mut self, simple: &ZshSimple) {
+        // Inline-assignment-prefix scope: `X=foo Y=bar cmd` should
+        // export the assigns to cmd's child env AND restore both
+        // shell-vars and process-env to the pre-call state when cmd
+        // returns. Detect by checking for assigns paired with words;
+        // emit a BEGIN/END_INLINE_ENV pair around the command run so
+        // SET_VAR can stash and restore each name's prior state.
+        // Direct port of zsh's addvars()-list scoping in execute_simple.
+        let has_inline_env_scope =
+            !simple.assigns.is_empty() && !simple.words.is_empty();
+        if has_inline_env_scope {
+            self.builder.emit(
+                Op::CallBuiltin(crate::exec::BUILTIN_BEGIN_INLINE_ENV, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
+        }
+
         // ── Assignments ───────────────────────────────────────────────
         // ZshAssign{ name, value: Scalar(String)|Array(Vec<String>), append }
         for assign in &simple.assigns {
@@ -941,6 +958,14 @@ impl ZshCompiler {
 
         if has_redirects {
             self.builder.emit(Op::WithRedirectsEnd, 0);
+        }
+
+        if has_inline_env_scope {
+            self.builder.emit(
+                Op::CallBuiltin(crate::exec::BUILTIN_END_INLINE_ENV, 0),
+                0,
+            );
+            self.builder.emit(Op::Pop, 0);
         }
     }
 
