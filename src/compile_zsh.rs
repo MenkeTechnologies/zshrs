@@ -1496,11 +1496,11 @@ impl ZshCompiler {
         // `echo *.toml` saw `\u{87}.toml` (no literal `*`) and
         // skipped expand_glob entirely → literal pattern emitted.
         let trigger_glob = unquoted(s, '*')
-            || unquoted(s, '\u{87}')
+            || unquoted(s, '\u{87}')   // STAR (parse/tokens.rs:14)
             || unquoted(s, '?')
-            || unquoted(s, '\u{86}')
+            || unquoted(s, '\u{97}')   // QUEST (parse/tokens.rs:30)
             || unquoted(s, '[')
-            || unquoted(s, '\u{91}')
+            || unquoted(s, '\u{91}')   // INBRACK (parse/tokens.rs:24)
             // extendedglob `^pat` (negation) and `pat~excl` (exclusion).
             // `^` is a no-op without `setopt extendedglob`, but routing
             // through expand_glob lets the runtime decide. The unquoted
