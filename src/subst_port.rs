@@ -1820,6 +1820,57 @@ fn parse_brace_param(
             Some(nodes)
         };
         pos = p;
+    } else if pos + 2 < chars.len()
+        && chars[pos] == '$'
+        && chars[pos + 1] == '('
+        && chars[pos + 2] == '('
+    {
+        // `${$((expr))}` — arithmetic substitution as the var-name slot.
+        // Must be checked BEFORE the `$(` cmd-subst branch because
+        // `$((` would otherwise greedy-match cmd-subst-of-subshell:
+        // `$( (expr) )` runs `(expr)` as a subshell command.
+        // Direct port of Src/subst.c lex.c:1235-1280 disambiguator
+        // where the lexer probes for `$((` before falling back to
+        // `$( … )`. zsh's `gettokstr()` checks the second `(` as a
+        // peek-ahead and switches to arith-eval mode. zshrs's
+        // bridge replicates the probe by string-matching `$((`.
+        //
+        // Find the matching `))` (skipping nested `(` `)` pairs to
+        // tolerate inline arith like `$((a*(b+c)))`). The closer is
+        // the first `))` that brings the running paren-depth back
+        // to the outer `$((` boundary.
+        let arith_start = pos;
+        let mut p = pos + 3; // past `$((`
+        let mut depth: i32 = 2;
+        while p < chars.len() && depth > 0 {
+            match chars[p] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // p points at the SECOND `)` of `))`; advance past it.
+                        p += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            p += 1;
+        }
+        // Body: between `$((` and `))`. arith_start+3 .. p-2.
+        let end = p.saturating_sub(2);
+        let body: String = chars[arith_start + 3..end].iter().collect();
+        // Route through the executor's arithmetic evaluator so bare
+        // identifiers in the expression resolve to their values per
+        // zsh: `$((i%6))` reads $i. arithsubst() in subst_port skips
+        // variable expansion (only the math.c engine), so calling
+        // it directly returns 0 for any non-numeric token. The
+        // executor's evaluate_arithmetic mirrors C zsh's `matheval`
+        // hook (Src/math.c:108) which reads `paramtab` for ident
+        // operands.
+        let captured = crate::exec::with_executor(|exec| exec.evaluate_arithmetic(&body));
+        nested_value = Some(vec![captured]);
+        pos = p;
     } else if pos < chars.len()
         && chars[pos] == '$'
         && pos + 1 < chars.len()
@@ -2277,19 +2328,41 @@ fn parse_brace_param(
         } else {
             get_param_value(&var_name, state)
         };
+        // `${(P)"name[expr]"}` — the resolved target name may carry a
+        // trailing `[subscript]`. Direct port of Src/subst.c:2799-2806
+        // where `fetchvalue(&vbuf, &ov, …)` parses both name and any
+        // bracketed subscript from the same input pointer. Split here
+        // before the lookup so e.g. `n="arr[-1]"; ${(P)n}` returns the
+        // last element of `$arr`, not "" because no param named
+        // "arr[-1]" exists.
+        let (target_base, target_sub) = match target_name.find('[') {
+            Some(b) if target_name.ends_with(']') => {
+                let base = target_name[..b].to_string();
+                let sub = target_name[b + 1..target_name.len() - 1].to_string();
+                (base, Some(sub))
+            }
+            _ => (target_name.clone(), None),
+        };
         if flags.type_info {
             // `(Pt)` — indirect-then-typeset-flags. Direct port of
             // Src/subst.c:2807-2854: P resolves the indirection target,
             // then `wantt` introspects THAT parameter's type. Without
             // this combined arm, (Pt) fell through (P) only and lost
             // the type-string semantics zinit/zbrowse rely on.
-            build_type_string_for(&target_name, state)
+            build_type_string_for(&target_base, state)
         } else if subscript.is_some() {
-            get_param_with_subscript(&target_name, subscript.as_deref(), state)
-        } else if target_name.is_empty() {
+            // Outer `[…]` on the brace expression itself takes
+            // precedence over any trailing subscript baked into the
+            // resolved target name. zsh's fetchvalue threads the
+            // outer subscript via `s` while the resolved name is
+            // already complete.
+            get_param_with_subscript(&target_base, subscript.as_deref(), state)
+        } else if target_base.is_empty() {
             Vec::new()
         } else {
-            get_param_with_subscript(&target_name, None, state)
+            // Pass through any subscript that came from the resolved
+            // name (e.g. `n2="arr[1,3]"; ${(P)n2}`).
+            get_param_with_subscript(&target_base, target_sub.as_deref(), state)
         }
     } else if flags.type_info {
         // `(t)` — type info string. Src/subst.c:2810-2853 builds

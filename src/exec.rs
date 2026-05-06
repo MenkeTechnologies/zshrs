@@ -3580,14 +3580,117 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let want_type = chars.iter().any(|&c| c == 't');
         let pt_combo = want_indirect && want_type;
         if want_indirect && !pt_combo && !matches!(state, St::S(ref s) if s.is_empty()) {
-            state = match state {
-                St::S(name) => with_executor(|exec| {
-                    if let Some(arr) = exec.arrays.get(&name) {
-                        St::A(arr.clone())
-                    } else {
-                        St::S(exec.get_variable(&name))
+            // The state at this point holds the (P) TARGET reference,
+            // not the original pointer name — the param-flag dispatch
+            // upstream initialized state to `exec.get_variable(name)`.
+            // Resolve that target. Two shapes:
+            //   - bare name: `${(P)n}` with `n=foo` → state="foo",
+            //     look up `foo` directly.
+            //   - subscripted name: `${(P)n2}` with `n2="arr[-1]"` →
+            //     state="arr[-1]", split into base="arr" + sub="-1"
+            //     and route through expand_string. Direct port of
+            //     Src/subst.c:2799-2806 where `fetchvalue(&vbuf, &ov, …)`
+            //     parses both name and any trailing `[…]` subscript
+            //     from the same input pointer. Without this split,
+            //     a subscripted target was looked up as a literal
+            //     parameter named "arr[-1]" (always unset → empty).
+            fn resolve_indirect_target(target: &str, exec: &mut ShellExecutor) -> St {
+                let (base, sub) = match target.find('[') {
+                    Some(b) if target.ends_with(']') => {
+                        let n = &target[..b];
+                        let s = &target[b + 1..target.len() - 1];
+                        (n.to_string(), Some(s.to_string()))
                     }
-                }),
+                    _ => (target.to_string(), None),
+                };
+                // Bare-name path.
+                if sub.is_none() {
+                    if let Some(arr) = exec.arrays.get(&base) {
+                        return St::A(arr.clone());
+                    }
+                    return St::S(exec.get_variable(&base));
+                }
+                let sub_str = sub.unwrap();
+                // Assoc lookup: `${(P)"map[key]"}` — single value for
+                // the given key.
+                if let Some(m) = exec.assoc_arrays.get(&base).cloned() {
+                    return St::S(m.get(&sub_str).cloned().unwrap_or_default());
+                }
+                // Indexed-array subscript. Direct port of getindex()
+                // (Src/params.c) handling for negative indices and
+                // `lo,hi` slice. expand_string() can't be used here —
+                // it routes the subscripted form through compile-time
+                // paths that re-fetch the WHOLE array on the bridge
+                // back from subst_port. Apply the subscript here
+                // directly.
+                if let Some(arr) = exec.arrays.get(&base).cloned() {
+                    let n = arr.len() as i64;
+                    let to_zero = |i: i64| -> i64 {
+                        if i > 0 {
+                            i - 1
+                        } else if i < 0 {
+                            n + i
+                        } else {
+                            0
+                        }
+                    };
+                    if let Some((lo_s, hi_s)) = sub_str.split_once(',') {
+                        let lo = lo_s.trim().parse::<i64>().unwrap_or(1);
+                        let hi = hi_s.trim().parse::<i64>().unwrap_or(n);
+                        let lo_i = to_zero(lo).max(0);
+                        let hi_i = to_zero(hi);
+                        if hi_i < lo_i || lo_i >= n {
+                            return St::A(Vec::new());
+                        }
+                        let hi_clamped = (hi_i + 1).min(n) as usize;
+                        return St::A(arr[lo_i as usize..hi_clamped].to_vec());
+                    }
+                    if sub_str == "@" || sub_str == "*" {
+                        return St::A(arr);
+                    }
+                    if let Ok(idx) = sub_str.parse::<i64>() {
+                        let real = to_zero(idx);
+                        if real < 0 || real >= n {
+                            return St::S(String::new());
+                        }
+                        return St::S(arr[real as usize].clone());
+                    }
+                }
+                // Fallback: scalar with subscript = char-range.
+                let val = exec.get_variable(&base);
+                let chars: Vec<char> = val.chars().collect();
+                let n = chars.len() as i64;
+                let to_zero = |i: i64| -> i64 {
+                    if i > 0 {
+                        i - 1
+                    } else if i < 0 {
+                        n + i
+                    } else {
+                        0
+                    }
+                };
+                if let Some((lo_s, hi_s)) = sub_str.split_once(',') {
+                    let lo = lo_s.trim().parse::<i64>().unwrap_or(1);
+                    let hi = hi_s.trim().parse::<i64>().unwrap_or(n);
+                    let lo_i = to_zero(lo).max(0);
+                    let hi_i = to_zero(hi);
+                    if hi_i < lo_i || lo_i >= n {
+                        return St::S(String::new());
+                    }
+                    let hi_clamped = (hi_i + 1).min(n) as usize;
+                    return St::S(chars[lo_i as usize..hi_clamped].iter().collect());
+                }
+                if let Ok(idx) = sub_str.parse::<i64>() {
+                    let real = to_zero(idx);
+                    if real < 0 || real >= n {
+                        return St::S(String::new());
+                    }
+                    return St::S(chars[real as usize].to_string());
+                }
+                St::S(String::new())
+            }
+            state = match state {
+                St::S(name) => with_executor(|exec| resolve_indirect_target(&name, exec)),
                 St::A(names) => with_executor(|exec| {
                     let resolved: Vec<String> = names
                         .into_iter()
@@ -20202,7 +20305,7 @@ impl ShellExecutor {
         }
     }
 
-    fn evaluate_arithmetic(&mut self, expr: &str) -> String {
+    pub fn evaluate_arithmetic(&mut self, expr: &str) -> String {
         // First, resolve `$NAME[(flags)pat]` / `$@[(flags)pat]`
         // before expand_string — otherwise `$@` gets joined into
         // a scalar (`a b c`) and the trailing `[…]` becomes
