@@ -5388,9 +5388,12 @@ fn dopadding_simple(
 ) -> String {
     // The 4-colon form `(l:N::STR2:)` — empty string1 + non-empty
     // string2 — drops the value entirely and produces N copies of
-    // string2. Direct port of dopadding's handling when preone is ""
-    // and premul is non-NULL (line 4925-ish in subst.c).
+    // string2 ONLY when value is empty (no parameter to pad). When
+    // value is non-empty, normal pad-with-prefix-then-fill applies.
+    // Direct port of Src/subst.c:4925-ish dopadding which only
+    // substitutes premul-as-fill when ls (value-len) == 0.
     if pre_num > 0
+        && s.is_empty()
         && pre_one.map(|s| s.is_empty()).unwrap_or(false)
         && pre_mul.map(|s| !s.is_empty()).unwrap_or(false)
     {
@@ -5403,6 +5406,7 @@ fn dopadding_simple(
         return out;
     }
     if post_num > 0
+        && s.is_empty()
         && post_one.map(|s| s.is_empty()).unwrap_or(false)
         && post_mul.map(|s| !s.is_empty()).unwrap_or(false)
     {
