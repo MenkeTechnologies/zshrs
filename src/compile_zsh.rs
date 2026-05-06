@@ -1740,7 +1740,19 @@ impl ZshCompiler {
         if !has_bnull {
             if let Some((name, key)) = bare_subscript_ref(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(name));
-                let key_const = self.builder.add_constant(Value::str(key));
+                // Prefix `\u{02}` to the key when the surrounding word
+                // is DQ-wrapped — BUILTIN_ARRAY_INDEX uses this to
+                // decide whether `[N,M]` range slices join (DQ) or
+                // stay as array (unquoted). Direct port of zsh's
+                // sepjoin nojoin gating per Src/subst.c paramsubst.
+                let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                let dq = raw_dq || self.dq_context_depth > 0;
+                let key_str = if dq {
+                    format!("\u{02}{}", key)
+                } else {
+                    key.to_string()
+                };
+                let key_const = self.builder.add_constant(Value::str(key_str.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
@@ -1755,7 +1767,16 @@ impl ZshCompiler {
         if !has_bnull {
             if let Some((name, key, suffix)) = bare_subscript_with_suffix(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(name));
-                let key_const = self.builder.add_constant(Value::str(key));
+                // Same DQ-detection as the bare-subscript-ref path
+                // above so suffix-concat range slices still join.
+                let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                let dq = raw_dq || self.dq_context_depth > 0;
+                let key_str = if dq {
+                    format!("\u{02}{}", key)
+                } else {
+                    key.to_string()
+                };
+                let key_const = self.builder.add_constant(Value::str(key_str.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder
@@ -1840,7 +1861,18 @@ impl ZshCompiler {
         if !has_bnull {
             if let Some((base, key)) = braced_subscript_ref(&untoked) {
                 let name_const = self.builder.add_constant(Value::str(base));
-                let key_const = self.builder.add_constant(Value::str(key));
+                // DQ-context flag: `\u{02}` prefix on idx tells
+                // BUILTIN_ARRAY_INDEX to JOIN range slices with IFS
+                // first char rather than return Value::Array. Direct
+                // port of zsh's nojoin gating in Src/subst.c paramsubst.
+                let raw_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                let dq = raw_dq || self.dq_context_depth > 0;
+                let key_str = if dq {
+                    format!("\u{02}{}", key)
+                } else {
+                    key.to_string()
+                };
+                let key_const = self.builder.add_constant(Value::str(key_str.as_str()));
                 self.builder.emit(Op::LoadConst(name_const), 0);
                 self.builder.emit(Op::LoadConst(key_const), 0);
                 self.builder

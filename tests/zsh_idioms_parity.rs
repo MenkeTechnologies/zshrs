@@ -129,14 +129,25 @@ echo done"#);
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// `(-.)` follow symlinks then check regular file. Currently
-    /// zshrs's filter doesn't follow symlinks for `(.)` when the
-    /// `-` modifier is set — the symlink itself fails the
-    /// `is_regular_file()` check. Real bug to fix in a later cycle;
-    /// smoke the load path here.
+    /// `(-.)` follow symlinks then check regular file — symlink
+    /// pointing to a regular file IS included.
     #[test]
-    fn dash_dot_qualifier_smoke() {
+    fn dash_dot_qualifier_follow_symlinks() {
         let d = setup_glob_dir("zshrs_glob_follow_sym");
+        let _ = std::os::unix::fs::symlink(
+            d.join("regular.txt"),
+            d.join("link.txt"),
+        );
+        let script = format!("cd {0} && print -l -- *(-.) | sort", d.display());
+        assert_parity(&script);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// `(.)` plain — no follow, symlink excluded even though target
+    /// is a regular file.
+    #[test]
+    fn dot_qualifier_no_follow() {
+        let d = setup_glob_dir("zshrs_glob_no_follow");
         let _ = std::os::unix::fs::symlink(
             d.join("regular.txt"),
             d.join("link.txt"),

@@ -3047,8 +3047,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // is an assoc, the idx is a string key — we check assoc_arrays first
     // when the idx isn't `@`/`*` and the name has an assoc binding.
     vm.register_builtin(BUILTIN_ARRAY_INDEX, |vm, _argc| {
-        let idx = vm.pop().to_str();
+        let mut idx = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // `\u{02}` prefix on idx = "compile-time DQ context" — set by
+        // the compile_zsh fast path when the ${arr[KEY]} appeared
+        // inside `"…"`. The runtime needs this to decide whether
+        // a `[N,M]` range slice should join (DQ) or stay as array
+        // (unquoted). The mode-1 BUILTIN_EXPAND_TEXT bridge already
+        // bumps `exec.in_dq_context`, so detect either signal.
+        let dq_compile = idx.starts_with('\u{02}');
+        if dq_compile {
+            idx = idx[1..].to_string();
+        }
         // `${pipestatus[N]}` / `${PIPESTATUS[N]}` — pipeline exit
         // status array. Populated by BUILTIN_PIPELINE_EXEC after a
         // real pipeline; for single commands fall back to a synthetic
@@ -3245,17 +3255,31 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 }
 
                 // Slice form `N,M`: comma separator with int-or-arith
-                // operands on each side. Returns Value::Array of the slice.
-                // Negative indices count from end.
+                // operands on each side. Negative indices count from
+                // end. Direct port of zsh's getindex() N,M slice.
+                //
+                // Return shape depends on context: in DQ (`"${arr[2,4]}"`)
+                // zsh joins the slice with the first IFS char into a
+                // single scalar (Src/subst.c sepjoin path with nojoin=0);
+                // in unquoted (`${arr[2,4]}`) or `[@]`-style context it
+                // remains an array. Detect via in_dq_context which the
+                // BUILTIN_EXPAND_TEXT mode-1 wrapper bumps.
                 if let Some((start_s, end_s)) = idx.split_once(',') {
                     let start = parse_subscript_index(exec, start_s);
                     let end = parse_subscript_index(exec, end_s);
                     if let (Some(s), Some(e)) = (start, end) {
+                        let sliced = slice_indexed_array(&arr, s, e);
+                        if exec.in_dq_context > 0 || dq_compile {
+                            let ifs_first = exec
+                                .get_variable("IFS")
+                                .chars()
+                                .next()
+                                .unwrap_or(' ')
+                                .to_string();
+                            return Value::str(sliced.join(&ifs_first));
+                        }
                         return Value::Array(
-                            slice_indexed_array(&arr, s, e)
-                                .into_iter()
-                                .map(Value::str)
-                                .collect(),
+                            sliced.into_iter().map(Value::str).collect(),
                         );
                     }
                 }
@@ -5008,7 +5032,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
         matches.retain(|path| {
             use std::fs;
             use std::os::unix::fs::PermissionsExt;
-            let meta = match fs::metadata(path) {
+            // zsh's `-` modifier in glob qualifiers (`*(-.)`) means
+            // "follow symlinks before applying the test". Without
+            // `-`, `(.)` uses lstat (skipping symlinks even when
+            // they target a regular file). Direct port of zsh's
+            // pattern.c qualifier parser — the QUAL_NULL bit is set
+            // by `-` and switches stat→lstat-vs-stat. Default Rust
+            // `fs::metadata` follows symlinks; use `symlink_metadata`
+            // by default, switch to `metadata` when `-` is in the
+            // qualifier set.
+            let follow_symlinks = qual.contains('-');
+            let meta_res = if follow_symlinks {
+                fs::metadata(path)
+            } else {
+                fs::symlink_metadata(path)
+            };
+            let meta = match meta_res {
                 Ok(m) => m,
                 Err(_) => return qual.contains('N'),
             };
@@ -14825,10 +14864,13 @@ impl ShellExecutor {
                 // File types — all use prefetched metadata cache
                 '.' => {
                     // zsh: `.` is "plain regular file" — excludes
-                    // symlinks (use `@` for those). Was matching
-                    // symlinks-to-files because `is_file()` on the
-                    // followed metadata returned true. Check the
-                    // SYMLINK metadata to filter out links first.
+                    // symlinks (use `@` for those). The `-`
+                    // qualifier modifier (`(-.)`) inverts this:
+                    // follow the symlink before testing, so a link
+                    // to a regular file IS included. Direct port of
+                    // zsh pattern.c QUAL_NULL → stat-not-lstat
+                    // toggle.
+                    let follow_links = qualifiers.contains('-');
                     result.retain(|f| {
                         let is_plain_file = meta_cache
                             .get(f)
@@ -14838,7 +14880,11 @@ impl ShellExecutor {
                                     .map(|m| m.file_type().is_symlink())
                                     .unwrap_or(false);
                                 let is_reg = m.as_ref().map(|m| m.is_file()).unwrap_or(false);
-                                is_reg && !is_link
+                                if follow_links {
+                                    is_reg
+                                } else {
+                                    is_reg && !is_link
+                                }
                             })
                             .unwrap_or(false);
                         if negate {

@@ -384,19 +384,23 @@ mod arrays {
         assert_parity(r#"arr=(a b c); echo "${arr[-1]}""#);
     }
 
-    /// `${arr[2,4]}` — range slice. In DQ context, zsh joins the
-    /// array slice to a scalar (`"b c d"`); zshrs keeps it as an
-    /// array of 3 elements. Pin the unquoted form (where both
-    /// shells agree on multi-element output) and leave the DQ
-    /// collapse for a follow-up fix in subst_port's range-subscript
-    /// + DQ-collapse interaction.
+    /// `${arr[2,4]}` — range slice. zsh's nojoin gating per
+    /// Src/subst.c paramsubst: in DQ the slice JOINS with first IFS
+    /// char to a scalar; unquoted it stays array. Closed by
+    /// adding compile-time `\u{02}` DQ sentinel that BUILTIN_ARRAY_INDEX
+    /// reads to switch return shape.
+    #[test]
+    fn array_range_slice_dq_joins() {
+        assert_parity(r#"arr=(a b c d e); print -l "${arr[2,4]}""#);
+    }
+
+    /// Unquoted range slice — multi-element array.
     #[test]
     fn array_range_slice_unquoted() {
         assert_parity(r#"arr=(a b c d e); print -l ${arr[2,4]}"#);
     }
 
-    /// Unquoted range slice with `[@]` splice for explicit array
-    /// context — both shells produce the same multi-element list.
+    /// `[@]` splice with offset — explicit-array form.
     #[test]
     fn array_range_slice_at_splice() {
         assert_parity(r#"arr=(a b c d e); print -l "${arr[@]:1:3}""#);
