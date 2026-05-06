@@ -5074,9 +5074,15 @@ fn parse_zsh_flag_subscript(s: &str) -> Option<(&str, &str, &str)> {
     if !base.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
         return None;
     }
-    if key.contains('[') || key.contains(']') || key.contains('$') || key.contains('`') {
+    if key.contains('[') || key.contains(']') || key.contains('`') {
         return None;
     }
+    // Allow `$` in keys — BUILTIN_ARRAY_INDEX runtime-expands the
+    // subscript text via expand_string before parsing, so a slice
+    // like `$((expr)),-1` resolves to its numeric form there.
+    // Without this gate removed, `${(@)arr[$((expr)),-1]}` fell
+    // through to the EXPAND_TEXT bridge which scalar-flattens
+    // and lost the slice semantics.
     Some((flags, base, key))
 }
 
