@@ -3336,6 +3336,17 @@ impl ZshCompiler {
             // `$MEND`, `$match[1..N]`, `$mbegin[]`, `$mend[]` on a
             // successful regexec; status 0 on match, 1 otherwise.
             "-regex-match" => self.builder.emit(Op::RegexMatch, 0),
+            // `-pcre-match` is the named-condition form provided by
+            // the zsh/pcre module (Src/Modules/pcre.c:506). Direct
+            // port of `cond_pcre_match`: compiles the RHS pattern
+            // and matches against the LHS, populating `$MATCH` and
+            // `$match[1..N]`. zshrs's PCRE backend is the Rust
+            // `regex` crate (RE2 engine) — backreferences and some
+            // lookarounds aren't supported, but the common subset
+            // matches. Routes to the same Op::RegexMatch as
+            // `=~`/`-regex-match` because the magic-var population
+            // shape is identical.
+            "-pcre-match" => self.builder.emit(Op::RegexMatch, 0),
             "<" => self.builder.emit(Op::StrLt, 0),
             ">" => self.builder.emit(Op::StrGt, 0),
             "-eq" => self.builder.emit(Op::NumEq, 0),

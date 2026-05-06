@@ -2885,6 +2885,43 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         _ => Some(Value::str("")),
                     }
                 }
+                "errnos" => {
+                    // zsh/system module: `${errnos[N]}` is an INDEXED
+                    // array of errno-name strings, 1-based. Direct
+                    // port of the `SPECIALPMDEF("errnos", PM_ARRAY|
+                    // PM_READONLY, …)` entry at
+                    // Src/Modules/system.c:902 + the `errnosgetfn`
+                    // accessor at line 832 (which returns
+                    // `arrdup((char **)sys_errnames)`). Splice (`@`/
+                    // `*`) returns the whole platform-specific list
+                    // as a Value::Array; numeric subscript returns
+                    // the matching name (or "" for unknown).
+                    let table = crate::modules::system::ERRNO_NAMES;
+                    if idx == "@" || idx == "*" {
+                        return Some(Value::Array(
+                            table.iter().map(|(n, _)| Value::str(*n)).collect(),
+                        ));
+                    }
+                    if let Ok(n) = idx.parse::<i64>() {
+                        // 1-based. Negative indices count from end.
+                        let len = table.len() as i64;
+                        let pos = if n > 0 {
+                            (n - 1) as usize
+                        } else if n < 0 {
+                            let p = len + n;
+                            if p < 0 {
+                                return Some(Value::str(""));
+                            }
+                            p as usize
+                        } else {
+                            return Some(Value::str(""));
+                        };
+                        if let Some((name, _)) = table.get(pos) {
+                            return Some(Value::str(*name));
+                        }
+                    }
+                    Some(Value::str(""))
+                }
                 // `langinfo` — port of zsh/langinfo module
                 // (src/zsh/Src/Modules/langinfo.c:402-449). Read-
                 // only assoc keyed by nl_item names (CODESET,
@@ -6788,6 +6825,27 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // we counted chars (5 for "a b c" instead of 3).
             if name == "@" || name == "*" || name == "argv" {
                 return exec.positional_params.len();
+            }
+            // Magic-array specials whose length is data-driven, not
+            // taken from `exec.arrays`/`exec.assoc_arrays`. Direct
+            // ports of the relevant `SPECIALPMDEF` entries:
+            //   - `errnos`     → Src/Modules/system.c:902
+            //   - `commands`   → Src/Modules/parameter.c
+            //   - `aliases`    → Src/Modules/parameter.c
+            //   - `functions`  → Src/Modules/parameter.c
+            //   - `parameters` → Src/Modules/parameter.c
+            //   - `options`    → Src/Modules/parameter.c
+            //   - `sysparams`  → Src/Modules/system.c:904
+            match name.as_str() {
+                "errnos" => return crate::modules::system::ERRNO_NAMES.len(),
+                "commands" => return exec.command_hash.len(),
+                "aliases" => return exec.aliases.len(),
+                "galiases" => return exec.global_aliases.len(),
+                "saliases" => return exec.suffix_aliases.len(),
+                "functions" => return exec.function_names().len(),
+                "options" => return exec.options.len(),
+                "sysparams" => return 3, // pid, ppid, procsubstpid
+                _ => {}
             }
             if let Some(arr) = exec.arrays.get(&name) {
                 arr.len()
@@ -11037,6 +11095,24 @@ impl ShellExecutor {
             "users" => return self.builtin_users(&rest_vec),
             "sync" => return self.builtin_sync(&rest_vec),
             "zbuild" => return self.builtin_zbuild(&rest_vec),
+            // `zf_*` aliases from `zsh/files` (Src/Modules/files.c
+            // BUILTIN table at line 816-824). The C source binds
+            // both unprefixed (`chmod`) and prefixed (`zf_chmod`)
+            // names to the SAME `bin_chmod` etc. handlers — the
+            // prefixed forms exist so a script can portably reach
+            // the builtin even when a function or alias has shadowed
+            // the bare name. Each arm here routes to the matching
+            // `builtin_*` method already defined further down in
+            // this file.
+            "zf_chmod" => return self.builtin_chmod(&rest_vec),
+            "zf_chown" => return self.builtin_chown(&rest_vec),
+            "zf_chgrp" => return self.builtin_chgrp(&rest_vec),
+            "zf_ln" => return self.builtin_ln(&rest_vec),
+            "zf_mkdir" => return self.builtin_mkdir(&rest_vec),
+            "zf_mv" => return self.builtin_mv(&rest_vec),
+            "zf_rm" => return self.builtin_rm(&rest_vec),
+            "zf_rmdir" => return self.builtin_rmdir(&rest_vec),
+            "zf_sync" => return self.builtin_sync(&rest_vec),
             _ => {}
         }
 
