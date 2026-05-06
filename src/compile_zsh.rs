@@ -635,6 +635,16 @@ impl ZshCompiler {
                 );
                 self.builder.emit(Op::Pop, 0);
                 self.compile_program(&t.always);
+                // Whole-construct status: preserve the try block's
+                // status when the always arm exited cleanly. Without
+                // this, a `{ false } always { echo }` reported 0
+                // because the always arm overwrote last_status with
+                // its own success code.
+                self.builder.emit(
+                    Op::CallBuiltin(crate::exec::BUILTIN_RESTORE_TRY_BLOCK_STATUS, 0),
+                    0,
+                );
+                self.builder.emit(Op::SetStatus, 0);
             }
         }
     }

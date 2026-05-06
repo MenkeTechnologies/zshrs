@@ -850,6 +850,30 @@ mod tilde_glob_subst {
     /// this: `pick="src/*.zsh"; files=(${~pick})`. Without this, the
     /// pattern stays literal and the glob never fires.
     #[test]
+    fn always_block_preserves_try_status() {
+        // `{ try } always { finally }` — the construct's exit status
+        // is the try block's status when the always arm exited
+        // cleanly. Was returning the always arm's status, so error
+        // propagation through `always` cleanup was masked.
+        // (Test-mod scoping note: this lives next to tilde_glob_subst
+        // because they ship in the same cycle.)
+        assert_parity(
+            r#"{ echo body; false; } always { echo cleanup; }
+echo "after status=$?""#,
+        );
+    }
+
+    #[test]
+    fn always_block_returns_always_status_when_set() {
+        // Conversely, when the always arm itself fails, the construct
+        // returns the always arm's status (not the try's).
+        assert_parity(
+            r#"{ echo body; true; } always { false; }
+echo "after status=$?""#,
+        );
+    }
+
+    #[test]
     fn tilde_param_glob_expands_pattern() {
         // Use UNQUOTED form: zsh's `~` flag applies glob expansion
         // only outside double quotes (`echo "${~pick}"` keeps the
