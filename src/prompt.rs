@@ -62,6 +62,49 @@ pub enum CmdState {
 }
 
 impl CmdState {
+    /// Map a `u8` discriminant back to the variant. Used by
+    /// `BUILTIN_CMD_PUSH` to decode the token from the bytecode
+    /// stack. The discriminants are in the same declaration order
+    /// as zsh's `cmdnames[]` (Src/prompt.c:62) so cross-checking
+    /// against the C source's CS_* numeric IDs is direct.
+    pub fn from_u8(n: u8) -> Option<Self> {
+        Some(match n {
+            0 => CmdState::For,
+            1 => CmdState::While,
+            2 => CmdState::Repeat,
+            3 => CmdState::Select,
+            4 => CmdState::Until,
+            5 => CmdState::If,
+            6 => CmdState::Then,
+            7 => CmdState::Else,
+            8 => CmdState::Elif,
+            9 => CmdState::Math,
+            10 => CmdState::Cond,
+            11 => CmdState::CmdOr,
+            12 => CmdState::CmdAnd,
+            13 => CmdState::Pipe,
+            14 => CmdState::ErrPipe,
+            15 => CmdState::Foreach,
+            16 => CmdState::Case,
+            17 => CmdState::Function,
+            18 => CmdState::Subsh,
+            19 => CmdState::Cursh,
+            20 => CmdState::Array,
+            21 => CmdState::Quote,
+            22 => CmdState::DQuote,
+            23 => CmdState::BQuote,
+            24 => CmdState::CmdSubst,
+            25 => CmdState::MathSubst,
+            26 => CmdState::ElifThen,
+            27 => CmdState::Heredoc,
+            28 => CmdState::HeredocD,
+            29 => CmdState::Brace,
+            30 => CmdState::BraceParam,
+            31 => CmdState::Always,
+            _ => return None,
+        })
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             CmdState::For => "for",
@@ -912,26 +955,31 @@ impl<'a> PromptExpander<'a> {
                 }
             }
 
-            // Command stack
+            // Command stack — direct port of Src/prompt.c:855-880
+            // case '_'. arg >= 0 prints the TOP `arg` elements
+            // BOTTOM-UP (oldest first). arg < 0 prints the BOTTOM
+            // `-arg` elements bottom-up. arg == 0 prints all.
             '_' => {
-                if !self.ctx.cmd_stack.is_empty() {
-                    let n = if arg == 0 {
-                        self.ctx.cmd_stack.len()
-                    } else if arg > 0 {
-                        (arg as usize).min(self.ctx.cmd_stack.len())
-                    } else {
-                        ((-arg) as usize).min(self.ctx.cmd_stack.len())
-                    };
-
+                let cmdsp = self.ctx.cmd_stack.len();
+                if cmdsp > 0 {
                     let names: Vec<&str> = if arg >= 0 {
+                        let mut n = if arg == 0 { cmdsp } else { arg as usize };
+                        if n > cmdsp {
+                            n = cmdsp;
+                        }
+                        // Walk forward from `cmdsp - n` to top.
                         self.ctx
                             .cmd_stack
                             .iter()
-                            .rev()
-                            .take(n)
+                            .skip(cmdsp - n)
                             .map(|s| s.name())
                             .collect()
                     } else {
+                        let mut n = (-arg) as usize;
+                        if n > cmdsp {
+                            n = cmdsp;
+                        }
+                        // Walk forward from 0 to `n`.
                         self.ctx
                             .cmd_stack
                             .iter()
