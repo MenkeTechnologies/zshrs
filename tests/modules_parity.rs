@@ -133,9 +133,10 @@ mod regex_module {
     /// — the truthiness shape.
     #[test]
     fn regex_match_basic_truthy() {
-        assert_parity(
+        assert_parity(&with_modules(
+            &["regex"],
             r#"[[ "hello world" -regex-match "wor.d" ]] && echo Y || echo N"#,
-        );
+        ));
     }
 
     /// Capture groups go to $match[1..N]; full match to $MATCH.
@@ -144,17 +145,19 @@ mod regex_module {
     /// sequence after a successful regexec).
     #[test]
     fn regex_match_captures() {
-        assert_parity(
+        assert_parity(&with_modules(
+            &["regex"],
             r#"[[ "foo=42" -regex-match "([a-z]+)=([0-9]+)" ]] && echo "$MATCH|$match[1]|$match[2]""#,
-        );
+        ));
     }
 
     /// Non-match must NOT touch $MATCH / $match.
     #[test]
     fn regex_match_failure_keeps_status_nonzero() {
-        assert_parity(
+        assert_parity(&with_modules(
+            &["regex"],
             r#"MATCH=untouched; [[ abc -regex-match xyz ]] || echo "no:$?:$MATCH""#,
-        );
+        ));
     }
 }
 
@@ -171,16 +174,9 @@ mod datetime_module {
         if !zsh_available() {
             return;
         }
-        let z: i64 = run_zsh("print -- $EPOCHSECONDS")
-            .stdout
-            .trim()
-            .parse()
-            .unwrap_or(0);
-        let r: i64 = run_zshrs("print -- $EPOCHSECONDS")
-            .stdout
-            .trim()
-            .parse()
-            .unwrap_or(0);
+        let script = with_modules(&["datetime"], "print -- $EPOCHSECONDS");
+        let z: i64 = run_zsh(&script).stdout.trim().parse().unwrap_or(0);
+        let r: i64 = run_zshrs(&script).stdout.trim().parse().unwrap_or(0);
         assert!(z > 1_700_000_000, "zsh EPOCHSECONDS suspicious: {}", z);
         assert!(r > 1_700_000_000, "zshrs EPOCHSECONDS suspicious: {}", r);
         assert!(
@@ -193,7 +189,10 @@ mod datetime_module {
 
     #[test]
     fn strftime_formats() {
-        assert_parity(r#"strftime "%Y-%m-%d" 1700000000"#);
+        assert_parity(&with_modules(
+            &["datetime"],
+            r#"strftime "%Y-%m-%d" 1700000000"#,
+        ));
     }
 }
 
@@ -209,9 +208,9 @@ mod terminfo_module {
         if !zsh_available() {
             return;
         }
-        let script = "print -rn -- $terminfo[kf1]";
-        let z = run_zsh(script).stdout;
-        let r = run_zshrs(script).stdout;
+        let script = with_modules(&["terminfo"], "print -rn -- $terminfo[kf1]");
+        let z = run_zsh(&script).stdout;
+        let r = run_zshrs(&script).stdout;
         assert_eq!(z.as_bytes(), r.as_bytes());
     }
 
@@ -220,9 +219,9 @@ mod terminfo_module {
         if !zsh_available() {
             return;
         }
-        let script = "print -rn -- $terminfo[kbs]";
-        let z = run_zsh(script).stdout;
-        let r = run_zshrs(script).stdout;
+        let script = with_modules(&["terminfo"], "print -rn -- $terminfo[kbs]");
+        let z = run_zsh(&script).stdout;
+        let r = run_zshrs(&script).stdout;
         assert_eq!(z.as_bytes(), r.as_bytes());
     }
 }
@@ -234,20 +233,88 @@ mod zutil_module {
 
     #[test]
     fn zstyle_set_get() {
-        assert_parity(
+        assert_parity(&with_modules(
+            &["zutil"],
             r#"zstyle ':completion:*' menu select
-            zstyle -s ':completion:*' menu val
-            print -- $val"#,
-        );
+zstyle -s ':completion:*' menu val
+print -- $val"#,
+        ));
     }
 
     #[test]
     fn zparseopts_basic() {
-        assert_parity(
+        assert_parity(&with_modules(
+            &["zutil"],
             r#"set -- -a 1 -b 2 rest
-            zparseopts -D -E a:=opta b:=optb
-            print -- "a=$opta b=$optb rest=$@""#,
-        );
+zparseopts -D -E a:=opta b:=optb
+print -- "a=$opta b=$optb rest=$@""#,
+        ));
+    }
+
+    /// `zstyle -b` returns "yes"/"no" via the same arg order as `-s`
+    /// (CONTEXT STYLE NAME). Direct test of `Src/Modules/zutil.c:660-680`.
+    #[test]
+    fn zstyle_b_yes_no() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"zstyle ':a:b' flag yes
+zstyle -b ':a:b' flag val
+print -- $val
+zstyle ':a:c' flag false
+zstyle -b ':a:c' flag val2
+print -- $val2"#,
+        ));
+    }
+
+    /// `zstyle -a` copies values into a named array (CONTEXT STYLE NAME).
+    /// Direct test of `zutil.c:682-705`.
+    #[test]
+    fn zstyle_a_array() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"zstyle ':a:b' tags one two three
+zstyle -a ':a:b' tags arr
+print -- "${arr[1]}|${arr[2]}|${arr[3]}""#,
+        ));
+    }
+
+    /// `zstyle -m CONTEXT STYLE PATTERN` returns 0 if any style value
+    /// matches `pattern`. Direct test of `zutil.c:727`.
+    #[test]
+    fn zstyle_m_pattern_match() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"zstyle ':a:b' tags alpha beta gamma
+zstyle -m ':a:b' tags 'be*' && echo Y || echo N
+zstyle -m ':a:b' tags 'zz*' && echo Y2 || echo N2"#,
+        ));
+    }
+
+    /// `zstyle -g NAME [CONTEXT [STYLE]]` lists matching style triples
+    /// into the named array. Distinct arg order from `-s/-b/-a` (NAME
+    /// goes FIRST). Direct test of `zutil.c:760+`.
+    #[test]
+    fn zstyle_g_name_first_arg_order() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"zstyle ':one' style A
+zstyle ':two' style B
+zstyle -g out ':one' style
+print -- "$out""#,
+        ));
+    }
+
+    /// `zstyle -t CONTEXT STYLE [VAL ...]` is a 2-arg-min test. Direct
+    /// test of `zutil.c:712-725`.
+    #[test]
+    fn zstyle_t_truthy_test() {
+        assert_parity(&with_modules(
+            &["zutil"],
+            r#"zstyle ':x' enabled true
+zstyle -t ':x' enabled && echo Y || echo N
+zstyle ':x' disabled false
+zstyle -t ':x' disabled && echo Y2 || echo N2"#,
+        ));
     }
 }
 
@@ -258,17 +325,19 @@ mod parameter_module {
 
     #[test]
     fn aliases_assoc_returns_value() {
-        assert_parity(
+        assert_parity(&with_modules(
+            &["parameter"],
             r#"alias gst="git status"
-            print -- "${aliases[gst]}""#,
-        );
+print -- "${aliases[gst]}""#,
+        ));
     }
 
     #[test]
     fn functions_assoc_lists_definitions() {
-        assert_parity(
+        assert_parity(&with_modules(
+            &["parameter"],
             r#"f() { echo hello; }
-            [[ -n "${functions[f]}" ]] && echo defined"#,
-        );
+[[ -n "${functions[f]}" ]] && echo defined"#,
+        ));
     }
 }

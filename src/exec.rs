@@ -30609,14 +30609,21 @@ impl ShellExecutor {
                     return 1;
                 }
                 "-s" => {
-                    // Get style as scalar. Too few args -> error.
+                    // `zstyle -s CONTEXT STYLE NAME [SEP]` — get
+                    // style as scalar into NAME. Direct port of
+                    // Src/Modules/zutil.c:643-655 — `lookupstyle
+                    // (args[1], args[2])` then `setsparam(args[3],
+                    // sepjoin(...))`. The previous zshrs code had
+                    // the args mis-permuted (treated args[1] as
+                    // NAME), so `zstyle -s :ctx style val` left
+                    // `$val` empty.
                     if args.len() < 4 {
                         eprintln!("zshrs:zstyle:1: not enough arguments");
                         return 1;
                     }
-                    let var_name = &args[1];
-                    let context = &args[2];
-                    let style = &args[3];
+                    let context = &args[1];
+                    let style = &args[2];
+                    let var_name = &args[3];
                     let sep = args.get(4).map(|s| s.as_str()).unwrap_or(" ");
                     if let Some(values) = self.style_table.get(context, style) {
                         self.variables.insert(var_name.clone(), values.join(sep));
