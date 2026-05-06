@@ -3151,10 +3151,27 @@ fn scalar_char_subscript(value: &str, sub: &str) -> Vec<String> {
             0
         }
     };
+    // Subscript bounds in zsh are arithmetic expressions, not just
+    // literal numbers (`s[1,COLUMNS-8]`, `s[i+1,$#s]`). Direct port
+    // of zsh's getindex which calls mathevali on each side of the
+    // comma. Try parse-as-int first (fast path); fall back to
+    // evaluate_arithmetic via the live executor.
+    let resolve = |part: &str| -> Option<i64> {
+        let trimmed = part.trim();
+        if let Ok(v) = trimmed.parse::<i64>() {
+            return Some(v);
+        }
+        crate::exec::try_with_executor(|exec| {
+            exec.evaluate_arithmetic(trimmed)
+                .parse::<i64>()
+                .ok()
+        })
+        .flatten()
+    };
     if let Some(comma) = sub.find(',') {
-        if let (Ok(a), Ok(b)) = (
-            sub[..comma].trim().parse::<i64>(),
-            sub[comma + 1..].trim().parse::<i64>(),
+        if let (Some(a), Some(b)) = (
+            resolve(&sub[..comma]),
+            resolve(&sub[comma + 1..]),
         ) {
             let start = to_idx(a);
             let end = if b > 0 {
@@ -3171,7 +3188,7 @@ fn scalar_char_subscript(value: &str, sub: &str) -> Vec<String> {
             return Vec::new();
         }
     }
-    if let Ok(idx) = sub.parse::<i64>() {
+    if let Some(idx) = resolve(sub) {
         let real = to_idx(idx);
         return chars
             .get(real)
