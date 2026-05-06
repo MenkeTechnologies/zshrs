@@ -228,6 +228,11 @@ pub struct SubstState {
     /// Names of currently-defined aliases. Populated by
     /// `from_executor`. Backs `${+aliases[name]}`.
     pub alias_names: std::collections::HashSet<String>,
+    /// Snapshot of `typeset`-tracked attributes (kind: scalar/integer/
+    /// float/array/assoc + readonly / export / left / right_blanks /
+    /// right_zeros / lower / upper / unique / hide / hideval / tied).
+    /// Backs `${(t)name}` and `${(Pt)name}` per Src/subst.c:2807-2854.
+    pub var_attrs: std::collections::HashMap<String, crate::exec::VarAttr>,
 }
 
 impl SubstState {
@@ -297,6 +302,7 @@ impl SubstState {
             function_names,
             command_names,
             alias_names,
+            var_attrs: exec.var_attrs.clone(),
         }
     }
 
@@ -2229,43 +2235,12 @@ fn parse_brace_param(
             })
             .unwrap_or_default()
     } else if flags.keys && state.assoc_arrays.contains_key(&var_name) {
-        // `${(k)assoc}` → keys, in insertion order. With a subscript
-        // `${(k)assoc[KEY]}` returns the key for that lookup (echoes
-        // KEY back if present, empty if absent). With a flag-bearing
-        // subscript like `${(k)assoc[(I)pat]}`, the (I) index-search
-        // already returns the matched KEYS (per Src/params.c::getarg
-        // line 1576-1595, hash branch with `ind = down = 1`). The
-        // (k) flag is therefore a no-op for `(I)`/`(R)` but must still
-        // be honored for plain key lookups so the result is the key
-        // not the value.
-        let m = state.assoc_arrays.get(&var_name).cloned().unwrap_or_default();
-        if let Some(sub) = subscript.as_deref() {
-            // Reuse the (I)/(R)/exact-key dispatch already wired for
-            // `${assoc[sub]}`. For (k)+`(I)pat` zsh returns the
-            // matched keys directly (Src/params.c getarg's hash
-            // branch sets `ind = down = 1` and returns names from the
-            // table). For (k)+exact-key it returns the key when
-            // present, empty otherwise.
-            let pairs: Vec<(String, String)> =
-                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            let parsed = parse_subscript_flags(sub);
-            let has_index_flag = parsed
-                .as_ref()
-                .map(|(f, _)| f.has_index_or_reverse_index())
-                .unwrap_or(false);
-            if let (true, Some((sub_flags, pat))) = (has_index_flag, parsed) {
-                apply_assoc_subscript_flags_pub(&pairs, sub_flags, &pat)
-            } else {
-                let key = singsub_no_tilde(sub, state);
-                if m.contains_key(&key) {
-                    vec![key]
-                } else {
-                    Vec::new()
-                }
-            }
-        } else {
-            m.keys().cloned().collect()
-        }
+        // `${(k)assoc}` → keys, in insertion order.
+        state
+            .assoc_arrays
+            .get(&var_name)
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
     } else if flags.keys {
         // `${(k)<magic-assoc>}` for specials NOT in `assoc_arrays`
         // (`aliases`, `functions`, `options`, `commands`, `terminfo`,
@@ -2302,7 +2277,14 @@ fn parse_brace_param(
         } else {
             get_param_value(&var_name, state)
         };
-        if subscript.is_some() {
+        if flags.type_info {
+            // `(Pt)` — indirect-then-typeset-flags. Direct port of
+            // Src/subst.c:2807-2854: P resolves the indirection target,
+            // then `wantt` introspects THAT parameter's type. Without
+            // this combined arm, (Pt) fell through (P) only and lost
+            // the type-string semantics zinit/zbrowse rely on.
+            build_type_string_for(&target_name, state)
+        } else if subscript.is_some() {
             get_param_with_subscript(&target_name, subscript.as_deref(), state)
         } else if target_name.is_empty() {
             Vec::new()
@@ -2311,24 +2293,10 @@ fn parse_brace_param(
         }
     } else if flags.type_info {
         // `(t)` — type info string. Src/subst.c:2810-2853 builds
-        // a `:`-separated list: TYPE ":" FLAGS. zshrs's parameter
-        // table doesn't yet model the full flag matrix; emit the
-        // primary type which is what most callers (checking
-        // `${(t)x}` for `array`, `association`, etc.) want.
-        let ty = if state.assoc_arrays.contains_key(&var_name) {
-            "association"
-        } else if state.arrays.contains_key(&var_name) {
-            "array"
-        } else if state.variables.contains_key(&var_name) {
-            "scalar"
-        } else {
-            ""
-        };
-        if ty.is_empty() {
-            Vec::new()
-        } else {
-            vec![ty.to_string()]
-        }
+        // `TYPE` followed by `-modifier` suffixes for each set
+        // attribute flag. Reads `state.var_attrs` (snapshot of the
+        // executor's typeset table) for the flag matrix.
+        build_type_string_for(&var_name, state)
     } else if subscript.is_some() || !var_name.is_empty() {
         get_param_with_subscript(&var_name, subscript.as_deref(), state)
     } else {
@@ -2843,6 +2811,7 @@ fn get_param_with_subscript(
                 function_names: state.function_names.clone(),
                 command_names: state.command_names.clone(),
                 alias_names: state.alias_names.clone(),
+                var_attrs: state.var_attrs.clone(),
             };
             let expanded_pat = if raw_pat.contains('$') || raw_pat.contains('`') {
                 expand_subscript_pat(raw_pat, &mut substate_mut)
@@ -2891,6 +2860,7 @@ fn get_param_with_subscript(
                 function_names: state.function_names.clone(),
                 command_names: state.command_names.clone(),
                 alias_names: state.alias_names.clone(),
+                var_attrs: state.var_attrs.clone(),
             };
             let expanded_pat = if raw_pat.contains('$') || raw_pat.contains('`') {
                 expand_subscript_pat(raw_pat, &mut substate_mut)
@@ -2922,6 +2892,7 @@ fn get_param_with_subscript(
                     function_names: state.function_names.clone(),
                     command_names: state.command_names.clone(),
                     alias_names: state.alias_names.clone(),
+                    var_attrs: state.var_attrs.clone(),
                 };
                 expand_subscript_pat(sub, &mut substate_mut)
             } else {
@@ -2987,6 +2958,7 @@ fn get_param_with_subscript(
                 function_names: state.function_names.clone(),
                 command_names: state.command_names.clone(),
                 alias_names: state.alias_names.clone(),
+                var_attrs: state.var_attrs.clone(),
             };
             let resolved_sub = singsub_no_tilde(sub, &mut substate_mut);
             // For splice forms `@`/`*`, return the full key list
@@ -8983,6 +8955,72 @@ pub mod valflag {
     pub const INV: u32 = 1;
     pub const EMPTY: u32 = 2;
     pub const SUBST: u32 = 4;
+}
+
+/// Build the `(t)` / `(Pt)` flag's type string for a named parameter.
+/// Direct port of `Src/subst.c:2807-2854`: emits base type
+/// (scalar/array/association/integer/float/nameref) followed by
+/// `-suffix` for each set attribute (left, right_blanks, right_zeros,
+/// lower, upper, readonly, tag, tied, export, unique, hide, hideval,
+/// special). Empty string when name is unset.
+pub fn build_type_string_for(name: &str, state: &SubstState) -> Vec<String> {
+    use crate::exec::VarKind;
+    let attr = state.var_attrs.get(name);
+    let base = if let Some(a) = attr {
+        match a.kind {
+            VarKind::Scalar => "scalar",
+            VarKind::Integer => "integer",
+            VarKind::Float => "float",
+            VarKind::Array => "array",
+            VarKind::Association => "association",
+        }
+    } else if state.assoc_arrays.contains_key(name) {
+        "association"
+    } else if state.arrays.contains_key(name) {
+        "array"
+    } else if state.variables.contains_key(name) {
+        "scalar"
+    } else {
+        return Vec::new();
+    };
+    let mut out = String::from(base);
+    if let Some(a) = attr {
+        if a.left_pad.is_some() {
+            out.push_str("-left");
+        }
+        if a.right_pad.is_some() {
+            // zsh distinguishes -right_blanks (space pad) from
+            // -right_zeros (zero pad). zshrs stores zero-pad in
+            // `zero_pad`; right_pad without zero_pad means blanks.
+            if a.zero_pad.is_some() {
+                out.push_str("-right_zeros");
+            } else {
+                out.push_str("-right_blanks");
+            }
+        }
+        if a.lowercase {
+            out.push_str("-lower");
+        }
+        if a.uppercase {
+            out.push_str("-upper");
+        }
+        if a.readonly {
+            out.push_str("-readonly");
+        }
+        if a.export {
+            out.push_str("-export");
+        }
+        if a.unique {
+            out.push_str("-unique");
+        }
+        if a.hidden {
+            out.push_str("-hide");
+        }
+        if a.hide_val {
+            out.push_str("-hideval");
+        }
+    }
+    vec![out]
 }
 
 /// Get parameter type description string

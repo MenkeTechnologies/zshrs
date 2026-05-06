@@ -3568,7 +3568,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // because it indirects FIRST (ref→target, lookup target =
         // "hello") then uppercases.
         let want_indirect = chars.iter().any(|&c| c == 'P');
-        if want_indirect && !matches!(state, St::S(ref s) if s.is_empty()) {
+        // `(Pt)` is a special pairing — type-of-the-target, not
+        // value-of-the-target. Direct port of Src/subst.c:2807-2854
+        // `wantt` arm: zsh's `wantt` runs AFTER `aspar` has resolved
+        // the pm pointer to the target's Param struct, then reads
+        // `pm->node.flags` for type. Doing the value pre-walker here
+        // discards the target name and the (t) handler ends up
+        // introspecting the original pointer ("n" → scalar). Skip
+        // the value-walker for (Pt); the (t) handler resolves the
+        // target name itself via `target_for_type` below.
+        let want_type = chars.iter().any(|&c| c == 't');
+        let pt_combo = want_indirect && want_type;
+        if want_indirect && !pt_combo && !matches!(state, St::S(ref s) if s.is_empty()) {
             state = match state {
                 St::S(name) => with_executor(|exec| {
                     if let Some(arr) = exec.arrays.get(&name) {
@@ -4734,15 +4745,29 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // Examples: `integer`, `float`, `scalar-readonly`,
                     // `scalar-export`, `scalar-left` (typeset -L N),
                     // `scalar-right_blanks`, `array`, `association`.
+                    //
+                    // `(Pt)` combo: direct port of Src/subst.c:2807-2854.
+                    // zsh's `wantt` reads `v->pm->node.flags` AFTER
+                    // `aspar` has resolved the indirect target's Param.
+                    // We mirror that: for (Pt), look up `name`'s scalar
+                    // value to get the target name, then introspect
+                    // THAT parameter's type. The value pre-walker was
+                    // skipped above for the Pt combo.
+                    let target = if pt_combo {
+                        with_executor(|exec| exec.get_variable(&name))
+                    } else {
+                        name.clone()
+                    };
                     let kind = with_executor(|exec| {
-                        if let Some(attr) = exec.var_attrs.get(&name) {
+                        if let Some(attr) = exec.var_attrs.get(&target) {
                             return attr.format_zsh();
                         }
-                        if exec.assoc_arrays.contains_key(&name) {
+                        if exec.assoc_arrays.contains_key(&target) {
                             "association".to_string()
-                        } else if exec.arrays.contains_key(&name) {
+                        } else if exec.arrays.contains_key(&target) {
                             "array".to_string()
-                        } else if exec.variables.contains_key(&name) || std::env::var(&name).is_ok()
+                        } else if exec.variables.contains_key(&target)
+                            || std::env::var(&target).is_ok()
                         {
                             "scalar".to_string()
                         } else {
