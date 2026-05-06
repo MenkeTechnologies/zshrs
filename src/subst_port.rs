@@ -6775,6 +6775,13 @@ fn strip_inline_pattern_flags(pat: &str) -> (String, bool, bool) {
         match c {
             'b' => backref = true,
             'B' => backref = false,
+            // `m` / `M` enable / disable $MATCH/$MBEGIN/$MEND. zshrs
+            // collapses both `m` and `b` into one backref-mode bool;
+            // the per-capture replacement seeder writes both views
+            // (match[N] AND $MATCH/$MBEGIN/$MEND) on every fire.
+            // Direct port of zsh's pattern.c pat_pure_m flag.
+            'm' => backref = true,
+            'M' => backref = false,
             'i' => case_i = true,
             'I' => case_i = false,
             'l' => {} // multibyte — ignored, regex handles unicode
@@ -6844,11 +6851,28 @@ fn glob_to_regex_capturing(pattern: &str, anchored: bool) -> String {
                     regex.push('^');
                     i += 1;
                 }
+                // Translate zsh class to Rust-regex class. Two
+                // gotchas vs zsh:
+                //  - `\]` inside a class — zsh / POSIX accept;
+                //    Rust regex needs `\]` AND a literal `[` if
+                //    present must also be escaped (`\[`).
+                //  - Bare `[` inside a class is literal in zsh but
+                //    rejected by Rust regex (it expects `\[`).
+                // Pass `\X` through verbatim, escape any bare `[`
+                // and bare `]` (only the close-`]` of the class
+                // doesn't get escaped — handled by the loop's
+                // termination check).
                 while i < chars.len() && chars[i] != ']' {
                     if chars[i] == '\\' && i + 1 < chars.len() {
                         regex.push('\\');
                         regex.push(chars[i + 1]);
                         i += 2;
+                    } else if chars[i] == '[' {
+                        // Bare `[` inside class — escape for Rust
+                        // regex (zsh treats it as literal).
+                        regex.push('\\');
+                        regex.push('[');
+                        i += 1;
                     } else {
                         regex.push(chars[i]);
                         i += 1;
@@ -6937,6 +6961,20 @@ fn populate_match_array(caps: &regex::Captures, state: &mut SubstState) {
         arr.push(caps.get(i).map(|m| m.as_str().to_string()).unwrap_or_default());
     }
     state.arrays.insert("match".to_string(), arr);
+    // Also seed `MATCH` / `MBEGIN` / `MEND` for the (#m) flag.
+    // Direct port of Src/pattern.c pat_pure_m which exposes the
+    // whole-match text and 1-based offsets in the parameter table.
+    if let Some(m0) = caps.get(0) {
+        state
+            .variables
+            .insert("MATCH".to_string(), m0.as_str().to_string());
+        state
+            .variables
+            .insert("MBEGIN".to_string(), (m0.start() + 1).to_string());
+        state
+            .variables
+            .insert("MEND".to_string(), m0.end().to_string());
+    }
 }
 
 /// Strip one level of `\`-escaping from a replacement string. Mirrors
@@ -7180,11 +7218,18 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
                     regex.push('^');
                     i += 1;
                 }
+                // Escape bare `[` inside class — zsh allows it
+                // literal, Rust regex requires `\[`. Same fix as
+                // glob_to_regex_capturing's class handler.
                 while i < chars.len() && chars[i] != ']' {
                     if chars[i] == '\\' && i + 1 < chars.len() {
                         regex.push('\\');
                         regex.push(chars[i + 1]);
                         i += 2;
+                    } else if chars[i] == '[' {
+                        regex.push('\\');
+                        regex.push('[');
+                        i += 1;
                     } else {
                         regex.push(chars[i]);
                         i += 1;
