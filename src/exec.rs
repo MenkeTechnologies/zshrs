@@ -7010,48 +7010,54 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let strip_one =
             |v: &str, op: u8, pattern: &str| -> String { strip_match_op(v, op, pattern, false) };
         // `${arr#pat}` / `${arr%pat}` / etc. on an array:
-        //   - Unquoted form: iterate per element.
+        //   - Unquoted form: iterate per element, preserve array
+        //     shape so `print -l` emits one line per element. Direct
+        //     port of Src/subst.c:3422-3433 `if (!vunset && isarr)`
+        //     branch which calls `getmatcharr(&aval, …)` — modifies
+        //     each element of the array in-place, leaves isarr=1.
         //   - DQ-wrapped form (`"${arr%pat}"`): zsh joins as scalar
         //     first then strips. So `(/tmp/foo /etc/bar)` with `%/*`
         //     gives `/tmp/foo /etc` (last `/bar` stripped from
         //     joined), not `/tmp /etc` (per-element).
-        let result: String = with_executor(|exec| {
-            // Prefer the compiler-provided `dq_flag` over reading
-            // exec.in_dq_context — the fast path skips the
-            // BUILTIN_EXPAND_TEXT wrapper that bumps the runtime
-            // counter, so the runtime check would always be 0
-            // here. dq_flag is true when this expansion sits inside
-            // a `"..."` word at compile time. Fall back to runtime
-            // context if compile time didn't set it (defensive
-            // for paths we haven't migrated yet).
+        enum StripResult {
+            Scalar(String),
+            Array(Vec<String>),
+        }
+        let result: StripResult = with_executor(|exec| {
             let in_dq = dq_flag || exec.in_dq_context > 0;
             if name == "@" || name == "*" {
                 if in_dq {
                     let joined = exec.positional_params.join(" ");
-                    return strip_one(&joined, op, &pattern);
+                    return StripResult::Scalar(strip_one(&joined, op, &pattern));
                 }
-                return exec
+                let stripped: Vec<String> = exec
                     .positional_params
                     .iter()
                     .map(|e| strip_one(e, op, &pattern))
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                    .collect();
+                return StripResult::Array(stripped);
             }
             if let Some(arr) = exec.arrays.get(&name) {
                 if in_dq {
                     let joined = arr.join(" ");
-                    return strip_one(&joined, op, &pattern);
+                    return StripResult::Scalar(strip_one(&joined, op, &pattern));
                 }
-                return arr
+                let stripped: Vec<String> = arr
                     .iter()
                     .map(|e| strip_one(e, op, &pattern))
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                    .collect();
+                return StripResult::Array(stripped);
             }
             let val = exec.get_variable(&name);
-            strip_one(&val, op, &pattern)
+            StripResult::Scalar(strip_one(&val, op, &pattern))
         });
-        fusevm::Value::str(result)
+        match result {
+            StripResult::Scalar(s) => fusevm::Value::str(s),
+            StripResult::Array(arr) => {
+                let mapped: Vec<fusevm::Value> = arr.into_iter().map(fusevm::Value::str).collect();
+                fusevm::Value::Array(mapped)
+            }
+        }
     });
 
     // `$((expr))` — pops [expr_string], evaluates via MathEval which
