@@ -12,8 +12,10 @@ as exposed by `zmodload`.
 | `curses.rs` | `curses.c` | `zcurses` builtin |
 | `datetime.rs` | `datetime.c` | `strftime`, `$EPOCHSECONDS`, `$EPOCHREALTIME` |
 | `db_gdbm.rs` | `db_gdbm.c` | `ztie -d db/gdbm` GDBM-backed assoc |
+| `example.rs` | `example.c` | documentation/template module — no runtime surface |
 | `files.rs` | `files.c` | builtin chmod / chown / chgrp / mv / ln / mkdir / rm / rmdir / sync |
 | `hlgroup.rs` | `hlgroup.c` | ZLE highlight-group SGR conversion (`.zle.esc` / `.zle.sgr`) |
+| `ksh93.rs` | `ksh93.c` | ksh93 emulation glue — `nameref` builtin, `${.sh.*}` specials |
 | `langinfo.rs` | `langinfo.c` | `${langinfo[CODESET]}` etc. via `nl_langinfo(3)` |
 | `mapfile.rs` | `mapfile.c` | `${mapfile[/path]}` file-as-string assoc |
 | `mathfunc.rs` | `mathfunc.c` | `sin`, `cos`, `log`, … math functions |
@@ -24,6 +26,7 @@ as exposed by `zmodload`.
 | `pcre.rs` | `pcre.c` | `pcre_compile` / `pcre_match` / `pcre_study` |
 | `random.rs` | `random.c` | `$SRANDOM` |
 | `random_real.rs` | `random_real.c` | `$RANDOM` 64-bit / high-precision RNG |
+| `regex.rs` | `regex.c` | `[[ … -regex-match … ]]` POSIX-regex condition |
 | `sched.rs` | (Src/builtin.c sched) | `sched` deferred-job builtin |
 | `socket.rs` | `socket.c` | `zsocket` Unix-domain socket |
 | `stat.rs` | `stat.c` | `zstat` builtin |
