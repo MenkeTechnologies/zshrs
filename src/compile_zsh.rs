@@ -73,6 +73,14 @@ pub struct ZshCompiler {
     /// behaviour where execlist's `oldlineno` flows into the inner
     /// program's lineno scope).
     pub lineno_addend: u64,
+    /// Counts the number of CS_* pushes that have been emitted at
+    /// the current compile cursor and have NOT yet been matched by
+    /// an emitted pop. When a `return`/`exit` jump is emitted, all
+    /// open pushes must be drained first so the cmd_stack doesn't
+    /// leak out of the function (zinit's load function nests
+    /// `if then for if then for …` to depth 7+; without this drain,
+    /// repeat invocations stack `for then` indefinitely).
+    pub cmd_stack_depth: u32,
 }
 
 impl Default for ZshCompiler {
@@ -96,6 +104,7 @@ impl ZshCompiler {
             scalar_assign_depth: 0,
             lineno_offset: 0,
             lineno_addend: 0,
+            cmd_stack_depth: 0,
         }
     }
 
@@ -114,11 +123,14 @@ impl ZshCompiler {
     /// Emit `cmdpush(token)` — direct port of Src/prompt.c:1623.
     /// Used by xtrace to render the `%_` prefix (`if cmdor cmdsubst`
     /// etc.) so trace output matches `/bin/zsh -x` byte-for-byte.
+    /// Bumps `cmd_stack_depth` so return/exit jumps know how many
+    /// pops to drain.
     fn emit_cmd_push(&mut self, token: u8) {
         self.builder.emit(Op::LoadInt(token as i64), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_PUSH, 1), 0);
         self.builder.emit(Op::Pop, 0);
+        self.cmd_stack_depth += 1;
     }
 
     /// Emit `cmdpop()` — direct port of Src/prompt.c:1631.
@@ -126,6 +138,22 @@ impl ZshCompiler {
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_POP, 0), 0);
         self.builder.emit(Op::Pop, 0);
+        self.cmd_stack_depth = self.cmd_stack_depth.saturating_sub(1);
+    }
+
+    /// Emit pops to drain ALL currently-open cmd_stack pushes
+    /// without changing `cmd_stack_depth`. Called before a
+    /// return/exit Jump so the cmd_stack is balanced when control
+    /// transfers to the chunk's return target. The static depth
+    /// counter is preserved because subsequent compile sites still
+    /// need to think the original pushes are open (so their later
+    /// emit_cmd_pop fires correctly on the non-return path).
+    fn emit_cmd_stack_drain(&mut self) {
+        for _ in 0..self.cmd_stack_depth {
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_POP, 0), 0);
+            self.builder.emit(Op::Pop, 0);
+        }
     }
 
     /// Compile a parsed `ZshProgram` to a runnable Chunk.
@@ -734,6 +762,11 @@ impl ZshCompiler {
             // Index from end: levels=1 → last (innermost); levels=2 →
             // second-to-last; etc. Clamped to depth.
             let depth = self.break_patches.len();
+            // Drain pending cmd_stack pushes before transferring
+            // control past their matching pops. zinit's load uses
+            // `for; if then; break; fi; done` — without the drain,
+            // the Then push leaks past the loop_exit.
+            self.emit_cmd_stack_drain();
             if depth > 0 {
                 let idx = depth.saturating_sub(levels);
                 let j = self.builder.emit(Op::Jump(0), 0);
@@ -755,6 +788,10 @@ impl ZshCompiler {
                 .unwrap_or(1)
                 .max(1);
             let depth = self.continue_patches.len();
+            // Drain pending cmd_stack pushes — same rationale as
+            // for `break`. `continue` inside an inner if/then is the
+            // common case in zinit's mode-aware loop bodies.
+            self.emit_cmd_stack_drain();
             if depth > 0 {
                 // For `continue N`, jump to the N-th enclosing loop's
                 // continue target. If N>1, that's actually a BREAK out
@@ -847,10 +884,13 @@ impl ZshCompiler {
         if let Some(builtin_id) = builtin_id {
             self.builder.emit(Op::CallBuiltin(builtin_id, argc), 0);
             self.builder.emit(Op::SetStatus, 0);
-            // `return`/`exit` short-circuit.
+            // `return`/`exit` short-circuit. Drain cmd_stack so the
+            // pushes from enclosing if/then/for/etc. don't leak past
+            // the function's return target.
             if first == "return" || first == "exit"
                 || first_clean == "return" || first_clean == "exit"
             {
+                self.emit_cmd_stack_drain();
                 let j = self.builder.emit(Op::Jump(0), 0);
                 self.return_patches.push(j);
             } else {
