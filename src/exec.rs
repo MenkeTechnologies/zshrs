@@ -145,6 +145,23 @@ where
     })
 }
 
+/// Fallible variant of `with_executor` — returns `None` when called
+/// outside VM context (e.g. from a unit test that exercises subst_port
+/// directly via `mk_state` without setting up an executor). Used by
+/// pure-paramsubst code paths that have a fallback when the executor
+/// isn't available, so they can run in unit tests without panicking.
+pub(crate) fn try_with_executor<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&mut ShellExecutor) -> R,
+{
+    CURRENT_EXECUTOR.with(|cell| {
+        let ptr = (*cell.borrow())?;
+        // SAFETY: same as with_executor.
+        let executor = unsafe { &mut *ptr };
+        Some(f(executor))
+    })
+}
+
 /// Parse a `(flags)pat` subscript prefix. Returns `Some((flags, pat))`
 /// when `idx` opens with `(` and contains a matching `)` (with no `[` /
 /// `]` inside the flag run, which would mean a literal char class).
@@ -5592,12 +5609,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 return fusevm::Value::Array(arr.into_iter().map(fusevm::Value::str).collect());
             }
         }
-        // Magic-assoc fallback FIRST — `\${aliases}` / `\${functions}`
-        // / `\${commands}` / etc. should return the value list per
+        // Magic-assoc fallback FIRST — `${aliases}` / `${functions}`
+        // / `${commands}` / etc. should return the value list per
         // zsh's bare-assoc semantics. Without this, those names fell
         // through to `get_variable` which is empty (they live in
         // separate executor tables, not `assoc_arrays`). Return as
-        // a Value::Array so `arr=(\${aliases})` distributes into
+        // a Value::Array so `arr=(${aliases})` distributes into
         // multiple elements, matching zsh's array-context word
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
@@ -5609,6 +5626,9 @@ fn register_builtins(vm: &mut fusevm::VM) {
             })
         });
         if let Some(vals) = magic_vals {
+            // Distinguish "name IS a magic-assoc with no entries"
+            // (return Array(empty)) from "name is unknown — fall
+            // through to get_variable".
             return fusevm::Value::Array(vals.into_iter().map(fusevm::Value::str).collect());
         }
         let val = with_executor(|exec| {
