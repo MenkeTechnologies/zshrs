@@ -2751,7 +2751,21 @@ fn expand_subscript_pat(s: &str, state: &mut SubstState) -> String {
                 }
                 if let Ok(n) = num.parse::<usize>() {
                     if n == 0 {
-                        // $0 — fall through to variable lookup
+                        // `$0` — script / function name. zsh stores it
+                        // in the parameter table under "0" (writable
+                        // via plain `0=value` assignment, used by
+                        // zinit's `0="${${(M)0:#/*}:-$PWD/$0}"` to
+                        // make $0 absolute). Direct port of
+                        // Src/params.c which exposes "0" as a
+                        // SPECIALPMDEF backed by `argzero`. Look up
+                        // state.variables["0"] (the snapshot of the
+                        // executor's variable table) before any other
+                        // dispatch.
+                        if let Some(v) = state.variables.get("0") {
+                            out.push_str(v);
+                            i = j;
+                            continue;
+                        }
                     } else if let Some(arr) = state.arrays.get("@") {
                         if let Some(v) = arr.get(n - 1) {
                             out.push_str(v);
@@ -4243,11 +4257,20 @@ fn apply_operator_with_flags(
 /// candidate prefix lengths in greedy order. O(n²) in the worst case
 /// but n is short for shell strings.
 fn find_prefix_match(s: &str, pattern: &str) -> Vec<usize> {
+    // Use the executor's full glob matcher (extendedglob `##`/`#`
+    // postfix, POSIX `[[:space:]]` classes, `~` exclusion, etc.).
+    // The previous crate::glob::pattern_match path was a simplified
+    // matcher that returned false for `[[:space:]]##` and similar
+    // extendedglob postfix forms, so per-element strip on a nested-
+    // value array silently no-op'd. Direct port of Src/subst.c's
+    // `getmatch` calling into pattern.c — the C source uses the
+    // same full pattern compiler for both bare-scalar and per-array
+    // strip arms.
     let chars: Vec<char> = s.chars().collect();
     let mut matches: Vec<usize> = Vec::new();
     for end in 0..=chars.len() {
         let candidate: String = chars[..end].iter().collect();
-        if crate::glob::pattern_match(pattern, &candidate, false, true) {
+        if crate::exec::ShellExecutor::glob_match_static(&candidate, pattern) {
             matches.push(end);
         }
     }
@@ -4259,7 +4282,7 @@ fn find_suffix_match(s: &str, pattern: &str) -> Vec<usize> {
     let mut matches: Vec<usize> = Vec::new();
     for start in 0..=chars.len() {
         let candidate: String = chars[start..].iter().collect();
-        if crate::glob::pattern_match(pattern, &candidate, false, true) {
+        if crate::exec::ShellExecutor::glob_match_static(&candidate, pattern) {
             matches.push(start);
         }
     }
