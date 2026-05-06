@@ -21,11 +21,8 @@
 
 pub mod aot;
 pub mod arith_compiler;
-pub mod attr;
 pub mod autoload_cache;
 pub mod script_cache;
-pub mod cap;
-pub mod clone;
 pub mod compat;
 pub mod compile_zsh;
 pub mod completion;
@@ -34,7 +31,6 @@ pub mod config;
 pub mod context;
 pub mod canonical_apply;
 pub mod overlay_snapshot;
-pub mod curses;
 pub mod daemon_presence;
 // Daemon lives in the `zshrs-daemon` workspace crate. Re-export it as `daemon`
 // so existing `crate::daemon::...` (in exec.rs) and `zsh::daemon::...` (in bins,
@@ -65,11 +61,8 @@ pub mod daemon {
         }
     }
 }
-pub mod datetime;
-pub mod db_gdbm;
 pub mod exec;
 pub mod fds;
-pub mod files;
 pub mod fish_features;
 pub mod ast_sexp;
 pub mod glob;
@@ -84,33 +77,61 @@ pub mod hashnameddir;
 pub mod hashtable;
 pub mod hist;
 pub mod history;
-pub mod hlgroup;
 pub mod init;
 pub mod input;
 pub mod jobs;
 pub mod ksh93;
-pub mod langinfo;
 pub mod linklist;
 pub mod log;
 pub mod loop_port;
-pub mod mapfile;
 pub mod math;
-pub mod mathfunc;
 pub mod mem;
 pub mod modentry;
 pub mod module;
-pub mod nearcolor;
-pub mod newuser;
+/// Ports of zsh's loadable modules (`Src/Modules/*.c`).
+/// Each child mirrors a single C source file; see
+/// `src/modules/mod.rs` for the index.
+pub mod modules;
+// Backwards-compat flat re-exports — call sites that still write
+// `crate::datetime::…`, `crate::stat::…`, etc. resolve to the
+// `crate::modules::<modname>` ports without churn. New code should
+// reach for `crate::modules::<modname>` directly.
+pub use modules::attr;
+pub use modules::cap;
+pub use modules::clone;
+pub use modules::curses;
+pub use modules::datetime;
+pub use modules::db_gdbm;
+pub use modules::files;
+pub use modules::hlgroup;
+pub use modules::langinfo;
+pub use modules::mapfile;
+pub use modules::mathfunc;
+pub use modules::nearcolor;
+pub use modules::newuser;
+pub use modules::param_private;
+pub use modules::parameter;
+pub use modules::pcre;
+pub use modules::random;
+pub use modules::random_real;
+pub use modules::sched;
+pub use modules::socket;
+pub use modules::stat;
+pub use modules::system;
+pub use modules::tcp;
+pub use modules::termcap;
+pub use modules::terminfo;
+pub use modules::watch;
+pub use modules::zftp;
+pub use modules::zprof;
+pub use modules::zpty;
+pub use modules::zselect;
+pub use modules::zutil;
 pub mod options;
-pub mod param_private;
-pub mod parameter;
 pub mod params;
 pub mod pattern;
-pub mod pcre;
 pub mod plugin_cache;
 pub mod prompt;
-pub mod random;
-pub mod random_real;
 // Plugin-Framework-Agnostic State-Modification Recorder. Entire module
 // is `#![cfg(feature = "recorder")]` so it disappears from the default
 // `zshrs` build at the rustc-expansion stage. See docs/RECORDER.md.
@@ -118,11 +139,8 @@ pub mod random_real;
 pub mod recorder;
 pub mod regex_mod;
 pub mod rlimits;
-pub mod sched;
 pub mod signals;
-pub mod socket;
 pub mod sort;
-pub mod stat;
 pub mod string_port;
 pub mod stringsort;
 pub mod subscript;
@@ -133,20 +151,10 @@ pub mod subscript;
 // (the only utilities other code imported from `subst::`) now live
 // in `subst_port`.
 pub mod subst_port;
-pub mod system;
-pub mod tcp;
-pub mod termcap;
-pub mod terminfo;
 pub mod text;
 pub mod utils;
-pub mod watch;
 pub mod worker;
-pub mod zftp;
 pub mod zle;
-pub mod zprof;
-pub mod zpty;
-pub mod zselect;
-pub mod zutil;
 pub mod zwc;
 pub mod zwc_decode;
 
