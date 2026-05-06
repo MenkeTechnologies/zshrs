@@ -1948,11 +1948,43 @@ fn parse_brace_param(
 
     // Apply post-operator flags: case mod, sort, unique, padding,
     // quoting, counting, `(%)` prompt-percent expansion.
-    value = apply_param_flags(&value, &flags, state);
+    value = apply_param_flags(&value, &flags, state, pf_flags);
+
+    // Pick the array→scalar join separator. Direct port of
+    // Src/subst.c:3897-3933 (the join-back path at end of
+    // paramsubst):
+    //   • `(j:STR:)` / `(F)` set `sep` — explicit join separator.
+    //   • `(f)` / `(s:STR:)` / `(0)` set `spsep` (split-separator).
+    //     When the result needs to re-collapse to scalar in a
+    //     joining context (DQ assignment / nested expansion),
+    //     C source line 3914 uses spsep as the rejoin separator
+    //     when nojoin != 1 (i.e., we're NOT forcing array-keep).
+    //   • Otherwise the default IFS first char (space).
+    //
+    // Without this, `y="${(f)x}"` joined with ` ` instead of `\n`
+    // — the saved value lost its line structure and `(f)` was
+    // effectively a no-op for the assignment-context consumer.
+    let array_join_sep: String = if let Some(ref s) = flags.join_sep {
+        s.clone()
+    } else if flags.join_lines {
+        "\n".to_string()
+    } else if flags.split_lines {
+        // `(f)` flag's spsep is "\n" — when re-joining a force-
+        // split array back to scalar, use the same separator so
+        // round-trip preserves the original line structure.
+        "\n".to_string()
+    } else if let Some(ref s) = flags.split_sep {
+        // `(s:STR:)` similarly: rejoin with the same separator
+        // when collapsing to scalar.
+        s.clone()
+    } else {
+        // Default: IFS first char (space for default IFS=$' \t\n').
+        " ".to_string()
+    };
 
     // Handle word splitting
     let joined = if flags.join_sep.is_some() || value.len() == 1 {
-        let sep = flags.join_sep.as_deref().unwrap_or(" ");
+        let sep = flags.join_sep.as_deref().unwrap_or(&array_join_sep);
         value.join(sep)
     } else if pf_flags & prefork_flags::SHWORDSPLIT != 0 && !qt {
         // Each array element becomes a separate word
@@ -1977,7 +2009,7 @@ fn parse_brace_param(
 
         return (result_nodes[0].clone(), dollar_pos, result_nodes);
     } else {
-        value.join(" ")
+        value.join(&array_join_sep)
     };
 
     // Build result
@@ -2300,27 +2332,43 @@ fn apply_param_flags(
     value: &[String],
     flags: &ParamFlags,
     state: &mut SubstState,
+    pf_flags: u32,
 ) -> Vec<String> {
     let mut result: Vec<String> = value.to_vec();
+    // Direct port of Src/subst.c:1759: `int ssub = (pf_flags &
+    // PREFORK_SINGLE);`. When ssub is true, the substitution is
+    // running inside a single-word (singsub) context — the split
+    // flags `(f)` / `(s:STR:)` / `(0)` / `(z)` are SUPPRESSED so
+    // the original scalar passes through without re-arrangement.
+    // Per subst.c:3902 `force_split = !ssub && (spbreak || spsep)`
+    // — ssub gates the entire force_split path. The visible
+    // consequence: `y="${(f)x}"` (assignment context, prefork
+    // called with PREFORK_SINGLE|PREFORK_ASSIGN) preserves x's
+    // original `\n` separators verbatim, while `echo "${(f)x}"`
+    // (no PREFORK_SINGLE) splits then re-joins with IFS-first-
+    // char (space).
+    let ssub = pf_flags & prefork_flags::SINGLE != 0;
 
-    // Split operations
-    if let Some(ref sep) = flags.split_sep {
-        result = result
-            .iter()
-            .flat_map(|s| s.split(sep).map(String::from))
-            .collect();
-    }
-    if flags.split_lines {
-        result = result
-            .iter()
-            .flat_map(|s| s.lines().map(String::from))
-            .collect();
-    }
-    if flags.split_words {
-        result = result
-            .iter()
-            .flat_map(|s| s.split_whitespace().map(String::from))
-            .collect();
+    // Split operations — gated on !ssub per the C source.
+    if !ssub {
+        if let Some(ref sep) = flags.split_sep {
+            result = result
+                .iter()
+                .flat_map(|s| s.split(sep).map(String::from))
+                .collect();
+        }
+        if flags.split_lines {
+            result = result
+                .iter()
+                .flat_map(|s| s.lines().map(String::from))
+                .collect();
+        }
+        if flags.split_words {
+            result = result
+                .iter()
+                .flat_map(|s| s.split_whitespace().map(String::from))
+                .collect();
+        }
     }
 
     // Case modification
