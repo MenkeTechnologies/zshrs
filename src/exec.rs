@@ -6810,6 +6810,35 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         }
                     }
                     '\\' => {
+                        // `\\(#e)` / `\\(#s)` — escaped backslash
+                        // followed by end/start anchor. After
+                        // expand_string's `\x00\` preprocessing,
+                        // this arrives as `\(#e)` (one backslash
+                        // already consumed as escape-marker). Per
+                        // zsh's pattern.c, `\\` in a pattern is
+                        // escape-backslash (literal `\`). When that
+                        // literal `\` is followed by `(#e)` /
+                        // `(#s)`, emit `\\$` / `\\^`. Detected
+                        // here as 5-char `\(#e)` (one `\` then
+                        // `(#e)` which the (#e) arm below would
+                        // otherwise treat as anchor with a literal
+                        // `(` — losing the backslash). Used by
+                        // zinit's `(#b)((*)\\(#e)|(*))`.
+                        let mut peek = chars.clone();
+                        let p1 = peek.next();
+                        let p2 = peek.next();
+                        let p3 = peek.next();
+                        let p4 = peek.next();
+                        if p1 == Some('(')
+                            && p2 == Some('#')
+                            && (p3 == Some('e') || p3 == Some('s'))
+                            && p4 == Some(')')
+                        {
+                            re.push_str("\\\\");
+                            chars.next(); chars.next(); chars.next(); chars.next();
+                            re.push(if p3 == Some('e') { '$' } else { '^' });
+                            continue;
+                        }
                         re.push('\\');
                         if let Some(next) = chars.next() {
                             re.push(next);

@@ -3035,6 +3035,17 @@ fn apply_operator_with_flags(
             };
             let (pat_no_flags, backref_mode, _case_i) = strip_inline_pattern_flags(&raw_pat);
             let pattern = singsub_no_tilde(&pat_no_flags, state);
+            // Strip `\x00` literal-markers inserted by expand_string's
+            // DQ-escape preprocessing. BUILTIN_EXPAND_TEXT mode 1
+            // turns `\\` into `\x00\` to mark "the next char is a
+            // literal not a meta". For pattern compilation the
+            // marker is noise — `\x00\` should compile as a literal
+            // `\` (combined with any following `(#e)`/`(#s)` it then
+            // hits the escape-backslash-then-anchor arm in
+            // `glob_to_regex_capturing`). Direct port of zsh's
+            // pattern.c which sees the raw text without the runtime
+            // literal-marker layer.
+            let pattern = pattern.replace('\x00', "");
             // Build regex UNANCHORED: the `/`-family replace ops let
             // `do_replace_one` enforce `/#` start-anchor and `/%`
             // end-anchor by inspecting the captured span positions.
@@ -4953,6 +4964,26 @@ fn glob_to_regex_capturing(pattern: &str, anchored: bool) -> String {
                     }
                 }
                 regex.push(']');
+            }
+            // `\(#e)` / `\(#s)` — escaped backslash followed by end/
+            // start anchor. Direct port of zsh's pattern.c parsing
+            // where `\\` is escape-backslash (literal `\`) and a
+            // following `(#e)` / `(#s)` is the anchor token. By
+            // the time we see this, expand_string has already
+            // collapsed the original `\\` to `\` (via the `\x00\`
+            // literal-marker preprocessing); detect the resulting
+            // shape and emit `\\$` / `\\^`. Used by zinit's
+            // `(#b)((*)\\(#e)|(*))` to match elements ending in
+            // a literal backslash.
+            '\\' if i + 4 < chars.len()
+                && chars[i + 1] == '('
+                && chars[i + 2] == '#'
+                && (chars[i + 3] == 'e' || chars[i + 3] == 's')
+                && chars[i + 4] == ')' =>
+            {
+                regex.push_str("\\\\");
+                regex.push(if chars[i + 3] == 'e' { '$' } else { '^' });
+                i += 4;
             }
             '\\' if i + 1 < chars.len() => {
                 regex.push(chars[i + 1]);
