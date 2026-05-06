@@ -3406,6 +3406,35 @@ fn register_builtins(vm: &mut fusevm::VM) {
         };
 
         let chars: Vec<char> = flags.chars().collect();
+        // Pre-scan for `(P)` — indirect: zsh's bin_zmodload-style
+        // P flag is special. It applies BEFORE all per-char
+        // transforms regardless of position in the flag string,
+        // because zsh's paramsubst sets `aspar` early and the
+        // INITIAL value is the indirected lookup. Without this
+        // pre-resolve, `${(UP)ref}` first uppercases ref's value
+        // ("target" → "TARGET") then tries to indirect on "TARGET"
+        // which is unset, returning empty. zsh produces "HELLO"
+        // because it indirects FIRST (ref→target, lookup target =
+        // "hello") then uppercases.
+        let want_indirect = chars.iter().any(|&c| c == 'P');
+        if want_indirect && !matches!(state, St::S(ref s) if s.is_empty()) {
+            state = match state {
+                St::S(name) => with_executor(|exec| {
+                    if let Some(arr) = exec.arrays.get(&name) {
+                        St::A(arr.clone())
+                    } else {
+                        St::S(exec.get_variable(&name))
+                    }
+                }),
+                St::A(names) => with_executor(|exec| {
+                    let resolved: Vec<String> = names
+                        .into_iter()
+                        .map(|n| exec.get_variable(&n))
+                        .collect();
+                    St::A(resolved)
+                }),
+            };
+        }
         // Pre-scan for `(p)` — print-style escape interpretation for
         // any subsequent `(s::)`, `(j::)`, `(l::)`, `(r::)` argument
         // strings. Direct port of src/zsh/Src/subst.c:2381-2382 which
@@ -3995,23 +4024,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'P' => {
-                    // Indirect: current value is another var name.
-                    // For Array (e.g. via `(@P)`), look up each
-                    // element as a name. Without the array branch,
-                    // `${(@P)var}` left the array as-is — returning
-                    // the raw var-name(s) instead of dereferencing.
+                    // (P) was already applied as the pre-walker
+                    // initial-state transform — see `want_indirect`
+                    // above. The walker pass is a no-op for P.
                     state = match state {
-                        St::S(indirect_name) => with_executor(|exec| {
-                            if let Some(arr) = exec.arrays.get(&indirect_name) {
-                                return St::A(arr.clone());
-                            }
-                            St::S(exec.get_variable(&indirect_name))
-                        }),
-                        St::A(names) => with_executor(|exec| {
-                            let resolved: Vec<String> =
-                                names.into_iter().map(|n| exec.get_variable(&n)).collect();
-                            St::A(resolved)
-                        }),
+                        St::S(s) => St::S(s),
+                        St::A(a) => St::A(a),
                     };
                 }
                 '@' => {
@@ -10698,6 +10716,25 @@ impl ShellExecutor {
         // Initialize so script reads return the canonical 3-char
         // string instead of empty.
         variables.insert("histchars".to_string(), "!^#".to_string());
+
+        // `$WATCHFMT` default per Src/Modules/watch.c:60 — used by
+        // `log` / `watch` builtins to format login/logout events.
+        // Without this, `${WATCHFMT}` returned empty even though
+        // C-zsh ships the documented `%n has %a %l from %m.` format.
+        variables.insert(
+            "WATCHFMT".to_string(),
+            "%n has %a %l from %m.".to_string(),
+        );
+
+        // Run setlocale(LC_ALL, "") so nl_langinfo() (used by the
+        // `langinfo` module) returns the host's actual locale instead
+        // of the C/POSIX default ("US-ASCII"). Direct port of zsh's
+        // Src/init.c:1208 setlocale call. unsafe { } around libc is
+        // standard for this exact use-case — setlocale is process-
+        // global and must run once at startup.
+        unsafe {
+            libc::setlocale(libc::LC_ALL, c"".as_ptr());
+        }
 
         let mut exec = Self {
             aliases: {
@@ -29674,16 +29711,21 @@ impl ShellExecutor {
                 return 0;
             }
 
-            // Add named directories
+            // Add OR query named directories. Per builtin.c
+            // bin_hash:4234: `hash -d NAME=PATH` ASSIGNS; bare
+            // `hash -d NAME` is a no-op when the entry exists (zsh
+            // requires `-L` for listing); when missing it errors
+            // "no such directory name: NAME".
+            let mut status = 0;
             for name in &names {
                 if let Some((n, p)) = name.split_once('=') {
                     self.add_named_dir(n, p);
-                } else {
-                    eprintln!("zshrs:hash:1: -d: {} not in name=value format", name);
-                    return 1;
+                } else if !self.named_dirs.contains_key(name) {
+                    eprintln!("zshrs:hash:1: no such directory name: {}", name);
+                    status = 1;
                 }
             }
-            return 0;
+            return status;
         }
 
         // Regular hash - command path lookup
@@ -29712,6 +29754,10 @@ impl ShellExecutor {
                 if verbose {
                     println!("{}={}", cmd, path);
                 }
+            } else if self.command_hash.contains_key(name) {
+                // Already hashed — bare `hash NAME` is a NO-OP in
+                // zsh's bin_hash (it just touches the entry); the
+                // listing form requires `-L`. Don't print here.
             } else if let Some(path) = self.find_in_path(name) {
                 // Look up in PATH and hash it
                 self.command_hash.insert(name.clone(), path.clone());
@@ -29719,7 +29765,12 @@ impl ShellExecutor {
                     println!("{}={}", name, path);
                 }
             } else {
-                eprintln!("zshrs:hash:1: {}: not found", name);
+                // Match zsh's error wording verbatim — `hash:1: no
+                // such command: NAME`. The previous "X: not found"
+                // form diverged from C zsh by one word, breaking
+                // diagnostic-text parity tests and tools that
+                // grep-match the exact phrase.
+                eprintln!("zshrs:hash:1: no such command: {}", name);
                 return 1;
             }
         }
@@ -33589,9 +33640,30 @@ impl ShellExecutor {
         let mut pattern_match = false;
         let mut enable_trace = false;
         let mut names: Vec<&str> = Vec::new();
+        let mut after_dashes = false;
 
         for arg in args {
+            if after_dashes {
+                names.push(arg);
+                continue;
+            }
             match arg.as_str() {
+                // `--` ends option processing — subsequent words are
+                // function names even if they start with `-`/`+`.
+                // Direct port of `parseopts(name, &args, ops, &func)`
+                // recognising `--` per Src/options.c. Without this,
+                // `functions -- foo` rejected `--` as `bad option`.
+                "--" => {
+                    after_dashes = true;
+                    continue;
+                }
+                // `functions +` (standalone +, no letter after) lists
+                // function names only, no bodies. Same as `functions
+                // +l` in semantic effect but different argv shape.
+                "+" => {
+                    list_only = true;
+                    continue;
+                }
                 "-l" => list_only = true,
                 "-t" => show_trace = true,
                 // `-T` (capital) ENABLES tracing on the named
@@ -35317,13 +35389,40 @@ impl ShellExecutor {
             }
         }
 
+        // Per-resource unit divisor for the print path. Direct port of
+        // Src/Builtins/rlimits.c:rlimits_unit (the ZLIMTYPE_*-driven
+        // table that printulimit uses):
+        //   - core, file size:           512-byte blocks
+        //   - data, stack, address space, RSS, locked-mem: 1024 bytes
+        //   - cpu time, file descriptors, processes:        no divide
+        let divisor: u64 = match resource {
+            r if r == RLIMIT_CORE || r == RLIMIT_FSIZE => 512,
+            r if r == RLIMIT_DATA
+                || r == RLIMIT_STACK
+                || r == RLIMIT_AS
+                || r == RLIMIT_RSS =>
+            {
+                1024
+            }
+            _ => 1,
+        };
+
         if let Some(v) = value {
-            // Set limit
+            // Set limit. The supplied value is in the same per-resource
+            // unit as the get/print path uses, so multiply BACK by the
+            // divisor before passing to setrlimit (which takes raw bytes
+            // for size-based limits). zsh does this in
+            // Src/Builtins/rlimits.c:do_limit's `val *= unit` step.
+            let raw = if v == libc::RLIM_INFINITY {
+                v
+            } else {
+                v.saturating_mul(divisor)
+            };
             if soft {
-                rlim.rlim_cur = v as libc::rlim_t;
+                rlim.rlim_cur = raw as libc::rlim_t;
             }
             if hard {
-                rlim.rlim_max = v as libc::rlim_t;
+                rlim.rlim_max = raw as libc::rlim_t;
             }
             unsafe {
                 if setrlimit(resource, &rlim) != 0 {
@@ -35337,7 +35436,7 @@ impl ShellExecutor {
             if limit == libc::RLIM_INFINITY as libc::rlim_t {
                 println!("unlimited");
             } else {
-                println!("{}", limit);
+                println!("{}", limit / divisor);
             }
         }
         0
@@ -35388,43 +35487,172 @@ impl ShellExecutor {
         }
     }
 
-    /// limit - csh-style resource limits
+    /// limit - csh-style resource limits.
+    /// Direct port of bin_limit() from Src/Builtins/rlimits.c:519.
+    /// Forms:
+    ///   `limit`              — list all soft limits in csh format
+    ///   `limit -s`           — explicit "soft" (same as no flag)
+    ///   `limit -h`           — list all hard limits
+    ///   `limit NAME`         — show one named limit
+    ///   `limit NAME VALUE`   — set one named limit's soft value
+    ///   `limit -h NAME ...`  — same as above, hard side
     fn builtin_limit(&self, args: &[String]) -> i32 {
-        // Delegate to ulimit with csh-style names
-        if args.is_empty() {
-            // Print all resource limits in csh format
-            use libc::{getrlimit, rlimit, RLIM_INFINITY};
-            let resources = [
-                (libc::RLIMIT_CPU, "cputime", 1, "seconds"),
-                (libc::RLIMIT_FSIZE, "filesize", 1024, "kB"),
-                (libc::RLIMIT_DATA, "datasize", 1024, "kB"),
-                (libc::RLIMIT_STACK, "stacksize", 1024, "kB"),
-                (libc::RLIMIT_CORE, "coredumpsize", 1024, "kB"),
-                (libc::RLIMIT_RSS, "memoryuse", 1024, "kB"),
-                #[cfg(target_os = "linux")]
-                (libc::RLIMIT_NPROC, "maxproc", 1, ""),
-                (libc::RLIMIT_NOFILE, "descriptors", 1, ""),
-            ];
-            for (res, name, divisor, unit) in resources {
-                let mut rl: rlimit = unsafe { std::mem::zeroed() };
-                unsafe {
-                    getrlimit(res, &mut rl);
+        use libc::{getrlimit, rlimit, setrlimit, RLIM_INFINITY};
+
+        // The csh-name → (resource, divisor, unit-suffix) table.
+        // Direct port of Src/Builtins/rlimits.c:194-218 (`set_resinfo`)
+        // which builds the same table at module init. Order matches
+        // zsh's output verbatim: cputime, filesize, datasize, stacksize,
+        // coredumpsize, addressspace, memorylocked, maxproc,
+        // descriptors. macOS exposes RLIMIT_AS as RLIMIT_RSS-effective
+        // and RLIMIT_MEMLOCK as a separate kernel cap; we keep the
+        // distinction so `addressspace` and `memorylocked` are SEPARATE
+        // entries (zsh emits both). Type of the resource constant
+        // differs per-platform; let inference pick it up.
+        let table: Vec<(_, &str, u64, &str)> = vec![
+            (libc::RLIMIT_CPU, "cputime", 1u64, "seconds"),
+            (libc::RLIMIT_FSIZE, "filesize", 1024, "kB"),
+            (libc::RLIMIT_DATA, "datasize", 1024, "kB"),
+            (libc::RLIMIT_STACK, "stacksize", 1024, "kB"),
+            (libc::RLIMIT_CORE, "coredumpsize", 1024, "kB"),
+            (libc::RLIMIT_AS, "addressspace", 1024, "kB"),
+            #[cfg(target_os = "macos")]
+            (libc::RLIMIT_MEMLOCK, "memorylocked", 1024, "kB"),
+            #[cfg(target_os = "linux")]
+            (libc::RLIMIT_MEMLOCK, "memorylocked", 1024, "kB"),
+            (libc::RLIMIT_NPROC, "maxproc", 1, ""),
+            (libc::RLIMIT_NOFILE, "descriptors", 1, ""),
+        ];
+
+        // Format the raw limit value with the same scaling zsh uses
+        // (Src/Builtins/rlimits.c:253 printrlim): for kB-unit limits,
+        // promote to MB when the value is ≥ 1024 kB and to GB when
+        // ≥ 1024 MB. Other units print as-is.
+        let format_value = |raw: libc::rlim_t, divisor: u64, unit: &str| -> String {
+            if raw == RLIM_INFINITY {
+                return "unlimited".to_string();
+            }
+            let v = raw / divisor;
+            if unit == "kB" {
+                if v >= 1024 * 1024 {
+                    return format!("{}GB", v / (1024 * 1024));
                 }
-                let val = if rl.rlim_cur == RLIM_INFINITY {
-                    "unlimited".to_string()
-                } else {
-                    let v = rl.rlim_cur as u64 / divisor;
-                    if unit.is_empty() {
-                        format!("{}", v)
-                    } else {
-                        format!("{}{}", v, unit)
-                    }
-                };
-                println!("{:<16}{}", name, val);
+                if v >= 1024 {
+                    return format!("{}MB", v / 1024);
+                }
+                return format!("{}kB", v);
+            }
+            if unit.is_empty() {
+                format!("{}", v)
+            } else {
+                format!("{}{}", v, unit)
+            }
+        };
+
+        let print_one = |res, name: &str, divisor: u64, unit: &str, hard: bool| {
+            let mut rl: rlimit = unsafe { std::mem::zeroed() };
+            unsafe {
+                if getrlimit(res, &mut rl) != 0 {
+                    return;
+                }
+            }
+            let raw = if hard { rl.rlim_max } else { rl.rlim_cur };
+            println!("{:<16}{}", name, format_value(raw, divisor, unit));
+        };
+
+        // Parse leading -s / -h flag.
+        //
+        // `-h` toggles to hard-limit display/set. `-s` is "soft"
+        // (default) but per zsh's bin_limit (Src/Builtins/rlimits.c:519)
+        // bare `-s` with no further args is a no-op — it doesn't list
+        // anything. Use the `seen_s_alone` flag to detect that case
+        // and short-circuit before the auto-list path.
+        let mut hard = false;
+        let mut seen_s_alone = false;
+        let mut positional: &[String] = args;
+        if let Some(first) = args.first() {
+            match first.as_str() {
+                "-s" => {
+                    positional = &args[1..];
+                    seen_s_alone = positional.is_empty();
+                }
+                "-h" => {
+                    hard = true;
+                    positional = &args[1..];
+                }
+                _ => {}
+            }
+        }
+
+        if seen_s_alone {
+            return 0;
+        }
+
+        if positional.is_empty() {
+            for (res, name, divisor, unit) in table {
+                print_one(res, name, divisor, unit, hard);
             }
             return 0;
         }
-        self.builtin_ulimit(args)
+
+        // Named lookup or named-set.
+        let name = &positional[0];
+        let entry = table.iter().find(|(_, n, _, _)| n == name);
+        let Some((res, name_lit, divisor, unit)) = entry.copied() else {
+            eprintln!("zshrs:limit:1: no such resource: {}", name);
+            return 1;
+        };
+
+        if positional.len() == 1 {
+            print_one(res, name_lit, divisor, unit, hard);
+            return 0;
+        }
+
+        // Set: limit NAME VALUE  (only soft side without -h, hard side
+        // with -h; -hs would set both — not yet wired here).
+        let raw_val = &positional[1];
+        let parsed: u64 = if raw_val == "unlimited" {
+            RLIM_INFINITY
+        } else {
+            // Strip optional unit suffix (zsh accepts `kB`, `MB`, etc.).
+            let (numeric, suffix_mul): (&str, u64) =
+                if let Some(s) = raw_val.strip_suffix("kB") {
+                    (s, 1)
+                } else if let Some(s) = raw_val.strip_suffix("MB") {
+                    (s, 1024)
+                } else if let Some(s) = raw_val.strip_suffix("GB") {
+                    (s, 1024 * 1024)
+                } else {
+                    (raw_val.as_str(), 1)
+                };
+            match numeric.parse::<u64>() {
+                Ok(v) => v.saturating_mul(suffix_mul).saturating_mul(divisor),
+                Err(_) => {
+                    eprintln!("zshrs:limit:1: invalid value: {}", raw_val);
+                    return 1;
+                }
+            }
+        };
+
+        let mut rl: rlimit = unsafe { std::mem::zeroed() };
+        unsafe {
+            if getrlimit(res, &mut rl) != 0 {
+                eprintln!("zshrs:limit:1: cannot get limit");
+                return 1;
+            }
+        }
+        if hard {
+            rl.rlim_max = parsed as libc::rlim_t;
+        } else {
+            rl.rlim_cur = parsed as libc::rlim_t;
+        }
+        unsafe {
+            if setrlimit(res, &rl) != 0 {
+                eprintln!("zshrs:limit:1: cannot set limit");
+                return 1;
+            }
+        }
+        0
     }
 
     /// unlimit - remove resource limits
@@ -35935,48 +36163,73 @@ impl ShellExecutor {
             }
         }
 
-        // Always-loaded compiled-in modules. Mirrors the lists in the
-        // ${modules[]} special-array paths so all three sources agree.
+        // Compiled-in modules zshrs supports. Same set the brew zsh
+        // ships in /opt/homebrew/lib/zsh/*.bundle, plus a few zshrs-
+        // specific entries (`zsh/profiler`, `zsh/main`, `zsh/random_real`,
+        // `zsh/param_private`, etc.). `zmodload NAME` accepts any of
+        // these; unknown names error like `failed to load module`.
         const ALWAYS_LOADED: &[&str] = &[
-            "zsh/datetime",
-            "zsh/sched",
-            "zsh/zutil",
-            "zsh/parameter",
-            "zsh/files",
-            "zsh/complete",
-            "zsh/complist",
-            "zsh/regex",
-            "zsh/system",
-            "zsh/stat",
-            "zsh/net/tcp",
-            "zsh/net/socket",
-            "zsh/private",
-            "zsh/zftp",
-            "zsh/zselect",
-            "zsh/zle",
-            "zsh/random",
-            "zsh/pcre",
-            "zsh/db/gdbm",
+            "zsh/attr",
             "zsh/cap",
             "zsh/clone",
+            "zsh/compctl",
+            "zsh/complete",
+            "zsh/complist",
+            "zsh/computil",
             "zsh/curses",
+            "zsh/datetime",
+            "zsh/db/gdbm",
+            "zsh/deltochar",
+            "zsh/example",
+            "zsh/files",
+            "zsh/hlgroup",
+            "zsh/ksh93",
+            "zsh/langinfo",
+            "zsh/main",
             "zsh/mapfile",
-            "zsh/nearcolor",
-            "zsh/newuser",
             "zsh/mathfunc",
+            "zsh/nearcolor",
+            "zsh/net/socket",
+            "zsh/net/tcp",
+            "zsh/newuser",
+            "zsh/param/private",
+            "zsh/parameter",
+            "zsh/pcre",
+            "zsh/private",
+            "zsh/profiler",
+            "zsh/random",
+            "zsh/random_real",
+            "zsh/regex",
+            "zsh/rlimits",
+            "zsh/sched",
+            "zsh/stat",
+            "zsh/system",
             "zsh/termcap",
             "zsh/terminfo",
-            "zsh/profiler",
-            "zsh/main",
+            "zsh/watch",
+            "zsh/zftp",
+            "zsh/zle",
+            "zsh/zleparameter",
+            "zsh/zprof",
+            "zsh/zpty",
+            "zsh/zselect",
+            "zsh/zutil",
         ];
 
+        // `is_loaded` answers: has the user explicitly loaded this
+        // module via `zmodload NAME` in this shell? Direct port of
+        // zsh's `-e` semantics (Src/module.c bin_zmodload case 'e'):
+        // "loaded" is observable state, NOT compile-time presence.
+        // zshrs links every module statically, but `-e` must reflect
+        // user-controlled load actions only; otherwise scripts that
+        // do `zmodload -e zsh/datetime || zmodload zsh/datetime` get
+        // the wrong answer.
         let is_loaded = |this: &Self, name: &str| -> bool {
-            ALWAYS_LOADED.contains(&name)
-                || this
-                    .options
-                    .get(&format!("_module_{}", name))
-                    .copied()
-                    .unwrap_or(false)
+            this
+                .options
+                .get(&format!("_module_{}", name))
+                .copied()
+                .unwrap_or(false)
         };
 
         // -e: existence test. Exit 0 if all named modules are loaded,
@@ -36011,6 +36264,19 @@ impl ShellExecutor {
             return 0;
         }
 
+        // Reject unknown module names. zsh's bin_zmodload (Src/module.c)
+        // attempts dlopen on the named bundle and reports
+        // "failed to load module" when the lookup misses; zshrs has
+        // no dlopen layer (modules are statically linked), so we
+        // gate on the `ALWAYS_LOADED` whitelist instead. Without
+        // this check, `zmodload zsh/no_such_module` silently
+        // succeeded, masking typos in user scripts.
+        for module in &modules {
+            if !ALWAYS_LOADED.contains(module) {
+                eprintln!("zshrs:zmodload:1: failed to load module: {}", module);
+                return 1;
+            }
+        }
         for module in modules {
             if unload {
                 self.options.remove(&format!("_module_{}", module));
@@ -36093,6 +36359,27 @@ impl ShellExecutor {
         status
     }
 
+    /// `nocorrect CMD ARGS...` — disable spelling correction for CMD
+    /// then dispatch the rest. In `-fc` / non-interactive contexts
+    /// spelling correction is already off, so this reduces to plain
+    /// dispatch. Direct port of zsh's `nocorrect` precommand
+    /// modifier (Src/exec.c precommand-modifier loop). Without this
+    /// handler, `nocorrect echo hello` resolved `nocorrect` as a
+    /// command and exited 127.
+    fn builtin_nocorrect(&mut self, args: &[String], redirects: &[Redirect]) -> i32 {
+        if args.is_empty() {
+            return 0;
+        }
+        let cmd = &args[0];
+        if self.is_builtin(cmd) {
+            self.builtin_builtin(args, redirects)
+        } else if self.function_exists(cmd) {
+            self.builtin_command(args, redirects)
+        } else {
+            self.builtin_command(args, redirects)
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     // zsh module builtins
     // ═══════════════════════════════════════════════════════════════════════════
@@ -36114,6 +36401,12 @@ impl ShellExecutor {
         let mut show_link = false;
         let mut as_array = false;
         let mut array_name = String::new();
+        // `-H name` populates an associative array keyed by field
+        // name (mode, size, mtime, …). Distinct from `-A name` which
+        // populates a plain indexed array of just the values in
+        // field-table order. Direct port of stat.c:418-426 STF_HASH.
+        let mut as_hash = false;
+        let mut hash_name = String::new();
         let mut format_time = String::new();
         let mut elements: Vec<String> = Vec::new();
         let mut files: Vec<&str> = Vec::new();
@@ -36153,6 +36446,15 @@ impl ShellExecutor {
                         return 1;
                     }
                 }
+                "-H" => {
+                    as_hash = true;
+                    if let Some(name) = iter.next() {
+                        hash_name = name.clone();
+                    } else {
+                        eprintln!("zshrs:zstat:1: argument expected: -H");
+                        return 1;
+                    }
+                }
                 "-F" => {
                     if let Some(fmt) = iter.next() {
                         format_time = fmt.clone();
@@ -36182,7 +36484,7 @@ impl ShellExecutor {
         // Multiple files auto-prefix with filename. Direct port of
         // stat.c:526-527 — `if (nargs > 1) flags |= STF_FILE;`
         // unless -A/-H redirects output. -N explicitly clears it.
-        if files.len() > 1 && !as_array {
+        if files.len() > 1 && !as_array && !as_hash {
             prefix_filename = true;
         }
 
@@ -36210,11 +36512,11 @@ impl ShellExecutor {
             // its own line as `<file>:\n` BEFORE that file's data
             // block — not as a per-line prefix. Direct port of
             // stat.c:543-550 + the `printf("%s:\n", …)` header.
-            if prefix_filename && !as_array {
+            if prefix_filename && !as_array && !as_hash {
                 println!("{}:", file);
             }
             let mut output_element = |name: &str, value: &str| {
-                if as_array {
+                if as_array || as_hash {
                     if show_all || elements.contains(&name.to_string()) {
                         collected.push((name.to_string(), value.to_string()));
                     }
@@ -36306,13 +36608,22 @@ impl ShellExecutor {
                 }
             }
 
-            // Flush collected key=value pairs into the assoc array
-            // when -A was given. Direct port of stat.c's
-            // setaparam(arrname, kvarr) call — zsh stores all
-            // collected stat fields keyed by name.
+            // Direct port of stat.c:566+ setiparam/setaparam paths:
+            //   `-A name` → indexed array, just the values in
+            //              field-table order. STF_ARRAY.
+            //   `-H name` → hash, name=>value pairs. STF_HASH.
+            // Without the per-flag distinction, `-A` was masquerading
+            // as `-H` and `${arr[size]}` worked when it shouldn't.
             if as_array {
+                let values: Vec<String> = collected
+                    .iter()
+                    .map(|(_, v)| v.clone())
+                    .collect();
+                self.arrays.insert(array_name.clone(), values);
+            }
+            if as_hash {
                 let map: indexmap::IndexMap<String, String> = collected.into_iter().collect();
-                self.assoc_arrays.insert(array_name.clone(), map);
+                self.assoc_arrays.insert(hash_name.clone(), map);
             }
         }
 
@@ -38125,13 +38436,19 @@ impl ShellExecutor {
 
                 if effective_spec.takes_arg {
                     let arg_value = if after_one_dash.contains('=') {
-                        Some(
-                            after_one_dash
-                                .split_once('=')
-                                .map(|x| x.1)
-                                .unwrap_or("")
-                                .to_string(),
-                        )
+                        // Direct port of Src/Modules/zutil.c:bin_zparseopts
+                        // value-collection path: when the option arg was
+                        // glued to the option name with `=` (`--name=foo`),
+                        // zsh stores the value WITH the leading `=` so the
+                        // user's array contains `["--name", "=foo"]`.
+                        // Without preserving the `=`, callers using
+                        // `${arr[2]}` to detect "was a value supplied" lose
+                        // information about the separator form.
+                        let raw = after_one_dash
+                            .split_once('=')
+                            .map(|x| x.1)
+                            .unwrap_or("");
+                        Some(format!("={}", raw))
                     } else if i + 1 < positionals.len()
                         && (!positionals[i + 1].starts_with('-') || effective_spec.optional_arg)
                     {

@@ -651,6 +651,24 @@ impl ZshCompiler {
             return;
         }
 
+        // `nocorrect CMD ARGS...` — spelling-correction precommand,
+        // a no-op in non-interactive (`-fc`) mode. fusevm's
+        // shell_builtins table doesn't recognize `nocorrect`, so the
+        // dispatch path at the bottom would look it up as a command
+        // name and fail "command not found". Strip and recurse.
+        // Direct port of zsh's parser-level precommand-modifier
+        // recognition.
+        let untoked_first_pre = crate::lexer::untokenize(&simple.words[0]);
+        if untoked_first_pre == "nocorrect" && simple.words.len() > 1 {
+            let inner = ZshSimple {
+                assigns: simple.assigns.clone(),
+                words: simple.words[1..].to_vec(),
+                redirs: simple.redirs.clone(),
+            };
+            self.compile_simple(&inner);
+            return;
+        }
+
         // `noglob CMD args...` is a precommand modifier — args must
         // NOT be glob-expanded. zsh handles this in the parser by
         // marking the command line "no-glob"; we strip the leading

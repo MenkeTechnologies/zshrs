@@ -1815,18 +1815,30 @@ impl<'a> MathEval<'a> {
         // Functions that preserve int-ness: when all args are int,
         // return MathNum::Integer instead of Float to avoid the
         // trailing "." in the string output ("5." instead of "5").
-        let int_preserving = matches!(
-            name,
-            "abs" | "min" | "max" | "int" | "floor" | "ceil" | "trunc"
-        );
+        //
+        // `int`/`floor`/`ceil`/`trunc` ALWAYS return Integer per zsh
+        // (mathfunc.c:bin_zmathfn) — `$(( int(2.7) ))` prints "2",
+        // not "2.". The truncation to int happens regardless of
+        // whether the input was already an integer. `abs`/`min`/`max`
+        // preserve the input type (int args → int result, float arg
+        // anywhere → float result) since their semantics don't
+        // inherently change the value's representation.
+        let always_int = matches!(name, "int" | "floor" | "ceil" | "trunc");
+        if always_int {
+            let i = match name {
+                "int" | "trunc" => arg_nums.first().map(|n| n.to_int()).unwrap_or(0),
+                "floor" => args.first().map(|x| x.floor() as i64).unwrap_or(0),
+                "ceil" => args.first().map(|x| x.ceil() as i64).unwrap_or(0),
+                _ => 0,
+            };
+            return MathNum::Integer(i);
+        }
+        let int_preserving = matches!(name, "abs" | "min" | "max");
         if all_int && int_preserving {
             let i = match name {
                 "abs" => arg_nums.first().map(|n| n.to_int().abs()).unwrap_or(0),
                 "min" => arg_nums.iter().map(|n| n.to_int()).min().unwrap_or(0),
                 "max" => arg_nums.iter().map(|n| n.to_int()).max().unwrap_or(0),
-                "int" | "floor" | "ceil" | "trunc" => {
-                    arg_nums.first().map(|n| n.to_int()).unwrap_or(0)
-                }
                 _ => 0,
             };
             return MathNum::Integer(i);
@@ -1872,6 +1884,11 @@ impl<'a> MathEval<'a> {
             "tan" => args.first().map(|x| x.tan()).unwrap_or(0.0),
             "tanh" => args.first().map(|x| x.tanh()).unwrap_or(0.0),
             "trunc" => args.first().map(|x| x.trunc()).unwrap_or(0.0),
+            // `float(x)` — widen int/float to float. Identity on
+            // floats; on ints, returns same value tagged as float so
+            // `printf "%.4f"` prints "3.0000" instead of "3". Direct
+            // port of mathfunc.c's `to_float()`.
+            "float" => args.first().copied().unwrap_or(0.0),
             _ => {
                 self.error = Some(format!("unknown function: {}", name));
                 0.0
