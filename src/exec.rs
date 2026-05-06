@@ -20353,13 +20353,34 @@ impl ShellExecutor {
             AliasKind::Suffix,
         );
 
-        // New/changed variables
+        // New/changed variables. Skip shell-special parameters whose
+        // values are runtime-state, not script-state — replaying them
+        // poisons subsequent shells with values frozen from the
+        // capture run. C zsh maintains these per-process and never
+        // serializes them: `_` (last argv of last command, Src/init.c
+        // special_params; gets `/tmp/foo` from a prior bash test then
+        // gets fed into `(( $_ ))` math in a user's .zshrc), `?`
+        // (last exit), `$`/`!`/`PPID` (process IDs), `RANDOM`,
+        // `SECONDS`, `EPOCHSECONDS`, `LINENO`, `OLDPWD`, `PWD`
+        // (volatile; cwd is re-read on replay anyway), `STATUS`,
+        // `OPTIND`, `IFS` (must default to whitespace at shell
+        // startup unless user explicitly sets it). Direct port of
+        // the C analogue's PM_SPECIAL flag — those params don't
+        // round-trip through the parameter-table dump path.
+        const NON_REPLAYABLE_VARS: &[&str] = &[
+            "0", "_", "?", "$", "!", "PPID", "RANDOM", "SECONDS",
+            "EPOCHSECONDS", "EPOCHREALTIME", "LINENO", "OLDPWD", "PWD",
+            "STATUS", "OPTIND", "OPTARG", "IFS", "FUNCNAME",
+            "BASHPID", "BASH_LINENO", "BASH_SOURCE",
+            "ZSH_ARGZERO", "ZSH_EVAL_CONTEXT", "ZSH_SUBSHELL",
+            "HISTCMD", "MATCH", "MBEGIN", "MEND",
+        ];
         let mut var_keys: Vec<&String> = self.variables.keys().collect();
         var_keys.sort();
         for name in var_keys {
-            if name == "0" {
+            if NON_REPLAYABLE_VARS.contains(&name.as_str()) {
                 continue;
-            } // skip $0 (we set it ourselves)
+            }
             let value = self.variables.get(name).unwrap();
             match snap.variables.get(name) {
                 Some(old) if old == value => {} // unchanged
@@ -20470,13 +20491,32 @@ impl ShellExecutor {
             }
         }
 
-        // Variables
+        // Variables. Drop shell-special parameters even on the
+        // replay side — pre-existing caches from before the
+        // diff_state filter was added still contain entries for
+        // `_`, `PPID`, etc.; replaying them poisons the new shell.
+        // Keeping the same exclusion list as `diff_state` so old
+        // caches self-heal on next read.
+        const NON_REPLAYABLE_VARS: &[&str] = &[
+            "0", "_", "?", "$", "!", "PPID", "RANDOM", "SECONDS",
+            "EPOCHSECONDS", "EPOCHREALTIME", "LINENO", "OLDPWD", "PWD",
+            "STATUS", "OPTIND", "OPTARG", "IFS", "FUNCNAME",
+            "BASHPID", "BASH_LINENO", "BASH_SOURCE",
+            "ZSH_ARGZERO", "ZSH_EVAL_CONTEXT", "ZSH_SUBSHELL",
+            "HISTCMD", "MATCH", "MBEGIN", "MEND",
+        ];
         for (name, value) in &delta.variables {
+            if NON_REPLAYABLE_VARS.contains(&name.as_str()) {
+                continue;
+            }
             self.variables.insert(name.clone(), value.clone());
         }
 
         // Exports (set in both variables and process env)
         for (name, value) in &delta.exports {
+            if NON_REPLAYABLE_VARS.contains(&name.as_str()) {
+                continue;
+            }
             self.variables.insert(name.clone(), value.clone());
             env::set_var(name, value);
         }
