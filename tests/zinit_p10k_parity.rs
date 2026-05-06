@@ -783,3 +783,37 @@ echo /nonexistent_glob_zshrs_test_xyz_*"#,
         );
     }
 }
+
+// ───────────────────────── ${m[$k]:=$v} subscript-expand ────────
+
+mod assoc_assign_with_dollar_subscript {
+    use super::*;
+
+    /// `${m[$k]:=$v}` — both `$k` (subscript) and `$v` (operand) must
+    /// be expanded before the write. zinit's ICE-defaults loop and
+    /// add-zsh-hook's per-key conditional set both depend on this.
+    #[test]
+    fn assoc_set_default_expands_subscript() {
+        assert_parity(
+            r#"typeset -gA m
+k=foo
+v=bar
+: ${m[$k]:=$v}
+echo "m[foo]=${m[foo]} m[k]=${m[$k]}""#,
+        );
+    }
+
+    /// Equivalent for plain `=` op (set-iff-unset, no empty-also-set).
+    #[test]
+    fn assoc_set_iff_unset_expands_subscript() {
+        assert_parity(
+            r#"typeset -gA m
+k=alpha
+v=one
+: ${m[$k]=$v}
+v=two
+: ${m[$k]=$v}
+echo "m[alpha]=${m[alpha]}""#,
+        );
+    }
+}
