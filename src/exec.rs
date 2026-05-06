@@ -3150,6 +3150,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
         if dq_compile {
             idx = idx[1..].to_string();
         }
+        // `\u{05}` prefix on idx = "(@) flag is set in surrounding
+        // flag chain" — emitted by parse_zsh_flag_subscript when the
+        // outer flag chain contains `@`. Direct port of zsh's
+        // nojoin behavior: `(@)` overrides the DQ-join even inside
+        // `"…"`. When this sentinel is present, force array shape
+        // for slices regardless of in_dq_context.
+        let force_array = idx.starts_with('\u{05}');
+        if force_array {
+            idx = idx[1..].to_string();
+        }
         // `${pipestatus[N]}` / `${PIPESTATUS[N]}` — pipeline exit
         // status array. Populated by BUILTIN_PIPELINE_EXEC after a
         // real pipeline; for single commands fall back to a synthetic
@@ -3393,7 +3403,11 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     let end = parse_subscript_index(exec, end_s);
                     if let (Some(s), Some(e)) = (start, end) {
                         let sliced = slice_indexed_array(&arr, s, e);
-                        if exec.in_dq_context > 0 || dq_compile {
+                        // (@) flag in surrounding chain overrides DQ-join
+                        // — always splat to Value::Array so the caller's
+                        // (@)-aware splat path emits each element as its
+                        // own word.
+                        if !force_array && (exec.in_dq_context > 0 || dq_compile) {
                             let ifs_first = exec
                                 .get_variable("IFS")
                                 .chars()
