@@ -863,6 +863,22 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// `\$0` inside a function reached via dynamic-name dispatch
+    /// (`fn=hook; $fn`) should be the function name (FUNCTION_ARGZERO,
+    /// default-on). The bytecode call_function path already did this;
+    /// dispatch_function_call (used by host_exec_external's user-fn
+    /// fallback) didn't, so plugin code reading `\$0` saw the
+    /// binary path instead. zinit's hook iteration is the canonical
+    /// example.
+    #[test]
+    fn dynamic_dispatch_sets_dollar_zero_to_fn_name() {
+        assert_parity(
+            r#"my_hook() { echo "name=$0"; }
+fn=my_hook
+$fn"#,
+        );
+    }
+
     /// `f=hook1; $f` — dynamic command-name dispatch. zshrs's
     /// host_exec_external was going straight to OS-level exec for
     /// the resolved name without checking the user-function table

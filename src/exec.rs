@@ -13535,6 +13535,20 @@ impl ShellExecutor {
         let saved_local_count = self.local_save_stack.len();
         let saved_local_arr_count = self.local_array_save_stack.len();
         let saved_local_assoc_count = self.local_assoc_save_stack.len();
+        // FUNCTION_ARGZERO: zsh sets `\$0` inside a function to the
+        // function name (default-on option). The bytecode-level
+        // call_function path already does this; the dispatch path
+        // used by dynamic-command-name dispatch (`f=hook; \$f`)
+        // didn't, so plugin code reading `\$0` saw the binary path
+        // instead. Save and install the function name; restore on
+        // exit. Anonymous functions get the cosmetic `(anon)` per
+        // call_function above.
+        let display_name = if name.starts_with("_zshrs_anon_") {
+            "(anon)".to_string()
+        } else {
+            name.to_string()
+        };
+        let saved_zero = self.variables.insert("0".to_string(), display_name);
         self.local_scope_depth += 1;
 
         let mut vm = fusevm::VM::new(chunk);
@@ -13546,6 +13560,14 @@ impl ShellExecutor {
 
         self.positional_params = saved_params;
         self.local_scope_depth -= 1;
+        match saved_zero {
+            Some(v) => {
+                self.variables.insert("0".to_string(), v);
+            }
+            None => {
+                self.variables.remove("0");
+            }
+        }
         while self.local_save_stack.len() > saved_local_count {
             if let Some((var_name, old_val)) = self.local_save_stack.pop() {
                 match old_val {
