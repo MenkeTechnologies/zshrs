@@ -4189,7 +4189,7 @@ fn apply_operator_with_flags(
                 ),
                 None => (unesc_slash(operand), String::new()),
             };
-            let (pat_no_flags, backref_mode, _case_i) = strip_inline_pattern_flags(&raw_pat);
+            let (pat_no_flags, backref_mode, case_i) = strip_inline_pattern_flags(&raw_pat);
             let pattern = singsub_no_tilde(&pat_no_flags, state);
             // Strip `\x00` literal-markers inserted by expand_string's
             // DQ-escape preprocessing. BUILTIN_EXPAND_TEXT mode 1
@@ -4211,6 +4211,14 @@ fn apply_operator_with_flags(
                 glob_to_regex_capturing(&pattern, false)
             } else {
                 param_pattern_to_regex_anchored(&pattern, false)
+            };
+            // Prefix with `(?i)` regex flag when (#i) was set —
+            // direct port of zsh's pattern.c PAT_INSENS bit which
+            // makes the entire pattern case-insensitive.
+            let regex_src = if case_i {
+                format!("(?i){}", regex_src)
+            } else {
+                regex_src
             };
             let re_opt = regex::Regex::new(&regex_src).ok();
             let op_str = operator.unwrap_or("/").to_string();
@@ -6759,36 +6767,52 @@ pub fn getmatch(val: &str, pattern: &str, flags: u32, flnum: i32, replstr: Optio
 ///   `(#I)` — case-sensitive (default; turn off i)
 ///   `(#l)` — multibyte form
 fn strip_inline_pattern_flags(pat: &str) -> (String, bool, bool) {
-    if !pat.starts_with("(#") {
-        return (pat.to_string(), false, false);
-    }
-    let after = &pat[2..];
-    let close = match after.find(')') {
-        Some(i) => i,
-        None => return (pat.to_string(), false, false),
-    };
-    let flag_str = &after[..close];
-    let rest = &after[close + 1..];
+    let mut remaining = pat;
     let mut backref = false;
     let mut case_i = false;
-    for c in flag_str.chars() {
-        match c {
-            'b' => backref = true,
-            'B' => backref = false,
-            // `m` / `M` enable / disable $MATCH/$MBEGIN/$MEND. zshrs
-            // collapses both `m` and `b` into one backref-mode bool;
-            // the per-capture replacement seeder writes both views
-            // (match[N] AND $MATCH/$MBEGIN/$MEND) on every fire.
-            // Direct port of zsh's pattern.c pat_pure_m flag.
-            'm' => backref = true,
-            'M' => backref = false,
-            'i' => case_i = true,
-            'I' => case_i = false,
-            'l' => {} // multibyte — ignored, regex handles unicode
-            _ => return (pat.to_string(), false, false),
+    // Loop to consume multiple consecutive `(#…)` flag blocks per
+    // zsh's pattern.c (PAT_INSENS / PAT_LOWERSENS / PAT_PURE_B /
+    // PAT_PURE_M etc. can be set independently with multiple flag
+    // groups: `(#b)(#i)pat`). Stop on the first non-flag token.
+    while remaining.starts_with("(#") {
+        let after = &remaining[2..];
+        let close = match after.find(')') {
+            Some(i) => i,
+            None => break,
+        };
+        let flag_str = &after[..close];
+        let mut all_known = true;
+        let mut new_backref = backref;
+        let mut new_case_i = case_i;
+        for c in flag_str.chars() {
+            match c {
+                'b' => new_backref = true,
+                'B' => new_backref = false,
+                // `m` / `M` enable / disable $MATCH/$MBEGIN/$MEND.
+                // zshrs collapses both `m` and `b` into one
+                // backref-mode bool; the per-capture replacement
+                // seeder writes both views (match[N] AND
+                // $MATCH/$MBEGIN/$MEND) on every fire. Direct port
+                // of zsh's pattern.c pat_pure_m flag.
+                'm' => new_backref = true,
+                'M' => new_backref = false,
+                'i' => new_case_i = true,
+                'I' => new_case_i = false,
+                'l' => {} // multibyte — ignored, regex handles unicode
+                _ => {
+                    all_known = false;
+                    break;
+                }
+            }
         }
+        if !all_known {
+            break;
+        }
+        backref = new_backref;
+        case_i = new_case_i;
+        remaining = &after[close + 1..];
     }
-    (rest.to_string(), backref, case_i)
+    (remaining.to_string(), backref, case_i)
 }
 
 /// Translate a zsh glob/pattern to a regex preserving `(...)` as
