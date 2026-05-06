@@ -2035,16 +2035,6 @@ fn parse_brace_param(
         );
     }
 
-    // Handle length prefix
-    if length_prefix {
-        let len = if value.len() == 1 {
-            value[0].chars().count()
-        } else {
-            value.len()
-        };
-        value = vec![len.to_string()];
-    }
-
     // Apply operator FIRST. Flags like `(%)`, `(L)`, `(q)`, padding,
     // counting, etc. are post-substitution transforms — they must
     // see the value AFTER the operator has potentially replaced it
@@ -2053,6 +2043,14 @@ fn parse_brace_param(
     // before the flags-transform sections (3957-4019). Pre-lookup
     // flags like `(k)`, `(v)`, `(P)`, `(t)` already fired earlier
     // during the value-lookup path.
+    //
+    // The `${#NAME}` length prefix is ALSO post-operator: zsh's
+    // `${#NAME:-default}` returns the length of "default" when
+    // NAME is unset, not the length of "" (which is 0). Direct
+    // port of paramsubst's chklen branch (Src/subst.c) that runs
+    // its strlen() after the operator block. The earlier zshrs
+    // ordering applied length first, so `${#NAME:-default}`
+    // returned 0 instead of 7. Fixed: length now follows operator.
     //
     // `(M)` is the exception: it modifies the `:#` operator's
     // semantics inline, so it travels with the operator call.
@@ -2065,6 +2063,19 @@ fn parse_brace_param(
         flags.match_flag,
         state,
     );
+
+    // Apply length prefix AFTER the operator has replaced the
+    // value. See the `length_prefix` setup above for the rationale
+    // (zsh's chklen runs after operator, so `${#X:-default}` is
+    // strlen(default) not strlen("")).
+    if length_prefix {
+        let len = if value.len() == 1 {
+            value[0].chars().count()
+        } else {
+            value.len()
+        };
+        value = vec![len.to_string()];
+    }
 
     // Apply post-operator flags: case mod, sort, unique, padding,
     // quoting, counting, `(%)` prompt-percent expansion.
