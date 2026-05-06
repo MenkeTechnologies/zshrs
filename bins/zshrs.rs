@@ -46,8 +46,19 @@ Special options:
   --help       show this message, then exit
   --version    show zsh version number, then exit
   --doctor     full diagnostic report of shell health, caches, and performance
-  --zsh-compat enable zsh compatibility mode (use .zcompdump, fpath scanning)
-  --posix      POSIX strict mode (no SQLite, no worker pool, no zsh extensions)
+
+Parity modes (caches OFF, daemon OFF — match the named reference shell
+byte-for-byte; every `source` re-runs the file fresh, every echo re-fires):
+  --zsh        identical-behaviour drop-in for /bin/zsh (compat-test entrypoint)
+  --bash       identical-behaviour drop-in for /bin/bash
+  --posix      identical-behaviour drop-in for /bin/sh (Bourne / dash)
+  --zsh-compat alias of --zsh (legacy spelling)
+
+Default mode (no flag) is full zshrs: rkyv script_cache + SQLite plugin_cache
++ daemon enabled. Use the parity flags for compat testing or when caching
+behavior is unwanted.
+
+Standard zsh options:
   -b           end option processing, like --
   -c           take first argument as a command to execute
   -f           equivalent to --no-rcs (don't source startup files)
