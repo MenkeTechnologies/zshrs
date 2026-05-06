@@ -3431,6 +3431,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // walker re-orders things. Use `flags` (the post-sentinel-
         // strip string) since the `chars` Vec is built later.
         let want_keys = flags.contains('k');
+        let want_values = flags.contains('v');
 
         // Literal-string operand sentinel: `${(flags)"text"}` compiles to a
         // name prefixed with `\u{01}` followed by the literal value. Skip
@@ -3458,6 +3459,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         crate::subst_port::magic_assoc_keys_from_executor(&name, exec)
                     {
                         St::A(keys)
+                    } else {
+                        St::S(exec.get_variable(&name))
+                    }
+                } else if want_values {
+                    // `${(v)<magic-assoc>}` — values for the same
+                    // magic-getfn list above. zinit/p10k both use
+                    // `${(v)aliases}`-style introspection; the
+                    // earlier (k) branch covered the keys but the
+                    // (v) symmetry was missing, so plugin code that
+                    // looped over alias bodies got an empty list.
+                    if let Some(keys) =
+                        crate::subst_port::magic_assoc_keys_from_executor(&name, exec)
+                    {
+                        let values: Vec<String> = keys
+                            .iter()
+                            .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
+                            .collect();
+                        St::A(values)
                     } else {
                         St::S(exec.get_variable(&name))
                     }
@@ -4169,28 +4188,54 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // Values of assoc. If immediately followed by 'k',
                     // interleave value/key pairs (zsh's `(vk)` form, less
                     // common than `(kv)` but supported for symmetry).
+                    // Magic-assoc fallback when name isn't in
+                    // assoc_arrays (`aliases`, `functions`, `commands`,
+                    // `options`, `parameters`, `terminfo`, `errnos`,
+                    // `sysparams`) — synthesize the value list from the
+                    // executor's get_special_array_value scanfn-equivalent.
                     if i < chars.len() && chars[i] == 'k' {
                         i += 1; // consume the 'k'
                         let pairs = with_executor(|exec| {
-                            exec.assoc_arrays
-                                .get(&name)
-                                .map(|m| {
-                                    let mut out = Vec::with_capacity(m.len() * 2);
-                                    for (k, v) in m {
-                                        out.push(v.clone());
-                                        out.push(k.clone());
-                                    }
-                                    out
-                                })
-                                .unwrap_or_default()
+                            if let Some(m) = exec.assoc_arrays.get(&name) {
+                                let mut out = Vec::with_capacity(m.len() * 2);
+                                for (k, v) in m {
+                                    out.push(v.clone());
+                                    out.push(k.clone());
+                                }
+                                out
+                            } else if let Some(keys) =
+                                crate::subst_port::magic_assoc_keys_from_executor(&name, exec)
+                            {
+                                let mut out = Vec::with_capacity(keys.len() * 2);
+                                for k in keys {
+                                    let v = exec
+                                        .get_special_array_value(&name, &k)
+                                        .unwrap_or_default();
+                                    out.push(v);
+                                    out.push(k);
+                                }
+                                out
+                            } else {
+                                Vec::new()
+                            }
                         });
                         state = St::A(pairs);
                     } else {
                         let vals = with_executor(|exec| {
-                            exec.assoc_arrays
-                                .get(&name)
-                                .map(|m| m.values().cloned().collect::<Vec<_>>())
-                                .unwrap_or_default()
+                            if let Some(m) = exec.assoc_arrays.get(&name) {
+                                m.values().cloned().collect::<Vec<_>>()
+                            } else if let Some(keys) =
+                                crate::subst_port::magic_assoc_keys_from_executor(&name, exec)
+                            {
+                                keys.iter()
+                                    .map(|k| {
+                                        exec.get_special_array_value(&name, k)
+                                            .unwrap_or_default()
+                                    })
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            }
                         });
                         state = St::A(vals);
                     }
@@ -5494,6 +5539,25 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 return fusevm::Value::Array(arr.into_iter().map(fusevm::Value::str).collect());
             }
         }
+        // Magic-assoc fallback FIRST — `\${aliases}` / `\${functions}`
+        // / `\${commands}` / etc. should return the value list per
+        // zsh's bare-assoc semantics. Without this, those names fell
+        // through to `get_variable` which is empty (they live in
+        // separate executor tables, not `assoc_arrays`). Return as
+        // a Value::Array so `arr=(\${aliases})` distributes into
+        // multiple elements, matching zsh's array-context word
+        // splitting for assoc-bare references.
+        let magic_vals = with_executor(|exec| {
+            sync_status(exec);
+            crate::subst_port::magic_assoc_keys_from_executor(&name, exec).map(|keys| {
+                keys.iter()
+                    .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
+                    .collect::<Vec<_>>()
+            })
+        });
+        if let Some(vals) = magic_vals {
+            return fusevm::Value::Array(vals.into_iter().map(fusevm::Value::str).collect());
+        }
         let val = with_executor(|exec| {
             sync_status(exec);
             // If `name` refers to an indexed array, return as Array for
@@ -5501,6 +5565,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // pop_args' flatten.
             if let Some(arr) = exec.arrays.get(&name) {
                 return arr.join(" ");
+            }
+            if let Some(map) = exec.assoc_arrays.get(&name) {
+                let mut keys: Vec<&String> = map.keys().collect();
+                keys.sort();
+                return keys
+                    .iter()
+                    .filter_map(|k| map.get(*k).cloned())
+                    .collect::<Vec<_>>()
+                    .join(" ");
             }
             exec.get_variable(&name)
         });

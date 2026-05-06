@@ -877,6 +877,39 @@ echo "out=$options[glob]""#,
         assert_eq!(real.stdout, rs.stdout);
     }
 
+    /// `${(v)aliases}` — values of the magic aliases assoc. The
+    /// PARAM_FLAG walker's 'v' arm only covered real assoc_arrays
+    /// entries; magic-assocs (aliases / functions / commands /
+    /// options / parameters / terminfo / errnos) returned empty.
+    /// zinit/p10k introspection that loops over alias bodies needs
+    /// this. Mirror the existing 'k' arm's magic-assoc fallback.
+    #[test]
+    fn v_flag_on_magic_aliases() {
+        assert_parity(
+            r#"alias l1=ls
+alias l2=less
+print -l -- ${(v)aliases} | sort"#,
+        );
+    }
+
+    /// Bare `${aliases}` (no flags) — zsh contract: assoc-bare
+    /// reference returns the value list joined by space, same as
+    /// `${(v)NAME[*]}`. zshrs's BUILTIN_GET_VAR fell through to
+    /// `get_variable("aliases")` which is empty (the alias table
+    /// doesn't live in `assoc_arrays`). Add the magic-assoc
+    /// fallback at the GET_VAR head; return Value::Array so
+    /// `arr=(${aliases})` distributes into multiple elements.
+    #[test]
+    fn bare_magic_assoc_returns_values() {
+        assert_parity(
+            r#"alias l1=ls
+alias l2=less
+print -l -- ${aliases} | sort
+arr=(${aliases})
+echo "n=$#arr""#,
+        );
+    }
+
     /// `\${functions[foo]:0:20}` substring extraction — went through
     /// the slow-path get_special_array_value which returned the raw
     /// user-typed source instead of the zsh-formatted body. Cycle 15
