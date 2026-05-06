@@ -2302,11 +2302,25 @@ impl<'a> ZshParser<'a> {
             Box::new(self.parse_program_until(Some(&[LexTok::Else, LexTok::Elif, LexTok::Fi])))
         };
 
-        // Parse elif and else (only for then/fi syntax, not brace syntax)
+        // Parse elif and else. zsh accepts the SAME elif/else
+        // continuations for both classic `then/fi` AND the brace
+        // form `{ ... } elif ... { ... } else { ... }`. Direct port
+        // of zsh/Src/parse.c:1417-1500 par_if where the elif/else
+        // arms are checked AFTER the body close regardless of which
+        // delimiter style opened the block. Without this, zinit's
+        //   if [[ -z $sel ]] { ... } else { ... }
+        // hung the parser — `else` was treated as an external
+        // command following the if-statement, which the lexer state
+        // mis-classified inside the still-open function body.
+        //
+        // For brace-form: skip the `fi` consumption at the end of
+        // the loop (no `fi` after a brace block), and `else` may
+        // arrive after a `}` close. Skip-separators between the
+        // body close and the elif/else token.
         let mut elif = Vec::new();
         let mut else_ = None;
 
-        if !use_brace {
+        {
             loop {
                 self.skip_separators();
 

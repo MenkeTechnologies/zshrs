@@ -3736,7 +3736,11 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // joined-then-stripped).
     let mut after_name = name_end;
     let mut had_at = false;
-    if inner.len() >= name_end + 3 {
+    // Char-aware boundary check — name_end + 3 may land mid-codepoint
+    // when the preceding bytes include UTF-8 multi-byte chars (e.g.
+    // METATOKEN bytes in lexer-emitted input). `is_char_boundary`
+    // protects the slice from panicking on invalid index.
+    if inner.len() >= name_end + 3 && inner.is_char_boundary(name_end + 3) {
         let tail = &inner[name_end..name_end + 3];
         if tail == "[@]" {
             // `[@]` = splice-expand (per-element even in DQ)
