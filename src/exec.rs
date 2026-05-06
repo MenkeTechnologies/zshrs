@@ -7880,6 +7880,25 @@ fn pop_args(vm: &mut fusevm::VM, argc: u8) -> Vec<String> {
             other => args.push(other.to_str()),
         }
     }
+    // `expand_glob` set the glob-failed cell when a no-match glob in
+    // this command's argv triggered the `nomatch` error. For BUILTIN
+    // commands (zsh: errflag persists in the shell process), the
+    // entire script aborts with status 1 — `echo /no_match_*` exits
+    // before printing anything. External commands hit the same flag
+    // in `host_exec_external` instead, which only fails the command
+    // and lets the script continue (zsh's fork inherits-but-resets
+    // errflag semantics). We only land here for builtins, so abort.
+    let glob_failed = with_executor(|exec| {
+        let f = exec.current_command_glob_failed.get();
+        if f {
+            exec.current_command_glob_failed.set(false);
+            exec.last_status = 1;
+        }
+        f
+    });
+    if glob_failed {
+        std::process::exit(1);
+    }
     // `$_` tracks the last argument of the PREVIOUSLY executed
     // command (zsh / bash convention). Promote the deferred value
     // into `$_` BEFORE this command runs (so `echo $_` reads the

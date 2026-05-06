@@ -2743,7 +2743,27 @@ fn get_param_with_subscript(
             if sub == "@" || sub == "*" {
                 return assoc.values().cloned().collect();
             }
-            return assoc.get(sub).cloned().into_iter().collect();
+            // Expand $-refs in the key before lookup. Without this,
+            // `${m[$k]}` looked up the literal key "$k" instead of the
+            // value of $k. Direct port of zsh's getindex() singsub
+            // pass.
+            let resolved = if sub.contains('$') || sub.contains('`') {
+                let mut substate_mut = SubstState {
+                    errflag: state.errflag,
+                    opts: state.opts.clone(),
+                    variables: state.variables.clone(),
+                    arrays: state.arrays.clone(),
+                    assoc_arrays: state.assoc_arrays.clone(),
+                    skip_filesub: state.skip_filesub,
+                    function_names: state.function_names.clone(),
+                    command_names: state.command_names.clone(),
+                    alias_names: state.alias_names.clone(),
+                };
+                expand_subscript_pat(sub, &mut substate_mut)
+            } else {
+                sub.to_string()
+            };
+            return assoc.get(&resolved).cloned().into_iter().collect();
         }
         return assoc.values().cloned().collect();
     }
@@ -3453,15 +3473,25 @@ fn apply_operator_with_flags(
                 let val = strip_outer_dq_markers(&expanded);
                 match subscript {
                     Some(idx) => {
+                        // Expand $-references in the subscript before
+                        // using it as the assoc key / array index.
+                        // zsh's `${m[$k]:=$v}` resolves `$k` to the
+                        // current value before writing. Without this,
+                        // the literal "$k" was stored as a key.
+                        let idx_resolved = if idx.contains('$') || idx.contains('`') {
+                            expand_subscript_pat(idx, state)
+                        } else {
+                            idx.to_string()
+                        };
                         let is_assoc = state.assoc_arrays.contains_key(var_name);
-                        let numeric = idx.parse::<i64>().ok();
+                        let numeric = idx_resolved.parse::<i64>().ok();
                         match (is_assoc, numeric) {
                             (true, _) => {
                                 let map = state
                                     .assoc_arrays
                                     .entry(var_name.to_string())
                                     .or_default();
-                                map.insert(idx.to_string(), val.clone());
+                                map.insert(idx_resolved.clone(), val.clone());
                             }
                             (false, Some(n)) => {
                                 let arr = state
@@ -3480,7 +3510,7 @@ fn apply_operator_with_flags(
                                     .assoc_arrays
                                     .entry(var_name.to_string())
                                     .or_default();
-                                map.insert(idx.to_string(), val.clone());
+                                map.insert(idx_resolved.clone(), val.clone());
                             }
                         }
                     }
