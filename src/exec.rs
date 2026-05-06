@@ -2549,6 +2549,39 @@ fn register_builtins(vm: &mut fusevm::VM) {
     //   nameddirs, userdirs, modules.
     // Returns None if `name` isn't a recognized magic name.
     fn magic_assoc_lookup(name: &str, idx: &str) -> Option<Value> {
+        // Subscript-flag lookup `(r)pat` / `(R)pat` / `(i)pat` /
+        // `(I)pat` on a magic-assoc — synthesize the (key,value)
+        // pair list from get_special_array_value and route through
+        // the assoc-flag matcher (same path real assocs use).
+        // Direct port of Src/params.c getarg's hash-aware index/
+        // match handling — without this, `${aliases[(I)foo*]}` and
+        // friends were passing the literal `(I)foo*` text through
+        // as the key.
+        let trimmed = idx.trim_start();
+        if trimmed.starts_with('(') {
+            if let Some((flags, pat)) =
+                crate::subst_port::parse_subscript_flags(trimmed)
+            {
+                let result = with_executor(|exec| {
+                    let keys = crate::subst_port::magic_assoc_keys_from_executor(name, exec)?;
+                    let pairs: Vec<(String, String)> = keys
+                        .into_iter()
+                        .map(|k| {
+                            let v = exec
+                                .get_special_array_value(name, &k)
+                                .unwrap_or_default();
+                            (k, v)
+                        })
+                        .collect();
+                    Some(crate::subst_port::apply_assoc_subscript_flags_pub(
+                        &pairs, flags, &pat,
+                    ))
+                });
+                if let Some(matches) = result {
+                    return Some(Value::Array(matches.into_iter().map(Value::str).collect()));
+                }
+            }
+        }
         with_executor(|exec| -> Option<Value> {
             match name {
                 "commands" => {

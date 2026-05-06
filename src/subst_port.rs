@@ -2857,6 +2857,34 @@ fn get_param_with_subscript(
                 "mapfile" | "terminfo" | "termcap" | "errnos" | "sysparams"
             )
         {
+            // Subscript-flag form `(I)pat` / `(i)pat` / `(r)pat` /
+            // `(R)pat` etc. on a magic-assoc — synthesize the
+            // (key,value) pair list from the executor's
+            // get_special_array_value scanfn, then route through
+            // apply_assoc_subscript_flags. Direct port of
+            // Src/params.c getarg's hash-aware index/match handling
+            // (the `ishash && rev` branch). Without this, the outer
+            // path passed the literal `(I)pat` text through as the
+            // assoc key, so `\${aliases[(I)foo*]}` returned empty.
+            let trimmed_sub = sub.trim_start();
+            if trimmed_sub.starts_with('(') {
+                if let Some((sub_flags, sub_pat)) = parse_subscript_flags(trimmed_sub) {
+                    if let Some(keys) = magic_assoc_keys(name, state) {
+                        let pairs: Vec<(String, String)> =
+                            crate::exec::with_executor(|exec| {
+                                keys.into_iter()
+                                    .map(|k| {
+                                        let v = exec
+                                            .get_special_array_value(name, &k)
+                                            .unwrap_or_default();
+                                        (k, v)
+                                    })
+                                    .collect()
+                            });
+                        return apply_assoc_subscript_flags(&pairs, &sub_flags, &sub_pat);
+                    }
+                }
+            }
             // Expand the subscript before lookup so `${mapfile[$tmp]}`
             // resolves $tmp first. Direct port of paramsubst's
             // `singsub(&sub)` step in the subscript-resolve path.
@@ -2951,7 +2979,7 @@ fn scalar_char_subscript(value: &str, sub: &str) -> Vec<String> {
 /// Mirrors the C source's per-flag bools — only the ones zshrs
 /// honors today are present.
 #[derive(Default, Debug, Clone, Copy)]
-struct SubscriptFlags {
+pub struct SubscriptFlags {
     /// `(r)` — return first element matching pattern.
     forward_match: bool,
     /// `(R)` — last matching.
@@ -2977,7 +3005,7 @@ struct SubscriptFlags {
 /// r/R/i/I/e/k/n. Everything else aborts the parse — we don't
 /// silently accept unknown flags because that would alias
 /// `[(unknown)foo]` to `[foo]` which can mask bugs in user code.
-fn parse_subscript_flags(sub: &str) -> Option<(SubscriptFlags, String)> {
+pub fn parse_subscript_flags(sub: &str) -> Option<(SubscriptFlags, String)> {
     let s = sub.trim_start();
     if !s.starts_with('(') {
         return None;
@@ -3050,6 +3078,17 @@ fn apply_array_subscript_flags(
     }
 }
 
+/// Public wrapper for callers (BUILTIN_ARRAY_INDEX magic-assoc path)
+/// that don't have direct access to the file-private flag struct.
+/// Re-parses the flag string and dispatches to the internal matcher.
+pub fn apply_assoc_subscript_flags_pub(
+    pairs: &[(String, String)],
+    flags: SubscriptFlags,
+    pat: &str,
+) -> Vec<String> {
+    apply_assoc_subscript_flags(pairs, &flags, pat)
+}
+
 fn apply_assoc_subscript_flags(
     pairs: &[(String, String)],
     flags: &SubscriptFlags,
@@ -3089,16 +3128,53 @@ fn apply_assoc_subscript_flags(
             .into_iter()
             .collect()
     } else if flags.forward_index || flags.reverse_index {
-        // For assoc, (i)/(I) returns the KEY of the matching pair.
-        let mut it: Box<dyn Iterator<Item = &(String, String)>> = if flags.reverse_index {
-            Box::new(pairs.iter().rev())
-        } else {
-            Box::new(pairs.iter())
+        // For assoc, (i)/(I) returns the KEY of the matching entry,
+        // and the search is run against KEYS — not values. Direct
+        // port of Src/params.c getarg's `ishash` branch around line
+        // 1576-1595 (`getnode(ht, s)` looks the key up in the hash
+        // table) plus 1685+ (`!keymatch` falls through to the value-
+        // pattern path only for non-hash params). The (k)/(K) flags
+        // are how you flip search-target from values to keys for
+        // ARRAYS; on hashes the default is already key-search.
+        //
+        // Special case: (I) on a hash with a glob pattern returns
+        // ALL matching keys (zsh's "matchmany" behavior). Single
+        // literal keys return at most one match.
+        let key_matches = |k: &str| -> bool {
+            if flags.exact {
+                k == pat
+            } else {
+                let re_src = param_pattern_to_regex(pat);
+                regex::Regex::new(&re_src)
+                    .map(|re| re.is_match(k))
+                    .unwrap_or(false)
+            }
         };
-        it.find(|e| matches(&pick(e)))
-            .map(|e| e.0.clone())
-            .into_iter()
-            .collect()
+        let pat_is_glob = pat.contains('*')
+            || pat.contains('?')
+            || pat.contains('[');
+        if flags.reverse_index && pat_is_glob {
+            pairs
+                .iter()
+                .filter(|e| key_matches(&e.0))
+                .map(|e| e.0.clone())
+                .collect()
+        } else if flags.reverse_index {
+            pairs
+                .iter()
+                .rev()
+                .find(|e| key_matches(&e.0))
+                .map(|e| e.0.clone())
+                .into_iter()
+                .collect()
+        } else {
+            pairs
+                .iter()
+                .find(|e| key_matches(&e.0))
+                .map(|e| e.0.clone())
+                .into_iter()
+                .collect()
+        }
     } else {
         pairs.iter().map(|e| e.1.clone()).collect()
     }
