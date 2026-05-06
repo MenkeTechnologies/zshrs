@@ -18996,18 +18996,173 @@ impl ShellExecutor {
     /// substitute the actual values inline before handing to the
     /// evaluator. Honors associative-array key lookups and 1-based
     /// numeric array indexing (with negative-from-end).
+    /// First-pass resolver for `$NAME[…]` / `$@[…]` / `$*[…]`.
+    /// Runs BEFORE expand_string so the array subscript stays bound
+    /// to its variable name (otherwise `$@` joins to a scalar and
+    /// the `[…]` becomes orphan text). Recognises both bare-numeric
+    /// keys and zsh subscript-flag forms `(I)pat`, `(R)pat`, etc.
+    /// Direct support for zinit's `(( $@[(I)-*] ))` pattern.
+    fn pre_resolve_dollar_subscripts(&self, expr: &str) -> String {
+        let bytes: Vec<char> = expr.chars().collect();
+        let mut out = String::with_capacity(expr.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i];
+            if c != '$' || i + 1 >= bytes.len() {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            // Skip `$$`/`$?`/`$#` — single-char specials, not arrays.
+            let next = bytes[i + 1];
+            let is_at_or_star = next == '@' || next == '*';
+            let is_ident_start = next.is_ascii_alphabetic() || next == '_';
+            if !is_at_or_star && !is_ident_start {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            // Collect the name.
+            let name_start = i + 1;
+            let mut name_end = name_start + 1;
+            if !is_at_or_star {
+                while name_end < bytes.len()
+                    && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == '_')
+                {
+                    name_end += 1;
+                }
+            }
+            // Must be followed by `[` to qualify.
+            if name_end >= bytes.len() || bytes[name_end] != '[' {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            let name: String = bytes[name_start..name_end].iter().collect();
+            // Collect balanced [...] for the key.
+            let key_start = name_end + 1;
+            let mut j = key_start;
+            let mut depth = 1;
+            while j < bytes.len() && depth > 0 {
+                match bytes[j] {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            let key_str: String = bytes[key_start..j].iter().collect();
+            let trimmed_key = key_str.trim_start();
+            let parsed_flag = if trimmed_key.starts_with('(') {
+                parse_subscript_flags(trimmed_key)
+            } else {
+                None
+            };
+            let resolved = if let Some((flags, pat)) = parsed_flag {
+                if let Some(assoc) = self.assoc_arrays.get(&name) {
+                    assoc_subscript_flag(assoc, flags, pat).to_str()
+                } else if name == "@" || name == "*" {
+                    array_subscript_flag(&self.positional_params, flags, pat).to_str()
+                } else if let Some(arr) = self.arrays.get(&name) {
+                    array_subscript_flag(arr, flags, pat).to_str()
+                } else {
+                    "0".to_string()
+                }
+            } else if let Some(assoc) = self.assoc_arrays.get(&name) {
+                let key_clean = if (key_str.starts_with('"') && key_str.ends_with('"'))
+                    || (key_str.starts_with('\'') && key_str.ends_with('\''))
+                {
+                    key_str[1..key_str.len() - 1].to_string()
+                } else {
+                    key_str.clone()
+                };
+                assoc.get(&key_clean).cloned().unwrap_or_else(|| "0".to_string())
+            } else if name == "@" || name == "*" {
+                if let Ok(idx) = key_str.trim().parse::<i64>() {
+                    let len = self.positional_params.len() as i64;
+                    let pos = if idx < 0 { len + idx } else { idx - 1 };
+                    if pos >= 0 && (pos as usize) < self.positional_params.len() {
+                        self.positional_params[pos as usize].clone()
+                    } else {
+                        "0".to_string()
+                    }
+                } else {
+                    "0".to_string()
+                }
+            } else if let Some(arr) = self.arrays.get(&name) {
+                if let Ok(idx) = key_str.trim().parse::<i64>() {
+                    let len = arr.len() as i64;
+                    let pos = if idx < 0 { len + idx } else { idx - 1 };
+                    if pos >= 0 && (pos as usize) < arr.len() {
+                        arr[pos as usize].clone()
+                    } else {
+                        "0".to_string()
+                    }
+                } else {
+                    "0".to_string()
+                }
+            } else {
+                // Leave the original text — let downstream complain.
+                let original: String = bytes[i..=j].iter().collect();
+                original
+            };
+            out.push_str(&resolved);
+            i = j + 1; // consume the closing `]`
+        }
+        out
+    }
+
     fn pre_resolve_array_subscripts(&self, expr: &str) -> String {
         let bytes: Vec<char> = expr.chars().collect();
         let mut out = String::with_capacity(expr.len());
         let mut i = 0;
         while i < bytes.len() {
             let c = bytes[i];
+            // `$@`, `$*`, `$NAME` followed by `[…]` — zinit's
+            // `(( $@[(I)-*] ))` and similar arith uses this. Strip
+            // the leading `$` and route through the same name+[key]
+            // resolver as bare identifiers. Without this the `$@`
+            // gets variable-expanded to its joined form before
+            // arith eval, dropping the subscript flag entirely.
+            if c == '$' && i + 1 < bytes.len() {
+                let next = bytes[i + 1];
+                let is_special_at = next == '@' || next == '*';
+                let is_ident_start = next.is_ascii_alphabetic() || next == '_';
+                if (is_special_at || is_ident_start) && i + 2 < bytes.len() {
+                    // Look-ahead: must be followed by `[` to qualify
+                    // as a subscript form. Bare `$@` without `[` is
+                    // left alone (downstream substitution handles it).
+                    let mut probe = i + 1;
+                    if is_special_at {
+                        probe += 1;
+                    } else {
+                        while probe < bytes.len()
+                            && (bytes[probe].is_ascii_alphanumeric() || bytes[probe] == '_')
+                        {
+                            probe += 1;
+                        }
+                    }
+                    if probe < bytes.len() && bytes[probe] == '[' {
+                        // Drop the `$` and re-enter the bare-ident
+                        // path on the next iteration.
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
             // Identifier start?
-            if c.is_ascii_alphabetic() || c == '_' {
+            if c.is_ascii_alphabetic() || c == '_' || c == '@' || c == '*' {
                 let start = i;
                 i += 1;
-                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == '_') {
-                    i += 1;
+                if !(bytes[start] == '@' || bytes[start] == '*') {
+                    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == '_') {
+                        i += 1;
+                    }
                 }
                 let name: String = bytes[start..i].iter().collect();
                 if i < bytes.len() && bytes[i] == '[' {
@@ -19042,7 +19197,31 @@ impl ShellExecutor {
                     } else {
                         key_str.clone()
                     };
-                    let resolved = if let Some(assoc) = self.assoc_arrays.get(&name) {
+                    // Subscript-flag form `(I)pat` / `(i)pat` etc. —
+                    // route through array_subscript_flag so zinit's
+                    // `(( $@[(I)-*] ))` and `(( OPTS[opt_-h,…] ))`
+                    // patterns yield an index/key as zsh does.
+                    let trimmed_key = key_resolved.trim_start();
+                    let parsed_flag = if trimmed_key.starts_with('(') {
+                        parse_subscript_flags(trimmed_key)
+                    } else {
+                        None
+                    };
+                    let resolved = if let Some((flags, pat)) = parsed_flag {
+                        // Pick assoc vs indexed array path.
+                        if let Some(assoc) = self.assoc_arrays.get(&name) {
+                            let v = assoc_subscript_flag(assoc, flags, pat);
+                            v.to_str()
+                        } else if name == "@" || name == "*" {
+                            let v = array_subscript_flag(&self.positional_params, flags, pat);
+                            v.to_str()
+                        } else if let Some(arr) = self.arrays.get(&name) {
+                            let v = array_subscript_flag(arr, flags, pat);
+                            v.to_str()
+                        } else {
+                            "0".to_string()
+                        }
+                    } else if let Some(assoc) = self.assoc_arrays.get(&name) {
                         assoc
                             .get(&key_resolved)
                             .cloned()
@@ -19080,14 +19259,23 @@ impl ShellExecutor {
     }
 
     fn evaluate_arithmetic(&mut self, expr: &str) -> String {
+        // First, resolve `$NAME[(flags)pat]` / `$@[(flags)pat]`
+        // before expand_string — otherwise `$@` gets joined into
+        // a scalar (`a b c`) and the trailing `[…]` becomes
+        // ambiguous text. zinit relies on `(( $@[(I)-*] ))`.
+        let expr_pre = if expr.contains('$') {
+            self.pre_resolve_dollar_subscripts(expr)
+        } else {
+            expr.to_string()
+        };
         // Only run expand_string when the expression has `$` (for
         // var/cmd-subst/nested-arith). Otherwise pass through —
         // expand_string would tilde-expand `~` (bitwise NOT in arith
         // context) into "no such user" errors.
-        let expr = if expr.contains('$') || expr.contains('`') {
-            self.expand_string(expr)
+        let expr = if expr_pre.contains('$') || expr_pre.contains('`') {
+            self.expand_string(&expr_pre)
         } else {
-            expr.to_string()
+            expr_pre
         };
         // Subscripted-array compound-assign / increment / decrement:
         // `((a[i]++))`, `((a[i]+=v))`, `((a[i]-=v))`, etc. Read the
