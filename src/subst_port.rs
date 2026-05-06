@@ -2280,6 +2280,49 @@ fn get_param_with_subscript(
         return assoc.values().cloned().collect();
     }
 
+    // Magic-assoc fallback for names not in `state.arrays` /
+    // `state.assoc_arrays`. Direct port of paramsubst's per-special
+    // getfn dispatch path: zsh's C source resolves the magic-array
+    // (`aliases`, `functions`, `mapfile`, `terminfo`, `errnos`, …)
+    // through the SPECIALPMDEF entry's getfn slot at runtime. We
+    // delegate to the executor's `get_special_array_value` which
+    // implements the same per-name table.
+    if let Some(sub) = real_sub {
+        if magic_assoc_keys(name, state).is_some()
+            || matches!(
+                name,
+                "mapfile" | "terminfo" | "termcap" | "errnos" | "sysparams"
+            )
+        {
+            // Expand the subscript before lookup so `${mapfile[$tmp]}`
+            // resolves $tmp first. Direct port of paramsubst's
+            // `singsub(&sub)` step in the subscript-resolve path.
+            let mut substate_mut = SubstState {
+                errflag: state.errflag,
+                opts: state.opts.clone(),
+                variables: state.variables.clone(),
+                arrays: state.arrays.clone(),
+                assoc_arrays: state.assoc_arrays.clone(),
+                skip_filesub: state.skip_filesub,
+                function_names: state.function_names.clone(),
+                command_names: state.command_names.clone(),
+                alias_names: state.alias_names.clone(),
+            };
+            let resolved_sub = singsub_no_tilde(sub, &mut substate_mut);
+            // For splice forms `@`/`*`, return the full key list
+            // / value list per the special's contract; otherwise
+            // resolve the single key.
+            let val = crate::exec::with_executor(|exec| {
+                exec.get_special_array_value(name, &resolved_sub).unwrap_or_default()
+            });
+            return if val.is_empty() {
+                Vec::new()
+            } else {
+                vec![val]
+            };
+        }
+    }
+
     // Scalar
     let value = get_param_value(name, state);
     if value.is_empty() {
