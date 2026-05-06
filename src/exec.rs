@@ -4118,10 +4118,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     // `(p)` print-escape interpretation per
                     // src/zsh/Src/subst.c:2381-2382 — `\n`, `\t`,
                     // `\xNN`, `\NNN` (octal) etc. become the actual
-                    // characters in the separator. Without (p) these
-                    // stay literal two-char sequences.
+                    // characters in the separator. Additionally,
+                    // (p) enables \$VAR / \${VAR} / \$(cmd) /
+                    // \$((expr)) expansion in the separator string
+                    // (zsh's parsestr+singsub treatment of get_strarg
+                    // results when the (p) flag is present). Without
+                    // (p), these stay literal — confirmed via
+                    // /opt/homebrew/bin/zsh -fc.
                     if print_escapes && !sep.is_empty() {
                         sep = print_escape_str(&sep);
+                        if sep.contains('$') || sep.contains('`') {
+                            sep = with_executor(|exec| exec.expand_string(&sep));
+                        }
                     }
                     if c == 'j' {
                         state = match state {
