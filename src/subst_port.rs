@@ -2229,12 +2229,43 @@ fn parse_brace_param(
             })
             .unwrap_or_default()
     } else if flags.keys && state.assoc_arrays.contains_key(&var_name) {
-        // `${(k)assoc}` → keys, in insertion order.
-        state
-            .assoc_arrays
-            .get(&var_name)
-            .map(|m| m.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default()
+        // `${(k)assoc}` → keys, in insertion order. With a subscript
+        // `${(k)assoc[KEY]}` returns the key for that lookup (echoes
+        // KEY back if present, empty if absent). With a flag-bearing
+        // subscript like `${(k)assoc[(I)pat]}`, the (I) index-search
+        // already returns the matched KEYS (per Src/params.c::getarg
+        // line 1576-1595, hash branch with `ind = down = 1`). The
+        // (k) flag is therefore a no-op for `(I)`/`(R)` but must still
+        // be honored for plain key lookups so the result is the key
+        // not the value.
+        let m = state.assoc_arrays.get(&var_name).cloned().unwrap_or_default();
+        if let Some(sub) = subscript.as_deref() {
+            // Reuse the (I)/(R)/exact-key dispatch already wired for
+            // `${assoc[sub]}`. For (k)+`(I)pat` zsh returns the
+            // matched keys directly (Src/params.c getarg's hash
+            // branch sets `ind = down = 1` and returns names from the
+            // table). For (k)+exact-key it returns the key when
+            // present, empty otherwise.
+            let pairs: Vec<(String, String)> =
+                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let parsed = parse_subscript_flags(sub);
+            let has_index_flag = parsed
+                .as_ref()
+                .map(|(f, _)| f.has_index_or_reverse_index())
+                .unwrap_or(false);
+            if let (true, Some((sub_flags, pat))) = (has_index_flag, parsed) {
+                apply_assoc_subscript_flags_pub(&pairs, sub_flags, &pat)
+            } else {
+                let key = singsub_no_tilde(sub, state);
+                if m.contains_key(&key) {
+                    vec![key]
+                } else {
+                    Vec::new()
+                }
+            }
+        } else {
+            m.keys().cloned().collect()
+        }
     } else if flags.keys {
         // `${(k)<magic-assoc>}` for specials NOT in `assoc_arrays`
         // (`aliases`, `functions`, `options`, `commands`, `terminfo`,
@@ -3052,6 +3083,13 @@ pub struct SubscriptFlags {
     keys: bool,
     /// `(n)` — numeric comparison (for `r`/`R`).
     numeric: bool,
+}
+
+impl SubscriptFlags {
+    /// `(i)` or `(I)` — index-search subscript flag was present.
+    pub fn has_index_or_reverse_index(&self) -> bool {
+        self.forward_index || self.reverse_index
+    }
 }
 
 /// Parse a `(flags)pattern` subscript prefix. Returns `Some((flags,

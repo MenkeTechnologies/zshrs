@@ -1643,4 +1643,334 @@ echo "via-direct=${my_segment_1}"
 echo "via-indirect=${(P)sanitized}""#,
         );
     }
+
+    // ─── batch added 2026-05-06 — validated against /opt/homebrew/bin/zsh ───
+
+    /// User-provided megamonster: split on "->", strip leading whitespace
+    /// per element, strip trailing whitespace per element. Triple-nested
+    /// `(@)` flag to preserve array shape across each strip phase.
+    /// Requires `extendedglob` for `[[:space:]]##` to mean "1+".
+    #[test]
+    fn triple_nested_split_strip_strip() {
+        assert_parity(
+            r#"setopt extendedglob
+___subst="  alpha  ->   beta  ->  gamma  ->  delta  "
+print -l -- ${(@)${(@)${(@s:->:)___subst}##[[:space:]]##}%%[[:space:]]##}"#,
+        );
+    }
+
+    /// `${(@)a##pat}` — per-element prefix-strip on indexed array,
+    /// preserving array shape so `print -l` emits one line per element.
+    #[test]
+    fn array_prefix_strip_per_element_with_at_flag() {
+        assert_parity(r#"a=(xfoo xbar xbaz); print -l -- ${(@)a##x}"#);
+    }
+
+    /// `${a##pat}` — per-element prefix-strip on indexed array WITHOUT
+    /// explicit `(@)` flag. zsh still applies per-element by default for
+    /// `##` / `%%` / `#` / `%` on arrays.
+    #[test]
+    fn array_prefix_strip_per_element_default() {
+        assert_parity(r#"a=(xfoo xbar xbaz); print -l -- ${a##x}"#);
+    }
+
+    /// Array `##` strip with extendedglob `##` quantifier (1+).
+    #[test]
+    fn array_strip_extendedglob_plus_one() {
+        assert_parity(
+            r#"setopt extendedglob
+a=("  foo" "   bar" "    baz")
+print -l -- ${(@)a##[[:space:]]##}"#,
+        );
+    }
+
+    /// `${(@s:|:)str}` — array-form split on pipe separator.
+    #[test]
+    fn at_split_pipe_separator() {
+        assert_parity(r#"x="alpha|beta|gamma"; print -l -- ${(@s:|:)x}"#);
+    }
+
+    /// `typeset -g $name=val` — dynamic global assignment via name in var.
+    #[test]
+    fn dynamic_typeset_g_indirect_name() {
+        assert_parity(
+            r#"name=foo
+typeset -g $name=bar
+echo $foo"#,
+        );
+    }
+
+    /// `${(F)arr}` — join array with newline. Ubiquitous in zinit.
+    #[test]
+    fn F_flag_join_with_newline() {
+        assert_parity(r#"a=(one two three); print -- "${(F)a}""#);
+    }
+
+    /// `${(0)str}` — split on null bytes. Used by zinit when reading
+    /// `find -print0`-style command output.
+    #[test]
+    fn zero_flag_null_byte_split() {
+        assert_parity(r#"x=$'a\0b\0c'; print -l ${(0)x}"#);
+    }
+
+    /// `${(kv)assoc}` — flatten assoc into key/value pairs. Order is
+    /// implementation-defined, so sort to compare.
+    #[test]
+    fn kv_flat_pairs_sorted() {
+        assert_parity(
+            r#"typeset -A m=(k1 v1 k2 v2)
+print -l -- ${(kv)m} | sort"#,
+        );
+    }
+
+    /// `${(O)arr}` — reverse-sort array (descending lexicographic).
+    #[test]
+    fn O_flag_reverse_sort() {
+        assert_parity(r#"a=(banana apple cherry); print -l ${(O)a}"#);
+    }
+
+    /// `${(oi)arr}` — case-insensitive sort.
+    #[test]
+    fn oi_flag_case_insensitive_sort() {
+        assert_parity(r#"a=(Bee ant Cat ANT); print -l ${(oi)a}"#);
+    }
+
+    /// `${(uon)arr}` — unique + ordered + numeric. With non-numeric
+    /// strings, `n` falls back to lexicographic.
+    #[test]
+    fn uon_flag_unique_ordered() {
+        assert_parity(r#"a=(c a b a c d b); print -l ${(uon)a}"#);
+    }
+
+    /// `${(j:|:)a}::${(j:.:)b}` — two different join separators in one
+    /// string, common in p10k segment formatting.
+    #[test]
+    fn chained_joins_two_separators() {
+        assert_parity(r#"a=(x y z); b=(1 2 3); print -- "${(j:|:)a}::${(j:.:)b}""#);
+    }
+
+    /// `${a[$(echo $i)]}` — subscript with cmd-subst result.
+    #[test]
+    fn subscript_via_cmdsubst_result() {
+        assert_parity(r#"a=(alpha beta gamma); i=2; print -- "${a[$(echo $i)]}""#);
+    }
+
+    // ─── extracted from /Users/wizard/.zinit/bin — real-world patterns ──
+
+    /// User-supplied path-build idiom from zinit/bin/zinit.zsh:1008
+    /// `${reply[-2]}${${reply[-2]:#(%|/)*}:+/}${reply[-1]//---//}`
+    /// — concat reply[-2], add "/" only if reply[-2] doesn't start with %
+    /// or /, then reply[-1] with "---" → "/".
+    /// Three cases: starts with /, starts with %, plain word.
+    #[test]
+    fn zinit_relative_path_build_from_reply() {
+        assert_parity(
+            r#"reply=(prefix /usr/local repo---name)
+print -- "[${reply[-2]}${${reply[-2]:#(%|/)*}:+/}${reply[-1]//---//}]"
+reply=(prefix %home repo---name)
+print -- "[${reply[-2]}${${reply[-2]:#(%|/)*}:+/}${reply[-1]//---//}]"
+reply=(prefix mydir repo---name)
+print -- "[${reply[-2]}${${reply[-2]:#(%|/)*}:+/}${reply[-1]//---//}]""#,
+        );
+    }
+
+    /// zinit.zsh:39 — `${${(M)Z[BIN_DIR]:#/*}:-$PWD/${Z[BIN_DIR]}}`:
+    /// if BIN_DIR is absolute use as-is, else prepend $PWD.
+    #[test]
+    fn zinit_bin_dir_absolute_else_pwd_prepend() {
+        assert_parity(
+            r#"PWD=/cwd
+typeset -A Z=(BIN_DIR rel/path)
+print -- "${${(M)Z[BIN_DIR]:#/*}:-$PWD/${Z[BIN_DIR]}}"
+typeset -A Z2=(BIN_DIR /abs/path)
+print -- "${${(M)Z2[BIN_DIR]:#/*}:-$PWD/${Z2[BIN_DIR]}}""#,
+        );
+    }
+
+    /// zinit.zsh:245 — UTF-8-conditional decoration:
+    /// `${${${(M)LANG:#*UTF-8*}:+⋯⋯}:-...}`
+    #[test]
+    fn zinit_lang_utf8_conditional_decoration() {
+        assert_parity(
+            r#"LANG=en_US.UTF-8
+print -- "${${${(M)LANG:#*UTF-8*}:+UTF}:-ASCII}"
+LANG=C
+print -- "${${${(M)LANG:#*UTF-8*}:+UTF}:-ASCII}""#,
+        );
+    }
+
+    /// zinit.zsh:499 — conditional suffix: append " unmapped" only when
+    /// value equals "hold". `${${(M)val:#hold}:+, unmapped}`
+    #[test]
+    fn zinit_conditional_suffix_on_match() {
+        assert_parity(
+            r#"bmap=hold
+print -- "<$bmap${${(M)bmap:#hold}:+, unmapped}>"
+bmap=normal
+print -- "<$bmap${${(M)bmap:#hold}:+, unmapped}>""#,
+        );
+    }
+
+    /// zinit.zsh:1008 helper — `${1:-${${(M)2#/}:+%}}`:
+    /// first arg, or "%" if second arg starts with /, else empty.
+    #[test]
+    fn zinit_first_arg_or_percent_if_second_absolute() {
+        assert_parity(
+            r#"emit() { print -- "[${1:-${${(M)2#/}:+%}}]"; }
+emit "" "/abs"
+emit "" "rel"
+emit "given" "/abs""#,
+        );
+    }
+
+    /// zinit.zsh:1170 — `${${(M)reply[-2]:#%}:+${reply[2]}}`:
+    /// pick reply[2] only when reply[-2] is exactly "%".
+    #[test]
+    fn zinit_pick_reply_2_when_minus_two_is_percent() {
+        assert_parity(
+            r#"reply=(a b % c)
+print -- "[${${(M)reply[-2]:#%}:+${reply[2]}}]"
+reply=(W X %)
+print -- "[${${(M)reply[-2]:#%}:+${reply[2]}}]""#,
+        );
+    }
+
+    /// zinit.zsh:480 — the actual nested-strip line, validating zinit's
+    /// in-place transform of `pairs="a -> b -> c"`.
+    #[test]
+    fn zinit_pairs_arrow_split_strip() {
+        assert_parity(
+            r#"setopt extendedglob
+pairs="ice_a -> val_a -> next_a"
+res=( "${(@)${(@)${(@s:->:)pairs}##[[:space:]]##}%%[[:space:]]##}" )
+print -l -- $res"#,
+        );
+    }
+
+    /// zinit.zsh:476 — match-keep filter for trailing-backslash detect:
+    /// `${(M)pairs:#*\\(#e)}` — keep elements ending in literal `\`.
+    #[test]
+    fn zinit_pairs_trailing_backslash_filter() {
+        assert_parity(
+            r#"setopt extendedglob
+pairs=("foo\\" "bar" "baz\\" "qux")
+print -l -- ${(M)pairs:#*\\(#e)}"#,
+        );
+    }
+
+    /// zinit annex hook ordering — `${(@on)m[(I)pat]}`: enumerate keys
+    /// matching pattern, sorted ordered+numeric.
+    #[test]
+    fn zinit_annex_hook_indexed_sorted() {
+        assert_parity(
+            r#"setopt extendedglob
+typeset -A m=(
+  "z-annex hook:atclone-1 1" v1
+  "z-annex hook:atinit-2 5" v2
+  "z-annex hook:atclone-3 9" v3
+  "other key" vx
+)
+print -l -- ${(@on)m[(I)z-annex hook:atclone-<-> <->]}"#,
+        );
+    }
+
+    /// `(MS)str##(\;|(#s))val(\;|(#e))` — shortest-match keep with
+    /// anchored alternation. zinit's "is required token in list" check.
+    #[test]
+    fn zinit_required_token_anchored_match_keep() {
+        assert_parity(
+            r#"setopt extendedglob
+ICE_requires=";libpcre;libssl;libtls;"
+required="libssl"
+print -- "${(MS)ICE_requires##(\;|(#s))$required(\;|(#e))}""#,
+        );
+    }
+
+    /// `${(M)out[@]:#(#i)pat}` — case-insensitive filter-keep on array.
+    /// zinit uses this to keep archive-format-mentioning lines.
+    #[test]
+    fn zinit_case_insensitive_array_filter_keep() {
+        assert_parity(
+            r#"setopt extendedglob
+out=("foo TAR file" "bar PNG image" "baz Zip archive" "qux text")
+print -l -- ${(M)out[@]:#(#i)(* |(#s))(zip|tar|gzip) *}"#,
+        );
+    }
+
+    /// `${(L)desc/(#b)(#i)pat/$match[2]}` — case-insensitive backref
+    /// substitution lowering case. zinit's archive-name detector.
+    #[test]
+    fn zinit_lowercase_with_caseinsens_backref() {
+        assert_parity(
+            r#"setopt extendedglob
+desc="MyArchive ZIP package format"
+print -- ${(L)desc/(#b)(#i)(* |(#s))(zip|rar|tar) */$match[2]}"#,
+        );
+    }
+
+    /// `${(@Q)${(@z)cmd}}` — shell-tokenize then dequote each token.
+    /// zinit uses for stored param-subst strings in PARAM_SUBST.
+    #[test]
+    fn zinit_tokenize_then_dequote() {
+        assert_parity(
+            r#"cmd="echo \"hello world\" --foo"
+print -l -- ${(@Q)${(@z)cmd}}"#,
+        );
+    }
+
+    /// `${(l:N:: :)$(( arith ))%%[,.]*}` — left-pad numeric result of
+    /// arith to N chars, stripping any trailing fractional separator.
+    #[test]
+    fn zinit_left_pad_arith_strip_fraction() {
+        assert_parity(r#"val=42; print -- "[${(l:5:: :)$(( val * 1000 ))%%[,.]*}]""#);
+    }
+
+    /// `${(@s.;.)str}` — split scalar on `;` to array.
+    #[test]
+    fn zinit_split_on_semicolon() {
+        assert_parity(r#"p="foo;bar;baz;qux"; print -l -- ${(@s.;.)p}"#);
+    }
+
+    /// `${(j:|:)arr[@]//\//---}` — replace `/` with `---` per element,
+    /// then join with `|`. zinit's plugin-id canonicalization.
+    #[test]
+    fn zinit_replace_slash_then_join_pipe() {
+        assert_parity(
+            r#"regs=("a/b" "c/d" "e/f")
+print -- "${(j:|:)regs[@]//\//---}""#,
+        );
+    }
+
+    /// `${(@f)"$(cmd)"}` — line-split a cmd-subst preserving array.
+    /// Used in zinit for `git log` output, file lists, etc.
+    #[test]
+    fn zinit_at_f_line_split_cmdsubst() {
+        assert_parity(
+            r#"arr=(${(@f)"$(printf 'line1\nline2\nline3\n')"})
+print -- "count=${#arr} first=${arr[1]} last=${arr[-1]}""#,
+        );
+    }
+
+    /// `${arr[@]##$prefix}` — strip dynamic prefix from each element of
+    /// array. zinit uses for plugin-dir prefix stripping.
+    #[test]
+    fn zinit_array_strip_dynamic_prefix() {
+        assert_parity(
+            r#"a=(/tmp/zinit/p1 /tmp/zinit/p2 /tmp/zinit/p3)
+prefix="/tmp/zinit/"
+print -l -- ${(@)a[@]##$prefix}"#,
+        );
+    }
+
+    /// Anchored both-ends whitespace strip:
+    /// `${str//((#s)[[:space:]]##|[[:space:]]##(#e))/}` — strip leading
+    /// and trailing whitespace via single global replace.
+    #[test]
+    fn zinit_anchored_strip_both_ends() {
+        assert_parity(
+            r#"setopt extendedglob
+x="   hello world   "
+print -- "[${x//((#s)[[:space:]]##|[[:space:]]##(#e))/}]""#,
+        );
+    }
 }
