@@ -581,6 +581,96 @@ pub fn getkeystring_pub(s: &str) -> String {
 /// function. Direct port of paramsubst's chkset path when the
 /// parameter is one of the special-name table entries (Src/init.c
 /// special_params + Src/subst.c paramsubst's getfn invocation).
+/// Return `Some(keys)` for a recognized magic-assoc name, snapshot
+/// from the live executor. Wrapper around `magic_assoc_keys` for
+/// callers (like `BUILTIN_PARAM_FLAG`'s runtime handler) that don't
+/// have a `SubstState` already built but DO have access to the
+/// executor — synthesises a minimal `SubstState` on the fly.
+pub fn magic_assoc_keys_from_executor(
+    name: &str,
+    exec: &crate::exec::ShellExecutor,
+) -> Option<Vec<String>> {
+    let state = SubstState::from_executor(exec);
+    magic_assoc_keys(name, &state)
+}
+
+/// Synthesize the key list for a magic associative-array special
+/// that doesn't live in `state.assoc_arrays`. Direct port of the
+/// `scanfn` slot zsh's C source registers in each special's
+/// `paramdef` table (Src/Modules/parameter.c et al.). Returns
+/// `Some` with the populated list when the name is a recognized
+/// magic-assoc, `None` for "this is a regular variable, fall
+/// through to the empty-result path".
+pub fn magic_assoc_keys(name: &str, state: &SubstState) -> Option<Vec<String>> {
+    use std::collections::HashSet;
+    fn sorted_set(set: &HashSet<String>) -> Vec<String> {
+        let mut v: Vec<String> = set.iter().cloned().collect();
+        v.sort();
+        v
+    }
+    Some(match name {
+        "aliases" => sorted_set(&state.alias_names),
+        "functions" => sorted_set(&state.function_names),
+        "commands" => sorted_set(&state.command_names),
+        "options" => {
+            // Snapshot via with_executor — options aren't in
+            // SubstState.
+            let mut v: Vec<String> =
+                crate::exec::with_executor(|exec| exec.options.keys().cloned().collect());
+            v.sort();
+            v
+        }
+        "parameters" => {
+            // ${(k)parameters} = every defined parameter name.
+            // Snapshot variables / arrays / assoc-arrays from the
+            // current state.
+            let mut set: HashSet<String> = state.variables.keys().cloned().collect();
+            for k in state.arrays.keys() {
+                set.insert(k.clone());
+            }
+            for k in state.assoc_arrays.keys() {
+                set.insert(k.clone());
+            }
+            sorted_set(&set)
+        }
+        "terminfo" => crate::modules::terminfo::COMMON_STRING_CAPS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+        "termcap" => {
+            // Concatenate all three termcap-code halves so the user
+            // sees the full capability namespace.
+            let mut v: Vec<String> = Vec::new();
+            v.extend(
+                crate::modules::termcap::BOOL_CODES
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
+            v.extend(
+                crate::modules::termcap::NUM_CODES
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
+            v.extend(
+                crate::modules::termcap::STR_CODES
+                    .iter()
+                    .map(|s| s.to_string()),
+            );
+            v
+        }
+        "errnos" => crate::modules::system::ERRNO_NAMES
+            .iter()
+            .map(|(n, _)| (*n).to_string())
+            .collect(),
+        "sysparams" => vec![
+            "pid".to_string(),
+            "ppid".to_string(),
+            "procsubstpid".to_string(),
+        ],
+        _ => return None,
+    })
+}
+
 fn check_magic_assoc_set(name: &str, key: &str, state: &SubstState) -> bool {
     match name {
         "functions" | "dis_functions" => state.function_names.contains(key),
@@ -1811,6 +1901,15 @@ fn parse_brace_param(
             .get(&var_name)
             .map(|m| m.keys().cloned().collect::<Vec<_>>())
             .unwrap_or_default()
+    } else if flags.keys {
+        // `${(k)<magic-assoc>}` for specials NOT in `assoc_arrays`
+        // (`aliases`, `functions`, `options`, `commands`, `terminfo`,
+        // `errnos`, etc.). Direct port of paramsubst's magic-getfn
+        // dispatch path: zsh's C source resolves the special's
+        // scanfn at runtime and walks its key set. We synthesize
+        // the same set via the executor snapshot the harness
+        // stamped into SubstState.
+        magic_assoc_keys(&var_name, state).unwrap_or_default()
     } else if flags.values && state.assoc_arrays.contains_key(&var_name) {
         // `${(v)assoc}` → values (same as default for plain
         // `${assoc}` but explicit; provided for `(kv)` paired use).

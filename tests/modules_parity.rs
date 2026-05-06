@@ -642,4 +642,34 @@ print -- "${aliases[gst]}""#,
 [[ -n "${functions[f]}" ]] && echo defined"#,
         ));
     }
+
+    /// `${(k)aliases}` enumerates alias names. Bare splice (no DQ)
+    /// iterates each name; we filter to a known prefix and sort to
+    /// normalize zsh's hashtable order.
+    #[test]
+    fn k_flag_on_aliases_enumerates_names() {
+        assert_parity(&with_modules(
+            &["parameter"],
+            r#"alias xz_one=foo
+alias xz_two=bar
+alias xz_three=baz
+for n in ${(k)aliases}; do
+    case $n in xz_*) print -- $n;; esac
+done | sort -u"#,
+        ));
+    }
+
+    /// `${(k)functions}` enumerates user-defined function names.
+    #[test]
+    fn k_flag_on_functions_enumerates_names() {
+        assert_parity(&with_modules(
+            &["parameter"],
+            r#"my_one() { :; }
+my_two() { :; }
+my_three() { :; }
+for n in ${(k)functions}; do
+    case $n in my_*) print -- $n;; esac
+done | sort -u"#,
+        ));
+    }
 }
