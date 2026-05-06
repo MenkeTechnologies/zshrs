@@ -2934,6 +2934,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         crate::modules::termcap::lookup(idx).unwrap_or_default(),
                     ))
                 }
+                "terminfo" => {
+                    // `${terminfo[capname]}` — direct port of
+                    // `getterminfo()` from Src/Modules/terminfo.c:135.
+                    // Lazy ncurses tigetstr/tigetnum/tigetflag lookup
+                    // for any capability the script names. The
+                    // executor also pre-seeds the common subset
+                    // into `assoc_arrays["terminfo"]` so
+                    // `${(k)terminfo}` enumerates the seeded names —
+                    // but the magic-assoc path runs FIRST (per the
+                    // `user_defined_assoc` gate at line 3108), so
+                    // for INDEX lookups we always reach `lookup()`
+                    // and uncommon caps like `bel` resolve correctly.
+                    Some(Value::str(
+                        crate::modules::terminfo::lookup(idx).unwrap_or_default(),
+                    ))
+                }
                 "errnos" => {
                     // zsh/system module: `${errnos[N]}` is an INDEXED
                     // array of errno-name strings, 1-based. Direct
@@ -10640,29 +10656,15 @@ impl ShellExecutor {
                 a.insert("path".to_string(), path_dirs);
                 a
             },
-            assoc_arrays: {
-                // Pre-populate `terminfo` so `${terminfo[capname]}`
-                // returns the resolved capability string for keys a
-                // script is likely to iterate (`for k in keys ${(k)
-                // terminfo}`). Each value is fetched via ncurses
-                // tigetstr/tigetnum/tigetflag against the live
-                // database for `$TERM`. Direct port of zsh/Src/
-                // Modules/terminfo.c::scanterminfo's eager-walk path.
-                // Lazy lookup of names not in this seed list still
-                // works through `get_special_array_value` →
-                // `crate::modules::terminfo::lookup`.
-                let mut a = HashMap::new();
-                let mut tinfo = IndexMap::new();
-                for cap in crate::modules::terminfo::COMMON_STRING_CAPS {
-                    if let Some(v) = crate::modules::terminfo::lookup(cap) {
-                        if !v.is_empty() {
-                            tinfo.insert((*cap).to_string(), v);
-                        }
-                    }
-                }
-                a.insert("terminfo".to_string(), tinfo);
-                a
-            },
+            // `terminfo` and `termcap` are NOT pre-seeded into
+            // `assoc_arrays` — `magic_assoc_lookup` handles them
+            // lazily via ncurses (tigetstr/tgetstr) so ANY cap name
+            // resolves, not just a hardcoded common subset. Pre-
+            // seeding broke uncommon caps (e.g. `${terminfo[bel]}`
+            // returned "") because the `user_defined_assoc` gate at
+            // line ~3110 short-circuits magic-lookup once the name
+            // is already in `assoc_arrays`.
+            assoc_arrays: HashMap::new(),
             jobs: JobTable::new(),
             fpath,
             zwc_cache: HashMap::new(),
@@ -11163,6 +11165,18 @@ impl ShellExecutor {
             "zf_rm" => return self.builtin_rm(&rest_vec),
             "zf_rmdir" => return self.builtin_rmdir(&rest_vec),
             "zf_sync" => return self.builtin_sync(&rest_vec),
+            // `zstat` — port of zsh/stat module (Src/Modules/stat.c
+            // BUILTIN("zstat", …)). Returns file metadata as
+            // `field value` pairs / an assoc / a plus-separated
+            // list depending on flags. zsh ALSO registers `stat`
+            // bound to the same handler, but that name conflicts
+            // with the system `stat(1)` binary (every script that
+            // calls `stat -f '%Lp' …` would break). zsh resolves
+            // this through opt-in `zmodload`; zshrs's modules are
+            // statically linked so we keep `stat` routing to the
+            // external command and only intercept the unambiguous
+            // `zstat` name.
+            "zstat" => return self.builtin_zstat(&rest_vec),
             _ => {}
         }
 

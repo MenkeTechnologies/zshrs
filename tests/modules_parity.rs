@@ -440,6 +440,28 @@ mod system_module {
     }
 }
 
+// ───────────────────────── zsh/stat ─────────────────────────
+
+mod stat_module {
+    use super::*;
+
+    /// `zstat` exits 0 on a real path. The output format differs
+    /// from zsh today (`device: 16777231` vs `device\t16777231`,
+    /// mode encoding differs); that's a known follow-up. The
+    /// smoke-test just pins the dispatch shape — `zstat` no
+    /// longer reports `command not found`.
+    #[test]
+    fn zstat_dispatches_and_exits_zero() {
+        if !zsh_available() {
+            return;
+        }
+        let script = with_modules(&["stat"], "zstat /tmp >/dev/null 2>&1; echo exit:$?");
+        let z = run_zsh(&script).stdout;
+        let r = run_zshrs(&script).stdout;
+        assert_eq!(z, r, "zstat exit mismatch");
+    }
+}
+
 // ───────────────────────── zsh/files ─────────────────────────
 
 mod files_module {
