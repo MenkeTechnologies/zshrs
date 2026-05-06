@@ -12105,10 +12105,15 @@ impl ShellExecutor {
         }
 
         // Cache miss — read, parse, compile, execute, then cache.
+        // No history expansion: zsh fires `!` history sub only on
+        // interactive input (the REPL line). Sourced files are
+        // verbatim — `(( !${#ARR} ))` (logical-not) must NOT
+        // become `(( <last-arg-of-prev-cmd>{#ARR} ))`. Direct port
+        // of Src/init.c source() which calls `lex_init_buf` /
+        // `loop()` without engaging the history layer.
         let content =
             std::fs::read_to_string(file_path).map_err(|e| format!("{}: {}", file_path, e))?;
-        let expanded = self.expand_history(&content);
-        let mut parser = crate::parser::ZshParser::new(&expanded);
+        let mut parser = crate::parser::ZshParser::new(&content);
         let program = parser.parse().map_err(|errs| {
             errs.first()
                 .map(|e| format!("{}", e))
@@ -12150,8 +12155,13 @@ impl ShellExecutor {
     /// Execute via the ZshLexer + ZshParser + ZshCompiler pipeline.
     /// This is the only execution path; `execute_script` delegates here.
     pub fn execute_script_zsh_pipeline(&mut self, script: &str) -> Result<i32, String> {
-        let expanded = self.expand_history(script);
-        let mut parser = crate::parser::ZshParser::new(&expanded);
+        // Skip history expansion for non-interactive script execution
+        // (`zsh -c '…'`, internal eval, sourced files). zsh's `!`
+        // history sub only fires on the REPL command line, never on
+        // a pre-parsed script body. The interactive REPL has its
+        // own dedicated path that calls expand_history before
+        // dispatching here.
+        let mut parser = crate::parser::ZshParser::new(script);
         let program = match parser.parse() {
             Ok(p) => p,
             Err(errs) => {
