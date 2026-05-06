@@ -703,6 +703,22 @@ pub fn magic_assoc_keys(name: &str, state: &SubstState) -> Option<Vec<String>> {
     })
 }
 
+/// Synthesize the value list for a magic associative-array special.
+/// Mirrors `magic_assoc_keys` but resolves each key through the
+/// executor's `get_special_array_value` to get the corresponding
+/// value. Used by `${(v)assoc}` / `${assoc}` / `${(kv)assoc}` for
+/// magic-assocs that don't live in `state.assoc_arrays` (aliases,
+/// functions, commands, options, parameters, …).
+pub fn magic_assoc_values(name: &str, state: &SubstState) -> Option<Vec<String>> {
+    let keys = magic_assoc_keys(name, state)?;
+    let values = crate::exec::with_executor(|exec| {
+        keys.iter()
+            .map(|k| exec.get_special_array_value(name, k).unwrap_or_default())
+            .collect::<Vec<String>>()
+    });
+    Some(values)
+}
+
 fn check_magic_assoc_set(name: &str, key: &str, state: &SubstState) -> bool {
     match name {
         "functions" | "dis_functions" => state.function_names.contains(key),
@@ -2186,6 +2202,12 @@ fn parse_brace_param(
             .get(&var_name)
             .map(|m| m.values().cloned().collect::<Vec<_>>())
             .unwrap_or_default()
+    } else if flags.values {
+        // `${(v)<magic-assoc>}` for specials NOT in `assoc_arrays`
+        // — mirror the `${(k)<magic-assoc>}` path that walks the
+        // synthesized scanfn key set, but resolve each key through
+        // the executor's get_special_array_value to get values.
+        magic_assoc_values(&var_name, state).unwrap_or_default()
     } else if flags.prompt_expand {
         // `(P)` indirect — read var_name's scalar value, then look
         // up THAT as a parameter name. Src/subst.c:1983-2000.
