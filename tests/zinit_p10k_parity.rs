@@ -818,6 +818,26 @@ echo "m[foo]=${m[foo]} m[k]=${m[$k]}""#,
         );
     }
 
+    /// `local -a opts=("$@")` — copy positional args into a local
+    /// array. Plugin code uses this constantly to capture caller
+    /// args before re-parsing. Was being routed through typeset's
+    /// arg loop where the spliced "$@" elements got broken across
+    /// separate args (`["-a", "opts=(a", "b", "c)"]`); the loop
+    /// processed only the first arg's parens content (just `a`) so
+    /// `opts` ended up as a 1-element array. Now the loop gobbles
+    /// continuation args until paren depth balances.
+    #[test]
+    fn local_array_init_from_dollar_at() {
+        assert_parity(
+            r#"fn() {
+  local -a opts=("$@")
+  echo "n=$#opts"
+  for o in "${opts[@]}"; do echo "[$o]"; done
+}
+fn a b c d"#,
+        );
+    }
+
     /// `cfg[${pair%%=*}]="${pair#*=}"` — zinit/oh-my-zsh config-parse
     /// pattern. The `=` inside the strip-pattern subscript fooled
     /// the assignment-splitter into cutting the LHS at the inner
