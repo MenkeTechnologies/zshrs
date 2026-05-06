@@ -8297,6 +8297,18 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn regex_match(&mut self, s: &str, regex: &str) -> bool {
+        // Untokenize the pattern + subject before compiling. zsh's
+        // lexer emits SNULL/DQ markers around quoted regions; if a
+        // single-quoted regex like `'([a-z]+)([0-9]+)'` reaches us
+        // with the SNULL bytes still present, regex::Regex::new
+        // returns Err (the markers aren't valid pattern syntax).
+        // Direct port of zsh's bin_test path which calls untokenize()
+        // on both operands before handing to the regex compiler
+        // (Src/cond.c:cond_match).
+        let regex = crate::lexer::untokenize(regex);
+        let s = crate::lexer::untokenize(s);
+        let s = s.as_str();
+        let regex = regex.as_str();
         // Compile (cached) and run captures so we can populate the
         // zsh-side magic vars: `$MATCH` (full match), `$match[N]`
         // (capture groups), and `$mbegin`/`$mend` (1-based offsets).
@@ -32627,6 +32639,84 @@ impl ShellExecutor {
         out
     }
 
+    /// Print-builtin escape decoder. Same recognised-escape set as
+    /// `expand_printf_escapes`, but drops the leading backslash for
+    /// any UNRECOGNISED `\X` (so `\ ` → ` `, `\X` → `X`). Direct
+    /// port of getkeystring() / printflags() behavior the C-source
+    /// bin_print uses (Src/utils.c:5045-5180). Echo continues using
+    /// the keep-backslash variant.
+    fn expand_print_escapes(&self, s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => result.push('\n'),
+                    Some('t') => result.push('\t'),
+                    Some('r') => result.push('\r'),
+                    Some('\\') => result.push('\\'),
+                    Some('a') => result.push('\x07'),
+                    Some('b') => result.push('\x08'),
+                    Some('e') | Some('E') => result.push('\x1b'),
+                    Some('f') => result.push('\x0c'),
+                    Some('v') => result.push('\x0b'),
+                    Some('0') => {
+                        let mut octal = String::new();
+                        while octal.len() < 3 {
+                            if let Some(&d) = chars.peek() {
+                                if ('0'..='7').contains(&d) {
+                                    octal.push(d);
+                                    chars.next();
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        if octal.is_empty() {
+                            result.push('\0');
+                        } else if let Ok(val) = u8::from_str_radix(&octal, 8) {
+                            result.push(val as char);
+                        }
+                    }
+                    Some('c') => break,
+                    Some('x') => {
+                        let mut hex = String::new();
+                        while hex.len() < 2 {
+                            if let Some(&d) = chars.peek() {
+                                if d.is_ascii_hexdigit() {
+                                    hex.push(d);
+                                    chars.next();
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        if hex.is_empty() {
+                            result.push('\\');
+                            result.push('x');
+                        } else if let Ok(val) = u8::from_str_radix(&hex, 16) {
+                            result.push(val as char);
+                        }
+                    }
+                    Some(other) => {
+                        // Print-specific: drop the backslash for
+                        // unrecognised escapes. zsh's `print "\ "`
+                        // emits a single space, not `\<space>`.
+                        result.push(other);
+                    }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
     fn expand_printf_escapes(&self, s: &str) -> String {
         let mut result = String::new();
         let mut chars = s.chars().peekable();
@@ -32686,6 +32776,15 @@ impl ShellExecutor {
                         }
                     }
                     Some(other) => {
+                        // For unrecognised `\X` escapes zsh's `print`
+                        // drops the backslash (`\ ` → ` `, `\.` → `.`)
+                        // BUT `echo` keeps it (`\ ` stays `\ `). Both
+                        // paths share this expander; the more
+                        // permissive "keep" form preserves `:q`-flag
+                        // round-trips through `echo` (which is what
+                        // user scripts test against). The print-only
+                        // drop semantics are handled at the print-
+                        // builtin layer separately.
                         result.push('\\');
                         result.push(other);
                     }
@@ -34211,7 +34310,15 @@ impl ShellExecutor {
                     // a superset of the standard set.
                     result = self.expand_bindkey_escapes(&result);
                 } else if interpret_escapes && !raw_mode {
-                    result = self.expand_printf_escapes(&result);
+                    // `print` (in contrast to `echo`) drops backslashes
+                    // for unrecognised `\X` escapes — zsh's bin_print
+                    // (Src/builtin.c:4587) calls getkeystring() which
+                    // collapses `\X` to `X` for X not in the
+                    // recognised-escape set. `echo` keeps them
+                    // verbatim. Use the print-specific decoder here so
+                    // `print -- "${(q)var}"` round-trips back to the
+                    // original spaces.
+                    result = self.expand_print_escapes(&result);
                 }
                 if named_dir_subst {
                     // Replace home dir with ~

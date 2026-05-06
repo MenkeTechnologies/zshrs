@@ -3177,8 +3177,16 @@ impl ZshCompiler {
                     // glob expansion is moot for `=~` because the test
                     // runtime treats the result as a regex pattern, not
                     // a filesystem path. Wrap in DQ to suppress brace
-                    // expansion + filesystem globbing during expansion.
-                    let dq_wrapped = if right.starts_with('\u{9e}') {
+                    // expansion + filesystem globbing during expansion
+                    // — UNLESS the operand is ALREADY single-quoted
+                    // (SNULL-wrapped, `\u{9d}…\u{9d}`). zsh treats
+                    // `[[ x =~ '(pat)' ]]` as a literal regex; double-
+                    // wrapping in DQ markers makes compile_word_str's
+                    // markup-strip skip the SNULL pair and the regex
+                    // engine sees the meta bytes verbatim.
+                    let already_sq_wrapped = right.starts_with('\u{9d}')
+                        && right.ends_with('\u{9d}');
+                    let dq_wrapped = if right.starts_with('\u{9e}') || already_sq_wrapped {
                         right.clone()
                     } else {
                         format!("\u{9e}{}\u{9e}", right)
