@@ -277,17 +277,15 @@ impl SubstState {
         // truth lives in `exec.positional_params`; the snapshot is
         // read-only — `set --` runs through exec directly, not
         // through SubstState.
-        if !exec.positional_params.is_empty() {
-            arrays
-                .entry("@".to_string())
-                .or_insert_with(|| exec.positional_params.clone());
-            arrays
-                .entry("*".to_string())
-                .or_insert_with(|| exec.positional_params.clone());
-            arrays
-                .entry("argv".to_string())
-                .or_insert_with(|| exec.positional_params.clone());
-        }
+        // ALWAYS overwrite any pre-existing "@"/"*"/"argv" entry —
+        // exec.positional_params is the live source. An earlier
+        // `.entry().or_insert_with()` pattern left stale values from
+        // prior calls (e.g. function arg "ls" surviving into the
+        // next call's "nope_zr" scope), breaking `${+commands[$1]}`
+        // inside fns called more than once.
+        arrays.insert("@".to_string(), exec.positional_params.clone());
+        arrays.insert("*".to_string(), exec.positional_params.clone());
+        arrays.insert("argv".to_string(), exec.positional_params.clone());
 
         SubstState {
             errflag: false,
@@ -2332,7 +2330,15 @@ fn parse_brace_param(
                 // (Src/subst.c paramsubst's getindex → vunset
                 // chain ends up testing param->gsu.h->getfn
                 // returning a non-NULL value).
-                let resolved = singsub_no_tilde(sub, state);
+                // Use expand_subscript_pat (not singsub_no_tilde)
+                // because it handles digit-name positionals via
+                // state.arrays["@"] — without that path, `${+commands[$1]}`
+                // inside a function passed the literal "$1" as the
+                // key and check_magic_assoc_set's PATH walk couldn't
+                // find it. Direct port of Src/subst.c paramsubst's
+                // pre-getindex singsub() pass which DOES expand
+                // positionals at this point.
+                let resolved = expand_subscript_pat(sub, state);
                 check_magic_assoc_set(&var_name, &resolved, state)
             }
         } else {
