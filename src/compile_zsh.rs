@@ -2303,6 +2303,68 @@ impl ZshCompiler {
             }
         }
 
+        // Bridge-array (no flag chain) fast path: outer `${${...}<op>}`
+        // where the operand starts with a nested `${...}`. The inner
+        // expansion may produce an array (split flags, subscript slice,
+        // etc.) and the outer operator (replace `/` / `//`, strip
+        // `#` / `%`, etc.) applies per-element. Without this, the
+        // EXPAND_TEXT bridge scalar-flattens the result.
+        // Direct port of zsh's aval threading through paramsubst when
+        // the operand is itself a recursive substitution.
+        if !has_bnull {
+            if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+                // Operand starts with `${`: the inner expansion is
+                // the value-source. Detect outer operator `/` / `//` /
+                // `/#` / `/%` / `##` / `#` / `%%` / `%` after the
+                // nested `${...}`.
+                if inner.starts_with("${") {
+                    // Find the matching `}` of the inner `${...}`.
+                    let mut depth = 0;
+                    let mut inner_close = None;
+                    let bytes = inner.as_bytes();
+                    let mut i = 0;
+                    while i < bytes.len() {
+                        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                            depth += 1;
+                            i += 2;
+                            continue;
+                        }
+                        if bytes[i] == b'}' {
+                            depth -= 1;
+                            if depth == 0 {
+                                inner_close = Some(i);
+                                break;
+                            }
+                        }
+                        i += 1;
+                    }
+                    if let Some(close_pos) = inner_close {
+                        let after = &inner[close_pos + 1..];
+                        // Detect outer operators that benefit from
+                        // array-shape preservation.
+                        let has_array_op = after.starts_with("//")
+                            || after.starts_with("/#")
+                            || after.starts_with("/%")
+                            || after.starts_with('/')
+                            || after.starts_with("##")
+                            || after.starts_with('#')
+                            || after.starts_with("%%")
+                            || after.starts_with('%')
+                            || after.starts_with(":#");
+                        if has_array_op {
+                            let body_const = self.builder.add_constant(Value::str(inner));
+                            self.builder.emit(Op::LoadConst(body_const), 0);
+                            self.builder.emit(
+                                Op::CallBuiltin(crate::exec::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                                0,
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // Phase 1 native param-modifier lowerings. Each replaces a
         // bridge case. The matcher is greedy from least-ambiguous to
         // most: `:-`, `:=`, `:?`, `:+` first (modifier ops), then
