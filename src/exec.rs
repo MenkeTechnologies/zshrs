@@ -3175,6 +3175,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
         if flip_to_keys {
             idx = idx[1..].to_string();
         }
+        // Pre-expand `$((arith))` / `$VAR` / `$(cmd)` references in
+        // the subscript text so downstream slice / index logic sees
+        // numeric literals it can parse. The compile path passes the
+        // raw subscript text as a constant; without expansion, a key
+        // like `$((1+1)),-1` failed `parse::<i64>()` for the lower
+        // bound and the whole slice fell back to scalar concat.
+        // Special-flag keys `(I)pat` / `(R)pat` skip this — those
+        // already get their `$VAR` resolution inside the matchers.
+        if idx.contains('$')
+            && !idx.starts_with("(I)")
+            && !idx.starts_with("(i)")
+            && !idx.starts_with("(R)")
+            && !idx.starts_with("(r)")
+            && !idx.starts_with("(K)")
+            && !idx.starts_with("(k)")
+        {
+            idx = with_executor(|exec| exec.expand_string(&idx));
+        }
         // `${pipestatus[N]}` / `${PIPESTATUS[N]}` — pipeline exit
         // status array. Populated by BUILTIN_PIPELINE_EXEC after a
         // real pipeline; for single commands fall back to a synthetic
