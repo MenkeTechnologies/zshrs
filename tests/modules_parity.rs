@@ -161,6 +161,60 @@ mod regex_module {
     }
 }
 
+// ───────────────────────── zsh/pcre ─────────────────────────
+
+mod pcre_module {
+    use super::*;
+
+    /// `[[ str -pcre-match pat ]]` truthiness shape — direct test
+    /// of `cond_pcre_match` (Src/Modules/pcre.c:506 CONDDEF).
+    /// zshrs uses the Rust `regex` crate (RE2 engine) so PCRE
+    /// features like backreferences aren't tested here — only the
+    /// common subset both engines accept.
+    #[test]
+    fn pcre_match_basic_truthy() {
+        assert_parity(&with_modules(
+            &["pcre"],
+            r#"[[ "hello world" -pcre-match "wor.d" ]] && echo Y || echo N"#,
+        ));
+    }
+
+    /// Capture groups populate `$MATCH` and `$match[1..N]`. Direct
+    /// test of `zpcre_get_substrings` (pcre.c:156-330) — same
+    /// magic-var contract as `=~` / `-regex-match`.
+    #[test]
+    fn pcre_match_captures() {
+        assert_parity(&with_modules(
+            &["pcre"],
+            r#"[[ "key=42" -pcre-match "([a-z]+)=([0-9]+)" ]] && echo "$MATCH|$match[1]|$match[2]""#,
+        ));
+    }
+
+    /// `pcre_compile pat` then `pcre_match str`: stateful API.
+    /// Direct test of the `pcre_pattern` static slot in pcre.c
+    /// (line 35) shared between `bin_pcre_compile` (line 70) and
+    /// `bin_pcre_match` (line 328).
+    #[test]
+    fn pcre_compile_then_match_stateful() {
+        assert_parity(&with_modules(
+            &["pcre"],
+            r#"pcre_compile "[a-z]+=[0-9]+"
+pcre_match "key=42" && echo "matched: $MATCH""#,
+        ));
+    }
+
+    /// `pcre_match` without a prior `pcre_compile` should error.
+    /// pcre.c:343 `if (pcre_pattern == NULL) zwarnnam(nam, "no
+    /// pattern has been compiled"); return 1;`
+    #[test]
+    fn pcre_match_without_compile_errors() {
+        assert_parity(&with_modules(
+            &["pcre"],
+            r#"pcre_match "anything" >/dev/null 2>&1; print -- "exit:$?""#,
+        ));
+    }
+}
+
 // ───────────────────────── zsh/datetime ─────────────────────────
 
 mod datetime_module {
@@ -223,6 +277,136 @@ mod terminfo_module {
         let z = run_zsh(&script).stdout;
         let r = run_zshrs(&script).stdout;
         assert_eq!(z.as_bytes(), r.as_bytes());
+    }
+}
+
+// ───────────────────────── zsh/system ─────────────────────────
+
+mod system_module {
+    use super::*;
+
+    /// `${errnos[1..3]}` returns POSIX-stable name list. Direct
+    /// test of the `SPECIALPMDEF("errnos", PM_ARRAY|PM_READONLY,
+    /// &errnos_gsu, …)` entry at Src/Modules/system.c:902 +
+    /// `errnosgetfn()` (line 832).
+    #[test]
+    fn errnos_indexed_lookup() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"print "${errnos[1]}|${errnos[2]}|${errnos[3]}|${errnos[22]}""#,
+        ));
+    }
+
+    /// `${#errnos}` returns the platform-specific table size.
+    /// Pinned to the per-OS table in `src/modules/system.rs`.
+    #[test]
+    fn errnos_length() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"print -- "count=${#errnos}""#,
+        ));
+    }
+
+    /// First 5 errno names by index — pins the platform-stable
+    /// POSIX prefix. Splice-form `"${errnos[@]}"` assignment to
+    /// another array doesn't yet work in zshrs (separate gap —
+    /// the magic-array splice path doesn't route through
+    /// `magic_assoc_lookup`); index-form does.
+    #[test]
+    fn errnos_first_five_by_index() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"for i in 1 2 3 4 5; print -- "${errnos[$i]}""#,
+        ));
+    }
+
+    /// `${sysparams[pid]}` gives the shell's PID. Both shells
+    /// return the SAME pid because the test runs each shell in its
+    /// own process — we just check it's a positive integer.
+    #[test]
+    fn sysparams_pid_is_positive_int() {
+        if !zsh_available() {
+            return;
+        }
+        let script = with_modules(&["system"], r#"print -- "${sysparams[pid]}""#);
+        let z: i64 = run_zsh(&script).stdout.trim().parse().unwrap_or(0);
+        let r: i64 = run_zshrs(&script).stdout.trim().parse().unwrap_or(0);
+        assert!(z > 0 && r > 0, "pids: zsh={} zshrs={}", z, r);
+    }
+
+    /// `zsystem supports flock` returns 0 on Unix.
+    #[test]
+    fn zsystem_supports_flock() {
+        assert_parity(&with_modules(
+            &["system"],
+            r#"zsystem supports flock && echo Y || echo N"#,
+        ));
+    }
+}
+
+// ───────────────────────── zsh/files ─────────────────────────
+
+mod files_module {
+    use super::*;
+
+    /// `zf_mkdir`/`zf_rmdir` — direct test of the BUILTIN aliases at
+    /// Src/Modules/files.c:820 + 823. The C source binds these to
+    /// the SAME `bin_mkdir`/`bin_rmdir` functions as the unprefixed
+    /// `mkdir`/`rmdir` builtins.
+    #[test]
+    fn zf_mkdir_rmdir_roundtrip() {
+        let dir = format!(
+            "/tmp/zshrs_zf_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let body = format!(
+            "zf_mkdir {dir}\n[[ -d {dir} ]] && echo Y || echo N\nzf_rmdir {dir}\n[[ -d {dir} ]] && echo Y2 || echo N2\n"
+        );
+        assert_parity(&with_modules(&["files"], &body));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn zf_chmod_changes_mode() {
+        let path = format!(
+            "/tmp/zshrs_zf_chmod_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        std::fs::write(&path, "x").unwrap();
+        let body = format!(
+            "zf_chmod 0644 {path}\nstat -f '%Lp' {path} 2>/dev/null || stat -c '%a' {path}\n"
+        );
+        assert_parity(&with_modules(&["files"], &body));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn zf_mv_renames_file() {
+        let src = format!(
+            "/tmp/zshrs_zf_mv_src_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dst = format!("{src}_dst");
+        let _ = std::fs::remove_file(&dst);
+        std::fs::write(&src, "hello").unwrap();
+        let body = format!(
+            "zf_mv {src} {dst}\n[[ -f {dst} ]] && cat {dst}\n[[ -f {src} ]] && echo SRC-STILL-THERE || echo SRC-GONE\n"
+        );
+        assert_parity(&with_modules(&["files"], &body));
+        let _ = std::fs::remove_file(&dst);
     }
 }
 
