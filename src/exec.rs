@@ -5679,6 +5679,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
             } else {
                 stored
             };
+            // If we're inside an inline-assignment frame (`X=foo cmd`
+            // is currently exec'ing the prefix), record the previous
+            // value so END_INLINE_ENV can restore it after the command
+            // returns. Then export the new value to the env so the
+            // child sees it. zsh's `X=foo cmd` semantics: shell
+            // variable AND env entry both vanish after cmd returns.
+            let in_inline_env = !exec.inline_env_stack.is_empty();
+            if in_inline_env {
+                let prev_var = exec.variables.get(&name).cloned();
+                let prev_env = std::env::var(&name).ok();
+                exec.inline_env_stack
+                    .last_mut()
+                    .unwrap()
+                    .push((name.clone(), prev_var, prev_env));
+                std::env::set_var(&name, &stored);
+            }
             exec.variables.insert(name.clone(), stored.clone());
             // `set -o allexport`: every assignment auto-exports the var.
             // zsh: `setopt allexport; a=42; env | grep ^a=` prints `a=42`.
@@ -5869,6 +5885,41 @@ fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.variables
                 .insert("TRY_BLOCK_ERROR".to_string(), vm_status.to_string());
+        });
+        fusevm::Value::Status(0)
+    });
+
+    // BUILTIN_BEGIN_INLINE_ENV / END_INLINE_ENV — wrap an
+    // inline-assignment-prefixed command (`X=foo Y=bar cmd`):
+    // BEGIN pushes a save frame; SET_VAR fires for each assign and
+    // ALSO env::set_var's the value (visible to cmd's child); the
+    // command runs; END pops the frame and restores both shell-var
+    // and process-env state. Direct port of zsh's addvars() →
+    // execute_simple → restore-after-exec contract.
+    vm.register_builtin(BUILTIN_BEGIN_INLINE_ENV, |_vm, _argc| {
+        with_executor(|exec| {
+            exec.inline_env_stack.push(Vec::new());
+        });
+        fusevm::Value::Status(0)
+    });
+    vm.register_builtin(BUILTIN_END_INLINE_ENV, |_vm, _argc| {
+        with_executor(|exec| {
+            if let Some(frame) = exec.inline_env_stack.pop() {
+                for (name, prev_var, prev_env) in frame.into_iter().rev() {
+                    match prev_var {
+                        Some(v) => {
+                            exec.variables.insert(name.clone(), v);
+                        }
+                        None => {
+                            exec.variables.remove(&name);
+                        }
+                    }
+                    match prev_env {
+                        Some(v) => std::env::set_var(&name, &v),
+                        None => std::env::remove_var(&name),
+                    }
+                }
+            }
         });
         fusevm::Value::Status(0)
     });
@@ -8230,6 +8281,8 @@ pub const BUILTIN_CONCAT_DISTRIBUTE: u16 = 318;
 /// { … }` so the finally arm can read $TRY_BLOCK_ERROR.
 pub const BUILTIN_SET_TRY_BLOCK_ERROR: u16 = 320;
 pub const BUILTIN_RESTORE_TRY_BLOCK_STATUS: u16 = 432;
+pub const BUILTIN_BEGIN_INLINE_ENV: u16 = 433;
+pub const BUILTIN_END_INLINE_ENV: u16 = 434;
 
 /// `[[ -o option ]]` — shell-option-set test. Stack: \[option_name\].
 /// Normalizes the name (strip underscores, lowercase) and reads
@@ -10592,6 +10645,14 @@ pub struct ShellExecutor {
     /// outer-scope value.
     pub subshell_snapshots: Vec<SubshellSnapshot>,
     pub last_status: i32,
+    /// Stack of inline-assignment scopes — `X=foo Y=bar cmd` pushes
+    /// a frame at the start, the assigns run inside it, and `cmd`
+    /// returns into END_INLINE_ENV which restores both shell-vars
+    /// and process-env to the pre-frame state. Each frame holds
+    /// `(name, prev_var, prev_env)` per assigned name. zsh's
+    /// equivalent is the parser-level "addvar" list executed under
+    /// `addvars()` (Src/exec.c) right before the command exec.
+    pub inline_env_stack: Vec<Vec<(String, Option<String>, Option<String>)>>,
     /// Set by `expand_glob`'s no-match arm when `nomatch` is on (zsh
     /// default) — instructs the simple-command dispatcher to skip
     /// executing the current command, set last_status=1, and continue
@@ -10937,6 +10998,7 @@ impl ShellExecutor {
             loop_signal: None,
             subshell_snapshots: Vec::new(),
             last_status: 0,
+            inline_env_stack: Vec::new(),
             current_command_glob_failed: std::cell::Cell::new(false),
             variables,
             arrays: {

@@ -863,6 +863,21 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// `X=foo Y=bar cmd` — inline assignments are visible in cmd's
+    /// child environment AND vanish from the parent shell after cmd
+    /// returns. zshrs was leaving X/Y in self.variables forever and
+    /// never exporting them to env, so `X=foo env | grep ^X=`
+    /// printed nothing AND `${X}` post-cmd returned the leaked value.
+    /// Plugin code uses inline-assigns for one-shot env tweaks
+    /// (`LANG=C grep ...`, `EDITOR=vim git commit`).
+    #[test]
+    fn inline_assign_exports_and_restores() {
+        assert_parity(
+            r#"X=foo Y=bar env | grep "^[XY]=" | sort
+echo "after: X=${X:-unset} Y=${Y:-unset}""#,
+        );
+    }
+
     /// `local -i x; ((x = ...))` — arith write-back must NOT leak
     /// the local into the process env. Plugin code uses local
     /// counters/timers all over the place; leaking them broke
