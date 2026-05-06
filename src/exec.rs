@@ -6491,8 +6491,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
     });
 
     vm.register_builtin(BUILTIN_PARAM_FILTER, |vm, _argc| {
-        let pattern = vm.pop().to_str();
+        let pattern_raw = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // Expand `$VAR` / `${VAR}` / `$(cmd)` / `$((expr))` references in
+        // the pattern before matching. Direct port of Src/subst.c:3192
+        // case '#' arm which calls singsub on the operand. zinit's
+        // `${(@)region_highlight:#$_LAST_HIGHLIGHT}` and similar idioms
+        // rely on the pattern being expanded first.
+        let pattern = if pattern_raw.contains('$') || pattern_raw.contains('`') {
+            with_executor(|exec| exec.expand_string(&pattern_raw))
+        } else {
+            pattern_raw
+        };
         let arr_val = with_executor(|exec| exec.arrays.get(&name).cloned());
         // extendedglob_match handles the leading-`^` negation operator
         // when the `extendedglob` option is set. Plain literal-equal
