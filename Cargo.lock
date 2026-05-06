@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "compsys"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "dirs",
  "libc",
@@ -3317,7 +3317,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zshrs"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "atty",
  "base64",
@@ -3375,7 +3375,7 @@ dependencies = [
 
 [[package]]
 name = "zshrs-daemon"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "atty",
  "axum",
@@ -3415,7 +3415,7 @@ dependencies = [
 
 [[package]]
 name = "zshrs-parse"
-version = "0.10.8"
+version = "0.10.9"
 dependencies = [
  "serde",
 ]
