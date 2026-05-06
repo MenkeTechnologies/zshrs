@@ -2132,14 +2132,39 @@ impl ZshCompiler {
                         .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
                     return;
                 }
-                // `(v)NAME[(I)pat]` — subscript yields KEYS, but outer
-                // (v) wants VALUES for those keys. Need to do an extra
-                // lookup pass. Direct port of zsh subst.c paramsubst's
-                // (v) post-pass which iterates the key list and
-                // resolves each key against the assoc to produce the
-                // value list. Route through the bridge (subst_port)
-                // for now — the bridge has the assoc-walk logic.
-                // (Falls through to the standard subst_port path.)
+                // `(v)NAME[(I)pat]` — subscript yields KEYS but outer
+                // (v) wants VALUES for those keys. Inject a `\u{06}`
+                // sentinel on the key arg so BUILTIN_ARRAY_INDEX flips
+                // its (I)/(i) result from keys-shape to values-shape
+                // (looking up each matching key in the assoc and
+                // returning the values joined). Direct port of zsh
+                // subst.c paramsubst's (v) post-pass — the C source
+                // similarly substitutes the value column for the key
+                // column when (v) is in the outer flag chain.
+                if only_v_flag && key_starts_with_idx_flag {
+                    let key_with_sentinel = format!("\u{06}{}", key);
+                    let name_const = self.builder.add_constant(Value::str(base));
+                    let key_const = self.builder.add_constant(Value::str(key_with_sentinel));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    return;
+                }
+                // Symmetric `(k)NAME[(R)pat]` — values-flag subscript
+                // returning matching values, but outer (k) wants keys
+                // for those matches. Use `\u{07}` sentinel so
+                // BUILTIN_ARRAY_INDEX returns keys for (R)/(r) hits.
+                if only_k_flag && key_starts_with_value_flag {
+                    let key_with_sentinel = format!("\u{07}{}", key);
+                    let name_const = self.builder.add_constant(Value::str(base));
+                    let key_const = self.builder.add_constant(Value::str(key_with_sentinel));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    return;
+                }
                 // Sentinel `\u{05}` on the key signals BUILTIN_ARRAY_INDEX
                 // that the surrounding flag chain has explicit `@` —
                 // override the DQ-join behavior so a slice like `[1,3]`
