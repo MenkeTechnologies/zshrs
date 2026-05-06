@@ -133,7 +133,7 @@ base64 = "0.22"
 members = [".", "compsys", "daemon", "parse"]
 
 [workspace.package]
-version = "0.10.8"
+version = "0.10.9"
 edition = "2021"
 license = "MIT"
 authors = ["MenkeTechnologies"]
@@ -143,9 +143,9 @@ authors = ["MenkeTechnologies"]
 # single `bp.sh <new-version>` run touches one file. Members reference
 # these via `compsys.workspace = true` etc.
 [workspace.dependencies]
-compsys = { path = "compsys", version = "0.10.8" }
-zshrs-daemon = { path = "daemon", version = "0.10.8" }
-zshrs-parse = { path = "parse", version = "0.10.8" }
+compsys = { path = "compsys", version = "0.10.9" }
+zshrs-daemon = { path = "daemon", version = "0.10.9" }
+zshrs-parse = { path = "parse", version = "0.10.9" }
 
 [profile.release]
 opt-level = 3
