@@ -2885,6 +2885,55 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         _ => Some(Value::str("")),
                     }
                 }
+                "epochtime" => {
+                    // zsh/datetime — `${epochtime}` is a 2-element
+                    // indexed array: [seconds, nanoseconds] from
+                    // clock_gettime(CLOCK_REALTIME). Direct port of
+                    // the `epochtimegetfn` accessor in
+                    // Src/Modules/datetime.c (struct gsu_array).
+                    use std::time::{SystemTime, UNIX_EPOCH};
+                    let (secs, nsecs) = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| (d.as_secs() as i64, d.subsec_nanos() as i64))
+                        .unwrap_or((0, 0));
+                    if idx == "@" || idx == "*" {
+                        return Some(Value::Array(vec![
+                            Value::str(secs.to_string()),
+                            Value::str(nsecs.to_string()),
+                        ]));
+                    }
+                    if let Ok(n) = idx.parse::<i64>() {
+                        let pos = if n > 0 {
+                            (n - 1) as usize
+                        } else if n < 0 {
+                            let p = 2 + n;
+                            if p < 0 {
+                                return Some(Value::str(""));
+                            }
+                            p as usize
+                        } else {
+                            return Some(Value::str(""));
+                        };
+                        return match pos {
+                            0 => Some(Value::str(secs.to_string())),
+                            1 => Some(Value::str(nsecs.to_string())),
+                            _ => Some(Value::str("")),
+                        };
+                    }
+                    Some(Value::str(""))
+                }
+                "termcap" => {
+                    // `${termcap[cap]}` — direct port of
+                    // `gettermcap()` from Src/Modules/termcap.c:144.
+                    // Backed by ncurses' termcap-emulation API
+                    // (`tgetent`/`tgetstr`/`tgetnum`/`tgetflag`)
+                    // which resolves from the same database
+                    // `${terminfo[…]}` uses but with the legacy
+                    // 2-letter cap names.
+                    Some(Value::str(
+                        crate::modules::termcap::lookup(idx).unwrap_or_default(),
+                    ))
+                }
                 "errnos" => {
                     // zsh/system module: `${errnos[N]}` is an INDEXED
                     // array of errno-name strings, 1-based. Direct
@@ -6838,6 +6887,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
             //   - `sysparams`  → Src/Modules/system.c:904
             match name.as_str() {
                 "errnos" => return crate::modules::system::ERRNO_NAMES.len(),
+                "epochtime" => return 2, // [seconds, nanoseconds]
                 "commands" => return exec.command_hash.len(),
                 "aliases" => return exec.aliases.len(),
                 "galiases" => return exec.global_aliases.len(),
@@ -16596,6 +16646,15 @@ impl ShellExecutor {
                 // (`$terminfo[acsc]`, `$terminfo[colors]`). Mirror
                 // zsh's terminfo.c::getterminfo lazy-resolve path.
                 Some(crate::modules::terminfo::lookup(key).unwrap_or_default())
+            }
+            // `termcap` is dispatched in the `magic_assoc_lookup`
+            // function (the primary special-array path) so that
+            // ${termcap[cl]} resolves before this fallback runs.
+            // Keeping a no-op arm here avoids a spurious "unknown
+            // assoc" diagnostic if a caller bypasses
+            // magic_assoc_lookup.
+            "termcap" => {
+                Some(crate::modules::termcap::lookup(key).unwrap_or_default())
             }
 
             // === FUNCTIONS ===

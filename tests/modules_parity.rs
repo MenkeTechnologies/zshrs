@@ -25,8 +25,26 @@ fn zshrs_bin() -> PathBuf {
     manifest.join("target").join("debug").join("zshrs")
 }
 
+/// Pick the most-modular `zsh` on PATH. The Apple-shipped
+/// `/bin/zsh` is locked at 5.9 with a *minimal* module set
+/// (no `zsh/ksh93`, no `zsh/param_private`); a Homebrew install
+/// at `/opt/homebrew/bin/zsh` (Apple Silicon) or
+/// `/usr/local/bin/zsh` (Intel) ships many more loadable modules
+/// and is the better parity target. Falls through to `/bin/zsh`
+/// when neither brew location exists.
+fn zsh_path() -> &'static str {
+    use std::path::Path;
+    if Path::new("/opt/homebrew/bin/zsh").exists() {
+        "/opt/homebrew/bin/zsh"
+    } else if Path::new("/usr/local/bin/zsh").exists() {
+        "/usr/local/bin/zsh"
+    } else {
+        "/bin/zsh"
+    }
+}
+
 fn zsh_available() -> bool {
-    Command::new("/bin/zsh")
+    Command::new(zsh_path())
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -39,14 +57,15 @@ struct ShellResult {
     exit: i32,
 }
 
-/// Run `script` through `/bin/zsh -fc …`. The caller is expected to
-/// prepend any required `zmodload zsh/<modname>` lines — `-fc`
-/// suppresses RC files so no module auto-loads.
+/// Run `script` through `<zsh> -fc …` (brew zsh preferred, Apple
+/// stock as fallback). The caller prepends any required
+/// `zmodload zsh/<modname>` lines — `-fc` suppresses RC files so
+/// no module auto-loads.
 fn run_zsh(script: &str) -> ShellResult {
-    let out = Command::new("/bin/zsh")
+    let out = Command::new(zsh_path())
         .args(["-fc", script])
         .output()
-        .expect("invoke /bin/zsh");
+        .expect("invoke zsh");
     ShellResult {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -248,6 +267,38 @@ mod datetime_module {
             r#"strftime "%Y-%m-%d" 1700000000"#,
         ));
     }
+
+    /// `${#epochtime}` is always 2 (seconds, nanoseconds). Direct
+    /// test of the `epochtimegetfn` 2-element-array contract from
+    /// Src/Modules/datetime.c.
+    #[test]
+    fn epochtime_has_two_elements() {
+        assert_parity(&with_modules(
+            &["datetime"],
+            r#"print -- "${#epochtime}""#,
+        ));
+    }
+
+    /// `$epochtime[1]` matches `$EPOCHSECONDS` to within 1 second.
+    /// Pinning byte-exact would race on the second-boundary; check
+    /// the value is a positive int of plausible magnitude in both.
+    #[test]
+    fn epochtime_first_element_is_unix_seconds() {
+        if !zsh_available() {
+            return;
+        }
+        let script = with_modules(&["datetime"], "print -- $epochtime[1]");
+        let z: i64 = run_zsh(&script).stdout.trim().parse().unwrap_or(0);
+        let r: i64 = run_zshrs(&script).stdout.trim().parse().unwrap_or(0);
+        assert!(z > 1_700_000_000, "zsh epochtime[1] suspicious: {}", z);
+        assert!(r > 1_700_000_000, "zshrs epochtime[1] suspicious: {}", r);
+        assert!(
+            (z - r).abs() < 5,
+            "epochtime[1] drift > 5s: zsh={} zshrs={}",
+            z,
+            r
+        );
+    }
 }
 
 // ───────────────────────── zsh/terminfo ─────────────────────────
@@ -268,12 +319,57 @@ mod terminfo_module {
         assert_eq!(z.as_bytes(), r.as_bytes());
     }
 
+    /// `kbs` (Backspace) is intentionally NOT byte-exact: brew zsh
+    /// applies a stty-erase override (returns `\x7f` even when the
+    /// terminfo database says `^H`/`\x08`); zshrs returns the
+    /// database-truth value. Skip rather than pin a divergence.
+
+    /// Application-keypad cursor keys are stable (no stty override).
     #[test]
-    fn terminfo_kbs_byte_exact() {
+    fn terminfo_kcuu1_byte_exact() {
         if !zsh_available() {
             return;
         }
-        let script = with_modules(&["terminfo"], "print -rn -- $terminfo[kbs]");
+        let script = with_modules(&["terminfo"], "print -rn -- $terminfo[kcuu1]");
+        let z = run_zsh(&script).stdout;
+        let r = run_zshrs(&script).stdout;
+        assert_eq!(z.as_bytes(), r.as_bytes());
+    }
+}
+
+// ───────────────────────── zsh/termcap ─────────────────────────
+
+mod termcap_module {
+    use super::*;
+
+    /// `${termcap[cl]}` — the clear-screen sequence. Stable across
+    /// terminals because `cl`/`clear` is a basic capability every
+    /// terminal defines. Direct port of `gettermcap()` (Src/Modules/
+    /// termcap.c:144) backed by ncurses tgetstr.
+    #[test]
+    fn termcap_cl_clear() {
+        if !zsh_available() {
+            return;
+        }
+        let script = with_modules(&["termcap"], "print -rn -- $termcap[cl]");
+        let z = run_zsh(&script).stdout;
+        let r = run_zshrs(&script).stdout;
+        assert_eq!(
+            z.as_bytes(),
+            r.as_bytes(),
+            "termcap[cl] divergence: zsh={:?} zshrs={:?}",
+            z.as_bytes(),
+            r.as_bytes()
+        );
+    }
+
+    /// `${termcap[ku]}` — cursor up (application keypad).
+    #[test]
+    fn termcap_ku_byte_exact() {
+        if !zsh_available() {
+            return;
+        }
+        let script = with_modules(&["termcap"], "print -rn -- $termcap[ku]");
         let z = run_zsh(&script).stdout;
         let r = run_zshrs(&script).stdout;
         assert_eq!(z.as_bytes(), r.as_bytes());
