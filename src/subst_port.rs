@@ -3402,15 +3402,14 @@ fn apply_param_flags(
         result = result.iter().map(|s| s.to_uppercase()).collect();
     }
     if flags.capitalize {
+        // (C) — capitalize each word per Src/hist.c CASMOD_CAPS.
+        // The previous inline impl just uppercased the first char,
+        // leaving "hello world how are you" stuck on "Hello world…".
+        // Route through the shared casemodify() helper which treats
+        // every non-alnum (incl. spaces) as a word boundary.
         result = result
             .iter()
-            .map(|s| {
-                let mut chars = s.chars();
-                match chars.next() {
-                    None => String::new(),
-                    Some(c) => c.to_uppercase().chain(chars).collect(),
-                }
-            })
+            .map(|s| casemodify(s, CaseMod::Caps))
             .collect();
     }
 
