@@ -1,0 +1,2 @@
+cat <(ls)
+ls >(cat)
