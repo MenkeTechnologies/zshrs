@@ -1335,11 +1335,23 @@ impl ZshCompiler {
         // `"\$..."` form via untokenize_preserve_quotes.
         let has_bnull = s.contains('\u{9f}');
 
-        // Trigger detection on the un-tokenized form.
+        // Trigger detection. `$` / `` ` `` checks run on the
+        // un-tokenized form because the lexer turns `$` into
+        // `\u{85}` (META-$) in `s` — the literal-char check on
+        // `s` would miss every expansion. Glob triggers (`*`,
+        // `?`, `[`) however MUST run on `s` so the SNULL/DNULL
+        // quote markers correctly suppress meta-interpretation
+        // inside `'…'` / `"…"` spans. Direct port of Src/pattern.c
+        // ::patcompswitch — chars inside quoted spans bypass meta.
+        // Without the marker-aware glob check,
+        // `arr=( foo "value:[brackets]" )` fired trigger_glob
+        // (the `[` looked unquoted post-untokenize), routed
+        // through expand_glob, and NOMATCH-errored at runtime
+        // even though the brackets are literally inside DQ.
         let trigger_dollar = unquoted(&untoked, '$') || unquoted(&untoked, '`');
-        let trigger_glob = unquoted(&untoked, '*')
-            || unquoted(&untoked, '?')
-            || unquoted(&untoked, '[')
+        let trigger_glob = unquoted(s, '*')
+            || unquoted(s, '?')
+            || unquoted(s, '[')
             // extendedglob `^pat` (negation) and `pat~excl` (exclusion).
             // `^` is a no-op without `setopt extendedglob`, but routing
             // through expand_glob lets the runtime decide. The unquoted
@@ -4813,9 +4825,39 @@ fn has_unquoted_expansion(s: &str) -> bool {
 }
 
 fn unquoted(s: &str, target: char) -> bool {
+    // True iff `target` appears in the un-quoted portion of `s`. The
+    // word may carry lexer-level quote markers — `\u{9d}` (SNULL,
+    // single-quoted span) and `\u{9e}` (DNULL, double-quoted span)
+    // bracket regions where globbing is suppressed. C zsh's pattern
+    // compiler (Src/pattern.c::patcompswitch) skips meta-interpretation
+    // for bytes inside these spans; the trigger detector must match
+    // that behavior or `arr=( foo "value:[brackets]" )` mis-flags as
+    // a glob and NOMATCH-errors at runtime even though the brackets
+    // are inside DQ.
+    //
+    // Also honors `\x00` literal-marker (one-char escape from
+    // expand_string preprocessing) and `\u{9f}` (BNULL — lexer
+    // backslash-escape).
     let mut prev = ' ';
+    let mut inside_sq = false;
+    let mut inside_dq = false;
     for c in s.chars() {
-        if c == target && prev != '\x00' {
+        if c == '\u{9d}' {
+            inside_sq = !inside_sq;
+            prev = c;
+            continue;
+        }
+        if c == '\u{9e}' {
+            inside_dq = !inside_dq;
+            prev = c;
+            continue;
+        }
+        if c == target
+            && prev != '\x00'
+            && prev != '\u{9f}'
+            && !inside_sq
+            && !inside_dq
+        {
             return true;
         }
         prev = c;
