@@ -8893,6 +8893,14 @@ impl fusevm::ShellHost for ZshrsHost {
         // nested CallBuiltin handlers and host callbacks all see the same
         // executor.
         let fn_name = name.to_string();
+        // Snapshot options at function entry. zsh restores these on
+        // exit when `local_options` is set at that time (per zshmisc
+        // LOCAL_OPTIONS — `setopt local_options` and `emulate -L
+        // ...` both arm the restore). Without this, a function that
+        // does `setopt no_glob` to scope an option leaked the change
+        // to the caller, breaking p10k/zinit's per-function emulate
+        // -L sticky-mode pattern.
+        let saved_options = with_executor(|exec| exec.options.clone());
         let (
             saved_params,
             saved_local_count,
@@ -9010,6 +9018,20 @@ impl fusevm::ShellHost for ZshrsHost {
             exec.pending_underscore = Some(last_call_arg);
             exec.positional_params = saved_params;
             exec.local_scope_depth -= 1;
+            // LOCAL_OPTIONS: when set at function exit, restore all
+            // options to the snapshot taken at entry. `emulate -L`
+            // arms this; plugin code uses both forms to scope option
+            // changes inside helpers without leaking to callers.
+            // Without it, `setopt no_glob` inside a helper polluted
+            // the caller's option state.
+            if exec
+                .options
+                .get("localoptions")
+                .copied()
+                .unwrap_or(false)
+            {
+                exec.options = saved_options.clone();
+            }
             // Restore `$0` and `$funcstack` to their pre-call values.
             match saved_zero {
                 Some(v) => {
@@ -23382,7 +23404,7 @@ impl ShellExecutor {
                 let rest = if starts_paren {
                     let mut depth: i32 = 0;
                     let mut combined = rest_raw.clone();
-                    let mut count_depth = |s: &str, d: &mut i32| {
+                    let count_depth = |s: &str, d: &mut i32| {
                         for c in s.chars() {
                             match c {
                                 '(' | '\u{88}' => *d += 1,

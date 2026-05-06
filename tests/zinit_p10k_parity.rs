@@ -818,6 +818,33 @@ echo "m[foo]=${m[foo]} m[k]=${m[$k]}""#,
         );
     }
 
+    /// `setopt local_options` + `setopt no_glob` inside a function:
+    /// option change must NOT leak to the caller. zsh's
+    /// LOCAL_OPTIONS contract is "if set on function exit, restore
+    /// the entry-time option snapshot." Was leaking.
+    #[test]
+    fn local_options_setopt_scoped() {
+        assert_parity(
+            r#"foo() { setopt local_options; setopt no_glob; }
+echo "before=$options[glob]"
+foo
+echo "after=$options[glob]""#,
+        );
+    }
+
+    /// `emulate -L zsh` inside a function arms LOCAL_OPTIONS too —
+    /// any subsequent setopt should revert on return. p10k segments
+    /// rely on this: `prompt_X() { emulate -L zsh; setopt extended_glob; ... }`.
+    #[test]
+    fn emulate_dash_l_scoped_options() {
+        assert_parity(
+            r#"foo() { emulate -L zsh; setopt no_glob; }
+echo "before=$options[glob]"
+foo
+echo "after=$options[glob]""#,
+        );
+    }
+
     /// `local -a opts=("$@")` — copy positional args into a local
     /// array. Plugin code uses this constantly to capture caller
     /// args before re-parsing. Was being routed through typeset's
