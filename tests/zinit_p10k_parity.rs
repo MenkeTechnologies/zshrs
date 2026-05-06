@@ -818,6 +818,20 @@ echo "m[foo]=${m[foo]} m[k]=${m[$k]}""#,
         );
     }
 
+    /// `_loaded[$plugin]=1` — direct subscripted assoc assignment
+    /// must expand `$plugin` in the subscript before storing. zinit's
+    /// "is plugin loaded" tracking relies on this. Was storing the
+    /// literal "$plugin" key instead of the resolved value.
+    #[test]
+    fn direct_subscript_assign_expands_dollar_key() {
+        assert_parity(
+            r#"typeset -gA _loaded
+plugin="myplugin"
+_loaded[$plugin]=1
+echo "kv=${_loaded[myplugin]} via=${_loaded[$plugin]} keys=${(k)_loaded}""#,
+        );
+    }
+
     /// Equivalent for plain `=` op (set-iff-unset, no empty-also-set).
     #[test]
     fn assoc_set_iff_unset_expands_subscript() {

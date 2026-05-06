@@ -1059,13 +1059,28 @@ impl ZshCompiler {
         if let Some((base, key)) = split_subscript(&untoked_name) {
             if let ZshAssignValue::Scalar(s) = &assign.value {
                 let name_const = self.builder.add_constant(Value::str(base));
-                let key_const = self.builder.add_constant(Value::str(key));
                 self.builder.emit(Op::LoadConst(name_const), 0);
-                self.builder.emit(Op::LoadConst(key_const), 0);
+                // Subscript may contain $-refs (`_loaded[$plugin]=1`)
+                // — emit through compile_word_str so the runtime
+                // expands. Without this, the literal "$plugin" was
+                // stored as the assoc key. Same fast/slow path as
+                // the Array branch's subscripted-assign below.
+                let key_has_expansion = key.contains('$') || key.contains('`');
+                if key_has_expansion {
+                    self.compile_word_str(key);
+                } else {
+                    let key_const = self.builder.add_constant(Value::str(key));
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                }
                 if assign.append {
                     // Append: dup name+key, GET_VAR via assoc, Concat with new tail
                     self.builder.emit(Op::LoadConst(name_const), 0);
-                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    if key_has_expansion {
+                        self.compile_word_str(key);
+                    } else {
+                        let key_const = self.builder.add_constant(Value::str(key));
+                        self.builder.emit(Op::LoadConst(key_const), 0);
+                    }
                     self.builder
                         .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
                     self.compile_word_str(s);
