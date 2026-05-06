@@ -2075,6 +2075,35 @@ impl ZshCompiler {
         // the `${(f)mapfile[/path]}` and `${(s:,:)assoc[k]}` shapes.
         if !has_bnull {
             if let Some((flags, base, key)) = parse_zsh_flag_subscript(&untoked) {
+                // `(@)` plus sort/uniq/order flags (`o`/`O`/`n`/`i`/`u`)
+                // on a `[(I)…]` / `[(R)…]` / `[(K)…]` subscript — must
+                // return array shape AFTER applying the order flags
+                // per-element, not as a Concat'd scalar. Route through
+                // BUILTIN_BRIDGE_BRACE_ARRAY which calls paramsubst,
+                // the canonical zsh path that walks the matching keys
+                // and applies sort flags on the resulting list.
+                // Without this, the scalar-Concat fallback joined the
+                // matching keys with space and lost array shape (zinit
+                // hook ordering pattern `${(@on)m[(I)pat]}`).
+                if flags.contains('@')
+                    && flags.chars().any(|c| matches!(c, 'o' | 'O' | 'n' | 'i' | 'u'))
+                    && (key.starts_with("(I)")
+                        || key.starts_with("(R)")
+                        || key.starts_with("(K)"))
+                {
+                    if let Some(inner) = untoked
+                        .strip_prefix("${")
+                        .and_then(|s| s.strip_suffix('}'))
+                    {
+                        let body_const = self.builder.add_constant(Value::str(inner));
+                        self.builder.emit(Op::LoadConst(body_const), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::exec::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            0,
+                        );
+                        return;
+                    }
+                }
                 // If the only flag is `(@)`, skip the
                 // BUILTIN_PARAM_FLAG round-trip — the sentinel/Concat
                 // machinery collapses a Value::Array result back to
@@ -2205,7 +2234,16 @@ impl ZshCompiler {
         // `aval` threading in subst.c paramsubst: the C source
         // carries the per-element vector through `aval`, returning
         // multi-word output to the caller.
-        if !has_bnull {
+        // Bridge-array fast path is normally gated on `!has_bnull`,
+        // but the `(M)`/`(R)` + `:#` filter form is allowed even with
+        // BNULL escapes — the filter's pattern compile in
+        // `param_pattern_to_regex_anchored` handles literal `\X`
+        // (including the special `\(#e)` / `\(#s)` anchor cases).
+        // Without this, `${(M)arr:#*\\(#e)}` falls through to the
+        // EXPAND_TEXT bridge which scalar-flattens.
+        let try_bridge_array = !has_bnull
+            || (untoked.starts_with("${(") && untoked.contains(":#"));
+        if try_bridge_array {
             if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
                 if let Some(close) = matching_paren_close(inner) {
                     let flag_chain = &inner[1..close];
@@ -2222,9 +2260,36 @@ impl ZshCompiler {
                     //      already preserves shape.
                     let has_at_filter = after_flags.contains("[@]")
                         && after_flags.contains(":#");
+                    // (M) / (R) filter on a `:#` operator — keeps
+                    // matching elements (M) or first-match index (R).
+                    // For arrays this MUST return array shape so the
+                    // caller emits each survivor as a separate word.
+                    // Without this, `${(M)arr:#pat}` falls through to
+                    // EXPAND_TEXT which scalar-flattens the result
+                    // even though paramsubst correctly filtered the
+                    // array. Direct port of zsh's aval thread through
+                    // paramsubst — Src/subst.c handles the (M)+:# combo
+                    // by walking aval per element.
+                    let has_filter_with_match_flag =
+                        (flag_chain.contains('M') || flag_chain.contains('R'))
+                            && after_flags.contains(":#");
+                    // `(@)` with a `[(I)...]` / `[(R)...]` subscript —
+                    // assoc-array key-pattern lookup that returns
+                    // multiple matches. zinit's hook ordering pattern
+                    // `${(@on)m[(I)pat]}` enumerates matching keys
+                    // and sorts them. Must return array shape so each
+                    // key emerges as a separate word. Without this,
+                    // the keys joined with space.
+                    let at_with_index_subscript =
+                        flag_chain.contains('@')
+                            && (after_flags.contains("[(I)")
+                                || after_flags.contains("[(R)")
+                                || after_flags.contains("[(K)"));
                     let need_array =
                         (flag_chain.contains('@') && after_flags.contains("${"))
-                            || has_at_filter;
+                            || has_at_filter
+                            || has_filter_with_match_flag
+                            || at_with_index_subscript;
                     if need_array {
                         let body_const = self.builder.add_constant(Value::str(inner));
                         self.builder.emit(Op::LoadConst(body_const), 0);
@@ -2243,8 +2308,25 @@ impl ZshCompiler {
         // most: `:-`, `:=`, `:?`, `:+` first (modifier ops), then
         // substring (`:` + digit/dash), strip (`#`/`##`/`%`/`%%`),
         // replace (`/`/`//`/`/#`/`/%`).
-        if !has_bnull {
-            if let Some(modifier) = parse_param_modifier(&untoked) {
+        //
+        // `has_bnull` gating: BNULL marks `\X` lexer-escapes that
+        // some downstream paths can't honor (the rhs of `:-` etc.
+        // gets re-expand_string'd which loses the escape distinction).
+        // EXCEPTION: `(@)`-flagged Replace MUST take this path even
+        // with has_bnull — the EXPAND_TEXT fallback scalar-flattens
+        // arrays, losing shape. BUILTIN_PARAM_REPLACE handles literal
+        // `\X` in the replacement correctly for the simple-replace
+        // case (no backref via `(#m)`), so the relaxation is gated
+        // narrowly: had_at=true AND op<2 (// or /, not /# or /%).
+        // The `(#m)` shape (hist_substring_regex_meta_escape) has
+        // had_at=false and goes through EXPAND_TEXT which is correct.
+        let parsed_mod = parse_param_modifier(&untoked);
+        let modifier_safe_with_bnull = matches!(
+            parsed_mod.as_ref().map(|m| &m.kind),
+            Some(crate::compile_zsh::ParamModifierKind::Replace { had_at: true, .. })
+        );
+        if !has_bnull || modifier_safe_with_bnull {
+            if let Some(modifier) = parsed_mod {
                 // The whole-word DNULL wrapping (`"${...}"`) gets
                 // stripped from `untoked` before parse_param_modifier
                 // sees it, but downstream emitters need to know the

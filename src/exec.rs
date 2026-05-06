@@ -13146,6 +13146,32 @@ impl ShellExecutor {
                 }
                 '|' => regex_pattern.push('|'),
                 '\\' => {
+                    // Special-case: `\(#e)` / `\(#s)` — literal
+                    // backslash followed by extendedglob end/start
+                    // anchor. Emit `\\$` / `\\^` so the pattern matches
+                    // a literal trailing/leading `\`. Without this the
+                    // `(` of `(#e)` got consumed as the escaped char,
+                    // dropping the anchor entirely. Direct port of
+                    // pattern.c P_EOL/P_BOL recognition after a `\`.
+                    // Only fires under extendedglob — without the
+                    // option, `(#e)` is not a token at all.
+                    if extendedglob_on {
+                        let mut peek = chars.clone();
+                        let p1 = peek.next();
+                        let p2 = peek.next();
+                        let p3 = peek.next();
+                        let p4 = peek.next();
+                        if p1 == Some('(')
+                            && p2 == Some('#')
+                            && (p3 == Some('e') || p3 == Some('s'))
+                            && p4 == Some(')')
+                        {
+                            regex_pattern.push_str("\\\\");
+                            regex_pattern.push(if p3 == Some('e') { '$' } else { '^' });
+                            chars.next(); chars.next(); chars.next(); chars.next();
+                            continue;
+                        }
+                    }
                     // Backslash escapes the next char — treat literally.
                     if let Some(next) = chars.next() {
                         if matches!(
