@@ -863,6 +863,20 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// `typeset -f no_such_fn` errors with status 1 when the named
+    /// function doesn't exist. zshrs was silently returning 0,
+    /// breaking plugin code's `typeset -f \$fn >/dev/null && fn-exists`
+    /// idiom.
+    #[test]
+    fn typeset_dash_f_missing_fn_errors() {
+        // Use 2>/dev/null to ignore exact diagnostic-text differences
+        // ("zsh:" vs "zshrs:" line-prefix); the meaningful contract is
+        // the exit status.
+        let real = super::run_zsh(r#"typeset -f no_such_fn_xyz 2>/dev/null; echo "$?""#);
+        let rs = super::run_zshrs(r#"typeset -f no_such_fn_xyz 2>/dev/null; echo "$?""#);
+        assert_eq!(real.stdout, rs.stdout);
+    }
+
     /// `\${functions[foo]:0:20}` substring extraction — went through
     /// the slow-path get_special_array_value which returned the raw
     /// user-typed source instead of the zsh-formatted body. Cycle 15
