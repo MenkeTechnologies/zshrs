@@ -1,0 +1,11 @@
+echo ${x:u}
+echo ${x:l}
+echo ${x:h}
+echo ${x:t}
+echo ${x:e}
+echo ${x:r}
+echo ${x:c}
+echo ${x:q}
+echo ${x:Q}
+echo ${x:a}
+echo ${x:A}
