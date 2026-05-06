@@ -707,14 +707,26 @@ fn stringsubst(
     let mut str3 = list.get_data(node_idx)?.to_string();
     let mut pos = 0;
 
-    // First pass: process substitutions
+    // First pass: process substitutions. Loop guard uses CHAR
+    // count, not str3.len() (byte count) — `pos` is a char index
+    // throughout the function and chars[pos] indexes by char. With
+    // multi-byte UTF-8 (zsh-meta tokens 0x83-0x9f each take 2 bytes
+    // in UTF-8 encoding), `pos < str3.len()` looped past the end of
+    // `chars` and `chars[pos]` panicked. str3 may be mutated within
+    // the loop body so `chars` is re-collected each iteration.
     let mut p1_iter = 0u32;
-    while pos < str3.len() && !state.errflag {
+    loop {
+        if state.errflag {
+            break;
+        }
         p1_iter += 1;
         if p1_iter > 100_000 {
             return None;
         }
         let chars: Vec<char> = str3.chars().collect();
+        if pos >= chars.len() {
+            break;
+        }
         let c = chars[pos];
 
         // Check for <(...), >(...), =(...)
@@ -742,15 +754,24 @@ fn stringsubst(
         pos += 1;
     }
 
-    // Second pass: $, `, etc.
+    // Second pass: $, `, etc. Same char-vs-byte fix as the first
+    // pass — `pos < str3.len()` was a byte-len guard but `pos`
+    // and `chars[pos]` are char-indexed. Multi-byte UTF-8 (zsh-
+    // meta tokens 0x83-0x9f) tripped the panic.
     pos = 0;
     let mut iter_count = 0u32;
-    while pos < str3.len() && !state.errflag {
+    loop {
+        if state.errflag {
+            break;
+        }
         iter_count += 1;
         if iter_count > 100_000 {
             return None;
         }
         let chars: Vec<char> = str3.chars().collect();
+        if pos >= chars.len() {
+            break;
+        }
         let c = chars[pos];
 
         // Lexer-emitted single-quote marker (`\u{9d}`, parse/src/tokens.rs
