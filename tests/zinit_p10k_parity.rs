@@ -877,6 +877,24 @@ echo "out=$options[glob]""#,
         assert_eq!(real.stdout, rs.stdout);
     }
 
+    /// `${aliases[(I)foo*]}` — index search on magic-assoc with a
+    /// glob pattern returns ALL matching keys (zsh's "matchmany"
+    /// behavior for hashes). Direct port of Src/params.c getarg
+    /// `ishash && ind` branch + the `getnode(ht, s)` key-table
+    /// lookup at line 1576-1595. Was passing the literal `(I)foo*`
+    /// text through to `aliases.get(...)` and returning empty.
+    /// Plus zsh's hash-default search-target is KEYS, not values
+    /// — the (k)/(K) flags are about ARRAYS, not hashes.
+    #[test]
+    fn magic_assoc_I_glob_returns_all_keys() {
+        assert_parity(
+            r#"alias foo=ls
+alias bar=less
+alias foobaz=cat
+echo "${aliases[(I)foo*]}""#,
+        );
+    }
+
     /// `${(v)aliases}` — values of the magic aliases assoc. The
     /// PARAM_FLAG walker's 'v' arm only covered real assoc_arrays
     /// entries; magic-assocs (aliases / functions / commands /
