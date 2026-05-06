@@ -2581,7 +2581,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 )),
                 "functions" => {
                     if let Some(text) = exec.function_definition_text(idx) {
-                        Some(Value::str(text))
+                        // zsh's `$functions[name]` returns the function
+                        // body with each statement on its own line and a
+                        // leading TAB on every line (no trailing `;`).
+                        // Was returning the raw user-typed source which
+                        // diverges on indent and terminator. Direct port
+                        // of Src/exec.c's `getfn_functions` formatter.
+                        let formatted = format_function_body_zsh(text.trim());
+                        Some(Value::str(format!("\t{}", formatted)))
                     } else {
                         Some(Value::str(""))
                     }
