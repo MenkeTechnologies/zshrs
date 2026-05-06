@@ -1973,4 +1973,38 @@ x="   hello world   "
 print -- "[${x//((#s)[[:space:]]##|[[:space:]]##(#e))/}]""#,
         );
     }
+
+    /// User-supplied: `profile=${${${(M)profile:#*:*}:+${profile#*:}}:-default}`
+    /// — if profile contains `:`, take part after `:`; else "default".
+    /// Three cases: contains colon, no colon, empty.
+    #[test]
+    fn zinit_profile_colon_split_or_default() {
+        assert_parity(
+            r#"profile="user:custom"
+print -- "[${${${(M)profile:#*:*}:+${profile#*:}}:-default}]"
+profile="bare"
+print -- "[${${${(M)profile:#*:*}:+${profile#*:}}:-default}]"
+profile=""
+print -- "[${${${(M)profile:#*:*}:+${profile#*:}}:-default}]""#,
+        );
+    }
+
+    /// User-supplied: zi-log line combining tri-conditional highlight
+    /// pick + `(pj:$sep:)` prompt-expanding-join with dynamic separator.
+    /// `${${${(M)profile:#default}:+$lhi_hl}:-$profile_hl}` picks
+    /// $lhi_hl when profile is "default", else $profile_hl. Then joins
+    /// $profiles with $pro_sep applying prompt expansion.
+    #[test]
+    fn zinit_log_highlight_pick_with_prompt_join() {
+        assert_parity(
+            r#"lhi_hl="<HI>"
+profile_hl="<P>"
+pro_sep="|"
+profiles=(alpha beta gamma)
+profile=default
+print -- "[${${${(M)profile:#default}:+$lhi_hl}:-$profile_hl} ${(pj:$pro_sep:)profiles[@]}]"
+profile=other
+print -- "[${${${(M)profile:#default}:+$lhi_hl}:-$profile_hl} ${(pj:$pro_sep:)profiles[@]}]""#,
+        );
+    }
 }
