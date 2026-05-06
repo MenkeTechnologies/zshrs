@@ -5851,6 +5851,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Status(0)
     });
 
+    // BUILTIN_RESTORE_TRY_BLOCK_STATUS — emitted at the end of an
+    // `always` arm. Per zshmisc, the exit status of the entire
+    // `{ try } always { finally }` construct is the try-list's
+    // status, regardless of what happens in the always-list (the
+    // exception is `return`/`exit` inside always, which short-
+    // circuits and the cleanup is the only thing that runs). So
+    // restore TRY_BLOCK_ERROR unconditionally — the always-list's
+    // exit status is discarded for the construct.
+    vm.register_builtin(BUILTIN_RESTORE_TRY_BLOCK_STATUS, |_vm, _argc| {
+        let try_status = with_executor(|exec| {
+            exec.variables
+                .get("TRY_BLOCK_ERROR")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(0)
+        });
+        fusevm::Value::Status(try_status)
+    });
+
     vm.register_builtin(BUILTIN_UNKNOWN_COND, |vm, _argc| {
         // Unused — the diagnostic is emitted at compile time
         // (BUILTIN dispatch wasn't reliably firing for this path).
@@ -8189,6 +8207,7 @@ pub const BUILTIN_CONCAT_DISTRIBUTE: u16 = 318;
 /// Emitted between the try block and the always block of `{ … } always
 /// { … }` so the finally arm can read $TRY_BLOCK_ERROR.
 pub const BUILTIN_SET_TRY_BLOCK_ERROR: u16 = 320;
+pub const BUILTIN_RESTORE_TRY_BLOCK_STATUS: u16 = 432;
 
 /// `[[ -o option ]]` — shell-option-set test. Stack: \[option_name\].
 /// Normalizes the name (strip underscores, lowercase) and reads
