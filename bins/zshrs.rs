@@ -325,16 +325,33 @@ Option letters:
     );
 }
 
-/// Shell mode: zshrs (default), --zsh (zsh drop-in), --posix (POSIX sh strict)
+/// Shell mode: zshrs (default), --zsh (zsh drop-in), --bash (bash drop-in),
+/// --posix (POSIX sh / Bourne strict).
+///
+/// Each mode is a parity-target: the visible behavior should match the named
+/// shell byte-for-byte where the script under test only uses features common
+/// to that shell. zshrs's caches, daemon, and zshrs-exclusive builtins are
+/// disabled in every mode except `Zshrs` so observable side-effects (stdout,
+/// signal handlers, file I/O) re-fire on every invocation just like the
+/// reference shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellMode {
-    /// Full zshrs — all features, --doctor, plugin cache UI, exclusive builtins
+    /// Full zshrs — all features, --doctor, plugin cache UI, exclusive builtins.
     Zshrs,
-    /// zsh drop-in — same external interface as zsh, no zshrs-exclusive features visible,
-    /// but full zshrs engine underneath (SQLite, worker pool, parallel everything)
+    /// zsh drop-in — identical to C zsh (Src/builtin.c bin_dot, no caches,
+    /// no daemon, no plugin replay). Used for compat-testing zshrs against
+    /// /bin/zsh with `zshrs --zsh script.zsh`.
     Zsh,
-    /// POSIX sh strict — only POSIX builtins, no zsh extensions, no arrays, no [[,
-    /// no extended globbing, no SQLite caches, no worker pool. Dinosaur mode.
+    /// bash drop-in — bash 5.x semantics. zsh extensions disabled; bash-only
+    /// features (e.g. `BASH_VERSION`, `[[ =~ ]]` BASH_REMATCH, `mapfile`,
+    /// `readarray`, `${arr[@]: ... }` slice rules) preferred. No caches,
+    /// no daemon. Used for `zshrs --bash script.sh` parity tests against
+    /// /bin/bash.
+    Bash,
+    /// POSIX sh / Bourne strict — only POSIX builtins, no zsh / bash
+    /// extensions, no arrays, no `[[`, no extended globbing, no SQLite
+    /// caches, no worker pool, no daemon. Used for parity tests against
+    /// `/bin/sh` (Bourne / dash).
     Posix,
 }
 
@@ -353,6 +370,10 @@ pub fn shell_mode() -> ShellMode {
 
 pub fn is_zsh_mode() -> bool {
     matches!(shell_mode(), ShellMode::Zsh)
+}
+
+pub fn is_bash_mode() -> bool {
+    matches!(shell_mode(), ShellMode::Bash)
 }
 
 pub fn is_posix_mode() -> bool {
@@ -531,15 +552,33 @@ pub fn zshrs_main() {
         }
     }
 
-    // Handle shell mode flags (must be checked early)
-    if args.iter().any(|a| a == "--posix") {
-        unsafe {
-            SHELL_MODE = ShellMode::Posix;
-        }
+    // Handle shell mode flags (must be checked early). Every parity
+    // mode (`--zsh`, `--bash`, `--posix`) force-disables zshrs's
+    // caches and daemon by setting `ZSHRS_CACHE=0`. Rationale: the
+    // reference shells (zsh, bash, sh) have no caching layer —
+    // C zsh's Src/builtin.c:6080-6123 bin_dot reads + execnodes the
+    // file every call. A drop-in mode needs the same observable
+    // behavior so `source` re-runs the file fresh, `echo` / `print`
+    // / signal handlers re-fire, and side-effects (file I/O,
+    // network) repeat on every invocation. The plugin_cache replay
+    // captures only state mutations and silently swallows stdout-
+    // producing commands on cache hit — that diverges from every
+    // reference shell, so parity modes opt out entirely.
+    let parity_mode_selected = if args.iter().any(|a| a == "--posix") {
+        unsafe { SHELL_MODE = ShellMode::Posix; }
+        true
+    } else if args.iter().any(|a| a == "--bash") {
+        unsafe { SHELL_MODE = ShellMode::Bash; }
+        true
     } else if args.iter().any(|a| a == "--zsh" || a == "--zsh-compat") {
-        unsafe {
-            SHELL_MODE = ShellMode::Zsh;
-        }
+        unsafe { SHELL_MODE = ShellMode::Zsh; }
+        true
+    } else {
+        false
+    };
+    if parity_mode_selected {
+        unsafe { std::env::set_var("ZSHRS_CACHE", "0"); }
+        tracing::info!(mode = ?shell_mode(), "parity mode: ZSHRS_CACHE=0, daemon disabled, plugin_cache replay disabled");
     }
     tracing::info!(mode = ?shell_mode(), "shell mode selected");
 
@@ -624,6 +663,7 @@ pub fn zshrs_main() {
             let a = &args[i];
             if a == "--zsh-compat"
                 || a == "--zsh"
+                || a == "--bash"
                 || a == "--posix"
                 || a == "-f"
                 || a == "--no-rcs"
@@ -655,6 +695,7 @@ pub fn zshrs_main() {
     ) {
         // Apply shell mode
         executor.zsh_compat = is_zsh_mode();
+        executor.bash_compat = is_bash_mode();
         if is_posix_mode() {
             executor.enter_posix_mode();
         }
@@ -1220,6 +1261,7 @@ fn is_script_cached(plugin_db_path: &std::path::Path, script_path: &str) -> bool
 fn run_non_interactive() {
     let mut executor = ShellExecutor::new();
     executor.zsh_compat = is_zsh_mode();
+    executor.bash_compat = is_bash_mode();
     if is_posix_mode() {
         executor.enter_posix_mode();
     }
@@ -1722,6 +1764,7 @@ fn run_interactive() {
 
     let mut executor = ShellExecutor::new();
     executor.zsh_compat = is_zsh_mode();
+    executor.bash_compat = is_bash_mode();
     if is_posix_mode() {
         executor.enter_posix_mode();
     }

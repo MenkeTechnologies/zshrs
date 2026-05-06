@@ -10174,7 +10174,16 @@ pub struct ShellExecutor {
     pub profiler: Profiler,
     pub style_table: StyleTable,
     /// zsh compatibility mode - use .zcompdump, fpath scanning, etc.
+    /// Also serves as the `--zsh` parity-test flag: caches off, daemon
+    /// off, plugin_cache replay off so every `source` re-runs the file
+    /// fresh per Src/builtin.c:6080-6123 bin_dot semantics.
     pub zsh_compat: bool,
+    /// bash compatibility mode (`--bash`). Same parity-mode semantics
+    /// as `zsh_compat` (caches/daemon/replay off) plus bash-specific
+    /// behavior tweaks where bash 5.x diverges from zsh — e.g.
+    /// `BASH_VERSION` / `BASH_REMATCH` exposed, `[[ =~ ]]` populates
+    /// match indices the bash way, mapfile/readarray as builtins.
+    pub bash_compat: bool,
     /// POSIX sh strict mode — no SQLite, no worker pool, no zsh extensions
     pub posix_mode: bool,
     /// Worker thread pool for background tasks (compinit, process subs, etc.)
@@ -10449,6 +10458,7 @@ impl ShellExecutor {
             profiler: Profiler::new(),
             style_table: StyleTable::new(),
             zsh_compat: false,
+            bash_compat: false,
             posix_mode: false,
             worker_pool: {
                 let config = crate::config::load();
@@ -20063,12 +20073,14 @@ impl ShellExecutor {
         // Daemon source/dot interception (per docs/DAEMON.md "Source / dot
         // interception and file registry"). Fire-and-forget IPC to populate
         // the daemon's compiled_files registry with this file's mtime + inode.
-        // Skipped in POSIX mode (daemon never spawns there). Failure is
-        // silently swallowed — the shell continues with its existing read-+-
-        // execute fallback (the "if daemon disabled or unreachable, clients
-        // fall back to source-interp" invariant).
+        // Skipped in any parity mode — `--posix` (Bourne sh has no daemon),
+        // `--zsh` (drop-in C zsh has no daemon), `--bash` (bash has no
+        // daemon). Each parity mode must behave identically to its
+        // reference shell, which means no zshrs-side compiled-files
+        // registry. Failure is silently swallowed — the shell continues
+        // with its existing read-+-execute fallback.
         #[cfg(feature = "daemon")]
-        if !self.posix_mode {
+        if !self.posix_mode && !self.zsh_compat && !self.bash_compat {
             if let Ok(meta) = std::fs::metadata(&abs_path) {
                 use std::os::unix::fs::MetadataExt;
                 let mtime_ns = meta
@@ -20108,8 +20120,16 @@ impl ShellExecutor {
 
         let result;
 
-        if self.posix_mode {
-            // --- POSIX mode: plain read + execute, no SQLite, no caching, no threads ---
+        if self.posix_mode || self.zsh_compat || self.bash_compat {
+            // --- Parity mode (--posix / --zsh / --bash): plain read +
+            //     execute, no SQLite, no caching, no threads, no daemon
+            //     — identical behaviour to the corresponding reference
+            //     shell. C zsh's Src/builtin.c:6080-6123 bin_dot reads
+            //     the file and execlist's it on every call; bash's
+            //     builtins.def `source_builtin` does the same; sh / dash
+            //     equivalent. Every `source` re-runs the file fresh so
+            //     stdout / signal handlers / file I/O all re-fire as
+            //     the user wrote them. ---
             result = match std::fs::read_to_string(&abs_path) {
                 Ok(content) => match self.execute_script(&content) {
                     Ok(status) => status,
@@ -20139,35 +20159,24 @@ impl ShellExecutor {
             // ~1.5x startup time (RECORDER.md §"Performance targets") —
             // disabling cache replay for that run guarantees every
             // dispatcher fires once for every state mutation.
+            // Cache is disabled when:
+            //   1. The recorder is active (needs every dispatcher
+            //      to fire on every mutation, can't replay deltas).
+            //   2. `ZSHRS_CACHE=0|false|no` env var is set (the
+            //      same env var the rkyv script_cache honors —
+            //      extended here so a single switch turns OFF both
+            //      caches for parity-testing runs against
+            //      /bin/zsh, where every `source` re-runs the file
+            //      fresh and visible stdout / signal handlers /
+            //      file I/O all re-fire).
+            //   3. CLI flag `--no-cache` (passed through via the
+            //      same env var by the bin entrypoint).
             #[cfg(feature = "recorder")]
-            let cache_disabled = crate::recorder::is_enabled();
+            let cache_disabled = crate::recorder::is_enabled()
+                || !crate::script_cache::cache_enabled();
             #[cfg(not(feature = "recorder"))]
-            let cache_disabled = false;
-            // Plugin-cache replay path DELIBERATELY DISABLED for
-            // `source`/`.`. The replay applies captured deltas
-            // (variables, functions, aliases) but skips the script's
-            // stdout-producing commands (`echo`, `print`, etc.) and
-            // any side-effect that wasn't snapshotted in `diff_state`
-            // (file writes, network, signal handlers, etc.). C zsh
-            // has no such cache — every `source` re-runs the file
-            // fresh. To preserve byte-for-byte parity with /bin/zsh
-            // (which is the project's "trust-complete" criterion in
-            // CLAUDE.md), the source path always executes the file.
-            //
-            // Speed regression is mitigated by the rkyv script-
-            // bytecode cache one level below: parse + compile is
-            // skipped on path+mtime hit, but the bytecode still
-            // RUNS, producing stdout naturally. That gives us the
-            // fast-path latency without sacrificing the visible
-            // semantics zinit/p10k/.zshrc users expect.
-            //
-            // The plugin_cache.db can still be populated for read
-            // tools (compaudit, etc.) but is no longer consulted
-            // here. Leaving the snapshot/diff/store path below
-            // intact for now — small constant overhead, and we may
-            // want the deltas for other purposes (e.g. recorder
-            // event replay).
-            if false && !cache_disabled {
+            let cache_disabled = !crate::script_cache::cache_enabled();
+            if !cache_disabled {
                 if let Some(ref cache) = self.plugin_cache {
                 if let Some((mt_s, mt_ns)) = crate::plugin_cache::file_mtime(file_path) {
                     if let Some(plugin_id) = cache.check(&abs_path, mt_s, mt_ns) {
