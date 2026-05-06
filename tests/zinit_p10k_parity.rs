@@ -1989,6 +1989,77 @@ print -- "[${${${(M)profile:#*:*}:+${profile#*:}}:-default}]""#,
         );
     }
 
+    /// User-supplied: 256-color terminal demo. Combines:
+    ///   - `{0..255}` brace numeric range
+    ///   - `print -Pn` prompt expansion no-newline
+    ///   - `%K{$i} %k%F{$i}` background/foreground prompt escapes
+    ///   - `${(l:3::0:)i}` left-pad index to 3 digits with "0"
+    ///   - `${${(M)$((i%6)):#3}:+$'\n'}` — arith inside paramsubst,
+    ///     conditional newline emit when `i % 6 == 3`.
+    /// Stresses arith-eval-inside-paramsubst parsing (`${$((expr))}`).
+    #[test]
+    fn zsh_256_color_demo_with_conditional_newline() {
+        assert_parity(
+            r#"for i in {0..255}; do
+  print -Pn "%K{$i}  %k%F{$i}${(l:3::0:)i}%f " ${${(M)$((i%6)):#3}:+$'\n'}
+done"#,
+        );
+    }
+
+    /// Isolation of `${$((expr))}` arith-inside-paramsubst — the inner
+    /// `$((i%6))` must arith-eval, not parse as cmd-subst-of-subshell.
+    #[test]
+    fn arith_eval_inside_paramsubst_braces() {
+        assert_parity(r#"i=15; print -- "[${$((i%6))}]""#);
+    }
+
+    /// User-supplied: ZSH_VERSION gate via numeric-range glob alternation.
+    /// `[[ $ZSH_VERSION == (5.<1->*|<6->.*) ]]` — zsh ≥ 5.1 OR zsh ≥ 6.x.
+    /// Tests `<1->` "1-or-greater" numeric range and alternation in `[[`.
+    /// Six version cases probing both branches and the boundaries.
+    #[test]
+    fn zsh_version_gate_numeric_range_alternation() {
+        assert_parity(
+            r#"check() { [[ $1 == (5.<1->*|<6->.*) ]] && echo "$1: MATCH" || echo "$1: NO"; }
+check 5.1.0
+check 5.0.8
+check 5.9.4
+check 6.0.0
+check 7.2.1
+check 4.3.0"#,
+        );
+    }
+
+    /// User-supplied: p10k anaconda content expansion. Quadruple-nested
+    /// strip pipeline + `:-` fallback to `:t` modifier on $CONDA_PREFIX.
+    /// `${${${${CONDA_PROMPT_MODIFIER#\(}% }%\)}:-${CONDA_PREFIX:t}}`
+    ///   - inner: strip leading `(`
+    ///   - then strip trailing space
+    ///   - then strip trailing `)`
+    ///   - if result is empty, take basename of $CONDA_PREFIX.
+    /// Three cases: typical `(myenv) `, empty modifier, bare word.
+    #[test]
+    fn p10k_anaconda_content_expansion() {
+        assert_parity(
+            r#"CONDA_PROMPT_MODIFIER="(myenv) "
+CONDA_PREFIX="/opt/conda/envs/myenv"
+print -- "[${${${${CONDA_PROMPT_MODIFIER#\(}% }%\)}:-${CONDA_PREFIX:t}}]"
+CONDA_PROMPT_MODIFIER=""
+CONDA_PREFIX="/opt/conda/envs/myenv"
+print -- "[${${${${CONDA_PROMPT_MODIFIER#\(}% }%\)}:-${CONDA_PREFIX:t}}]"
+CONDA_PROMPT_MODIFIER="bare"
+CONDA_PREFIX="/opt/conda/envs/other"
+print -- "[${${${${CONDA_PROMPT_MODIFIER#\(}% }%\)}:-${CONDA_PREFIX:t}}]""#,
+        );
+    }
+
+    /// `${(M)$((expr)):#N}` — arith-eval result through (M) match-keep
+    /// filter against literal pattern.
+    #[test]
+    fn match_keep_on_arith_result() {
+        assert_parity(r#"i=15; print -- "[${(M)$((i%6)):#3}]""#);
+    }
+
     /// User-supplied: zi-log line combining tri-conditional highlight
     /// pick + `(pj:$sep:)` prompt-expanding-join with dynamic separator.
     /// `${${${(M)profile:#default}:+$lhi_hl}:-$profile_hl}` picks
