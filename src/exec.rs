@@ -23565,10 +23565,35 @@ impl ShellExecutor {
                     // Set array variable
                     if is_assoc {
                         let mut assoc: IndexMap<String, String> = IndexMap::new();
-                        let mut iter = elements.iter();
-                        while let Some(key) = iter.next() {
-                            if let Some(val) = iter.next() {
-                                assoc.insert(key.clone(), val.clone());
+                        // Detect bash-style `[K]=V` element shape and use
+                        // the per-element pair parse; otherwise fall
+                        // back to zsh's classic alternating-pairs
+                        // (key1, val1, key2, val2, ...). zinit and
+                        // p10k both use the bracketed form heavily:
+                        //   typeset -A m=([key1]=val1 [key2]=val2)
+                        // (Src/builtin.c bin_typeset detects the same
+                        // shape via its `[ ... ]=` parser.)
+                        let bracket_style = !elements.is_empty()
+                            && elements
+                                .iter()
+                                .all(|e| {
+                                    e.starts_with('[')
+                                        && e.contains("]=")
+                                });
+                        if bracket_style {
+                            for elem in &elements {
+                                if let Some(close) = elem.find("]=") {
+                                    let key = &elem[1..close];
+                                    let val = &elem[close + 2..];
+                                    assoc.insert(key.to_string(), val.to_string());
+                                }
+                            }
+                        } else {
+                            let mut iter = elements.iter();
+                            while let Some(key) = iter.next() {
+                                if let Some(val) = iter.next() {
+                                    assoc.insert(key.clone(), val.clone());
+                                }
                             }
                         }
                         self.assoc_arrays.insert(name.to_string(), assoc);

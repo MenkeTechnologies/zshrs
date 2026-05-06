@@ -863,6 +863,21 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// `typeset -A m=([k1]=v1 [k2]=v2)` — bracketed-key assoc-init
+    /// shape (zinit ICE setup, p10k segment color tables, oh-my-zsh
+    /// theme tables all use this). zshrs was treating each element
+    /// as a flat alternating-pair entry, so `[k1]=v1` became the
+    /// key and `[k2]=v2` the value — just one wrong pair total.
+    /// Now per-element `[K]=V` parse fills the assoc correctly.
+    #[test]
+    fn assoc_bracket_init_shape() {
+        assert_parity(
+            r#"typeset -gA m=([alpha]=1 [beta]=2 [gamma]=3)
+echo "n=$#m"
+for k in ${(k)m}; do echo "$k=${m[$k]}"; done | sort"#,
+        );
+    }
+
     /// `local -a opts=("$@")` — copy positional args into a local
     /// array. Plugin code uses this constantly to capture caller
     /// args before re-parsing. Was being routed through typeset's
