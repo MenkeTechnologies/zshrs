@@ -3236,38 +3236,38 @@ fn apply_operator_with_flags(
             out_vals
         }
         Some("^") => {
-            // Uppercase first character
-            value
-                .iter()
-                .map(|s| {
-                    let mut chars = s.chars();
-                    match chars.next() {
-                        Some(c) => c.to_uppercase().chain(chars).collect(),
-                        None => String::new(),
-                    }
-                })
-                .collect()
+            // `${var^}` is bash-only (uppercase first char). zsh
+            // rejects — see the `^^` arm below for rationale.
+            eprintln!("zshrs:1: bad substitution");
+            state.errflag = true;
+            Vec::new()
         }
         Some("^^") => {
-            // Uppercase all
-            value.iter().map(|s| s.to_uppercase()).collect()
+            // `${var^^}` is bash-only; zsh rejects with "bad
+            // substitution" and exits the substitution chain.
+            // Direct port of zsh's parser behaviour: the `^` in a
+            // ${…} body is a syntax error unless it's part of an
+            // extendedglob `^pat` (which only fires INSIDE patterns,
+            // not as a param-modifier). The zsh-native uppercase
+            // form is `${(U)var}`. Emit an error to stderr and
+            // return empty so callers see no value.
+            eprintln!("zshrs:1: bad substitution");
+            state.errflag = true;
+            Vec::new()
         }
         Some(",") => {
-            // Lowercase first character
-            value
-                .iter()
-                .map(|s| {
-                    let mut chars = s.chars();
-                    match chars.next() {
-                        Some(c) => c.to_lowercase().chain(chars).collect(),
-                        None => String::new(),
-                    }
-                })
-                .collect()
+            // `${var,}` is bash-only (lowercase first char). zsh
+            // rejects — see the `,,` arm above for rationale.
+            eprintln!("zshrs:1: bad substitution");
+            state.errflag = true;
+            Vec::new()
         }
         Some(",,") => {
-            // Lowercase all
-            value.iter().map(|s| s.to_lowercase()).collect()
+            // `${var,,}` is bash-only; zsh rejects (same as `^^`).
+            // The zsh-native lowercase form is `${(L)var}`.
+            eprintln!("zshrs:1: bad substitution");
+            state.errflag = true;
+            Vec::new()
         }
         _ => value,
     }
