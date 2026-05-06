@@ -7085,11 +7085,64 @@ fn do_replace_one(
 /// family which lets the operator (`do_replace_one`) enforce
 /// `/#`/`/%` anchoring by inspecting capture span positions.
 fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
+    // `(#i)` / `(#l)` / `(#I)` extendedglob flag prefixes that toggle
+    // case-insensitive matching for the rest of the pattern (until
+    // a `(#I)` resets). Direct port of Src/pattern.c PAT_INSENS /
+    // PAT_LOWERSENS / PAT_INSENS_OFF tokens. Parse the leading
+    // `(#…)` flag block (if any) and emit a regex `(?i)` flag prefix
+    // when case-insensitive is requested. Consumes from `pattern`.
+    //
+    // Gated on the `extendedglob` option per zsh: without
+    // extendedglob, `(#i)foo` is matched literally (the parens, `#`,
+    // `i`, `)` all stay as themselves). Verified vs
+    // /opt/homebrew/bin/zsh -fc.
+    let extendedglob_on = crate::exec::with_executor(|exec| {
+        exec.options
+            .get("extendedglob")
+            .copied()
+            .unwrap_or(false)
+    });
+    let mut chars: Vec<char> = pattern.chars().collect();
+    let mut case_insensitive = false;
+    while extendedglob_on && chars.len() >= 4 && chars[0] == '(' && chars[1] == '#' {
+        // Find the closing `)` of the flag group.
+        let mut j = 2;
+        while j < chars.len() && chars[j] != ')' {
+            j += 1;
+        }
+        if j >= chars.len() {
+            break;
+        }
+        // Inspect inner flags. Treat unknown flags as literal — keep
+        // the entire (# … ) in pattern. Known flags: i/l (case-
+        // insensitive on), I (case-insensitive off), b (backref —
+        // handled separately by the replace path), B (backref off).
+        let inner: String = chars[2..j].iter().collect();
+        let mut handled = true;
+        for c in inner.chars() {
+            match c {
+                'i' | 'l' => case_insensitive = true,
+                'I' => case_insensitive = false,
+                'b' | 'B' | 'm' | 'M' => { /* match-mode flags handled upstream */ }
+                _ => {
+                    handled = false;
+                    break;
+                }
+            }
+        }
+        if !handled {
+            break;
+        }
+        // Consume the `(#…)` block from the input.
+        chars.drain(..=j);
+    }
     let mut regex = String::new();
+    if case_insensitive {
+        regex.push_str("(?i)");
+    }
     if anchored {
         regex.push('^');
     }
-    let chars: Vec<char> = pattern.chars().collect();
     let mut i = 0;
     // Same `#` / `##` extendedglob postfix handling as
     // glob_to_regex_capturing — see that function's comment.

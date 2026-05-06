@@ -2198,25 +2198,34 @@ impl ZshCompiler {
         // `${...}` brace expression that the standard fast paths
         // cannot handle (nested `${...}` in name slot, or any other
         // shape that would otherwise hit the EXPAND_TEXT bridge with
-        // its String-collapse), AND the flag chain contains `(@)`
-        // signalling the user wants array-shape preservation, route
-        // through BUILTIN_BRIDGE_BRACE_ARRAY which calls into
-        // subst_port::substitute_brace_array and returns Value::Array.
-        // Direct port of zsh's `aval` threading in subst.c paramsubst:
-        // C source carries the per-element vector through `aval`,
-        // returning the multi-word output to the caller.
+        // its String-collapse), AND the result needs to be array-
+        // shaped (explicit `(@)`, explicit `[@]` subscript, or `(M)`
+        // filter on an array-subscripted name like `out[@]`), route
+        // through BUILTIN_BRIDGE_BRACE_ARRAY. Direct port of zsh's
+        // `aval` threading in subst.c paramsubst: the C source
+        // carries the per-element vector through `aval`, returning
+        // multi-word output to the caller.
         if !has_bnull {
             if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
                 if let Some(close) = matching_paren_close(inner) {
                     let flag_chain = &inner[1..close];
                     let after_flags = &inner[close + 1..];
-                    // Heuristic: only redirect when flag chain has
-                    // `@` AND the post-flags portion contains a
-                    // nested `${` (the case the standard fast paths
-                    // can't handle). Pure `(@)NAME` and
-                    // `(@)NAME[KEY]` are still handled by
-                    // parse_zsh_flag / parse_zsh_flag_subscript above.
-                    if flag_chain.contains('@') && after_flags.contains("${") {
+                    // Trigger conditions:
+                    //   1. `(@)` in flags + nested `${` in body — the
+                    //      original triple-nested case.
+                    //   2. Filter operator `:#` on `NAME[@]` — explicit
+                    //      array-splice with filter must return array
+                    //      shape (zsh: `${(M)out[@]:#pat}` filters per
+                    //      element, returns array). Other operators
+                    //      (##, %%, /, etc.) on `NAME[@]` go through
+                    //      their own per-element fast path that
+                    //      already preserves shape.
+                    let has_at_filter = after_flags.contains("[@]")
+                        && after_flags.contains(":#");
+                    let need_array =
+                        (flag_chain.contains('@') && after_flags.contains("${"))
+                            || has_at_filter;
+                    if need_array {
                         let body_const = self.builder.add_constant(Value::str(inner));
                         self.builder.emit(Op::LoadConst(body_const), 0);
                         self.builder.emit(
