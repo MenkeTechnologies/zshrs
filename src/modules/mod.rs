@@ -31,7 +31,6 @@ pub mod pcre;
 pub mod random;
 pub mod random_real;
 pub mod regex;
-pub mod sched;
 pub mod socket;
 pub mod stat;
 pub mod system;

@@ -116,7 +116,7 @@ pub use modules::pcre;
 pub use modules::random;
 pub use modules::random_real;
 pub use modules::regex as regex_module;
-pub use modules::sched;
+pub use builtins::sched;
 pub use modules::socket;
 pub use modules::stat;
 pub use modules::system;
@@ -140,7 +140,6 @@ pub mod prompt;
 #[cfg(feature = "recorder")]
 pub mod recorder;
 pub mod regex_mod;
-pub mod rlimits;
 pub mod signals;
 pub mod sort;
 pub mod string_port;
@@ -159,6 +158,11 @@ pub mod worker;
 pub mod zle;
 pub mod zwc;
 pub mod zwc_decode;
+/// Ports of zsh's core builtins from `Src/builtin.c` (and other
+/// non-`Src/Modules/` sites). Distinct from `crate::modules`.
+pub mod builtins;
+// Backwards-compat re-export so `crate::rlimits::…` keeps resolving.
+pub use builtins::rlimits;
 
 pub use exec::ShellExecutor;
 pub use fish_features::{

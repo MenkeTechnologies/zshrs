@@ -27,7 +27,6 @@ as exposed by `zmodload`.
 | `random.rs` | `random.c` | `$SRANDOM` |
 | `random_real.rs` | `random_real.c` | `$RANDOM` 64-bit / high-precision RNG |
 | `regex.rs` | `regex.c` | `[[ … -regex-match … ]]` POSIX-regex condition |
-| `sched.rs` | (Src/builtin.c sched) | `sched` deferred-job builtin |
 | `socket.rs` | `socket.c` | `zsocket` Unix-domain socket |
 | `stat.rs` | `stat.c` | `zstat` builtin |
 | `system.rs` | `system.c` | `sysopen` / `sysread` / `syswrite` / `syserror` / `zsystem` |
