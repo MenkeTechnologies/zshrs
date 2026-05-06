@@ -2690,6 +2690,19 @@ impl ZshCompiler {
 
     fn compile_cond(&mut self, c: &crate::parser::ZshCond) {
         use crate::parser::ZshCond;
+        // xtrace: emit `[[ ... ]]` text before evaluating. Direct
+        // port of zsh's exec.c::execcond which calls printprompt4()
+        // and writes the cond's source form to xtrerr before
+        // dispatching the test. Without this, `zsh -x` showed
+        // `[[ ! -x /usr/bin/locale ]]` lines that zshrs's trace
+        // dropped — the conditional tests in /etc/zshrc and most
+        // .zshrc structures simply weren't traced.
+        let cond_text = format!("[[ {} ]]", render_cond(c));
+        let trace_const = self.builder.add_constant(Value::str(cond_text.as_str()));
+        self.builder.emit(Op::LoadConst(trace_const), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+        self.builder.emit(Op::Pop, 0);
         // Result on stack: bool. Status set after this returns.
         self.compile_cond_expr(c);
         // Convert bool → status (true=0, false=1)
@@ -3003,6 +3016,16 @@ impl ZshCompiler {
     }
 
     fn compile_arith(&mut self, expr: &str) {
+        // xtrace: emit `(( expr ))` text before evaluating. Direct
+        // port of zsh's exec.c::execdpar which traces the arith
+        // expression to xtrerr. Without this, `zsh -x` showed
+        // `(( $+__p9k_intro ))` etc. that zshrs's trace dropped.
+        let trace_text = format!("(( {} ))", expr);
+        let trace_const = self.builder.add_constant(Value::str(trace_text.as_str()));
+        self.builder.emit(Op::LoadConst(trace_const), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+        self.builder.emit(Op::Pop, 0);
         // Compound `(( expr ))` — set status based on whether expr is non-zero.
         // Subscripted-array assignment (`((a[i]=v))`) needs to bypass
         // ArithCompiler (which doesn't write back through arr[idx])
@@ -4822,6 +4845,45 @@ fn has_unquoted_expansion(s: &str) -> bool {
         i += 1;
     }
     false
+}
+
+/// Reconstruct an approximate source-text representation of a
+/// `[[ ]]` cond AST for xtrace output. Direct port of zsh's
+/// exec.c::execcond which emits the cond's source form to
+/// xtrerr before evaluation. Untokenize each operand so lexer
+/// META markers don't leak into the trace.
+fn render_cond(c: &crate::parser::ZshCond) -> String {
+    use crate::parser::ZshCond;
+    fn untok(s: &str) -> String {
+        crate::lexer::untokenize(s)
+    }
+    match c {
+        ZshCond::Not(inner) => format!("! {}", render_cond(inner)),
+        ZshCond::And(a, b) => format!("{} && {}", render_cond(a), render_cond(b)),
+        ZshCond::Or(a, b) => format!("{} || {}", render_cond(a), render_cond(b)),
+        ZshCond::Unary(op, arg) => {
+            let op = untok(op);
+            let arg = untok(arg);
+            if arg.is_empty() {
+                op
+            } else {
+                format!("{} {}", op, arg)
+            }
+        }
+        ZshCond::Binary(left, op, right) => {
+            let left = untok(left);
+            let op = untok(op);
+            let right = untok(right);
+            if right.is_empty() {
+                format!("{} {}", op, left)
+            } else {
+                format!("{} {} {}", left, op, right)
+            }
+        }
+        ZshCond::Regex(left, regex) => {
+            format!("{} =~ {}", untok(left), untok(regex))
+        }
+    }
 }
 
 fn unquoted(s: &str, target: char) -> bool {

@@ -1,0 +1,1159 @@
+[34m/Users/wizard/.zshenv	/Users/wizard/.zshenv	1	[0m	export SHELL_SESSIONS_DISABLE=1
+[34m/etc/zshrc	/etc/zshrc	1	[0m	locale LC_CTYPE
+[34m/etc/zshrc	/etc/zshrc	9	[0m	setopt COMBINING_CHARS
+[34m/etc/zshrc	/etc/zshrc	13	[0m	disable log
+[34m/etc/zshrc	/etc/zshrc	21	[0m	setopt BEEP
+[34m/etc/zshrc	/etc/zshrc	28	[0m	typeset -g -A key
+[34m/etc/zshrc	/etc/zshrc	74	[0m	[ -r /etc/zshrc_$TERM_PROGRAM ]
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	65	[0m	builtin zmodload zsh/datetime
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	74	[0m	source $HOME/.zpwr/local/zpwr-hash-dirs.zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	hash -d ZPWR=/Users/wizard/.zpwr
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	2	[0m	hash -d ZPWR_LOCAL=/Users/wizard/.zpwr/local
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	3	[0m	hash -d ZPWR_TEMP=/Users/wizard/.zpwr/local/.temp
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	4	[0m	hash -d ZPWR_COMPSYS_CACHE=/Users/wizard/.zpwr/local/zcompcache
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	hash -d ZPWR_TMUX=/Users/wizard/.zpwr/tmux
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	6	[0m	hash -d TMUXH=/Users/wizard/.tmux
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	hash -d YARN_HOME=/Users/wizard/.config/yarn
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	8	[0m	hash -d ZPWR_SCRIPTS=/Users/wizard/.zpwr/scripts
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	hash -d ZPWR_DOC=/Users/wizard/Documents
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	10	[0m	hash -d ZPWR_DL=/Users/wizard/Downloads
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	11	[0m	hash -d NODE_HOME=/opt/homebrew/lib/node_modules
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	12	[0m	hash -d plugins=/Users/wizard/.zinit/plugins
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	hash -d zinit=/Users/wizard/.zinit
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	14	[0m	hash -d ZSH=/Users/wizard/.zinit
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	hash -d HOMEBREW_HOME_FORMULAE=/opt/homebrew/Library/taps/homebrew/homebrew-core/formula
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	16	[0m	hash -d ZPWR_FORKED_DIR=/Users/wizard/forkedRepos
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	hash -d zpfx=/Users/wizard/.zinit/polaris
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	18	[0m	hash -d ZPWR_D=/Users/wizard/Desktop
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	19	[0m	hash -d ZPWR_PYSCRIPTS=/Users/wizard/PycharmProjects/fromShell
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	82	[0m	source ${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	90	[0m	builtin typeset +x FPATH
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	105	[0m	builtin export ZPWR=${0:A:h:h}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	106	[0m	builtin export ZPWR_ENV=$ZPWR/env
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	108	[0m	builtin export ZPWR_ENV_FILE=$ZPWR_ENV/.zpwr_env.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	109	[0m	builtin export ZPWR_RE_ENV_FILE=$ZPWR_ENV/.zpwr_re_env.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	112	[0m	builtin typeset -Ag ZPWR_VARS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	114	[0m	builtin typeset -Ag ZPWR_VERBS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	123	[0m	zpwrInitEnv
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	builtin source $ZPWR_ENV_FILE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	18	[0m	export ZPWR_AUTO_ATTACH=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	20	[0m	export ZPWR_AUTO_COMPLETE=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	22	[0m	export ZPWR_AUTO_COMPLETE_DELAY=3.0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	24	[0m	export ZPWR_AUTO_LS_RM=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	26	[0m	export ZPWR_AUTO_LS_CD=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	28	[0m	export ZPWR_AUTO_SELECT=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	30	[0m	export ZPWR_BANNER_CLEARLIST=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	32	[0m	export ZPWR_BANNER_DESKTOP_DARWIN=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	34	[0m	export ZPWR_BANNER_DESKTOP_LINUX=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	36	[0m	export ZPWR_BANNER_TYPE=noponies
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	38	[0m	export ZPWR_BAT_THEME=GitHub
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	41	[0m	export ZPWR_CHAR_LOGO=<<)(>>
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	43	[0m	export ZPWR_DESC_PRE=-<<
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	45	[0m	export ZPWR_DESC_POST=>>-
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	47	[0m	export ZPWR_DESC_TEXT_COLOR=34
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	49	[0m	export ZPWR_DESC_PRE_COLOR=1;31
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	51	[0m	export ZPWR_DESC_POST_COLOR=1;31
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	53	[0m	export ZPWR_COLORS=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	55	[0m	export ZPWR_COLORS_SECTIONS=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	57	[0m	export ZPWR_COLORS_VERBS=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	59	[0m	export ZPWR_COLOR_BLUE=\x1b[37;44m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	60	[0m	export ZPWR_COLOR_RED=\x1b[31m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	61	[0m	export ZPWR_COLOR_RESET=\x1b[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	63	[0m	export ZPWR_COMMIT_STYLE=1;37;45
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	65	[0m	export ZPWR_NAMED_COLORS==(#b)(*)=1;37;46
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	67	[0m	export ZPWR_COMMON_ZSTYLE_OPTS=reply=("${PREFIX:+=(#bi)($PREFIX:t)(?)(*)==37;45=37;43=34}:${(s.:.)LS_COLORS}")
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	69	[0m	export ZPWR_SUDO_CMD=sudo -E
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	71	[0m	export ZPWR_FULL_SUDO="builtin" "command" "sudo" -E "env" PATH="$PATH"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	73	[0m	export ZPWR_COMPLETION_DIR=zsh-more-completions
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	75	[0m	export ZPWR_CORRECT=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	77	[0m	export ZPWR_CORRECT_EXPAND=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	79	[0m	export ZPWR_DEBUG=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	81	[0m	export ZPWR_DEFAULT_OMZ_THEME=simonoff
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	83	[0m	export ZPWR_DELIMITER_CHAR=%
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	85	[0m	export ZPWR_VIM=nvim
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	87	[0m	export ZPWR_EDITOR_TO_VIM=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	89	[0m	export ZPWR_EMACS=command emacs -nw
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	91	[0m	export ZPWR_EMACS_CLIENT=emacsclient -c -nw -a ""
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	93	[0m	export ZPWR_EXA_EXTENDED=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	95	[0m	export ZPWR_EXPAND=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	97	[0m	export ZPWR_EXPAND_SECOND_POSITION=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	99	[0m	export ZPWR_EXPAND_NATIVE=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	101	[0m	export ZPWR_EXPAND_PRE_EXEC=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	103	[0m	export ZPWR_EXPAND_PRE_EXEC_NATIVE=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	105	[0m	export ZPWR_EXPAND_PRE_EXEC_SECOND_POSITION=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	107	[0m	export ZPWR_EXPAND_QUOTE_DOUBLE=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	109	[0m	export ZPWR_EXPAND_QUOTE_SINGLE=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	111	[0m	export ZPWR_FZF=fzf --ansi
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	113	[0m	export ZPWR_FD=command fd --follow --type file --threads 8
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	115	[0m	export ZPWR_FZF_LOGO=<<)ZPWR(>>
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	117	[0m	export ZPWR_GITHUB_ACCOUNT=MenkeTechnologies
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	119	[0m	export ZPWR_GLOBAL_ALIAS_PREFIX=j
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	121	[0m	export ZPWR_INTERACTIVE_MENU_SELECT=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	123	[0m	export ZPWR_KEYTIMEOUT=10
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	125	[0m	export ZPWR_LEARN=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	127	[0m	export ZPWR_LOG_UNDER_COLOR=\x1b[0;36m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	129	[0m	export ZPWR_LOG_QUOTE_COLOR=\x1b[0;95m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	131	[0m	export ZPWR_LOG_DATE_COLOR=\x1b[1;32;40m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	133	[0m	export ZPWR_LOG_MSG_COLOR=\x1b[1;37;45m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	135	[0m	export ZPWR_MAP_C_V_VIM_NORMAL=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	137	[0m	export ZPWR_MARKER_COLOR=0;1;4;37;44m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	139	[0m	export ZPWR_PYGMENTIZE_COLOR=emacs
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	141	[0m	export ZPWR_COLORIZER=bat
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	143	[0m	export ZPWR_OPTS=
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	145	[0m	export ZPWR_OS_TYPE=$(uname -s | tr A-Z a-z)
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	tr A-Z a-z
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	uname -s
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	147	[0m	export ZPWR_PLUGIN_MANAGER=zinit
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	149	[0m	test -z $ZPWR_PROFILING
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	151	[0m	export ZPWR_PROMPT=powerlevel10k
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	153	[0m	export ZPWR_PSSH_TIMEOUT=0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	155	[0m	export ZPWR_GIT_COLOR_PREFIX=git -c color.status=always -c color.ui=always --no-pager
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	157	[0m	export ZPWR_QUOTE_START_CHAR=<<(
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	159	[0m	export ZPWR_QUOTE_END_CHAR=)>>
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	161	[0m	export ZPWR_REPO_NAME=zpwr
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	164	[0m	export ZPWR_SEND_KEYS_FULL=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	166	[0m	export ZPWR_LOOK_TIME=5
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	169	[0m	export ZPWR_SEND_KEYS_PANE=-1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	171	[0m	export ZPWR_SURROUND=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	173	[0m	export ZPWR_TABSTOP=__________
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	175	[0m	export ZPWR_TABSTOP_ALIASES=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	177	[0m	export ZPWR_TMUX_PREFIX_MAC=C-a
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	179	[0m	export ZPWR_TMUX_PREFIX_LINUX=C-b
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	181	[0m	export ZPWR_TMUX_HISTORY_LIMIT=30000
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	183	[0m	export ZPWR_TRACE=false
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	185	[0m	export ZPWR_VIM_TEMPLATES=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	187	[0m	export ZPWR_BINDKEY_VI=true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	189	[0m	export ZPWR_ZINIT_COMPINIT_DELAY=0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	191	[0m	export ZPWR_ZDHARMA=zdharma-continuum
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	193	[0m	export ZPWR_THUMBS_REGEX=^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$
+((?:[a-z0-9]+(?:-[a-z0-9]+)*\.)+[a-z]{2,})(?::.*)?
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	197	[0m	export ZPWR_TTY=$TTY
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	203	[0m	test -z $ZPWR_REMOTE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	212	[0m	test -z $ZPWR_RE_ENV_FILE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	214	[0m	source $ZPWR_RE_ENV_FILE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	59	[0m	test -z $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	62	[0m	zpwrEvalIfNeeded ZPWR_PLUGIN_MANAGER_HOME $ZPWR_PLUGIN_MANAGER_HOME $HOME/.zinit $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_PLUGIN_MANAGER_HOME=/Users/wizard/.zinit
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	63	[0m	export ZSH=$ZPWR_PLUGIN_MANAGER_HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	64	[0m	zpwrEvalIfNeeded ZSH_CUSTOM $ZSH_CUSTOM $ZSH $ZSH
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZSH_CUSTOM=/Users/wizard/.zinit
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	72	[0m	export LS_COLORS=fi=38:di=32;1:ex=31;1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	73	[0m	export EXA_COLORS=in=34:ur=32:uw=32:ux=32:gr=33:gw=33:gx=33:tr=31:tw=31:tx=31:xx=34:uu=38:gu=32:lc=32;1:un=41;37;1:gn=43;37;1:sb=4;1:xa=1;34:df=31;46;1:ds=31;45;1:lp=36;1:cc=1;31;46:da=34:b0=31;1;4:gm=32;1;4:ga=36;1;4:gd=34;1;4:gv=35;1;4:gt=37;1;4
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	86	[0m	zpwrEvalIfNeeded ZPWR_FZF_DIR $ZPWR_FZF_DIR $ZSH_CUSTOM/plugins/fzf $ZSH
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_FZF_DIR=/Users/wizard/.zinit/plugins/fzf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	88	[0m	zpwrEvalIfNeeded ZPWR_LOCAL $ZPWR_LOCAL $ZPWR/local $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOCAL=/Users/wizard/.zpwr/local
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	90	[0m	zpwrEvalIfNeeded ZSH_CACHE_DIR $ZSH_CACHE_DIR $ZPWR_LOCAL/.cache $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZSH_CACHE_DIR=/Users/wizard/.zpwr/local/.cache
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	92	[0m	zpwrEvalIfNeeded ZPWR_ALIAS_FILE $ZPWR_ALIAS_FILE $ZPWR_ENV/.shell_aliases_functions.sh $ZPWR_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALIAS_FILE=/Users/wizard/.zpwr/env/.shell_aliases_functions.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	94	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD $ZPWR_AUTOLOAD $ZPWR/autoload $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD=/Users/wizard/.zpwr/autoload
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	96	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_COMMON $ZPWR_AUTOLOAD_COMMON $ZPWR_AUTOLOAD/common $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_COMMON=/Users/wizard/.zpwr/autoload/common
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	98	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_COMPS $ZPWR_AUTOLOAD_COMPS $ZPWR_AUTOLOAD/comps $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_COMPS=/Users/wizard/.zpwr/autoload/comps
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	100	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_COMP_UTILS $ZPWR_AUTOLOAD_COMP_UTILS $ZPWR_AUTOLOAD/comp_utils $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_COMP_UTILS=/Users/wizard/.zpwr/autoload/comp_utils
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	102	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_DARWIN $ZPWR_AUTOLOAD_DARWIN $ZPWR_AUTOLOAD/darwin $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_DARWIN=/Users/wizard/.zpwr/autoload/darwin
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	104	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_FZF $ZPWR_AUTOLOAD_FZF $ZPWR_AUTOLOAD/fzf $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_FZF=/Users/wizard/.zpwr/autoload/fzf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	106	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_LINUX $ZPWR_AUTOLOAD_LINUX $ZPWR_AUTOLOAD/linux $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_LINUX=/Users/wizard/.zpwr/autoload/linux
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	108	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_SYSTEMCTL $ZPWR_AUTOLOAD_SYSTEMCTL $ZPWR_AUTOLOAD/systemctl $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_SYSTEMCTL=/Users/wizard/.zpwr/autoload/systemctl
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	110	[0m	zpwrEvalIfNeeded ZPWR_COMPS $ZPWR_COMPS $ZPWR/autoload/comps $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_COMPS=/Users/wizard/.zpwr/autoload/comps
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	112	[0m	zpwrEvalIfNeeded ZPWR_CROSS_OS_CMD $ZPWR_CROSS_OS_CMD $ZPWR_SCRIPTS/crossOSCommands.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_CROSS_OS_CMD=/Users/wizard/.zpwr/scripts/crossOSCommands.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	114	[0m	zpwrEvalIfNeeded ZPWR_CROSS_OS_EXE $ZPWR_CROSS_OS_EXE $ZPWR_SCRIPTS/crossOSExecute.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_CROSS_OS_EXE=/Users/wizard/.zpwr/scripts/crossOSExecute.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	117	[0m	zpwrEvalIfNeeded ZPWR_PLUGIN_DIR $ZPWR_PLUGIN_DIR $ZSH_CUSTOM/plugins $ZSH_CUSTOM
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_PLUGIN_DIR=/Users/wizard/.zinit/plugins
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	119	[0m	zpwrEvalIfNeeded ZPWR_ZINIT_FZF $ZPWR_ZINIT_FZF $ZPWR_PLUGIN_DIR/MenkeTechnologies---fzf $ZPWR_PLUGIN_DIR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ZINIT_FZF=/Users/wizard/.zinit/plugins/MenkeTechnologies---fzf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	121	[0m	zpwrEvalIfNeeded ZPWR_HIDDEN_DIR $ZPWR_HIDDEN_DIR $ZPWR/local $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_HIDDEN_DIR=/Users/wizard/.zpwr/local
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	123	[0m	zpwrEvalIfNeeded ZPWR_TOKEN_PRE $ZPWR_TOKEN_PRE $ZPWR_LOCAL/.tokens.sh $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TOKEN_PRE=/Users/wizard/.zpwr/local/.tokens.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	125	[0m	zpwrEvalIfNeeded ZPWR_TOKEN_POST $ZPWR_TOKEN_POST $ZPWR_LOCAL/.tokens-post.sh $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TOKEN_POST=/Users/wizard/.zpwr/local/.tokens-post.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	126	[0m	zpwrEvalIfNeeded ZPWR_TEST $ZPWR_TEST $ZPWR/tests $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEST=/Users/wizard/.zpwr/tests
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	128	[0m	zpwrEvalIfNeeded ZPWR_INSTALL $ZPWR_INSTALL $ZPWR/install $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_INSTALL=/Users/wizard/.zpwr/install
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	130	[0m	zpwrEvalIfNeeded ZPWR_TMUXRC $ZPWR_TMUXRC $ZPWR_INSTALL/.tmux.conf $ZPWR_INSTALL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TMUXRC=/Users/wizard/.zpwr/install/.tmux.conf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	132	[0m	zpwrEvalIfNeeded ZPWR_VIMRC $ZPWR_VIMRC $ZPWR_INSTALL/.vimrc $ZPWR_INSTALL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_VIMRC=/Users/wizard/.zpwr/install/.vimrc
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	134	[0m	zpwrEvalIfNeeded ZPWR_IDEAVIMRC $ZPWR_IDEAVIMRC $ZPWR_INSTALL/.ideavimrc $ZPWR_INSTALL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_IDEAVIMRC=/Users/wizard/.zpwr/install/.ideavimrc
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	136	[0m	zpwrEvalIfNeeded ZPWR_TMUX $ZPWR_TMUX $ZPWR/tmux $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TMUX=/Users/wizard/.zpwr/tmux
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	138	[0m	zpwrEvalIfNeeded ZPWR_TMUX_LOCAL $ZPWR_TMUX_LOCAL $ZPWR_TMUX/local $ZPWR_TMUX
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TMUX_LOCAL=/Users/wizard/.zpwr/tmux/local
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	140	[0m	zpwrEvalIfNeeded TMPPREFIX $TMPPREFIX $ZPWR_LOCAL/.temp/zsh $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export TMPPREFIX=/Users/wizard/.zpwr/local/.temp/zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	142	[0m	zpwrEvalIfNeeded ZPWR_LOCAL_TEMP $ZPWR_LOCAL_TEMP $ZPWR_LOCAL/.temp $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOCAL_TEMP=/Users/wizard/.zpwr/local/.temp
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	144	[0m	zpwrEvalIfNeeded ZPWR_LOCK_FILE $ZPWR_LOCK_FILE $ZPWR_LOCAL/.lock $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOCK_FILE=/Users/wizard/.zpwr/local/.lock
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	146	[0m	zpwrEvalIfNeeded ZPWR_LOCAL_ENV $ZPWR_LOCAL_ENV $ZPWR_LOCAL/zpwrEnv $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOCAL_ENV=/Users/wizard/.zpwr/local/zpwrEnv
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	148	[0m	zpwrEvalIfNeeded ZPWR_PROMPT_FILE $ZPWR_PROMPT_FILE $ZPWR_ENV/.p10k.zsh $ZPWR_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_PROMPT_FILE=/Users/wizard/.zpwr/env/.p10k.zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	150	[0m	zpwrEvalIfNeeded ZPWR_SCRIPTS $ZPWR_SCRIPTS $ZPWR/scripts $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_SCRIPTS=/Users/wizard/.zpwr/scripts
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	152	[0m	zpwrEvalIfNeeded ZPWR_SCRIPTS_MAC $ZPWR_SCRIPTS_MAC $ZPWR_SCRIPTS/macOnly $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_SCRIPTS_MAC=/Users/wizard/.zpwr/scripts/macOnly
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	154	[0m	zpwrEvalIfNeeded ZPWR_VERBS_FILE $ZPWR_VERBS_FILE $ZPWR_ENV/zpwr.zsh $ZPWR_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_VERBS_FILE=/Users/wizard/.zpwr/env/zpwr.zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	156	[0m	zpwrEvalIfNeeded ZPWR_LIB $ZPWR_LIB $ZPWR_SCRIPTS/lib.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LIB=/Users/wizard/.zpwr/scripts/lib.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	158	[0m	zpwrEvalIfNeeded ZPWR_LIB_INIT $ZPWR_LIB_INIT $ZPWR_SCRIPTS/init.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LIB_INIT=/Users/wizard/.zpwr/scripts/init.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	160	[0m	zpwrEvalIfNeeded ZPWR_FZF_CLEARLIST $ZPWR_FZF_CLEARLIST zsh $ZPWR_SCRIPTS/zpwrClearList.zsh -- \$file | fold -s -w 80 $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_FZF_CLEARLIST=zsh /Users/wizard/.zpwr/scripts/zpwrClearList.zsh -- $file | fold -s -w 80
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	162	[0m	zpwrEvalIfNeeded ZPWR_NVIMINFO $ZPWR_NVIMINFO $ZPWR_LOCAL/.nviminfo $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_NVIMINFO=/Users/wizard/.zpwr/local/.nviminfo
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	164	[0m	zpwrEvalIfNeeded ZPWR_ALACRITTY_CFG $ZPWR_ALACRITTY_CFG $HOME/.config/alacritty/alacritty.toml $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALACRITTY_CFG=/Users/wizard/.config/alacritty/alacritty.toml
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	166	[0m	zpwrEvalIfNeeded ZPWR_RECENTF $ZPWR_RECENTF $HOME/.emacs.d/.cache/recentf $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_RECENTF=/Users/wizard/.emacs.d/.cache/recentf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	168	[0m	zpwrEvalIfNeeded ZPWR_BANNER_COMMAND $ZPWR_BANNER_COMMAND bash $ZPWR_SCRIPTS_MAC/figletRandomFontOnce.sh $(hostname) $ZPWR_SCRIPTS_MAC
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	hostname
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_BANNER_COMMAND=bash /Users/wizard/.zpwr/scripts/macOnly/figletRandomFontOnce.sh codelabs-arm
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	170	[0m	zpwrEvalIfNeeded ZPWR_BANNER_SCRIPT $ZPWR_BANNER_SCRIPT $ZPWR_SCRIPTS/about.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_BANNER_SCRIPT=/Users/wizard/.zpwr/scripts/about.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	172	[0m	zpwrEvalIfNeeded ZPWR_ALL_GIT_DIRS $ZPWR_ALL_GIT_DIRS $ZPWR_LOCAL/zpwrGitDirs.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALL_GIT_DIRS=/Users/wizard/.zpwr/local/zpwrGitDirs.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	174	[0m	zpwrEvalIfNeeded ZPWR_ALL_GIT_DIRS_CLEAN $ZPWR_ALL_GIT_DIRS_CLEAN $ZPWR_LOCAL/zpwrGitDirsClean.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALL_GIT_DIRS_CLEAN=/Users/wizard/.zpwr/local/zpwrGitDirsClean.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	176	[0m	zpwrEvalIfNeeded ZPWR_ALL_GIT_DIRS_DIRTY $ZPWR_ALL_GIT_DIRS_DIRTY $ZPWR_LOCAL/zpwrGitDirsDirty.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALL_GIT_DIRS_DIRTY=/Users/wizard/.zpwr/local/zpwrGitDirsDirty.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	178	[0m	zpwrEvalIfNeeded ZPWR_LOGFILE $ZPWR_LOGFILE $ZPWR_LOCAL/zpwrLog.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOGFILE=/Users/wizard/.zpwr/local/zpwrLog.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	180	[0m	zpwrEvalIfNeeded ZPWR_ENV_KEY_FILE $ZPWR_ENV_KEY_FILE ${ZPWR_LOCAL_ENV}Key.txt $ZPWR_LOCAL_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ENV_KEY_FILE=/Users/wizard/.zpwr/local/zpwrEnvKey.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	182	[0m	zpwrEvalIfNeeded ZPWR_ENV_VALUE_FILE $ZPWR_ENV_VALUE_FILE ${ZPWR_LOCAL_ENV}Value.txt $ZPWR_LOCAL_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ENV_VALUE_FILE=/Users/wizard/.zpwr/local/zpwrEnvValue.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	184	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE $ZPWR_TEMPFILE $ZPWR_LOCAL_TEMP/.temp$$-$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE=/Users/wizard/.zpwr/local/.temp/.temp11323-wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	185	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE1 $ZPWR_TEMPFILE1 $ZPWR_LOCAL_TEMP/.temp$$-1$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE1=/Users/wizard/.zpwr/local/.temp/.temp11323-1wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	186	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE2 $ZPWR_TEMPFILE2 $ZPWR_LOCAL_TEMP/.temp$$-2$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE2=/Users/wizard/.zpwr/local/.temp/.temp11323-2wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	187	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE3 $ZPWR_TEMPFILE3 $ZPWR_LOCAL_TEMP/.temp$$-3$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE3=/Users/wizard/.zpwr/local/.temp/.temp11323-3wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	188	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE4 $ZPWR_TEMPFILE4 $ZPWR_LOCAL_TEMP/.temp$$-4$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE4=/Users/wizard/.zpwr/local/.temp/.temp11323-4wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	189	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE_PROCESSED $ZPWR_TEMPFILE_PROCESSED $ZPWR_LOCAL_TEMP/.temp$$-processed$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE_PROCESSED=/Users/wizard/.zpwr/local/.temp/.temp11323-processedwizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	191	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE_SQL $ZPWR_TEMPFILE_SQL $ZPWR_LOCAL_TEMP/.temp$$-2$USER.sql $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE_SQL=/Users/wizard/.zpwr/local/.temp/.temp11323-2wizard.sql
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	193	[0m	zpwrEvalIfNeeded ZPWR_TMUX_CAPTURE $ZPWR_TMUX_CAPTURE $ZPWR_TMUX_LOCAL/tmux-capture-$$-$USER $ZPWR_TMUX_LOCAL $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TMUX_CAPTURE=/Users/wizard/.zpwr/tmux/local/tmux-capture-11323-wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	195	[0m	zpwrEvalIfNeeded ZPWR_SOCKET $ZPWR_SOCKET $ZPWR_LOCAL_TEMP/.temp-$USER-socket $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_SOCKET=/Users/wizard/.zpwr/local/.temp/.temp-wizard-socket
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	197	[0m	zpwrEvalIfNeeded ZPWR_FIFO $ZPWR_FIFO $ZPWR_LOCAL_TEMP/.temp-$USER-fifo $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_FIFO=/Users/wizard/.zpwr/local/.temp/.temp-wizard-fifo
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	199	[0m	zpwrEvalIfNeeded ZPWR_COMPSYS_CACHE $ZPWR_COMPSYS_CACHE $ZPWR_LOCAL/zcompcache $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_COMPSYS_CACHE=/Users/wizard/.zpwr/local/zcompcache
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	201	[0m	zpwrEvalIfNeeded ZSH_COMPDUMP $ZSH_COMPDUMP $ZPWR_LOCAL/.zcompdump-$ZPWR_REPO_NAME-$ZPWR_GITHUB_ACCOUNT $ZPWR_LOCAL $ZPWR_REPO_NAME $ZPWR_GITHUB_ACCOUNT
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZSH_COMPDUMP=/Users/wizard/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	203	[0m	zpwrEvalIfNeeded ZPWR_FORKED_DIR $ZPWR_FORKED_DIR $HOME/forkedRepos $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_FORKED_DIR=/Users/wizard/forkedRepos
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	205	[0m	zpwrEvalIfNeeded ZPWR_D $ZPWR_D $HOME/Desktop $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_D=/Users/wizard/Desktop
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	206	[0m	zpwrEvalIfNeeded ZPWR_DOC $ZPWR_DOC $HOME/Documents $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_DOC=/Users/wizard/Documents
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	207	[0m	zpwrEvalIfNeeded ZPWR_DL $ZPWR_DL $HOME/Downloads $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_DL=/Users/wizard/Downloads
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	209	[0m	zpwrEvalIfNeeded HISTFILE $HISTFILE $ZPWR_LOCAL/.$ZPWR_REPO_NAME-$ZPWR_GITHUB_ACCOUNT-history $ZPWR_LOCAL $ZPWR_REPO_NAME $ZPWR_GITHUB_ACCOUNT
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export HISTFILE=/Users/wizard/.zpwr/local/.zpwr-MenkeTechnologies-history
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	211	[0m	zpwrEvalIfNeeded ZPWR_VIM_KEYBINDINGS $ZPWR_VIM_KEYBINDINGS $ZPWR_LOCAL/zpwrVimKeybindings.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_VIM_KEYBINDINGS=/Users/wizard/.zpwr/local/zpwrVimKeybindings.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	213	[0m	zpwrEvalIfNeeded ZPWR_ALL_KEYBINDINGS $ZPWR_ALL_KEYBINDINGS $ZPWR_LOCAL/zpwrAllKeybindings.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALL_KEYBINDINGS=/Users/wizard/.zpwr/local/zpwrAllKeybindings.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	215	[0m	zpwrEvalIfNeeded ZPWR_GITHUB_URL $ZPWR_GITHUB_URL https://github.com/$ZPWR_GITHUB_ACCOUNT $ZPWR_GITHUB_ACCOUNT
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_GITHUB_URL=https://github.com/MenkeTechnologies
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	220	[0m	source $ZPWR_LIB
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	225	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	226	[0m	typeset -Tgx ZPWR_DIRS_CLEAN zpwrDirsClean
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	227	[0m	typeset -Tgx ZPWR_FILES_CLEAN zpwrFilesClean
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	234	[0m	unset CDPATH
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	240	[0m	export MAGIC_ENTER_OTHER_COMMAND=zpwrClearList
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	242	[0m	export MAGIC_ENTER_GIT_COMMAND=zpwrClearList
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	138	[0m	builtin test -s $ZPWR_ALIAS_FILE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	138	[0m	builtin source $ZPWR_ALIAS_FILE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	33	[0m	source $ZPWR_SCRIPTS/crossOSCommands.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	119	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	38	[0m	source $ZPWR_SCRIPTS/crossOSExecute.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	52	[0m	export Z_DATA=$HOME/.z
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	54	[0m	export PS3=[1;34m-->>>> [0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	56	[0m	export NMON=mndckt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	57	[0m	export CLICOLOR=YES
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	58	[0m	export LSCOLORS=ExFxBxDxCxegedabagacad
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	59	[0m	export D=$HOME/Desktop
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	60	[0m	export PYEXECUTABLES=$HOME/Documents/pythonScripts
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	61	[0m	export ZPWR_PYSCRIPTS=$HOME/PycharmProjects/fromShell
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	62	[0m	export XAUTHORITY=$HOME/.Xauthority
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	63	[0m	export TERMINAL_APP=Terminal.app
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	64	[0m	export YARN_HOME=$HOME/.config/yarn
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	65	[0m	export TMUX_HOME=$HOME/.tmux
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	66	[0m	export HISTSIZE=50000
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	67	[0m	export HISTTIMEFORMAT= %F %T _ 
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	68	[0m	export UMASK=077
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	69	[0m	export LESS=-M -N -R -K -F -X -i
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	74	[0m	export NCURSES_NO_UTF8_ACS=1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	81	[0m	eval $(/opt/homebrew/bin/brew shellenv)
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	/opt/homebrew/bin/brew shellenv
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	82	[0m	export HOMEBREW_HOME_FORMULAE=$HOMEBREW_PREFIX/Library/taps/homebrew/homebrew-core/formula
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	87	[0m	export NODE_HOME=$HOMEBREW_PREFIX/lib/node_modules
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	88	[0m	export NODE_PATH=$NODE_HOME:$YARN_HOME/global/node_modules
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	89	[0m	export HOMEBREW_OPT_HOME=$HOMEBREW_PREFIX/opt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	90	[0m	export HOMEBREW_DBHOME=$HOMEBREW_PREFIX/var
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	91	[0m	export HOMEBREW_DB_CONF=$HOMEBREW_PREFIX/etc
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	92	[0m	export GROOVY_LIB=$HOMEBREW_OPT_HOME/groovy
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	93	[0m	export SCALA_HOME=$HOMEBREW_OPT_HOME/scala
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	94	[0m	export PERL_HOME=$HOMEBREW_OPT_HOME/perl
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	96	[0m	export MANPATH=$HOME/perl5/man:$MANPATH
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	97	[0m	export MANPATH=$HOMEBREW_OPT_HOME/erlang/lib/erlang/man:$HOMEBREW_PREFIX/share/man:$MANPATH
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	98	[0m	export TUTORIAL_FILES=$HOME/Documents/tutorialsRepo
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	101	[0m	zpwrCommandExists nvim
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	161	[0m	zpwrCommandExists systemctl
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	169	[0m	zpwrCommandExists pssh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	179	[0m	export ZPWR_SCHEMA_NAME=root
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	180	[0m	export ZPWR_TABLE_NAME=LearningCollection
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	187	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	188	[0m	declare -Tgx INFOPATH infopath
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	208	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	145	[0m	builtin typeset -A ZINIT
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	158	[0m	builtin export LC_ALL=en_US.UTF-8
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	160	[0m	builtin export KEYTIMEOUT=$ZPWR_KEYTIMEOUT
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	161	[0m	builtin export SHELL=${commands[zsh]}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	163	[0m	builtin export AUTOPAIR_BKSPC_WIDGET=.backward-delete-char
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	195	[0m	builtin export SSH_KEY_PATH=~/.ssh/rsa_id
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	295	[0m	zpwrCommandExists dotnet
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	299	[0m	zpwrCommandExists docker
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	303	[0m	zpwrCommandExists docker-compose
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	308	[0m	zpwrCommandExists ngrok
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	312	[0m	zpwrCommandExists kubectl
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	316	[0m	zpwrCommandExists oc
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	320	[0m	zpwrCommandExists systemctl
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	325	[0m	zpwrCommandExists subl
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	326	[0m	zpwrCommandExists svn
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	local cmd
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	362	[0m	zpwrTokenPre
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	builtin test -f $ZPWR_TOKEN_PRE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	2	[0m	builtin source $ZPWR_TOKEN_PRE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	2	[0m	true
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	3	[0m	zpwrLogConsoleErr could not source ZPWR_TOKEN_PRE '$ZPWR_TOKEN_PRE'
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	5	[0m	zpwrLogColor ERROR $*
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	6	[0m	local lvl=$1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	shift
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	local _NC=\x1b[38;5;51m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	10	[0m	local _NP=\x1b[38;5;201m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	11	[0m	local _NG=\x1b[38;5;46m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	12	[0m	local _NY=\x1b[38;5;226m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	local _NR=\x1b[38;5;196m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	14	[0m	local _NM=\x1b[38;5;129m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	local _NO=\x1b[38;5;208m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	16	[0m	local _NW=\x1b[38;5;255m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	local _DM=\x1b[38;5;240m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	18	[0m	local _B=\x1b[1m _N=\x1b[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	19	[0m	local c1 c2 c3 sig_fill sig_empty sig_color
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	30	[0m	printf \n
+
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	41	[0m	printf  ${c1}███████╗██████╗ ██████╗  ██████╗ ██████╗${_N}\n
+ [38;5;196m███████╗██████╗ ██████╗  ██████╗ ██████╗[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	42	[0m	printf  ${c1}██╔════╝██╔══██╗██╔══██╗██╔═══██╗██╔══██╗${_N}\n
+ [38;5;196m██╔════╝██╔══██╗██╔══██╗██╔═══██╗██╔══██╗[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	43	[0m	printf  ${c2}█████╗  ██████╔╝██████╔╝██║   ██║██████╔╝${_N}\n
+ [38;5;160m█████╗  ██████╔╝██████╔╝██║   ██║██████╔╝[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	44	[0m	printf  ${c2}██╔══╝  ██╔══██╗██╔══██╗██║   ██║██╔══██╗${_N}\n
+ [38;5;160m██╔══╝  ██╔══██╗██╔══██╗██║   ██║██╔══██╗[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	45	[0m	printf  ${c3}███████╗██║  ██║██║  ██║╚██████╔╝██║  ██║${_N}\n
+ [38;5;124m███████╗██║  ██║██║  ██║╚██████╔╝██║  ██║[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	46	[0m	printf  ${c3}╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝${_N}\n
+ [38;5;124m╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	69	[0m	local _i
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	70	[0m	local -i _pad=$(( 74 - 46 - ${#lvl} ))
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	72	[0m	printf  ${_DM}┌──────────────────────────────────────────────────────────────────────────┐${_N}\n
+ [38;5;240m┌──────────────────────────────────────────────────────────────────────────┐[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	73	[0m	printf  ${_DM}│${_N} ${_NG}STATUS:${_N} ${_NW}${_B}${lvl}${_N}  ${_DM}//${_N} ${_NC}SIGNAL: ${sig_color}
+ [38;5;240m│[0m [38;5;46mSTATUS:[0m [38;5;255m[1mERROR[0m  [38;5;240m//[0m [38;5;51mSIGNAL: [38;5;196m[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	74	[0m	printf █
+█[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	74	[0m	printf █
+█[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	75	[0m	printf ${_DM}
+[38;5;240m[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	76	[0m	printf ░
+░[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	76	[0m	printf ░
+░[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	76	[0m	printf ░
+░[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	76	[0m	printf ░
+░[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	76	[0m	printf ░
+░[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	76	[0m	printf ░
+░[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	76	[0m	printf ░
+░[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	76	[0m	printf ░
+░[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	77	[0m	printf ${_N} ${_DM}//${_N} ${_NC}$(date '+%H:%M:%S')${_N}  
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	date +%H:%M:%S
+[0m [38;5;240m//[0m [38;5;51m21:54:05[0m  [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	78	[0m	printf  
+ [34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	79	[0m	printf ${_DM}│${_N}\n
+[38;5;240m│[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	80	[0m	printf  ${_DM}└──────────────────────────────────────────────────────────────────────────┘${_N}\n
+ [38;5;240m└──────────────────────────────────────────────────────────────────────────┘[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	81	[0m	printf   ${_DM}>>${_N} ${c1}%b${_N}\n $*
+  [38;5;240m>>[0m [38;5;196mcould not source ZPWR_TOKEN_PRE '/Users/wizard/.zpwr/local/.tokens.sh'[0m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	9	[0m	builtin source $ZPWR_RE_ENV_FILE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	zpwrIsZsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	test -n $ZSH_VERSION
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	59	[0m	test -z $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	62	[0m	zpwrEvalIfNeeded ZPWR_PLUGIN_MANAGER_HOME $ZPWR_PLUGIN_MANAGER_HOME $HOME/.zinit $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_PLUGIN_MANAGER_HOME=/Users/wizard/.zinit
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	63	[0m	export ZSH=$ZPWR_PLUGIN_MANAGER_HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	64	[0m	zpwrEvalIfNeeded ZSH_CUSTOM $ZSH_CUSTOM $ZSH $ZSH
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZSH_CUSTOM=/Users/wizard/.zinit
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	72	[0m	export LS_COLORS=fi=38:di=32;1:ex=31;1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	73	[0m	export EXA_COLORS=in=34:ur=32:uw=32:ux=32:gr=33:gw=33:gx=33:tr=31:tw=31:tx=31:xx=34:uu=38:gu=32:lc=32;1:un=41;37;1:gn=43;37;1:sb=4;1:xa=1;34:df=31;46;1:ds=31;45;1:lp=36;1:cc=1;31;46:da=34:b0=31;1;4:gm=32;1;4:ga=36;1;4:gd=34;1;4:gv=35;1;4:gt=37;1;4
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	86	[0m	zpwrEvalIfNeeded ZPWR_FZF_DIR $ZPWR_FZF_DIR $ZSH_CUSTOM/plugins/fzf $ZSH
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_FZF_DIR=/Users/wizard/.zinit/plugins/fzf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	88	[0m	zpwrEvalIfNeeded ZPWR_LOCAL $ZPWR_LOCAL $ZPWR/local $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOCAL=/Users/wizard/.zpwr/local
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	90	[0m	zpwrEvalIfNeeded ZSH_CACHE_DIR $ZSH_CACHE_DIR $ZPWR_LOCAL/.cache $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZSH_CACHE_DIR=/Users/wizard/.zpwr/local/.cache
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	92	[0m	zpwrEvalIfNeeded ZPWR_ALIAS_FILE $ZPWR_ALIAS_FILE $ZPWR_ENV/.shell_aliases_functions.sh $ZPWR_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALIAS_FILE=/Users/wizard/.zpwr/env/.shell_aliases_functions.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	94	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD $ZPWR_AUTOLOAD $ZPWR/autoload $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD=/Users/wizard/.zpwr/autoload
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	96	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_COMMON $ZPWR_AUTOLOAD_COMMON $ZPWR_AUTOLOAD/common $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_COMMON=/Users/wizard/.zpwr/autoload/common
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	98	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_COMPS $ZPWR_AUTOLOAD_COMPS $ZPWR_AUTOLOAD/comps $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_COMPS=/Users/wizard/.zpwr/autoload/comps
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	100	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_COMP_UTILS $ZPWR_AUTOLOAD_COMP_UTILS $ZPWR_AUTOLOAD/comp_utils $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_COMP_UTILS=/Users/wizard/.zpwr/autoload/comp_utils
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	102	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_DARWIN $ZPWR_AUTOLOAD_DARWIN $ZPWR_AUTOLOAD/darwin $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_DARWIN=/Users/wizard/.zpwr/autoload/darwin
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	104	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_FZF $ZPWR_AUTOLOAD_FZF $ZPWR_AUTOLOAD/fzf $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_FZF=/Users/wizard/.zpwr/autoload/fzf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	106	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_LINUX $ZPWR_AUTOLOAD_LINUX $ZPWR_AUTOLOAD/linux $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_LINUX=/Users/wizard/.zpwr/autoload/linux
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	108	[0m	zpwrEvalIfNeeded ZPWR_AUTOLOAD_SYSTEMCTL $ZPWR_AUTOLOAD_SYSTEMCTL $ZPWR_AUTOLOAD/systemctl $ZPWR_AUTOLOAD
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_AUTOLOAD_SYSTEMCTL=/Users/wizard/.zpwr/autoload/systemctl
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	110	[0m	zpwrEvalIfNeeded ZPWR_COMPS $ZPWR_COMPS $ZPWR/autoload/comps $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_COMPS=/Users/wizard/.zpwr/autoload/comps
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	112	[0m	zpwrEvalIfNeeded ZPWR_CROSS_OS_CMD $ZPWR_CROSS_OS_CMD $ZPWR_SCRIPTS/crossOSCommands.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_CROSS_OS_CMD=/Users/wizard/.zpwr/scripts/crossOSCommands.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	114	[0m	zpwrEvalIfNeeded ZPWR_CROSS_OS_EXE $ZPWR_CROSS_OS_EXE $ZPWR_SCRIPTS/crossOSExecute.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_CROSS_OS_EXE=/Users/wizard/.zpwr/scripts/crossOSExecute.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	117	[0m	zpwrEvalIfNeeded ZPWR_PLUGIN_DIR $ZPWR_PLUGIN_DIR $ZSH_CUSTOM/plugins $ZSH_CUSTOM
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_PLUGIN_DIR=/Users/wizard/.zinit/plugins
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	119	[0m	zpwrEvalIfNeeded ZPWR_ZINIT_FZF $ZPWR_ZINIT_FZF $ZPWR_PLUGIN_DIR/MenkeTechnologies---fzf $ZPWR_PLUGIN_DIR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ZINIT_FZF=/Users/wizard/.zinit/plugins/MenkeTechnologies---fzf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	121	[0m	zpwrEvalIfNeeded ZPWR_HIDDEN_DIR $ZPWR_HIDDEN_DIR $ZPWR/local $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_HIDDEN_DIR=/Users/wizard/.zpwr/local
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	123	[0m	zpwrEvalIfNeeded ZPWR_TOKEN_PRE $ZPWR_TOKEN_PRE $ZPWR_LOCAL/.tokens.sh $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TOKEN_PRE=/Users/wizard/.zpwr/local/.tokens.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	125	[0m	zpwrEvalIfNeeded ZPWR_TOKEN_POST $ZPWR_TOKEN_POST $ZPWR_LOCAL/.tokens-post.sh $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TOKEN_POST=/Users/wizard/.zpwr/local/.tokens-post.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	126	[0m	zpwrEvalIfNeeded ZPWR_TEST $ZPWR_TEST $ZPWR/tests $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEST=/Users/wizard/.zpwr/tests
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	128	[0m	zpwrEvalIfNeeded ZPWR_INSTALL $ZPWR_INSTALL $ZPWR/install $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_INSTALL=/Users/wizard/.zpwr/install
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	130	[0m	zpwrEvalIfNeeded ZPWR_TMUXRC $ZPWR_TMUXRC $ZPWR_INSTALL/.tmux.conf $ZPWR_INSTALL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TMUXRC=/Users/wizard/.zpwr/install/.tmux.conf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	132	[0m	zpwrEvalIfNeeded ZPWR_VIMRC $ZPWR_VIMRC $ZPWR_INSTALL/.vimrc $ZPWR_INSTALL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_VIMRC=/Users/wizard/.zpwr/install/.vimrc
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	134	[0m	zpwrEvalIfNeeded ZPWR_IDEAVIMRC $ZPWR_IDEAVIMRC $ZPWR_INSTALL/.ideavimrc $ZPWR_INSTALL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_IDEAVIMRC=/Users/wizard/.zpwr/install/.ideavimrc
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	136	[0m	zpwrEvalIfNeeded ZPWR_TMUX $ZPWR_TMUX $ZPWR/tmux $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TMUX=/Users/wizard/.zpwr/tmux
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	138	[0m	zpwrEvalIfNeeded ZPWR_TMUX_LOCAL $ZPWR_TMUX_LOCAL $ZPWR_TMUX/local $ZPWR_TMUX
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TMUX_LOCAL=/Users/wizard/.zpwr/tmux/local
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	140	[0m	zpwrEvalIfNeeded TMPPREFIX $TMPPREFIX $ZPWR_LOCAL/.temp/zsh $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export TMPPREFIX=/Users/wizard/.zpwr/local/.temp/zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	142	[0m	zpwrEvalIfNeeded ZPWR_LOCAL_TEMP $ZPWR_LOCAL_TEMP $ZPWR_LOCAL/.temp $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOCAL_TEMP=/Users/wizard/.zpwr/local/.temp
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	144	[0m	zpwrEvalIfNeeded ZPWR_LOCK_FILE $ZPWR_LOCK_FILE $ZPWR_LOCAL/.lock $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOCK_FILE=/Users/wizard/.zpwr/local/.lock
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	146	[0m	zpwrEvalIfNeeded ZPWR_LOCAL_ENV $ZPWR_LOCAL_ENV $ZPWR_LOCAL/zpwrEnv $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOCAL_ENV=/Users/wizard/.zpwr/local/zpwrEnv
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	148	[0m	zpwrEvalIfNeeded ZPWR_PROMPT_FILE $ZPWR_PROMPT_FILE $ZPWR_ENV/.p10k.zsh $ZPWR_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_PROMPT_FILE=/Users/wizard/.zpwr/env/.p10k.zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	150	[0m	zpwrEvalIfNeeded ZPWR_SCRIPTS $ZPWR_SCRIPTS $ZPWR/scripts $ZPWR
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_SCRIPTS=/Users/wizard/.zpwr/scripts
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	152	[0m	zpwrEvalIfNeeded ZPWR_SCRIPTS_MAC $ZPWR_SCRIPTS_MAC $ZPWR_SCRIPTS/macOnly $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_SCRIPTS_MAC=/Users/wizard/.zpwr/scripts/macOnly
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	154	[0m	zpwrEvalIfNeeded ZPWR_VERBS_FILE $ZPWR_VERBS_FILE $ZPWR_ENV/zpwr.zsh $ZPWR_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_VERBS_FILE=/Users/wizard/.zpwr/env/zpwr.zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	156	[0m	zpwrEvalIfNeeded ZPWR_LIB $ZPWR_LIB $ZPWR_SCRIPTS/lib.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LIB=/Users/wizard/.zpwr/scripts/lib.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	158	[0m	zpwrEvalIfNeeded ZPWR_LIB_INIT $ZPWR_LIB_INIT $ZPWR_SCRIPTS/init.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LIB_INIT=/Users/wizard/.zpwr/scripts/init.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	160	[0m	zpwrEvalIfNeeded ZPWR_FZF_CLEARLIST $ZPWR_FZF_CLEARLIST zsh $ZPWR_SCRIPTS/zpwrClearList.zsh -- \$file | fold -s -w 80 $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_FZF_CLEARLIST=zsh /Users/wizard/.zpwr/scripts/zpwrClearList.zsh -- $file | fold -s -w 80
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	162	[0m	zpwrEvalIfNeeded ZPWR_NVIMINFO $ZPWR_NVIMINFO $ZPWR_LOCAL/.nviminfo $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_NVIMINFO=/Users/wizard/.zpwr/local/.nviminfo
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	164	[0m	zpwrEvalIfNeeded ZPWR_ALACRITTY_CFG $ZPWR_ALACRITTY_CFG $HOME/.config/alacritty/alacritty.toml $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALACRITTY_CFG=/Users/wizard/.config/alacritty/alacritty.toml
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	166	[0m	zpwrEvalIfNeeded ZPWR_RECENTF $ZPWR_RECENTF $HOME/.emacs.d/.cache/recentf $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_RECENTF=/Users/wizard/.emacs.d/.cache/recentf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	168	[0m	zpwrEvalIfNeeded ZPWR_BANNER_COMMAND $ZPWR_BANNER_COMMAND bash $ZPWR_SCRIPTS_MAC/figletRandomFontOnce.sh $(hostname) $ZPWR_SCRIPTS_MAC
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	hostname
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_BANNER_COMMAND=bash /Users/wizard/.zpwr/scripts/macOnly/figletRandomFontOnce.sh codelabs-arm
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	170	[0m	zpwrEvalIfNeeded ZPWR_BANNER_SCRIPT $ZPWR_BANNER_SCRIPT $ZPWR_SCRIPTS/about.sh $ZPWR_SCRIPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_BANNER_SCRIPT=/Users/wizard/.zpwr/scripts/about.sh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	172	[0m	zpwrEvalIfNeeded ZPWR_ALL_GIT_DIRS $ZPWR_ALL_GIT_DIRS $ZPWR_LOCAL/zpwrGitDirs.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALL_GIT_DIRS=/Users/wizard/.zpwr/local/zpwrGitDirs.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	174	[0m	zpwrEvalIfNeeded ZPWR_ALL_GIT_DIRS_CLEAN $ZPWR_ALL_GIT_DIRS_CLEAN $ZPWR_LOCAL/zpwrGitDirsClean.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALL_GIT_DIRS_CLEAN=/Users/wizard/.zpwr/local/zpwrGitDirsClean.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	176	[0m	zpwrEvalIfNeeded ZPWR_ALL_GIT_DIRS_DIRTY $ZPWR_ALL_GIT_DIRS_DIRTY $ZPWR_LOCAL/zpwrGitDirsDirty.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALL_GIT_DIRS_DIRTY=/Users/wizard/.zpwr/local/zpwrGitDirsDirty.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	178	[0m	zpwrEvalIfNeeded ZPWR_LOGFILE $ZPWR_LOGFILE $ZPWR_LOCAL/zpwrLog.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_LOGFILE=/Users/wizard/.zpwr/local/zpwrLog.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	180	[0m	zpwrEvalIfNeeded ZPWR_ENV_KEY_FILE $ZPWR_ENV_KEY_FILE ${ZPWR_LOCAL_ENV}Key.txt $ZPWR_LOCAL_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ENV_KEY_FILE=/Users/wizard/.zpwr/local/zpwrEnvKey.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	182	[0m	zpwrEvalIfNeeded ZPWR_ENV_VALUE_FILE $ZPWR_ENV_VALUE_FILE ${ZPWR_LOCAL_ENV}Value.txt $ZPWR_LOCAL_ENV
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ENV_VALUE_FILE=/Users/wizard/.zpwr/local/zpwrEnvValue.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	184	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE $ZPWR_TEMPFILE $ZPWR_LOCAL_TEMP/.temp$$-$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE=/Users/wizard/.zpwr/local/.temp/.temp11323-wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	185	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE1 $ZPWR_TEMPFILE1 $ZPWR_LOCAL_TEMP/.temp$$-1$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE1=/Users/wizard/.zpwr/local/.temp/.temp11323-1wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	186	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE2 $ZPWR_TEMPFILE2 $ZPWR_LOCAL_TEMP/.temp$$-2$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE2=/Users/wizard/.zpwr/local/.temp/.temp11323-2wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	187	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE3 $ZPWR_TEMPFILE3 $ZPWR_LOCAL_TEMP/.temp$$-3$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE3=/Users/wizard/.zpwr/local/.temp/.temp11323-3wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	188	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE4 $ZPWR_TEMPFILE4 $ZPWR_LOCAL_TEMP/.temp$$-4$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE4=/Users/wizard/.zpwr/local/.temp/.temp11323-4wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	189	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE_PROCESSED $ZPWR_TEMPFILE_PROCESSED $ZPWR_LOCAL_TEMP/.temp$$-processed$USER $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE_PROCESSED=/Users/wizard/.zpwr/local/.temp/.temp11323-processedwizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	191	[0m	zpwrEvalIfNeeded ZPWR_TEMPFILE_SQL $ZPWR_TEMPFILE_SQL $ZPWR_LOCAL_TEMP/.temp$$-2$USER.sql $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TEMPFILE_SQL=/Users/wizard/.zpwr/local/.temp/.temp11323-2wizard.sql
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	193	[0m	zpwrEvalIfNeeded ZPWR_TMUX_CAPTURE $ZPWR_TMUX_CAPTURE $ZPWR_TMUX_LOCAL/tmux-capture-$$-$USER $ZPWR_TMUX_LOCAL $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_TMUX_CAPTURE=/Users/wizard/.zpwr/tmux/local/tmux-capture-11323-wizard
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	195	[0m	zpwrEvalIfNeeded ZPWR_SOCKET $ZPWR_SOCKET $ZPWR_LOCAL_TEMP/.temp-$USER-socket $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_SOCKET=/Users/wizard/.zpwr/local/.temp/.temp-wizard-socket
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	197	[0m	zpwrEvalIfNeeded ZPWR_FIFO $ZPWR_FIFO $ZPWR_LOCAL_TEMP/.temp-$USER-fifo $ZPWR_LOCAL_TEMP $USER
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_FIFO=/Users/wizard/.zpwr/local/.temp/.temp-wizard-fifo
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	199	[0m	zpwrEvalIfNeeded ZPWR_COMPSYS_CACHE $ZPWR_COMPSYS_CACHE $ZPWR_LOCAL/zcompcache $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_COMPSYS_CACHE=/Users/wizard/.zpwr/local/zcompcache
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	201	[0m	zpwrEvalIfNeeded ZSH_COMPDUMP $ZSH_COMPDUMP $ZPWR_LOCAL/.zcompdump-$ZPWR_REPO_NAME-$ZPWR_GITHUB_ACCOUNT $ZPWR_LOCAL $ZPWR_REPO_NAME $ZPWR_GITHUB_ACCOUNT
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZSH_COMPDUMP=/Users/wizard/.zpwr/local/.zcompdump-zpwr-MenkeTechnologies
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	203	[0m	zpwrEvalIfNeeded ZPWR_FORKED_DIR $ZPWR_FORKED_DIR $HOME/forkedRepos $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_FORKED_DIR=/Users/wizard/forkedRepos
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	205	[0m	zpwrEvalIfNeeded ZPWR_D $ZPWR_D $HOME/Desktop $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_D=/Users/wizard/Desktop
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	206	[0m	zpwrEvalIfNeeded ZPWR_DOC $ZPWR_DOC $HOME/Documents $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_DOC=/Users/wizard/Documents
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	207	[0m	zpwrEvalIfNeeded ZPWR_DL $ZPWR_DL $HOME/Downloads $HOME
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_DL=/Users/wizard/Downloads
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	209	[0m	zpwrEvalIfNeeded HISTFILE $HISTFILE $ZPWR_LOCAL/.$ZPWR_REPO_NAME-$ZPWR_GITHUB_ACCOUNT-history $ZPWR_LOCAL $ZPWR_REPO_NAME $ZPWR_GITHUB_ACCOUNT
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export HISTFILE=/Users/wizard/.zpwr/local/.zpwr-MenkeTechnologies-history
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	211	[0m	zpwrEvalIfNeeded ZPWR_VIM_KEYBINDINGS $ZPWR_VIM_KEYBINDINGS $ZPWR_LOCAL/zpwrVimKeybindings.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_VIM_KEYBINDINGS=/Users/wizard/.zpwr/local/zpwrVimKeybindings.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	213	[0m	zpwrEvalIfNeeded ZPWR_ALL_KEYBINDINGS $ZPWR_ALL_KEYBINDINGS $ZPWR_LOCAL/zpwrAllKeybindings.txt $ZPWR_LOCAL
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_ALL_KEYBINDINGS=/Users/wizard/.zpwr/local/zpwrAllKeybindings.txt
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	215	[0m	zpwrEvalIfNeeded ZPWR_GITHUB_URL $ZPWR_GITHUB_URL https://github.com/$ZPWR_GITHUB_ACCOUNT $ZPWR_GITHUB_ACCOUNT
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local name current prev wanted
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	15	[0m	eval export $name="$wanted"
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	export ZPWR_GITHUB_URL=https://github.com/MenkeTechnologies
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	return 0
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	399	[0m	builtin autoload -z $ZPWR_AUTOLOAD_COMMON/*(.:t) $ZPWR_AUTOLOAD_COMP_UTILS/*(.:t)
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	400	[0m	builtin autoload -Uz zrecompile zmv zargs compinit
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	410	[0m	builtin autoload -z $ZPWR_AUTOLOAD_DARWIN/*(.:t)
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	431	[0m	builtin bindkey -v
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	463	[0m	builtin source $ZPWR_PLUGIN_MANAGER_HOME/bin/zinit.zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	typeset -gaH ZINIT_REGISTERED_PLUGINS ZINIT_TASKS ZINIT_RUN
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	14	[0m	typeset -ga zsh_loaded_plugins
+zshrs:1: illegal character: #
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	17	[0m	typeset -gAH ZINIT ZINIT_SNIPPETS ZINIT_REPORTS ZINIT_ICES ZINIT_SICE ZINIT_CUR_BIND_MAP ZINIT_EXTS ZINIT_EXTS2
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	18	[0m	typeset -gaH ZINIT_COMPDEF_REPLAY
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	21	[0m	typeset -gAH ZPLGM
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	23	[0m	unset ZPLGM
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	35	[0m	: ${ZINIT[BIN_DIR]:=${ZINIT[ZERO]:h}}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	136	[0m	: ${ZINIT[COMPLETIONS_DIR]:=${ZINIT[HOME_DIR]}/completions}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	137	[0m	: ${ZINIT[MODULE_DIR]:=${ZINIT[HOME_DIR]}/module}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	138	[0m	: ${ZINIT[PACKAGES_BRANCH]:=HEAD}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	139	[0m	: ${ZINIT[PACKAGES_REPO]:=zdharma-continuum/zinit-packages}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	140	[0m	: ${ZINIT[PLUGINS_DIR]:=${ZINIT[HOME_DIR]}/plugins}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	141	[0m	: ${ZINIT[POLARIS_DIR]:=${ZINIT[HOME_DIR]}/polaris}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	142	[0m	: ${ZINIT[SERVICES_DIR]:=${ZINIT[HOME_DIR]}/services}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	143	[0m	: ${ZINIT[SNIPPETS_DIR]:=${ZINIT[HOME_DIR]}/snippets}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	144	[0m	: ${ZINIT[ZPFX]:=${ZINIT[HOME_DIR]}/polaris}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	145	[0m	typeset -g ZPFX
+ZPFX=/Users/wizard/.zinit/polaris
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	146	[0m	: ${ZPFX:=${ZINIT[ZPFX]}}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	147	[0m	: ${ZINIT[ALIASES_OPT]::=${${options[aliases]:#off}:+1}}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	148	[0m	: ${ZINIT[MAN_DIR]:=${ZPFX}/man}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	158	[0m	export ZPFX=${~ZPFX} ZSH_CACHE_DIR=${ZSH_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/zinit} PMSPEC=0uUpiPsf
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	163	[0m	hash -f
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	164	[0m	hash -d zinit=${ZINIT[HOME_DIR]}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	165	[0m	hash -d plugins=${ZINIT[PLUGINS_DIR]}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	166	[0m	hash -d zpfx=${ZINIT[HOME_DIR]}/polaris
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	184	[0m	builtin autoload -Uz is-at-least
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	185	[0m	is-at-least 5.1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	23	[0m	emulate -L zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	25	[0m	local IFS=.- min_cnt=0 ver_cnt=0 part min_ver version order
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	38	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	193	[0m	declare -gA ZINIT_1MAP ZINIT_2MAP
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	213	[0m	zmodload zsh/zutil
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	214	[0m	zmodload zsh/parameter
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	216	[0m	autoload -Uz colors
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	216	[0m	colors
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	4	[0m	emulate -L zsh
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	6	[0m	typeset -Ag color colour
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	77	[0m	local k
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	98	[0m	local lc=[ rc=m
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	100	[0m	typeset -Hg reset_color bold_color
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	106	[0m	typeset -AHg fg fg_bold fg_no_bold
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	115	[0m	typeset -AHg bg bg_bold bg_no_bold
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	259	[0m	typeset -gAH ZINIT_ZLE_HOOKS_LIST
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	270	[0m	builtin setopt noaliases
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	473	[0m	zinit ice lucid nocd nocompile atinitzpwrBindPowerline; zpwrBindPowerlineTmux; zpwrBindDirs; zpwrPrecmd atloadzpwrBindPrecmd; _p9k_precmd &> /dev/null
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local -A ICE ZINIT_ICE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	6	[0m	integer ___retval ___retval2 ___correct
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	local -a match mbegin mend
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	8	[0m	local MATCH cmd ___q=` ___q2=' IFS= 	
+ 
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	8	[0m	integer MBEGIN MEND
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	local -a reply
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	local REPLY
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	18	[0m	local -A ___opt_map OPTS
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	83	[0m	integer ___error
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	105	[0m	.zinit-ice $@
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	builtin setopt localoptions noksharrays extendedglob warncreateglobal typesetsilent noshortloops
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	2	[0m	integer retval
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	3	[0m	local bit exts=${(j:|:)${(@)${(@Akons:|:)${ZINIT_EXTS[ice-mods]//\'\'/}}/(#s)<->-/}}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	21	[0m	return retval
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	107	[0m	local ___last_ice=${@[___retval2]}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	108	[0m	shift ___retval2
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	110	[0m	+zi-log -n {b}{u-warn}ERROR{b-warn}:{rst} Unknown subcommand{ehi}: {apo}`{cmd}$1{apo}`{rst} 
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	builtin emulate -LR zsh -o extendedglob ${=${options[xtrace]:#off}:+-o xtrace}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	2	[0m	local opt msg
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	3	[0m	local opt=$1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	3	[0m	shift
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	28	[0m	builtin print -Pr ${opt:#--} -- $msg
+])([^\%\{\]#))/$(.zinit-main-message-formatter "" "" ""; \
+  builtin print -rn -- ""
+ )}//←→}[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	112	[0m	+zinit-prehelp-usage-message rst
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	builtin emulate -LR zsh -o extendedglob ${=${options[xtrace]:#off}:+-o xtrace}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	2	[0m	local cmd=$1 allowed=$2 sep=$ZINIT[col-msg2], $ZINIT[col-ehi] sep2=$ZINIT[col-msg2], $ZINIT[col-opt] bcol
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	29	[0m	local -a cmds
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	31	[0m	local bcol={$cmd} sep=${ZINIT[col-rst]}${ZINIT[col-$cmd]}`, `${ZINIT[col-cmd]}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	32	[0m	+zi-log $bcol(it should be one of, e.g.{ehi}: {nb}$bcol`{cmd}${(pj:$sep:)cmds}$bcol`, {cmd}{…}$bcol, e.g.{ehi}: {nb}$bcol`{lhi}zinit {b}{cmd}load {pid}username/reponame$bcol`) or a {b}{hi}for{nb}$bcol-based command body (i.e.{ehi}:{rst}$bcol e.g.{ehi}: {rst}$bcol`{lhi}zinit {…}{b}ice-spec{nb}{…} {hi}for{nb}{lhi} {…}({b}plugin {nb}or{b} snippet) {pname}ID-1 ID-2 {-…} {lhi}{…}$bcol`). See `{cmd}help$bcol` for a more detailed usage information and the list of the {cmd}subcommands$bcol.{rst}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	builtin emulate -LR zsh -o extendedglob ${=${options[xtrace]:#off}:+-o xtrace}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	2	[0m	local opt msg
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	28	[0m	builtin print -Pr ${opt:#--} -- $msg
+ ])([^\%\{\]#))/$(.zinit-main-message-formatter "" "" ""; \
+  builtin print -rn -- ""
+ )}//←→}
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	32	[0m	print -n 
+ 15[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	113	[0m	return 1
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	475	[0m	zinit load romkatv/powerlevel10k
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	1	[0m	local -A ICE ZINIT_ICE
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	6	[0m	integer ___retval ___retval2 ___correct
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	7	[0m	local -a match mbegin mend
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	8	[0m	local MATCH cmd ___q=` ___q2=' IFS= 	
+ 
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	8	[0m	integer MBEGIN MEND
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	local -a reply
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	13	[0m	local REPLY
+[34m/Users/wizard/.zshrc	/Users/wizard/.zshrc	18	[0m	local -A ___opt_map OPTS
+zshrs:1: bad math expression: operator expected at `romkatv/po...'
