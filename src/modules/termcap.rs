@@ -353,6 +353,62 @@ pub fn tgoto(cap: &str, col: i32, row: i32) -> String {
     result
 }
 
+// FFI bindings for the system termcap interface. Direct port of
+// the call sites in `Src/Modules/termcap.c`. Modern ncurses ships
+// the termcap-emulation API alongside terminfo; both terminfo's
+// `tigetstr` and termcap's `tgetstr` resolve from the same
+// underlying database.
+#[link(name = "ncurses")]
+extern "C" {
+    fn tgetent(bp: *mut libc::c_char, name: *const libc::c_char) -> libc::c_int;
+    fn tgetstr(id: *const libc::c_char, area: *mut *mut libc::c_char) -> *mut libc::c_char;
+    fn tgetnum(id: *const libc::c_char) -> libc::c_int;
+    fn tgetflag(id: *const libc::c_char) -> libc::c_int;
+}
+
+/// Initialize the termcap database for `$TERM`. Must run before
+/// any tgetstr/tgetnum/tgetflag query. Direct port of `tgetent()`
+/// invocation in `Src/Modules/termcap.c:39` setup_().
+fn ensure_initialized() -> bool {
+    use std::sync::OnceLock;
+    static INITIALIZED: OnceLock<bool> = OnceLock::new();
+    *INITIALIZED.get_or_init(|| {
+        // The buffer is unused on modern ncurses but must be supplied.
+        let mut buf = vec![0i8; 2048];
+        let term_name = std::env::var("TERM").unwrap_or_default();
+        let cterm = std::ffi::CString::new(term_name).unwrap_or_default();
+        unsafe { tgetent(buf.as_mut_ptr(), cterm.as_ptr()) == 1 }
+    })
+}
+
+/// Look up a termcap two-letter capability name. Direct port of
+/// `gettermcap()` from `Src/Modules/termcap.c:144`. Tries string
+/// → numeric → boolean in that order. Returns `None` for unknown
+/// names so callers can map to `""` — matches the C source's
+/// PM_UNSET fallback at termcap.c:155-160.
+pub fn lookup(name: &str) -> Option<String> {
+    if !ensure_initialized() {
+        return None;
+    }
+    let cname = std::ffi::CString::new(name).ok()?;
+    unsafe {
+        let s = tgetstr(cname.as_ptr(), std::ptr::null_mut());
+        if !s.is_null() && (s as isize) != -1 {
+            let bytes = std::ffi::CStr::from_ptr(s).to_bytes();
+            return Some(String::from_utf8_lossy(bytes).into_owned());
+        }
+        let n = tgetnum(cname.as_ptr());
+        if n >= 0 {
+            return Some(n.to_string());
+        }
+        let b = tgetflag(cname.as_ptr());
+        if b == 0 || b == 1 {
+            return Some(if b == 1 { "yes".to_string() } else { "no".to_string() });
+        }
+    }
+    None
+}
+
 /// `echotc` builtin entry point.
 /// Port of `bin_echotc()` from Src/Modules/termcap.c:80 —
 /// dispatches between numeric / boolean / string capabilities and
@@ -522,5 +578,21 @@ mod tests {
     fn test_str_codes() {
         assert!(STR_CODES.contains(&"cl"));
         assert!(STR_CODES.contains(&"cm"));
+    }
+}
+
+#[cfg(test)]
+mod ncurses_smoke {
+    use super::*;
+
+    #[test]
+    fn cl_lookup_returns_clear_screen() {
+        // Don't pin the exact bytes (depends on $TERM in the
+        // CI environment); just assert non-empty result for the
+        // canonical clear-screen capability.
+        std::env::set_var("TERM", "xterm-256color");
+        let v = lookup("cl");
+        eprintln!("cl = {:?}", v);
+        assert!(v.is_some(), "lookup(cl) returned None; ncurses not initialized?");
     }
 }

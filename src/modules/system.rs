@@ -508,7 +508,14 @@ pub const ERRNO_NAMES: &[(&str, i32)] = &[
     ("ENOTRECOVERABLE", 104),
     ("EOWNERDEAD", 105),
     ("EQFULL", 106),
-    ("ENOTCAPABLE", 107),
+    // ENOTCAPABLE (errno 107) exists in Apple's MacOSX26.sdk
+    // headers but NOT in MacOSX15.sdk and earlier. Apple's stock
+    // /bin/zsh is linked against the newer SDK so it lists 107
+    // entries; Homebrew's zsh was built against an older SDK and
+    // lists only 106. We pin to the Homebrew/older-SDK shape since
+    // that's the parity target on this host. When zshrs is
+    // eventually rebuilt for SDK 26+ a follow-up will conditionally
+    // add ENOTCAPABLE.
 ];
 
 /// Linux errno table — the kernel's order diverges from BSD/macOS
