@@ -4297,6 +4297,20 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     if inner.is_empty() {
         return None;
     }
+    // `(@)NAME##pat` / `(@)NAME%pat` / etc. — `(@)` forces array shape
+    // for the surrounding word. On an unquoted indexed array the
+    // shape is already preserved by per-element iteration, so the
+    // `(@)` is a no-op. Strip it and let the regular fast path
+    // handle the strip/replace per-element. Direct port of the C
+    // source: `(@)` sets `nojoin = 1` early in paramsubst (Src/subst.c
+    // around line 1813); when isarr is already 1 from the array
+    // value, nojoin's only effect is preventing IFS-join in DQ
+    // context. For non-DQ + indexed-array, no behavior change.
+    let inner = if let Some(rest) = inner.strip_prefix("(@)") {
+        rest
+    } else {
+        inner
+    };
     // Reject flag forms — handled by earlier fast-paths.
     if inner.starts_with('(') {
         return None;
