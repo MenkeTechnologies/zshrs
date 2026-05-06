@@ -3218,6 +3218,26 @@ fn register_builtins(vm: &mut fusevm::VM) {
             with_executor(|exec| exec.assoc_arrays.contains_key(&name));
         if !user_defined_assoc {
             if let Some(v) = magic_assoc_lookup(&name, &idx) {
+                // Magic-assoc with `(I)pat` glob-match returned an
+                // Array of matching keys. In DQ context (the user
+                // wrote `"${aliases[(I)foo*]}"`), zsh joins array
+                // results with the first IFS char per Src/subst.c
+                // paramsubst's `nojoin` gating. Without this the
+                // outer DQ-string was treating the array as a
+                // splice and emitting one arg per matching key.
+                if dq_compile {
+                    if let Value::Array(items) = &v {
+                        let strs: Vec<String> =
+                            items.iter().map(|i| i.to_str()).collect();
+                        let sep = with_executor(|exec| {
+                            exec.variables
+                                .get("IFS")
+                                .and_then(|s| s.chars().next())
+                                .unwrap_or(' ')
+                        });
+                        return Value::str(strs.join(&sep.to_string()));
+                    }
+                }
                 return v;
             }
         }
