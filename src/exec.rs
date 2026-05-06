@@ -5945,23 +5945,50 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // through to get_variable".
             return fusevm::Value::Array(vals.into_iter().map(fusevm::Value::str).collect());
         }
-        let val = with_executor(|exec| {
+        // Indexed-array path: return Value::Array so pop_args splats
+        // each element into its own argv slot. Direct port of zsh's
+        // unquoted `$arr` semantics — each element becomes a separate
+        // word in command-arg position.
+        //
+        // DQ context exception: inside `"...$arr..."`, zsh joins with
+        // the first char of $IFS (default space) so the DQ word stays
+        // a single argv slot. Detect via in_dq_context (bumped by
+        // BUILTIN_EXPAND_TEXT mode 1) and return the joined scalar.
+        // Direct port of Src/subst.c:1759-1813 nojoin/sepjoin: in DQ
+        // (qt=1) without explicit `(@)`, sepjoin runs and the result
+        // is one word.
+        let arr_assoc_data = with_executor(|exec| {
             sync_status(exec);
-            // If `name` refers to an indexed array, return as Array for
-            // splice contexts. Scalar callers already handle Array via
-            // pop_args' flatten.
+            let in_dq = exec.in_dq_context > 0;
             if let Some(arr) = exec.arrays.get(&name) {
-                return arr.join(" ");
+                return Some((arr.clone(), in_dq));
             }
             if let Some(map) = exec.assoc_arrays.get(&name) {
                 let mut keys: Vec<&String> = map.keys().collect();
                 keys.sort();
-                return keys
+                let values: Vec<String> = keys
                     .iter()
                     .filter_map(|k| map.get(*k).cloned())
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                    .collect();
+                return Some((values, in_dq));
             }
+            None
+        });
+        if let Some((items, in_dq)) = arr_assoc_data {
+            if in_dq {
+                let sep = with_executor(|exec| {
+                    exec.get_variable("IFS")
+                        .chars()
+                        .next()
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| " ".to_string())
+                });
+                return Value::str(items.join(&sep));
+            }
+            return fusevm::Value::Array(items.into_iter().map(fusevm::Value::str).collect());
+        }
+        let val = with_executor(|exec| {
+            sync_status(exec);
             exec.get_variable(&name)
         });
         Value::str(val)
@@ -6681,11 +6708,51 @@ fn register_builtins(vm: &mut fusevm::VM) {
         }
     });
 
-    // BUILTIN_CONCAT_DISTRIBUTE — word-segment concat that distributes
-    // over arrays. See doc on the constant for the distribution table.
+    // BUILTIN_CONCAT_DISTRIBUTE — word-segment concat. With
+    // rcexpandparam (zsh option), distributes element-wise (cartesian
+    // product). Default mode: joins arrays with IFS first char to a
+    // single scalar before concat, matching zsh's default unquoted
+    // and DQ semantics. Direct port of Src/subst.c sepjoin path
+    // (line ~1813) which gates element-vs-join on the rc_expand_param
+    // option, defaulting to join.
     vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE, |vm, _argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
+        let rc_expand = with_executor(|exec| {
+            exec.options.get("rcexpandparam").copied().unwrap_or(false)
+        });
+        let ifs_first = || -> String {
+            with_executor(|exec| {
+                exec.get_variable("IFS")
+                    .chars()
+                    .next()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| " ".to_string())
+            })
+        };
+        // Helper: join an Array to scalar via IFS-first.
+        let join_arr = |arr: Vec<fusevm::Value>| -> String {
+            let sep = ifs_first();
+            arr.iter()
+                .map(|v| v.as_str_cow().into_owned())
+                .collect::<Vec<_>>()
+                .join(&sep)
+        };
+        if !rc_expand {
+            // Default: join any Array side to scalar, then concat.
+            let l = match lhs {
+                fusevm::Value::Array(a) => join_arr(a),
+                other => other.as_str_cow().into_owned(),
+            };
+            let r = match rhs {
+                fusevm::Value::Array(a) => join_arr(a),
+                other => other.as_str_cow().into_owned(),
+            };
+            let mut s = String::with_capacity(l.len() + r.len());
+            s.push_str(&l);
+            s.push_str(&r);
+            return fusevm::Value::str(s);
+        }
         match (lhs, rhs) {
             (fusevm::Value::Array(la), fusevm::Value::Array(ra)) => {
                 // Cartesian product: [a + b for a in la for b in ra].
