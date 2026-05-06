@@ -930,6 +930,87 @@ fn slice_scalar(s: &str, start: i64, end: i64) -> String {
     chars[(s_idx - 1) as usize..e_idx as usize].iter().collect()
 }
 
+/// Quote one argv element for xtrace output. Direct port of zsh's
+/// `quotedzputs()` (Src/utils.c) — bare token if printable+safe, else
+/// `'…'` quoted with embedded apostrophes escaped as `'\''`.
+fn quote_xtrace_arg(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    // Tokens that don't need quoting: printable ASCII excluding
+    // shell metacharacters. Per zsh's quotedzputs, anything else
+    // gets single-quoted.
+    let safe = s.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                '_' | '.' | '/' | '-' | '+' | ':' | '=' | '@' | '%' | ','
+            )
+    });
+    if safe {
+        s.to_string()
+    } else {
+        // `'` inside a single-quoted string closes the quote, escapes
+        // an apostrophe via `'\''`, then reopens.
+        let inner = s.replace('\'', "'\\''");
+        format!("'{}'", inner)
+    }
+}
+
+/// Render the current PS4 prefix and write `prefix + cmd_text` to
+/// stderr. Shared by BUILTIN_XTRACE_LINE / BUILTIN_XTRACE_ARGS.
+/// Direct port of `printprompt4()` (Src/utils.c:1718-1735).
+fn emit_xtrace_text(cmd_text: &str) {
+    let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
+    if !on {
+        return;
+    }
+    // Default `prompt4` per Src/init.c:1192-1193:
+    //   ksh / sh emulation → `+ `
+    //   zsh (default)      → `+%N:%i> `
+    let (prefix_template, ctx, _posix_mode) = with_executor(|exec| {
+        let posix = exec
+            .options
+            .get("kshemulation")
+            .copied()
+            .unwrap_or(false)
+            || exec.options.get("shemulation").copied().unwrap_or(false)
+            || exec.posix_mode;
+        // C zsh aliases `PS4` and `PROMPT4` to the same underlying
+        // global (Src/params.c:381 + 421). Mirror that until zshrs
+        // grows a generic parameter-alias mechanism.
+        let lookup = |name: &str| -> Option<String> {
+            exec.variables
+                .get(name)
+                .cloned()
+                .or_else(|| std::env::var(name).ok())
+        };
+        let template = lookup("PS4")
+            .or_else(|| lookup("PROMPT4"))
+            .unwrap_or_else(|| {
+                if posix {
+                    "+ ".to_string()
+                } else {
+                    "+%N:%i> ".to_string()
+                }
+            });
+        (template, exec.build_prompt_context(), posix)
+    });
+    // Suppress recursion: the prompt expander runs subshells for
+    // `%(?...)` etc.; with XTRACE still on we'd re-emit a trace of
+    // every expanded sub-command.
+    let saved = with_executor(|exec| {
+        let s = exec.options.get("xtrace").copied().unwrap_or(false);
+        exec.options.insert("xtrace".to_string(), false);
+        s
+    });
+    let prefix = crate::prompt::expand_prompt(&prefix_template, &ctx);
+    with_executor(|exec| {
+        exec.options.insert("xtrace".to_string(), saved);
+    });
+    eprintln!("{}{}", prefix, cmd_text);
+}
+
 /// Register all zsh builtins with the VM.
 fn register_builtins(vm: &mut fusevm::VM) {
     use fusevm::shell_builtins::*;
@@ -5531,6 +5612,28 @@ fn register_builtins(vm: &mut fusevm::VM) {
         fusevm::Value::Status(0)
     });
 
+    // Direct port of Src/prompt.c:1623 cmdpush. Token is a
+    // `crate::prompt::CmdState as u8` — emitted by compile_zsh
+    // around each compound command (if/while/[[…]]/((…))/$(…))
+    // and consumed by `%_` in PS4 / prompt expansion.
+    vm.register_builtin(BUILTIN_CMD_PUSH, |vm, _argc| {
+        let token = vm.pop().to_int() as u8;
+        with_executor(|exec| {
+            if let Some(state) = crate::prompt::CmdState::from_u8(token) {
+                exec.cmd_stack.push(state);
+            }
+        });
+        fusevm::Value::Status(0)
+    });
+
+    // Direct port of Src/prompt.c:1631 cmdpop.
+    vm.register_builtin(BUILTIN_CMD_POP, |_vm, _argc| {
+        with_executor(|exec| {
+            exec.cmd_stack.pop();
+        });
+        fusevm::Value::Status(0)
+    });
+
     vm.register_builtin(BUILTIN_OPTION_SET, |vm, _argc| {
         let name = vm.pop().to_str();
         // zsh strips a leading `no` (e.g. `[[ -o nounset ]]` and
@@ -5978,70 +6081,44 @@ fn register_builtins(vm: &mut fusevm::VM) {
         with_executor(|exec| {
             exec.last_status = live;
         });
+        emit_xtrace_text(&cmd_text);
+        fusevm::Value::Status(0)
+    });
+
+    // Like XTRACE_LINE but reads the top `argc - 1` values from the
+    // VM stack WITHOUT consuming them (peek), then pops a prefix
+    // string at the top. Joins prefix + peeked args with spaces using
+    // zsh's quotedzputs-equivalent quoting. Direct port of
+    // Src/exec.c:2055-2066 — emit AFTER expansion, with each arg
+    // shell-quoted, so `for i in a b; echo for $i` traces as
+    // `echo for a` / `echo for b`, not `echo for $i`.
+    //
+    // Stack contract on entry: [arg1, arg2, ..., argN, prefix].
+    // Pops prefix; peeks argN..arg1 below. argc = N + 1.
+    vm.register_builtin(BUILTIN_XTRACE_ARGS, |vm, argc| {
+        let prefix = vm.pop().to_str();
+        let live = vm.last_status;
+        with_executor(|exec| {
+            exec.last_status = live;
+        });
         let on = with_executor(|exec| exec.options.get("xtrace").copied().unwrap_or(false));
         if on {
-            // Port of `printprompt4()` from Src/utils.c:1718-1735. The C
-            // source: take `prompt4`, temporarily clear opt[XTRACE] so
-            // the expansion itself doesn't recurse into xtrace
-            // (`opts[XTRACE] = 0; promptexpand(...); opts[XTRACE] = t`),
-            // then write the expanded result to xtrerr (stderr).
-            //
-            // Default `prompt4` per Src/init.c:1192-1193:
-            //   ksh / sh emulation → `+ `
-            //   zsh (default)      → `+%N:%i> `
-            //
-            // `%N` resolves via PromptContext.scriptname (or argzero
-            // fallback per Src/prompt.c:554-556); `%i` is the current
-            // input line number (PromptContext.lineno).
-            let (prefix_template, ctx, posix_mode) = with_executor(|exec| {
-                let posix = exec
-                    .options
-                    .get("kshemulation")
-                    .copied()
-                    .unwrap_or(false)
-                    || exec.options.get("shemulation").copied().unwrap_or(false)
-                    || exec.posix_mode;
-                // C zsh aliases `PS4` and `PROMPT4` to the same
-                // underlying `&prompt4` global (Src/params.c:381 +
-                // 421 — `IPDEF7R("PS4", &prompt4)` and
-                // `IPDEF7("PROMPT4", &prompt4)`). Until zshrs grows a
-                // generic parameter-alias mechanism, mirror the
-                // C-source semantics here by checking both names in
-                // both the in-shell variables hash and the OS env.
-                // Otherwise an exported `PROMPT4=…` from the parent
-                // shell silently fails to set PS4 and xtrace falls
-                // back to the C-default `+%N:%i> ` prefix.
-                let lookup = |name: &str| -> Option<String> {
-                    exec.variables
-                        .get(name)
-                        .cloned()
-                        .or_else(|| std::env::var(name).ok())
-                };
-                let template = lookup("PS4")
-                    .or_else(|| lookup("PROMPT4"))
-                    .unwrap_or_else(|| {
-                        if posix {
-                            "+ ".to_string()
-                        } else {
-                            "+%N:%i> ".to_string()
-                        }
-                    });
-                (template, exec.build_prompt_context(), posix)
-            });
-            // Suppress recursion: the prompt expander runs subshells
-            // for `%(?...)`, `${...}` etc.; with XTRACE still on we'd
-            // emit a trace of every expanded sub-command.
-            let saved = with_executor(|exec| {
-                let s = exec.options.get("xtrace").copied().unwrap_or(false);
-                exec.options.insert("xtrace".to_string(), false);
-                s
-            });
-            let prefix = crate::prompt::expand_prompt(&prefix_template, &ctx);
-            with_executor(|exec| {
-                exec.options.insert("xtrace".to_string(), saved);
-            });
-            let _ = posix_mode; // captured for symmetry; default already branched
-            eprintln!("{}{}", prefix, cmd_text);
+            let n_args = argc.saturating_sub(1) as usize;
+            let len = vm.stack.len();
+            let arg_strs: Vec<String> = if n_args > 0 && len >= n_args {
+                vm.stack[len - n_args..]
+                    .iter()
+                    .map(|v| quote_xtrace_arg(&v.to_str()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let line = if arg_strs.is_empty() {
+                prefix
+            } else {
+                format!("{} {}", prefix, arg_strs.join(" "))
+            };
+            emit_xtrace_text(&line);
         }
         fusevm::Value::Status(0)
     });
@@ -7830,6 +7907,26 @@ pub const BUILTIN_SET_LINENO: u16 = 342;
 /// `${prefix}*`, etc.) — those skip the bridge's pathname-expansion
 /// pass and would otherwise leak the glob meta to argv as a literal.
 pub const BUILTIN_GLOB_EXPAND: u16 = 343;
+
+/// Push a `CmdState` token onto the command-context stack. Direct
+/// port of zsh's `cmdpush(int cmdtok)` (Src/prompt.c:1623). The
+/// stack is consulted by `%_` in PS4/prompt expansion to produce
+/// the cumulative control-flow-context labels (`if`, `then`,
+/// `cmdand`, `cmdor`, `cmdsubst`, …) that `zsh -x` xtrace shows
+/// in the trace prefix. Compile_zsh emits push/pop pairs around
+/// each compound command (if/while/[[…]]/((…))/$(…) etc.).
+/// Token is a `CmdState as u8`.
+pub const BUILTIN_CMD_PUSH: u16 = 344;
+
+/// Pop the top of the command-context stack. Direct port of zsh's
+/// `cmdpop(void)` (Src/prompt.c:1631).
+pub const BUILTIN_CMD_POP: u16 = 345;
+
+/// Emit an xtrace line built from the top `argc` values on the VM
+/// stack, peeked WITHOUT consuming. Used to trace simple commands
+/// AFTER expansion, so `echo for $i` shows as `echo for a` / `echo
+/// for b`. Direct port of Src/exec.c:2055-2066.
+pub const BUILTIN_XTRACE_ARGS: u16 = 346;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)
@@ -10172,6 +10269,16 @@ pub struct ShellExecutor {
     /// original separator (newlines) instead of re-joining with
     /// IFS-first-char (space).
     pub in_scalar_assign: u32,
+    /// Command-context stack — direct port of zsh's `cmdstack`
+    /// global (Src/prompt.c:56 `unsigned char *cmdstack`). Pushed
+    /// by `BUILTIN_CMD_PUSH` (compile_zsh emits around each
+    /// compound command), popped by `BUILTIN_CMD_POP`. Read by
+    /// `%_` in PS4 / prompt expansion to render the cumulative
+    /// control-flow context labels in the xtrace prefix
+    /// (`if`, `then`, `cmdand`, `cmdor`, `cmdsubst`, …).
+    /// `build_prompt_context` clones this into PromptContext so
+    /// the prompt expander sees the live stack.
+    pub cmd_stack: Vec<crate::prompt::CmdState>,
     /// IDs of history entries explicitly added during this session
     /// via `print -s`. `fc -l` uses this to scope listings to just
     /// the script-added entries (matches zsh's `-c` semantics where
@@ -10434,6 +10541,7 @@ impl ShellExecutor {
             in_dq_context: 0,
             in_paramsubst_nest: 0,
             in_scalar_assign: 0,
+            cmd_stack: Vec::new(),
             session_history_ids: Vec::new(),
             autoload_pending: HashMap::new(),
             hook_functions: HashMap::new(),
@@ -16199,11 +16307,35 @@ impl ShellExecutor {
         }
 
         // Parse + compile + run.
+        // Push CS_CMDSUBST for `%_` xtrace prefix — direct port of
+        // Src/exec.c:4783 `cmdpush(CS_CMDSUBST);` around execode().
+        // Trace lines emitted by the inner program inherit this token
+        // so their PS4 prefix shows "cmdsubst" matching zsh -x.
+        self.cmd_stack.push(crate::prompt::CmdState::CmdSubst);
+        // Save LINENO so the inner cmdsubst's line counter doesn't
+        // leak into the outer trace — direct port of Src/exec.c:1407
+        // `oldlineno = lineno;` followed by `lineno = oldlineno;`
+        // restore at line 1640. Inner program parses fresh as line 1
+        // and increments from there; once it returns, the outer
+        // line at the `$(…)` site must read the original outer
+        // lineno (so xtrace renders `+:5:> echo …` not `+:1:> …`).
+        let saved_lineno = self.variables.get("LINENO").cloned();
+        // Anchor the inner program's lineno to the outer's current
+        // $LINENO so xtrace inside the cmdsubst renders the outer
+        // line. zsh's execlist preserves lineno across the inner
+        // exec — for our sub-VM (fresh compile) we use lineno_addend
+        // to shift inner's line N → outer_lineno + (N - 1).
+        let outer_lineno: u64 = self
+            .variables
+            .get("LINENO")
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
         let mut parser = crate::parser::ZshParser::new(cmd_str);
         let prog = parser.parse().ok();
         let mut cmd_status: Option<i32> = None;
         if let Some(prog) = prog {
-            let compiler = crate::compile_zsh::ZshCompiler::new();
+            let mut compiler = crate::compile_zsh::ZshCompiler::new();
+            compiler.lineno_addend = outer_lineno.saturating_sub(1);
             let chunk = compiler.compile(&prog);
             if !chunk.ops.is_empty() {
                 let mut vm = fusevm::VM::new(chunk);
@@ -16214,6 +16346,11 @@ impl ShellExecutor {
                 cmd_status = Some(vm.last_status);
             }
         }
+        // Restore LINENO so outer xtrace sees the outer line.
+        if let Some(ln) = saved_lineno {
+            self.variables.insert("LINENO".to_string(), ln);
+        }
+        self.cmd_stack.pop();
         // Propagate the inner cmd's status to the parent shell. zsh:
         // `a=$(false); echo $?` → 1 because cmd-subst status leaks to
         // $?. Set last_status on the executor so $? reads the right
@@ -18758,7 +18895,16 @@ impl ShellExecutor {
             shlvl,
             num_jobs: self.jobs.list().len() as i32,
             is_root: unsafe { libc::geteuid() } == 0,
-            cmd_stack: Vec::new(),
+            // `%_` in PS4 / prompt expansion renders the cumulative
+            // control-flow context labels (`if`, `then`, `cmdand`,
+            // `cmdor`, `cmdsubst`, …) — feed the executor's live
+            // `cmd_stack` (pushed by BUILTIN_CMD_PUSH around each
+            // compound command, popped by BUILTIN_CMD_POP) so the
+            // prompt expander sees what zsh's `cmdstack` global
+            // would show. Direct port of Src/prompt.c:855-887 `%_`
+            // expansion which iterates the cmdstack and joins
+            // names with spaces.
+            cmd_stack: self.cmd_stack.clone(),
             psvar: self.get_psvar(),
             term_width: self.get_term_width(),
             // `$LINENO` is updated by `BUILTIN_SET_LINENO` before
@@ -20172,6 +20318,13 @@ impl ShellExecutor {
         let saved_zero = self.variables.get("0").cloned();
         self.variables.insert("0".to_string(), abs_path.clone());
 
+        // Save current scriptname and set to the sourced file path
+        // so `%N` in PS4 / xtrace renders the file being sourced.
+        // Direct port of Src/init.c source() — pushes a new
+        // scriptname onto the stack and restores on return.
+        let saved_scriptname = self.scriptname.clone();
+        self.scriptname = Some(abs_path.clone());
+
         // zsh: `. file ARG1 ARG2` passes ARG1/ARG2 as $1/$2 to the
         // sourced script. Save outer positional params, install
         // args[1..] as new positionals, restore on exit. Without
@@ -20264,6 +20417,7 @@ impl ShellExecutor {
                             } else {
                                 self.variables.remove("0");
                             }
+                            self.scriptname = saved_scriptname;
                             return 0;
                         }
                     }
@@ -20342,6 +20496,9 @@ impl ShellExecutor {
         } else {
             self.variables.remove("0");
         }
+
+        // Restore scriptname so `%N` reverts to the outer context.
+        self.scriptname = saved_scriptname;
 
         // Restore outer positional params (only when source was given
         // explicit args).

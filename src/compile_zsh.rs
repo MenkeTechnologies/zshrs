@@ -65,6 +65,14 @@ pub struct ZshCompiler {
     /// body — matching zsh's `lineno = 1` reset on function entry
     /// (Src/init.c:1588).
     pub lineno_offset: u64,
+    /// Add this to each pipe's `lineno` AFTER subtracting
+    /// `lineno_offset`. Used by command-substitution sub-VM
+    /// compilation to anchor the inner program's lineno to the
+    /// outer's `$LINENO` at the `$(…)` site, so xtrace inside the
+    /// cmdsubst renders the OUTER line number (matching zsh's
+    /// behaviour where execlist's `oldlineno` flows into the inner
+    /// program's lineno scope).
+    pub lineno_addend: u64,
 }
 
 impl Default for ZshCompiler {
@@ -87,6 +95,7 @@ impl ZshCompiler {
             assign_context_depth: 0,
             scalar_assign_depth: 0,
             lineno_offset: 0,
+            lineno_addend: 0,
         }
     }
 
@@ -99,6 +108,23 @@ impl ZshCompiler {
         }
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_ERREXIT_CHECK, 0), 0);
+        self.builder.emit(Op::Pop, 0);
+    }
+
+    /// Emit `cmdpush(token)` — direct port of Src/prompt.c:1623.
+    /// Used by xtrace to render the `%_` prefix (`if cmdor cmdsubst`
+    /// etc.) so trace output matches `/bin/zsh -x` byte-for-byte.
+    fn emit_cmd_push(&mut self, token: u8) {
+        self.builder.emit(Op::LoadInt(token as i64), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_PUSH, 1), 0);
+        self.builder.emit(Op::Pop, 0);
+    }
+
+    /// Emit `cmdpop()` — direct port of Src/prompt.c:1631.
+    fn emit_cmd_pop(&mut self) {
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_CMD_POP, 0), 0);
         self.builder.emit(Op::Pop, 0);
     }
 
@@ -136,7 +162,8 @@ impl ZshCompiler {
         // to the body (matches zsh's `lineno = 1` reset on
         // function entry at Src/init.c:1588).
         let raw_line = list.sublist.pipe.lineno;
-        let rel_line = raw_line.saturating_sub(self.lineno_offset).max(1);
+        let rel_line =
+            raw_line.saturating_sub(self.lineno_offset).max(1) + self.lineno_addend;
         self.builder.emit(Op::LoadInt(rel_line as i64), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_LINENO, 1), 0);
@@ -214,6 +241,17 @@ impl ZshCompiler {
         // still bump suppression so individual pipes don't trigger
         // their own errexit checks; we do NOT emit a wrap-up check at
         // the end either.
+        //
+        // cmdstack tracking — direct port of Src/exec.c:1530 / :1563
+        //   case WC_SUBLIST_AND: …; cmdpush(CS_CMDAND); break;
+        //   case WC_SUBLIST_OR:  …; cmdpush(CS_CMDOR);  break;
+        // The C source captures `csp = cmdsp` at the start of each
+        // sublist (Src/exec.c:1396) and restores `cmdsp = csp` at the
+        // end (line 1593) — that bulk-pops the CMDAND/CMDOR pushes.
+        // We mirror by counting our own pushes and emitting matching
+        // pops at the end. This way `a && b && c` shows "cmdand" on
+        // pipe[1]'s trace and "cmdand cmdand" on pipe[2]'s, matching
+        // zsh -x byte-for-byte.
         let has_chain_or_negate = sublist.flags.not || !ops.is_empty();
         if has_chain_or_negate {
             self.errexit_suppress_depth += 1;
@@ -222,7 +260,19 @@ impl ZshCompiler {
         if sublist.flags.not {
             self.emit_negate_status();
         }
+        let mut chain_pushes = 0usize;
         for (i, op) in ops.iter().enumerate() {
+            // Push BEFORE the JumpIfFalse so the push happens whether
+            // or not the RHS pipe runs; the bulk-pop after the loop
+            // matches the static count, regardless of runtime skips.
+            // Functionally equivalent to zsh's `csp = cmdsp` save +
+            // `cmdsp = csp` restore wrapping the sublist.
+            let token = match op {
+                SublistOp::And => crate::prompt::CmdState::CmdAnd as u8,
+                SublistOp::Or => crate::prompt::CmdState::CmdOr as u8,
+            };
+            self.emit_cmd_push(token);
+            chain_pushes += 1;
             self.builder.emit(Op::GetStatus, 0);
             let skip = match op {
                 SublistOp::And => self.builder.emit(Op::JumpIfFalse(0), 0),
@@ -230,6 +280,10 @@ impl ZshCompiler {
             };
             self.compile_pipe(pipes[i + 1]);
             self.builder.patch_jump(skip, self.builder.current_pos());
+        }
+        // Bulk-pop the chain pushes (mirrors `cmdsp = csp` restore).
+        for _ in 0..chain_pushes {
+            self.emit_cmd_pop();
         }
         if has_chain_or_negate {
             self.errexit_suppress_depth -= 1;
@@ -395,6 +449,14 @@ impl ZshCompiler {
             self.compile_command(&pipe.cmd);
             return;
         }
+        // cmdstack: direct port of Src/exec.c:2034
+        //   cmdpush(CS_PIPE);
+        //   list_pipe = 1;
+        //   execpline2(...);
+        //   cmdpop();
+        // wrapping the multi-stage pipeline so any nested execlist
+        // inside the pipe sees CS_PIPE on its trace prefix.
+        self.emit_cmd_push(crate::prompt::CmdState::Pipe as u8);
 
         // Multi-stage pipeline: collect (cmd, merge_stderr_into_pipe)
         // pairs. `cmd1 |& cmd2` makes cmd1's stage merge stderr into
@@ -444,6 +506,7 @@ impl ZshCompiler {
             0,
         );
         self.builder.emit(Op::SetStatus, 0);
+        self.emit_cmd_pop();
     }
 
     fn compile_command(&mut self, cmd: &ZshCommand) {
@@ -456,6 +519,14 @@ impl ZshCompiler {
                 // subshell scope) rather than escaping to the chunk's
                 // top-level return-target. zsh: `(exit 42)` exits the
                 // subshell only; the parent continues with $?=42.
+                //
+                // cmdstack: parse-time analogue of Src/parse.c — the
+                // execution-time analogue is buried inside execcmd's
+                // child-fork path (`entersubsh` + recursive exec). For
+                // trace-prefix labelling the user's xtrace, push
+                // CS_SUBSH here so commands inside the subshell see
+                // "subsh" on their PS4.
+                self.emit_cmd_push(crate::prompt::CmdState::Subsh as u8);
                 self.builder.emit(Op::SubshellBegin, 0);
                 let saved = std::mem::take(&mut self.return_patches);
                 self.compile_program(prog);
@@ -466,10 +537,15 @@ impl ZshCompiler {
                     self.builder.patch_jump(patch, landing);
                 }
                 self.builder.emit(Op::SubshellEnd, 0);
+                self.emit_cmd_pop();
             }
             ZshCommand::Cursh(prog) => {
                 // {list} — brace group; no isolation.
+                // cmdstack: direct port of Src/loop.c:746
+                //   cmdpush(CS_CURSH);
+                self.emit_cmd_push(crate::prompt::CmdState::Cursh as u8);
                 self.compile_program(prog);
+                self.emit_cmd_pop();
             }
             ZshCommand::If(if_node) => self.compile_if(if_node),
             ZshCommand::While(w) => self.compile_while(w),
@@ -699,28 +775,26 @@ impl ZshCompiler {
             return;
         }
 
-        // xtrace: emit a runtime print of the literal command text
-        // BEFORE pushing args / dispatching. The runtime checks the
-        // `xtrace` option and prints with `$PS4` prefix to stderr.
-        // Compile-time literal — variable expansion in args isn't
-        // resolved here (matches zsh's `+ echo "$x"` style).
-        let trace_text = simple
-            .words
-            .iter()
-            .map(|w| crate::lexer::untokenize(w))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let trace_const = self.builder.add_constant(Value::str(trace_text));
-        self.builder.emit(Op::LoadConst(trace_const), 0);
-        self.builder
-            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
-        self.builder.emit(Op::Pop, 0);
-
         // Builtin or function or external. Push args first.
         let argc = (simple.words.len() - 1) as u8;
         for word in &simple.words[1..] {
             self.compile_word_str(word);
         }
+
+        // xtrace: emit a runtime print of the EXPANDED command line
+        // AFTER args are pushed but BEFORE dispatch consumes them.
+        // Direct port of Src/exec.c:2055-2066 (makecline) — zsh
+        // traces the post-expansion argv with each arg shell-quoted.
+        // BUILTIN_XTRACE_ARGS peeks args without consuming, pops the
+        // prefix (cmd-name) we push next, builds + prints the line.
+        // Stack on entry: [arg1, …, argN, prefix].
+        let cmd_prefix = crate::lexer::untokenize(&simple.words[0]);
+        let prefix_const = self.builder.add_constant(Value::str(cmd_prefix.as_str()));
+        self.builder.emit(Op::LoadConst(prefix_const), 0);
+        let trace_argc = simple.words.len() as u8;
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_ARGS, trace_argc), 0);
+        self.builder.emit(Op::Pop, 0);
 
         // `shopt` is bash-only; zsh has no such builtin. Force external lookup
         // so it produces "command not found: shopt" matching /bin/zsh exactly.
@@ -2056,27 +2130,45 @@ impl ZshCompiler {
         // skip_body:
         // Final else block (no condition gate). All end-jumps patched to past
         // the whole if.
+        //
+        // cmdstack tracking — direct port of Src/loop.c:572 / :587
+        //   cmdpush(s ? CS_ELIF : CS_IF);   around cond
+        //   cmdpop();
+        //   if (run) {
+        //       cmdpush(run == 2 ? CS_ELSE : (s ? CS_ELIFTHEN : CS_IFTHEN));
+        //       around body  cmdpop();
+        //   }
         let mut end_jumps = Vec::new();
 
         // First branch — the test is errexit-suppressed.
+        self.emit_cmd_push(crate::prompt::CmdState::If as u8);
         self.errexit_suppress_depth += 1;
         self.compile_program(&if_node.cond);
         self.errexit_suppress_depth -= 1;
+        self.emit_cmd_pop();
         self.builder.emit(Op::GetStatus, 0);
         let mut skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
+        // CS_IFTHEN = 6 = CmdState::Then
+        self.emit_cmd_push(crate::prompt::CmdState::Then as u8);
         self.compile_program(&if_node.then);
+        self.emit_cmd_pop();
         end_jumps.push(self.builder.emit(Op::Jump(0), 0));
         self.builder
             .patch_jump(skip_body, self.builder.current_pos());
 
         // elif branches — same suppression for each cond.
         for (cond, body) in &if_node.elif {
+            self.emit_cmd_push(crate::prompt::CmdState::Elif as u8);
             self.errexit_suppress_depth += 1;
             self.compile_program(cond);
             self.errexit_suppress_depth -= 1;
+            self.emit_cmd_pop();
             self.builder.emit(Op::GetStatus, 0);
             skip_body = self.builder.emit(Op::JumpIfFalse(0), 0);
+            // CS_ELIFTHEN = 26 = CmdState::ElifThen, prints "elif-then"
+            self.emit_cmd_push(crate::prompt::CmdState::ElifThen as u8);
             self.compile_program(body);
+            self.emit_cmd_pop();
             end_jumps.push(self.builder.emit(Op::Jump(0), 0));
             self.builder
                 .patch_jump(skip_body, self.builder.current_pos());
@@ -2084,7 +2176,9 @@ impl ZshCompiler {
 
         // else
         if let Some(else_) = &if_node.else_ {
+            self.emit_cmd_push(crate::prompt::CmdState::Else as u8);
             self.compile_program(else_);
+            self.emit_cmd_pop();
         }
 
         let end = self.builder.current_pos();
@@ -2105,6 +2199,16 @@ impl ZshCompiler {
         //   loop_exit:
         //
         // Plus break/continue patch-list pushes around the body.
+        //
+        // cmdstack: direct port of Src/loop.c:424
+        //   cmdpush(isuntil ? CS_UNTIL : CS_WHILE);
+        // popped after the loop body.
+        let cs_token = if w.until {
+            crate::prompt::CmdState::Until as u8
+        } else {
+            crate::prompt::CmdState::While as u8
+        };
+        self.emit_cmd_push(cs_token);
         let status_slot = self.next_slot;
         self.next_slot += 1;
         self.builder.emit(Op::LoadInt(0), 0);
@@ -2153,6 +2257,7 @@ impl ZshCompiler {
         // Restore loop's exit status from the body's last-status slot.
         self.builder.emit(Op::GetSlot(status_slot), 0);
         self.builder.emit(Op::SetStatus, 0);
+        self.emit_cmd_pop();
     }
 
     fn compile_for(&mut self, f: &crate::parser::ZshFor) {
@@ -2161,6 +2266,12 @@ impl ZshCompiler {
             self.compile_select(f);
             return;
         }
+        // cmdstack: direct port of Src/loop.c:119 `cmdpush(CS_FOR);`.
+        // Both `for x in …` and `for ((;;))` push CS_FOR at execution
+        // time — Src/parse.c:972/977 differentiates CS_FOR vs
+        // CS_FOREACH at parse time only, but execfor always uses
+        // CS_FOR.
+        self.emit_cmd_push(crate::prompt::CmdState::For as u8);
         match &f.list {
             ForList::Words(words) => {
                 self.compile_for_words(&f.var, words, &f.body);
@@ -2178,6 +2289,7 @@ impl ZshCompiler {
                 self.compile_for_positional(&f.var, &f.body);
             }
         }
+        self.emit_cmd_pop();
     }
 
     fn compile_select(&mut self, f: &crate::parser::ZshFor) {
@@ -2253,6 +2365,19 @@ impl ZshCompiler {
         self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2), 0);
+        self.builder.emit(Op::Pop, 0);
+        // xtrace: emit `name=value\n` per iteration. Direct port of
+        // Src/loop.c:163-166. XTRACE_LINE no-ops when -x is off.
+        let assign_prefix = format!("{}=", var);
+        let prefix_const = self.builder.add_constant(Value::str(assign_prefix.as_str()));
+        self.builder.emit(Op::LoadConst(prefix_const), 0);
+        let var_const2 = self.builder.add_constant(Value::str(var));
+        self.builder.emit(Op::LoadConst(var_const2), 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+        self.builder.emit(Op::Concat, 0);
+        self.builder
+            .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
 
         self.break_patches.push(Vec::new());
@@ -2359,6 +2484,24 @@ impl ZshCompiler {
             self.builder.emit(Op::SlotArrayGet(arr_slot), 0);
             self.builder
                 .emit(Op::CallBuiltin(crate::exec::BUILTIN_SET_VAR, 2), 0);
+            self.builder.emit(Op::Pop, 0);
+            // xtrace: emit `name=value\n` per iteration. Direct port
+            // of Src/loop.c:163-166:
+            //   if (isset(XTRACE)) {
+            //     printprompt4();
+            //     fprintf(xtrerr, "%s=%s\n", name, str);
+            //   }
+            // XTRACE_LINE no-ops when -x is off, so cheap unconditionally.
+            let assign_prefix = format!("{}=", name);
+            let prefix_const = self.builder.add_constant(Value::str(assign_prefix.as_str()));
+            self.builder.emit(Op::LoadConst(prefix_const), 0);
+            let name_const2 = self.builder.add_constant(Value::str(*name));
+            self.builder.emit(Op::LoadConst(name_const2), 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+            self.builder.emit(Op::Concat, 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
             self.builder.emit(Op::Pop, 0);
         }
 
@@ -2494,6 +2637,9 @@ impl ZshCompiler {
 
     fn compile_case(&mut self, c: &crate::parser::ZshCase) {
         use crate::parser::CaseTerm;
+        // cmdstack: direct port of Src/loop.c:615 `cmdpush(CS_CASE);`
+        // wrapping the whole case statement.
+        self.emit_cmd_push(crate::prompt::CmdState::Case as u8);
         // Word goes onto a slot for repeated comparison.
         self.compile_word_str(&c.word);
         let word_slot = self.next_slot;
@@ -2507,6 +2653,33 @@ impl ZshCompiler {
         let mut pending_fall: Option<usize> = None;
 
         for arm in &c.arms {
+            // xtrace: emit `case <word> (<pat1> | <pat2>)` per arm.
+            // Direct port of Src/loop.c:626-682 — printprompt4 then
+            // `fprintf(xtrerr, "case %s (", word)`, then each
+            // alternative joined by ` | `, then `)\n`. zshrs builds
+            // the line at runtime (because <word> is dynamic) by
+            // concatenating literal prefix + word + literal suffix.
+            // Pattern alts are static, baked into the suffix.
+            let pat_clean: Vec<String> = arm
+                .patterns
+                .iter()
+                .map(|p| crate::lexer::untokenize(p))
+                .collect();
+            let pat_join = pat_clean.join(" | ");
+            let prefix_text = "case ".to_string();
+            let suffix_text = format!(" ({})", pat_join);
+            // Build: "case " + word + " (pat1 | pat2)"
+            let prefix_const = self.builder.add_constant(Value::str(prefix_text.as_str()));
+            self.builder.emit(Op::LoadConst(prefix_const), 0);
+            self.builder.emit(Op::GetSlot(word_slot), 0);
+            self.builder.emit(Op::Concat, 0);
+            let suffix_const = self.builder.add_constant(Value::str(suffix_text.as_str()));
+            self.builder.emit(Op::LoadConst(suffix_const), 0);
+            self.builder.emit(Op::Concat, 0);
+            self.builder
+                .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
+            self.builder.emit(Op::Pop, 0);
+
             let mut match_jumps = Vec::new();
             for pattern in &arm.patterns {
                 self.builder.emit(Op::GetSlot(word_slot), 0);
@@ -2566,9 +2739,12 @@ impl ZshCompiler {
         if let Some(prev) = pending_fall {
             self.builder.patch_jump(prev, end);
         }
+        self.emit_cmd_pop();
     }
 
     fn compile_repeat(&mut self, r: &crate::parser::ZshRepeat) {
+        // cmdstack: direct port of Src/loop.c:522 `cmdpush(CS_REPEAT);`
+        self.emit_cmd_push(crate::prompt::CmdState::Repeat as u8);
         let i_slot = self.next_slot;
         self.next_slot += 1;
         let count_slot = self.next_slot;
@@ -2607,6 +2783,7 @@ impl ZshCompiler {
                 self.builder.patch_jump(bp, loop_exit);
             }
         }
+        self.emit_cmd_pop();
     }
 
     fn compile_funcdef(&mut self, f: &crate::parser::ZshFuncDef) {
@@ -2690,21 +2867,21 @@ impl ZshCompiler {
 
     fn compile_cond(&mut self, c: &crate::parser::ZshCond) {
         use crate::parser::ZshCond;
-        // xtrace: emit `[[ ... ]]` text before evaluating. Direct
-        // port of zsh's exec.c::execcond which calls printprompt4()
-        // and writes the cond's source form to xtrerr before
-        // dispatching the test. Without this, `zsh -x` showed
-        // `[[ ! -x /usr/bin/locale ]]` lines that zshrs's trace
-        // dropped — the conditional tests in /etc/zshrc and most
-        // .zshrc structures simply weren't traced.
+        // xtrace: emit `[[ ... ]]` text BEFORE pushing CS_COND so
+        // the trace line itself is NOT labeled "cond" (zsh: only
+        // nested commands inside the cond see the cond context).
+        // Direct port of Src/exec.c:5210-5214 — printprompt4 fires,
+        // THEN cmdpush(CS_COND).
         let cond_text = format!("[[ {} ]]", render_cond(c));
         let trace_const = self.builder.add_constant(Value::str(cond_text.as_str()));
         self.builder.emit(Op::LoadConst(trace_const), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
+        self.emit_cmd_push(crate::prompt::CmdState::Cond as u8);
         // Result on stack: bool. Status set after this returns.
         self.compile_cond_expr(c);
+        self.emit_cmd_pop();
         // Convert bool → status (true=0, false=1)
         let true_jump = self.builder.emit(Op::JumpIfTrue(0), 0);
         self.builder.emit(Op::LoadInt(1), 0);
@@ -3016,16 +3193,17 @@ impl ZshCompiler {
     }
 
     fn compile_arith(&mut self, expr: &str) {
-        // xtrace: emit `(( expr ))` text before evaluating. Direct
-        // port of zsh's exec.c::execdpar which traces the arith
-        // expression to xtrerr. Without this, `zsh -x` showed
-        // `(( $+__p9k_intro ))` etc. that zshrs's trace dropped.
+        // xtrace: emit `(( expr ))` text BEFORE pushing CS_MATH so
+        // the trace line itself is NOT labeled "math". Direct port
+        // of Src/exec.c:5240-5245 — printprompt4 fires, THEN
+        // cmdpush(CS_MATH).
         let trace_text = format!("(( {} ))", expr);
         let trace_const = self.builder.add_constant(Value::str(trace_text.as_str()));
         self.builder.emit(Op::LoadConst(trace_const), 0);
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
+        self.emit_cmd_push(crate::prompt::CmdState::Math as u8);
         // Compound `(( expr ))` — set status based on whether expr is non-zero.
         // Subscripted-array assignment (`((a[i]=v))`) needs to bypass
         // ArithCompiler (which doesn't write back through arr[idx])
@@ -3057,6 +3235,7 @@ impl ZshCompiler {
             // success unless rhs is 0.
             self.builder.emit(Op::LoadInt(0), 0);
             self.builder.emit(Op::SetStatus, 0);
+            self.emit_cmd_pop();
             return;
         }
         // ArithCompiler emits float-only Op::Div, doesn't recognize
@@ -3121,6 +3300,7 @@ impl ZshCompiler {
             self.builder.emit(Op::SetStatus, 0);
             let end = self.builder.current_pos();
             self.builder.patch_jump(end_jump, end);
+            self.emit_cmd_pop();
             return;
         }
         self.compile_arith_str(expr);
@@ -3136,6 +3316,7 @@ impl ZshCompiler {
         self.builder.emit(Op::SetStatus, 0);
         let end = self.builder.current_pos();
         self.builder.patch_jump(end_jump, end);
+        self.emit_cmd_pop();
     }
 
     /// Compile arithmetic expression text. Leaves the result on stack
