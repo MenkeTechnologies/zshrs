@@ -6773,9 +6773,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // `${a/?/X}` (paren is the group). Without `(` in the trigger
         // set, paren patterns fell into the literal-string path and
         // matched nothing.
+        // `#` (and its `##` repetition pair) is an extendedglob
+        // postfix metachar — `a##` = one-or-more `a`. Include it
+        // in the trigger set so `${var//a##/X}` routes through the
+        // regex compile path instead of the literal-string fallback.
+        // Bare `#` alone is non-meta — but it's safe to over-trigger
+        // here because the regex compiler escapes literals it can't
+        // interpret as quantifier postfix anyway.
         let has_glob = pattern
             .chars()
-            .any(|c| matches!(c, '?' | '*' | '[' | ']' | '('));
+            .any(|c| matches!(c, '?' | '*' | '[' | ']' | '(' | '#'));
         let glob_re: Option<regex::Regex> = if has_glob || case_insensitive_repl {
             // Convert the glob pattern to a regex string:
             //   ? → . (any single char)
@@ -6785,10 +6792,36 @@ fn register_builtins(vm: &mut fusevm::VM) {
             //   other regex metas → escaped
             let mut re = String::with_capacity(pattern.len() * 2);
             let mut chars = pattern.chars().peekable();
+            // `#` / `##` extendedglob postfix detector for the
+            // BUILTIN_PARAM_REPLACE pattern compile. Matches the
+            // same handling in subst_port::glob_to_regex_capturing
+            // and exec.rs::glob_match_static — direct port of zsh's
+            // pattern.c POUND/POUND2 cases. Used by zinit's
+            // main-message-formatter pattern `[^\}]##` (one-or-
+            // more non-`}`).
+            let consume_postfix = |chars: &mut std::iter::Peekable<std::str::Chars>| -> Option<&'static str> {
+                if chars.peek() == Some(&'#') {
+                    chars.next();
+                    if chars.peek() == Some(&'#') {
+                        chars.next();
+                        Some("+")
+                    } else {
+                        Some("*")
+                    }
+                } else {
+                    None
+                }
+            };
             while let Some(c) = chars.next() {
                 match c {
-                    '?' => re.push('.'),
-                    '*' => re.push_str(".*"),
+                    '?' => {
+                        re.push('.');
+                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                    }
+                    '*' => {
+                        re.push_str(".*");
+                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                    }
                     '[' => {
                         // Pass through to the closing ']' (already
                         // valid regex syntax for most char classes).
@@ -6808,6 +6841,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                 break;
                             }
                         }
+                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
                     }
                     '\\' => {
                         // `\\(#e)` / `\\(#s)` — escaped backslash
@@ -6864,16 +6898,26 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         chars.next(); // consume ')'
                         re.push(if kind == 'e' { '$' } else { '^' });
                     }
-                    // `(`, `)`, `|` are zsh group/alternation operators
-                    // — keep them as regex equivalents.
-                    '(' | ')' | '|' => re.push(c),
+                    // `(`, `|` are zsh group/alternation operators
+                    // — keep them as regex equivalents. `)` may be
+                    // followed by `#`/`##` postfix applied to the
+                    // closed group (e.g. `(foo|bar)##` = one-or-more
+                    // of foo/bar).
+                    '(' | '|' => re.push(c),
+                    ')' => {
+                        re.push(c);
+                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                    }
                     // Regex meta chars that are NOT glob metas — escape
                     // so the regex compiler treats them literally.
                     '.' | '+' | '^' | '$' | '{' | '}' => {
                         re.push('\\');
                         re.push(c);
                     }
-                    _ => re.push(c),
+                    _ => {
+                        re.push(c);
+                        if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
+                    }
                 }
             }
             // Apply `(#i)` case-insensitive flag if it was present
@@ -17628,13 +17672,19 @@ impl ShellExecutor {
                 }
             }
 
-            // ${var//pattern/replacement} - replace all matches
+            // ${var//pattern/replacement} - replace all matches.
+            // When the pattern has glob/extendedglob metachars, route
+            // through ShellExecutor::glob_match_static-equivalent
+            // regex compile so `a##`, `[abc]`, `*`, etc. work.
+            // Direct port of zsh's getmatch path (Src/utils.c) which
+            // pattern-compiles every replace pattern. The previous
+            // bare `v.replace(&pat, &repl)` path treated pat as a
+            // literal string — `${v//a##/X}` against "aaab" never
+            // matched even with extended_glob set.
             Some(VarModifier::ReplaceAll(pattern, replacement)) => {
                 let v = val.unwrap_or_default();
                 let pat = self.expand_word(pattern);
                 let repl = self.expand_word(replacement);
-                // Anchored forms behave the same as single-replace under `//`
-                // — anchor by definition matches once.
                 if let Some(rest) = pat.strip_prefix('#') {
                     if let Some(suffix) = v.strip_prefix(rest) {
                         format!("{}{}", repl, suffix)
@@ -17648,7 +17698,24 @@ impl ShellExecutor {
                         v
                     }
                 } else {
-                    v.replace(&pat, &repl)
+                    // Pattern may have glob meta — compile to regex
+                    // and global-replace if any of `*`, `?`, `[`,
+                    // `(`, `#` (extendedglob `##` repetition), or
+                    // `^` (extendedglob negation) appears. Falls
+                    // back to literal replace on regex compile
+                    // failure or for pure-literal patterns.
+                    let has_meta = pat.chars()
+                        .any(|c| matches!(c, '?' | '*' | '[' | '(' | '#' | '^'));
+                    if has_meta {
+                        let regex_src =
+                            crate::subst_port::compile_glob_to_regex_for_replace(&pat);
+                        match regex::Regex::new(&regex_src) {
+                            Ok(re) => re.replace_all(&v, repl.as_str()).into_owned(),
+                            Err(_) => v.replace(&pat, &repl),
+                        }
+                    } else {
+                        v.replace(&pat, &repl)
+                    }
                 }
             }
 

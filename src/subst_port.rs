@@ -4963,10 +4963,41 @@ fn glob_to_regex_capturing(pattern: &str, anchored: bool) -> String {
     }
     let chars: Vec<char> = pattern.chars().collect();
     let mut i = 0;
+    // After emitting an atom, peek for `#` / `##` extendedglob
+    // postfix (zero-or-more / one-or-more repetition of the
+    // previous atom). Direct port of zsh's pattern.c POUND /
+    // POUND2 cases in patcompswitch — `a##` matches one-or-more
+    // `a`, `a#` zero-or-more. Used by zinit's main-message-
+    // formatter pattern `[^\}]##` (one-or-more non-`}`) and
+    // many other extendedglob places. Returns the regex
+    // quantifier or None if no postfix.
+    let consume_postfix = |chars: &[char], i: &mut usize| -> Option<&'static str> {
+        if *i + 1 < chars.len() && chars[*i + 1] == '#' {
+            if *i + 2 < chars.len() && chars[*i + 2] == '#' {
+                *i += 2;
+                Some("+")
+            } else {
+                *i += 1;
+                Some("*")
+            }
+        } else {
+            None
+        }
+    };
     while i < chars.len() {
         match chars[i] {
-            '*' => regex.push_str(".*"),
-            '?' => regex.push('.'),
+            '*' => {
+                regex.push_str(".*");
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
+            '?' => {
+                regex.push('.');
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
             '[' => {
                 regex.push('[');
                 i += 1;
@@ -4985,6 +5016,9 @@ fn glob_to_regex_capturing(pattern: &str, anchored: bool) -> String {
                     }
                 }
                 regex.push(']');
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
             }
             // `\(#e)` / `\(#s)` — escaped backslash followed by end/
             // start anchor. Direct port of zsh's pattern.c parsing
@@ -5025,14 +5059,26 @@ fn glob_to_regex_capturing(pattern: &str, anchored: bool) -> String {
                 i += 3; // outer loop increment handles the 4th
             }
             // Capture groups + alternation pass through — the WHOLE
-            // POINT of (#b) mode.
-            '(' | ')' | '|' => regex.push(chars[i]),
+            // POINT of (#b) mode. `#`/`##` postfix on a `)` applies
+            // to the whole group.
+            '(' | '|' => regex.push(chars[i]),
+            ')' => {
+                regex.push(')');
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
             // Regex metachars that are literal in glob — escape.
             c @ ('.' | '+' | '^' | '$' | '{' | '}') => {
                 regex.push('\\');
                 regex.push(c);
             }
-            c => regex.push(c),
+            c => {
+                regex.push(c);
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
         }
         i += 1;
     }
@@ -5163,10 +5209,35 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
     }
     let chars: Vec<char> = pattern.chars().collect();
     let mut i = 0;
+    // Same `#` / `##` extendedglob postfix handling as
+    // glob_to_regex_capturing — see that function's comment.
+    let consume_postfix = |chars: &[char], i: &mut usize| -> Option<&'static str> {
+        if *i + 1 < chars.len() && chars[*i + 1] == '#' {
+            if *i + 2 < chars.len() && chars[*i + 2] == '#' {
+                *i += 2;
+                Some("+")
+            } else {
+                *i += 1;
+                Some("*")
+            }
+        } else {
+            None
+        }
+    };
     while i < chars.len() {
         match chars[i] {
-            '*' => regex.push_str(".*"),
-            '?' => regex.push('.'),
+            '*' => {
+                regex.push_str(".*");
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
+            '?' => {
+                regex.push('.');
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
             '[' => {
                 regex.push('[');
                 i += 1;
@@ -5185,6 +5256,9 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
                     }
                 }
                 regex.push(']');
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
             }
             '\\' if i + 1 < chars.len() => {
                 regex.push('\\');
@@ -5196,7 +5270,12 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
                 regex.push('\\');
                 regex.push(c);
             }
-            c => regex.push(c),
+            c => {
+                regex.push(c);
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
         }
         i += 1;
     }
@@ -5209,6 +5288,17 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
 /// Whole-match form (`^…$`). Used by `:#`, `case`, `[[ = ]]`.
 fn param_pattern_to_regex(pattern: &str) -> String {
     param_pattern_to_regex_anchored(pattern, true)
+}
+
+/// Public unanchored variant — used by `apply_var_modifier`'s
+/// ReplaceAll path in exec.rs to glob-match `${var//pat/repl}`
+/// when `pat` contains metas. Direct port of zsh's getmatch path
+/// (Src/utils.c) which compiles every replace pattern. The
+/// surface is intentionally minimal (just unanchored regex);
+/// callers that need backref or anchor behaviour go through
+/// the subst_port replace dispatch directly.
+pub fn compile_glob_to_regex_for_replace(pattern: &str) -> String {
+    param_pattern_to_regex_anchored(pattern, false)
 }
 
 fn glob_to_regex(pattern: &str) -> String {
