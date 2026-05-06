@@ -1699,7 +1699,14 @@ impl ZshCompiler {
                     .all(|c| c == '_' || c.is_ascii_alphanumeric());
             let is_positional =
                 !bare_name.is_empty() && bare_name.chars().all(|c| c.is_ascii_digit());
-            if is_ident || is_positional {
+            // `${#@}` / `${#*}` / `${#argv}` — count of positional
+            // params. Direct port of zsh's paramsubst special-name
+            // handling for `@`/`*`/`argv` in the chklen branch.
+            // Without this, the bare-name fast path missed `@`/`*`
+            // and the fallback emitted `0`.
+            let is_special_positional =
+                bare_name == "@" || bare_name == "*" || bare_name == "argv";
+            if is_ident || is_positional || is_special_positional {
                 let idx = self.builder.add_constant(Value::str(bare_name));
                 self.builder.emit(Op::LoadConst(idx), 0);
                 self.builder
