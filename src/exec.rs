@@ -23357,12 +23357,52 @@ impl ShellExecutor {
             return 0;
         }
 
-        // Process variable assignments
-        for arg in var_args {
+        // Process variable assignments. Index-based loop so we can
+        // gobble continuation args when an assignment of form
+        // `name=(elem elem...)` got split across multiple positional
+        // args (zsh's lexer keeps the parens intact, but zshrs's
+        // bytecode array-init can splice expansions like `("$@")` into
+        // separate words — `local -a opts=("$@")` arrives as
+        // `["-a", "opts=(a", "b", "c)"]`. Detect un-balanced parens in
+        // the value side and absorb subsequent args until the
+        // bracket-count rebalances, then process as one combined
+        // value).
+        let mut idx = 0usize;
+        while idx < var_args.len() {
+            let arg = var_args[idx].clone();
+            idx += 1;
             // Check if this starts an array assignment: "name=(" or "name=(value"
             if let Some(eq_pos) = arg.find('=') {
                 let name = &arg[..eq_pos];
-                let rest = &arg[eq_pos + 1..];
+                let rest_raw = arg[eq_pos + 1..].to_string();
+                // If the rest looks like the start of an array literal
+                // (`(...`) but the parens aren't balanced WITHIN this
+                // single arg, gobble follow-on args.
+                let starts_paren = rest_raw.starts_with('(') || rest_raw.starts_with('\u{88}');
+                let rest = if starts_paren {
+                    let mut depth: i32 = 0;
+                    let mut combined = rest_raw.clone();
+                    let mut count_depth = |s: &str, d: &mut i32| {
+                        for c in s.chars() {
+                            match c {
+                                '(' | '\u{88}' => *d += 1,
+                                ')' | '\u{8a}' => *d -= 1,
+                                _ => {}
+                            }
+                        }
+                    };
+                    count_depth(&rest_raw, &mut depth);
+                    while depth > 0 && idx < var_args.len() {
+                        combined.push(' ');
+                        combined.push_str(&var_args[idx]);
+                        count_depth(&var_args[idx], &mut depth);
+                        idx += 1;
+                    }
+                    combined
+                } else {
+                    rest_raw
+                };
+                let rest = rest.as_str();
 
                 // zsh validates the lhs is a valid identifier:
                 //   `typeset 1bad=5` -> `<INVOKED>:1: not an
