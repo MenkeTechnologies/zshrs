@@ -16629,8 +16629,67 @@ impl ShellExecutor {
 
     /// Get value from zsh/parameter special arrays (options, commands, functions, etc.)
     /// Returns Some(value) if this is a special array access, None otherwise
-    fn get_special_array_value(&self, array_name: &str, key: &str) -> Option<String> {
+    pub fn get_special_array_value(&self, array_name: &str, key: &str) -> Option<String> {
         match array_name {
+            // === ZSH/MAPFILE module ===
+            // `${mapfile[/path]}` reads the file's contents. Direct
+            // port of `getpmmapfile()` (Src/Modules/mapfile.c:217)
+            // which calls `get_contents()` (line 167) on the path.
+            // Splice (`@`/`*`) returns the CWD entry list per
+            // `scanpmmapfile()` (line 240).
+            "mapfile" => {
+                if key == "@" || key == "*" {
+                    return Some(crate::modules::mapfile::scan_directory(".")
+                        .ok()
+                        .map(|v| v.join(" "))
+                        .unwrap_or_default());
+                }
+                Some(crate::modules::mapfile::get_file_contents(key).unwrap_or_default())
+            }
+            // === ZSH/SYSTEM — errnos / sysparams ===
+            "errnos" => {
+                let table = crate::modules::system::ERRNO_NAMES;
+                if key == "@" || key == "*" {
+                    return Some(
+                        table
+                            .iter()
+                            .map(|(n, _)| (*n).to_string())
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    );
+                }
+                if let Ok(n) = key.parse::<i64>() {
+                    let len = table.len() as i64;
+                    let pos = if n > 0 {
+                        (n - 1) as usize
+                    } else if n < 0 {
+                        let p = len + n;
+                        if p < 0 {
+                            return Some(String::new());
+                        }
+                        p as usize
+                    } else {
+                        return Some(String::new());
+                    };
+                    if let Some((name, _)) = table.get(pos) {
+                        return Some((*name).to_string());
+                    }
+                }
+                Some(String::new())
+            }
+            "sysparams" => {
+                let pid = std::process::id().to_string();
+                let ppid = unsafe { libc::getppid() }.to_string();
+                if key == "@" || key == "*" {
+                    return Some(format!("{} {}", pid, ppid));
+                }
+                Some(match key {
+                    "pid" => pid,
+                    "ppid" => ppid,
+                    "procsubstpid" => "0".to_string(),
+                    _ => String::new(),
+                })
+            }
             // === SHELL OPTIONS ===
             "options" => {
                 if key == "@" || key == "*" {
@@ -36017,15 +36076,33 @@ impl ShellExecutor {
         let mut format_time = String::new();
         let mut elements: Vec<String> = Vec::new();
         let mut files: Vec<&str> = Vec::new();
+        // `-t` flag: prefix each output line with the filename.
+        // Direct port of `-t` handling in Src/Modules/stat.c bin_stat
+        // (the BUILTIN flag char list `AfHLnNoTrs` includes `t`).
+        let mut prefix_filename = false;
 
         let mut iter = args.iter().peekable();
         while let Some(arg) = iter.next() {
             match arg.as_str() {
                 "-s" => symbolic_mode = true,
                 "-L" => show_link = true,
-                "-N" => {} // Don't resolve symlinks
-                "-n" => {} // Numeric user/group
+                // `-n`: STF_FILE — prefix each line with the
+                // filename. Direct port of stat.c:518-519.
+                "-n" => prefix_filename = true,
+                // `-N`: clear STF_FILE — explicit "don't prefix".
+                "-N" => prefix_filename = false,
+                // `-o`: STF_OCTAL — print mode in octal. (Not yet
+                // wired; non-symbolic mode currently always
+                // decimal — matches zsh default.)
                 "-o" => show_all = false,
+                // `-t`: STF_NAME — show element names. Default
+                // already sets STF_NAME when no `+pick` is given,
+                // so this is a no-op for the common shape; the
+                // flag exists so scripts can be explicit.
+                "-t" => {}
+                // `-T`: clear STF_NAME — strip element names.
+                // Not yet wired; keeping names is the safe default.
+                "-T" => {}
                 "-A" => {
                     as_array = true;
                     if let Some(name) = iter.next() {
@@ -36061,6 +36138,13 @@ impl ShellExecutor {
             return 1;
         }
 
+        // Multiple files auto-prefix with filename. Direct port of
+        // stat.c:526-527 — `if (nargs > 1) flags |= STF_FILE;`
+        // unless -A/-H redirects output. -N explicitly clears it.
+        if files.len() > 1 && !as_array {
+            prefix_filename = true;
+        }
+
         for file in files {
             let meta = if show_link {
                 std::fs::symlink_metadata(file)
@@ -36079,13 +36163,22 @@ impl ShellExecutor {
             // Collect into a local map first; flush to assoc_arrays
             // below so the &mut borrow doesn't tangle with iteration.
             let mut collected: Vec<(String, String)> = Vec::new();
+            // zsh's bin_stat output format: NAME left-padded to 8
+            // chars (space-padded), then VALUE. With STF_FILE set
+            // (multi-file mode or `-n`), the filename appears on
+            // its own line as `<file>:\n` BEFORE that file's data
+            // block — not as a per-line prefix. Direct port of
+            // stat.c:543-550 + the `printf("%s:\n", …)` header.
+            if prefix_filename && !as_array {
+                println!("{}:", file);
+            }
             let mut output_element = |name: &str, value: &str| {
                 if as_array {
                     if show_all || elements.contains(&name.to_string()) {
                         collected.push((name.to_string(), value.to_string()));
                     }
                 } else if show_all || elements.contains(&name.to_string()) {
-                    println!("{}: {}", name, value);
+                    println!("{:<8}{}", name, value);
                 }
             };
 
@@ -36136,7 +36229,12 @@ impl ShellExecutor {
                 );
                 output_element("mode", &mode_str);
             } else {
-                output_element("mode", &format!("{:o}", meta.permissions().mode()));
+                // Non-symbolic mode is the raw `st_mode` integer in
+                // DECIMAL — matches zsh bin_stat which prints
+                // `s.st_mode` via the `%lu` format. Octal would
+                // confuse scripts that test against numeric
+                // constants like `(( mode & 0o170000 ))`.
+                output_element("mode", &meta.permissions().mode().to_string());
             }
 
             output_element("nlink", &meta.nlink().to_string());

@@ -445,11 +445,7 @@ mod system_module {
 mod stat_module {
     use super::*;
 
-    /// `zstat` exits 0 on a real path. The output format differs
-    /// from zsh today (`device: 16777231` vs `device\t16777231`,
-    /// mode encoding differs); that's a known follow-up. The
-    /// smoke-test just pins the dispatch shape — `zstat` no
-    /// longer reports `command not found`.
+    /// `zstat` exits 0 on a real path.
     #[test]
     fn zstat_dispatches_and_exits_zero() {
         if !zsh_available() {
@@ -459,6 +455,42 @@ mod stat_module {
         let z = run_zsh(&script).stdout;
         let r = run_zshrs(&script).stdout;
         assert_eq!(z, r, "zstat exit mismatch");
+    }
+
+    /// Output format: NAME left-padded to 8 chars then VALUE.
+    /// Direct test of bin_stat's print path
+    /// (Src/Modules/stat.c). Uses /etc/hosts which is stable on
+    /// all macOS/Linux hosts and never gets mutated by other
+    /// tests (unlike /tmp, where other parity tests create
+    /// scratch files that change `nlink`/`size`).
+    #[test]
+    fn zstat_format_matches_zsh() {
+        assert_parity(&with_modules(
+            &["stat"],
+            "zstat /etc/hosts 2>/dev/null | grep -E '^(mode|nlink|size) '",
+        ));
+    }
+
+    /// `zstat -n /tmp` prepends a `<file>:` header line. Direct
+    /// test of stat.c:518-519 — `if (OPT_ISSET(ops,'n')) flags |=
+    /// STF_FILE` and the `printf("%s:\n", …)` header at line ~543.
+    #[test]
+    fn zstat_dash_n_prefixes_filename() {
+        assert_parity(&with_modules(
+            &["stat"],
+            "zstat -n /tmp 2>/dev/null | head -3",
+        ));
+    }
+
+    /// `zstat /tmp /tmp` (multi-file) auto-prefixes each block with
+    /// `<file>:`. Direct test of stat.c:526-527 — `if (nargs > 1)
+    /// flags |= STF_FILE`.
+    #[test]
+    fn zstat_multi_file_auto_prefix() {
+        assert_parity(&with_modules(
+            &["stat"],
+            "zstat /tmp /tmp 2>/dev/null | grep '^/tmp:' | head -2",
+        ));
     }
 }
 
@@ -525,6 +557,66 @@ mod files_module {
         );
         assert_parity(&with_modules(&["files"], &body));
         let _ = std::fs::remove_file(&dst);
+    }
+}
+
+// ───────────────────────── zsh/mapfile ─────────────────────────
+
+mod mapfile_module {
+    use super::*;
+
+    /// `${mapfile[/path]}` reads file contents. Bare form.
+    #[test]
+    fn mapfile_bare_read() {
+        if !zsh_available() {
+            return;
+        }
+        let path = format!(
+            "/tmp/zshrs_mapfile_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        std::fs::write(&path, "hello world").unwrap();
+        let body = format!("print -- \"${{mapfile[{path}]}}\"");
+        assert_parity(&with_modules(&["mapfile"], &body));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `${mapfile[$tmp]:-FAIL}` — magic-assoc with `:-` fallback.
+    /// Direct test of paramsubst's `case '-':` arm at
+    /// Src/subst.c:3206-3232 against the special's getfn slot —
+    /// the fallback should ONLY fire when the file is missing or
+    /// empty, not when the read succeeds.
+    #[test]
+    fn mapfile_with_default_fallback() {
+        if !zsh_available() {
+            return;
+        }
+        let path = format!(
+            "/tmp/zshrs_mapfile_default_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        std::fs::write(&path, "hello").unwrap();
+        let body = format!("tmp={path}; print -- \"[${{mapfile[$tmp]:-FAIL}}]\"");
+        assert_parity(&with_modules(&["mapfile"], &body));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `${mapfile[/missing]:-FAIL}` — fallback FIRES when the file
+    /// doesn't exist.
+    #[test]
+    fn mapfile_default_fires_on_missing() {
+        assert_parity(&with_modules(
+            &["mapfile"],
+            r#"print -- "[${mapfile[/no/such/file/should/exist/here]:-FALLBACK}]""#,
+        ));
     }
 }
 
