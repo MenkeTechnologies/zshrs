@@ -788,10 +788,32 @@ impl ZshCompiler {
         // BUILTIN_XTRACE_ARGS peeks args without consuming, pops the
         // prefix (cmd-name) we push next, builds + prints the line.
         // Stack on entry: [arg1, …, argN, prefix].
-        let cmd_prefix = crate::lexer::untokenize(&simple.words[0]);
+        //
+        // Precommand-modifier stripping: zsh's exec.c:3086 removes
+        // `builtin`/`command`/`noglob`/`nocorrect`/`exec`/`-` from
+        // preargs before tracing (BINF_PREFIX flag). Mirror at
+        // compile-time so xtrace shows `zmodload zsh/datetime` not
+        // `builtin zmodload zsh/datetime`.
+        let mut precmd_skip = 0usize;
+        while precmd_skip + 1 < simple.words.len() {
+            let w = crate::lexer::untokenize(&simple.words[precmd_skip]);
+            if matches!(
+                w.as_str(),
+                "builtin" | "command" | "noglob" | "nocorrect" | "exec" | "-"
+            ) {
+                precmd_skip += 1;
+            } else {
+                break;
+            }
+        }
+        let cmd_prefix = crate::lexer::untokenize(&simple.words[precmd_skip]);
         let prefix_const = self.builder.add_constant(Value::str(cmd_prefix.as_str()));
         self.builder.emit(Op::LoadConst(prefix_const), 0);
-        let trace_argc = simple.words.len() as u8;
+        // trace_argc = (1 cmd-name) + (args after stripped modifiers).
+        // Stack has all words[1..] pushed; XTRACE_ARGS peeks the last
+        // (trace_argc - 1) of them so the modifier-victim slot is
+        // accounted for as the new cmd name.
+        let trace_argc = (simple.words.len() - precmd_skip) as u8;
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_ARGS, trace_argc), 0);
         self.builder.emit(Op::Pop, 0);
@@ -2871,10 +2893,17 @@ impl ZshCompiler {
         // the trace line itself is NOT labeled "cond" (zsh: only
         // nested commands inside the cond see the cond context).
         // Direct port of Src/exec.c:5210-5214 — printprompt4 fires,
-        // THEN cmdpush(CS_COND).
-        let cond_text = format!("[[ {} ]]", render_cond(c));
-        let trace_const = self.builder.add_constant(Value::str(cond_text.as_str()));
-        self.builder.emit(Op::LoadConst(trace_const), 0);
+        // THEN cmdpush(CS_COND). Operands inside `[[ … ]]` are
+        // EXPANDED for trace (zsh shows `[[ -r /Users/foo ]]`, not
+        // `[[ -r $HOME ]]`) — emit_cond_trace_runtime builds the line
+        // at runtime by interleaving static op text with expanded
+        // operands.
+        let lit_const = self.builder.add_constant(Value::str("[[ "));
+        self.builder.emit(Op::LoadConst(lit_const), 0);
+        self.emit_cond_trace_runtime(c);
+        let close_const = self.builder.add_constant(Value::str(" ]]"));
+        self.builder.emit(Op::LoadConst(close_const), 0);
+        self.builder.emit(Op::Concat, 0);
         self.builder
             .emit(Op::CallBuiltin(crate::exec::BUILTIN_XTRACE_LINE, 1), 0);
         self.builder.emit(Op::Pop, 0);
@@ -2894,6 +2923,69 @@ impl ZshCompiler {
         let end = self.builder.current_pos();
         self.builder.patch_jump(end_jump, end);
         let _ = ZshCond::Not;
+    }
+
+    /// Append a runtime-expanded rendering of `c` onto the string
+    /// already on the top of the stack. Direct port of Src/exec.c
+    /// trace block in execcond which prints each expanded operand.
+    /// Operands are word-expanded so `$HOME` / `~` / `$(…)` show
+    /// the resolved value, matching zsh's `[[ -r /Users/foo ]]`.
+    fn emit_cond_trace_runtime(&mut self, c: &crate::parser::ZshCond) {
+        use crate::parser::ZshCond;
+        let push_lit = |s: &mut Self, text: &str| {
+            let idx = s.builder.add_constant(Value::str(text));
+            s.builder.emit(Op::LoadConst(idx), 0);
+            s.builder.emit(Op::Concat, 0);
+        };
+        // Push an expanded word — `$HOME`/`~`/`$(…)`/etc. resolved.
+        // Mode 1 = SQ-strip + DQ-strip + scalar expand, no split.
+        let push_word = |s: &mut Self, word: &str| {
+            s.compile_word_str(word);
+            s.builder.emit(Op::Concat, 0);
+        };
+        match c {
+            ZshCond::Not(inner) => {
+                push_lit(self, "! ");
+                self.emit_cond_trace_runtime(inner);
+            }
+            ZshCond::And(a, b) => {
+                self.emit_cond_trace_runtime(a);
+                push_lit(self, " && ");
+                self.emit_cond_trace_runtime(b);
+            }
+            ZshCond::Or(a, b) => {
+                self.emit_cond_trace_runtime(a);
+                push_lit(self, " || ");
+                self.emit_cond_trace_runtime(b);
+            }
+            ZshCond::Unary(op, arg) => {
+                let op_clean = crate::lexer::untokenize(op);
+                push_lit(self, &op_clean);
+                if !arg.is_empty() {
+                    push_lit(self, " ");
+                    push_word(self, arg);
+                }
+            }
+            ZshCond::Binary(left, op, right) => {
+                let op_clean = crate::lexer::untokenize(op);
+                if right.is_empty() {
+                    push_lit(self, &op_clean);
+                    push_lit(self, " ");
+                    push_word(self, left);
+                } else {
+                    push_word(self, left);
+                    push_lit(self, " ");
+                    push_lit(self, &op_clean);
+                    push_lit(self, " ");
+                    push_word(self, right);
+                }
+            }
+            ZshCond::Regex(left, regex) => {
+                push_word(self, left);
+                push_lit(self, " =~ ");
+                push_word(self, regex);
+            }
+        }
     }
 
     fn compile_cond_expr(&mut self, c: &crate::parser::ZshCond) {

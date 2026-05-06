@@ -931,23 +931,47 @@ fn slice_scalar(s: &str, start: i64, end: i64) -> String {
 }
 
 /// Quote one argv element for xtrace output. Direct port of zsh's
-/// `quotedzputs()` (Src/utils.c) — bare token if printable+safe, else
-/// `'…'` quoted with embedded apostrophes escaped as `'\''`.
+/// `quotedzputs()` (Src/utils.c:6464) → `hasspecial()` check
+/// (Src/utils.c:6072). A token is bare if no char is in SPECCHARS;
+/// otherwise the whole token gets single-quoted with embedded `'`
+/// rewritten to `'\''`. Empty string renders as `''`.
 fn quote_xtrace_arg(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
     }
-    // Tokens that don't need quoting: printable ASCII excluding
-    // shell metacharacters. Per zsh's quotedzputs, anything else
-    // gets single-quoted.
-    let safe = s.chars().all(|c| {
-        c.is_ascii_alphanumeric()
-            || matches!(
-                c,
-                '_' | '.' | '/' | '-' | '+' | ':' | '=' | '@' | '%' | ','
-            )
+    // Direct port of `SPECCHARS "#$^*()=|{}[]`<>?~;&\n\t \\\'\""`
+    // from Src/zsh.h:228. ANY occurrence triggers the single-quote
+    // wrap — e.g. `name=val` quotes because `=` is in the set.
+    let needs_quote = s.chars().any(|c| {
+        matches!(
+            c,
+            '#' | '$'
+                | '^'
+                | '*'
+                | '('
+                | ')'
+                | '='
+                | '|'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | '`'
+                | '<'
+                | '>'
+                | '?'
+                | '~'
+                | ';'
+                | '&'
+                | '\n'
+                | '\t'
+                | ' '
+                | '\\'
+                | '\''
+                | '"'
+        )
     });
-    if safe {
+    if !needs_quote {
         s.to_string()
     } else {
         // `'` inside a single-quoted string closes the quote, escapes
@@ -20325,6 +20349,13 @@ impl ShellExecutor {
         let saved_scriptname = self.scriptname.clone();
         self.scriptname = Some(abs_path.clone());
 
+        // Save + clear cmd_stack so the sourced file starts with an
+        // empty `%_` context. Direct port of Src/init.c:1578-1581
+        // `ocs = cmdstack; ocsp = cmdsp; … cmdsp = 0;` — without this
+        // an outer `if [[ … ]] then source X fi` leaks `then` into
+        // every line of X's xtrace.
+        let saved_cmd_stack = std::mem::take(&mut self.cmd_stack);
+
         // zsh: `. file ARG1 ARG2` passes ARG1/ARG2 as $1/$2 to the
         // sourced script. Save outer positional params, install
         // args[1..] as new positionals, restore on exit. Without
@@ -20418,6 +20449,7 @@ impl ShellExecutor {
                                 self.variables.remove("0");
                             }
                             self.scriptname = saved_scriptname;
+                            self.cmd_stack = saved_cmd_stack;
                             return 0;
                         }
                     }
@@ -20499,6 +20531,9 @@ impl ShellExecutor {
 
         // Restore scriptname so `%N` reverts to the outer context.
         self.scriptname = saved_scriptname;
+        // Restore the outer cmd_stack so post-source xtrace lines
+        // see the original `%_` context.
+        self.cmd_stack = saved_cmd_stack;
 
         // Restore outer positional params (only when source was given
         // explicit args).
