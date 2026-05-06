@@ -7147,6 +7147,22 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
                 regex.push(chars[i + 1]);
                 i += 1;
             }
+            // `(#e)` / `(#s)` end/start anchors (extendedglob).
+            // Direct port of zsh's pattern.c P_EOL / P_BOL tokens.
+            // Used by zinit's `(M)pairs:#*\\(#e)` to filter elements
+            // ending in literal `\`.
+            '(' if i + 3 < chars.len()
+                && chars[i + 1] == '#'
+                && (chars[i + 2] == 'e' || chars[i + 2] == 's')
+                && chars[i + 3] == ')' =>
+            {
+                // Emit a non-capturing group with the anchor inside
+                // since the outer regex is already anchored with
+                // ^...$. Use the appropriate boundary lookahead:
+                // `(?:$)` for end and `(?:^)` for start.
+                regex.push_str(if chars[i + 2] == 'e' { "(?:$)" } else { "(?:^)" });
+                i += 3;
+            }
             // Glob alternation: `(a|b|c)` is a group with `|`
             // alternation in zsh patterns (verified via
             // /opt/homebrew/bin/zsh -fc — works in `:#`, `case`,
