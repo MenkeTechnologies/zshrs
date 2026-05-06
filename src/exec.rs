@@ -5637,7 +5637,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 value.clone()
             };
             // Mirror scalar→array if name is the scalar side of a
-            // typeset -T tie.
+            // typeset -T tie. Direct port of Src/params.c PM_TIED:
+            // assigning to PATH must update both `path` (the array
+            // mirror) and the process env (so child execs see the
+            // new value, and so find_in_path / external lookups
+            // resolve correctly). Without the env::set_var step
+            // here, `PATH=/nope; ls` continued to find ls via the
+            // shell's startup-time env PATH.
             if let Some((arr_name, sep)) = exec.tied_scalar_to_array.get(&name).cloned() {
                 let parts: Vec<String> = if stored.is_empty() {
                     Vec::new()
@@ -5645,6 +5651,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     stored.split(&sep).map(String::from).collect()
                 };
                 exec.arrays.insert(arr_name, parts);
+                std::env::set_var(&name, &stored);
+                // Clear the command hash on PATH change so subsequent
+                // command lookups walk the new PATH instead of
+                // returning stale absolute paths from before the
+                // assignment. zsh's bin_set rehashes lazily; this is
+                // the simplest equivalent.
+                if name == "PATH" {
+                    exec.command_hash.clear();
+                }
             }
             // zsh enforces a minimum of 1 on `HISTSIZE` — `HISTSIZE=0`
             // and `HISTSIZE=-5` both clamp to `1`. Mirror at storage
@@ -10855,6 +10870,16 @@ impl ShellExecutor {
             "WATCHFMT".to_string(),
             "%n has %a %l from %m.".to_string(),
         );
+
+        // `$FUNCNEST` default. Real zsh defaults to 500 (Src/zsh.h
+        // MAXNEST), but zshrs's bytecode-VM recursion eats ~40KB of
+        // Rust stack per frame and tops out around 150 on the
+        // default 8MB stack. We seed `100` here so plugin probes
+        // (`${FUNCNEST:-default}`) get a realistic cap that
+        // matches what `call_function` actually enforces. Users
+        // who need deeper need to raise FUNCNEST explicitly AND
+        // run with a larger stack (RUST_MIN_STACK).
+        variables.insert("FUNCNEST".to_string(), "100".to_string());
 
         // Run setlocale(LC_ALL, "") so nl_langinfo() (used by the
         // `langinfo` module) returns the host's actual locale instead
