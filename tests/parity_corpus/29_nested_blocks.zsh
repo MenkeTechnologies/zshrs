@@ -1,0 +1,2 @@
+{ { echo nested; } }
+( ( echo nested ) )
