@@ -2096,6 +2096,50 @@ impl ZshCompiler {
                         .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
                     return;
                 }
+                // `(k)NAME[(I)pat]` / `(v)NAME[(I)pat]` / `(k)NAME[(R)pat]`
+                // / etc. — when the subscript carries `(I)`/`(R)`/`(i)`/
+                // `(r)` index/match flags, the result already arrives
+                // shaped as keys (for I/i) or values (for R/r). The
+                // outer (k)/(v) flag is a no-op in that case per zsh
+                // (verified: typeset -A m=(a 1 b 2); echo \"\${(k)m[(I)*]}\"
+                // returns the same as \"\${m[(I)*]}\"). Passing through
+                // BUILTIN_PARAM_FLAG would reinterpret the joined-keys
+                // string as a NEW parameter name and fail. Skip the
+                // wrap.
+                let key_starts_with_idx_flag = key.starts_with('(')
+                    && key.find(')').map(|p| {
+                        key[1..p].chars().any(|c| matches!(c, 'I' | 'i'))
+                    }).unwrap_or(false);
+                let key_starts_with_value_flag = key.starts_with('(')
+                    && key.find(')').map(|p| {
+                        key[1..p].chars().any(|c| matches!(c, 'R' | 'r'))
+                    }).unwrap_or(false);
+                // `(k)NAME[(I)pat]` / `(k)NAME[(i)pat]` / `(v)NAME[(R)pat]`
+                // / `(v)NAME[(r)pat]` — outer flag matches what the
+                // subscript-flag returns. zsh treats this combo as a
+                // no-op because the subscript already yields the
+                // requested shape (verified vs /bin/zsh).
+                let only_k_flag = flags == "k";
+                let only_v_flag = flags == "v";
+                let redundant = (only_k_flag && key_starts_with_idx_flag)
+                    || (only_v_flag && key_starts_with_value_flag);
+                if redundant {
+                    let name_const = self.builder.add_constant(Value::str(base));
+                    let key_const = self.builder.add_constant(Value::str(key));
+                    self.builder.emit(Op::LoadConst(name_const), 0);
+                    self.builder.emit(Op::LoadConst(key_const), 0);
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_ARRAY_INDEX, 2), 0);
+                    return;
+                }
+                // `(v)NAME[(I)pat]` — subscript yields KEYS, but outer
+                // (v) wants VALUES for those keys. Need to do an extra
+                // lookup pass. Direct port of zsh subst.c paramsubst's
+                // (v) post-pass which iterates the key list and
+                // resolves each key against the assoc to produce the
+                // value list. Route through the bridge (subst_port)
+                // for now — the bridge has the assoc-walk logic.
+                // (Falls through to the standard subst_port path.)
                 // Sentinel `\u{05}` on the key signals BUILTIN_ARRAY_INDEX
                 // that the surrounding flag chain has explicit `@` —
                 // override the DQ-join behavior so a slice like `[1,3]`
