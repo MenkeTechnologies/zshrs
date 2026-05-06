@@ -686,6 +686,21 @@ echo "${(t)x}""#,
 mod tied_path_arrays {
     use super::*;
 
+    /// `PATH="/dir"` — assigning to the scalar must mirror into both
+    /// the `path` array AND the process env. Without this, child
+    /// processes read the shell's startup-time PATH, ignoring the
+    /// override. zsh wires this through the PM_TIED setfn.
+    #[test]
+    fn path_scalar_assignment_syncs_env() {
+        // Both shells should fail to find `ls` when PATH is munged
+        // to a directory that doesn't have it. Test exit code parity
+        // rather than exact stderr (different `command not found`
+        // wording).
+        let real = super::run_zsh(r#"PATH="/zshrs_no_such_path"; ls /tmp >/dev/null 2>&1; echo "x=$?""#);
+        let rs = super::run_zshrs(r#"PATH="/zshrs_no_such_path"; ls /tmp >/dev/null 2>&1; echo "x=$?""#);
+        assert_eq!(real.stdout, rs.stdout);
+    }
+
     /// `path+=(/dir)` — appending to the array must reflect into `$PATH`
     /// because zsh implicitly ties path↔PATH at startup. Was only
     /// surfacing the new entry in `$path`, not in `$PATH`, so external
