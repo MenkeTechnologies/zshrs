@@ -863,6 +863,31 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// `typeset -F N` — float precision honored on both initial
+    /// assignment AND subsequent arithmetic write-back. zinit/p10k
+    /// timing code (`typeset -F 3 elapsed; (( elapsed = ... ))`)
+    /// relies on the format being preserved through each `(( … ))`.
+    #[test]
+    fn typeset_float_precision_on_arith_writeback() {
+        assert_parity(
+            r#"typeset -F 3 x=1.0
+(( x = x * 2.5 ))
+echo "after-mul=$x"
+typeset -F 4 y
+(( y = 100 / 7.0 ))
+echo "div=$y""#,
+        );
+    }
+
+    /// Separate-arg form `typeset -F 2 x=val` (vs in-flag `-F2`).
+    #[test]
+    fn typeset_F_separate_arg_precision() {
+        assert_parity(
+            r#"typeset -F 2 x=3.141592
+echo "$x""#,
+        );
+    }
+
     /// `typeset -A m=([k1]=v1 [k2]=v2)` — bracketed-key assoc-init
     /// shape (zinit ICE setup, p10k segment color tables, oh-my-zsh
     /// theme tables all use this). zshrs was treating each element

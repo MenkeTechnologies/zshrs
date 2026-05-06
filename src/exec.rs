@@ -19862,6 +19862,55 @@ impl ShellExecutor {
         out
     }
 
+    /// Apply `typeset -F N` / `-E N` precision when writing a float-
+    /// typed variable. Direct port of zsh's params.c:
+    /// `floatsetfn` formats the f64 through `convfloat()` which
+    /// honors PM_FFLOAT/PM_EFLOAT + the declared precision before
+    /// store. Without this, `typeset -F 3 x; (( x = 2.5 ))` stored
+    /// the f64::to_string default instead of the expected `2.500`.
+    fn format_for_var_attr(&self, name: &str, value: &str) -> String {
+        let attr = match self.var_attrs.get(name) {
+            Some(a) => a,
+            None => return value.to_string(),
+        };
+        if !matches!(attr.kind, VarKind::Float) {
+            return value.to_string();
+        }
+        let prec = match attr.float_precision {
+            Some(p) => p,
+            None => return value.to_string(),
+        };
+        let f: f64 = match value.parse() {
+            Ok(f) => f,
+            Err(_) => return value.to_string(),
+        };
+        if attr.float_exp {
+            let frac_prec = prec.saturating_sub(1);
+            let raw = format!("{:.prec$e}", f, prec = frac_prec);
+            if let Some(epos) = raw.rfind('e') {
+                let (mantissa, exp) = raw.split_at(epos);
+                let exp_body = &exp[1..];
+                let (sign, digits) = if let Some(d) = exp_body.strip_prefix('-') {
+                    ("-", d)
+                } else if let Some(d) = exp_body.strip_prefix('+') {
+                    ("+", d)
+                } else {
+                    ("+", exp_body)
+                };
+                let padded = if digits.len() < 2 {
+                    format!("0{}", digits)
+                } else {
+                    digits.to_string()
+                };
+                format!("{}e{}{}", mantissa, sign, padded)
+            } else {
+                raw
+            }
+        } else {
+            format!("{:.prec$}", f, prec = prec)
+        }
+    }
+
     fn evaluate_arithmetic(&mut self, expr: &str) -> String {
         // First, resolve `$NAME[(flags)pat]` / `$@[(flags)pat]`
         // before expand_string — otherwise `$@` gets joined into
@@ -20131,8 +20180,9 @@ impl ShellExecutor {
         match evaluator.evaluate() {
             Ok(result) => {
                 for (k, v) in evaluator.extract_string_variables() {
-                    self.variables.insert(k.clone(), v.clone());
-                    env::set_var(&k, &v);
+                    let formatted = self.format_for_var_attr(&k, &v);
+                    self.variables.insert(k.clone(), formatted.clone());
+                    env::set_var(&k, &formatted);
                 }
                 // If the expression had a `[#N]` / `[##N]` prefix,
                 // format the integer result in base N. zsh's
@@ -20291,8 +20341,9 @@ impl ShellExecutor {
         match evaluator.evaluate() {
             Ok(result) => {
                 for (k, v) in evaluator.extract_string_variables() {
-                    self.variables.insert(k.clone(), v.clone());
-                    env::set_var(&k, &v);
+                    let formatted = self.format_for_var_attr(&k, &v);
+                    self.variables.insert(k.clone(), formatted.clone());
+                    env::set_var(&k, &formatted);
                 }
                 result.to_int()
             }
@@ -20327,8 +20378,9 @@ impl ShellExecutor {
         match evaluator.evaluate() {
             Ok(result) => {
                 for (k, v) in evaluator.extract_string_variables() {
-                    self.variables.insert(k.clone(), v.clone());
-                    env::set_var(&k, &v);
+                    let formatted = self.format_for_var_attr(&k, &v);
+                    self.variables.insert(k.clone(), formatted.clone());
+                    env::set_var(&k, &formatted);
                 }
                 result.to_float()
             }
