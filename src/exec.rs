@@ -11698,6 +11698,26 @@ impl ShellExecutor {
                         for _ in 0..probe.len() {
                             chars.next();
                         }
+                    } else if probe_str == "#e)" {
+                        // `(#e)` — match end-of-string anchor. Direct
+                        // port of zsh's pattern.c P_EOL token (zsh's
+                        // "globbing flag" `(#e)` per zshexpn(1)).
+                        // Emits regex `$` to anchor the match at the
+                        // end of the input. Used by zinit's
+                        // `(#b)((*)\\(#e)|(*))` to detect a trailing
+                        // `\` in each element.
+                        regex_pattern.push('$');
+                        for _ in 0..probe.len() {
+                            chars.next();
+                        }
+                    } else if probe_str == "#s)" {
+                        // `(#s)` — match start-of-string anchor.
+                        // zshexpn(1): "matches at the start of the
+                        // test string". Emits regex `^`.
+                        regex_pattern.push('^');
+                        for _ in 0..probe.len() {
+                            chars.next();
+                        }
                     } else {
                         regex_pattern.push('(');
                         capture_group_count += 1;
