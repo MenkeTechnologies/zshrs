@@ -1232,23 +1232,46 @@ fn process_command_subst(
         }
     }
 
-    // $(...) - command substitution
-    if let Some(end) = find_matching_bracket(&s[start_pos..], INPAR, OUTPAR) {
-        let cmd: String = s.chars().skip(start_pos + 1).take(end - 1).collect();
-        let output = if state.opts.exec_opt {
-            run_command(&cmd)
-        } else {
-            String::new()
-        };
+    // $(...) - command substitution. Pick INPAR/OUTPAR vs literal
+    // `(`/`)` based on what the caller actually used. C zsh always
+    // sees the lexer-tokenized form (Inpar/Outpar); zshrs's recursive
+    // paths (e.g. multsub on a `:-` operand whose value has literal
+    // parens) hand us un-tokenized text. Mirror Src/subst.c:247
+    // `str[1] == Inpar` by treating both forms uniformly here.
+    //
+    // `find_matching_bracket` expects the slice to start *after* the
+    // opening paren (its depth begins at 1, mirroring C's
+    // skipparens at Src/utils.c:2409 which advances past `**s == inpar`
+    // before incrementing level). Build the slice from the char
+    // immediately after the open paren via char-indices to keep
+    // multibyte META tokens from splitting on byte boundaries.
+    let (open, close) = if c == INPAR { (INPAR, OUTPAR) } else { ('(', ')') };
+    let body_start_byte = s
+        .char_indices()
+        .nth(start_pos + 1)
+        .map(|(b, _)| b)
+        .unwrap_or(s.len());
+    if let Some(end) = find_matching_bracket(&s[body_start_byte..], open, close) {
+        let cmd: String = s.chars().skip(start_pos + 1).take(end).collect();
+        // Route through the live executor's command-substitution
+        // runner (Src/exec.c::execcmdsubst's in-process pipe-capture
+        // path). The legacy `run_command(&cmd)` gated on
+        // `state.opts.exec_opt` was always dead because exec_opt is
+        // never set true — recursive `:-`/`:=` operands hit the
+        // `else { String::new() }` branch and lost the cmd output.
+        let output = crate::exec::with_executor(|exec| {
+            exec.run_command_substitution(&cmd)
+        });
         let output = output.trim_end_matches('\n');
         let prefix: String = s.chars().take(start_pos - 1).collect();
-        let suffix: String = s.chars().skip(start_pos + end + 1).collect();
+        let suffix: String = s.chars().skip(start_pos + end + 2).collect();
         return (
             format!("{}{}{}", prefix, output, suffix),
             prefix.len() + output.len(),
         );
     }
 
+    let _ = qt;
     (s.to_string(), start_pos + 1)
 }
 
