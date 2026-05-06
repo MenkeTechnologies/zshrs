@@ -11595,6 +11595,19 @@ impl ShellExecutor {
             }
         }
 
+        // User-defined function lookup before OS-level exec. zsh's
+        // dynamic-command-name dispatch (`cmd=hook1; $cmd`) checks
+        // the function table FIRST — without this, `$f` for a
+        // function-name `f` was always falling through to
+        // `execute_external` and erroring "command not found".
+        // Plugin code uses this pattern constantly:
+        //   for f in "${precmd_functions[@]}"; do "$f"; done
+        if self.function_exists(cmd) {
+            if let Some(status) = self.dispatch_function_call(cmd, &rest_vec) {
+                return status;
+            }
+        }
+
         self.execute_external(cmd, &rest_vec, &[]).unwrap_or(127)
     }
 

@@ -863,6 +863,22 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// `f=hook1; $f` — dynamic command-name dispatch. zshrs's
+    /// host_exec_external was going straight to OS-level exec for
+    /// the resolved name without checking the user-function table
+    /// first. zinit's hook iteration (`for f in
+    /// "${precmd_functions[@]}"; do "$f"; done`) is the canonical
+    /// example that depends on this.
+    #[test]
+    fn dynamic_cmd_name_calls_user_function() {
+        assert_parity(
+            r#"hook1() { echo h1; }
+hook2() { echo h2; }
+arr=(hook1 hook2)
+for f in $arr; do $f; done"#,
+        );
+    }
+
     /// Bare `$+NAME` / `$+NAME[KEY]` set-test (no braces). p10k's
     /// segment-load guards use `(( $+commands[git] ))` and
     /// `(( $+functions[my_helper] ))` everywhere; was emitting the
