@@ -20181,8 +20181,25 @@ impl ShellExecutor {
             Ok(result) => {
                 for (k, v) in evaluator.extract_string_variables() {
                     let formatted = self.format_for_var_attr(&k, &v);
+                    // Only mirror to env when the variable is
+                    // explicitly exported (typeset -x or env::var
+                    // already has it from a prior export). zshrs
+                    // previously env::set_var-d every arith write-
+                    // back, which leaked `local -i x=0; ((x=5))`
+                    // values into the process env and survived the
+                    // fn-exit local_save_stack unwind — variables
+                    // got restored but env::var() lookup-fallback
+                    // still saw the leaked value, so `${x:-unset}`
+                    // post-fn returned the stale leaked value.
+                    let is_exported = self
+                        .var_attrs
+                        .get(&k)
+                        .map(|a| a.export)
+                        .unwrap_or(false);
                     self.variables.insert(k.clone(), formatted.clone());
-                    env::set_var(&k, &formatted);
+                    if is_exported {
+                        env::set_var(&k, &formatted);
+                    }
                 }
                 // If the expression had a `[#N]` / `[##N]` prefix,
                 // format the integer result in base N. zsh's
@@ -20342,8 +20359,25 @@ impl ShellExecutor {
             Ok(result) => {
                 for (k, v) in evaluator.extract_string_variables() {
                     let formatted = self.format_for_var_attr(&k, &v);
+                    // Only mirror to env when the variable is
+                    // explicitly exported (typeset -x or env::var
+                    // already has it from a prior export). zshrs
+                    // previously env::set_var-d every arith write-
+                    // back, which leaked `local -i x=0; ((x=5))`
+                    // values into the process env and survived the
+                    // fn-exit local_save_stack unwind — variables
+                    // got restored but env::var() lookup-fallback
+                    // still saw the leaked value, so `${x:-unset}`
+                    // post-fn returned the stale leaked value.
+                    let is_exported = self
+                        .var_attrs
+                        .get(&k)
+                        .map(|a| a.export)
+                        .unwrap_or(false);
                     self.variables.insert(k.clone(), formatted.clone());
-                    env::set_var(&k, &formatted);
+                    if is_exported {
+                        env::set_var(&k, &formatted);
+                    }
                 }
                 result.to_int()
             }
@@ -20379,8 +20413,25 @@ impl ShellExecutor {
             Ok(result) => {
                 for (k, v) in evaluator.extract_string_variables() {
                     let formatted = self.format_for_var_attr(&k, &v);
+                    // Only mirror to env when the variable is
+                    // explicitly exported (typeset -x or env::var
+                    // already has it from a prior export). zshrs
+                    // previously env::set_var-d every arith write-
+                    // back, which leaked `local -i x=0; ((x=5))`
+                    // values into the process env and survived the
+                    // fn-exit local_save_stack unwind — variables
+                    // got restored but env::var() lookup-fallback
+                    // still saw the leaked value, so `${x:-unset}`
+                    // post-fn returned the stale leaked value.
+                    let is_exported = self
+                        .var_attrs
+                        .get(&k)
+                        .map(|a| a.export)
+                        .unwrap_or(false);
                     self.variables.insert(k.clone(), formatted.clone());
-                    env::set_var(&k, &formatted);
+                    if is_exported {
+                        env::set_var(&k, &formatted);
+                    }
                 }
                 result.to_float()
             }

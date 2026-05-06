@@ -863,6 +863,24 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// `local -i x; ((x = ...))` — arith write-back must NOT leak
+    /// the local into the process env. Plugin code uses local
+    /// counters/timers all over the place; leaking them broke
+    /// caller's variable scope (caller saw the leaked value as a
+    /// "now-set" global).
+    #[test]
+    fn local_int_arith_writeback_stays_local() {
+        assert_parity(
+            r#"foo() {
+  local -i x=0
+  (( x = 5 + 3 ))
+  echo "in=$x"
+}
+foo
+echo "out=${x:-unset}""#,
+        );
+    }
+
     /// `typeset -F N` — float precision honored on both initial
     /// assignment AND subsequent arithmetic write-back. zinit/p10k
     /// timing code (`typeset -F 3 elapsed; (( elapsed = ... ))`)
