@@ -1213,6 +1213,36 @@ pub fn substitute_brace(content: &str, exec: &mut crate::exec::ShellExecutor) ->
     result
 }
 
+/// Parallel of `substitute_brace` that returns the multi-word
+/// `nodes` list so callers can preserve array shape across nested
+/// `${(@)${...}##pat}` forms. Direct port of zsh's `aval` threading
+/// in Src/subst.c paramsubst — the C source carries the per-element
+/// vector through `aval` to the caller, which decides whether to
+/// splat or join based on `nojoin`. zshrs's String-returning bridge
+/// collapses array→scalar on return, breaking idioms like
+/// `print -l -- ${(@)${(@s:->:)x}##pat}`.
+pub fn substitute_brace_array(
+    content: &str,
+    exec: &mut crate::exec::ShellExecutor,
+) -> Vec<String> {
+    exec.in_paramsubst_nest += 1;
+    let mut state = SubstState::from_executor(exec);
+    let wrapped = format!("${{{}}}", content);
+    let (result, _pos, nodes) =
+        paramsubst(&wrapped, 0, false, 0, &mut 0, &mut state);
+    state.commit_to_executor(exec);
+    exec.in_paramsubst_nest -= 1;
+    // If paramsubst produced multiple nodes, return them. For a
+    // single-result expansion the nodes vec contains one entry equal
+    // to `result` — return [result] as a 1-element Vec so the
+    // caller's array-emit path stays uniform.
+    if nodes.is_empty() {
+        vec![result]
+    } else {
+        nodes
+    }
+}
+
 /// Process $(...) or $((...)) substitution
 fn process_command_subst(
     s: &str,
