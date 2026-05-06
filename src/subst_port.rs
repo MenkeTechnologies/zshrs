@@ -3356,7 +3356,9 @@ fn apply_assoc_subscript_flags(
         };
         let pat_is_glob = pat.contains('*')
             || pat.contains('?')
-            || pat.contains('[');
+            || pat.contains('[')
+            || pat.contains("<->")
+            || pat.contains("<-");
         if flags.reverse_index && pat_is_glob {
             pairs
                 .iter()
@@ -7348,9 +7350,34 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
                 }
             }
             '\\' if i + 1 < chars.len() => {
-                regex.push('\\');
-                regex.push(chars[i + 1]);
-                i += 1;
+                // Special case: `\(#e)` / `\(#s)` — literal backslash
+                // followed by end/start anchor. After expand_string
+                // collapses `\\` (source) → `\` (1 char), the pattern
+                // arrives as `\(#e)` (5 chars). Treat the `\` as a
+                // literal backslash to match against, and the trailing
+                // `(#e)` / `(#s)` as anchors. Without this, the `\(`
+                // got escaped as `\(` (literal paren) and the `(#e)`
+                // detection on the next iteration never fired since
+                // the `(` was already consumed. Mirrors the same
+                // 5-char lookahead in BUILTIN_PARAM_REPLACE's pattern
+                // compile in exec.rs. Direct port of Src/pattern.c
+                // patcompswitch — `\` quotes the next char, but if
+                // that char is `(` and the run forms `(#e)`/`(#s)`
+                // the anchor is recognized.
+                if i + 4 < chars.len()
+                    && chars[i + 1] == '('
+                    && chars[i + 2] == '#'
+                    && (chars[i + 3] == 'e' || chars[i + 3] == 's')
+                    && chars[i + 4] == ')'
+                {
+                    regex.push_str("\\\\");
+                    regex.push(if chars[i + 3] == 'e' { '$' } else { '^' });
+                    i += 4;
+                } else {
+                    regex.push('\\');
+                    regex.push(chars[i + 1]);
+                    i += 1;
+                }
             }
             // `(#e)` / `(#s)` end/start anchors (extendedglob).
             // Direct port of zsh's pattern.c P_EOL / P_BOL tokens.
@@ -7377,6 +7404,47 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
             // and similar.
             '(' | ')' | '|' => {
                 regex.push(chars[i]);
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
+            // Numeric range glob `<a-b>`, `<->`, `<a->`, `<-b>` —
+            // matches a sequence of digits whose decimal value is
+            // in the inclusive range. Direct port of zsh's pattern.c
+            // `P_NUMRNG`. Only enabled when extendedglob is on (zsh
+            // gates this on the option). When disabled, `<` stays
+            // a literal char.
+            '<' if extendedglob_on && {
+                // Look ahead for `<...>` with a `-` somewhere inside.
+                let mut k = i + 1;
+                let mut has_dash = false;
+                while k < chars.len() && chars[k] != '>' {
+                    if chars[k] == '-' {
+                        has_dash = true;
+                    }
+                    if !chars[k].is_ascii_digit() && chars[k] != '-' {
+                        break;
+                    }
+                    k += 1;
+                }
+                k < chars.len() && chars[k] == '>' && has_dash
+            } => {
+                // Find the `>`.
+                let mut k = i + 1;
+                while k < chars.len() && chars[k] != '>' {
+                    k += 1;
+                }
+                // Range body is `chars[i+1..k]`. We don't enforce
+                // numeric bounds in the regex (regex can't do
+                // value-bounded numeric matching efficiently), so
+                // approximate: match any digit sequence. Post-match
+                // bounds-checking would require a captures pass that
+                // the param_pattern_to_regex_anchored callers don't
+                // currently do — accept the over-match for now.
+                // This still correctly differentiates digit runs from
+                // non-digits in `[(I)foo-<->]`-style patterns.
+                regex.push_str("[0-9]+");
+                i = k;
                 if let Some(q) = consume_postfix(&chars, &mut i) {
                     regex.push_str(q);
                 }
