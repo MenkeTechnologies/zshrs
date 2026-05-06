@@ -3105,7 +3105,27 @@ fn register_builtins(vm: &mut fusevm::VM) {
         if had_at_subscript {
             flags = flags[1..].to_string();
         }
+        // `\u{04}` sentinel = scalar-assignment context (compile-time
+        // detected via `scalar_assign_depth`). Direct port of zsh's
+        // PREFORK_SINGLE bit (Src/exec.c::addvars line 2546). Strip
+        // the sentinel and remember it for the split-flag gate
+        // below.
+        let ssub_compile = flags.starts_with('\u{04}');
+        if ssub_compile {
+            flags = flags[1..].to_string();
+        }
         let dq_runtime = with_executor(|exec| exec.in_dq_context > 0);
+        // PREFORK_SINGLE equivalent — set when the BUILTIN_PARAM_FLAG
+        // is being evaluated as the RHS of a scalar assignment.
+        // Direct port of Src/subst.c:1759 `int ssub = (pf_flags &
+        // PREFORK_SINGLE)`. Per Src/subst.c:3902 `force_split = !ssub
+        // && (spbreak || spsep)` — when ssub, the force-split path
+        // is gated off, so split flags `(f)` / `(s:STR:)` / `(0)` /
+        // `(z)` produce the original scalar verbatim. Consulted at
+        // each split flag's effect site below (the flag char itself
+        // is not removed; instead the split is skipped).
+        let ssub_runtime = ssub_compile
+            || with_executor(|exec| exec.in_scalar_assign > 0);
         // `[@]` / `[*]` subscript on the name overrides the DQ
         // strip — explicit `[@]` marks the array as splice-
         // expanded so array-only flags (`o`/`O`/`n`/`i`/`u`)
@@ -3494,26 +3514,33 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 'f' => {
-                    state = match state {
-                        St::S(s) => St::A(s.split('\n').map(String::from).collect()),
-                        St::A(a) => {
-                            // Same flat-map rule as (s): split each element.
-                            let mut out: Vec<String> = Vec::with_capacity(a.len());
-                            for elem in a {
-                                for line in elem.split('\n') {
-                                    out.push(line.to_string());
+                    // Suppress the split entirely in scalar-assignment
+                    // context per Src/subst.c:3902 ssub gate. The
+                    // value passes through unchanged (preserves
+                    // original `\n` separators in `y="${(f)x}"`).
+                    if !ssub_runtime {
+                        state = match state {
+                            St::S(s) => St::A(s.split('\n').map(String::from).collect()),
+                            St::A(a) => {
+                                // Same flat-map rule as (s): split each element.
+                                let mut out: Vec<String> = Vec::with_capacity(a.len());
+                                for elem in a {
+                                    for line in elem.split('\n') {
+                                        out.push(line.to_string());
+                                    }
                                 }
+                                St::A(out)
                             }
-                            St::A(out)
-                        }
-                    };
+                        };
+                    }
                 }
                 '0' => {
                     // `(0)` — split on NUL byte. Direct port of
                     // src/zsh/Src/subst.c:2292-2297 which sets `spsep`
                     // to a meta-encoded NUL. We split on the literal
                     // `\0` character. Same flat-map behaviour as `(f)`.
-                    state = match state {
+                    // Same ssub gate.
+                    if !ssub_runtime { state = match state {
                         St::S(s) => St::A(s.split('\0').map(String::from).collect()),
                         St::A(a) => {
                             let mut out: Vec<String> = Vec::with_capacity(a.len());
@@ -3524,7 +3551,7 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             }
                             St::A(out)
                         }
-                    };
+                    }; }
                 }
                 'F' => {
                     // (F) — join array elements with newlines (mirror
@@ -6451,7 +6478,15 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let mode = vm.pop().to_int() as u8;
         let text = vm.pop().to_str();
         with_executor(|exec| match mode {
-            1 => {
+            // Mode 1 = DoubleQuoted (argument context).
+            // Mode 5 = DoubleQuoted in scalar-assignment context.
+            // Both share the same DQ unescape pre-processing; mode 5
+            // additionally bumps `in_scalar_assign` so subst_port's
+            // paramsubst sees ssub=true and suppresses split flags
+            // `(f)` / `(s:STR:)` / `(0)` per Src/subst.c:1759 +
+            // Src/exec.c::addvars line 2546 (the PREFORK_SINGLE bit
+            // C zsh sets when prefork-ing the assignment RHS).
+            1 | 5 => {
                 // DoubleQuoted: strip outer `"…"` if present. In DQ
                 // context, `\` escapes the DQ-special chars `$`, `` ` ``,
                 // `"`, `\`. zsh's expand_string expects the lexer's
@@ -6482,7 +6517,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 // double quotes — array-only flags ((o), (O), (n),
                 // (i), (M), (u)) must be no-ops here per zsh.
                 exec.in_dq_context += 1;
+                if mode == 5 {
+                    exec.in_scalar_assign += 1;
+                }
                 let out = exec.expand_string(&prepped);
+                if mode == 5 {
+                    exec.in_scalar_assign -= 1;
+                }
                 exec.in_dq_context -= 1;
                 fusevm::Value::str(out)
             }
@@ -10028,6 +10069,16 @@ pub struct ShellExecutor {
     /// where the inner call returns aval; outer continues without
     /// re-joining until its own emission point).
     pub in_paramsubst_nest: u32,
+    /// True (>0) while expanding the RHS of a scalar assignment.
+    /// Direct port of zsh's `PREFORK_SINGLE` bit set by
+    /// Src/exec.c::addvars line 2546 (`prefork(vl, isstr ?
+    /// (PREFORK_SINGLE|PREFORK_ASSIGN) : PREFORK_ASSIGN, ...)`).
+    /// Subst_port's paramsubst reads this via `ssub` and suppresses
+    /// `(f)` / `(s:STR:)` / `(0)` / `(z)` split flags per
+    /// Src/subst.c:1759 + 3902, so `y="${(f)x}"` preserves x's
+    /// original separator (newlines) instead of re-joining with
+    /// IFS-first-char (space).
+    pub in_scalar_assign: u32,
     /// IDs of history entries explicitly added during this session
     /// via `print -s`. `fc -l` uses this to scope listings to just
     /// the script-added entries (matches zsh's `-c` semantics where
@@ -10280,6 +10331,7 @@ impl ShellExecutor {
             pending_underscore: None,
             in_dq_context: 0,
             in_paramsubst_nest: 0,
+            in_scalar_assign: 0,
             session_history_ids: Vec::new(),
             autoload_pending: HashMap::new(),
             hook_functions: HashMap::new(),

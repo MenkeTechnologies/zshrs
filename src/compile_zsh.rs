@@ -1661,6 +1661,16 @@ impl ZshCompiler {
                 if had_at_or_star {
                     flags_for_runtime.push('\u{03}');
                 }
+                // Sentinel `\u{04}` = "RHS of a scalar assignment".
+                // BUILTIN_PARAM_FLAG reads this at runtime and treats
+                // it as PREFORK_SINGLE — split flags `(f)` / `(s)` /
+                // `(0)` / `(z)` are suppressed per Src/subst.c:3902
+                // ssub gate. Direct port of zsh's prefork being
+                // called with PREFORK_SINGLE|PREFORK_ASSIGN by
+                // Src/exec.c::addvars line 2546.
+                if self.scalar_assign_depth > 0 {
+                    flags_for_runtime.push('\u{04}');
+                }
                 flags_for_runtime.push_str(flags);
                 let name_const = self.builder.add_constant(Value::str(name));
                 self.builder.emit(Op::LoadConst(name_const), 0);
@@ -1916,10 +1926,25 @@ impl ZshCompiler {
         // If we're recursing inside a DQ-wrapped parent (tracked via
         // `dq_context_depth`), force mode 1 so child expansions
         // suppress array-only flags like the outer DQ does.
-        let mode = if self.dq_context_depth > 0 {
+        let base_mode = if self.dq_context_depth > 0 {
             1
         } else {
             expand_text_mode(s, &preserved)
+        };
+        // Mode 5: "DQ in scalar-assignment context" — same as mode 1
+        // (DoubleQuoted) but additionally signals PREFORK_SINGLE-
+        // equivalent semantics to subst_port. Direct port of zsh
+        // exec.c::addvars line 2546 setting `PREFORK_SINGLE|
+        // PREFORK_ASSIGN` on prefork. Inside paramsubst, ssub=
+        // PREFORK_SINGLE gates the force_split path off so split
+        // flags `(f)` / `(s:STR:)` / `(0)` / `(z)` produce the
+        // ORIGINAL scalar (preserves `\n` separators in
+        // `y="${(f)x}"`) rather than splitting then re-joining
+        // with IFS-first-char.
+        let mode = if base_mode == 1 && self.scalar_assign_depth > 0 {
+            5
+        } else {
+            base_mode
         };
         let idx = self.builder.add_constant(Value::str(preserved.as_str()));
         self.builder.emit(Op::LoadConst(idx), 0);
