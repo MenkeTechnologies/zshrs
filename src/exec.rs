@@ -6815,6 +6815,26 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             re.push(next);
                         }
                     }
+                    // `(#e)` / `(#s)` end/start anchors — direct port
+                    // of zsh's pattern.c P_EOL / P_BOL tokens. 4-char
+                    // lookahead detects them; emit regex `$` / `^`.
+                    // Used by zinit's
+                    // `(#b)((*)\\(#e)|(*))` array-replace pattern.
+                    '(' if {
+                        let mut peek = chars.clone();
+                        let p1 = peek.next();
+                        let p2 = peek.next();
+                        let p3 = peek.next();
+                        p1 == Some('#')
+                            && (p2 == Some('e') || p2 == Some('s'))
+                            && p3 == Some(')')
+                    } =>
+                    {
+                        chars.next(); // consume '#'
+                        let kind = chars.next().unwrap(); // 'e' or 's'
+                        chars.next(); // consume ')'
+                        re.push(if kind == 'e' { '$' } else { '^' });
+                    }
                     // `(`, `)`, `|` are zsh group/alternation operators
                     // — keep them as regex equivalents.
                     '(' | ')' | '|' => re.push(c),
