@@ -7863,19 +7863,40 @@ fn register_builtins(vm: &mut fusevm::VM) {
                         // valid regex syntax for most char classes).
                         // zsh uses BOTH `[!...]` and `[^...]` for class
                         // negation; regex only accepts `^`. Translate
-                        // a leading `!` after `[` to `^`. Without this
-                        // `${a//[!fo]/X}` matched the literal `!` in
-                        // the class and over-replaced.
+                        // a leading `!` after `[` to `^`. Track escape
+                        // state so `[\]…]` (escaped `]` inside class)
+                        // doesn't terminate the class on the FIRST `]`.
+                        // Direct port of zsh's pattern.c P_BRACT_END:
+                        // a backslash-quoted `]` inside a class stays
+                        // literal. Used by hist-substring's
+                        // `[\][()|\\*?#<>~^]` pattern.
                         re.push('[');
                         if chars.peek() == Some(&'!') {
                             chars.next();
                             re.push('^');
                         }
-                        for cc in chars.by_ref() {
-                            re.push(cc);
-                            if cc == ']' {
+                        // First-char `]` is literal in zsh and regex
+                        // (POSIX rule), so allow it without closing.
+                        let mut first = true;
+                        let mut escaped = false;
+                        while let Some(cc) = chars.next() {
+                            if escaped {
+                                re.push(cc);
+                                escaped = false;
+                                first = false;
+                                continue;
+                            }
+                            if cc == '\\' {
+                                re.push(cc);
+                                escaped = true;
+                                continue;
+                            }
+                            if cc == ']' && !first {
+                                re.push(cc);
                                 break;
                             }
+                            re.push(cc);
+                            first = false;
                         }
                         if let Some(q) = consume_postfix(&mut chars) { re.push_str(q); }
                     }
