@@ -3081,12 +3081,25 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // status array. Populated by BUILTIN_PIPELINE_EXEC after a
         // real pipeline; for single commands fall back to a synthetic
         // [last_status] list so `true; echo $pipestatus[1]` prints 0.
+        // After a non-pipeline command runs, the prior pipestatus
+        // array becomes stale (zsh resets pipestatus to a single-
+        // element array on every command). Detect by comparing the
+        // last element to last_status; if they diverge, fall back
+        // to the synthetic [last_status] form so e.g.
+        //   true | false; echo "$?"; echo "$pipestatus"
+        // prints "0" (just the echo's status), not "0 1".
         if name == "pipestatus" || name == "PIPESTATUS" {
             let arr = with_executor(|exec| {
-                exec.arrays
-                    .get(&name)
-                    .cloned()
-                    .unwrap_or_else(|| vec![exec.last_status.to_string()])
+                let cached = exec.arrays.get(&name).cloned();
+                let last = exec.last_status.to_string();
+                match cached {
+                    Some(arr)
+                        if arr.last().map(|s| s.as_str()) == Some(last.as_str()) =>
+                    {
+                        arr
+                    }
+                    _ => vec![last],
+                }
             });
             if let Ok(i) = idx.parse::<i64>() {
                 let len = arr.len() as i64;
@@ -10497,6 +10510,16 @@ pub struct ShellExecutor {
     /// outer-scope value.
     pub subshell_snapshots: Vec<SubshellSnapshot>,
     pub last_status: i32,
+    /// Set by `expand_glob`'s no-match arm when `nomatch` is on (zsh
+    /// default) — instructs the simple-command dispatcher to skip
+    /// executing the current command, set last_status=1, and continue
+    /// to the next command in the script. zsh's bin_simple uses the
+    /// errflag global for the same role: error printed, command
+    /// suppressed, script continues. Without this we were calling
+    /// `process::exit(1)` deep inside expand_glob, killing the whole
+    /// shell on any unmatched glob even with multi-statement input.
+    /// `Cell` because the no-match site only has a `&self` borrow.
+    pub current_command_glob_failed: std::cell::Cell<bool>,
     pub variables: HashMap<String, String>,
     pub arrays: HashMap<String, Vec<String>>,
     pub assoc_arrays: HashMap<String, IndexMap<String, String>>, // zsh associative arrays (insertion-ordered, mirrors zsh hashtable hnodes)
@@ -10822,6 +10845,7 @@ impl ShellExecutor {
             loop_signal: None,
             subshell_snapshots: Vec::new(),
             last_status: 0,
+            current_command_glob_failed: std::cell::Cell::new(false),
             variables,
             arrays: {
                 let mut a = HashMap::new();
@@ -11287,6 +11311,16 @@ impl ShellExecutor {
     /// the tree-walker's `execute_external` rather than a plain
     /// `Command::new` shortcut. Returns the exit status.
     pub fn host_exec_external(&mut self, args: &[String]) -> i32 {
+        // If a glob expansion in this command's argv triggered the
+        // nomatch error path, suppress the actual exec and return
+        // status 1 — mirrors zsh's command-aborted-on-glob-error
+        // behaviour. The flag is reset BEFORE returning so the next
+        // command starts clean.
+        if self.current_command_glob_failed.get() {
+            self.current_command_glob_failed.set(false);
+            self.last_status = 1;
+            return 1;
+        }
         let Some((cmd, rest)) = args.split_first() else {
             return 0;
         };
@@ -14177,7 +14211,11 @@ impl ShellExecutor {
             let nomatch = self.options.get("nomatch").copied().unwrap_or(true);
             if nomatch && Self::looks_like_glob(pattern) {
                 eprintln!("zshrs:1: no matches found: {}", pattern);
-                std::process::exit(1);
+                // zsh: command is aborted (skipped) with status 1,
+                // script continues. Set the flag the simple-command
+                // dispatcher checks; it returns early before exec.
+                self.current_command_glob_failed.set(true);
+                return Vec::new();
             }
             vec![pattern.to_string()]
         } else {

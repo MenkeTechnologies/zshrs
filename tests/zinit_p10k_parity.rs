@@ -693,7 +693,7 @@ mod tied_path_arrays {
     /// `-f` (no rcfiles) to keep the comparison stable across the user
     /// `.zshenv`'s PATH munging.
     #[test]
-    fn path_append_mirrors_into_PATH() {
+    fn path_append_mirrors_into_path_env() {
         let real_out = super::run_zsh(
             r#"path+=(/zshrs_test_dir_xyz)
 echo "$PATH" | tr : '\n' | tail -1"#,
@@ -748,6 +748,38 @@ echo "${1[-2,-1]}""#,
         assert_parity(
             r#"fn() { echo "${1[1,3]}|${1[5]}"; }
 fn abcdefgh"#,
+        );
+    }
+}
+
+// ───────────────────────── nomatch script-continuation ──────────
+
+mod nomatch_continues {
+    use super::*;
+
+    /// `nomatch` (zsh default) errors the *command* — script continues
+    /// to the next statement. Was calling `process::exit(1)` deep
+    /// inside expand_glob, killing the whole shell on the first
+    /// unmatched glob and breaking any plugin script that uses
+    /// optional patterns.
+    ///
+    /// Both real zsh and zshrs print the same error and run
+    /// `echo after`, so the parity test catches the divergence.
+    #[test]
+    fn unmatched_glob_continues_script() {
+        assert_parity(
+            r#"ls /nonexistent_glob_zshrs_test_xyz_*
+echo after"#,
+        );
+    }
+
+    /// `setopt no_nomatch` — pass literal pattern through. Pinning so
+    /// future refactors don't silently re-enable the abort.
+    #[test]
+    fn no_nomatch_passes_literal() {
+        assert_parity(
+            r#"setopt no_nomatch
+echo /nonexistent_glob_zshrs_test_xyz_*"#,
         );
     }
 }
