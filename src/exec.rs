@@ -23337,9 +23337,14 @@ impl ShellExecutor {
             return 0;
         }
 
-        // If -f with args, just show those functions
+        // If -f with args, just show those functions. Per zsh's
+        // bin_typeset (Src/builtin.c), missing names error
+        // `typeset: no such function: NAME` and the overall status
+        // is 1 if any name was missing — the shell reports 1 when
+        // even one of the listed names doesn't exist.
         if is_function {
             let _ = print_mode;
+            let mut missing = 0;
             for name in &var_args {
                 if let Some(body) = self.function_definition_text(name) {
                     println!(
@@ -23347,9 +23352,12 @@ impl ShellExecutor {
                         name,
                         format_function_body_zsh(body.trim())
                     );
+                } else {
+                    eprintln!("zshrs:{}:1: no such function: {}", invoked_as, name);
+                    missing += 1;
                 }
             }
-            return 0;
+            return if missing > 0 { 1 } else { 0 };
         }
 
         // No args: list all variables with attributes
