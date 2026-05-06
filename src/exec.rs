@@ -20143,7 +20143,31 @@ impl ShellExecutor {
             let cache_disabled = crate::recorder::is_enabled();
             #[cfg(not(feature = "recorder"))]
             let cache_disabled = false;
-            if !cache_disabled {
+            // Plugin-cache replay path DELIBERATELY DISABLED for
+            // `source`/`.`. The replay applies captured deltas
+            // (variables, functions, aliases) but skips the script's
+            // stdout-producing commands (`echo`, `print`, etc.) and
+            // any side-effect that wasn't snapshotted in `diff_state`
+            // (file writes, network, signal handlers, etc.). C zsh
+            // has no such cache — every `source` re-runs the file
+            // fresh. To preserve byte-for-byte parity with /bin/zsh
+            // (which is the project's "trust-complete" criterion in
+            // CLAUDE.md), the source path always executes the file.
+            //
+            // Speed regression is mitigated by the rkyv script-
+            // bytecode cache one level below: parse + compile is
+            // skipped on path+mtime hit, but the bytecode still
+            // RUNS, producing stdout naturally. That gives us the
+            // fast-path latency without sacrificing the visible
+            // semantics zinit/p10k/.zshrc users expect.
+            //
+            // The plugin_cache.db can still be populated for read
+            // tools (compaudit, etc.) but is no longer consulted
+            // here. Leaving the snapshot/diff/store path below
+            // intact for now — small constant overhead, and we may
+            // want the deltas for other purposes (e.g. recorder
+            // event replay).
+            if false && !cache_disabled {
                 if let Some(ref cache) = self.plugin_cache {
                 if let Some((mt_s, mt_ns)) = crate::plugin_cache::file_mtime(file_path) {
                     if let Some(plugin_id) = cache.check(&abs_path, mt_s, mt_ns) {
