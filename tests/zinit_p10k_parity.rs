@@ -818,6 +818,24 @@ echo "m[foo]=${m[foo]} m[k]=${m[$k]}""#,
         );
     }
 
+    /// `cfg[${pair%%=*}]="${pair#*=}"` — zinit/oh-my-zsh config-parse
+    /// pattern. The `=` inside the strip-pattern subscript fooled
+    /// the assignment-splitter into cutting the LHS at the inner
+    /// `=`, so the whole assignment was discarded as a malformed
+    /// command. Now the splitter walks brace/bracket/paren depth
+    /// before accepting an EQUALS marker as the assignment delim.
+    #[test]
+    fn config_parse_loop_with_strip_subscript() {
+        assert_parity(
+            r#"config="key1=val1:key2=val2:key3=val3"
+typeset -gA cfg
+for pair in ${(s.:.)config}; do
+  cfg[${pair%%=*}]="${pair#*=}"
+done
+for k in ${(k)cfg}; do echo "$k=${cfg[$k]}"; done | sort"#,
+        );
+    }
+
     /// `_loaded[$plugin]=1` — direct subscripted assoc assignment
     /// must expand `$plugin` in the subscript before storing. zinit's
     /// "is plugin loaded" tracking relies on this. Was storing the

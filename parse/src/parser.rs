@@ -1692,6 +1692,49 @@ impl<'a> ZshParser<'a> {
     /// (parse.c:1842-2000ish); zshrs splits it out to a dedicated
     /// helper for clarity.
     fn parse_assign(&mut self) -> Option<ZshAssign> {
+        // Helper: locate the EQUALS-marker that delimits NAME from
+        // VALUE in an assignment-shaped tokstr. The lexer META-encodes
+        // EVERY `=` (including those inside `${var%%=foo}` strip
+        // patterns or `[idx]=...` subscripts), so a naive
+        // `tokstr.find(EQUALS)` would split at the first inner `=`
+        // and break the whole assignment. Walk the string skipping
+        // brace and bracket depth so the assignment's `=` (the one
+        // after the last `]` of the LHS subscript / or after the
+        // bare name) is the one we land on.
+        fn find_assign_equals(s: &str) -> Option<usize> {
+            let target = crate::tokens::char_tokens::EQUALS;
+            let mut brace = 0i32;
+            let mut bracket = 0i32;
+            let mut paren = 0i32;
+            for (i, c) in s.char_indices() {
+                match c {
+                    '{' | '\u{8f}' /* INBRACE */ => brace += 1,
+                    '}' | '\u{90}' /* OUTBRACE */ => {
+                        if brace > 0 {
+                            brace -= 1;
+                        }
+                    }
+                    '[' | '\u{91}' /* INBRACK */ => bracket += 1,
+                    ']' | '\u{92}' /* OUTBRACK */ => {
+                        if bracket > 0 {
+                            bracket -= 1;
+                        }
+                    }
+                    '(' | '\u{88}' /* INPAR */ => paren += 1,
+                    ')' | '\u{8a}' /* OUTPAR */ => {
+                        if paren > 0 {
+                            paren -= 1;
+                        }
+                    }
+                    _ if c == target && brace == 0 && bracket == 0 && paren == 0 => {
+                        return Some(i);
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
         use crate::tokens::char_tokens;
 
         let tokstr = self.lexer.tokstr.as_ref()?;
@@ -1704,7 +1747,7 @@ impl<'a> ZshParser<'a> {
                 (tokstr.as_str(), false)
             };
             (name.to_string(), String::new(), append)
-        } else if let Some(pos) = tokstr.find(char_tokens::EQUALS) {
+        } else if let Some(pos) = find_assign_equals(tokstr) {
             let name_part = &tokstr[..pos];
             let (name, append) = if let Some(stripped) = name_part.strip_suffix('+') {
                 (stripped, true)
