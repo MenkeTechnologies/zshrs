@@ -3407,19 +3407,20 @@ fn apply_param_flags(
         }
     }
     if flags.unquote {
+        // (Q) flag — full shell-quoting reversal, NOT just outer-quote
+        // strip. Direct port of Src/subst.c paramsubst's PSPRINT_FLAG_Q
+        // arm which calls `dequotestring()` (Src/utils.c) — that walks
+        // every character, processing `'…'` SQ-spans, `"…"` DQ-spans
+        // with backslash escapes, and standalone `\X` escapes. The
+        // canonical roundtrip case is `(qq)` → `(Q)` for strings
+        // containing single quotes: `(qq)` of `a'b` produces
+        // `'a'\''b'` (close, escape, open) and `(Q)` must reverse all
+        // four transitions to recover `a'b`. The earlier naive
+        // `strip-outer-quotes` only handled the outer pair and left
+        // the `'\''` literal intact.
         result = result
             .iter()
-            .map(|s| {
-                // Simple unquoting
-                let s = s.trim();
-                if (s.starts_with('\'') && s.ends_with('\''))
-                    || (s.starts_with('"') && s.ends_with('"'))
-                {
-                    s[1..s.len() - 1].to_string()
-                } else {
-                    s.to_string()
-                }
-            })
+            .map(|s| unquote_subst(s.trim()))
             .collect();
     }
 
