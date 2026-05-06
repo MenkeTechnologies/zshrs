@@ -845,6 +845,24 @@ echo "after=$options[glob]""#,
         );
     }
 
+    /// `emulate -L zsh` resets options to zsh defaults even mid-
+    /// invocation — so a function that opened with `emulate -L zsh`
+    /// sees `glob=on` regardless of what the caller had set.
+    /// Plugins rely on this for hygiene (`prompt_X() { emulate -L
+    /// zsh; …no need to defensively setopt every assumed default… }`).
+    #[test]
+    fn emulate_dash_l_resets_to_zsh_defaults() {
+        assert_parity(
+            r#"setopt no_glob
+foo() {
+  emulate -L zsh
+  echo "in=$options[glob]"
+}
+foo
+echo "out=$options[glob]""#,
+        );
+    }
+
     /// `local -a opts=("$@")` — copy positional args into a local
     /// array. Plugin code uses this constantly to capture caller
     /// args before re-parsing. Was being routed through typeset's
