@@ -2158,6 +2158,31 @@ fn parse_brace_param(
             let resolved_sub = singsub_no_tilde(sub, state);
             if resolved_sub == "@" || resolved_sub == "*" {
                 v
+            } else if let Some((lo_s, hi_s)) = resolved_sub.split_once(',') {
+                // Range slice `[lo,hi]` per Src/params.c::getindex
+                // line ~2003. Both endpoints accept negative indices
+                // (offset from end). Endpoints are 1-based when
+                // positive; -1 means last element.
+                let arr = &v;
+                let n = arr.len() as i64;
+                let resolve = |s: &str, default: i64| -> i64 {
+                    s.trim().parse::<i64>().unwrap_or(default)
+                };
+                let lo = resolve(lo_s, 1);
+                let hi = resolve(hi_s, n);
+                let to_zero_based = |i: i64| -> i64 {
+                    if i > 0 { i - 1 }
+                    else if i < 0 { n + i }
+                    else { 0 }
+                };
+                let lo_i = to_zero_based(lo).max(0);
+                let hi_i = to_zero_based(hi);
+                if hi_i < lo_i || lo_i >= n {
+                    Vec::new()
+                } else {
+                    let hi_clamped = (hi_i + 1).min(n) as usize;
+                    arr[lo_i as usize..hi_clamped].to_vec()
+                }
             } else if let Ok(idx) = resolved_sub.parse::<i64>() {
                 let arr = &v;
                 let n = arr.len() as i64;
