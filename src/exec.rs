@@ -3364,6 +3364,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
             A(Vec<String>),
         }
 
+        // Detect (k) flag PRESENCE early — we need to seed
+        // magic-assoc lookups with the key set before the flag
+        // walker re-orders things. Use `flags` (the post-sentinel-
+        // strip string) since the `chars` Vec is built later.
+        let want_keys = flags.contains('k');
+
         // Literal-string operand sentinel: `${(flags)"text"}` compiles to a
         // name prefixed with `\u{01}` followed by the literal value. Skip
         // the lookup and seed state with the literal scalar.
@@ -3377,6 +3383,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     St::A(map.values().cloned().collect())
                 } else if let Some(arr) = exec.arrays.get(&name) {
                     St::A(arr.clone())
+                } else if want_keys {
+                    // `${(k)<magic-assoc>}` — names like `aliases`,
+                    // `functions`, `options`, `commands`, `terminfo`,
+                    // `errnos` etc. are not in `assoc_arrays` (they're
+                    // synthesized via magic-getfn). When the flag set
+                    // includes `k`, return the SCANFN-equivalent key
+                    // list. Direct port of paramsubst's per-special
+                    // scanfn dispatch (Src/Modules/parameter.c +
+                    // system.c + terminfo.c et al.).
+                    if let Some(keys) =
+                        crate::subst_port::magic_assoc_keys_from_executor(&name, exec)
+                    {
+                        St::A(keys)
+                    } else {
+                        St::S(exec.get_variable(&name))
+                    }
                 } else {
                     St::S(exec.get_variable(&name))
                 }
@@ -4019,7 +4041,23 @@ fn register_builtins(vm: &mut fusevm::VM) {
                             } else if let Some(arr) = exec.arrays.get(&name) {
                                 arr.clone()
                             } else {
-                                Vec::new()
+                                // Magic-assoc fallback for (kv): emit
+                                // alternating [key, value] pairs by
+                                // pairing magic_assoc_keys with
+                                // get_special_array_value lookups.
+                                if let Some(keys) = crate::subst_port::magic_assoc_keys_from_executor(&name, exec) {
+                                    let mut out = Vec::with_capacity(keys.len() * 2);
+                                    for k in keys {
+                                        let v = exec
+                                            .get_special_array_value(&name, &k)
+                                            .unwrap_or_default();
+                                        out.push(k);
+                                        out.push(v);
+                                    }
+                                    out
+                                } else {
+                                    Vec::new()
+                                }
                             }
                         });
                         state = St::A(pairs);
@@ -4032,7 +4070,16 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                 // returns the array values themselves.
                                 arr.clone()
                             } else {
-                                Vec::new()
+                                // `${(k)<magic-assoc>}` — names like
+                                // `aliases`, `functions`, `options`,
+                                // `commands`, `terminfo`, `errnos`,
+                                // etc. Direct port of the per-special
+                                // scanfn dispatch (Src/Modules/
+                                // parameter.c et al.). Returns the
+                                // sorted key set the C source builds
+                                // by walking each magic table.
+                                crate::subst_port::magic_assoc_keys_from_executor(&name, exec)
+                                    .unwrap_or_default()
                             }
                         });
                         state = St::A(keys);
