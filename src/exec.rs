@@ -3971,45 +3971,53 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     };
                 }
                 'Q' => {
-                    // (Q) — dequote: strip one layer of shell quoting
-                    // from each element. `${(Q)\"hello\"}` → `hello`.
-                    // Removes balanced single, double, or `$'...'` quotes
-                    // and processes backslash escapes in DQ context.
+                    // (Q) — full shell-quoting reversal. Direct port of
+                    // Src/utils.c::dequotestring which scans the entire
+                    // string, handling SQ-spans (`'…'`), DQ-spans
+                    // (`"…"`) with backslash escapes, and standalone
+                    // `\X` escapes — NOT just outer-quote strip. The
+                    // canonical roundtrip is `(qq)` → `(Q)` for strings
+                    // containing single quotes: `(qq)` of `a'b` produces
+                    // `'a'\''b'` and `(Q)` must reverse the four
+                    // close/escape/open transitions to recover `a'b`.
+                    // Earlier outer-quote-strip left `a'\''b` literal.
                     let dequote = |s: &str| -> String {
-                        let bytes = s.as_bytes();
-                        let n = bytes.len();
-                        if n >= 2 && bytes[0] == b'\'' && bytes[n - 1] == b'\'' {
-                            return String::from_utf8_lossy(&bytes[1..n - 1]).to_string();
-                        }
-                        if n >= 2 && bytes[0] == b'"' && bytes[n - 1] == b'"' {
-                            let inner = &s[1..n - 1];
-                            let mut out = String::with_capacity(inner.len());
-                            let mut chars = inner.chars().peekable();
-                            while let Some(c) = chars.next() {
-                                if c == '\\' {
-                                    match chars.peek() {
-                                        Some(&('"' | '\\' | '$' | '`')) => {
-                                            out.push(chars.next().unwrap());
-                                        }
-                                        _ => out.push(c),
-                                    }
-                                } else {
-                                    out.push(c);
-                                }
-                            }
-                            return out;
-                        }
-                        // No surrounding quotes — just unescape
-                        // backslashes (zsh's "remove one level" rule).
                         let mut out = String::with_capacity(s.len());
                         let mut chars = s.chars().peekable();
                         while let Some(c) = chars.next() {
-                            if c == '\\' {
-                                if let Some(n) = chars.next() {
-                                    out.push(n);
+                            match c {
+                                '\\' => {
+                                    if let Some(&nx) = chars.peek() {
+                                        out.push(nx);
+                                        chars.next();
+                                    }
                                 }
-                            } else {
-                                out.push(c);
+                                '\'' => {
+                                    while let Some(&inner) = chars.peek() {
+                                        chars.next();
+                                        if inner == '\'' {
+                                            break;
+                                        }
+                                        out.push(inner);
+                                    }
+                                }
+                                '"' => {
+                                    while let Some(&inner) = chars.peek() {
+                                        chars.next();
+                                        if inner == '"' {
+                                            break;
+                                        }
+                                        if inner == '\\' {
+                                            if let Some(&esc) = chars.peek() {
+                                                out.push(esc);
+                                                chars.next();
+                                                continue;
+                                            }
+                                        }
+                                        out.push(inner);
+                                    }
+                                }
+                                _ => out.push(c),
                             }
                         }
                         out
