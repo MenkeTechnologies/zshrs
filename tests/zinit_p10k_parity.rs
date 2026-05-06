@@ -817,3 +817,52 @@ echo "m[alpha]=${m[alpha]}""#,
         );
     }
 }
+
+// ───────────────────────── ${+commands[X]} lazy fill ────────────
+
+mod commands_magic_assoc {
+    use super::*;
+
+    /// `${+commands[X]}` should walk PATH on demand to answer
+    /// "is X an executable in PATH". Was returning 0 for everything
+    /// because the cache was intentionally empty (start-up walk
+    /// would be expensive) without a lookup-time fallback.
+    /// Probably-existing utilities used so the test runs on any
+    /// POSIX system.
+    #[test]
+    fn ls_is_a_command() {
+        assert_parity(r#"echo "${+commands[ls]}""#);
+    }
+
+    #[test]
+    fn nonexistent_is_not_a_command() {
+        assert_parity(r#"echo "${+commands[zshrs_definitely_not_a_command_xyz]}""#);
+    }
+}
+
+// ───────────────────────── ${~name} bare-tilde glob ─────────────
+
+mod tilde_glob_subst {
+    use super::*;
+
+    /// `${~name}` — bare `~` prefix sets the glob_subst flag (zsh
+    /// equivalent to `${(~)name}`). zinit's pick pattern relies on
+    /// this: `pick="src/*.zsh"; files=(${~pick})`. Without this, the
+    /// pattern stays literal and the glob never fires.
+    #[test]
+    fn tilde_param_glob_expands_pattern() {
+        // Use UNQUOTED form: zsh's `~` flag applies glob expansion
+        // only outside double quotes (`echo "${~pick}"` keeps the
+        // literal pattern). The unquoted command-substitution form
+        // exercises the glob path on both shells.
+        let script = r#"mkdir -p /tmp/zinit_tilde_test/src
+touch /tmp/zinit_tilde_test/src/a.zsh /tmp/zinit_tilde_test/src/b.zsh
+cd /tmp/zinit_tilde_test
+pick="src/*.zsh"
+matches=$(echo ${~pick})
+[[ "$matches" == *src/a.zsh* && "$matches" == *src/b.zsh* ]] && echo OK || echo NOPE"#;
+        let real_out = super::run_zsh(script);
+        let rs_out = super::run_zshrs(script);
+        assert_eq!(real_out.stdout, rs_out.stdout);
+    }
+}

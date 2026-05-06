@@ -707,7 +707,45 @@ fn check_magic_assoc_set(name: &str, key: &str, state: &SubstState) -> bool {
     match name {
         "functions" | "dis_functions" => state.function_names.contains(key),
         "aliases" | "dis_aliases" | "galiases" | "saliases" => state.alias_names.contains(key),
-        "commands" => state.command_names.contains(key),
+        "commands" => {
+            // command_names is intentionally lazy (would be expensive
+            // to enumerate every executable in PATH at startup), so
+            // fall through to a per-key PATH walk when the cached set
+            // doesn't have the answer. zsh's `${+commands[ls]}` is
+            // expected to return 1 on any normal system, but our
+            // empty cache always returned 0.
+            if state.command_names.contains(key) {
+                return true;
+            }
+            // Reject keys with `/` — those are paths, not bare names.
+            if key.is_empty() || key.contains('/') {
+                return false;
+            }
+            let path_var = state
+                .variables
+                .get("PATH")
+                .cloned()
+                .unwrap_or_else(|| std::env::var("PATH").unwrap_or_default());
+            for dir in path_var.split(':').filter(|s| !s.is_empty()) {
+                let candidate = std::path::Path::new(dir).join(key);
+                if let Ok(meta) = std::fs::metadata(&candidate) {
+                    if meta.is_file() {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            if meta.permissions().mode() & 0o111 != 0 {
+                                return true;
+                            }
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
         // Other magic assocs (parameters, modules, options, …)
         // could be added here. For now the three most common in
         // plugin code (functions / aliases / commands) cover the
@@ -1655,6 +1693,21 @@ fn parse_brace_param(
         let next = chars.get(pos + 1).copied().unwrap_or('\0');
         if next.is_ascii_alphabetic() || next == '_' || next == '{' || next == INBRACE {
             chkset = true;
+            pos += 1;
+        }
+    }
+    // `${~name}` — bare `~` prefix sets the glob_subst flag,
+    // equivalent to `${(~)name}`. Used heavily by zinit's pick /
+    // load patterns: `pick="src/*.zsh"; files=(${~pick})` glob-
+    // expands the value of $pick. Per Src/subst.c paramsubst, the
+    // bare-`~` form is read at the same point as the bare-`#`/`+`
+    // prefixes, ahead of the var-name slot.
+    if chars.get(pos) == Some(&'~') {
+        let next = chars.get(pos + 1).copied().unwrap_or('\0');
+        // Only consume the `~` when it's followed by a name-start
+        // — leaves bare `${~}` alone as the unrelated literal form.
+        if next.is_ascii_alphabetic() || next == '_' || next == '{' || next == INBRACE {
+            flags.glob_subst = true;
             pos += 1;
         }
     }
@@ -3230,18 +3283,37 @@ fn apply_param_flags(
             .collect();
     }
 
-    // (~) glob_subst — apply glob expansion to result. zshrs's
-    // parameter table doesn't fully match the C `globsubst` flag
-    // semantics, but the most-hit case is `${~var}` where var
-    // contains `*.zsh` etc. Best-effort: expand each value as a
-    // shell glob via the std glob crate-equivalent if present.
-    // Without a glob backend we leave the value untouched (fails
-    // closed; matches what unset glob would do).
+    // (~) glob_subst — apply glob expansion to each result element.
+    // zinit's pick-pattern (`pick="src/*.zsh"; files=(${~pick})`) and
+    // many plugin loaders rely on this. Per Src/subst.c the flag
+    // re-routes the post-expansion text through the glob engine; we
+    // delegate to the executor's expand_glob (which already handles
+    // wildcards, qualifiers, and **).
     if flags.glob_subst {
-        // No-op for now — full glob requires the glob.c port. The
-        // flag is no longer "parsed but never read" — it's parsed,
-        // looked at here, and a placeholder. Future port will fan
-        // out via the existing pattern engine.
+        let expanded = crate::exec::with_executor(|exec| {
+            let mut out: Vec<String> = Vec::with_capacity(result.len());
+            for piece in &result {
+                if piece.is_empty() {
+                    continue;
+                }
+                let words = exec.expand_glob(piece);
+                if words.is_empty() {
+                    // expand_glob returns [] for both "no glob meta"
+                    // (fast path returns the literal in a 1-element
+                    // vec we never see, or empty when the no-match
+                    // path fired). Keep the original on empty so the
+                    // command sees the literal pattern when it didn't
+                    // match — but the no-match arm has already set
+                    // current_command_glob_failed to abort the
+                    // command, so a trailing empty here is fine.
+                    out.push(piece.clone());
+                } else {
+                    out.extend(words);
+                }
+            }
+            out
+        });
+        result = expanded;
     }
 
     // (X) report_error — turn unset/empty parameter into a hard
