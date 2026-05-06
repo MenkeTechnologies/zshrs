@@ -33477,8 +33477,16 @@ impl ShellExecutor {
 
         let mode = mode.unwrap_or_else(|| "zsh".to_string());
 
-        // Get the options that would be set for this mode
-        let (set_opts, unset_opts) = Self::emulate_mode_options(&mode, reset_mode);
+        // Get the options that would be set for this mode. Per zsh's
+        // `emulate` semantics (zshmisc): even bare `emulate SHELL`
+        // (and `emulate -L SHELL`) resets options to SHELL's defaults
+        // — not just `-R`. The `-R` flag does MORE (also resets
+        // readonly var state, traps, etc.), but the option-reset
+        // happens for all forms. Without this, `emulate -L zsh`
+        // inherited the caller's options instead of starting from a
+        // clean zsh state, breaking p10k segments that rely on the
+        // reset-to-defaults contract.
+        let (set_opts, unset_opts) = Self::emulate_mode_options(&mode, true);
 
         // -l: just list the options, don't apply
         if list_mode {
