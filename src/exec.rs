@@ -13895,7 +13895,7 @@ impl ShellExecutor {
     }
 
     /// Expand glob pattern to matching files
-    fn expand_glob(&self, pattern: &str) -> Vec<String> {
+    pub fn expand_glob(&self, pattern: &str) -> Vec<String> {
         // Glob alternation `(a|b|c)` is a primary zsh feature
         // (no extendedglob needed, unlike `~` exclusion). Direct
         // port of zsh's pattern.c handling of P_BRANCH | inside
