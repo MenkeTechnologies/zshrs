@@ -31520,6 +31520,30 @@ impl ShellExecutor {
     }
 
     /// Push directory onto stack and cd to it
+    /// Mirror `self.dir_stack` into `self.arrays["dirstack"]` so user
+    /// reads of `${dirstack[@]}` / `$dirstack[N]` see the live stack.
+    /// Direct port of zsh's PM_SPECIAL `dirstack` setfn — the C
+    /// source synthesizes the array on demand from the internal
+    /// LinkList; zshrs uses a side-table sync since the array
+    /// lookup paths route through `arrays` (not a getfn dispatch).
+    fn sync_dirstack_array(&mut self) {
+        // zsh's `dirstack` is ordered most-recent-push first
+        // (`dirstack[1]` is the directory `pushd` saved on the most
+        // recent call). zshrs's `dir_stack` is push-back order, so
+        // reverse when mirroring to the array.
+        let dirs: Vec<String> = self
+            .dir_stack
+            .iter()
+            .rev()
+            .map(|p| p.display().to_string())
+            .collect();
+        if dirs.is_empty() {
+            self.arrays.remove("dirstack");
+        } else {
+            self.arrays.insert("dirstack".to_string(), dirs);
+        }
+    }
+
     fn builtin_pushd(&mut self, args: &[String]) -> i32 {
         // pushd [ -qsLP ] [ arg ]
         // pushd [ -qsLP ] old new
@@ -31675,6 +31699,7 @@ impl ShellExecutor {
             self.dir_stack.pop();
             return 1;
         }
+        self.sync_dirstack_array();
         // Sync $PWD/$OLDPWD with the new cwd. cd updates these but
         // pushd's path didn't, so `pushd /tmp; echo $PWD` continued
         // to show the pre-pushd cwd. Use the user-provided `arg`
@@ -31801,6 +31826,7 @@ impl ShellExecutor {
             self.dir_stack.push(target);
             return 1;
         }
+        self.sync_dirstack_array();
         // Sync $PWD/$OLDPWD with the new cwd (logical for default,
         // physical for -P). pushd updates these; popd needs to too
         // or the dir-stack listing reads stale $PWD.
