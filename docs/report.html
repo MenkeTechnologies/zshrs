@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 88 C files, 145,863 C lines, 194,029 Rust lines, 801 tests.">
+  <meta name="description" content="zshrs — Full zsh C-to-Rust port coverage report. 91 C files, 147,233 C lines, 208,696 Rust lines, 3,059 tests.">
   <title>zshrs — Port Coverage Report</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -84,7 +84,7 @@
             <a href="https://github.com/MenkeTechnologies/zshrs" target="_blank" rel="noopener noreferrer">GitHub</a>
           </nav>
           <p style="margin:0.35rem 0 0;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--text-dim);letter-spacing:0.03em;opacity:0.75;">
-            zsh/Src/*.c &rarr; zsh/src/*.rs &middot; 88 C files (31 core + 24 ZLE + 33 modules) &middot; 145,863 C lines &middot; 194,029 Rust lines &middot; 186 files &middot; 801 tests
+            zsh/Src/*.c &rarr; zsh/src/*.rs &middot; 91 C files (32 core + 24 ZLE + 33 modules + 2 Builtins) &middot; 147,233 C lines &middot; 208,696 Rust lines &middot; 189 files &middot; 3,059 tests
           </p>
         </div>
         <div class="tutorial-toolbar">
@@ -101,7 +101,7 @@
       <!-- SECTION 1: EXECUTIVE SUMMARY           -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>EXECUTIVE SUMMARY</h2>
-      <p class="tutorial-subtitle">Complete port of the entire zsh codebase from C to Rust. All 88 C source files (31 core, 24 ZLE, 33 modules) have corresponding Rust modules. Every C function has a Rust equivalent &mdash; 2,100+ with the same name, ~460 restructured into idiomatic Rust (struct methods, enum variants, pattern matching). Zero missing functionality.</p>
+      <p class="tutorial-subtitle">Complete port of the entire zsh codebase from C to Rust. All 91 C source files (32 core, 24 ZLE, 33 modules, 2 Builtins) have corresponding Rust modules. Every C function has a Rust equivalent &mdash; 2,100+ with the same name, ~460 restructured into idiomatic Rust (struct methods, enum variants, pattern matching). Zero missing functionality.</p>
 
       <p class="tutorial-subtitle" style="margin-top:0.5rem;color:var(--accent-light);">
         <strong style="color:var(--accent);">Scope note:</strong> this report covers the <em>C-to-Rust port</em> &mdash; what was translated from upstream zsh.
@@ -114,11 +114,11 @@
       </p>
 
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-val green">801</div><div class="stat-label">Tests Passing</div></div>
-        <div class="stat-card"><div class="stat-val">88</div><div class="stat-label">C Files Ported</div></div>
+        <div class="stat-card"><div class="stat-val green">3,059</div><div class="stat-label">Tests Passing</div></div>
+        <div class="stat-card"><div class="stat-val">91</div><div class="stat-label">C Files Ported</div></div>
         <div class="stat-card"><div class="stat-val accent">2,565</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card"><div class="stat-val">186</div><div class="stat-label">Rust Source Files</div></div>
-        <div class="stat-card"><div class="stat-val" style="color:var(--yellow,#ffb800);text-shadow:0 0 20px rgba(255,184,0,.3);">145,863</div><div class="stat-label">C Lines Covered</div></div>
+        <div class="stat-card"><div class="stat-val">189</div><div class="stat-label">Rust Source Files</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:var(--yellow,#ffb800);text-shadow:0 0 20px rgba(255,184,0,.3);">147,233</div><div class="stat-label">C Lines Covered</div></div>
         <div class="stat-card"><div class="stat-val green">0</div><div class="stat-label">Missing Functionality</div></div>
       </div>
 
@@ -126,7 +126,7 @@
         <p style="font-size:11px;color:var(--text-muted);letter-spacing:0.5px;text-transform:uppercase;margin-bottom:4px;font-family:'Orbitron',sans-serif;font-weight:700;">Overall Line Coverage</p>
         <div class="bar-wrap" style="height:26px;">
           <div class="bar-fill cyan" style="width:86.8%;"></div>
-          <span class="bar-pct" style="font-size:12px;">194,029 Rust / 145,863 C &mdash; 100% coverage</span>
+          <span class="bar-pct" style="font-size:12px;">208,696 Rust / 147,233 C &mdash; 100% coverage</span>
         </div>
         <p style="font-size:10px;color:var(--text-muted);margin-top:4px;">Rust is more concise than C: no manual memory management, no meta-encoding, no function-pointer tables. exec.rs is 353% of exec.c because it includes 180+ builtins (23 coreutils anti-fork) that C splits across builtin.c.</p>
       </div>
@@ -1210,10 +1210,10 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <!-- SECTION 8: ENGINEERING OVERVIEW         -->
       <!-- ═══════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">%</span>ENGINEERING OVERVIEW</h2>
-      <p class="tutorial-subtitle">Full codebase metrics across 87 Rust source files, 18 ZLE modules, 20 loadable module ports, and 145 builtins. The zshrs crate is a self-contained reimplementation of zsh in safe Rust with targeted <code>unsafe</code> for POSIX syscalls.</p>
+      <p class="tutorial-subtitle">Full codebase metrics across 189 Rust source files, 18 ZLE modules, 20 loadable module ports, and 145 builtins. The zshrs crate is a self-contained reimplementation of zsh in safe Rust with targeted <code>unsafe</code> for POSIX syscalls.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));">
-        <div class="stat-card"><div class="stat-val">194,029</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val">208,696</div><div class="stat-label">Total Rust Lines</div></div>
         <div class="stat-card"><div class="stat-val accent">99</div><div class="stat-label">Source Files</div></div>
         <div class="stat-card"><div class="stat-val">76</div><div class="stat-label">Modules</div></div>
         <div class="stat-card"><div class="stat-val green">2,565</div><div class="stat-label">Public Functions</div></div>
@@ -1248,7 +1248,7 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
           <tr><td style="color:var(--cyan);">Options / Init</td><td><code>options, init, context</code></td><td class="num">1,688</td><td class="num">2.0%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:2.0%"></div></div></td><td>200+ shell options, startup files, emulation modes (sh/ksh/csh/zsh)</td></tr>
           <tr><td style="color:var(--cyan);">Other</td><td><code>zwc, hashtable, completion, subscript, ...</code></td><td class="num">3,489</td><td class="num">4.1%</td><td><div class="bar-wrap"><div class="bar-fill green" style="width:4.1%"></div></div></td><td>Compiled scripts (ZWC), hash tables, completion framework, subscript parsing</td></tr>
         </tbody>
-        <tfoot><tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL</td><td class="num">194,029</td><td class="num">100%</td><td></td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td colspan="2" style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">TOTAL</td><td class="num">208,696</td><td class="num">100%</td><td></td><td></td></tr></tfoot>
       </table>
 
       <hr class="section-rule">
@@ -1553,7 +1553,7 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <!-- SECTION: BEYOND THE C PORT — RUNTIME INFRASTRUCTURE -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title" style="color:var(--accent);"><span class="step-hash" style="color:var(--accent);">&#x25CF;</span>BEYOND THE C PORT &mdash; RUNTIME INFRASTRUCTURE</h2>
-      <p class="tutorial-subtitle">The C-to-Rust port covered above (87 source files, 88 C files mapped, 859 C functions) is what zshrs <em>inherits</em> from zsh. The numbers below count what zshrs <em>adds</em> &mdash; new Rust code with no C ancestor. This is the layer that takes zshrs from &ldquo;zsh in Rust&rdquo; to &ldquo;the first compiled Unix shell with a session-persistent daemon, AOP-intercept recorder, and bidirectional ptmx-attach job supervisor.&rdquo;</p>
+      <p class="tutorial-subtitle">The C-to-Rust port covered above (189 source files, 91 C files mapped, 859 C functions) is what zshrs <em>inherits</em> from zsh. The numbers below count what zshrs <em>adds</em> &mdash; new Rust code with no C ancestor. This is the layer that takes zshrs from &ldquo;zsh in Rust&rdquo; to &ldquo;the first compiled Unix shell with a session-persistent daemon, AOP-intercept recorder, and bidirectional ptmx-attach job supervisor.&rdquo;</p>
 
       <table class="file-table">
         <thead><tr><th>Crate / Layer</th><th class="num">Files</th><th class="num">Lines</th><th class="num">Pub Fns</th><th class="num">Tests</th><th>Purpose</th></tr></thead>
@@ -1616,12 +1616,12 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
       <!-- SECTION: GRAND TOTAL — ALL THREE CRATES          -->
       <!-- ═════════════════════════════════════════════════ -->
       <h2 class="tutorial-title"><span class="step-hash">&#x2261;</span>GRAND TOTAL &mdash; FULL WORKSPACE</h2>
-      <p class="tutorial-subtitle">Three Rust crates in a single Cargo workspace. Combined: 406,483 Rust lines, 3,580+ public functions, 2,983 tests, 706 commits.</p>
+      <p class="tutorial-subtitle">Three Rust crates in a single Cargo workspace. Combined: 421,150 Rust lines, 3,580+ public functions, 5,194 tests, 706 commits.</p>
 
       <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
-        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">406,483</div><div class="stat-label">Total Rust Lines</div></div>
+        <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">421,150</div><div class="stat-label">Total Rust Lines</div></div>
         <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">3,580</div><div class="stat-label">Public Functions</div></div>
-        <div class="stat-card"><div class="stat-val green">2,936</div><div class="stat-label">Tests Passing</div></div>
+        <div class="stat-card"><div class="stat-val green">5,194</div><div class="stat-label">Tests Passing</div></div>
         <div class="stat-card"><div class="stat-val" style="color:#fff;text-shadow:0 0 20px var(--cyan-glow),0 0 60px var(--accent-glow);">637</div><div class="stat-label">Cargo Packages</div></div>
       </div>
 
@@ -1634,9 +1634,9 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
             <td>Parallel Perl 5 interpreter: NaN-boxed VM, Cranelift JIT, 3,700+ builtins, pipe-forward, LSP</td>
           </tr>
           <tr>
-            <td style="color:var(--cyan);">zsh</td><td class="num">194,029</td><td class="num">186</td><td class="num">2,565</td><td class="num">303</td><td class="num">107</td><td class="num">801</td>
+            <td style="color:var(--cyan);">zsh</td><td class="num">208,696</td><td class="num">189</td><td class="num">2,565</td><td class="num">303</td><td class="num">107</td><td class="num">3,059</td>
             <td><div class="bar-wrap"><div class="bar-fill cyan" style="width:31.2%"></div><span class="bar-pct">31.2%</span></div></td>
-            <td>Full zsh port: 31 core + 24 ZLE + 33 module C files, 26 ZLE modules, 145 shell builtins</td>
+            <td>Full zsh port: 32 core + 24 ZLE + 33 module + 2 Builtins C files, 26 ZLE modules, 145 shell builtins</td>
           </tr>
           <tr>
             <td style="color:var(--magenta);">compsys</td><td class="num">19,822</td><td class="num">25</td><td class="num">474</td><td class="num">75</td><td class="num">17</td><td class="num">222</td>
@@ -1644,13 +1644,13 @@ test result: ok. 738 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fi
             <td>Completion system: zstyle, compadd, _arguments, menu selection, SQLite cache, 70 functions</td>
           </tr>
         </tbody>
-        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">270,403</td><td class="num">205</td><td class="num">3,436</td><td class="num">599</td><td class="num">224</td><td class="num">2,936</td><td></td><td></td></tr></tfoot>
+        <tfoot><tr class="total-row"><td style="font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:1px;">WORKSPACE</td><td class="num">285,070</td><td class="num">208</td><td class="num">3,436</td><td class="num">599</td><td class="num">224</td><td class="num">5,194</td><td></td><td></td></tr></tfoot>
       </table>
 
     </main>
 
     <footer style="text-align:center;padding:2rem;font-size:10px;color:var(--text-muted);font-family:'Orbitron',sans-serif;letter-spacing:2px;">
-      ZSHRS PORT-COVERAGE REPORT &middot; +36K LINES NEW INFRASTRUCTURE BEYOND THE PORT &middot; UPDATED 2026-05-03 &middot; MENKETECHNOLOGIES
+      ZSHRS PORT-COVERAGE REPORT &middot; +36K LINES NEW INFRASTRUCTURE BEYOND THE PORT &middot; UPDATED 2026-05-06 &middot; MENKETECHNOLOGIES
     </footer>
   </div>
 
