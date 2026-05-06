@@ -4436,16 +4436,15 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // `(@)NAME##pat` / `(@)NAME%pat` / etc. — `(@)` forces array shape
     // for the surrounding word. On an unquoted indexed array the
     // shape is already preserved by per-element iteration, so the
-    // `(@)` is a no-op. Strip it and let the regular fast path
-    // handle the strip/replace per-element. Direct port of the C
-    // source: `(@)` sets `nojoin = 1` early in paramsubst (Src/subst.c
-    // around line 1813); when isarr is already 1 from the array
-    // value, nojoin's only effect is preventing IFS-join in DQ
-    // context. For non-DQ + indexed-array, no behavior change.
-    let inner = if let Some(rest) = inner.strip_prefix("(@)") {
-        rest
+    // `(@)` is a no-op there. In DQ context, however, `(@)` overrides
+    // the join-then-strip default and forces per-element semantics
+    // — same effect as an explicit `[@]` subscript. Track via the
+    // `at_flag_seen` flag and propagate to had_at on Strip/Replace.
+    // Direct port of zsh nojoin=1 path (Src/subst.c:1813).
+    let (inner, at_flag_seen) = if let Some(rest) = inner.strip_prefix("(@)") {
+        (rest, true)
     } else {
-        inner
+        (inner, false)
     };
     // Reject flag forms — handled by earlier fast-paths.
     if inner.starts_with('(') {
@@ -4553,7 +4552,7 @@ fn parse_param_modifier(s: &str) -> Option<ParamModifier> {
     // semantics inside DQ (`"${a[@]%%pat}"` = per-element, not
     // joined-then-stripped).
     let mut after_name = name_end;
-    let mut had_at = false;
+    let mut had_at = at_flag_seen;
     // Char-aware boundary check — name_end + 3 may land mid-codepoint
     // when the preceding bytes include UTF-8 multi-byte chars (e.g.
     // METATOKEN bytes in lexer-emitted input). `is_char_boundary`
