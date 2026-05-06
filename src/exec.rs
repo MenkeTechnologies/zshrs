@@ -17179,7 +17179,16 @@ impl ShellExecutor {
                 if key == "@" || key == "*" {
                     return Some(self.function_names().join(" "));
                 }
-                Some(self.function_definition_text(key).unwrap_or_default())
+                // Apply zsh's getfn_functions formatter — leading-tab
+                // body, no trailing `;`. Direct port of Src/exec.c
+                // shipped via compile_zsh's fast path; this branch
+                // is the slow-path/subst_port entry that previously
+                // returned the raw user-typed source. Keeps
+                // `${functions[foo]:0:20}` (substring extraction)
+                // consistent with the fast-path `\$functions[foo]`.
+                let text = self.function_definition_text(key)?;
+                let formatted = format_function_body_zsh(text.trim());
+                Some(format!("\t{}", formatted))
             }
             "functions_source" => {
                 // ${functions_source[name]} → file path where the
