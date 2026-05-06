@@ -579,4 +579,175 @@ mod zinit_param_meta {
     fn plus_set_test() {
         assert_parity(r#"x=hello; print -- "${+x}""#);
     }
+
+    /// `(P)+name` — indirect set-test. The `+` chkset must apply to
+    /// the value of `name` interpreted as a parameter, not to `name`
+    /// itself. add-zsh-hook (a stock zsh function) relies on this:
+    ///   hook=precmd_functions; (( ${(P)+hook} )) — true iff
+    ///   precmd_functions is set, regardless of whether the scalar
+    ///   `hook` itself is set. Was returning 1 (treating "is hook set"
+    ///   ignoring the P flag), which made add-zsh-hook take the wrong
+    ///   branch and the script error.
+    #[test]
+    fn p_flag_plus_set_test_indirects() {
+        assert_parity(
+            r#"hook=NONEXISTENT_VAR_XYZ
+echo "u=${(P)+hook}"
+hook=HOME
+echo "s=${(P)+hook}""#,
+        );
+    }
+}
+
+// ───────────────────────── subscript pat $-expand ───────────────
+
+mod subscript_pat_expand {
+    use super::*;
+
+    /// `${arr[(I)$1]}` — `$1` in the pattern slot must be expanded
+    /// before zsh's getindex pattern-match runs. Pinned because
+    /// add-zsh-hook's `${hooktypes[(I)$1]} == 0` relied on this.
+    #[test]
+    fn flag_subscript_dollar_positional() {
+        assert_parity(
+            r#"set -- precmd
+hooktypes=(chpwd precmd preexec)
+echo "i=${hooktypes[(I)$1]}""#,
+        );
+    }
+
+    /// Same check inside `(( … ))` — the arith-eval path goes through
+    /// expand_string → substitute_brace, which had a different
+    /// expansion gap than the bare-word path.
+    #[test]
+    fn flag_subscript_dollar_positional_in_arith() {
+        assert_parity(
+            r#"set -- precmd
+hooktypes=(chpwd precmd preexec)
+v=$((${hooktypes[(I)$1]}))
+echo "v=$v""#,
+        );
+    }
+
+    /// `${arr[(I)${VAR}]}` — full braced expansion in the pattern.
+    #[test]
+    fn flag_subscript_braced_var() {
+        assert_parity(
+            r#"key=bar
+arr=(foo bar baz)
+echo "i=${arr[(I)${key}]}""#,
+        );
+    }
+
+    /// add-zsh-hook end-to-end smoke. Stock zsh function autoloaded
+    /// from the brew install.
+    #[test]
+    fn add_zsh_hook_precmd_round_trip() {
+        assert_parity(
+            r#"autoload -Uz add-zsh-hook
+my_pre() { :; }
+add-zsh-hook precmd my_pre
+echo "fns=${precmd_functions[*]}""#,
+        );
+    }
+}
+
+// ───────────────────────── typeset H/h flag semantics ───────────
+
+mod typeset_h_flags {
+    use super::*;
+
+    /// `typeset -gAH NAME` — `-H` is PM_HIDEVAL (hide value), per
+    /// Src/builtin.c "typeset" spec (option string `…HL:%R:%TUZ:%a…`).
+    /// Was reversed in zshrs (treated `-H` as PM_HIDE) until the
+    /// add-zsh-hook session caught it via `(t)` introspection.
+    #[test]
+    fn capital_h_is_hideval() {
+        assert_parity(
+            r#"typeset -gAH ZINIT
+ZINIT[k]=v
+echo "$ZINIT[k]"
+echo "${(t)ZINIT}""#,
+        );
+    }
+
+    /// `-h` is PM_HIDE (hidden, suppressed from listings).
+    #[test]
+    fn lowercase_h_is_hide() {
+        assert_parity(
+            r#"typeset -h x=hidden
+echo "${(t)x}""#,
+        );
+    }
+}
+
+// ───────────────────────── tied path arrays ─────────────────────
+
+mod tied_path_arrays {
+    use super::*;
+
+    /// `path+=(/dir)` — appending to the array must reflect into `$PATH`
+    /// because zsh implicitly ties path↔PATH at startup. Was only
+    /// surfacing the new entry in `$path`, not in `$PATH`, so external
+    /// PATH consumers (`command -v`, exec lookup) missed it. Test with
+    /// `-f` (no rcfiles) to keep the comparison stable across the user
+    /// `.zshenv`'s PATH munging.
+    #[test]
+    fn path_append_mirrors_into_PATH() {
+        let real_out = super::run_zsh(
+            r#"path+=(/zshrs_test_dir_xyz)
+echo "$PATH" | tr : '\n' | tail -1"#,
+        );
+        let rs_out = super::run_zshrs(
+            r#"path+=(/zshrs_test_dir_xyz)
+echo "$PATH" | tr : '\n' | tail -1"#,
+        );
+        assert_eq!(real_out.stdout, rs_out.stdout);
+    }
+}
+
+// ───────────────────────── set -A clears array ──────────────────
+
+mod set_a_clears {
+    use super::*;
+
+    /// `set -A NAME` (no values) clears the array — zsh contract from
+    /// Src/builtin.c bin_set's PM_ARRAY arm. Was leaving the previous
+    /// elements in place.
+    #[test]
+    fn set_a_no_values_clears() {
+        assert_parity(
+            r#"a=(x y z)
+set -A a
+echo "n=$#a items=$a""#,
+        );
+    }
+}
+
+// ───────────────────────── digit-positional subscript ───────────
+
+mod positional_subscript {
+    use super::*;
+
+    /// `${1[N,M]}` — char-slice on the first positional. Was being
+    /// dropped (digit-name path returned the full positional value
+    /// without applying the subscript).
+    #[test]
+    fn positional_char_slice() {
+        assert_parity(
+            r#"set -- abcdefg
+echo "${1[1,3]}"
+echo "${1[2]}"
+echo "${1[-2,-1]}""#,
+        );
+    }
+
+    /// Inside a function — same semantics as positional in -c.
+    #[test]
+    fn positional_char_slice_in_fn() {
+        assert_parity(
+            r#"fn() { echo "${1[1,3]}|${1[5]}"; }
+fn abcdefgh"#,
+        );
+    }
 }

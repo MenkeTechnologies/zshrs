@@ -2304,7 +2304,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 emit_path_or_assign(&name, &values, attrs, true, &ctx);
             }
             let is_unique = exec.var_attrs.get(&name).map(|a| a.unique).unwrap_or(false);
-            let target = exec.arrays.entry(name).or_insert_with(Vec::new);
+            // Mirror the post-append result back to a tied scalar
+            // (`typeset -T PATH path :` — `path+=(/x)` must update
+            // `PATH` too). Without this, zinit / OMZ patterns like
+            // `path+=(/some/dir)` left $PATH stale, so `command -v`
+            // / pathprog lookups missed newly-added dirs.
+            let tied_scalar = exec.tied_array_to_scalar.get(&name).cloned();
+            let target = exec.arrays.entry(name.clone()).or_insert_with(Vec::new);
             if is_unique {
                 let existing: std::collections::HashSet<String> = target.iter().cloned().collect();
                 for v in values {
@@ -2314,6 +2320,18 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 }
             } else {
                 target.extend(values);
+            }
+            if let Some((scalar_name, sep)) = tied_scalar {
+                let joined = exec
+                    .arrays
+                    .get(&name)
+                    .map(|a| a.join(&sep))
+                    .unwrap_or_default();
+                exec.variables.insert(scalar_name.clone(), joined.clone());
+                // Keep the env var (PATH / FPATH / MANPATH / …) in
+                // sync with the scalar so child processes see the
+                // change.
+                std::env::set_var(&scalar_name, &joined);
             }
         });
         Value::Status(0)
@@ -10966,6 +10984,24 @@ impl ShellExecutor {
             if !path_arr.is_empty() {
                 exec.arrays.insert("path".to_string(), path_arr);
             }
+        }
+        // Register the standard tied path-family pairs so `path+=` /
+        // `fpath+=` / etc. mirror through the array→scalar sync hook
+        // in BUILTIN_APPEND_ARRAY (and the SET_ARRAY tied path).
+        // Direct port of the implicit ties that zsh wires up at
+        // startup for PATH/path, FPATH/fpath, etc. Source-of-truth
+        // for the pairs is Src/init.c's `setupvals()` PM_TIED entries.
+        for (scalar, arr) in [
+            ("PATH", "path"),
+            ("FPATH", "fpath"),
+            ("MANPATH", "manpath"),
+            ("CDPATH", "cdpath"),
+            ("MODULE_PATH", "module_path"),
+        ] {
+            exec.tied_array_to_scalar
+                .insert(arr.to_string(), (scalar.to_string(), ":".to_string()));
+            exec.tied_scalar_to_array
+                .insert(scalar.to_string(), (arr.to_string(), ":".to_string()));
         }
         exec
     }
@@ -22575,8 +22611,14 @@ impl ShellExecutor {
         let mut is_function = false; // -f
         let mut is_global = false; // -g
         let mut is_tied = false; // -T
-        let mut is_hidden = false; // -H
-        let mut is_hide_val = false; // -h
+        // zsh flag semantics (Src/builtin.c "typeset" spec):
+        //   -h = PM_HIDE   = hidden
+        //   -H = PM_HIDEVAL = hide_val
+        // (NOT the other way around — earlier code had these reversed,
+        // which made `typeset -H ZINIT` produce `(t)=association-hide`
+        // instead of zsh's `association-hideval`.)
+        let mut is_hidden = false; // -h
+        let mut is_hide_val = false; // -H
         let mut is_trace = false; // -t
         let mut is_unique = false; // -U: dedupe array elements
         let mut print_mode = false; // -p
@@ -22626,8 +22668,8 @@ impl ShellExecutor {
                         'f' => is_function = false,
                         'g' => is_global = false,
                         'T' => is_tied = false,
-                        'H' => is_hidden = false,
-                        'h' => is_hide_val = false,
+                        'H' => is_hide_val = false,
+                        'h' => is_hidden = false,
                         't' => is_trace = false,
                         'U' => is_unique = false,
                         'p' => print_mode = false,
@@ -22745,8 +22787,8 @@ impl ShellExecutor {
                         'f' => is_function = true,
                         'g' => is_global = true,
                         'T' => is_tied = true,
-                        'H' => is_hidden = true,
-                        'h' => is_hide_val = true,
+                        'H' => is_hide_val = true,
+                        'h' => is_hidden = true,
                         't' => is_trace = true,
                         'U' => is_unique = true,
                         'p' => print_mode = true,
@@ -23566,6 +23608,9 @@ impl ShellExecutor {
                     || is_array
                     || is_assoc
                     || is_unique
+                    || is_hidden
+                    || is_hide_val
+                    || is_trace
                 {
                     let kind = if is_integer {
                         VarKind::Integer
@@ -27464,6 +27509,17 @@ impl ShellExecutor {
                     }
                     return 0;
                 }
+            }
+        }
+        // `set -A NAME` (no values): zsh clears the array.
+        // `set +A NAME` (no values): leaves the array unchanged
+        // (per Src/builtin.c bin_set: +A only updates positional
+        // slots from the values list and a missing list is a no-op).
+        // Without this, `a=(1 2 3); set -A a` left `a` as 1 2 3,
+        // diverging from zsh's empty-array semantics.
+        if let Some(ref name) = array_name {
+            if set_array == Some(true) {
+                self.arrays.insert(name.clone(), Vec::new());
             }
         }
         0
