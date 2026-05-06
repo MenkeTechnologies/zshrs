@@ -2307,13 +2307,22 @@ fn parse_brace_param(
     // has been consumed for length, clear it on `flags` so the
     // post-pass `apply_param_flags` doesn't double-count.
     if length_prefix {
+        // For `(c)#arr` and `(w)#arr` zsh joins the array with the
+        // first IFS char (space by default) BEFORE counting chars or
+        // words — Src/subst.c paramsubst's chklen path inside the
+        // PSPRINT_FLAG_C / _W arms calls sepjoin first. Without the
+        // join, `${(c)#arr}` for `arr=(abc def)` reported 6 (chars
+        // 3+3) instead of 7 (chars of "abc def").
+        let ifs_first = state
+            .variables
+            .get("IFS")
+            .and_then(|s| s.chars().next())
+            .unwrap_or(' ')
+            .to_string();
         let len = if flags.count_chars {
-            value.iter().map(|s| s.chars().count()).sum::<usize>()
+            value.join(&ifs_first).chars().count()
         } else if flags.count_words {
-            value
-                .iter()
-                .map(|s| s.split_whitespace().count())
-                .sum::<usize>()
+            value.join(&ifs_first).split_whitespace().count()
         } else if value.len() == 1 {
             value[0].chars().count()
         } else {
