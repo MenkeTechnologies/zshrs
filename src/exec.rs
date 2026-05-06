@@ -3160,6 +3160,21 @@ fn register_builtins(vm: &mut fusevm::VM) {
         if force_array {
             idx = idx[1..].to_string();
         }
+        // `\u{06}` prefix = "outer (v) flag wants values for matching
+        // assoc keys" — flip the (I)/(i) subscript-flag from
+        // returning keys to returning the corresponding values.
+        // Direct port of zsh's (v)+(I) combo.
+        let flip_to_values = idx.starts_with('\u{06}');
+        if flip_to_values {
+            idx = idx[1..].to_string();
+        }
+        // `\u{07}` prefix = "outer (k) flag wants keys for matching
+        // assoc values" — flip the (R)/(r) subscript-flag from
+        // returning values to returning the corresponding keys.
+        let flip_to_keys = idx.starts_with('\u{07}');
+        if flip_to_keys {
+            idx = idx[1..].to_string();
+        }
         // `${pipestatus[N]}` / `${PIPESTATUS[N]}` — pipeline exit
         // status array. Populated by BUILTIN_PIPELINE_EXEC after a
         // real pipeline; for single commands fall back to a synthetic
@@ -3305,6 +3320,42 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 // values/keys, supported below.
                 if let Some(map) = exec.assoc_arrays.get(&name) {
                     if let Some((flags, pat)) = parse_subscript_flags(&idx) {
+                        // (v)+(I)/(i): subscript searches keys but
+                        // outer wants values. Iterate the assoc and
+                        // return values for keys that match `pat`.
+                        if flip_to_values
+                            && (flags.contains('I') || flags.contains('i'))
+                        {
+                            let return_all = flags.contains('I');
+                            let mut out: Vec<String> = Vec::new();
+                            for (k, v) in map.iter() {
+                                if ShellExecutor::glob_match_static(k, pat) {
+                                    out.push(v.clone());
+                                    if !return_all {
+                                        break;
+                                    }
+                                }
+                            }
+                            return Value::str(out.join(" "));
+                        }
+                        // (k)+(R)/(r): subscript searches values but
+                        // outer wants keys. Iterate the assoc and
+                        // return keys whose values match.
+                        if flip_to_keys
+                            && (flags.contains('R') || flags.contains('r'))
+                        {
+                            let return_all = flags.contains('R');
+                            let mut out: Vec<String> = Vec::new();
+                            for (k, v) in map.iter() {
+                                if ShellExecutor::glob_match_static(v, pat) {
+                                    out.push(k.clone());
+                                    if !return_all {
+                                        break;
+                                    }
+                                }
+                            }
+                            return Value::str(out.join(" "));
+                        }
                         return assoc_subscript_flag(map, flags, pat);
                     }
                     return Value::str(map.get(&idx).cloned().unwrap_or_default());
