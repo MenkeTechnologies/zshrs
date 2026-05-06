@@ -31,6 +31,11 @@
 //!   - History expansion (gated)
 //!   - Prompt expansion via print -P / `(%)` flag
 
+// Test names encode zsh flag letters verbatim (e.g. `(P)`, `(L)`, `:A`).
+// Allow PascalCase suffixes in identifiers so the test name reads as the
+// zsh feature it pins.
+#![allow(non_snake_case)]
+
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -1728,7 +1733,7 @@ fn subshell_assignment_no_leak() {
 fn subshell_cd_no_leak() {
     let saved = std::env::current_dir().unwrap();
     let saved_str = saved.to_string_lossy().into_owned();
-    let (status, out) = run(&format!("(cd /tmp; echo $PWD) > /dev/null; pwd"));
+    let (status, out) = run("(cd /tmp; echo $PWD) > /dev/null; pwd");
     assert_eq!(status, 0);
     assert_eq!(out.trim(), saved_str);
 }

@@ -4731,8 +4731,20 @@ fn register_builtins(vm: &mut fusevm::VM) {
         // We detect the same condition via `in_paramsubst_nest`,
         // bumped by every BUILTIN_PARAM_FLAG / BUILTIN_PARAM_*
         // recursion entry.
+        // The DQ collapse fires only for "bare" arrays — those that
+        // came from `${arr}` / `${assoc}` without a split flag. When
+        // any split flag (`(z)`, `(f)`, `(s:STR:)`, `(0)`, `(=)`) was
+        // applied the array shape is INTENTIONAL: zsh keeps it
+        // multi-word inside DQ. Direct port of Src/subst.c's
+        // `nojoin` behavior — the split flags set nojoin=1 which
+        // causes paramsubst to skip sepjoin even in DQ.
+        let split_flag_active = flags.contains('z')
+            || flags.contains('f')
+            || flags.contains('s')
+            || flags.contains('0')
+            || flags.contains('=');
         let is_nested = with_executor(|exec| exec.in_paramsubst_nest > 1);
-        if (dq_compile || dq_runtime) && !has_at_subscript && !is_nested {
+        if (dq_compile || dq_runtime) && !has_at_subscript && !is_nested && !split_flag_active {
             if let St::A(a) = state {
                 // Pick the join separator. `(F)` (the last F seen) is
                 // tracked via `flags.contains('F')`; `(j:str:)` runs
@@ -23133,10 +23145,26 @@ impl ShellExecutor {
                     std::process::exit(1);
                 }
 
-                if let Some(after_paren) = rest.strip_prefix('(') {
+                // The lexer keeps single-quoted-enclosing parens as META
+                // tokens (`INPAR` = `\u{88}`, `OUTPAR` = `\u{8a}`) when
+                // the array body contains `'…'`-quoted elements.
+                // Without accepting those forms, `typeset -A m=(k1 'v')`
+                // fell through to scalar assign and stored the META `(`
+                // as the value. Direct port of zsh's tokenized array-
+                // body recognition (Src/lex.c / Src/parse.c).
+                let stripped_paren = rest
+                    .strip_prefix('(')
+                    .or_else(|| rest.strip_prefix('\u{88}'));
+                if let Some(after_paren) = stripped_paren {
                     // Array assignment - collect all elements until we find ')'
                     let mut elements = Vec::new();
-                    let current = after_paren.to_string();
+                    // Untokenize the body so the inner element parser
+                    // sees the user's literal text. Strip a trailing
+                    // META OUTPAR before passing through.
+                    let cleaned = after_paren
+                        .trim_end_matches('\u{8a}')
+                        .trim_end_matches(')');
+                    let current = crate::lexer::untokenize(cleaned);
 
                     // Quote-aware split: walk the body honoring
                     // `"..."` and `'...'` so that DQ-quoted

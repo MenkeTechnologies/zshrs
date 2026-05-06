@@ -1,6 +1,12 @@
 //! Integration tests for zshrs shell — exercises builtins, syntax, and
 //! variable handling by spawning the real `zshrs` binary with `-f -c`.
 
+// Test names encode zsh's flag/modifier letters verbatim — `(M)`, `(P)`,
+// `(L)`, `(U)`, `(Q)`, `(F)`, `:A`, `:Z`, `-U`, etc. Forcing snake_case
+// would obscure which zsh feature each test pins, so allow PascalCase
+// suffixes in test identifiers.
+#![allow(non_snake_case)]
+
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -50,6 +56,7 @@ fn run_zshrs(code: &str) -> (i32, String, String) {
 }
 
 /// Run a snippet and return just its exit status.
+#[allow(dead_code)]
 fn run_zshrs_status(code: &str) -> i32 {
     run_zshrs(code).0
 }
@@ -2751,9 +2758,17 @@ fn test_set_plus_x_disables_xtrace() {
 
 #[test]
 fn test_xtrace_uses_ps4() {
-    // Default PS4 is `+ `. Verify the prefix shows up.
-    let (_, _, stderr) = run_zshrs("set -x; true");
+    // Verify PS4 expansion runs and prefixes the trace line. The
+    // earlier assertion `stderr.contains("+ ")` was bash's default,
+    // not zsh's — zsh's default PS4 is `+%N:%i> ` (Src/init.c) which
+    // expands to `+<file>:<line>> ` and never produces a literal
+    // `+ `. Set PS4 explicitly inside the script so this test is
+    // robust against any inherited $PROMPT4/$PS4 from the user's
+    // env (real zsh imports them too — verified against
+    // /opt/homebrew/bin/zsh).
+    let (_, _, stderr) = run_zshrs("PS4='+ '; set -x; true");
     assert!(stderr.contains("+ "), "stderr: {stderr:?}");
+    assert!(stderr.contains("true"), "stderr should contain command: {stderr:?}");
 }
 
 #[test]
@@ -2981,7 +2996,7 @@ fn test_glob_caret_negation() {
     }
     let (_, output, _) = run_zshrs(&format!("cd {}; echo [^a]", dir));
     let _ = std::fs::remove_dir_all(dir);
-    let mut got: Vec<&str> = output.trim().split_whitespace().collect();
+    let mut got: Vec<&str> = output.split_whitespace().collect();
     got.sort();
     assert_eq!(got, vec!["b", "c"], "got: {output:?}");
 }
@@ -3828,7 +3843,7 @@ fn test_kill_l_uses_platform_signal_numbers() {
     // hardcoded to Linux. Pulled from libc::SIGUSR1 etc.
     let (_, output, _) = run_zshrs(r#"kill -l USR1"#);
     let n: i32 = output.trim().parse().unwrap_or(0);
-    let expected = libc::SIGUSR1 as i32;
+    let expected = libc::SIGUSR1;
     assert_eq!(
         n, expected,
         "got: {output:?}, expected libc::SIGUSR1={expected}"
@@ -5770,7 +5785,7 @@ fn test_glob_posix_char_class_alpha() {
     let cmd = format!("cd {} && echo [[:digit:]]", dir.display());
     let (_, output, _) = run_zshrs(&cmd);
     let _ = std::fs::remove_dir_all(&dir);
-    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    let mut parts: Vec<&str> = output.split_whitespace().collect();
     parts.sort();
     assert_eq!(parts, vec!["1", "2"]);
 }
@@ -5785,7 +5800,7 @@ fn test_glob_posix_char_class_alpha_letters() {
     let cmd = format!("cd {} && echo [[:alpha:]]", dir.display());
     let (_, output, _) = run_zshrs(&cmd);
     let _ = std::fs::remove_dir_all(&dir);
-    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    let mut parts: Vec<&str> = output.split_whitespace().collect();
     parts.sort();
     assert_eq!(parts, vec!["a", "b"]);
 }
@@ -5864,7 +5879,7 @@ fn test_random_resolves_in_arithmetic() {
     // a working extras map before MathEval runs.
     let (_, output, _) = run_zshrs("echo $((RANDOM))");
     let val: i64 = output.trim().parse().unwrap_or(-1);
-    assert!(val >= 0 && val <= 32767, "RANDOM out of range: {}", val);
+    assert!((0..=32767).contains(&val), "RANDOM out of range: {}", val);
 
     // RANDOM should differ per arith-subst (zsh contract).
     let (_, output, _) = run_zshrs("a=$((RANDOM)); b=$((RANDOM)); [[ $a != $b ]] && echo diff");
@@ -5962,7 +5977,7 @@ fn test_extendedglob_tilde_exclusion() {
     );
     let (_, output, _) = run_zshrs(&cmd);
     let _ = std::fs::remove_dir_all(&dir);
-    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    let mut parts: Vec<&str> = output.split_whitespace().collect();
     parts.sort();
     assert_eq!(parts, vec!["a.txt", "c.txt"]);
 }
@@ -5979,7 +5994,7 @@ fn test_extendedglob_caret_negation() {
     let cmd = format!("setopt extendedglob; cd {} && echo ^b", dir.display());
     let (_, output, _) = run_zshrs(&cmd);
     let _ = std::fs::remove_dir_all(&dir);
-    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    let mut parts: Vec<&str> = output.split_whitespace().collect();
     parts.sort();
     assert_eq!(parts, vec!["a", "c"]);
 }
@@ -6132,7 +6147,7 @@ fn test_glob_trailing_slash_preserved() {
     // when the input pattern ended in `/`.
     let dir = std::env::temp_dir().join("zshrs_test_trailing_slash");
     let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::create_dir_all(&dir.join("sub/sub2"));
+    let _ = std::fs::create_dir_all(dir.join("sub/sub2"));
     std::fs::File::create(dir.join("file")).unwrap();
     let cmd = format!("cd {} && echo */", dir.display());
     let (_, output, _) = run_zshrs(&cmd);
@@ -8270,7 +8285,7 @@ fn test_dirs_uses_logical_pwd_not_canonical() {
     // symlink to /private/tmp on macOS) and checking the
     // first path in dirs output.
     let (_, output, _) = run_zshrs(r#"pushd /tmp >/dev/null; dirs"#);
-    let first_token = output.trim().split_whitespace().next().unwrap_or("");
+    let first_token = output.split_whitespace().next().unwrap_or("");
     assert_eq!(
         first_token, "/tmp",
         "expected /tmp (logical), got: {output:?}"
@@ -8400,7 +8415,7 @@ fn test_glob_qualifier_size_uses_lstat_for_symlinks() {
     // L+0: include the symlink (lstat-size > 0) but exclude
     // the empty regular file.
     let (_, output, _) = run_zshrs(&format!("echo {}/*(L+0)", d));
-    let parts: std::collections::HashSet<&str> = output.trim().split_whitespace().collect();
+    let parts: std::collections::HashSet<&str> = output.split_whitespace().collect();
     assert!(
         parts.contains(format!("{}/link_e", d).as_str()),
         "expected link_e in L+0 results: {output:?}"
@@ -8424,7 +8439,7 @@ fn test_glob_qualifier_history_modifier() {
     let _ = std::fs::write(format!("{}/a.txt", d), "");
     let _ = std::fs::write(format!("{}/b.csv", d), "");
     let (_, output, _) = run_zshrs(&format!("echo {}/*(:r)", d));
-    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    let mut parts: Vec<&str> = output.split_whitespace().collect();
     parts.sort();
     assert_eq!(
         parts,
@@ -8446,7 +8461,7 @@ fn test_glob_qualifier_comma_or() {
     let _ = std::fs::write(format!("{}/a.txt", d), "");
     let _ = std::fs::create_dir_all(format!("{}/sub", d));
     let (_, output, _) = run_zshrs(&format!("echo {}/*(.,/)", d));
-    let mut parts: Vec<&str> = output.trim().split_whitespace().collect();
+    let mut parts: Vec<&str> = output.split_whitespace().collect();
     parts.sort();
     assert_eq!(
         parts,

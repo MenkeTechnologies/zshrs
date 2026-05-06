@@ -223,8 +223,10 @@ mod tests {
 
     #[test]
     fn test_truecolor_to_256() {
+        // (128, 128, 128) is mid-gray — lands in the 24-step grayscale
+        // ramp (indices 232..=255), not the 6×6×6 color cube.
         let idx = truecolor_to_256(128, 128, 128);
-        assert!(idx >= 232 || idx <= 255);
+        assert!((232..=255).contains(&idx), "expected gray-ramp index, got {idx}");
     }
 
     #[test]

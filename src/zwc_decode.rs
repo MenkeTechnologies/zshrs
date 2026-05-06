@@ -1726,10 +1726,10 @@ mod tests {
             ])
             .status()?;
         if !status.success() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("zcompile failed with exit {:?}", status.code()),
-            ));
+            return Err(std::io::Error::other(format!(
+                "zcompile failed with exit {:?}",
+                status.code()
+            )));
         }
         Ok((tmp, out_path))
     }

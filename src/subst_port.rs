@@ -1,4 +1,4 @@
-//! Substitution handling - Line-by-line port from zsh/Src/subst.c
+//! Substitution handling — port of zsh/Src/subst.c.
 //!
 //! subst.c - various substitutions
 //!
@@ -7,32 +7,45 @@
 //! Copyright (c) 1992-1997 Paul Falstad
 //! All rights reserved.
 //!
-//! This is a direct port of the C code, maintaining the same structure,
-//! variable names, and control flow where possible.
+//! Direct port of the C code, maintaining the same structure, variable
+//! names, and control flow where possible. The Rust port is larger
+//! than the C source (~8.6k vs 4.9k lines) primarily because it
+//! splits long C arms into named functions, lifts inline `static`
+//! helpers into module-level fns, and replaces unsafe pointer walks
+//! with explicit `Vec<char>` / `Vec<String>` traversals.
 //!
 //! Original C file: ~/forkedRepos/zsh/Src/subst.c (4922 lines)
 //!
-//! Port coverage:
-//! - prefork() - main pre-fork substitution dispatcher
-//! - stringsubst() - string substitution engine  
-//! - stringsubstquote() - $'...' quote processing
-//! - paramsubst() - parameter expansion (the big one: ~3300 lines in C)
-//! - multsub() - multiple word substitution
-//! - singsub() - single word substitution
-//! - filesub() / filesubstr() - tilde and equals expansion
-//! - modify() - history-style colon modifiers
-//! - dopadding() - left/right padding
-//! - getkeystring() - escape sequence processing
-//! - getmatch() / getmatcharr() - pattern matching
-//! - quotestring() - various quoting modes
-//! - arithsubst() - arithmetic substitution
-//! - globlist() - glob expansion on list
-//! - get_strarg() / get_intarg() - argument parsing
-//! - strcatsub() - string concatenation for substitution
-//! - substevalchar() - (#) flag evaluation
-//! - equalsubstr() - =command substitution
-//! - dstackent() - directory stack access
-//! - All helper functions
+//! All 24 top-level C functions are present:
+//! - prefork() — main pre-fork substitution dispatcher
+//! - stringsubst() — string substitution engine
+//! - stringsubstquote() — $'...' quote processing
+//! - paramsubst() — parameter expansion (the largest: ~3300 lines in C)
+//! - multsub() — multiple word substitution
+//! - singsub() — single word substitution
+//! - filesub() / filesubstr() — tilde and equals expansion
+//! - equalsubstr() — `=command` substitution
+//! - modify() — history-style colon modifiers
+//! - dopadding() — left/right padding (4-colon `(l:N:STR1:STR2:)` form)
+//! - getmatch() / getmatcharr() — pattern matching
+//! - quotestring() — various quoting modes
+//! - arithsubst() — arithmetic substitution
+//! - globlist() — glob expansion on list
+//! - get_strarg() / get_intarg() — argument parsing
+//! - strcatsub() — string concatenation for substitution
+//! - subst_parse_str() — substitution string parsing
+//! - substevalchar() — `(#)` flag evaluation
+//! - untok_and_escape() — token un-escape helper
+//! - check_colon_subscript() — `:OFFSET[:LEN]` substring detection
+//! - dstackent() — directory stack access
+//! - keyvalpairelement() — `(kv)` flag pair walker
+//! - quotesubst() — quoting helper for substitution
+//! - wcpadwidth() — multibyte char display-cell width for `dopadding`
+//!
+//! Behavioral parity is checked by `tests/zshrs_shell.rs` and the
+//! `tests/no_tree_walker_dispatch.rs` invariant suite. Any divergence
+//! from `/opt/homebrew/bin/zsh -fc` for the in-scope substitution
+//! shapes is treated as a bug — file an issue + add a parity test.
 
 use std::collections::VecDeque;
 
@@ -194,9 +207,9 @@ pub struct SubstState {
     pub variables: std::collections::HashMap<String, String>,
     pub arrays: std::collections::HashMap<String, Vec<String>>,
     pub assoc_arrays: std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
-    /// When set, prefork's third pass skips `filesub` (tilde +
+    /// When set, prefork's third pass skips `filesub` (tilde and
     /// `=cmd` expansion). Used by `singsub_no_tilde` for pattern
-    /// + replacement contexts in `${var/pat/repl}` where the
+    /// and replacement contexts in `${var/pat/repl}` where the
     /// leading `~` must stay literal.
     pub skip_filesub: bool,
     /// Names of all defined shell functions. Populated by
@@ -257,11 +270,30 @@ impl SubstState {
         // wins over eagerly enumerating every executable on disk.
         let command_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+        let mut arrays = exec.arrays.clone();
+        // Mirror exec's positional params under the "@", "*", and
+        // "argv" array keys so subst_port can use one lookup path for
+        // `$@`, `${@:N:M}`, `${#@}`, `${#*}`, `$argv` etc. Source of
+        // truth lives in `exec.positional_params`; the snapshot is
+        // read-only — `set --` runs through exec directly, not
+        // through SubstState.
+        if !exec.positional_params.is_empty() {
+            arrays
+                .entry("@".to_string())
+                .or_insert_with(|| exec.positional_params.clone());
+            arrays
+                .entry("*".to_string())
+                .or_insert_with(|| exec.positional_params.clone());
+            arrays
+                .entry("argv".to_string())
+                .or_insert_with(|| exec.positional_params.clone());
+        }
+
         SubstState {
             errflag: false,
             opts: SubstOptions::default(),
             variables: exec.variables.clone(),
-            arrays: exec.arrays.clone(),
+            arrays,
             assoc_arrays,
             skip_filesub: false,
             function_names,
@@ -1447,40 +1479,72 @@ fn parse_brace_param(
                 'R' => flags.reverse_subscript = true,
                 'B' | 'E' | 'N' => flags.begin_end_length = true,
                 's' => {
-                    // s:sep: - split separator
+                    // (s.SEP.) split separator — zsh allows ANY
+                    // non-alphanumeric ASCII char as the delimiter
+                    // (`(s.:.)`, `(s/x/)`, `(s| |)` all valid). Direct
+                    // port of Src/subst.c paramsubst's flag parser
+                    // which captures the next char as `del` and reads
+                    // until the matching `del`.
                     pos += 1;
-                    if pos < chars.len() && chars[pos] == ':' {
+                    if pos < chars.len()
+                        && !chars[pos].is_ascii_alphanumeric()
+                        && chars[pos] != ')'
+                    {
+                        let del = chars[pos];
                         pos += 1;
                         let mut sep = String::new();
-                        while pos < chars.len() && chars[pos] != ':' {
+                        while pos < chars.len() && chars[pos] != del {
                             sep.push(chars[pos]);
                             pos += 1;
                         }
                         flags.split_sep = Some(sep);
+                        if pos < chars.len() && chars[pos] == del {
+                            pos += 1;
+                        }
+                        // Position will be decremented below.
+                        pos = pos.saturating_sub(1);
                     } else {
                         pos -= 1;
                     }
                 }
                 'j' => {
-                    // j:sep: - join separator
+                    // (j.SEP.) join separator — same delimiter rules
+                    // as (s).
                     pos += 1;
-                    if pos < chars.len() && chars[pos] == ':' {
+                    if pos < chars.len()
+                        && !chars[pos].is_ascii_alphanumeric()
+                        && chars[pos] != ')'
+                    {
+                        let del = chars[pos];
                         pos += 1;
                         let mut sep = String::new();
-                        while pos < chars.len() && chars[pos] != ':' {
+                        while pos < chars.len() && chars[pos] != del {
                             sep.push(chars[pos]);
                             pos += 1;
                         }
                         flags.join_sep = Some(sep);
+                        if pos < chars.len() && chars[pos] == del {
+                            pos += 1;
+                        }
+                        pos = pos.saturating_sub(1);
                     } else {
                         pos -= 1;
                     }
                 }
                 'l' => {
-                    // l:len:fill: - left pad
+                    // (l:N:STR1:STR2:) — left-pad. Up to TWO string
+                    // args after the width: STR1 is single-shot, STR2
+                    // is the repeating fill. Direct port of
+                    // Src/subst.c paramsubst flag parser. Empty STR1
+                    // is meaningful: `(l:N::STR2:)` triggers
+                    // dopadding's "no value" branch where the result
+                    // is just N copies of STR2.
+                    //
+                    // String args terminate on the closing delimiter
+                    // (`:` here) OR the closing `)` of the flag block
+                    // — `(l:5:0:)` is the same shape as `(l:5:0)`.
                     pos += 1;
                     if pos < chars.len() && chars[pos] == ':' {
-                        // Parse length and fill
                         pos += 1;
                         let mut len_str = String::new();
                         while pos < chars.len() && chars[pos].is_ascii_digit() {
@@ -1492,19 +1556,38 @@ fn parse_brace_param(
                         }
                         if pos < chars.len() && chars[pos] == ':' {
                             pos += 1;
-                            let mut fill = String::new();
-                            while pos < chars.len() && chars[pos] != ':' {
-                                fill.push(chars[pos]);
+                            let mut s1 = String::new();
+                            while pos < chars.len()
+                                && chars[pos] != ':'
+                                && chars[pos] != ')'
+                            {
+                                s1.push(chars[pos]);
                                 pos += 1;
                             }
-                            flags.pad_char = Some(fill.chars().next().unwrap_or(' '));
+                            flags.pad_string1 = Some(s1);
+                            if pos < chars.len() && chars[pos] == ':' {
+                                pos += 1;
+                                let mut s2 = String::new();
+                                while pos < chars.len()
+                                    && chars[pos] != ':'
+                                    && chars[pos] != ')'
+                                {
+                                    s2.push(chars[pos]);
+                                    pos += 1;
+                                }
+                                flags.pad_string2 = Some(s2);
+                            }
                         }
+                        // The outer loop does `pos += 1`, so back up
+                        // one so we don't skip the next flag char or
+                        // the closing `)`.
+                        pos = pos.saturating_sub(1);
                     } else {
                         pos -= 1;
                     }
                 }
                 'r' => {
-                    // r:len:fill: - right pad
+                    // (r:N:STR1:STR2:) — right-pad, mirrors `l`.
                     pos += 1;
                     if pos < chars.len() && chars[pos] == ':' {
                         pos += 1;
@@ -1518,13 +1601,29 @@ fn parse_brace_param(
                         }
                         if pos < chars.len() && chars[pos] == ':' {
                             pos += 1;
-                            let mut fill = String::new();
-                            while pos < chars.len() && chars[pos] != ':' {
-                                fill.push(chars[pos]);
+                            let mut s1 = String::new();
+                            while pos < chars.len()
+                                && chars[pos] != ':'
+                                && chars[pos] != ')'
+                            {
+                                s1.push(chars[pos]);
                                 pos += 1;
                             }
-                            flags.pad_char = Some(fill.chars().next().unwrap_or(' '));
+                            flags.pad_string1 = Some(s1);
+                            if pos < chars.len() && chars[pos] == ':' {
+                                pos += 1;
+                                let mut s2 = String::new();
+                                while pos < chars.len()
+                                    && chars[pos] != ':'
+                                    && chars[pos] != ')'
+                                {
+                                    s2.push(chars[pos]);
+                                    pos += 1;
+                                }
+                                flags.pad_string2 = Some(s2);
+                            }
                         }
+                        pos = pos.saturating_sub(1);
                     } else {
                         pos -= 1;
                     }
@@ -1621,6 +1720,50 @@ fn parse_brace_param(
             Some(nodes)
         };
         pos = p;
+    } else if pos < chars.len()
+        && chars[pos] == '$'
+        && pos + 1 < chars.len()
+        && chars[pos + 1] == '('
+    {
+        // `${(FLAGS)$(cmd)}` — cmd-substitution as the var-name slot.
+        // Direct port of Src/subst.c paramsubst's `${$(…)}` path which
+        // dispatches the inner `cmdsubst` and threads the captured
+        // output through `aval`. Capture the cmd-subst (handles
+        // nested parens via depth tracking), expand it through
+        // exec::expand_string so `$(cmd)` actually runs, and use the
+        // result as the pre-resolved value for the outer flag chain.
+        let cmd_start = pos;
+        let mut depth = 0;
+        let mut p = pos + 2; // past `$(`
+        depth = 1;
+        while p < chars.len() && depth > 0 {
+            match chars[p] {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        p += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            p += 1;
+        }
+        // Strip the leading `$(` and trailing `)` so the body alone
+        // goes to the cmd-subst runner. cmd_start points at `$`,
+        // body therefore starts at cmd_start+2 and ends at p-1.
+        let body: String = chars[cmd_start + 2..p.saturating_sub(1)]
+            .iter()
+            .collect();
+        let captured = crate::exec::with_executor(|exec| {
+            exec.run_command_substitution(&body)
+        });
+        // Strip trailing newlines (zsh's cmd-subst behavior — same as
+        // bash) before feeding to the flag chain.
+        let captured = captured.trim_end_matches('\n').to_string();
+        nested_value = Some(vec![captured]);
+        pos = p;
     } else {
         // Single-char special parameter names: `@`, `*`, `#`, `?`,
         // `$`, `!`, `0` (when alone). Direct port of paramsubst's
@@ -1645,9 +1788,28 @@ fn parse_brace_param(
     }
     let var_name: String = chars[var_start..pos].iter().collect();
 
-    // Check for subscript [...]
+    // `${!name}` is bash-only indirect — zsh rejects with "bad
+    // substitution". Single `${!}` is the bg-process PID and stays
+    // valid; only the form with a name AFTER `!` is bash.
+    if var_name == "!"
+        && pos < chars.len()
+        && chars[pos] != '}'
+        && chars[pos] != OUTBRACE
+    {
+        eprintln!("zshrs:1: bad substitution");
+        state.errflag = true;
+        let prefix: String = chars[..dollar_pos].iter().collect();
+        return (prefix, dollar_pos, Vec::new());
+    }
+
+    // Check for subscript [...]. Multiple chained subscripts
+    // (`${a[1][1]}`, `${a[1][2,4]}`) are stacked into `extra_subs`
+    // and applied after the primary subscript resolves.
+    // Direct port of Src/subst.c paramsubst's `getindex(s, &v, …)`
+    // loop which recurses on residual `[…]` after each pick.
     let mut subscript = None;
-    if chars.get(pos) == Some(&'[') || chars.get(pos) == Some(&INBRACK) {
+    let mut extra_subs: Vec<String> = Vec::new();
+    while chars.get(pos) == Some(&'[') || chars.get(pos) == Some(&INBRACK) {
         pos += 1;
         let sub_start = pos;
         let mut depth = 1;
@@ -1662,7 +1824,12 @@ fn parse_brace_param(
                 pos += 1;
             }
         }
-        subscript = Some(chars[sub_start..pos].iter().collect::<String>());
+        let captured: String = chars[sub_start..pos].iter().collect();
+        if subscript.is_none() {
+            subscript = Some(captured);
+        } else {
+            extra_subs.push(captured);
+        }
         pos += 1; // Skip ]
     }
 
@@ -1705,6 +1872,18 @@ fn parse_brace_param(
                             operator = Some(":#");
                             pos += 1;
                         }
+                        // `:^arr2` zip-short / `:^^arr2` zip-long.
+                        // Port of Src/subst.c paramsubst's SUB_ZIP_SHORT
+                        // / SUB_ZIP_LONG arms — interleave elements
+                        // from the named second array.
+                        '^' if pos + 1 < chars.len() && chars[pos + 1] == '^' => {
+                            operator = Some(":^^");
+                            pos += 2;
+                        }
+                        '^' => {
+                            operator = Some(":^");
+                            pos += 1;
+                        }
                         // `::=` unconditional assign — port of zsh's
                         // extension that fires regardless of whether
                         // the var is set/empty (subst.c handles via
@@ -1724,15 +1903,18 @@ fn parse_brace_param(
                         // by the leading char — a digit / `-` / space
                         // is substring, anything else in the modifier
                         // alphabet is a modifier.
-                        c if "hHtTrRfFqQasSAuUlLeEgGwWcCpP&".contains(c) => {
+                        // Per Src/subst.c paramsubst — substring uses
+                        // the `:OFFSET[:LEN]` numeric form. Anything
+                        // non-numeric routes through `modify()` so
+                        // unknown modifier letters emit
+                        // "unrecognized modifier `X'" instead of
+                        // silently parsing as offset 0.
+                        c if c.is_alphabetic() || c == '&' => {
                             operator = Some(":mod");
-                            // pos stays at the modifier letter — the
-                            // operand-collection loop below picks up
-                            // the whole `h:t:r` / `s/x/y/` chain.
                         }
                         _ => {
                             operator = Some(":");
-                        } // Substring
+                        } // Substring (digit, '-', '+', ' ', '(', etc.)
                     }
                 }
             }
@@ -1808,6 +1990,15 @@ fn parse_brace_param(
                     operator = Some(",");
                 }
             }
+            // `${var@OP}` is bash-only — zsh's parameter expansion
+            // does not recognize `@` as a postfix operator and reports
+            // "bad substitution". Capture the operator here so the
+            // operand-collection loop below skips it cleanly and the
+            // `Some("@op")` arm emits the diagnostic.
+            '@' => {
+                operator = Some("@op");
+                pos += 1;
+            }
             _ => {}
         }
     }
@@ -1845,6 +2036,18 @@ fn parse_brace_param(
     // Pre-resolved value from a nested `${${…}…}` form short-circuits
     // the by-name lookup — operators / flags apply to that value.
     let mut value = if let Some(v) = nested_value.take() {
+        // (P) flag with a nested var-name slot — `${(P)$(echo a)}` or
+        // `${(P)${...}}`. Use the captured/resolved value as the
+        // target name and look it up. Mirrors paramsubst's `aspar`
+        // arm: `name = aval[0]; aval = NULL; getvalue(name)`.
+        if flags.prompt_expand {
+            let target_name = v.first().cloned().unwrap_or_default();
+            if target_name.is_empty() {
+                Vec::new()
+            } else {
+                get_param_with_subscript(&target_name, subscript.as_deref(), state)
+            }
+        } else
         // Direct port of Src/subst.c paramsubst's `${${…}[idx]}` path:
         // when the var-name slot is itself an inner ${…}, the outer
         // `[subscript]` applies to the inner's aval. C source threads
@@ -1935,7 +2138,14 @@ fn parse_brace_param(
         // up THAT as a parameter name. Src/subst.c:1983-2000.
         // Multi-level indirection (`${(PP)x}`) is not supported by
         // C either; one level of redirection.
-        let target_name = get_param_value(&var_name, state);
+        // When the var-name slot was a cmd-subst (`${(P)$(echo a)}`),
+        // the nested_value already holds the captured output — use
+        // it as the target name directly. Same for `${(P)${...}}`.
+        let target_name = if let Some(v) = nested_value.take() {
+            v.first().cloned().unwrap_or_default()
+        } else {
+            get_param_value(&var_name, state)
+        };
         if subscript.is_some() {
             get_param_with_subscript(&target_name, subscript.as_deref(), state)
         } else if target_name.is_empty() {
@@ -1968,6 +2178,15 @@ fn parse_brace_param(
     } else {
         Vec::new()
     };
+
+    // Apply chained subscripts (`${a[1][1]}`, `${(s. .)s[1]}`).
+    // zsh recurses through `getindex(s, &v, …)` after each pick;
+    // here we walk `extra_subs` left-to-right, treating the current
+    // value vec as either an array (numeric index, `@`/`*` slice) or
+    // a single scalar (range subscript like `[2,4]` slices chars).
+    for extra in &extra_subs {
+        value = apply_chained_subscript(value, extra, state);
+    }
 
     // Handle `${+NAME}` — set-test. Direct port of Src/subst.c:3600-
     // 3602: `val = dupstring(vunset ? "0" : "1")`. The check is
@@ -2080,13 +2299,29 @@ fn parse_brace_param(
     // value. See the `length_prefix` setup above for the rationale
     // (zsh's chklen runs after operator, so `${#X:-default}` is
     // strlen(default) not strlen("")).
+    //
+    // `(c)` and `(w)` flags act as length-mode hints when combined
+    // with `#`: `${(c)#var}` is char-count, `${(w)#var}` is word-
+    // count. Direct port of Src/subst.c paramsubst's `chklen` arm
+    // which checks PSPRINT_FLAG_C / PSPRINT_FLAG_W. Once the flag
+    // has been consumed for length, clear it on `flags` so the
+    // post-pass `apply_param_flags` doesn't double-count.
     if length_prefix {
-        let len = if value.len() == 1 {
+        let len = if flags.count_chars {
+            value.iter().map(|s| s.chars().count()).sum::<usize>()
+        } else if flags.count_words {
+            value
+                .iter()
+                .map(|s| s.split_whitespace().count())
+                .sum::<usize>()
+        } else if value.len() == 1 {
             value[0].chars().count()
         } else {
             value.len()
         };
         value = vec![len.to_string()];
+        flags.count_chars = false;
+        flags.count_words = false;
     }
 
     // Apply post-operator flags: case mod, sort, unique, padding,
@@ -2220,6 +2455,8 @@ struct ParamFlags {
     pad_left: Option<usize>,
     pad_right: Option<usize>,
     pad_char: Option<char>,
+    pad_string1: Option<String>,
+    pad_string2: Option<String>,
 }
 
 /// Get parameter value (scalar or array)
@@ -2346,13 +2583,55 @@ fn get_param_with_subscript(
         }
     }
 
-    // Scalar
+    // Scalar — apply char-index or range subscript when present.
+    // Port of Src/subst.c paramsubst's scalar-subscript path (the
+    // `getindex` / `getarg` branch when the param resolves to a
+    // string and the subscript is `N` / `N,M`).
     let value = get_param_value(name, state);
     if value.is_empty() {
-        Vec::new()
-    } else {
-        vec![value]
+        return Vec::new();
     }
+    if let Some(sub) = real_sub {
+        let chars: Vec<char> = value.chars().collect();
+        let n = chars.len() as i64;
+        let to_idx = |i: i64| -> usize {
+            if i > 0 {
+                ((i - 1) as usize).min(chars.len())
+            } else if i < 0 {
+                ((n + i).max(0)) as usize
+            } else {
+                0
+            }
+        };
+        if let Some(comma) = sub.find(',') {
+            if let (Ok(a), Ok(b)) = (
+                sub[..comma].trim().parse::<i64>(),
+                sub[comma + 1..].trim().parse::<i64>(),
+            ) {
+                let start = to_idx(a);
+                let end = if b > 0 {
+                    (b as usize).min(chars.len())
+                } else if b < 0 {
+                    ((n + b + 1).max(0)) as usize
+                } else {
+                    0
+                };
+                if start < chars.len() && start < end {
+                    let slice: String = chars[start..end.min(chars.len())].iter().collect();
+                    return vec![slice];
+                }
+                return Vec::new();
+            }
+        }
+        if let Ok(idx) = sub.parse::<i64>() {
+            let real = to_idx(idx);
+            return chars
+                .get(real)
+                .map(|c| vec![c.to_string()])
+                .unwrap_or_default();
+        }
+    }
+    vec![value]
 }
 
 /// Bitmask of subscript flag bits parsed from the leading `(...)`.
@@ -2498,13 +2777,12 @@ fn apply_assoc_subscript_flags(
             .collect()
     } else if flags.forward_index || flags.reverse_index {
         // For assoc, (i)/(I) returns the KEY of the matching pair.
-        let it: Box<dyn Iterator<Item = &(String, String)>> = if flags.reverse_index {
+        let mut it: Box<dyn Iterator<Item = &(String, String)>> = if flags.reverse_index {
             Box::new(pairs.iter().rev())
         } else {
             Box::new(pairs.iter())
         };
-        it.filter(|e| matches(&pick(e)))
-            .next()
+        it.find(|e| matches(&pick(e)))
             .map(|e| e.0.clone())
             .into_iter()
             .collect()
@@ -2538,9 +2816,18 @@ fn apply_param_flags(
     // Split operations — gated on !ssub per the C source.
     if !ssub {
         if let Some(ref sep) = flags.split_sep {
+            // Default: drop empty fields. The `(@)` flag preserves
+            // them. Direct port of Src/subst.c paramsubst's
+            // sepsplit() call which honors the SUB_NULLEMPTY bit.
+            let preserve = flags.array_expand;
             result = result
                 .iter()
-                .flat_map(|s| s.split(sep).map(String::from))
+                .flat_map(|s| {
+                    s.split(sep.as_str())
+                        .filter(|f| preserve || !f.is_empty())
+                        .map(String::from)
+                        .collect::<Vec<_>>()
+                })
                 .collect();
         }
         if flags.split_lines {
@@ -2550,9 +2837,15 @@ fn apply_param_flags(
                 .collect();
         }
         if flags.split_words {
+            // (z) — tokenize like the shell parser does. Direct port
+            // of Src/subst.c paramsubst's case 'z' arm which calls
+            // bufferwords() (Src/lex.c) — it returns shell-token
+            // boundaries, not whitespace splits. Meta operators
+            // (`;`, `|`, `&`, `&&`, `||`, `;;`, redirects) become
+            // their own tokens.
             result = result
                 .iter()
-                .flat_map(|s| s.split_whitespace().map(String::from))
+                .flat_map(|s| z_tokenize(s))
                 .collect();
         }
     }
@@ -2797,31 +3090,47 @@ fn apply_param_flags(
         result = vec![count.to_string()];
     }
 
-    // Padding
+    // Padding. Routes through dopadding() (port of Src/subst.c
+    // dopadding) so the 4-colon `(l:N:STR1:STR2:)` form gets the
+    // exact zsh semantics: STR1 is the single-shot prefix (truncated
+    // if longer than width), STR2 is the repeating fill, and the
+    // caller's value sits in the middle (truncated if too big to fit).
+    //
+    // For an unset/empty input value WITH a padding flag, zsh's
+    // dopadding still produces N chars of the fill — `${(l:5::0:)42}`
+    // returns "00000" even when $42 is unset. Seed `result` with a
+    // single empty string so the per-element pad path runs once.
+    if (flags.pad_left.is_some() || flags.pad_right.is_some()) && result.is_empty() {
+        result = vec![String::new()];
+    }
     if let Some(width) = flags.pad_left {
-        let fill = flags.pad_char.unwrap_or(' ');
+        let s1 = flags.pad_string1.as_deref();
+        let s2 = flags
+            .pad_string2
+            .as_deref()
+            .or_else(|| flags.pad_char.as_ref().map(|_| ""));
+        let pre_one = s1;
+        let pre_mul = match (flags.pad_string1.as_ref(), flags.pad_string2.as_ref()) {
+            (Some(_), Some(s2)) => Some(s2.as_str()),
+            (Some(s1), None) => Some(s1.as_str()),
+            (None, _) => flags.pad_char.as_ref().map(|_| " "),
+        };
+        let _ = (s1, s2);
         result = result
             .iter()
-            .map(|s| {
-                if s.len() < width {
-                    format!("{}{}", fill.to_string().repeat(width - s.len()), s)
-                } else {
-                    s.clone()
-                }
-            })
+            .map(|s| dopadding_simple(s, width, 0, pre_one, pre_mul, None, None, flags.pad_char))
             .collect();
     }
     if let Some(width) = flags.pad_right {
-        let fill = flags.pad_char.unwrap_or(' ');
+        let post_one = flags.pad_string1.as_deref();
+        let post_mul = match (flags.pad_string1.as_ref(), flags.pad_string2.as_ref()) {
+            (Some(_), Some(s2)) => Some(s2.as_str()),
+            (Some(s1), None) => Some(s1.as_str()),
+            (None, _) => flags.pad_char.as_ref().map(|_| " "),
+        };
         result = result
             .iter()
-            .map(|s| {
-                if s.len() < width {
-                    format!("{}{}", s, fill.to_string().repeat(width - s.len()))
-                } else {
-                    s.clone()
-                }
-            })
+            .map(|s| dopadding_simple(s, 0, width, None, None, post_one, post_mul, flags.pad_char))
             .collect();
     }
 
@@ -2856,14 +3165,13 @@ fn strip_outer_dq_markers(s: &str) -> String {
     // pre-tokenized string), the literal quotes survive prefork and
     // must be peeled here. Only strip if both ends match — random
     // mid-string quotes stay (they were intentional content).
-    let trimmed = if (out.starts_with('"') && out.ends_with('"') && out.len() >= 2)
+    if (out.starts_with('"') && out.ends_with('"') && out.len() >= 2)
         || (out.starts_with('\'') && out.ends_with('\'') && out.len() >= 2)
     {
         out[1..out.len() - 1].to_string()
     } else {
         out
-    };
-    trimmed
+    }
 }
 
 /// Apply parameter operator
@@ -3102,10 +3410,40 @@ fn apply_operator_with_flags(
                 .collect()
         }
         Some(":") => {
-            // Substring: ${var:offset} or ${var:offset:length}
+            // Substring: ${var:offset} or ${var:offset:length}.
+            // For positional-array refs (`@`, `*`, `argv`) and named
+            // arrays the offset/length operate on ELEMENTS — port of
+            // Src/subst.c paramsubst's `case ':':` arm where it
+            // checks `isarr` and dispatches to array slicing instead
+            // of char-slice. Direct port of bash/zsh `${@:N:M}`.
             let parts: Vec<&str> = operand.split(':').collect();
             let offset: i64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             let length: Option<i64> = parts.get(1).and_then(|s| s.parse().ok());
+
+            let is_array_ref = matches!(var_name, "@" | "*" | "argv")
+                || (state.arrays.contains_key(var_name) && value.len() > 1);
+            if is_array_ref {
+                let arr = &value;
+                let n = arr.len() as i64;
+                // For `${@:N}` with N>=1, elements 1..N are the
+                // positionals (`$1` is index 0 in `value`). zsh's
+                // semantics: skip N positionals when N>0; -N from
+                // the end when N<0; N=0 includes `$0` (which we
+                // don't store in `arr`, so 0 means start).
+                let start = if offset < 0 {
+                    ((n + offset).max(0)) as usize
+                } else if offset == 0 {
+                    0
+                } else {
+                    ((offset - 1).max(0) as usize).min(arr.len())
+                };
+                let end = match length {
+                    Some(l) if l < 0 => ((n + l).max(start as i64)) as usize,
+                    Some(l) => (start + l as usize).min(arr.len()),
+                    None => arr.len(),
+                };
+                return arr[start..end].to_vec();
+            }
 
             value
                 .iter()
@@ -3130,31 +3468,31 @@ fn apply_operator_with_flags(
                 .collect()
         }
         Some("#") => {
-            // Remove shortest prefix matching pattern
+            // Remove shortest prefix matching pattern. Per
+            // Src/subst.c paramsubst's `case '#':` arm and getmatch():
+            // `(M)` flag (passed via `match_flag`) inverts return —
+            // matched portion instead of unmatched.
             value
                 .iter()
-                .map(|s| remove_prefix(s, operand, false))
+                .map(|s| strip_prefix_match(s, operand, false, match_flag))
                 .collect()
         }
         Some("##") => {
-            // Remove longest prefix matching pattern
             value
                 .iter()
-                .map(|s| remove_prefix(s, operand, true))
+                .map(|s| strip_prefix_match(s, operand, true, match_flag))
                 .collect()
         }
         Some("%") => {
-            // Remove shortest suffix matching pattern
             value
                 .iter()
-                .map(|s| remove_suffix(s, operand, false))
+                .map(|s| strip_suffix_match(s, operand, false, match_flag))
                 .collect()
         }
         Some("%%") => {
-            // Remove longest suffix matching pattern
             value
                 .iter()
-                .map(|s| remove_suffix(s, operand, true))
+                .map(|s| strip_suffix_match(s, operand, true, match_flag))
                 .collect()
         }
         Some("/") | Some("//") | Some("/#") | Some("/%") => {
@@ -3258,6 +3596,45 @@ fn apply_operator_with_flags(
             }
             out_vals
         }
+        Some(":^") | Some(":^^") => {
+            // Zip two arrays element-wise. `:^` (SUB_ZIP_SHORT) stops
+            // at min(len); `:^^` (SUB_ZIP_LONG) goes to max(len) and
+            // cycles the shorter. The operand is the name of the
+            // second array. Port of Src/subst.c paramsubst's SUB_ZIP
+            // path.
+            let second = state
+                .arrays
+                .get(operand)
+                .cloned()
+                .or_else(|| state.variables.get(operand).map(|v| vec![v.clone()]))
+                .unwrap_or_default();
+            if value.is_empty() || second.is_empty() {
+                return value;
+            }
+            let long = operator == Some(":^^");
+            let total = if long {
+                value.len().max(second.len())
+            } else {
+                value.len().min(second.len())
+            };
+            let mut out: Vec<String> = Vec::with_capacity(total * 2);
+            for i in 0..total {
+                let a = &value[i % value.len()];
+                let b = &second[i % second.len()];
+                out.push(a.clone());
+                out.push(b.clone());
+            }
+            out
+        }
+        Some("@op") => {
+            // `${var@OP}` is bash-only — zsh's parameter expansion
+            // rejects `@` as a postfix operator. zsh-native is
+            // `${(q)var}` / `${(Q)var}` for quoting and `${(t)var}`
+            // for type. Emit "bad substitution".
+            eprintln!("zshrs:1: bad substitution");
+            state.errflag = true;
+            Vec::new()
+        }
         Some("^") => {
             // `${var^}` is bash-only (uppercase first char). zsh
             // rejects — see the `^^` arm below for rationale.
@@ -3293,6 +3670,95 @@ fn apply_operator_with_flags(
             Vec::new()
         }
         _ => value,
+    }
+}
+
+/// Find the boundary index in `s` (in chars) such that `s[..idx]`
+/// is the prefix matching `pattern`. `greedy=true` returns the
+/// longest such prefix; otherwise the shortest. `None` if no
+/// prefix of `s` matches `pattern`.
+///
+/// Port of zsh's getmatch() prefix path in Src/subst.c. We use
+/// crate::glob::pattern_match for the actual glob test and iterate
+/// candidate prefix lengths in greedy order. O(n²) in the worst case
+/// but n is short for shell strings.
+fn find_prefix_match(s: &str, pattern: &str) -> Vec<usize> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut matches: Vec<usize> = Vec::new();
+    for end in 0..=chars.len() {
+        let candidate: String = chars[..end].iter().collect();
+        if crate::glob::pattern_match(pattern, &candidate, false, true) {
+            matches.push(end);
+        }
+    }
+    matches
+}
+
+fn find_suffix_match(s: &str, pattern: &str) -> Vec<usize> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut matches: Vec<usize> = Vec::new();
+    for start in 0..=chars.len() {
+        let candidate: String = chars[start..].iter().collect();
+        if crate::glob::pattern_match(pattern, &candidate, false, true) {
+            matches.push(start);
+        }
+    }
+    matches
+}
+
+/// Strip a prefix of `s` matching `pattern`. Returns the unmatched
+/// tail by default; with `match_flag` returns the matched head
+/// (empty when no match).
+fn strip_prefix_match(s: &str, pattern: &str, greedy: bool, match_flag: bool) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let matches = find_prefix_match(s, pattern);
+    let chosen = if greedy {
+        matches.iter().copied().max()
+    } else {
+        matches.iter().copied().min()
+    };
+    match chosen {
+        Some(end) => {
+            if match_flag {
+                chars[..end].iter().collect()
+            } else {
+                chars[end..].iter().collect()
+            }
+        }
+        None => {
+            if match_flag {
+                String::new()
+            } else {
+                s.to_string()
+            }
+        }
+    }
+}
+
+/// Suffix counterpart of `strip_prefix_match`.
+fn strip_suffix_match(s: &str, pattern: &str, greedy: bool, match_flag: bool) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let matches = find_suffix_match(s, pattern);
+    let chosen = if greedy {
+        matches.iter().copied().min()
+    } else {
+        matches.iter().copied().max()
+    };
+    match chosen {
+        Some(start) => {
+            if match_flag {
+                chars[start..].iter().collect()
+            } else {
+                chars[..start].iter().collect()
+            }
+        }
+        None => {
+            if match_flag {
+                String::new()
+            } else {
+                s.to_string()
+            }
+        }
     }
 }
 
@@ -4115,13 +4581,27 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String {
             // Apply modifier to each word
             let separator = sep.as_deref().unwrap_or(" ");
             let words: Vec<&str> = result.split(separator).collect();
-            let modified: Vec<String> = words
-                .iter()
-                .map(|w| apply_single_modifier(w, modifier, gbal, state))
-                .collect();
+            let mut modified: Vec<String> = Vec::with_capacity(words.len());
+            for w in &words {
+                match apply_single_modifier(w, modifier, gbal, state) {
+                    Some(m) => modified.push(m),
+                    None => {
+                        eprintln!("zshrs: unrecognized modifier `{}'", modifier);
+                        state.errflag = true;
+                        return String::new();
+                    }
+                }
+            }
             result = modified.join(separator);
         } else {
-            result = apply_single_modifier(&result, modifier, gbal, state);
+            match apply_single_modifier(&result, modifier, gbal, state) {
+                Some(m) => result = m,
+                None => {
+                    eprintln!("zshrs: unrecognized modifier `{}'", modifier);
+                    state.errflag = true;
+                    return String::new();
+                }
+            }
         }
     }
 
@@ -4146,47 +4626,56 @@ fn apply_subst(s: &str, pat: &str, repl: &str, gbal: bool) -> String {
     }
 }
 
-/// Apply a single modifier to a string
-fn apply_single_modifier(s: &str, modifier: char, gbal: bool, _state: &mut SubstState) -> String {
-    match modifier {
-        // :a - absolute path
-        'a' => {
-            if s.starts_with('/') {
-                s.to_string()
-            } else if let Ok(cwd) = std::env::current_dir() {
-                format!("{}/{}", cwd.display(), s)
-            } else {
-                s.to_string()
+/// Apply a single modifier to a string. Returns `None` for unknown
+/// modifiers so the caller can emit "unrecognized modifier".
+fn apply_single_modifier(
+    s: &str,
+    modifier: char,
+    gbal: bool,
+    _state: &mut SubstState,
+) -> Option<String> {
+    Some(match modifier {
+        // :a - absolute path. Lexical: prepend cwd if relative,
+        // collapse `.` and `..` segments without consulting the
+        // filesystem. Port of Src/subst.c modify's `case 'a':` arm
+        // which calls `xsymlinks(…, /*resolve=*/0)`.
+        'a' => lexical_canonicalize(s, false),
+        // :A - real path. Lexical canonicalize first (so non-existent
+        // paths still get `/./` collapsed), then ask the OS to resolve
+        // symlinks. If realpath fails (file doesn't exist), keep the
+        // lexical result. Port of Src/subst.c modify's `case 'A':` arm.
+        'A' => {
+            let lex = lexical_canonicalize(s, false);
+            match std::fs::canonicalize(&lex) {
+                Ok(p) => p.to_string_lossy().to_string(),
+                Err(_) => lex,
             }
         }
-        // :A - real path (resolve symlinks)
-        'A' => match std::fs::canonicalize(s) {
-            Ok(p) => p.to_string_lossy().to_string(),
-            Err(_) => s.to_string(),
-        },
         // :c - command path (like which)
         'c' => {
             if let Ok(path) = std::env::var("PATH") {
                 for dir in path.split(':') {
                     let full = format!("{}/{}", dir, s);
                     if std::path::Path::new(&full).exists() {
-                        return full;
+                        return Some(full);
                     }
                 }
             }
             s.to_string()
         }
-        // :h - head (directory)
-        'h' => match s.rfind('/') {
-            Some(0) => "/".to_string(),
-            Some(pos) => s[..pos].to_string(),
-            None => ".".to_string(),
-        },
-        // :t - tail (filename)
-        't' => match s.rfind('/') {
-            Some(pos) => s[pos + 1..].to_string(),
-            None => s.to_string(),
-        },
+        // :h - head (directory). Delegates to remtpath() (port of
+        // Src/hist.c:2056). Strips trailing slashes, then drops the
+        // filename. `/tmp/` → `/`, `//` → `/`, `/a/b/c` → `/a/b`.
+        'h' => remtpath(s, 0),
+        // :t - tail (filename). Port of remlpaths() — strips trailing
+        // slashes first to match the head logic.
+        't' => {
+            let trimmed = s.trim_end_matches('/');
+            match trimmed.rfind('/') {
+                Some(pos) => trimmed[pos + 1..].to_string(),
+                None => trimmed.to_string(),
+            }
+        }
         // :r - remove extension
         'r' => match s.rfind('.') {
             Some(pos) if pos > 0 && !s[..pos].ends_with('/') => s[..pos].to_string(),
@@ -4201,21 +4690,18 @@ fn apply_single_modifier(s: &str, modifier: char, gbal: bool, _state: &mut Subst
         'l' => s.to_lowercase(),
         // :u - uppercase
         'u' => s.to_uppercase(),
-        // :q - quote
-        'q' => {
-            format!("'{}'", s.replace('\'', "'\\''"))
-        }
-        // :Q - unquote
-        'Q' => {
-            let trimmed = s.trim();
-            if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-                || (trimmed.starts_with('"') && trimmed.ends_with('"'))
-            {
-                trimmed[1..trimmed.len() - 1].to_string()
-            } else {
-                s.to_string()
-            }
-        }
+        // :q - backslash-escape shell metacharacters. Port of
+        // Src/subst.c modify's `case 'q':` arm which calls
+        // quotestring(copy, QT_BACKSLASH_SHOWNULL). The result is the
+        // shell metaclass-safe form: spaces, tabs, newlines, glob
+        // chars, quotes, $, &, etc. each preceded by `\`.
+        'q' => quote_backslash(s),
+        // :Q - unquote. Strip shell-quoting in `s` so the result is
+        // the literal value. Port of Src/subst.c modify's `case 'Q':`
+        // arm which calls parse_subst_string + remnulargs + untokenize.
+        // Drops backslash escapes (`\X` → `X`) and matched `'…'` /
+        // `"…"` quote pairs.
+        'Q' => unquote_subst(s),
         // :P - physical path
         'P' => {
             let path = if s.starts_with('/') {
@@ -4231,8 +4717,551 @@ fn apply_single_modifier(s: &str, modifier: char, gbal: bool, _state: &mut Subst
                 Err(_) => path,
             }
         }
-        _ => s.to_string(),
+        _ => return None,
+    })
+}
+
+/// Apply zsh-style left/right padding. Direct port of dopadding()
+/// from Src/subst.c at the level the (l:…:)/(r:…:) flags expose.
+///
+/// • `pre_num` / `post_num` — width to pad on each side.
+/// • `pre_one` / `post_one` — single-shot string (string1 of the
+///   flag) inserted once before/after `s`.
+/// • `pre_mul` / `post_mul` — repeating fill (string2 of the flag);
+///   when both string1 and string2 are given AND string1 is empty,
+///   the result is just `pre_mul` repeated to `pre_num` chars (the
+///   value gets pushed off — matches zsh's quirky 4-colon form).
+///
+/// 8 params mirrors the C signature 1:1 (Src/subst.c:893) — bundling
+/// into a struct just to satisfy clippy would obscure the port.
+#[allow(clippy::too_many_arguments)]
+fn dopadding_simple(
+    s: &str,
+    pre_num: usize,
+    post_num: usize,
+    pre_one: Option<&str>,
+    pre_mul: Option<&str>,
+    post_one: Option<&str>,
+    post_mul: Option<&str>,
+    fallback_char: Option<char>,
+) -> String {
+    // The 4-colon form `(l:N::STR2:)` — empty string1 + non-empty
+    // string2 — drops the value entirely and produces N copies of
+    // string2. Direct port of dopadding's handling when preone is ""
+    // and premul is non-NULL (line 4925-ish in subst.c).
+    if pre_num > 0
+        && pre_one.map(|s| s.is_empty()).unwrap_or(false)
+        && pre_mul.map(|s| !s.is_empty()).unwrap_or(false)
+    {
+        let fill = pre_mul.unwrap();
+        let mut out = String::with_capacity(pre_num);
+        let fill_chars: Vec<char> = fill.chars().collect();
+        for i in 0..pre_num {
+            out.push(fill_chars[i % fill_chars.len()]);
+        }
+        return out;
     }
+    if post_num > 0
+        && post_one.map(|s| s.is_empty()).unwrap_or(false)
+        && post_mul.map(|s| !s.is_empty()).unwrap_or(false)
+    {
+        let fill = post_mul.unwrap();
+        let mut out = String::with_capacity(post_num);
+        let fill_chars: Vec<char> = fill.chars().collect();
+        for i in 0..post_num {
+            out.push(fill_chars[i % fill_chars.len()]);
+        }
+        return out;
+    }
+    // Standard padding path. Truncate value if longer than the
+    // target width on the relevant side; otherwise fill from
+    // pre_one/post_one (once) followed by pre_mul/post_mul (repeating).
+    let value_chars: Vec<char> = s.chars().collect();
+    let value_len = value_chars.len();
+    if pre_num > 0 {
+        if value_len >= pre_num {
+            // Value too long — keep the rightmost pre_num chars.
+            return value_chars[value_len - pre_num..].iter().collect();
+        }
+        let need = pre_num - value_len;
+        let one = pre_one.unwrap_or("");
+        let one_chars: Vec<char> = one.chars().collect();
+        let one_take = one_chars.len().min(need);
+        let mul_need = need - one_take;
+        let fill_str = pre_mul
+            .map(|s| s.to_string())
+            .or_else(|| fallback_char.map(|c| c.to_string()))
+            .unwrap_or_else(|| " ".to_string());
+        let fill_chars: Vec<char> = fill_str.chars().collect();
+        let mut out = String::with_capacity(pre_num + value_len);
+        if !fill_chars.is_empty() {
+            for i in 0..mul_need {
+                out.push(fill_chars[i % fill_chars.len()]);
+            }
+        } else {
+            for _ in 0..mul_need {
+                out.push(' ');
+            }
+        }
+        // Take the suffix of pre_one's chars so a long string1 is
+        // truncated on the LEFT when partially consumed (matches
+        // dopadding's "preone may be truncated on the left").
+        let take_from = one_chars.len().saturating_sub(one_take);
+        for c in &one_chars[take_from..] {
+            out.push(*c);
+        }
+        out.extend(value_chars);
+        return out;
+    }
+    if post_num > 0 {
+        if value_len >= post_num {
+            // Truncate to post_num chars on the right.
+            return value_chars[..post_num].iter().collect();
+        }
+        let need = post_num - value_len;
+        let one = post_one.unwrap_or("");
+        let one_chars: Vec<char> = one.chars().collect();
+        let one_take = one_chars.len().min(need);
+        let mul_need = need - one_take;
+        let fill_str = post_mul
+            .map(|s| s.to_string())
+            .or_else(|| fallback_char.map(|c| c.to_string()))
+            .unwrap_or_else(|| " ".to_string());
+        let fill_chars: Vec<char> = fill_str.chars().collect();
+        let mut out: String = value_chars.iter().collect();
+        for c in &one_chars[..one_take] {
+            out.push(*c);
+        }
+        if !fill_chars.is_empty() {
+            for i in 0..mul_need {
+                out.push(fill_chars[i % fill_chars.len()]);
+            }
+        } else {
+            for _ in 0..mul_need {
+                out.push(' ');
+            }
+        }
+        return out;
+    }
+    s.to_string()
+}
+
+/// Shell-tokenize `s` per zsh `${(z)…}` semantics. Port of
+/// bufferwords() (Src/lex.c) at the level the (z) flag exposes:
+/// whitespace separates words; metacharacters `;`, `&`, `|`, `<`, `>`,
+/// `(`, `)` become their own tokens, with `&&`, `||`, `;;`, `>>`,
+/// `<<`, `>&`, `<&` recognised as compound tokens. Quoted regions
+/// preserve embedded whitespace and metas.
+fn z_tokenize(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    let push = |out: &mut Vec<String>, cur: &mut String| {
+        if !cur.is_empty() {
+            out.push(std::mem::take(cur));
+        }
+    };
+    let is_meta = |c: char| matches!(c, ';' | '&' | '|' | '<' | '>' | '(' | ')');
+    let mut cur = String::new();
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            push(&mut out, &mut cur);
+            i += 1;
+            continue;
+        }
+        if c == '\'' {
+            cur.push(c);
+            i += 1;
+            while i < chars.len() && chars[i] != '\'' {
+                cur.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() {
+                cur.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if c == '"' {
+            cur.push(c);
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    cur.push(chars[i]);
+                    cur.push(chars[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                cur.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() {
+                cur.push(chars[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if c == '\\' && i + 1 < chars.len() {
+            cur.push(c);
+            cur.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        if is_meta(c) {
+            push(&mut out, &mut cur);
+            // Compound metas: `&&`, `||`, `;;`, `>>`, `<<`, `>&`,
+            // `<&`. Single-char fallthrough otherwise.
+            let mut tok = String::from(c);
+            if i + 1 < chars.len() {
+                let pair = (c, chars[i + 1]);
+                let combined = matches!(
+                    pair,
+                    ('&', '&')
+                        | ('|', '|')
+                        | (';', ';')
+                        | ('>', '>')
+                        | ('<', '<')
+                        | ('>', '&')
+                        | ('<', '&')
+                );
+                if combined {
+                    tok.push(chars[i + 1]);
+                    i += 2;
+                    out.push(tok);
+                    continue;
+                }
+            }
+            out.push(tok);
+            i += 1;
+            continue;
+        }
+        cur.push(c);
+        i += 1;
+    }
+    push(&mut out, &mut cur);
+    out
+}
+
+/// Apply one chained subscript on top of an already-resolved value.
+/// Cases:
+///   • value has multiple elements → treat as array, pick by index /
+///     `@` / `*` / negative.
+///   • value has one element → treat as scalar, slice chars by index
+///     or `[N,M]` range. Port of zsh's getindex() recursion (subst.c).
+fn apply_chained_subscript(value: Vec<String>, sub: &str, state: &mut SubstState) -> Vec<String> {
+    let resolved_sub = singsub_no_tilde(sub, state);
+    let s = resolved_sub.trim();
+    if s.is_empty() {
+        return value;
+    }
+    if s == "@" || s == "*" {
+        return value;
+    }
+    // Range form `N,M` — slice chars/elements from N..=M (1-based).
+    if let Some(comma) = s.find(',') {
+        if let (Ok(a), Ok(b)) = (
+            s[..comma].trim().parse::<i64>(),
+            s[comma + 1..].trim().parse::<i64>(),
+        ) {
+            if value.len() == 1 {
+                let chars: Vec<char> = value[0].chars().collect();
+                let n = chars.len() as i64;
+                let start = if a > 0 { (a - 1) as usize } else if a < 0 { ((n + a).max(0)) as usize } else { 0 };
+                let end = if b > 0 { (b as usize).min(chars.len()) } else if b < 0 { ((n + b + 1).max(0)) as usize } else { 0 };
+                if start <= end && start <= chars.len() {
+                    return vec![chars[start..end.min(chars.len())].iter().collect()];
+                }
+                return vec![String::new()];
+            } else {
+                let n = value.len() as i64;
+                let start = if a > 0 { (a - 1) as usize } else if a < 0 { ((n + a).max(0)) as usize } else { 0 };
+                let end = if b > 0 { (b as usize).min(value.len()) } else if b < 0 { ((n + b + 1).max(0)) as usize } else { 0 };
+                if start < value.len() && start <= end {
+                    return value[start..end.min(value.len())].to_vec();
+                }
+                return Vec::new();
+            }
+        }
+    }
+    if let Ok(idx) = s.parse::<i64>() {
+        if value.len() == 1 {
+            let chars: Vec<char> = value[0].chars().collect();
+            let n = chars.len() as i64;
+            let real = if idx > 0 {
+                (idx - 1) as usize
+            } else if idx < 0 {
+                let off = n + idx;
+                if off < 0 {
+                    return vec![String::new()];
+                }
+                off as usize
+            } else {
+                return vec![String::new()];
+            };
+            return chars
+                .get(real)
+                .map(|c| vec![c.to_string()])
+                .unwrap_or_else(|| vec![String::new()]);
+        }
+        let n = value.len() as i64;
+        let real = if idx > 0 {
+            (idx - 1) as usize
+        } else if idx < 0 {
+            let off = n + idx;
+            if off < 0 {
+                return Vec::new();
+            }
+            off as usize
+        } else {
+            return Vec::new();
+        };
+        return value.into_iter().nth(real).map(|v| vec![v]).unwrap_or_default();
+    }
+    value
+}
+
+/// Backslash-escape shell metacharacters in `s`. Port of
+/// `quotestring(QT_BACKSLASH_SHOWNULL)` from Src/utils.c — same
+/// metaclass set: whitespace, glob, quoting, redirection, history.
+fn quote_backslash(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            ' ' | '\t' | '\n' | '\'' | '"' | '`' | '\\' | '$' | '&' | '|' | ';'
+            | '<' | '>' | '(' | ')' | '{' | '}' | '[' | ']' | '*' | '?' | '!'
+            | '#' | '~' | '^' | '=' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Strip shell-quoting from `s`. Drops `\X` → `X`, `'…'` and `"…"`
+/// to literal contents. Port of Src/subst.c modify's `case 'Q':` arm
+/// which calls parse_subst_string + remnulargs + untokenize.
+fn unquote_subst(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                if let Some(&nx) = chars.peek() {
+                    out.push(nx);
+                    chars.next();
+                }
+            }
+            '\'' => {
+                while let Some(&inner) = chars.peek() {
+                    chars.next();
+                    if inner == '\'' {
+                        break;
+                    }
+                    out.push(inner);
+                }
+            }
+            '"' => {
+                while let Some(&inner) = chars.peek() {
+                    chars.next();
+                    if inner == '"' {
+                        break;
+                    }
+                    if inner == '\\' {
+                        if let Some(&esc) = chars.peek() {
+                            out.push(esc);
+                            chars.next();
+                            continue;
+                        }
+                    }
+                    out.push(inner);
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Lexically resolve `.`/`..` segments in a path. If `s` is relative,
+/// prepend `$PWD` (or the OS cwd) so the result is absolute.
+/// `keep_relative=true` keeps relative paths relative.
+/// Port of `xsymlinks()` from Src/utils.c with `resolve=0` — same
+/// segment-walk logic without consulting the filesystem.
+fn lexical_canonicalize(s: &str, keep_relative: bool) -> String {
+    if s.is_empty() {
+        return s.to_string();
+    }
+    let absolute = s.starts_with('/');
+    let base: String = if absolute || keep_relative {
+        s.to_string()
+    } else {
+        let cwd = std::env::var("PWD")
+            .or_else(|_| {
+                std::env::current_dir().map(|p| p.to_string_lossy().to_string())
+            })
+            .unwrap_or_default();
+        if cwd.is_empty() {
+            s.to_string()
+        } else {
+            format!("{}/{}", cwd.trim_end_matches('/'), s)
+        }
+    };
+
+    let mut out: Vec<&str> = Vec::new();
+    for seg in base.split('/') {
+        match seg {
+            "" | "." => continue,
+            ".." => {
+                out.pop();
+            }
+            _ => out.push(seg),
+        }
+    }
+
+    let leading = if base.starts_with('/') { "/" } else { "" };
+    if out.is_empty() {
+        if leading.is_empty() { ".".to_string() } else { "/".to_string() }
+    } else {
+        format!("{}{}", leading, out.join("/"))
+    }
+}
+
+
+/// `wcpadwidth(wc, multi_width)` — return the display-cell width of
+/// `wc` per zsh's MULTIBYTE_SUPPORT padding logic. Direct port of
+/// Src/subst.c:848-866.
+///
+/// Modes:
+///   • `multi_width == 0` — every char counts as one cell.
+///   • `multi_width == 1` — use `wcwidth`-style cell counting.
+///   • else — combining/zero-width chars count as 0, all others as 1.
+///
+/// The Rust port uses `unicode-width`-style heuristics inline: ASCII
+/// printable + most BMP chars = 1 cell; CJK Unified Ideographs and
+/// other wide blocks = 2 cells; combining/control = 0.
+pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {
+    match multi_width {
+        0 => 1,
+        1 => {
+            let w = char_display_width(wc);
+            if w >= 0 { w } else { 0 }
+        }
+        _ => if char_display_width(wc) > 0 { 1 } else { 0 },
+    }
+}
+
+fn char_display_width(c: char) -> i32 {
+    let cp = c as u32;
+    // Control chars (C0/C1) — non-printable, width 0.
+    if cp < 0x20 || (0x7F..0xA0).contains(&cp) {
+        return 0;
+    }
+    // Combining marks (U+0300..036F, etc.) — width 0. Truncated set
+    // covering the most common cases; full support would require a
+    // unicode-width table.
+    if (0x0300..=0x036F).contains(&cp)
+        || (0x0483..=0x0489).contains(&cp)
+        || (0x0591..=0x05BD).contains(&cp)
+        || (0x0610..=0x061A).contains(&cp)
+        || (0x064B..=0x065F).contains(&cp)
+        || (0x0670..=0x0670).contains(&cp)
+        || (0x06D6..=0x06DC).contains(&cp)
+        || cp == 0x200B
+        || cp == 0x200C
+        || cp == 0x200D
+        || cp == 0xFEFF
+    {
+        return 0;
+    }
+    // CJK ranges, full-width forms — width 2.
+    if (0x1100..=0x115F).contains(&cp)
+        || (0x2E80..=0x303E).contains(&cp)
+        || (0x3041..=0x33FF).contains(&cp)
+        || (0x3400..=0x4DBF).contains(&cp)
+        || (0x4E00..=0x9FFF).contains(&cp)
+        || (0xA000..=0xA4CF).contains(&cp)
+        || (0xAC00..=0xD7A3).contains(&cp)
+        || (0xF900..=0xFAFF).contains(&cp)
+        || (0xFE30..=0xFE4F).contains(&cp)
+        || (0xFF00..=0xFF60).contains(&cp)
+        || (0xFFE0..=0xFFE6).contains(&cp)
+        || (0x20000..=0x2FFFD).contains(&cp)
+        || (0x30000..=0x3FFFD).contains(&cp)
+    {
+        return 2;
+    }
+    1
+}
+
+/// `subst_parse_str(sp, single, err)` — parse a substitution string in
+/// place: convert tokens, optionally suppressing errors, and recover
+/// the unquoted body for arithmetic / array-index evaluation. Direct
+/// port of Src/subst.c:1460-1487.
+///
+/// In zsh, this is used by arithsubst() to re-parse `$(( … ))`'s
+/// inner expression after parameter expansion has run, and by the
+/// `${…[N]}` index path to evaluate `N` as an arithmetic expression.
+///
+/// Returns the converted text on success, `None` on parse error
+/// (matches the C return value: 0=ok, 1=error).
+///
+/// The `single` flag (false) maps the lexer's `Qstring`/`Qtick` quoted
+/// markers back to plain `String`/`Tick` tokens, mirroring the inner
+/// loop at subst.c:1473-1485 that strips the doubled-up quote
+/// recognition.
+pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> {
+    // Without zsh's full parser available, we approximate: untokenize
+    // the input via existing lexer helpers and, when not `single`,
+    // walk the string converting `Qstring` (\u{8c}) → `String` (\u{85})
+    // and `Qtick` (\u{8e}) → `Tick` (\u{84}). This is the same
+    // transformation the C source applies to the buffer in-place.
+    let mut buf: String = s.to_string();
+    if !single {
+        let mut chars: Vec<char> = buf.chars().collect();
+        let mut qt = false;
+        // The C source uses Dnull (\u{91}) as the toggle for double-
+        // quoted regions. INBRACK in our tokens table is \u{91}, but
+        // the subst.c usage corresponds to Dnull from zsh.h. Use the
+        // value zsh actually emits there: 0x91 in the META range.
+        let dnull: char = '\u{91}';
+        for c in chars.iter_mut() {
+            if !qt {
+                if *c == '\u{8c}' {
+                    *c = '\u{85}';
+                } else if *c == '\u{8e}' {
+                    *c = '\u{84}';
+                }
+            }
+            if *c == dnull {
+                qt = !qt;
+            }
+        }
+        buf = chars.iter().collect();
+    }
+    // The error-bit is honored by the C caller via parsestr() /
+    // parsestrnoerr(); we don't have those parsers here. Surface the
+    // input as-is — callers using this for arith / index already
+    // run their own validation. Return None when `err` is set and
+    // the input contains unbalanced quotes (the only structural
+    // failure the C path explicitly checks for).
+    if err {
+        let mut depth_dq = 0usize;
+        let mut depth_sq = 0usize;
+        for c in buf.chars() {
+            if c == '"' {
+                depth_dq ^= 1;
+            } else if c == '\'' {
+                depth_sq ^= 1;
+            }
+        }
+        if depth_dq != 0 || depth_sq != 0 {
+            return None;
+        }
+    }
+    Some(buf)
 }
 
 /// Get a directory stack entry
@@ -6331,6 +7360,10 @@ pub fn getkeystring_ext(s: &str, flags: u32) -> (String, usize) {
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)]
+// Test names embed zsh's flag/modifier letters as written in the
+// shell — `(P)`, `(L)`, `(Q)`, `(U)`, etc. Forcing them to snake_case
+// would obscure which zsh feature the test pins.
 mod tests {
     use super::*;
 

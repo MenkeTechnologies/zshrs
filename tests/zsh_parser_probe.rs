@@ -5,7 +5,7 @@
 //! Failures here mean the port itself has gaps before we even start the
 //! compile_zsh.rs migration.
 
-use zsh::parser::{ZshCommand, ZshParser};
+use zsh::parser::ZshParser;
 
 fn parse_ok(src: &str) {
     let mut parser = ZshParser::new(src);
@@ -236,7 +236,7 @@ fn p_nested_if() {
 
 #[test]
 fn probe_cond_shape() {
-    use zsh::parser::{ZshCommand, ZshParser};
+    use zsh::parser::ZshParser;
     let mut p = ZshParser::new("[[ a == a ]]");
     let prog = p.parse().unwrap();
     eprintln!("[[]] AST: {:#?}", prog);

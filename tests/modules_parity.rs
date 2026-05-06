@@ -319,10 +319,10 @@ mod terminfo_module {
         assert_eq!(z.as_bytes(), r.as_bytes());
     }
 
-    /// `kbs` (Backspace) is intentionally NOT byte-exact: brew zsh
-    /// applies a stty-erase override (returns `\x7f` even when the
-    /// terminfo database says `^H`/`\x08`); zshrs returns the
-    /// database-truth value. Skip rather than pin a divergence.
+    // `kbs` (Backspace) is intentionally NOT byte-exact: brew zsh
+    // applies a stty-erase override (returns `\x7f` even when the
+    // terminfo database says `^H`/`\x08`); zshrs returns the
+    // database-truth value. Skip rather than pin a divergence.
 
     /// Application-keypad cursor keys are stable (no stty override).
     #[test]
