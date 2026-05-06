@@ -2061,8 +2061,15 @@ impl ZshCompiler {
                 // `dq_context_depth` counter so child compile_word_str
                 // calls can see they're being expanded inside DQ
                 // without us having to re-wrap (which would recurse).
-                let parent_is_dq = s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
-                if parent_is_dq {
+                // `parent_is_dq` is true if EITHER (a) the word itself
+                // is wrapped in DQ markers, or (b) the calling context
+                // already bumped `dq_context_depth` (e.g. cond's RHS
+                // pattern wants variable expansion but no filesystem
+                // glob — `[[ "$PATH" != *"$SCRIPTS"* ]]`).
+                let dq_marker_wrap =
+                    s.starts_with('\u{9e}') && s.ends_with('\u{9e}') && s.len() >= 2;
+                let parent_is_dq = dq_marker_wrap || self.dq_context_depth > 0;
+                if dq_marker_wrap {
                     self.dq_context_depth += 1;
                 }
                 // Detect glob metachars in the LITERAL segments (var
@@ -2117,7 +2124,7 @@ impl ZshCompiler {
                         }
                     }
                 }
-                if parent_is_dq {
+                if dq_marker_wrap {
                     self.dq_context_depth -= 1;
                 }
                 if needs_brace && !parent_is_dq {
@@ -2970,7 +2977,19 @@ impl ZshCompiler {
     /// trace block in execcond which prints each expanded operand.
     /// Operands are word-expanded so `$HOME` / `~` / `$(…)` show
     /// the resolved value, matching zsh's `[[ -r /Users/foo ]]`.
+    /// Operands inside a `[[ … ]]` cond are PATTERNS — `*` and `?`
+    /// stay literal in the trace output, never trigger filesystem
+    /// glob (which would NOMATCH-fail on `[[ x != *"$VAR"* ]]`).
+    /// Bump dq_context_depth so compile_word_str's segment-fast-path
+    /// gates `BUILTIN_GLOB_EXPAND` emission and BUILTIN_EXPAND_TEXT
+    /// runs in mode 1 (DoubleQuoted) which doesn't filesystem-glob.
     fn emit_cond_trace_runtime(&mut self, c: &crate::parser::ZshCond) {
+        self.dq_context_depth += 1;
+        self.emit_cond_trace_runtime_inner(c);
+        self.dq_context_depth -= 1;
+    }
+
+    fn emit_cond_trace_runtime_inner(&mut self, c: &crate::parser::ZshCond) {
         use crate::parser::ZshCond;
         let push_lit = |s: &mut Self, text: &str| {
             let idx = s.builder.add_constant(Value::str(text));
@@ -2986,17 +3005,17 @@ impl ZshCompiler {
         match c {
             ZshCond::Not(inner) => {
                 push_lit(self, "! ");
-                self.emit_cond_trace_runtime(inner);
+                self.emit_cond_trace_runtime_inner(inner);
             }
             ZshCond::And(a, b) => {
-                self.emit_cond_trace_runtime(a);
+                self.emit_cond_trace_runtime_inner(a);
                 push_lit(self, " && ");
-                self.emit_cond_trace_runtime(b);
+                self.emit_cond_trace_runtime_inner(b);
             }
             ZshCond::Or(a, b) => {
-                self.emit_cond_trace_runtime(a);
+                self.emit_cond_trace_runtime_inner(a);
                 push_lit(self, " || ");
-                self.emit_cond_trace_runtime(b);
+                self.emit_cond_trace_runtime_inner(b);
             }
             ZshCond::Unary(op, arg) => {
                 let op_clean = crate::lexer::untokenize(op);
@@ -3119,9 +3138,13 @@ impl ZshCompiler {
                     // RHS handling for `==` / `=` / `!=` patterns:
                     // - If it contains a variable / cmd-subst (`$`, `` ` ``)
                     //   route through compile_word_str so the value is
-                    //   substituted in. Wrap in DQ so the expansion
-                    //   doesn't trigger filesystem-glob — the result
-                    //   is a PATTERN matched by the test, not a path.
+                    //   substituted in. To preserve unquoted `*`/`?`/etc.
+                    //   as PATTERN metachars while still suppressing
+                    //   filesystem globbing of the result, bump
+                    //   dq_context_depth so compile_word_str's fast paths
+                    //   skip BUILTIN_GLOB_EXPAND. The runtime test op
+                    //   then matches the LHS against the assembled
+                    //   pattern at evaluation time.
                     // - Otherwise use the literal-pattern path with
                     //   pre-escaped quoted-glob metas.
                     let needs_expand = right.contains('\u{85}')   // META-$
@@ -3130,12 +3153,9 @@ impl ZshCompiler {
                         || right.contains('$')
                         || right.contains('`');
                     if needs_expand {
-                        let dq_wrapped = if right.starts_with('\u{9e}') {
-                            right.clone()
-                        } else {
-                            format!("\u{9e}{}\u{9e}", right)
-                        };
-                        self.compile_word_str(&dq_wrapped);
+                        self.dq_context_depth += 1;
+                        self.compile_word_str(right);
+                        self.dq_context_depth -= 1;
                     } else {
                         let escaped = escape_quoted_glob_metas(right);
                         let right_clean = crate::lexer::untokenize(&escaped);
