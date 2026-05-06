@@ -4958,6 +4958,20 @@ fn glob_to_regex_capturing(pattern: &str, anchored: bool) -> String {
                 regex.push(chars[i + 1]);
                 i += 1;
             }
+            // `(#e)` / `(#s)` end/start anchors — direct port of
+            // zsh's pattern.c P_EOL / P_BOL tokens. Detected by
+            // `(#e)` or `(#s)` 4-char lookahead. Emit `$` / `^`
+            // respectively. Used by zinit's
+            // `(#b)((*)\\(#e)|(*))` pattern to detect a trailing
+            // `\` in array elements.
+            '(' if i + 3 < chars.len()
+                && chars[i + 1] == '#'
+                && (chars[i + 2] == 'e' || chars[i + 2] == 's')
+                && chars[i + 3] == ')' =>
+            {
+                regex.push(if chars[i + 2] == 'e' { '$' } else { '^' });
+                i += 3; // outer loop increment handles the 4th
+            }
             // Capture groups + alternation pass through — the WHOLE
             // POINT of (#b) mode.
             '(' | ')' | '|' => regex.push(chars[i]),
