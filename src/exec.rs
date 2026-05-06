@@ -22944,6 +22944,15 @@ impl ShellExecutor {
                     && !args[i + 1].is_empty()
                 {
                     width = args[i + 1].parse().ok();
+                    // `-F N` / `-E N` use N as float precision, not
+                    // padding width — the in-flag form (`-F2`) sets
+                    // `precision` directly inside the char loop, but
+                    // the separate-arg form (`-F 2`) was only filling
+                    // `width`, so the storage formatter fell back to
+                    // its `precision.unwrap_or(10)` default.
+                    if (is_float || is_float_exp) && precision.is_none() {
+                        precision = width;
+                    }
                     i += 1;
                 }
                 // `-i 16` — output base as a separate arg. Mirrors the
