@@ -1621,6 +1621,28 @@ impl<'a> ZshParser<'a> {
                 return None;
             }
             match self.lexer.tok {
+                LexTok::Envstring | LexTok::Envarray => {
+                    // Mid-command assignment-shape arg under typeset
+                    // / declare / local / etc. (intypeset gates the
+                    // lexer to emit Envstring/Envarray for `name=val`
+                    // and `name=()` past the command name). Parse the
+                    // assignment, then emit a synthetic word
+                    // `NAME=value` (scalar) or `NAME=( … )` (array)
+                    // string so typeset's builtin arg list sees the
+                    // assignment-shape arg. Avoids the inline-env
+                    // scope path that mistakenly treats it like a
+                    // pre-cmd `X=Y cmd` assignment.
+                    if let Some(assign) = self.parse_assign() {
+                        let synthetic = match &assign.value {
+                            ZshAssignValue::Scalar(v) => format!("{}={}", assign.name, v),
+                            ZshAssignValue::Array(elems) => {
+                                format!("{}=({})", assign.name, elems.join(" "))
+                            }
+                        };
+                        words.push(synthetic);
+                    }
+                    self.lexer.zshlex();
+                }
                 LexTok::String | LexTok::Typeset => {
                     let s = self.lexer.tokstr.clone();
                     if let Some(s) = s {

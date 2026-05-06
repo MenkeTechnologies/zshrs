@@ -981,13 +981,37 @@ impl<'a> ZshLexer<'a> {
                 if self.incasepat <= 0 => {
                     self.incmdpos = true;
                 }
+            LexTok::Typeset => {
+                self.incmdpos = false;
+                // typeset / declare / local / export / readonly /
+                // integer / float / autoload accept assignment-shape
+                // args (NAME=value, NAME=()). Set intypeset so the
+                // lexer's `=`-after-name detector emits Envstring/
+                // Envarray for those args. Direct port of zsh's
+                // lex.c which sets `intypeset` when one of the
+                // typeset-family commands is seen at cmdpos.
+                self.intypeset = true;
+            }
             LexTok::String
-            | LexTok::Typeset
             | LexTok::Envarray
             | LexTok::Outpar
             | LexTok::Case
             | LexTok::Dinbrack => {
                 self.incmdpos = false;
+            }
+            // Command separators clear the intypeset bit so the next
+            // command's args don't get assignment-shape recognition.
+            LexTok::Seper
+            | LexTok::Newlin
+            | LexTok::Semi
+            | LexTok::Dsemi
+            | LexTok::Semiamp
+            | LexTok::Semibar
+            | LexTok::Amper
+            | LexTok::Damper
+            | LexTok::Dbar
+            | LexTok::Baramp => {
+                self.intypeset = false;
             }
             _ => {}
         }
@@ -2771,13 +2795,39 @@ impl<'a> ZshLexer<'a> {
             }
             // lex.c:345-353 — word/value-shaped tokens leave cmd-pos
             // so subsequent tokens are arguments, not a fresh command.
+            LexTok::Typeset => {
+                self.incmdpos = false;
+                // typeset / declare / local / export / readonly /
+                // integer / float / autoload accept assignment-shape
+                // args (NAME=value, NAME=()). Set intypeset so the
+                // lexer's `=`-after-name detector still emits Envstring
+                // / Envarray for those args. Direct port of zsh's
+                // lex.c which sets `intypeset` when one of the
+                // typeset-family commands is seen at cmdpos.
+                self.intypeset = true;
+            }
             LexTok::String
-            | LexTok::Typeset
             | LexTok::Envarray
             | LexTok::Outpar
             | LexTok::Case
             | LexTok::Dinbrack => {
                 self.incmdpos = false;
+            }
+            LexTok::Seper
+            | LexTok::Newlin
+            | LexTok::Semi
+            | LexTok::Dsemi
+            | LexTok::Semiamp
+            | LexTok::Semibar
+            | LexTok::Amper
+            | LexTok::Damper
+            | LexTok::Dbar
+            | LexTok::Baramp => {
+                // End of typeset-arg list — clear the intypeset bit
+                // so subsequent commands don't see assignment-shape
+                // recognition. Direct port of zsh's lex.c which
+                // clears intypeset on every command separator.
+                self.intypeset = false;
             }
             _ => {}
         }
