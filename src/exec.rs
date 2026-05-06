@@ -3503,6 +3503,22 @@ fn register_builtins(vm: &mut fusevm::VM) {
     // from assoc_arrays), then walk `flags` char-by-char applying each
     // transformation. Final state is either Value::str or Value::Array
     // depending on the last flag.
+    // Bridge entry that preserves array shape — see the const's doc.
+    // Pops [content] (the brace body without the outer ${...}) and
+    // returns Value::Array of per-element words.
+    vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
+        let content = vm.pop().to_str();
+        let nodes = with_executor(|exec| {
+            crate::subst_port::substitute_brace_array(&content, exec)
+        });
+        if nodes.len() == 1 {
+            // Preserve scalar context for single-element results so
+            // surrounding concat ops don't see an unexpected Array.
+            return fusevm::Value::str(nodes.into_iter().next().unwrap_or_default());
+        }
+        fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+    });
+
     vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
         let mut flags = vm.pop().to_str();
         let name = vm.pop().to_str();
@@ -8818,6 +8834,16 @@ pub const BUILTIN_CMD_POP: u16 = 345;
 /// AFTER expansion, so `echo for $i` shows as `echo for a` / `echo
 /// for b`. Direct port of Src/exec.c:2055-2066.
 pub const BUILTIN_XTRACE_ARGS: u16 = 346;
+
+/// Bridge into subst_port::substitute_brace_array for nested forms
+/// that need to PRESERVE array shape across the expand_string
+/// boundary. Stack: [content_string]. Returns Value::Array of the
+/// per-element words. Used by the compile path for
+/// `${(@)<nested>...##pat}` shapes — the standard substitute_brace
+/// returns String which collapses array→scalar; this builtin
+/// preserves the multi-word output via paramsubst's third return
+/// (`nodes` vec, the C source's `aval` thread).
+pub const BUILTIN_BRIDGE_BRACE_ARRAY: u16 = 347;
 
 /// Word-segment concat with FIRST/LAST sticking. Stack: [lhs, rhs].
 /// Used for default unquoted splice forms (`${arr[@]}`, `$@`, `$*`)

@@ -2194,6 +2194,41 @@ impl ZshCompiler {
             }
         }
 
+        // Bridge-array fast path: when the WHOLE word is a single
+        // `${...}` brace expression that the standard fast paths
+        // cannot handle (nested `${...}` in name slot, or any other
+        // shape that would otherwise hit the EXPAND_TEXT bridge with
+        // its String-collapse), AND the flag chain contains `(@)`
+        // signalling the user wants array-shape preservation, route
+        // through BUILTIN_BRIDGE_BRACE_ARRAY which calls into
+        // subst_port::substitute_brace_array and returns Value::Array.
+        // Direct port of zsh's `aval` threading in subst.c paramsubst:
+        // C source carries the per-element vector through `aval`,
+        // returning the multi-word output to the caller.
+        if !has_bnull {
+            if let Some(inner) = untoked.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+                if let Some(close) = matching_paren_close(inner) {
+                    let flag_chain = &inner[1..close];
+                    let after_flags = &inner[close + 1..];
+                    // Heuristic: only redirect when flag chain has
+                    // `@` AND the post-flags portion contains a
+                    // nested `${` (the case the standard fast paths
+                    // can't handle). Pure `(@)NAME` and
+                    // `(@)NAME[KEY]` are still handled by
+                    // parse_zsh_flag / parse_zsh_flag_subscript above.
+                    if flag_chain.contains('@') && after_flags.contains("${") {
+                        let body_const = self.builder.add_constant(Value::str(inner));
+                        self.builder.emit(Op::LoadConst(body_const), 0);
+                        self.builder.emit(
+                            Op::CallBuiltin(crate::exec::BUILTIN_BRIDGE_BRACE_ARRAY, 1),
+                            0,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
         // Phase 1 native param-modifier lowerings. Each replaces a
         // bridge case. The matcher is greedy from least-ambiguous to
         // most: `:-`, `:=`, `:?`, `:+` first (modifier ops), then
@@ -4883,6 +4918,30 @@ fn parse_zsh_flag(s: &str) -> Option<(&str, &str)> {
 /// scalar into BUILTIN_PARAM_FLAG via the `\u{01}` literal-value
 /// sentinel. Excludes nested `${…}` and dynamic `$`-keys (those need
 /// a different lowering — runtime expand-then-flag).
+/// Find the matching `)` for a leading `(` in `s`. Returns Some(index)
+/// pointing at the matching close; None if `s` doesn't start with `(`
+/// or the parens are unbalanced. Used by the bridge-array fast path
+/// to extract the flag-chain region from `(flags)body` shapes.
+fn matching_paren_close(s: &str) -> Option<usize> {
+    if !s.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn parse_zsh_flag_subscript(s: &str) -> Option<(&str, &str, &str)> {
     let inner = s.strip_prefix("${")?.strip_suffix('}')?;
     if inner.contains("${") {
