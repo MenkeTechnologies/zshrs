@@ -10946,21 +10946,35 @@ impl ShellExecutor {
     }
 
     /// Run hook functions (precmd, preexec, chpwd, etc.)
+    /// Direct port of zsh's `runhookdef` (Src/builtin.c) — invokes any
+    /// function literally named the hook (`chpwd`, `precmd`,
+    /// `preexec`) AND every entry in the matching `<hook>_functions`
+    /// array.
     pub fn run_hooks(&mut self, hook_name: &str) {
+        // Invoke a function by running its name as a script — zsh
+        // dispatch order (alias → function → builtin → external)
+        // hits the function. execute_script_zsh_pipeline runs through
+        // the same compile path the user-typed call would.
+        let invoke = |this: &mut Self, name: &str| {
+            if this.function_exists(name) {
+                let _ = this.execute_script(name);
+            }
+        };
+
+        // The hook function itself (`chpwd`, `precmd`, `preexec`) is
+        // invoked by NAME match in zsh — no registration step. Without
+        // this, top-level `chpwd() { … }` never fires.
+        invoke(self, hook_name);
         if let Some(funcs) = self.hook_functions.get(hook_name).cloned() {
             for func_name in funcs {
-                if self.function_exists(&func_name) {
-                    let _ = self.execute_script(&func_name.to_string());
-                }
+                invoke(self, &func_name);
             }
         }
-        // Also check for hook arrays (e.g., precmd_functions)
+        // `<hook>_functions` array — zsh stdlib + add-zsh-hook idiom.
         let array_name = format!("{}_functions", hook_name);
         if let Some(funcs) = self.arrays.get(&array_name).cloned() {
             for func_name in funcs {
-                if self.function_exists(&func_name) {
-                    let _ = self.execute_script(&func_name.to_string());
-                }
+                invoke(self, &func_name);
             }
         }
     }
@@ -20354,6 +20368,13 @@ impl ShellExecutor {
                 let stored_str = stored.to_string_lossy().to_string();
                 env::set_var("PWD", &stored);
                 self.variables.insert("PWD".to_string(), stored_str);
+                // Run zsh's `chpwd` hook + `chpwd_functions` array.
+                // Direct port of Src/builtin.c bin_cd's call to
+                // run_hooks("chpwd"). Without this, scripts that
+                // rely on `chpwd() { ... }` for prompt updates,
+                // direnv-style integration, etc. saw their hook
+                // never fire.
+                self.run_hooks("chpwd");
                 0
             }
             Err(e) => {
