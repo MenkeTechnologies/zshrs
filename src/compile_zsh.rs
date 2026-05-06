@@ -1163,6 +1163,84 @@ impl ZshCompiler {
                     self.builder.emit(Op::LoadConst(idx), 0);
                     return;
                 }
+                // Multi-segment SQ-concat shape: `NAME='X'\''Y'\''Z'`
+                // lexes to a sequence of SNULL-bounded chunks
+                // separated by BNULL+char (escape-concat). Direct
+                // port of zsh's parse-time concatenation rule
+                // (Src/lex.c::dquote_parse handles it the same way
+                // — adjacent quoted/unquoted segments form one
+                // word). p10k's `__p9k_intro_base='IFS=$'\'' \t…'\''`
+                // hits this shape — without the detector, the
+                // expansion path emitted `'IFS=$'` (with literal
+                // quotes) and `eval "$__p9k_intro"` ran broken
+                // code.
+                //
+                // Detector: every char in the value is either inside
+                // a SNULL pair OR is a BNULL-escaped char OR is the
+                // BNULL marker itself. NO `$` / `` ` `` outside
+                // SNULL pairs (those would mean an unquoted
+                // expansion segment that the bridge must handle).
+                let value_is_sq_concat = !value_chars.is_empty() && {
+                    let mut inside_sq = false;
+                    let mut all_inside_or_escaped = true;
+                    let mut had_sq = false;
+                    let mut i = 0;
+                    while i < value_chars.len() {
+                        let c = value_chars[i];
+                        if c == '\u{9d}' {
+                            inside_sq = !inside_sq;
+                            had_sq = true;
+                        } else if !inside_sq {
+                            if c == '\u{9f}' && i + 1 < value_chars.len() {
+                                // BNULL + char — escape pair, skip both
+                                i += 2;
+                                continue;
+                            }
+                            if matches!(c, '$' | '`' | '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}') {
+                                all_inside_or_escaped = false;
+                                break;
+                            }
+                            // Other un-SQ chars (literal text outside
+                            // SQ): fine, contributes to the value.
+                        }
+                        i += 1;
+                    }
+                    had_sq && all_inside_or_escaped && !inside_sq
+                };
+                if prefix_is_ident && value_is_sq_concat {
+                    // Decode: walk the value, dropping SNULL markers
+                    // and BNULL escape-bytes, emitting the rest as
+                    // literal. Inside SNULL: chars are verbatim.
+                    // Outside SNULL: BNULL+char becomes char literal.
+                    let mut decoded = String::new();
+                    let mut inside_sq = false;
+                    let mut i = 0;
+                    while i < value_chars.len() {
+                        let c = value_chars[i];
+                        if c == '\u{9d}' {
+                            inside_sq = !inside_sq;
+                            i += 1;
+                            continue;
+                        }
+                        if !inside_sq && c == '\u{9f}' && i + 1 < value_chars.len() {
+                            decoded.push(value_chars[i + 1]);
+                            i += 2;
+                            continue;
+                        }
+                        decoded.push(c);
+                        i += 1;
+                    }
+                    let mut out = String::with_capacity(prefix_clean.len() + 2 + decoded.len());
+                    out.push_str(&prefix_clean);
+                    if append {
+                        out.push('+');
+                    }
+                    out.push('=');
+                    out.push_str(&decoded);
+                    let idx = self.builder.add_constant(Value::str(out.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    return;
+                }
             }
             // Mixed: fall through. The runtime expand path needs to
             // see the SNULL-bounded segments as literal islands while
