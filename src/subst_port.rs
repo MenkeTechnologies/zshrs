@@ -2492,6 +2492,28 @@ fn get_param_with_subscript(
         None => (None, subscript),
     };
 
+    // Numeric-name positional shortcut: `$1`, `$2`, ..., `${1}`,
+    // `${10:t}` etc. The positional array is mirrored at `state
+    // .arrays["@"]` from `from_executor`; resolve the digit name
+    // to that slot (1-based → 0-based) so subsequent operators /
+    // modifiers see the actual positional value rather than empty.
+    // Direct port of zsh getindex()'s digit-name handling
+    // (Src/subst.c:1300-1340).
+    if !name.is_empty() && name.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(n) = name.parse::<usize>() {
+            if let Some(arr) = state.arrays.get("@") {
+                if n == 0 {
+                    // `$0` is the script name, not the first positional.
+                    // Fall through to env / variables lookup.
+                } else if let Some(v) = arr.get(n - 1) {
+                    return vec![v.clone()];
+                } else {
+                    return Vec::new();
+                }
+            }
+        }
+    }
+
     // Check if it's an array
     if let Some(arr) = state.arrays.get(name) {
         if let Some(flags) = sub_flags {

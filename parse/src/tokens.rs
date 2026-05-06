@@ -387,7 +387,12 @@ pub static RESERVED_WORDS: &[(&str, LexTok)] = &[
     ("if", LexTok::If),
     ("integer", LexTok::Typeset),
     ("local", LexTok::Typeset),
-    ("nocorrect", LexTok::Nocorrect),
+    // `nocorrect` is recognized as a precommand modifier in
+    // compile_zsh — keep it as a plain String token so the dispatcher
+    // can strip + recurse. Promoting it to LexTok::Nocorrect made the
+    // parser silently drop it (no consumer for the token), erasing
+    // the whole `nocorrect CMD ARGS` statement.
+    // ("nocorrect", LexTok::Nocorrect),
     ("readonly", LexTok::Typeset),
     ("repeat", LexTok::Repeat),
     ("select", LexTok::Select),
