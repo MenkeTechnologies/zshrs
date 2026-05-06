@@ -443,6 +443,22 @@ fn parse_pattern_flags_full(
                 backref = false;
                 i += 1;
             }
+            b'm' => {
+                // `(#m)` flag: per Src/pattern.c the matched text is
+                // exposed via $MATCH in the replacement, plus
+                // $MBEGIN/$MEND for offsets. zshrs uses the same
+                // backref-mode plumbing — the replacement template is
+                // re-expanded with caps available, so $MATCH resolves
+                // through expand_string. Direct port of zsh's
+                // `pat_pure_m` flag (line 154 in Src/pattern.c).
+                backref = true;
+                i += 1;
+            }
+            b'M' => {
+                // `(#M)` — disable (m) (rarely used, but symmetric).
+                backref = false;
+                i += 1;
+            }
             b'a' => {
                 i += 1;
                 let start = i;
@@ -7628,7 +7644,13 @@ fn register_builtins(vm: &mut fusevm::VM) {
         let has_glob = pattern
             .chars()
             .any(|c| matches!(c, '?' | '*' | '[' | ']' | '(' | '#'));
-        let glob_re: Option<regex::Regex> = if has_glob || case_insensitive_repl {
+        // backref_mode (set by `(#b)` / `(#m)` / `(#M)` flags) needs
+        // per-match capture iteration so `$match[N]` / `$MATCH` /
+        // `$MBEGIN` / `$MEND` resolve PER-replacement against the
+        // current capture. The literal-string replace path skips
+        // captures entirely, so MATCH stays empty. Force the regex
+        // path when backref_mode is set even for literal patterns.
+        let glob_re: Option<regex::Regex> = if has_glob || case_insensitive_repl || backref_mode {
             // Convert the glob pattern to a regex string:
             //   ? → . (any single char)
             //   * → .* (any seq)
@@ -7789,6 +7811,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 let expand_repl_with_caps = |caps: &regex::Captures| -> String {
                     if backref_mode {
                         with_executor(|exec| {
+                            // `(#b)` — per-group captures into `match[N]`
+                            // (1-based array). Also seed `MATCH` with the
+                            // whole-match text so `(#m)` plus `$MATCH` in
+                            // the replacement returns the matched portion.
+                            // Direct port of Src/pattern.c addbackref +
+                            // pat_pure_m which sets both views.
                             let mut arr = Vec::with_capacity(caps.len());
                             for i in 1..caps.len() {
                                 arr.push(
@@ -7798,6 +7826,14 @@ fn register_builtins(vm: &mut fusevm::VM) {
                                 );
                             }
                             exec.arrays.insert("match".to_string(), arr);
+                            if let Some(m0) = caps.get(0) {
+                                exec.variables
+                                    .insert("MATCH".to_string(), m0.as_str().to_string());
+                                exec.variables
+                                    .insert("MBEGIN".to_string(), (m0.start() + 1).to_string());
+                                exec.variables
+                                    .insert("MEND".to_string(), m0.end().to_string());
+                            }
                         });
                         with_executor(|exec| exec.expand_string(&repl_raw))
                     } else {
