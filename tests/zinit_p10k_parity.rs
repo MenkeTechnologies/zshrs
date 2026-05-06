@@ -2089,15 +2089,19 @@ print -- "[${${${(M)profile:#default}:+$lhi_hl}:-$profile_hl} ${(pj:$pro_sep:)pr
     /// Three branches probed.
     #[test]
     fn zinit_zero_cascading_fallback() {
+        // Set $0 explicitly to a known value so the test doesn't
+        // depend on the shell binary path (which differs between
+        // /opt/homebrew/bin/zsh and target/debug/zshrs).
         assert_parity(
-            r#"ZERO=/path/to/ZERO
+            r#"0=/my/script.zsh
+ZERO=/path/to/ZERO
 ZSH_ARGZERO=zsh
-print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-${(%):-%N}}]"
+print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-fallback}]"
 unset ZERO
-print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-${(%):-%N}}]"
+print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-fallback}]"
 unset ZERO
 ZSH_ARGZERO=$0
-print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-${(%):-%N}}]""#,
+print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-fallback}]""#,
         );
     }
 

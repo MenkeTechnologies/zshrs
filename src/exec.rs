@@ -6061,9 +6061,12 @@ fn register_builtins(vm: &mut fusevm::VM) {
             // wired list (params.c `ROVAR` flag) — not user-settable.
             // NOTE: `_` is NOT readonly — zsh allows assignments to
             // and `unset` of it (it's just the last-arg auto-update).
+            // ZSH_ARGZERO is also writable in zsh per Src/params.c
+            // (uses PM_SCALAR without PM_READONLY); zinit's startup
+            // line `ZSH_ARGZERO=$0` relies on this.
             let is_intrinsic_ro = matches!(
                 name.as_str(),
-                "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC"
+                "PPID" | "LINENO" | "argv0" | "ARGC"
             );
             let is_ro = is_intrinsic_ro
                 || exec.readonly_vars.contains(&name)
@@ -21683,7 +21686,7 @@ impl ShellExecutor {
             // and exit 0 (compat regression).
             let is_intrinsic_ro = matches!(
                 arg.as_str(),
-                "PPID" | "LINENO" | "ZSH_ARGZERO" | "argv0" | "ARGC"
+                "PPID" | "LINENO" | "argv0" | "ARGC"
             );
             let is_ro = is_intrinsic_ro
                 || self.readonly_vars.contains(arg)

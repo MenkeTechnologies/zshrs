@@ -3946,7 +3946,18 @@ fn apply_operator_with_flags(
             // used for filename expansion. zsh manual: "Note that
             // these all use shell pattern matching, not regular
             // expressions."
-            let regex_src = param_pattern_to_regex(operand);
+            // Expand `$VAR` / `${VAR}` references in the pattern
+            // BEFORE compiling. Direct port of Src/subst.c paramsubst's
+            // `case '#':` arm which calls singsub on the operand (line
+            // 3192 in C source). Without expansion, a pattern like
+            // `${a:#$b}` matches the literal string \"\$b\" instead of
+            // the value of $b.
+            let expanded_pat = if operand.contains('$') || operand.contains('`') {
+                singsub_no_tilde(operand, state)
+            } else {
+                operand.to_string()
+            };
+            let regex_src = param_pattern_to_regex(&expanded_pat);
             let re_opt = regex::Regex::new(&regex_src).ok();
             value
                 .into_iter()
