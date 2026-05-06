@@ -1169,6 +1169,73 @@ impl ZshCompiler {
             // expanding the surrounding `${…}` / `$name` content.
         }
 
+        // `NAME=<DNULL>…<DNULL>` — assignment-arg shape with a
+        // fully-DQ value (no `$` / `` ` `` / `\` escapes inside; for
+        // values WITH expansions the bridge path is required).
+        // Direct port of zsh's parse-time decision in par_simple
+        // where typeset-args inherit the value's quoting verbatim.
+        // Without this, `typeset foo="[[ test ]]"` stored
+        // `"[[ test ]]"` (DQ marks literal) because the runtime
+        // BUILTIN_EXPAND_TEXT mode-1 strip-outer-DQ logic only fires
+        // on whole-word DQ wrap, not on the `NAME=…` shape.
+        if s.contains('\u{9e}') {
+            let trimmed = s.trim_matches(|c: char| c.is_whitespace());
+            let trimmed_chars: Vec<char> = trimmed.chars().collect();
+            let eq_pos = trimmed_chars
+                .iter()
+                .position(|&c| c == '=' || c == '\u{8d}');
+            if let Some(eq_idx) = eq_pos {
+                let prefix: String = trimmed_chars[..eq_idx].iter().collect();
+                let value: String = trimmed_chars[eq_idx + 1..].iter().collect();
+                let (prefix_clean, append) = if let Some(p) = prefix.strip_suffix('+') {
+                    (p.to_string(), true)
+                } else {
+                    (prefix.clone(), false)
+                };
+                let prefix_is_ident = !prefix_clean.is_empty()
+                    && prefix_clean
+                        .chars()
+                        .next()
+                        .map(|c| c == '_' || c.is_ascii_alphabetic())
+                        .unwrap_or(false)
+                    && prefix_clean
+                        .chars()
+                        .all(|c| c == '_' || c.is_ascii_alphanumeric());
+                let value_chars: Vec<char> = value.chars().collect();
+                let value_is_whole_dq = value_chars.len() >= 2
+                    && value_chars[0] == '\u{9e}'
+                    && *value_chars.last().unwrap() == '\u{9e}'
+                    && value_chars.iter().filter(|&&c| c == '\u{9e}').count() == 2;
+                // Only take the literal shortcut when the DQ body
+                // has no `$`/`` ` ``/`\\` escape that would need
+                // runtime expansion. Fall through to the bridge for
+                // values that need expansion (`$VAR` etc. INSIDE the
+                // DQ — those still resolve at runtime).
+                let inner_chars = if value_is_whole_dq {
+                    &value_chars[1..value_chars.len() - 1]
+                } else {
+                    &value_chars[..]
+                };
+                let needs_runtime = inner_chars.iter().any(|c| {
+                    matches!(c, '$' | '`' | '\u{85}' | '\u{8c}' | '\u{93}' | '\u{99}')
+                });
+                if prefix_is_ident && value_is_whole_dq && !needs_runtime {
+                    let inner: String = inner_chars.iter().collect();
+                    let inner = crate::lexer::untokenize(&inner);
+                    let mut out = String::with_capacity(prefix_clean.len() + 2 + inner.len());
+                    out.push_str(&prefix_clean);
+                    if append {
+                        out.push('+');
+                    }
+                    out.push('=');
+                    out.push_str(&inner);
+                    let idx = self.builder.add_constant(Value::str(out.as_str()));
+                    self.builder.emit(Op::LoadConst(idx), 0);
+                    return;
+                }
+            }
+        }
+
         // ZshLexer marks shell-special chars with zsh's META-range tokens
         // (0x83-0x9f) so the parser can distinguish syntax from literal.
         // For runtime values we want the original char back. `untokenize`
