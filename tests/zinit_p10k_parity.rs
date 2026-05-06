@@ -863,6 +863,19 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// `\${functions[foo]:0:20}` substring extraction — went through
+    /// the slow-path get_special_array_value which returned the raw
+    /// user-typed source instead of the zsh-formatted body. Cycle 15
+    /// fixed only the fast-path `\$functions[foo]` whole-read case.
+    #[test]
+    fn functions_subscript_substring() {
+        assert_parity(
+            r#"foo() { echo "body"; }
+echo "len=${#functions[foo]}"
+echo "head=${functions[foo]:0:6}""#,
+        );
+    }
+
     /// `\$0` inside a function reached via dynamic-name dispatch
     /// (`fn=hook; $fn`) should be the function name (FUNCTION_ARGZERO,
     /// default-on). The bytecode call_function path already did this;
