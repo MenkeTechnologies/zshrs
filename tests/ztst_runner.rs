@@ -49,6 +49,7 @@ struct TestBlock {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ZtstFile {
     name: String,
     prep: Vec<String>,
@@ -179,11 +180,15 @@ fn read_code_chunk(lines: &[&str], idx: &mut usize) -> Option<String> {
             if !chunk.is_empty() {
                 chunk.push('\n');
             }
-            // Strip exactly 2 leading spaces to match ztst convention
-            let stripped = if line.starts_with("  ") {
-                &line[2..]
-            } else if line.starts_with('\t') {
-                &line[1..]
+            // Strip exactly 2 leading spaces to match ztst convention.
+            // The two-space prefix is the canonical ztst body marker;
+            // tab is accepted as a one-char fallback used by older
+            // tests. Manual slicing instead of strip_prefix because the
+            // else-arm trims any leading whitespace.
+            let stripped = if let Some(s) = line.strip_prefix("  ") {
+                s
+            } else if let Some(s) = line.strip_prefix('\t') {
+                s
             } else {
                 line.trim_start()
             };
@@ -259,31 +264,33 @@ fn read_test_block(lines: &[&str], idx: &mut usize) -> Option<TestBlock> {
     // Also F: for failure messages (ignored by runner)
     while *idx < lines.len() {
         let line = lines[*idx];
-        if line.starts_with("*>") {
+        if let Some(rest) = line.strip_prefix("*>") {
             stdout_pattern = true;
-            append_redir_line(&mut expected_stdout, &line[2..]);
+            append_redir_line(&mut expected_stdout, rest);
             *idx += 1;
             // Continue reading > lines as part of same stdout block
-            while *idx < lines.len() && lines[*idx].starts_with('>') {
-                append_redir_line(&mut expected_stdout, &lines[*idx][1..]);
+            while *idx < lines.len() {
+                let Some(rest) = lines[*idx].strip_prefix('>') else { break };
+                append_redir_line(&mut expected_stdout, rest);
                 *idx += 1;
             }
-        } else if line.starts_with('>') {
-            append_redir_line(&mut expected_stdout, &line[1..]);
+        } else if let Some(rest) = line.strip_prefix('>') {
+            append_redir_line(&mut expected_stdout, rest);
             *idx += 1;
-        } else if line.starts_with("*?") {
+        } else if let Some(rest) = line.strip_prefix("*?") {
             stderr_pattern = true;
-            append_redir_line(&mut expected_stderr, &line[2..]);
+            append_redir_line(&mut expected_stderr, rest);
             *idx += 1;
-            while *idx < lines.len() && lines[*idx].starts_with('?') {
-                append_redir_line(&mut expected_stderr, &lines[*idx][1..]);
+            while *idx < lines.len() {
+                let Some(rest) = lines[*idx].strip_prefix('?') else { break };
+                append_redir_line(&mut expected_stderr, rest);
                 *idx += 1;
             }
-        } else if line.starts_with('?') {
-            append_redir_line(&mut expected_stderr, &line[1..]);
+        } else if let Some(rest) = line.strip_prefix('?') {
+            append_redir_line(&mut expected_stderr, rest);
             *idx += 1;
-        } else if line.starts_with('<') {
-            append_redir_line(&mut stdin_data, &line[1..]);
+        } else if let Some(rest) = line.strip_prefix('<') {
+            append_redir_line(&mut stdin_data, rest);
             *idx += 1;
         } else if line.starts_with("F:") {
             // Failure hint — skip
@@ -325,7 +332,6 @@ fn parse_status_line(line: &str) -> Option<(Option<i32>, String, String)> {
     let mut chars = line.chars().peekable();
     let mut num_str = String::new();
     let mut flags = String::new();
-    let message;
 
     // Read number (may be negative or just '-')
     if chars.peek() == Some(&'-') {
@@ -355,7 +361,7 @@ fn parse_status_line(line: &str) -> Option<(Option<i32>, String, String)> {
     }
 
     // Rest is message
-    message = chars.collect::<String>().trim().to_string();
+    let message = chars.collect::<String>().trim().to_string();
 
     let status = if num_str == "-" {
         None

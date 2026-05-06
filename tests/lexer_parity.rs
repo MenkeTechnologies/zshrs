@@ -184,7 +184,7 @@ fn shell_escape(s: &str) -> String {
 /// Drive zshrs's lexer over the source string, formatting each token as
 /// `TOKNAME\tTOKSTR\n`, terminated by `ENDINPUT\n` or `LEXERR\n` to match
 /// the dumptokens module output exactly. The C-side module untokenizes
-/// + unmetafies tokstr before printing (see `Src/Modules/zshrs_dump.c`);
+/// and unmetafies tokstr before printing (see `Src/Modules/zshrs_dump.c`);
 /// we do the equivalent here via `zsh::lexer::untokenize`.
 fn dump_via_zshrs(src: &str) -> String {
     let mut out = String::new();

@@ -1372,6 +1372,11 @@ pub fn should_ignore_line(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+// Adjacent helpers (`bufferwords`, `histsplitwords`, `flockhistfile`,
+// etc.) live below this block to keep history-related code in one
+// file instead of splitting along test/non-test lines. Reordering
+// would scatter the C-port topology across multiple modules.
 mod tests {
     use super::*;
 

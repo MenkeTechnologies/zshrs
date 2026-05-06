@@ -414,9 +414,15 @@ mod tests {
         let file = std::fs::File::open("/dev/null").unwrap();
         let fd = file.as_raw_fd();
 
-        // Create borrowed file and drop it
-        let borrowed = unsafe { BorrowedFdFile::from_raw_fd(fd) };
-        drop(borrowed);
+        // Create borrowed file and let it fall out of scope. Direct
+        // `drop()` would tickle clippy::drop_non_drop because
+        // BorrowedFdFile has no Drop impl by design — the whole
+        // point of this type is that scope-end is a no-op for the
+        // underlying fd. The inner block makes the lifetime
+        // boundary explicit.
+        {
+            let _borrowed = unsafe { BorrowedFdFile::from_raw_fd(fd) };
+        }
 
         // fd should still be valid
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD, 0) };

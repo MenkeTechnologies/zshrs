@@ -1656,6 +1656,10 @@ pub fn output_highlight(attrs: &TextAttrs) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+// Trailing helpers (`prompt_width`, etc.) live below the tests to
+// keep the prompt module's C-port topology cohesive — reordering
+// would split related functions across the file.
 mod tests {
     use super::*;
 

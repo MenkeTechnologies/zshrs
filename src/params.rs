@@ -4161,8 +4161,11 @@ mod tests {
 
     #[test]
     fn test_format_float() {
-        let s = format_float(3.14, 2, flags::FFLOAT);
-        assert!(s.starts_with("3.14"));
+        // Use 2.5 instead of 3.14 — clippy errors on the latter as
+        // an approx PI constant. The test checks 2-decimal formatting
+        // round-trips, which the exact value doesn't influence.
+        let s = format_float(2.5, 2, flags::FFLOAT);
+        assert!(s.starts_with("2.50"));
 
         assert_eq!(format_float(f64::INFINITY, 0, 0), "Inf");
         assert_eq!(format_float(f64::NEG_INFINITY, 0, 0), "-Inf");
@@ -4358,9 +4361,13 @@ mod tests {
         assert_eq!(i.as_float(), 42.0);
         assert!(!i.is_float());
 
-        let f = MNumber::Float(3.14);
-        assert_eq!(f.as_integer(), 3);
-        assert!((f.as_float() - 3.14).abs() < 1e-10);
+        // Pick a float value that's not π — clippy errors on
+        // 3.14 as an approx PI constant. The shape of the test is
+        // "round-trip a float through MNumber"; the exact value
+        // doesn't matter.
+        let f = MNumber::Float(2.5);
+        assert_eq!(f.as_integer(), 2);
+        assert!((f.as_float() - 2.5).abs() < 1e-10);
         assert!(f.is_float());
     }
 

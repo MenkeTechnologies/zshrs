@@ -592,7 +592,6 @@ fn ask_take_pop_critical_first() {
     let d = DaemonHandle::spawn();
     let mut asker = d.connect();
     let target = d.connect();
-    let target_id = target.welcome.client_id;
     drop(target);
 
     // Need the target connected for ask_ask to accept; reconnect after.
