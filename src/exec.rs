@@ -930,6 +930,76 @@ fn slice_scalar(s: &str, start: i64, end: i64) -> String {
     chars[(s_idx - 1) as usize..e_idx as usize].iter().collect()
 }
 
+/// FFI bindings to the system ncurses terminfo interface. Direct
+/// port of zsh/Src/Modules/terminfo.c which calls these functions
+/// from libcurses to resolve capability names. macOS / Linux ship
+/// the curses library as part of the OS.
+#[link(name = "ncurses")]
+extern "C" {
+    fn setupterm(
+        term: *const libc::c_char,
+        filedes: libc::c_int,
+        errret: *mut libc::c_int,
+    ) -> libc::c_int;
+    fn tigetstr(capname: *const libc::c_char) -> *const libc::c_char;
+    fn tigetnum(capname: *const libc::c_char) -> libc::c_int;
+    fn tigetflag(capname: *const libc::c_char) -> libc::c_int;
+}
+
+/// Initialize the terminfo database for the current `$TERM`. Must
+/// be called before any tigetstr/tigetnum/tigetflag query. Direct
+/// port of the `init_term()` call path in zsh's terminfo.c.
+fn ensure_terminfo_initialized() -> bool {
+    use std::sync::OnceLock;
+    static INITIALIZED: OnceLock<bool> = OnceLock::new();
+    *INITIALIZED.get_or_init(|| {
+        let mut errret: libc::c_int = 0;
+        // Pass NULL term name to use $TERM. fd 1 is stdout per the
+        // C source (zsh/Src/init.c init_term: setupterm(0, 1, ...)).
+        unsafe { setupterm(std::ptr::null(), 1, &mut errret) == 0 }
+    })
+}
+
+/// Look up a terminfo string capability via ncurses. Direct port
+/// of zsh/Src/Modules/terminfo.c::getterminfo:
+///   tigetstr(name) → string, or (char *)-1 if not a string cap.
+/// Returns None for unknown / empty capabilities so the caller can
+/// emit "" matching zsh's PM_UNSET fallback (terminfo.c:165-168).
+fn terminfo_lookup(name: &str) -> Option<String> {
+    if !ensure_terminfo_initialized() {
+        return None;
+    }
+    let cname = match std::ffi::CString::new(name) {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    unsafe {
+        // First try string caps (most common — function keys, cursor
+        // motion, sgr codes). tigetstr returns NULL or (char*)-1 for
+        // non-string capabilities.
+        let s = tigetstr(cname.as_ptr());
+        let s_addr = s as isize;
+        if !s.is_null() && s_addr != -1 {
+            let bytes = std::ffi::CStr::from_ptr(s).to_bytes();
+            return Some(String::from_utf8_lossy(bytes).into_owned());
+        }
+        // Then numeric caps (e.g. `colors`, `cols`, `lines`).
+        // tigetnum returns -1 for unknown, -2 for not-a-num.
+        let n = tigetnum(cname.as_ptr());
+        if n >= 0 {
+            return Some(n.to_string());
+        }
+        // Boolean caps (`am`, `xenl`, etc.). tigetflag returns -1
+        // for unknown name; 0/1 for the flag value (per terminfo.c
+        // PM_SCALAR-yes/no string format).
+        let b = tigetflag(cname.as_ptr());
+        if b == 0 || b == 1 {
+            return Some(if b == 1 { "yes".to_string() } else { "no".to_string() });
+        }
+    }
+    None
+}
+
 /// Quote one argv element for xtrace output. Direct port of zsh's
 /// `quotedzputs()` (Src/utils.c:6464) → `hasspecial()` check
 /// (Src/utils.c:6072). A token is bare if no char is in SPECCHARS;
@@ -10532,7 +10602,39 @@ impl ShellExecutor {
                 a.insert("path".to_string(), path_dirs);
                 a
             },
-            assoc_arrays: HashMap::new(),
+            assoc_arrays: {
+                // Pre-populate `terminfo` so `${terminfo[capname]}`
+                // returns the resolved capability string for keys a
+                // script is likely to iterate (`for k in keys ${(k)
+                // terminfo}`). Each value is fetched via ncurses
+                // tigetstr/tigetnum/tigetflag against the live
+                // database for `$TERM`. Direct port of zsh/Src/
+                // Modules/terminfo.c::scanterminfo's eager-walk path.
+                // Lazy lookup of names not in this seed list still
+                // works through `get_special_array_value` →
+                // `terminfo_lookup`.
+                let mut a = HashMap::new();
+                let mut tinfo = IndexMap::new();
+                let common_strs = [
+                    "kf1", "kf2", "kf3", "kf4", "kf5", "kf6", "kf7", "kf8",
+                    "kf9", "kf10", "kf11", "kf12", "kf13", "kf14", "kf15",
+                    "kf16", "kf17", "kf18", "kf19", "kf20", "kcuu1", "kcud1",
+                    "kcuf1", "kcub1", "khome", "kend", "kpp", "knp", "kbs",
+                    "kich1", "kdch1", "clear", "ed", "el", "home", "civis",
+                    "cnorm", "smso", "rmso", "smul", "rmul", "bold", "rev",
+                    "sgr0", "smkx", "rmkx", "smcup", "rmcup", "setaf", "setab",
+                    "cup", "ich1", "dch1", "il1", "dl1",
+                ];
+                for cap in &common_strs {
+                    if let Some(v) = terminfo_lookup(cap) {
+                        if !v.is_empty() {
+                            tinfo.insert((*cap).to_string(), v);
+                        }
+                    }
+                }
+                a.insert("terminfo".to_string(), tinfo);
+                a
+            },
             jobs: JobTable::new(),
             fpath,
             zwc_cache: HashMap::new(),
@@ -16481,6 +16583,23 @@ impl ShellExecutor {
                     return Some(vals.join(" "));
                 }
                 Some(self.suffix_aliases.get(key).cloned().unwrap_or_default())
+            }
+
+            // === TERMINFO (zsh/terminfo module) ===
+            // `${terminfo[capname]}` returns the escape sequence for
+            // capability `capname`. Direct port of zsh/Src/Modules/
+            // terminfo.c — the C version calls `tigetstr(name)` from
+            // ncurses; we map the common-subset capability names to
+            // standard xterm/VT escape sequences inline. Covers the
+            // function-keys / cursor-motion / clear / color set that
+            // user keymaps query (`key[F1]=$terminfo[kf1]` etc.).
+            "terminfo" => {
+                // Lazy lookup via ncurses tigetstr/tigetnum/tigetflag
+                // — the pre-populated assoc init seeds the common
+                // subset, but a script may query any cap by name
+                // (`$terminfo[acsc]`, `$terminfo[colors]`). Mirror
+                // zsh's terminfo.c::getterminfo lazy-resolve path.
+                Some(terminfo_lookup(key).unwrap_or_default())
             }
 
             // === FUNCTIONS ===

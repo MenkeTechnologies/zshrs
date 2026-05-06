@@ -2243,12 +2243,24 @@ impl ZshCompiler {
                 .patch_jump(skip_body, self.builder.current_pos());
         }
 
-        // else
+        // else — body's status carries through. If else exists,
+        // emit a Jump-past-default so the no-match SetStatus(0)
+        // doesn't clobber else_body's exit code.
         if let Some(else_) = &if_node.else_ {
             self.emit_cmd_push(crate::prompt::CmdState::Else as u8);
             self.compile_program(else_);
             self.emit_cmd_pop();
+            end_jumps.push(self.builder.emit(Op::Jump(0), 0));
         }
+
+        // No-match path: when no cond was truthy AND no else
+        // matched, the if-stmt returns 0. Direct port of
+        // Src/loop.c:execif:590-591 — `else if (!retflag && !errflag)
+        // lastval = 0;`. The default path falls through here from
+        // the trailing JumpIfFalse skip-targets; matched-body and
+        // else-body Jumps land at `end` (past this SetStatus).
+        self.builder.emit(Op::LoadInt(0), 0);
+        self.builder.emit(Op::SetStatus, 0);
 
         let end = self.builder.current_pos();
         for ej in end_jumps {
