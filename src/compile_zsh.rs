@@ -1485,9 +1485,22 @@ impl ZshCompiler {
         // through expand_glob, and NOMATCH-errored at runtime
         // even though the brackets are literally inside DQ.
         let trigger_dollar = unquoted(&untoked, '$') || unquoted(&untoked, '`');
+        // Glob metacharacters arrive in two forms:
+        //   - Literal char (`*`, `?`, `[`) — the lexer leaves them
+        //     bare in some paths (e.g. SQ-stripped contexts)
+        //   - META-encoded (`\u{87}` STAR, `\u{86}` QUEST, `\u{91}`
+        //     INBRACK) — the lexer's primary tokenization
+        // Trigger glob expansion when EITHER form appears unquoted.
+        // Direct port of Src/pattern.c::patcompswitch which treats
+        // both encodings as glob metas. Without the META branch,
+        // `echo *.toml` saw `\u{87}.toml` (no literal `*`) and
+        // skipped expand_glob entirely → literal pattern emitted.
         let trigger_glob = unquoted(s, '*')
+            || unquoted(s, '\u{87}')
             || unquoted(s, '?')
+            || unquoted(s, '\u{86}')
             || unquoted(s, '[')
+            || unquoted(s, '\u{91}')
             // extendedglob `^pat` (negation) and `pat~excl` (exclusion).
             // `^` is a no-op without `setopt extendedglob`, but routing
             // through expand_glob lets the runtime decide. The unquoted

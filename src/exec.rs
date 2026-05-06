@@ -6844,6 +6844,19 @@ fn register_builtins(vm: &mut fusevm::VM) {
                 let parts: Vec<String> = brace_expanded
                     .into_iter()
                     .flat_map(|s| {
+                        // The lexer leaves glob metacharacters in their
+                        // META-encoded form: `*` → `\u{87}`, `?` →
+                        // `\u{86}`, `[` → `\u{91}`, etc. expand_string
+                        // doesn't untokenize them, so the literal-char
+                        // checks below (`s.contains('*')`) would miss
+                        // every real glob and skip expand_glob — that
+                        // bug let `echo *.toml` print the literal
+                        // `*.toml` because the META `\u{87}` never
+                        // matched the literal `*`. Untokenize once so
+                        // the metacharacter checks see the canonical
+                        // form. zsh's pattern.c expects `*` etc. as
+                        // bare chars at the glob layer.
+                        let s = crate::lexer::untokenize(&s);
                         // Skip glob expansion for assignment-shaped
                         // words (`NAME=value`). zsh doesn't expand the
                         // RHS of an assignment as a path glob unless

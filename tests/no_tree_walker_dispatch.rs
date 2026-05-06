@@ -406,14 +406,15 @@ fn function_positional_params() {
 
 #[test]
 fn function_recursion() {
-    // The recursion's exit status is the last condition check (`[[ 0 -gt 0 ]]`
-    // returns false → status 1) at the innermost level — that's POSIX-correct
-    // shell behavior. We pin the stdout to prove the recursion went 4→3→2→1
-    // and accept the trailing-failed-condition exit code.
+    // Direct port of zsh 5.9 behaviour: `if cond; then body; fi`
+    // with cond=false and NO `else` returns 0. Src/loop.c:execif:
+    // 590-591 — `else if (!retflag && !errflag) lastval = 0;`.
+    // The earlier expectation of exit 1 was the pre-fix zshrs bug
+    // (cond's status leaked through); corrected here to match zsh.
     ok_status(
         "rec() { if [[ $1 -gt 0 ]]; then echo $1; rec $(($1 - 1)); fi; }; rec 4",
         "4\n3\n2\n1\n",
-        1,
+        0,
     );
 }
 
