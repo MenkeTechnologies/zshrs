@@ -877,6 +877,25 @@ echo "out=$options[glob]""#,
         assert_eq!(real.stdout, rs.stdout);
     }
 
+    /// `${+commands[$1]}` inside a function called twice with
+    /// different args — SubstState had a stale `arrays["@"]` from the
+    /// first call leaking into the second. The chkset path's
+    /// expand_subscript_pat read `state.arrays["@"]` which had an
+    /// `or_insert_with` guard that suppressed the live update.
+    /// Direct port of zsh's contract that paramsubst sees the
+    /// CURRENT positional-param list at each substitution event,
+    /// not a snapshot from script entry.
+    #[test]
+    fn dollar_one_in_subscript_per_call() {
+        assert_parity(
+            r#"check() {
+  if (( ${+commands[$1]} )); then echo "have $1"; else echo "miss $1"; fi
+}
+check ls
+check nope_xyz_zr"#,
+        );
+    }
+
     /// `"${aliases[(I)foo*]}"` in DQ context — array result must
     /// join with first IFS char per Src/subst.c paramsubst's
     /// `nojoin` gating. Cycle 23 added the matchmany behavior but
