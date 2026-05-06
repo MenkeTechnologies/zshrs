@@ -7147,8 +7147,21 @@ fn param_pattern_to_regex_anchored(pattern: &str, anchored: bool) -> String {
                 regex.push(chars[i + 1]);
                 i += 1;
             }
+            // Glob alternation: `(a|b|c)` is a group with `|`
+            // alternation in zsh patterns (verified via
+            // /opt/homebrew/bin/zsh -fc — works in `:#`, `case`,
+            // `[[ = ]]` even without extendedglob). Translate to
+            // regex group syntax directly. The `|` outside `(...)`
+            // also stays alternation in zsh's `${var//pat1|pat2/x}`
+            // and similar.
+            '(' | ')' | '|' => {
+                regex.push(chars[i]);
+                if let Some(q) = consume_postfix(&chars, &mut i) {
+                    regex.push_str(q);
+                }
+            }
             // Regex metachars that are literals in glob — escape.
-            c @ ('.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}') => {
+            c @ ('.' | '+' | '^' | '$' | '{' | '}') => {
                 regex.push('\\');
                 regex.push(c);
             }
