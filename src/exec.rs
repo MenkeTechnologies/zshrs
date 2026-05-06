@@ -15483,6 +15483,67 @@ impl ShellExecutor {
                         result.push_str(&self.get_variable(&sc.to_string()));
                         continue;
                     }
+                    // `$+NAME` — set-test, returns "1" or "0". zsh
+                    // accepts both `${+NAME}` (handled by the brace
+                    // path above via subst_port::paramsubst's chkset)
+                    // AND the unbraced `$+NAME` shape, which p10k
+                    // uses heavily: `(( $+__p9k_root_dir )) ||
+                    // typeset -gr __p9k_root_dir=...`. Direct port
+                    // of Src/subst.c:2604-2612 chkset detection
+                    // (the inbrace == false branch keeps `+` literal,
+                    // but for `$+NAME` followed by an identifier we
+                    // forward to the brace path so the same chkset
+                    // result emits).
+                    if chars.peek() == Some(&'+') {
+                        let mut peek_iter = chars.clone();
+                        peek_iter.next(); // skip +
+                        let next = peek_iter.peek().copied();
+                        if next.map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+                            chars.next(); // consume +
+                            let mut name = String::new();
+                            while let Some(&c) = chars.peek() {
+                                if c.is_alphanumeric() || c == '_' {
+                                    name.push(chars.next().unwrap());
+                                } else {
+                                    break;
+                                }
+                            }
+                            // `$+name[idx]` mirrors `${+name[idx]}`
+                            // — wrap with subscript intact and run
+                            // through the brace path so all the
+                            // assoc/array/magic-special handling
+                            // already in subst_port applies.
+                            let mut subscript = String::new();
+                            if chars.peek() == Some(&'[') {
+                                chars.next(); // consume [
+                                let mut depth = 1;
+                                while let Some(&c) = chars.peek() {
+                                    if c == '[' {
+                                        depth += 1;
+                                        subscript.push(chars.next().unwrap());
+                                    } else if c == ']' {
+                                        depth -= 1;
+                                        if depth == 0 {
+                                            chars.next();
+                                            break;
+                                        }
+                                        subscript.push(chars.next().unwrap());
+                                    } else {
+                                        subscript.push(chars.next().unwrap());
+                                    }
+                                }
+                            }
+                            let braced = if subscript.is_empty() {
+                                format!("+{}", name)
+                            } else {
+                                format!("+{}[{}]", name, subscript)
+                            };
+                            result.push_str(&crate::subst_port::substitute_brace(
+                                &braced, self,
+                            ));
+                            continue;
+                        }
+                    }
                     // $#name → ${#name} (string/array length).
                     // Also `$#@` and `$#*` — count of positional
                     // params (zsh shorthand for `${#@}`/`${#*}`).
