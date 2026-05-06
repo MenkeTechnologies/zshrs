@@ -2078,4 +2078,359 @@ profile=other
 print -- "[${${${(M)profile:#default}:+$lhi_hl}:-$profile_hl} ${(pj:$pro_sep:)profiles[@]}]""#,
         );
     }
+
+    // ─── batch from /Users/wizard/.zinit/plugins/** — real-world ──────
+
+    /// User-supplied: $0 cascading fallback header from zinit/p10k self-
+    /// detection. `0="${${ZERO:-${0:#$ZSH_ARGZERO}}:-${(%):-%N}}"` —
+    ///   1. prefer $ZERO if set
+    ///   2. else $0 unless it equals $ZSH_ARGZERO
+    ///   3. else `${(%):-%N}` (current script name via prompt expansion)
+    /// Three branches probed.
+    #[test]
+    fn zinit_zero_cascading_fallback() {
+        assert_parity(
+            r#"ZERO=/path/to/ZERO
+ZSH_ARGZERO=zsh
+print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-${(%):-%N}}]"
+unset ZERO
+print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-${(%):-%N}}]"
+unset ZERO
+ZSH_ARGZERO=$0
+print -- "[${${ZERO:-${0:#$ZSH_ARGZERO}}:-${(%):-%N}}]""#,
+        );
+    }
+
+    /// User-supplied: `0="${${(M)0:#/*}:-$PWD/$0}"` — make $0 absolute.
+    /// If $0 already starts with /, keep as-is; else prepend $PWD/.
+    #[test]
+    fn zinit_zero_make_absolute() {
+        assert_parity(
+            r#"PWD=/cwd
+0=relative/path
+print -- "[${${(M)0:#/*}:-$PWD/$0}]"
+0=/abs/path
+print -- "[${${(M)0:#/*}:-$PWD/$0}]""#,
+        );
+    }
+
+    /// zsh-autosuggest: `${(@)region_highlight:#$last}` — array filter
+    /// against single dynamic value. Removes one specific highlight.
+    #[test]
+    fn zsh_autosuggest_region_highlight_filter() {
+        assert_parity(
+            r#"last="zle bg=blue"
+arr=("zle bg=blue" "kw bg=red" "zle bg=blue" "syn fg=cyan")
+print -l -- ${(@)arr:#$last}"#,
+        );
+    }
+
+    /// history-substring-search: regex-meta escape via (#m) MATCH.
+    /// `${query//(#m)[\][()|\\*?#<>~^]/\$MATCH}` — backslash-prefix
+    /// each glob/regex special char.
+    #[test]
+    fn hist_substring_regex_meta_escape() {
+        assert_parity(
+            r#"setopt extendedglob
+q="foo*bar?baz[qux]"
+print -r -- "${q//(#m)[\][()|\\*?#<>~^]/\\$MATCH}""#,
+        );
+    }
+
+    /// fast-syntax-highlighting: `${arr[(R)val]}` — reverse-lookup,
+    /// returns the first array element matching pattern (not the index).
+    #[test]
+    fn array_reverse_lookup_value() {
+        assert_parity(r#"arr=(alpha beta gamma); print -- "${arr[(R)beta]}""#);
+    }
+
+    /// fzf-tab tcandidates: swap-fields-around-null pattern.
+    /// `${(@)tc/(#b)(*)$'\0'([^$'\0']#)/$match[2]$'\0'$match[1]}`
+    /// — given "name\0first" → "first\0name" (preserves null delim).
+    #[test]
+    fn fzf_tab_swap_around_null_delim() {
+        assert_parity(
+            r#"setopt extendedglob
+tc=($'name\0first' $'role\0second' $'cat\0third')
+print -l -- "${(@)tc/(#b)(*)$'\0'([^$'\0']#)/$match[2]$'\0'$match[1]}""#,
+        );
+    }
+
+    /// p10k _p9k_prompt_segment: arith-bounded slice of array.
+    /// `${(@)parts[$((shortenlen > $#parts ? -$#parts : -shortenlen)),-1]}`
+    /// — last shortenlen elements, clamped to array length.
+    #[test]
+    fn p10k_arith_bounded_slice() {
+        assert_parity(
+            r#"parts=(a b c d e f g)
+shortenlen=3
+print -l -- "${(@)parts[$((shortenlen > $#parts ? -$#parts : -shortenlen)),-1]}"
+shortenlen=20
+print -l -- "${(@)parts[$((shortenlen > $#parts ? -$#parts : -shortenlen)),-1]}""#,
+        );
+    }
+
+    /// fast-syntax-highlighting: 3-part backref replacement around \1
+    /// markers. `${(@)parts/(#b)(*)$'\1'(*)$'\1'(*)/[$m[1]]<$m[2]>{$m[3]}}`
+    #[test]
+    fn fsh_three_part_backref_replace() {
+        assert_parity(
+            r#"setopt extendedglob
+parts=($'a\1b\1c' $'x\1y\1z')
+print -l -- "${(@)parts/(#b)(*)$'\1'(*)$'\1'(*)/[$match[1]]<$match[2]>{$match[3]}}""#,
+        );
+    }
+
+    /// `${arr[(I)pat]}` — return numeric index of first matching element
+    /// (0 if no match). Used by zsh-autosuggest to detect registered widget.
+    #[test]
+    fn array_index_of_matching() {
+        assert_parity(
+            r#"arr=(alpha bravo charlie delta)
+print -- "match=${arr[(I)b*]}"
+print -- "miss=${arr[(I)z*]}""#,
+        );
+    }
+
+    /// zpwr-expand version-prefix strip:
+    /// `${x##[[:digit:]]##[[:punct:]][[:digit:]]##[[:blank:]]}`
+    /// — strip leading `<digits>.<digits> ` shape.
+    #[test]
+    fn zpwr_expand_version_prefix_strip() {
+        assert_parity(
+            r#"setopt extendedglob
+x="1.5 mything-foo"
+print -- "[${x##[[:digit:]]##[[:punct:]][[:digit:]]##[[:blank:]]}]"
+x="42.99 versioned-thing"
+print -- "[${x##[[:digit:]]##[[:punct:]][[:digit:]]##[[:blank:]]}]"
+x="no-version-here"
+print -- "[${x##[[:digit:]]##[[:punct:]][[:digit:]]##[[:blank:]]}]""#,
+        );
+    }
+
+    /// zpwr-expand keep-matched-prefix via nested-strip subtraction:
+    /// `${x%${x##pat}}` — pattern that keeps prefix matched by ##pat.
+    #[test]
+    fn keep_matched_prefix_via_nested_strip() {
+        assert_parity(
+            r#"setopt extendedglob
+x="1.5 mything-foo"
+print -- "[${x%${x##[[:digit:]]##[[:punct:]][[:digit:]]##[[:blank:]]}}]""#,
+        );
+    }
+
+    /// `${(@)arr:#$dyn}` — array-filter using dynamic param as pattern.
+    /// Dynamic-pattern path through the assoc/array filter.
+    #[test]
+    fn array_filter_with_dynamic_pattern() {
+        assert_parity(
+            r#"arr=(foo bar baz qux)
+ban=bar
+print -l -- ${(@)arr:#$ban}
+ban=z*
+setopt extendedglob
+print -l -- ${(@)arr:#$~ban}"#,
+        );
+    }
+
+    /// User-supplied: history-search-multi-word — replace literal newlines
+    /// in each array element with backslash-n.
+    /// `__hsmw_ctx_disp_list=( "${(@)arr//$'\n'/\\n}" )`
+    #[test]
+    fn hsmw_replace_newline_with_escape_n() {
+        assert_parity(
+            r#"arr=($'line1\nline2\nline3' "single" $'two\nparts')
+out=( "${(@)arr//$'\n'/\\n}" )
+print -lr -- $out"#,
+        );
+    }
+
+    /// User-supplied: history-search-multi-word — truncate each element
+    /// via `(#m) MATCH[1,COLUMNS-N]` with leading two-space prefix.
+    /// `${(@)arr/(#m)*/  ${MATCH[1,COLUMNS-8]}}`
+    #[test]
+    fn hsmw_truncate_per_element_via_match() {
+        assert_parity(
+            r#"setopt extendedglob
+COLUMNS=20
+arr=("short" "this is a longer line that should get truncated" "medium length text")
+out=( "${(@)arr/(#m)*/  ${MATCH[1,COLUMNS-8]}}" )
+print -lr -- $out"#,
+        );
+    }
+
+    /// User-supplied: zconvey right-pad headerline with variable width.
+    /// `${(r:hlen:: :)headerline}` — `r:NAME:` looks up NAME's value as
+    /// the pad width. zshrs only handles literal numeric width here.
+    #[test]
+    fn zconvey_right_pad_variable_width() {
+        assert_parity(
+            r#"hlen=20
+headerline="hello"
+print -- "[${(r:hlen:: :)headerline}]"
+hlen=8
+print -- "[${(r:hlen:: :)headerline}]""#,
+        );
+    }
+
+    /// User-supplied: zconvey ANSI literal-replace inside string.
+    /// `${headerline/Zconvey/\033[1;34mZconvey\033[0m\033[1;44m}` —
+    /// single first-match replace with backslash-escape literals.
+    #[test]
+    fn zconvey_literal_ansi_replace_first() {
+        assert_parity(
+            r#"h="Welcome to Zconvey today"
+print -r -- "${h/Zconvey/\033[1;34mZconvey\033[0m\033[1;44m}""#,
+        );
+    }
+
+    /// User-supplied: zconvey backref-replace digit-bracket markers.
+    /// `${text/(#b)(<[[:digit:]]#>)/\033[1;32m${match[1]}\033[1;33m}` —
+    /// (#b) backref-capture, single replace, ANSI wrap.
+    #[test]
+    fn zconvey_backref_color_first_marker() {
+        assert_parity(
+            r#"setopt extendedglob
+text="line <42> mid <1024> end"
+print -r -- "${text/(#b)(<[[:digit:]]#>)/\033[1;32m${match[1]}\033[1;33m}""#,
+        );
+    }
+
+    /// User-supplied: zconvey color-the-value-after-NAME-prefix.
+    /// `${text/(#b)NAME: (?#)/NAME: \033[1;32m${match[1]}\033[0m}` —
+    /// (?#) "0+ any" extendedglob with backref. Often anchored at start.
+    #[test]
+    fn zconvey_color_value_after_name_prefix() {
+        assert_parity(
+            r#"setopt extendedglob
+text="NAME: foobar"
+print -r -- "${text/(#b)NAME: (?#)/NAME: \033[1;32m${match[1]}\033[0m}""#,
+        );
+    }
+
+    /// User-supplied: zbrowse `${(Pt)name}` — typeset-flags introspection.
+    /// Returns "scalar" / "array" / "association" / "integer" depending
+    /// on the type of the parameter named by $name.
+    #[test]
+    fn zbrowse_p_typeset_flags_introspection() {
+        assert_parity(
+            r#"foo="scalar val"
+bar=(a b c)
+typeset -A baz=(k1 v1 k2 v2)
+typeset -i num=42
+typeset -F flt=3.14
+for n in foo bar baz num flt; do print -- "$n: ${(Pt)n}"; done"#,
+        );
+    }
+
+    /// User-supplied: zbrowse `${(Pkv@)name}` — through-indirection
+    /// keys-and-values splat for associative arrays.
+    #[test]
+    fn zbrowse_p_kv_splat_through_indirect() {
+        assert_parity(
+            r#"typeset -A m=(k1 v1 k2 v2 k3 v3)
+n=m
+elems=("${(Pkv@)n}")
+print -- "count=${#elems}"
+print -- "${(o)elems}" | sort"#,
+        );
+    }
+
+    /// User-supplied: dynamic-name + subscript indirection.
+    /// `n2="${n}[-1]"; ${(P)n2}` — build subscripted name then deref.
+    #[test]
+    fn zbrowse_dynamic_name_subscript_indirect() {
+        assert_parity(
+            r#"arr=(a b c d e f g)
+n=arr
+n2="${n}[-1]"
+print -- "[${(P)n2}]"
+n2="${n}[1,3]"
+print -- "[${(P)n2}]""#,
+        );
+    }
+
+    /// User-supplied: array slice with oversize end clamps to length.
+    /// `${arr[1,50]}` on a 3-element array returns all 3 elements.
+    #[test]
+    fn array_slice_oversize_end_clamps() {
+        assert_parity(
+            r#"arr=(a b c)
+out=("${(@)arr[1,50]}")
+print -- "count=${#out}"
+print -l -- "${out[@]}""#,
+        );
+    }
+
+    /// User-supplied: zbrowse parameters magic-assoc enum + (qkv) join.
+    /// `${(j: :)${(qkv)mymap[@]}}` — quote each key/value, space-join.
+    /// Order is non-deterministic so we compare sorted lines.
+    #[test]
+    fn zbrowse_qkv_quoted_kv_pairs_joined() {
+        assert_parity(
+            r#"typeset -gA mymap=(alpha v1 beta v2 gamma v3)
+print -- "${(j: :)${(qkv)mymap[@]}}" | tr ' ' '\n' | sort"#,
+        );
+    }
+
+    /// User-supplied: zbrowse value-truncation pattern from inner branch.
+    /// `text=${(P)name}; last=${text[-10,-1]}; text=${text[1,300]}` —
+    /// keep first 300 chars of a long scalar, plus tail-10 separately.
+    #[test]
+    fn zbrowse_scalar_head_tail_slice() {
+        assert_parity(
+            r#"longstr="The quick brown fox jumps over the lazy dog and never looks back"
+n=longstr
+text="${(P)n}"
+last="${text[-10,-1]}"
+head="${text[1,30]}"
+print -- "head=[$head]"
+print -- "last=[$last]""#,
+        );
+    }
+
+    /// User-supplied: zbrowse `${(Pj::)name}` — P-indirect through name,
+    /// then j-join array with empty separator.
+    #[test]
+    fn zbrowse_p_join_empty_through_indirect() {
+        assert_parity(r#"arr=(a b c d); n=arr; print -- "[${(Pj::)n}]""#);
+    }
+
+    /// User-supplied: zbrowse `${(Pj: :)subscripted-name}` — combines
+    /// P-indirect and j-join on a built name like `"arr[1,3]"`.
+    /// Stresses indirect-subscript through array slice.
+    #[test]
+    fn zbrowse_p_indirect_subscripted_join_space() {
+        assert_parity(
+            r#"arr=(a b c d e f)
+n2="arr[1,3]"
+print -- "[${(Pj: :)n2}]"
+n2="arr[2,-1]"
+print -- "[${(Pj: :)n2}]""#,
+        );
+    }
+
+    /// User-supplied: zbrowse `${(P@)name}` — splat through indirect.
+    #[test]
+    fn zbrowse_p_splat_through_indirect() {
+        assert_parity(
+            r#"arr=(one two three)
+n=arr
+out=("${(P@)n}")
+print -- "count=${#out}"
+print -l -- "${out[@]}""#,
+        );
+    }
+
+    /// User-supplied: zbrowse `${(qqqq@)arr}` — 4-level zsh-style
+    /// quoting per array element. `qqqq` produces `$'...'` form with
+    /// backslash escapes for special chars.
+    #[test]
+    fn zbrowse_qqqq_per_element_dollar_quoting() {
+        assert_parity(
+            r#"arr=("hello world" $'with\nbreak' "tab\there")
+out=("${(qqqq@)arr}")
+print -lr -- $out"#,
+        );
+    }
 }
