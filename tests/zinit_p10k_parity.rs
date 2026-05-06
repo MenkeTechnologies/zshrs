@@ -877,6 +877,23 @@ echo "out=$options[glob]""#,
         assert_eq!(real.stdout, rs.stdout);
     }
 
+    /// `"${aliases[(I)foo*]}"` in DQ context — array result must
+    /// join with first IFS char per Src/subst.c paramsubst's
+    /// `nojoin` gating. Cycle 23 added the matchmany behavior but
+    /// the result was returning as Value::Array which the outer DQ
+    /// echo-arg compositor then spread as separate args (printing
+    /// the prefix multiple times). Per zsh semantics, DQ array
+    /// reads collapse to a joined scalar at the read site.
+    #[test]
+    fn magic_assoc_I_glob_in_dq_joins() {
+        assert_parity(
+            r#"alias foo=ls
+alias bar=less
+alias foobaz=cat
+echo "match: ${aliases[(I)foo*]}""#,
+        );
+    }
+
     /// `${aliases[(I)foo*]}` — index search on magic-assoc with a
     /// glob pattern returns ALL matching keys (zsh's "matchmany"
     /// behavior for hashes). Direct port of Src/params.c getarg
