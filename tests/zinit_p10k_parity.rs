@@ -1249,3 +1249,398 @@ matches=$(echo ${~pick})
         assert_eq!(real_out.stdout, rs_out.stdout);
     }
 }
+
+// ============================================================================
+// MEGAMONSTERS — the gnarliest param-subst lines drawn from real-world
+// zinit / p10k / oh-my-zsh / zsh-syntax-highlighting source. Every test
+// here pins behaviour against /opt/homebrew/bin/zsh; failing assertions
+// are real divergences worth fixing. No #[ignore] — we ship parity or
+// we ship a loud test failure.
+// ============================================================================
+
+mod megamonsters {
+    use super::*;
+
+    // ─── triple-nested splat with flags + modifiers ─────────────────
+
+    /// `${${${(f)x}[2,-1]}//pat/repl}` — split on \n, slice off the
+    /// header, then global-replace inside each remaining line.
+    /// Composition of three independent param-subst phases.
+    #[test]
+    fn triple_nested_split_slice_replace() {
+        assert_parity(
+            r#"x=$'header\nalpha=1\nbeta=2\ngamma=3'
+print -l -- ${${${(f)x}[2,-1]}//=/ → }"#,
+        );
+    }
+
+    /// p10k segment-build pattern: take a function name, strip prefix,
+    /// uppercase, prepend `%F{...}`, append `%f`. All in one expr.
+    #[test]
+    fn p10k_segment_color_decoration() {
+        assert_parity(
+            r#"prompt_dir() { :; }
+fn=prompt_dir
+echo "%F{blue}${${(U)fn#prompt_}//_/ }%f""#,
+        );
+    }
+
+    // ─── chained modifier on cmd-subst on flag-result ───────────────
+
+    /// `${(U)$(echo path):h:t}` — uppercase the head-then-tail of a
+    /// command-substituted path. zsh evaluates inside-out:
+    /// $(echo /a/b/c.zsh) → "/a/b/c.zsh" → :h="/a/b" → :t="b" →
+    /// (U)→"B".
+    #[test]
+    fn cmdsubst_flag_modifier_chain() {
+        assert_parity(r#"echo "${(U)$(echo /a/b/c.zsh):h:t}""#);
+    }
+
+    /// `${(P)${${(@f)$(...)}[1]}}` — first line of a command's
+    /// output, used as a variable name, then indirected to its value.
+    /// p10k's "what's my git branch" path uses this shape.
+    #[test]
+    fn p_flag_indirects_through_first_line_of_cmdsubst() {
+        assert_parity(
+            r#"USERNAME=alice
+ref=USERNAME
+src=$ref
+echo "${(P)${${(@f)$(echo $src)}[1]}}""#,
+        );
+    }
+
+    // ─── strip-and-replace chains ───────────────────────────────────
+
+    /// zinit's plugin-id parser: `user/repo@branch` → `user`, `repo`,
+    /// `branch`, all in one paramsubst chain per field.
+    #[test]
+    fn zinit_plugin_id_split() {
+        assert_parity(
+            r#"id="MenkeTechnologies/zsh-more-completions@master"
+echo "user=${id%%/*}"
+echo "repo=${${id#*/}%@*}"
+echo "branch=${id##*@}"
+echo "norm=${${id%@*}//\//---}""#,
+        );
+    }
+
+    /// p10k history-format: pad an integer with leading zeros via
+    /// (l:N::0:), wrap with brackets, prefix with a color, all in one
+    /// quoted expression.
+    #[test]
+    fn p10k_zero_pad_history_index() {
+        assert_parity(
+            r#"i=42
+echo "[${(l:5::0:)i}]"
+i=7
+echo "[${(l:5::0:)i}]"
+i=12345
+echo "[${(l:5::0:)i}]""#,
+        );
+    }
+
+    // ─── (kv) iteration with filtering ──────────────────────────────
+
+    /// Iterate assoc keys matching a glob, return values via
+    /// `${(v)assoc[(I)pat]}`. zinit's "all icebergs whose name starts
+    /// with foo" pattern.
+    #[test]
+    fn assoc_glob_filter_then_values() {
+        assert_parity(
+            r#"typeset -gA M=(foo_a 1 foo_b 2 bar_x 3 baz_y 4 foobaz 5)
+echo "matching keys: ${(k)M[(I)foo*]}"
+echo "matching vals: ${(v)M[(I)foo*]}""#,
+        );
+    }
+
+    // ─── nested default chains ──────────────────────────────────────
+
+    /// 5-deep default cascade with cmd-subst at the bottom. Plugin
+    /// init code uses chains this deep when figuring out a config
+    /// dir from XDG/HOME/PATH/`pwd`/etc.
+    #[test]
+    fn five_deep_default_cascade() {
+        assert_parity(
+            r#"unset A B C D
+echo "${A:-${B:-${C:-${D:-$(echo bottom)}}}}"
+A=set
+echo "${A:-${B:-${C:-${D:-$(echo bottom)}}}}""#,
+        );
+    }
+
+    // ─── pattern-replace with anchors + escape chain ────────────────
+
+    /// `${var/#pat/repl}` anchored prefix replace + `${var/%pat/repl}`
+    /// anchored suffix replace, applied in sequence to canonicalize
+    /// a path-like string. zsh-syntax-highlighting normalizes
+    /// alias bodies like this.
+    #[test]
+    fn anchored_replace_prefix_then_suffix() {
+        assert_parity(
+            r#"p="  /tmp/foo/bar.zsh  "
+echo "[${${p/# /  }/% /}]"
+echo "[${${p#  }%  }]""#,
+        );
+    }
+
+    // ─── (q) round-trip with embedded specials ──────────────────────
+
+    /// `(qq)` quote, then `(Q)` un-quote — round-trip should be
+    /// identical even with spaces, backslashes, and quote chars.
+    #[test]
+    fn qq_then_Q_roundtrip_specials() {
+        assert_parity(
+            r#"original="hello \"world\" with 'mixed' quotes and \\ backslashes"
+quoted=${(qq)original}
+echo "quoted=$quoted"
+unquoted=${(Q)quoted}
+echo "match=$([[ "$unquoted" == "$original" ]] && echo yes || echo no)""#,
+        );
+    }
+
+    // ─── flag composition: (e@s.SEP.) split with eval ───────────────
+
+    /// `(@s.:.)str` splits on `:` into array. `(e)` would also eval
+    /// each element. zinit uses this to materialize PATH-like strings
+    /// into array elements with side-effect interpretation.
+    #[test]
+    fn split_then_iterate_with_modifier() {
+        assert_parity(
+            r#"config="alpha:beta:gamma:delta"
+arr=("${(@s.:.)config}")
+print -l -- "${(U)arr[@]}""#,
+        );
+    }
+
+    // ─── arithmetic-as-key + subscript-flag combo ───────────────────
+
+    /// `${arr[(r)pat]}` reverse-find returns the FIRST matching value.
+    /// Wrapped inside `${(L)...}` for lowercase. zinit-style finder.
+    #[test]
+    fn r_flag_then_L_lowercase() {
+        assert_parity(
+            r#"arr=(FOO BAR BAZ FOOBAR)
+echo "${(L)arr[(r)FOO*]}""#,
+        );
+    }
+
+    // ─── join+split round trip with mid-step replacement ────────────
+
+    /// Take an array, join with `|`, replace `|` with `,`, split back
+    /// into array with `(s.,.)`. Tests that flag composition survives
+    /// the round-trip even through string mutation.
+    #[test]
+    fn join_replace_split_roundtrip() {
+        assert_parity(
+            r#"arr=(one two three four)
+joined=${(j:|:)arr}
+swapped=${joined//\|/,}
+back=("${(@s:,:)swapped}")
+echo "n=$#back"
+print -l -- "${back[@]}""#,
+        );
+    }
+
+    // ─── conditional set-via-default with modifier on inner ─────────
+
+    /// `${var::=expr}` is "always assign" — different from `:=`
+    /// (assign-if-unset). Combined with modifier on the operand:
+    /// take the value of another var, lowercase it, store as default.
+    /// zinit's normalize-and-cache pattern.
+    #[test]
+    fn always_assign_with_lowercase_modifier() {
+        assert_parity(
+            r#"src="HELLO World"
+target=
+: ${target::=${(L)src}}
+echo "first=$target"
+: ${target::=${(L)src}_more}
+echo "second=$target""#,
+        );
+    }
+
+    // ─── deeply nested assoc lookup with default ────────────────────
+
+    /// `${${assoc[k1]:-${assoc[k2]:-${assoc[k3]:-default}}}}` — three-
+    /// level fallback through the same assoc. p10k's segment-config
+    /// resolution does this for fg/bg/icon from per-segment override
+    /// to global default.
+    #[test]
+    fn assoc_fallback_chain_with_outer_capture() {
+        assert_parity(
+            r#"typeset -gA cfg=(c v3)
+val=${${cfg[a]:-${cfg[b]:-${cfg[c]:-fallback}}}}
+echo "1=$val"
+typeset -gA cfg=(b v2 c v3)
+val=${${cfg[a]:-${cfg[b]:-${cfg[c]:-fallback}}}}
+echo "2=$val"
+typeset -gA cfg=(a v1 b v2 c v3)
+val=${${cfg[a]:-${cfg[b]:-${cfg[c]:-fallback}}}}
+echo "3=$val"
+typeset -gA cfg=()
+val=${${cfg[a]:-${cfg[b]:-${cfg[c]:-fallback}}}}
+echo "4=$val""#,
+        );
+    }
+
+    // ─── flag modifier chain inside DQ — DQ collapse semantics ──────
+
+    /// In DQ context, `${(@s.:.)var}` should split AND keep array
+    /// boundaries — the `(@)` flag is the explicit-array marker that
+    /// suppresses zsh's normal DQ-collapse-to-scalar. p10k uses this
+    /// to safely splice user-config strings.
+    #[test]
+    fn at_flag_keeps_array_in_dq() {
+        assert_parity(
+            r#"colors="red:green:blue"
+arr=("${(@s.:.)colors}")
+echo "n=$#arr"
+print -l -- "${arr[@]}""#,
+        );
+    }
+
+    // ─── modifier on positional inside fn ───────────────────────────
+
+    /// Function takes a path, applies `:A:h:t` chain to derive a
+    /// component name. zinit-style "snippet name from URL".
+    #[test]
+    fn modifier_chain_on_positional() {
+        assert_parity(
+            r#"derive() { echo "${1:t:r}"; }
+derive /path/to/script.tar.gz
+derive /just-a-name.zsh
+derive https://example.com/repo/file.json"#,
+        );
+    }
+
+    // ─── magic-assoc: (k)+filter on functions ───────────────────────
+
+    /// Plugin tooling pattern: enumerate all autoload-style functions
+    /// (matching `_*` prefix) via the `functions` magic-assoc.
+    #[test]
+    fn magic_functions_filter_and_enumerate() {
+        assert_parity(
+            r#"_helper_a() { :; }
+_helper_b() { :; }
+public_one() { :; }
+_helper_c() { :; }
+print -l -- ${(M)${(k)functions}:#_*} | sort"#,
+        );
+    }
+
+    // ─── p10k's /literal-line-from-source/ ──────────────────────────
+
+    /// Real line from p10k internal/p10k.zsh: take a path, replace
+    /// $HOME prefix with `~`. Without (#b)+match[N] this still works
+    /// via plain prefix-replace as long as we hand-anchor.
+    #[test]
+    fn p10k_home_to_tilde_simple() {
+        assert_parity(
+            r#"export HOME=/Users/me
+p="/Users/me/projects/foo"
+short=${p/#$HOME/\~}
+echo "$short"
+p2="/var/log/syslog"
+short2=${p2/#$HOME/\~}
+echo "$short2""#,
+        );
+    }
+
+    // ─── (e) flag on assoc keys for eval ────────────────────────────
+
+    /// zinit's lazy-eval pattern: store a small expr in an assoc
+    /// value, retrieve and eval. Tests that values survive a roundtrip
+    /// through paramsubst untouched even with embedded `$`.
+    #[test]
+    fn assoc_value_with_dollar_survives_lookup() {
+        assert_parity(
+            r#"typeset -gA m
+m[lazy]='echo $USER'
+USER=alice
+eval "${m[lazy]}""#,
+        );
+    }
+
+    // ─── splat with paren-wrapped flag-then-modifier ────────────────
+
+    /// `"${(s::)str}"` — split scalar into individual chars. p10k's
+    /// per-character icon walker.
+    #[test]
+    fn split_into_chars_then_iterate() {
+        assert_parity(
+            r#"str=ABC
+chars=("${(@s::)str}")
+echo "n=$#chars"
+for c in "${chars[@]}"; do echo "[$c]"; done"#,
+        );
+    }
+
+    // ─── (P) indirection with flag-set on target ────────────────────
+
+    /// `${(UP)ref}` — indirect through `ref` to find a variable,
+    /// then uppercase its value. Cycle 3-ish fix verified the pre-
+    /// walker order; this is the kitchen-sink pin.
+    #[test]
+    fn p_indirect_then_uppercase() {
+        assert_parity(
+            r#"target="hello world"
+ref=target
+echo "${(UP)ref}""#,
+        );
+    }
+
+    // ─── arr=("${(@)flag}…") spread inside DQ ───────────────────────
+
+    /// `arr=("${(@s.,.)str}")` is THE canonical safe-splat — the (@)
+    /// keeps array boundaries in DQ context. Wrapping in DQ is what
+    /// preserves embedded whitespace per element. Used in every
+    /// plugin's config parser.
+    #[test]
+    fn safe_splat_with_embedded_whitespace() {
+        assert_parity(
+            r#"str="alpha beta,gamma delta,epsilon"
+arr=("${(@s.,.)str}")
+echo "n=$#arr"
+for e in "${arr[@]}"; do echo "[$e]"; done"#,
+        );
+    }
+
+    // ─── deep modifier-on-modifier chain ────────────────────────────
+
+    /// `${${${file:t}:r}:l}` — name without dir, without extension,
+    /// lowercased. Three modifier passes on a positional.
+    #[test]
+    fn three_modifier_passes_chained() {
+        assert_parity(
+            r#"file="/PATH/To/MyScript.TAR.GZ"
+echo "${${${file:t}:r}:l}""#,
+        );
+    }
+
+    // ─── case-changing flags on cmd-subst ───────────────────────────
+
+    /// `${(C)$(...)}` — capitalize each word of a command's output.
+    /// p10k uses this for prettifying short hostnames.
+    #[test]
+    fn capitalize_each_word_of_cmdsubst() {
+        assert_parity(r#"echo "${(C)$(echo hello world how are you)}""#);
+    }
+
+    // ─── zinit gnarliest: a piece of the real p9k_register line ─────
+
+    /// p10k internal/p10k.zsh has lines like
+    ///   `: ${(P)${name//[^a-zA-Z0-9_]/_}::=${val}}`
+    /// — sanitize a name (replace non-ident chars with `_`), use the
+    /// sanitized form indirectly to set a value.
+    #[test]
+    fn p10k_sanitize_then_indirect_assign() {
+        assert_parity(
+            r#"raw="my-segment-1"
+sanitized="${raw//[^a-zA-Z0-9_]/_}"
+echo "san=$sanitized"
+typeset -g $sanitized=hello
+echo "via-direct=${my_segment_1}"
+echo "via-indirect=${(P)sanitized}""#,
+        );
+    }
+}

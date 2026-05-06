@@ -709,11 +709,15 @@ pub fn magic_assoc_keys(name: &str, state: &SubstState) -> Option<Vec<String>> {
 /// functions, commands, options, parameters, …).
 pub fn magic_assoc_values(name: &str, state: &SubstState) -> Option<Vec<String>> {
     let keys = magic_assoc_keys(name, state)?;
-    let values = crate::exec::with_executor(|exec| {
+    // Falls back to empty values when called outside a VM context
+    // (unit tests via `mk_state` that exercise subst_port directly).
+    let key_count = keys.len();
+    let values = crate::exec::try_with_executor(|exec| {
         keys.iter()
             .map(|k| exec.get_special_array_value(name, k).unwrap_or_default())
             .collect::<Vec<String>>()
-    });
+    })
+    .unwrap_or_else(|| vec![String::new(); key_count]);
     Some(values)
 }
 
@@ -8573,7 +8577,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "TODO: full p10k line `${${${(q)__p9k_zd}/#(#b)${(q)HOME}(|\\/*)/'~'$match[1]}//\\%/%%}` requires `(#b)` backref-capture pattern flag + `${match[N]}` backreferences. Currently three of the four parts work end-to-end (q flag alone, /# anchored replace, // global replace); the (#b)+match[N] backref part is the remaining gap."]
     fn p10k_home_replace_with_tilde() {
         let mut s = mk_state(
             &[("HOME", "/Users/me"), ("path", "/Users/me/proj/x")],
@@ -8631,7 +8634,6 @@ mod tests {
     // ─── p10k:321 — `::=` + (Q) + ~ glob_subst on token ──────────
 
     #[test]
-    #[ignore = "TODO: `::=` operator + `${~var}` glob_subst-on-value form both unimplemented. Pinned per p10k internal/p10k.zsh:321 `: ${token::=${(Q)${~token}}}`."]
     fn p10k_token_canonicalize_via_Q_and_glob_subst() {
         let mut s = mk_state(&[("token", "'literal'")], &[], &[]);
         // (Q) strips the quotes; ~ would glob-expand if there were
@@ -8643,7 +8645,6 @@ mod tests {
     // ─── zinit's gnarliest — (#b) backref + ${match[N]} in repl ──
 
     #[test]
-    #[ignore = "TODO: the kitchen-sink case requires `(#b)`/`(#e)` glob-flag pattern anchors, `${match[N]}` backreference array, AND `${var::=…}:+` ternary-via-assign — all unimplemented. Pinned per the line user supplied from zinit:\n  ___substs=( ${___substs[@]//(#b)((*)\\(#e)|(*))/${match[3]:+${___prev:+$___prev\\;}}${match[3]}${${___prev::=${match[2]:+${___prev:+$___prev\\;}}${match[2]}}:+}} )"]
     fn p10k_zinit_kitchen_sink_substs() {
         // The pattern: `(#b)((*)\(#e)|(*))`
         //   group 1: alternation of (group 2: ANY ending in `\` at
@@ -8699,7 +8700,6 @@ mod tests {
     // ─── nested with literal `~` glob_subst ──────────────────────
 
     #[test]
-    #[ignore = "TODO: `${~var}` (glob subst on result) — interpret the value as a glob pattern, expand against filesystem."]
     fn p10k_tilde_glob_subst_form() {
         let mut s = mk_state(&[("p", "/usr/bin/*")], &[], &[]);
         // Truth: `${~p}` glob-expands /usr/bin/*. Result depends on
