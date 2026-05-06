@@ -3480,13 +3480,77 @@ fn register_builtins(vm: &mut fusevm::VM) {
             || name.ends_with("[*]")
             || flags.contains('@');
         if (dq_compile || dq_runtime) && !has_at_subscript {
-            // Strip array-only flags (sort/unique/index variants).
-            // (M) is NOT stripped here — it still modifies `:#pat`
-            // filter behavior on the joined scalar in DQ context.
-            flags = flags
-                .chars()
-                .filter(|c| !matches!(c, 'o' | 'O' | 'n' | 'i' | 'u'))
-                .collect();
+            // Strip array-only flag CHARS (sort/unique/index variants)
+            // from the flag chain — but only when they appear as
+            // bare flag chars, not as part of a flag-arg like
+            // `(r:NAME::pad:)` where NAME may contain `n`/`o`/etc.
+            // Direct port of zsh's nojoin gating in Src/subst.c:1813
+            // which gates these flags off in DQ context. The C source
+            // walks the flag chain as a state machine; we mirror that
+            // by tracking arg-region depth: when we hit `(j:`, `(s:`,
+            // `(l:`, `(r:` etc., switch into "in-arg" mode and copy
+            // chars verbatim until the closing delim. Without this
+            // careful skip, `(r:hlen:: :)` lost the `n` inside the
+            // identifier, so width parsing returned a truncated name.
+            let bytes = flags.as_bytes();
+            let mut out = String::with_capacity(bytes.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                let b = bytes[i] as char;
+                // Flag chars that take a delimited argument:
+                // `j:STR:` join, `s:STR:` split, `l:N::pad:`,
+                // `r:N::pad:`, `Z:STR:`, `g:STR:`. The arg is
+                // bracket-delimited by the next char.
+                if matches!(b, 'j' | 's' | 'l' | 'r' | 'Z' | 'g')
+                    && i + 1 < bytes.len()
+                    && !(bytes[i + 1] as char).is_ascii_alphanumeric()
+                    && bytes[i + 1] != b'_'
+                {
+                    let delim_open = bytes[i + 1] as char;
+                    let delim_close = match delim_open {
+                        '[' => ']',
+                        '{' => '}',
+                        '(' => ')',
+                        '<' => '>',
+                        c => c,
+                    };
+                    out.push(b);
+                    out.push(delim_open);
+                    i += 2;
+                    // For `l:N::pad:` and `r:N::pad:`, the format has
+                    // TWO arg sections: `:N:` then `:pad:`. Walk
+                    // through both, plus any further sections until
+                    // we run out of immediate-`delim_close+delim_open`
+                    // pairs. This matches zsh subst.c get_strarg
+                    // which is called in a loop.
+                    loop {
+                        while i < bytes.len() && bytes[i] as char != delim_close {
+                            out.push(bytes[i] as char);
+                            i += 1;
+                        }
+                        if i < bytes.len() {
+                            out.push(delim_close);
+                            i += 1;
+                        }
+                        // Continue if the next char is the same
+                        // open-delim (another arg section).
+                        if i < bytes.len() && bytes[i] as char == delim_open {
+                            out.push(delim_open);
+                            i += 1;
+                            continue;
+                        }
+                        break;
+                    }
+                    continue;
+                }
+                if matches!(b, 'o' | 'O' | 'n' | 'i' | 'u') {
+                    i += 1;
+                    continue;
+                }
+                out.push(b);
+                i += 1;
+            }
+            flags = out;
         }
 
         // Initial state: prefer assoc → array → scalar lookup. If `P` flag
@@ -3861,7 +3925,24 @@ fn register_builtins(vm: &mut fusevm::VM) {
                     if i < chars.len() {
                         i += 1; // skip closing delim
                     }
-                    let width: usize = width_str.parse().unwrap_or(0);
+                    // Width may be a literal number, `$VAR`, or a bare
+                    // identifier (zsh evaluates `(r:hlen:: :)` by
+                    // running `mathevali("hlen")` which reads the
+                    // parameter table). Direct port of Src/subst.c
+                    // `get_intarg()` (line 1428) which does
+                    // `parsestr` → `singsub` → `mathevali`. Fast path:
+                    // if the arg parses as a literal usize, use it
+                    // directly. Otherwise expand `$`-references and
+                    // route through evaluate_arithmetic so bare
+                    // identifiers resolve to their variable values.
+                    let width: usize = if let Ok(n) = width_str.parse() {
+                        n
+                    } else {
+                        with_executor(|exec| {
+                            let arith_str = exec.evaluate_arithmetic(&width_str);
+                            arith_str.parse::<i64>().map(|v| v.unsigned_abs() as usize).unwrap_or(0)
+                        })
+                    };
                     // Optional `:fill:` after the width.
                     let mut fill = String::from(" ");
                     if i < chars.len() && ZshrsHost::is_zsh_flag_delim(chars[i]) {
