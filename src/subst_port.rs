@@ -1113,6 +1113,14 @@ fn stringsubst(
                     new_pf_flags |= prefork_flags::SHWORDSPLIT;
                 }
 
+                // stringsubst → paramsubst is a recursive descent —
+                // bump the executor's paramsubst-nest counter so the
+                // inner expansion's glob_subst etc. sees it's running
+                // inside an outer operand context (where filesystem
+                // glob expansion must be suppressed). Use the fallible
+                // variant so the unit-test path that calls paramsubst
+                // without a live executor doesn't panic.
+                crate::exec::try_with_executor(|e| e.in_paramsubst_nest += 1);
                 let (new_str, new_pos, new_nodes) = paramsubst(
                     &str3,
                     pos,
@@ -1124,6 +1132,7 @@ fn stringsubst(
                     ret_flags,
                     state,
                 );
+                crate::exec::try_with_executor(|e| e.in_paramsubst_nest -= 1);
 
                 if state.errflag {
                     return None;
@@ -3593,7 +3602,31 @@ fn apply_param_flags(
     // re-routes the post-expansion text through the glob engine; we
     // delegate to the executor's expand_glob (which already handles
     // wildcards, qualifiers, and **).
-    if flags.glob_subst {
+    //
+    // Suppress the filesystem glob when:
+    //   1. We're inside a nested paramsubst (e.g. operand of `:#`
+    //      filter, default `:-`/`:+`, replacement `${var/pat/${~name}}`,
+    //      etc.). The surrounding operator already wants the value as
+    //      a pattern string. zsh: `${(@)arr:#$~ban}` filters arr against
+    //      $ban as a shell pattern; no filesystem step.
+    //   2. We're in single-word context (ssub — DQ wrap or scalar
+    //      assignment). zsh: `"${~ban}"` returns the literal "z*"
+    //      string, NOT filesystem matches. The glob_subst flag's
+    //      effect collapses to a no-op when the result is consumed
+    //      as a scalar (the value passes through uninterpreted).
+    //      Direct port of Src/subst.c paramsubst's glob_subst gate
+    //      around the prefork SINGLE check.
+    let (in_nested_subst, in_dq, in_scalar_assign) = crate::exec::try_with_executor(|exec| {
+        (
+            exec.in_paramsubst_nest > 1,
+            exec.in_dq_context > 0,
+            exec.in_scalar_assign > 0,
+        )
+    })
+    .unwrap_or((false, false, false));
+    let ssub_ctx =
+        pf_flags & prefork_flags::SINGLE != 0 || in_dq || in_scalar_assign;
+    if flags.glob_subst && !in_nested_subst && !ssub_ctx {
         let expanded = crate::exec::with_executor(|exec| {
             let mut out: Vec<String> = Vec::with_capacity(result.len());
             for piece in &result {
