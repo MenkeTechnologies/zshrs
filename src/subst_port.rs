@@ -2553,13 +2553,14 @@ fn parse_brace_param(
     //
     // `(M)` is the exception: it modifies the `:#` operator's
     // semantics inline, so it travels with the operator call.
-    value = apply_operator_with_flags(
+    value = apply_operator_with_flags_full(
         &var_name,
         subscript.as_deref(),
         value,
         operator,
         &operand,
         flags.match_flag,
+        flags.search,
         state,
     );
 
@@ -3810,6 +3811,26 @@ fn apply_operator_with_flags(
     match_flag: bool,
     state: &mut SubstState,
 ) -> Vec<String> {
+    apply_operator_with_flags_full(
+        var_name, subscript, value, operator, operand, match_flag, false, state,
+    )
+}
+
+/// Full variant accepting both (M) match-keep and (S) substring-
+/// search flags. Per Src/subst.c, (S) changes `#`/`##`/`%`/`%%`
+/// from anchored prefix/suffix strip to "find shortest/longest
+/// match anywhere in the string". Combined with (M), returns the
+/// matched substring; otherwise returns the unmatched remainder.
+fn apply_operator_with_flags_full(
+    var_name: &str,
+    subscript: Option<&str>,
+    value: Vec<String>,
+    operator: Option<&str>,
+    operand: &str,
+    match_flag: bool,
+    search_flag: bool,
+    state: &mut SubstState,
+) -> Vec<String> {
     let is_set = !value.is_empty();
     let is_empty = value.iter().all(|s| s.is_empty());
     let joined = value.join(" ");
@@ -4099,32 +4120,33 @@ fn apply_operator_with_flags(
                 })
                 .collect()
         }
-        Some("#") => {
-            // Remove shortest prefix matching pattern. Per
-            // Src/subst.c paramsubst's `case '#':` arm and getmatch():
-            // `(M)` flag (passed via `match_flag`) inverts return —
-            // matched portion instead of unmatched.
+        Some(op @ ("#" | "##" | "%" | "%%")) => {
+            // Strip prefix/suffix matching pattern.
+            //   `#`/`##`  = anchored prefix (shortest/longest) match
+            //   `%`/`%%`  = anchored suffix (shortest/longest) match
+            //   `(M)` = return matched portion (else unmatched).
+            //   `(S)` = search-anywhere (substring), not anchored.
+            // Operand is expanded for `$VAR`/`${VAR}` references
+            // before pattern matching (Src/subst.c paramsubst's
+            // case '#'/'%' arm calls singsub on the operand).
+            let expanded_operand = if operand.contains('$') || operand.contains('`') {
+                singsub_no_tilde(operand, state)
+            } else {
+                operand.to_string()
+            };
+            let greedy = matches!(op, "##" | "%%");
+            let from_end = matches!(op, "%" | "%%");
             value
                 .iter()
-                .map(|s| strip_prefix_match(s, operand, false, match_flag))
-                .collect()
-        }
-        Some("##") => {
-            value
-                .iter()
-                .map(|s| strip_prefix_match(s, operand, true, match_flag))
-                .collect()
-        }
-        Some("%") => {
-            value
-                .iter()
-                .map(|s| strip_suffix_match(s, operand, false, match_flag))
-                .collect()
-        }
-        Some("%%") => {
-            value
-                .iter()
-                .map(|s| strip_suffix_match(s, operand, true, match_flag))
+                .map(|s| {
+                    if search_flag {
+                        substring_search_match(s, &expanded_operand, greedy, match_flag, from_end)
+                    } else if from_end {
+                        strip_suffix_match(s, &expanded_operand, greedy, match_flag)
+                    } else {
+                        strip_prefix_match(s, &expanded_operand, greedy, match_flag)
+                    }
+                })
                 .collect()
         }
         Some("/") | Some("//") | Some("/#") | Some("/%") => {
@@ -4358,6 +4380,67 @@ fn find_suffix_match(s: &str, pattern: &str) -> Vec<usize> {
 /// Strip a prefix of `s` matching `pattern`. Returns the unmatched
 /// tail by default; with `match_flag` returns the matched head
 /// (empty when no match).
+/// (S) substring-search variant of strip_prefix_match /
+/// strip_suffix_match. Searches the pattern anywhere in `s` and
+/// returns either the matched portion (with M) or the remainder
+/// after stripping the match (without M). `from_end=true` searches
+/// from the right (for `%`/`%%`); false searches from left (for
+/// `#`/`##`). `greedy=true` picks longest match; false picks
+/// shortest. Direct port of zsh's getmatch() with SUB_SUBSTR
+/// flag set (Src/glob.c).
+fn substring_search_match(
+    s: &str,
+    pattern: &str,
+    greedy: bool,
+    match_flag: bool,
+    from_end: bool,
+) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    let mut best: Option<(usize, usize)> = None;
+    let starts: Vec<usize> = if from_end {
+        (0..=n).rev().collect()
+    } else {
+        (0..=n).collect()
+    };
+    for start in starts {
+        let ends: Vec<usize> = if greedy {
+            (start..=n).rev().collect()
+        } else {
+            (start..=n).collect()
+        };
+        for end in ends {
+            let candidate: String = chars[start..end].iter().collect();
+            if crate::exec::ShellExecutor::glob_match_static(&candidate, pattern) {
+                best = Some((start, end));
+                break;
+            }
+        }
+        if best.is_some() {
+            break;
+        }
+    }
+    match best {
+        Some((start, end)) => {
+            if match_flag {
+                chars[start..end].iter().collect()
+            } else {
+                let mut out = String::new();
+                out.extend(chars[..start].iter());
+                out.extend(chars[end..].iter());
+                out
+            }
+        }
+        None => {
+            if match_flag {
+                String::new()
+            } else {
+                s.to_string()
+            }
+        }
+    }
+}
+
 fn strip_prefix_match(s: &str, pattern: &str, greedy: bool, match_flag: bool) -> String {
     let chars: Vec<char> = s.chars().collect();
     let matches = find_prefix_match(s, pattern);
