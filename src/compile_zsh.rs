@@ -1783,6 +1783,45 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: bare `$+NAME` / `$+NAME[KEY]` — set-test, equivalent
+        // to `${+NAME}` / `${+NAME[KEY]}`. p10k uses `$+commands[X]`
+        // and `$+functions[X]` heavily as a guard; the unbraced form
+        // was falling through to the literal-emit path. Mirror the
+        // `$#NAME` fast-path style: build the braced shape and call
+        // BUILTIN_EXPAND_TEXT mode 4 so the runtime's chkset machinery
+        // (already correct for `${+...}`) handles it.
+        if !has_bnull && untoked.len() >= 3 && untoked.starts_with("$+") {
+            let rest = &untoked[2..];
+            let first = rest.chars().next();
+            let bare = if let Some(lb) = rest.find('[') {
+                if rest.ends_with(']') {
+                    Some(&rest[..lb])
+                } else {
+                    None
+                }
+            } else {
+                Some(rest)
+            };
+            let valid = bare
+                .map(|b| {
+                    !b.is_empty()
+                        && first
+                            .map(|c| c == '_' || c.is_ascii_alphabetic())
+                            .unwrap_or(false)
+                        && b.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+                })
+                .unwrap_or(false);
+            if valid {
+                let braced = format!("${{+{}}}", rest);
+                let idx = self.builder.add_constant(Value::str(braced));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder.emit(Op::LoadInt(4), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_EXPAND_TEXT, 2), 0);
+                return;
+            }
+        }
+
         // Fast path: bare `$NAME[KEY]` — without braces, zsh lexes
         // `$NAME` as the variable name and `[KEY]` as a subscript that
         // applies to it (NOT a literal `[KEY]` suffix). Emit name+key

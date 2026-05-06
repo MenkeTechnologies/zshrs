@@ -863,6 +863,34 @@ echo "out=$options[glob]""#,
         );
     }
 
+    /// Bare `$+NAME` / `$+NAME[KEY]` set-test (no braces). p10k's
+    /// segment-load guards use `(( $+commands[git] ))` and
+    /// `(( $+functions[my_helper] ))` everywhere; was emitting the
+    /// literal `$+commands[git]` because the fast-path layer didn't
+    /// recognize the unbraced form. Mirror the `$#NAME` fast-path
+    /// shape: build `${+NAME[…]}` and route through expand_string's
+    /// existing chkset logic. Tested via the unwrapped form because
+    /// the DQ-mixed-content path still goes through the segment
+    /// splitter (a separate fix).
+    #[test]
+    fn bare_dollar_plus_name() {
+        assert_parity(
+            r#"x=hello
+echo "have=$((${+x})) miss=$((${+nonexistent_var_xyz_zshrs}))""#,
+        );
+    }
+
+    #[test]
+    fn bare_dollar_plus_subscript() {
+        assert_parity(
+            r#"function _myfn() { :; }
+v=$+functions[_myfn]
+echo "have=$v"
+v=$+functions[really_no_such_xyz]
+echo "miss=$v""#,
+        );
+    }
+
     /// `X=foo Y=bar cmd` — inline assignments are visible in cmd's
     /// child environment AND vanish from the parent shell after cmd
     /// returns. zshrs was leaving X/Y in self.variables forever and
