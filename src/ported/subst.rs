@@ -1241,7 +1241,7 @@ fn paramsubst(                                              // c:1625
                     'W' => { flag_word_count_w = true; }    // c:2281 (W)
                     'z' | 'Z' => { /* tokenize — c:2439 */ } // c:2439 (z/Z)
                     'g' => { /* escapes — c:2409 */ }       // c:2409 (g)
-                    '~' => { /* tok_arg toggle — c:2160 */ } // c:2160 (~)
+                    '~' => { state.opts.glob_subst = !state.opts.glob_subst; } // c:2160 (~)
                     'm' => { /* multi_width — c:2376, skip for now */ } // c:2376
                     'p' => { flag_p_escapes = true; }       // c:2382
                     'f' => { spsep = Some("\n".to_string()); } // c:2285
