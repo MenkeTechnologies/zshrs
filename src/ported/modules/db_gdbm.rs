@@ -491,11 +491,13 @@ impl TiedGdbmParam {
 static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-/// List currently-tied GDBM parameter names.
-/// Port of the `tied_param_list` enumeration the C source keeps in
-/// Src/Modules/db_gdbm.c via `append_tied_name()` /
-/// `remove_tied_name()` (lines 42/43) — `${scangdbmkeys}` reads it.
-pub fn scangdbmkeys() -> Vec<String> {
+/// List currently-tied GDBM parameter names — backs the
+/// `${gdbm_tied}` magic-assoc reader.
+/// Port of `append_tied_name()` / `remove_tied_name()` (the
+/// `tied_param_list` enumeration helpers at
+/// Src/Modules/db_gdbm.c:42-43); reads the linked list those
+/// two C helpers maintain.
+pub fn append_tied_name() -> Vec<String> {
     if let Ok(params) = TIED_PARAMS.lock() {
         params.keys().cloned().collect()
     } else {
@@ -510,7 +512,7 @@ pub fn scangdbmkeys() -> Vec<String> {
 /// the param name into the tied-list.
 ///
 /// Usage: `ztie -d db/gdbm -f /path/to/db.gdbm [-r] PARAM_NAME`
-pub fn ztie(
+pub fn bin_ztie(
     args: &[String],
     readonly: bool,
     db_type: Option<&str>,
@@ -564,7 +566,7 @@ pub fn ztie(
 /// the hash table, and removes the entry from the tied-list.
 ///
 /// Usage: `zuntie [-u] PARAM_NAME...`
-pub fn zuntie(args: &[String], force_unset: bool) -> Result<(), String> {
+pub fn bin_zuntie(args: &[String], force_unset: bool) -> Result<(), String> {
     let mut errors = Vec::new();
 
     for param_name in args {
@@ -596,7 +598,7 @@ pub fn zuntie(args: &[String], force_unset: bool) -> Result<(), String> {
 /// C source writes the result into `$REPLY`. Same convention.
 ///
 /// Usage: `zgdbmpath PARAM_NAME`
-pub fn zgdbmpath(param_name: &str) -> Result<String, String> {
+pub fn bin_zgdbmpath(param_name: &str) -> Result<String, String> {
     let params = TIED_PARAMS.lock().map_err(|_| "lock error")?;
 
     let tied = params
@@ -659,7 +661,7 @@ pub fn gdbmunsetfn(param_name: &str, key: &str) -> Result<(), String> {
 /// Get every key in a tied parameter.
 /// Port of `scangdbmkeys()` from Src/Modules/db_gdbm.c:442 — the
 /// `scanfn` slot the C source wires for `${(k)db}`.
-pub fn gdbm_keys(param_name: &str) -> Option<Vec<String>> {
+pub fn scangdbmkeys(param_name: &str) -> Option<Vec<String>> {
     get_tied_param(param_name).map(|p| p.keys())
 }
 
@@ -779,7 +781,7 @@ impl crate::ported::exec::ShellExecutor {
             }
         }
 
-        match db_gdbm::ztie(
+        match db_gdbm::bin_ztie(
             &param_args,
             readonly,
             db_type.as_deref(),
@@ -816,7 +818,7 @@ impl crate::ported::exec::ShellExecutor {
             return 1;
         }
 
-        match db_gdbm::zuntie(&param_args, force_unset) {
+        match db_gdbm::bin_zuntie(&param_args, force_unset) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("zshrs:zuntie:1: {}", e);
@@ -837,7 +839,7 @@ impl crate::ported::exec::ShellExecutor {
             return 1;
         }
 
-        match db_gdbm::zgdbmpath(&args[0]) {
+        match db_gdbm::bin_zgdbmpath(&args[0]) {
             Ok(path) => {
                 self.variables.insert("REPLY".to_string(), path.clone());
                 std::env::set_var("REPLY", &path);
