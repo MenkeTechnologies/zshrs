@@ -20,7 +20,7 @@
 
 ## `[PATENT PENDING]`
 
-The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — 190k+ lines, 267 source files, 80 core modules, **100% ZLE widget coverage** (193/193 entries from zsh's `Src/Zle/iwidgets.list` — history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 48 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility.
+The first Unix shell to compile to bytecodes and execute on a purpose-built virtual machine with fused superinstructions. Since the Bourne shell at Bell Labs in 1970, every Unix shell has been an interpreter. zshrs is the first to be a compiler. A drop-in zsh replacement written in Rust — **318k+ lines, 386 source files** across a 4-crate workspace (`zshrs` runtime, `compsys`, `zshrs-daemon`, `zshrs-parse`), with the runtime split into a **strict 1:1 port directory** (`src/ported/` — 89 files, every fn maps to a real `Src/<x>.c` zsh function, enforced by `tests/port_purity.rs`), **a non-port extensions directory** (`src/extensions/` — 31 files, features zsh C does not have: AOT, daemon coordination, plugin/script/autoload caches, fish-style autosuggest/abbrev/highlight, persistent worker pools, ZWC byte-code helpers), and a feature-gated recorder (`src/recorder/`). **100% ZLE widget coverage** (193/193 entries from zsh's `Src/Zle/iwidgets.list` — history navigation, vi find/repeat/marks, undo/redo, isearch, yank-pop, shell-aware word motion, region/visual mode, text objects, completion menu, $zle_highlight parsing), 48 fish-ported builtins, persistent worker pool, AOP intercept, **rkyv**-backed bytecode images (mmap hot path; the only shell bytecode cache), **read-only SQLite mirrors** beside them for `dbview` / SQL inspection only (no cache semantics), and full zsh compatibility.
 
 ### [`Docs`](https://menketechnologies.github.io/zshrs/index.html) · [`Reference`](https://menketechnologies.github.io/zshrs/reference.html) · [`Coverage Report`](https://menketechnologies.github.io/zshrs/report.html) · [`strykelang`](https://github.com/MenkeTechnologies/strykelang) · [`fusevm`](https://github.com/MenkeTechnologies/fusevm) · [`compsys`](compsys/)
 
@@ -436,28 +436,56 @@ intercept before git { …; }       # AOP advice fires for both literal and dyna
 
 ## [0x0B] ARCHITECTURE
 
+The codebase is **structurally divided into ported code vs extensions**, with the boundary mechanically enforced by `tests/port_purity.rs`. Bots, contributors, and humans all read [`docs/PORT.md`](docs/PORT.md) before writing a single line.
+
 ```
-                  ┌──────────────────────────────────────────┐
-                  │              zshrs binary                 │
-                  ├──────────────┬───────────────────────────┤
-                  │   src/ (80)  │      fish/ (48 builtins)  │
-                  │   lexer      │      reader + line editor  │
-                  │   parser     │      syntax highlighting   │
-                  │   compiler   │      autosuggestions        │
-                  │   exec       │      abbreviations          │
-                  │   jobs       │      env dispatch           │
-                  │   signals    │      history backend        │
-                  │   params     │      process control        │
-                  │   glob       │      event system           │
-                  │   zle/ (26)  │                             │
-                  ├──────────────┴───────────────────────────┤
-                  │             compsys (27 files)            │
-                  │   rkyv mmap · read-only SQL mirror · zstyle │
-                  ├────────���─────────────────────────────────┤
-                  │           fusevm (bytecode VM)            │
-                  │   129 opcodes · fused loops · JIT path   │
-                  └──────────────────────────────────────────┘
+                  ┌────────────────────────────────────────────────────────────────┐
+                  │                       zshrs workspace                          │
+                  │             4 crates · 386 .rs files · 318k+ lines             │
+                  ├──────────────────────────────────────────┬─────────────────────┤
+                  │  src/ (124 .rs — runtime crate)           │  fish/ (157 .rs)    │
+                  │  ┌────────────────────────────────────┐   │  reader / line edit │
+                  │  │  src/ported/  (89 — STRICT PORT)   │   │  syntax highlight   │
+                  │  │  every .rs ↔ a real Src/<x>.c file │   │  autosuggest        │
+                  │  │  every fn carries `/// Port of …`  │   │  abbreviations      │
+                  │  │  enforced by tests/port_purity.rs  │   │  env dispatch       │
+                  │  │  builtins/ · zle/ · modules/ ·     │   │  history backend    │
+                  │  │  hist · jobs · params · pattern ·  │   │  process control    │
+                  │  │  signals · glob · subst · math ·   │   │  event system       │
+                  │  │  prompt · utils · init · …         │   ├─────────────────────┤
+                  │  └────────────────────────────────────┘   │  parse/ (4 .rs)     │
+                  │  ┌────────────────────────────────────┐   │  port of lex.c +    │
+                  │  │  src/extensions/  (31 — NON-PORT)  │   │  parse.c — shared   │
+                  │  │  features zsh C does NOT have:     │   │  by zshrs runtime   │
+                  │  │  AOT · plugin/script/autoload      │   │  and the daemon     │
+                  │  │  cache · fish_features · worker    │   ├─────────────────────┤
+                  │  │  pool · zwc · arith_compiler ·     │   │  daemon/ (41 .rs)   │
+                  │  │  hooks · keymaps · widgets ·       │   │  zshrs-daemon — IPC │
+                  │  │  daemon_presence · log · …         │   │  · HTTP · OpenAPI · │
+                  │  └────────────────────────────────────┘   │  fsnotify · cache · │
+                  │  ┌────────────────────────────────────┐   │  zsource/zhistory/  │
+                  │  │  src/recorder/  (1 — feature gate) │   │  zjob builtins      │
+                  │  │  AOP intercept; #[cfg(recorder)]   │   ├─────────────────────┤
+                  │  │  → zero bytes in default binary    │   │  compsys/ (27 .rs)  │
+                  │  └────────────────────────────────────┘   │  rkyv mmap · zstyle │
+                  ├──────────────────────────────────────────┴─────────────────────┤
+                  │                  bins/  (3 — entry points)                     │
+                  │     zshrs            zshrs-recorder         zd                 │
+                  │     (default)        (--features recorder)  (--features zd)    │
+                  ├────────────────────────────────────────────────────────────────┤
+                  │                       fusevm (bytecode VM)                    │
+                  │            129 opcodes · fused superinstructions · JIT         │
+                  └────────────────────────────────────────────────────────────────┘
 ```
+
+### Directory rule (PORT.md)
+
+| Directory | Rule | Enforcement |
+|-----------|------|-------------|
+| `src/ported/` | **Strict 1:1 port.** Every `.rs` mirrors a real `src/zsh/Src/<x>.c`; every top-level `fn` carries `/// Port of <cname>() from Src/<file>.c:NNNN`; no invented helpers; **directory and file set FROZEN** (89 files, no new files allowed). | `tests/port_purity.rs` |
+| `src/extensions/` | **Non-port only.** Features zsh C demonstrably does *not* have. Must not duplicate or shadow any port. | `port_purity` exempts the 1:1 file rule for this directory only |
+| `src/recorder/` | **Feature-gated.** Every symbol `#[cfg(feature = "recorder")]`; deleted by rustc when off. | `Cargo.toml` `required-features = ["recorder"]` on the `zshrs-recorder` bin |
+| `src/zsh/` | **Read-only reference.** Vendored upstream zsh C source. The spec; never modified. | n/a |
 
 ---
 
