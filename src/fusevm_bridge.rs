@@ -6973,6 +6973,30 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let repl_raw = vm.pop().to_str();
         let pattern_raw = vm.pop().to_str();
         let name = vm.pop().to_str();
+        // SUB_* flag bits set by the (M)/(R)/(B)/(E)/(N)/(S) flag-loop
+        // arms. Direct port of zsh's getmatch() flag dispatch — these
+        // alter the disposition of the match result:
+        //   M=0x08 — return matched portion
+        //   R=0x10 — return rest after match
+        //   B=0x20 — return 1-based start index
+        //   E=0x40 — return 1-based end index
+        //   N=0x80 — return match length
+        //   S=0x04 — substring search (anywhere) instead of anchored
+        // Read once and consume so subsequent paramsubst calls see
+        // a clean slate — direct port of subst.c flag-loop pattern.
+        let (sub_match, sub_rest, sub_bind, sub_eind, sub_len, _sub_substr) =
+            with_executor(|exec| {
+                let f = exec.sub_flags;
+                exec.sub_flags = 0;
+                (
+                    (f & 0x0008) != 0,                       // c:2171 M
+                    (f & 0x0010) != 0,                       // c:2174 R
+                    (f & 0x0020) != 0,                       // c:2177 B
+                    (f & 0x0040) != 0,                       // c:2180 E
+                    (f & 0x0080) != 0,                       // c:2183 N
+                    (f & 0x0004) != 0,                       // c:2186 S
+                )
+            });
         // Both pattern and replacement get parameter / cmd-subst /
         // arith expansion before use (zsh semantics — `${s/$pat/X}`
         // resolves $pat).
@@ -7233,6 +7257,38 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             None
         };
         let one = |val: String| -> String {
+            // SUB_M/R/B/E/N short-circuit — alter the disposition
+            // before doing the actual replacement. Direct port of
+            // zsh's getmatch() which returns one of these views
+            // instead of the substituted string when the bit is set.
+            // Matched-portion / rest / position / length variants
+            // all skip the replacement template entirely.
+            let any_disposition = sub_match || sub_rest || sub_bind || sub_eind || sub_len;
+            if any_disposition {
+                if let Some(ref rx) = glob_re {
+                    if let Some(m) = rx.find(&val) {
+                        if sub_match { return m.as_str().to_string(); }
+                        if sub_rest  { return val[m.end()..].to_string(); }
+                        if sub_bind  { return (m.start() + 1).to_string(); }
+                        if sub_eind  { return m.end().to_string(); }
+                        if sub_len   { return (m.end() - m.start()).to_string(); }
+                    } else {
+                        // No match: M/R return empty, B/E/N return 0.
+                        if sub_match || sub_rest { return String::new(); }
+                        return "0".to_string();
+                    }
+                } else if let Some(pos) = val.find(pattern.as_str()) {
+                    let end = pos + pattern.len();
+                    if sub_match { return pattern.clone(); }
+                    if sub_rest  { return val[end..].to_string(); }
+                    if sub_bind  { return (pos + 1).to_string(); }
+                    if sub_eind  { return end.to_string(); }
+                    if sub_len   { return pattern.len().to_string(); }
+                } else {
+                    if sub_match || sub_rest { return String::new(); }
+                    return "0".to_string();
+                }
+            }
             if let Some(ref rx) = glob_re {
                 // Helper that runs ONE replacement: takes the
                 // captures, populates `state.arrays["match"]`
