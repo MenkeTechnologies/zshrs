@@ -1826,6 +1826,20 @@ fn paramsubst(                                              // c:1625
                     .filter(|s| other_set.contains(s.as_str()))
                     .collect();
                 value = kept.join(" ");
+            } else if let Some(rhs) = r.strip_prefix(":^^") { // c:3540 (zip-long)
+                // ${arr:^^other} — interleave two arrays, continuing
+                // past the shorter one with empty strings (vs `:^`
+                // which stops at the shorter). Direct port of the
+                // SUB_ZIP_LONG variant in subst.c:3540.
+                let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
+                let other = state.arrays.get(rhs.trim()).cloned().unwrap_or_default();
+                let n = arr.len().max(other.len());
+                let mut zipped: Vec<String> = Vec::with_capacity(n * 2);
+                for i in 0..n {
+                    zipped.push(arr.get(i).cloned().unwrap_or_default());
+                    zipped.push(other.get(i).cloned().unwrap_or_default());
+                }
+                value = zipped.join(" ");
             } else if let Some(rhs) = r.strip_prefix(":^") { // c:3540 (zip)
                 // ${arr:^other} — interleave two arrays element-by-elem.
                 let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
