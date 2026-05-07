@@ -46,8 +46,8 @@ pub fn query_terminal() -> TermCapabilities {
     }
 
     // Send Device Attributes query (DA1): ESC [ c
-    if let Ok(response) = send_query("\x1b[c", PROBE_TIMEOUT_MS) {
-        parse_device_attributes(&response, &mut caps);
+    if let Ok(response) = probe_terminal("\x1b[c", PROBE_TIMEOUT_MS) {
+        handle_query(&response, &mut caps);
     }
 
     // Check COLORTERM for truecolor
@@ -77,8 +77,11 @@ pub fn query_terminal() -> TermCapabilities {
     caps
 }
 
-/// Send an escape sequence query and read the response
-fn send_query(query: &str, timeout_ms: u64) -> io::Result<String> {
+/// Send an escape sequence query and read the response.
+/// Port of `probe_terminal()` from Src/Zle/termquery.c — the
+/// raw-mode write+read+restore harness that drives all DA1/DA2/
+/// status-report probes.
+fn probe_terminal(query: &str, timeout_ms: u64) -> io::Result<String> {
     #[cfg(unix)]
     {
         // Set terminal to raw mode for reading response
@@ -136,8 +139,10 @@ fn send_query(query: &str, timeout_ms: u64) -> io::Result<String> {
     }
 }
 
-/// Parse DA1 response (from termquery.c handle_query)
-fn parse_device_attributes(response: &str, caps: &mut TermCapabilities) {
+/// Parse DA1 response.
+/// Port of the DA1 branch of `handle_query()` from
+/// Src/Zle/termquery.c.
+fn handle_query(response: &str, caps: &mut TermCapabilities) {
     // DA1 response format: ESC [ ? Ps ; Ps ; ... c
     // Common parameter values:
     // 4 = sixel graphics
@@ -156,36 +161,6 @@ fn parse_device_attributes(response: &str, caps: &mut TermCapabilities) {
             }
         }
     }
-}
-
-/// Decide whether bracketed-paste should be enabled.
-/// Port of the bracketed-paste support check from
-/// Src/Zle/termquery.c. The C source sends DA2 to discriminate, but
-/// every modern terminal (xterm-derived, kitty, alacritty,
-/// terminal.app, vscode) supports it; we white-list by `$TERM` not
-/// being a `dumb` / `cons` prefix.
-pub fn probe_bracketed_paste() -> bool {
-    // Most modern terminals support this
-    if let Ok(term) = std::env::var("TERM") {
-        !term.starts_with("dumb") && !term.starts_with("cons")
-    } else {
-        false
-    }
-}
-
-/// Emit the CSI sequence enabling bracketed-paste mode.
-/// Port of the `\\e[?2004h` send-on-zle-init path in
-/// Src/Zle/termquery.c (`handle_paste`). DEC private mode 2004 is
-/// the cross-vendor bracketed-paste enable.
-pub fn enable_bracketed_paste() -> String {
-    "\x1b[?2004h".to_string()
-}
-
-/// Emit the CSI sequence disabling bracketed-paste mode.
-/// Mirror of `enable_bracketed_paste` — sent at zle-line-finish or
-/// shell exit via the `\\e[?2004l` reset.
-pub fn disable_bracketed_paste() -> String {
-    "\x1b[?2004l".to_string()
 }
 
 /// Percent-encode a string for OSC-7 / OSC-8 URLs.
@@ -267,7 +242,9 @@ fn base64_encode(data: &[u8]) -> String {
 /// through this crate yet.
 pub fn extension_enabled(name: &str) -> bool {
     match name {
-        "bracketed-paste" => probe_bracketed_paste(),
+        "bracketed-paste" => std::env::var("TERM")
+            .map(|t| !t.starts_with("dumb") && !t.starts_with("cons"))
+            .unwrap_or(false),
         "truecolor" => std::env::var("COLORTERM")
             .map(|v| v == "truecolor" || v == "24bit")
             .unwrap_or(false),
@@ -317,52 +294,6 @@ pub fn notify_pwd(path: &str) -> String {
     format!("\x1b]7;file://{}{}\x1b\\", hostname, url_encode(path))
 }
 
-/// `OSC 133 ; A` — prompt start marker.
-/// Port of the `prompt_marker_start` half of
-/// `mark_output()`/`prompt_markers()` in Src/Zle/termquery.c. Used
-/// by terminal emulators (iTerm, WezTerm, vscode) to fold prompts
-/// for selection / "go to previous prompt" navigation.
-pub fn prompt_marker_start() -> &'static str {
-    "\x1b]133;A\x1b\\"
-}
-
-/// `OSC 133 ; B` — command start marker (printed after the prompt).
-/// Mirrors `prompt_marker_start`'s role in `mark_output()` from
-/// Src/Zle/termquery.c.
-pub fn prompt_marker_end() -> &'static str {
-    "\x1b]133;B\x1b\\"
-}
-
-/// `OSC 133 ; C` — command output start.
-/// Port of the output-start half of `mark_output()` in
-/// Src/Zle/termquery.c.
-pub fn output_marker_start() -> &'static str {
-    "\x1b]133;C\x1b\\"
-}
-
-/// `OSC 133 ; D ; exit_code` — command end + exit status.
-/// Port of the output-end branch of `mark_output()` from
-/// Src/Zle/termquery.c.
-pub fn output_marker_end(exit_code: i32) -> String {
-    format!("\x1b]133;D;{}\x1b\\", exit_code)
-}
-
-/// Enter synchronized-output mode — terminal queues the next
-/// frame's worth of writes until the matching end is sent.
-/// Port of the `\\e[?2026h` half of the synchronized-output enable
-/// in Src/Zle/termquery.c. Mode 2026 is the kitty/iTerm/wezterm
-/// vendor-shared synchronized-rendering protocol.
-pub fn sync_output_start() -> &'static str {
-    "\x1b[?2026h"
-}
-
-/// Leave synchronized-output mode — terminal flushes the queued
-/// frame.
-/// Mirror of `sync_output_start`.
-pub fn sync_output_end() -> &'static str {
-    "\x1b[?2026l"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,21 +312,9 @@ mod tests {
     }
 
     #[test]
-    fn test_bracketed_paste() {
-        assert_eq!(enable_bracketed_paste(), "\x1b[?2004h");
-        assert_eq!(disable_bracketed_paste(), "\x1b[?2004l");
-    }
-
-    #[test]
     fn test_base64_encode() {
         assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
         assert_eq!(base64_encode(b""), "");
         assert_eq!(base64_encode(b"a"), "YQ==");
-    }
-
-    #[test]
-    fn test_prompt_markers() {
-        assert!(prompt_marker_start().contains("133;A"));
-        assert!(prompt_marker_end().contains("133;B"));
     }
 }
