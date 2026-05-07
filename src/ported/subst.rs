@@ -1072,15 +1072,25 @@ fn stringsubst(                                             // c:237
                     return None;                            // c:237
                 }                                           // c:237
 
-                // Insert additional nodes if word splitting produced them
-                let mut current_idx = node_idx;             // c:237
-                for (i, node_data) in new_nodes.into_iter().enumerate() { // c:237
-                    if i == 0 {                             // c:237
-                        list.setdata(current_idx, node_data); // c:237
-                    } else {                                // c:237
-                        current_idx = list.insertlinknode(current_idx, node_data); // c:237
-                    }                                       // c:237
-                }                                           // c:237
+                // Insert additional nodes if word splitting produced
+                // them. Empty new_nodes means the expansion produced
+                // ZERO words (e.g. unquoted empty array \${arr} with
+                // arr=()) — clear the original node's text so the
+                // surrounding context (prefix/suffix) collapses.
+                // Direct port of zsh's behavior: \`cmd \$arr\` with
+                // arr=() runs cmd with no args.
+                if new_nodes.is_empty() {                   // c:237
+                    list.setdata(node_idx, String::new());  // c:237
+                } else {
+                    let mut current_idx = node_idx;             // c:237
+                    for (i, node_data) in new_nodes.into_iter().enumerate() { // c:237
+                        if i == 0 {                             // c:237
+                            list.setdata(current_idx, node_data); // c:237
+                        } else {                                // c:237
+                            current_idx = list.insertlinknode(current_idx, node_data); // c:237
+                        }                                       // c:237
+                    }                                           // c:237
+                }
 
                 str3 = list.getdata(node_idx)?.to_string(); // c:237
                 pos = new_pos;                              // c:237
