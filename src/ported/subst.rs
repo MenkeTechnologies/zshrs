@@ -1130,6 +1130,7 @@ fn paramsubst(                                              // c:1625
         let mut flag_char_count = false;                    // c:2275 (c)
         let mut flag_word_count = false;                    // c:2278 (w)
         let mut flag_word_count_w = false;                  // c:2281 (W)
+        let mut flag_b_pattern = false;                     // c:2255 (b)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1214,7 +1215,7 @@ fn paramsubst(                                              // c:1625
                     'X' => { flag_error = true; }           // c:2264 (X)
                     'D' => { /* dir-magic — c:2229 */ }     // c:2229 (D)
                     'V' => { flag_visible = true; }         // c:2232 (V)
-                    'b' => { /* backslash-pattern — c:2255 */ } // c:2255 (b)
+                    'b' => { flag_b_pattern = true; }       // c:2255 (b)
                     'w' => { flag_word_count = true; }      // c:2278 (w)
                     'c' => { flag_char_count = true; }      // c:2275 (c)
                     'W' => { flag_word_count_w = true; }    // c:2281 (W)
@@ -1766,6 +1767,29 @@ fn paramsubst(                                              // c:1625
         if flag_eval {                                      // c:2268
             value = singsub(&value, state);                 // c:2268
         }
+
+        // (b) backslash-quote pattern metachars — output is safe to
+        // feed back into a glob/regex context as a literal. Port of
+        // subst.c:2255 QT_BACKSLASH_PATTERN: every char that has
+        // pattern meaning (`* ? [ ] ( ) | ^ # ~ \ < >` plus IFS
+        // whitespace and shell metachars `& ; { } $ \` " '`) gets
+        // a leading backslash. Used by `[[ x =~ ${(b)pat} ]]` and
+        // `case x in ${(b)pat}` to neutralize a user-supplied
+        // string before it's interpreted as a pattern.
+        if flag_b_pattern {                                 // c:2255
+            let mut out = String::with_capacity(value.len() * 2); // c:2255
+            for ch in value.chars() {                       // c:2255
+                if matches!(ch,                              // c:2255
+                    '*' | '?' | '[' | ']' | '(' | ')' | '|' | '^' | '#' | '~'
+                    | '\\' | '<' | '>' | '&' | ';' | '{' | '}' | '$' | '`'
+                    | '"' | '\'' | ' ' | '\t' | '\n')        // c:2255
+                {                                            // c:2255
+                    out.push('\\');                          // c:2255
+                }                                            // c:2255
+                out.push(ch);                                // c:2255
+            }                                                // c:2255
+            value = out;                                     // c:2255
+        }                                                    // c:2255
 
         // (Q) unquote — strip outer quotes / backslash escapes.
         // Port of subst.c:2261 quotemod-- effect: when quotemod < 0,
