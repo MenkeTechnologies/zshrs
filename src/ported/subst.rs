@@ -3319,10 +3319,21 @@ fn paramsubst(                                              // c:1625
         }                                                   // c:1625
         '*' | '@' => {                                      // c:1625
             let values = state.arrays.get("@").cloned().unwrap_or_default(); // c:1625
-            let value = if c == '*' || qt {                 // c:1625
-                values.join(" ")                            // c:1625
+            // zsh semantics:
+            //   $* / "$*" — join with IFS first char
+            //   $@        — splat into separate words
+            //   "$@"      — preserve array shape (still splat)
+            // Our port: $@ (qt or unqt) → splat; $* → join.
+            // Direct port of subst.c c:1625 dispatch — only $* with
+            // any quoting joins; $@ always preserves array shape.
+            let value = if c == '*' {                       // c:1625
+                let join_sep = state.variables.get("IFS")
+                    .and_then(|s| s.chars().next())
+                    .map(String::from)
+                    .unwrap_or_else(|| " ".to_string());
+                values.join(&join_sep)                       // c:1625
             } else {                                        // c:1625
-                // $@ in unquoted context - each element becomes separate word
+                // $@ / "$@" in unquoted/SINGLE-aware context
                 if pf_flags & prefork_flags::SINGLE == 0 {  // c:1625
                     let prefix: String = chars[..start_pos].iter().collect(); // c:1625
                     let suffix: String = chars[pos + 1..].iter().collect(); // c:1625
