@@ -1625,6 +1625,26 @@ fn paramsubst(                                              // c:1625
         // subexp recursion on the inside. Per zsh, the wrapper just
         // suppresses word-splitting on the cmd-subst result; (f) /
         // (@) flags then re-split as requested.
+        // ${=name} / ${==name} — force or suppress word-splitting on
+        // the result regardless of SH_WORD_SPLIT. Direct port of
+        // Src/subst.c:2558-2569 — single `=` sets spbreak=2 (force),
+        // doubled `==` sets spbreak=0 (suppress). Identifier-only
+        // forms are caught by the compile-time fast path
+        // `parse_forced_split_brace`; the runtime path here covers
+        // `${=$(...)}`, `${=${...}}`, and similar nested operands
+        // that the fast path can't statically resolve.
+        let mut force_split = false;                          // c:1705
+        let mut suppress_split = false;                       // c:1705
+        if idx < body_chars.len() && body_chars[idx] == '=' { // c:2558
+            if body_chars.get(idx + 1).copied() == Some('=') {
+                suppress_split = true;                        // c:2562 (==)
+                idx += 2;                                     // c:2562
+            } else {
+                force_split = true;                           // c:2566 (=)
+                idx += 1;                                     // c:2566
+            }
+        }
+
         let mut peeled_quotes = false;                       // c:2649
         if idx + 1 < body_chars.len()                        // c:2649
             && body_chars[idx] == '"'                        // c:2649
@@ -3180,6 +3200,30 @@ fn paramsubst(                                              // c:1625
             }
         }
 
+        // ${=name} forced split — promote scalar value to multi-word
+        // splat per Src/subst.c:3902 `force_split = !ssub && spbreak`.
+        // Suppressed when ssub (paramsubst called with PREFORK_SINGLE,
+        // i.e. inside a scalar-assignment context). The split uses
+        // IFS chars from the executor; default IFS is " \t\n".
+        let in_ssub = pf_flags & prefork_flags::SINGLE != 0;
+        if force_split && !in_ssub && split_parts.is_none() {
+            let ifs = state.variables.get("IFS").cloned()
+                .unwrap_or_else(|| " \t\n".to_string());
+            let parts: Vec<String> = value
+                .split(|c: char| ifs.contains(c))
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+            if !parts.is_empty() {
+                value = parts.join(" ");
+                split_parts = Some(parts);
+            }
+        }
+        // ${==name} forced no-split — just consume the flag, no
+        // additional action needed since the default path doesn't
+        // split. Used to override SH_WORD_SPLIT for one expansion.
+        let _ = suppress_split;                              // c:2562
+
         // Reconstruct the full str3 with the brace expansion applied
         // — same protocol the simple `$var` arm uses (line 1240).
         // Caller (stringsubst) re-loads `str3 = list.getdata(node_idx)`
@@ -3207,13 +3251,22 @@ fn paramsubst(                                              // c:1625
         let scripted_scalar = subscript.as_deref()           // c:3950
             .map(|s| s != "@" && s != "*" && !s.contains(','))
             .unwrap_or(false);                               // c:3950
-        let auto_splat = !flag_at                           // c:3950
+        // ${=name} explicitly forces splat even in DQ context per
+        // subst.c:2566 — the spbreak=2 setting overrides the qt
+        // gate. Without this, `print "${=str}"` in DQ rejoined the
+        // split words back into a single arg.
+        let force_splat_from_eq = force_split
+            && pf_flags & prefork_flags::SINGLE == 0
+            && rest.is_empty()
+            && split_parts.is_some();
+        let auto_splat = force_splat_from_eq                 // c:2566
+            || (!flag_at                                     // c:3950
             && !qt                                           // c:3950 (only outside DQ)
             && pf_flags & prefork_flags::SINGLE == 0         // c:3950 (multsub context)
             && rest.is_empty()                               // c:3950 (no operator subverted shape)
             && !scripted_scalar                              // c:3950 (single-elem pick is scalar)
             && (state.arrays.contains_key(&var_name)         // c:3950
-                || split_parts.is_some());                   // c:3950 ((s::) made an array)
+                || split_parts.is_some()));                  // c:3950 ((s::) made an array)
         if flag_at || auto_splat {                          // c:3950
             let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
                 // (s::) split → splat the post-split parts
