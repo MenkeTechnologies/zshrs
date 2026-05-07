@@ -128,6 +128,21 @@ pub(crate) fn magic_assoc_keys(name: &str, exec: &ShellExecutor) -> Option<Vec<S
         "jobtexts" | "jobdirs" | "jobstates" => {
             Some(exec.jobs.iter().map(|(id, _)| id.to_string()).collect())
         }
+        "dirstack" => {
+            // dirstack is array-typed not assoc — but `${(k)dirstack}`
+            // returns indices, `${(v)dirstack}` returns paths. Treat
+            // it like assoc-of-int-keys for symmetry.
+            Some((0..exec.dir_stack.len()).map(|i| i.to_string()).collect())
+        }
+        "errnos" => {
+            // /usr/include/errno.h names. Static set per zsh's
+            // sigtrapped lookup.
+            Some(crate::modules::system::ERRNO_NAMES
+                .iter().map(|(n, _)| (*n).to_string()).collect())
+        }
+        "sysparams" => {
+            Some(vec!["pid".to_string(), "ppid".to_string(), "procsubstpid".to_string()])
+        }
         "parameters" => {
             let mut keys: Vec<String> = exec.variables.keys().cloned().collect();
             keys.extend(exec.arrays.keys().cloned());
