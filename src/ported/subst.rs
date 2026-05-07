@@ -962,9 +962,17 @@ fn stringsubst(                                             // c:237
                     } else {
                         String::new()
                     };
-                    str3 = arithsubst(&expr, &prefix, &suffix, state); // c:237
+                    // Compute the arith result ONCE — was running
+                    // arithsubst twice (once for the substituted
+                    // string, again to measure the substituted-only
+                    // portion's char count). Side-effects in the
+                    // expression (post-increment, assignment) fired
+                    // twice, breaking `$((i++))`-style code at the
+                    // $[…] alias.
+                    let result_only = arithsubst(&expr, "", "", state); // c:237
+                    str3 = format!("{}{}{}", prefix, result_only, suffix); // c:237
                     list.setdata(node_idx, str3.clone());   // c:237
-                    pos = prefix.chars().count() + arithsubst(&expr, "", "", state).chars().count(); // c:237
+                    pos = prefix.chars().count() + result_only.chars().count(); // c:237
                     continue;                               // c:237
                 } else {                                    // c:237
                     state.errflag = true;                   // c:237
