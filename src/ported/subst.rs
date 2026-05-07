@@ -2352,10 +2352,18 @@ fn paramsubst(                                              // c:1625
         // subst.c:4180-4253 array sortit/unique post-processing.
         // Applies on space-joined value; reassembles after.
         if sort_active || unique {                          // c:4180
-            let parts: Vec<String> = if let Some(arr) = state.arrays.get(&var_name) {
+            // Sort/unique source: prefer split_parts (any prior
+            // operator result like :# filter, (s::) split, or
+            // assoc-splat) so sort applies to the actual element
+            // list, not a whitespace re-split of the joined view.
+            let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
+                sp                                          // c:4180 (operator-result)
+            } else if let Some(arr) = state.arrays.get(&var_name) {
                 arr.clone()                                 // c:4180 (real array)
+            } else if let Some(map) = state.assoc_arrays.get(&var_name) {
+                map.values().cloned().collect()             // c:4180 (assoc values)
             } else {
-                value.split_whitespace().map(String::from).collect() // c:4180 (whitespace-split)
+                value.split_whitespace().map(String::from).collect() // c:4180 (fallback)
             };
             let mut sorted: Vec<String> = parts;
             if unique {                                     // c:4253
@@ -2389,6 +2397,9 @@ fn paramsubst(                                              // c:1625
             }
             let join_with = sep.as_deref().unwrap_or(" ");
             value = sorted.join(join_with);
+            // Update split_parts so downstream operators (case mods,
+            // padding, splat) see the sorted/uniq list.
+            split_parts = Some(sorted);                      // c:4180
         }
 
         // (s::SEP:) split-on-SEP: apply BEFORE dopadding/quote/case
