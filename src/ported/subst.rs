@@ -2706,10 +2706,15 @@ fn paramsubst(                                              // c:1625
         // Auto-splat for bare \$arr outside DQ in multsub context —
         // mirrors the braced-form auto_splat in the brace arm above.
         // zsh treats arrays as inherently multi-word in unquoted
-        // context. Direct port of subst.c:3950 multi-node return.
+        // context. Also fires for \$arr[@] / \$arr[*] which are the
+        // explicit-splat forms — even with a subscript, a `@`/`*`
+        // sub means "all elements as separate words".
+        // Direct port of subst.c:3950 multi-node return.
+        let splat_full = subscript_str.as_deref() == Some("@") // c:3950
+            || subscript_str.as_deref() == Some("*");          // c:3950
         if !qt                                                // c:3950
             && pf_flags & prefork_flags::SINGLE == 0          // c:3950
-            && subscript_str.is_none()                        // c:3950
+            && (subscript_str.is_none() || splat_full)        // c:3950
             && state.arrays.contains_key(&var_name)           // c:3950
         {                                                     // c:3950
             if let Some(arr) = state.arrays.get(&var_name).cloned() {
