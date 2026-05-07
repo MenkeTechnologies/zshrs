@@ -2147,6 +2147,9 @@ fn paramsubst(                                              // c:1625
         // (s::SEP:) split-on-SEP: apply BEFORE dopadding/quote/case
         // (per zsh order). Port of subst.c flag-loop spsep usage
         // around line 3950+ (post-fetch split block).
+        // Track the post-split parts for the auto-splat block so
+        // (@s::) on a scalar splats into multiple result_nodes.
+        let mut split_parts: Option<Vec<String>> = None;     // c:3950
         if let Some(ref sp) = spsep {                       // c:3950
             let parts: Vec<String> = if sp.is_empty() {
                 value.chars().map(|c| c.to_string()).collect()
@@ -2154,9 +2157,12 @@ fn paramsubst(                                              // c:1625
                 value.split(sp.as_str()).map(String::from).collect()
             };
             // zsh: split result is space-joined for scalar context;
-            // multsub-aware caller handles full multi-node splat.
+            // multsub-aware caller handles full multi-node splat
+            // via split_parts (passed through to the auto_splat
+            // post-processing block below).
             let join_with = sep.as_deref().unwrap_or(" ");  // c:3950
             value = parts.join(join_with);
+            split_parts = Some(parts);                       // c:3950
         } else if let Some(ref sp) = sep {                  // c:3963 (j with no s)
             // (j:STR:) — join an array with STR. Direct port of
             // subst.c:3963 sepjoin call. Was reusing the value
@@ -2447,9 +2453,16 @@ fn paramsubst(                                              // c:1625
             && !qt                                           // c:3950 (only outside DQ)
             && pf_flags & prefork_flags::SINGLE == 0         // c:3950 (multsub context)
             && rest.is_empty()                               // c:3950 (no operator subverted shape)
-            && state.arrays.contains_key(&var_name);         // c:3950
+            && (state.arrays.contains_key(&var_name)         // c:3950
+                || split_parts.is_some());                   // c:3950 ((s::) made an array)
         if flag_at || auto_splat {                          // c:3950
-            let parts: Vec<String> = if let Some(arr) = state.arrays.get(&var_name) {
+            let parts: Vec<String> = if let Some(sp) = split_parts.clone() {
+                // (s::) split → splat the post-split parts
+                // regardless of source. Direct port of subst.c's
+                // ssub-then-splat where spsep promotes scalar to
+                // array via the split.
+                sp                                          // c:3950
+            } else if let Some(arr) = state.arrays.get(&var_name) {
                 arr.clone()                                 // c:3960 (real array splat)
             } else if let Some(map) = state.assoc_arrays.get(&var_name) {
                 if flag_keys && flag_values {                // c:3955 (kv splat — interleaved)
