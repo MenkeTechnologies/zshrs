@@ -2158,13 +2158,17 @@ fn paramsubst(                                              // c:1625
             let join_with = sep.as_deref().unwrap_or(" ");  // c:3950
             value = parts.join(join_with);
         } else if let Some(ref sp) = sep {                  // c:3963 (j with no s)
-            // (j:STR:) — re-join an already-array value with STR.
-            // For scalar input it's a no-op; the array case is
-            // handled by the caller's multsub-style splat where
-            // each node gets joined.
-            // Apply when value contains a space or newline (signals
-            // existing splittable form).
-            if value.contains(' ') || value.contains('\n') {
+            // (j:STR:) — join an array with STR. Direct port of
+            // subst.c:3963 sepjoin call. Was reusing the value
+            // (post-fetch joined string) and re-splitting on
+            // whitespace, which lost embedded-spaces in elements.
+            // Now consult state.arrays directly when var_name is
+            // an array; falls through to the whitespace-split
+            // approximation only when value isn't backed by an
+            // explicit array (computed via flag, subexp, etc.).
+            if let Some(arr) = state.arrays.get(&var_name) { // c:3963
+                value = arr.join(sp);                        // c:3963
+            } else if value.contains(' ') || value.contains('\n') {
                 let parts: Vec<&str> = value.split_whitespace().collect();
                 value = parts.join(sp);
             }
