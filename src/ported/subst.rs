@@ -12716,6 +12716,25 @@ impl crate::ported::exec::ShellExecutor {
                             continue;
                         }
                     }
+                    // `$~name` — the `~` between `$` and the identifier
+                    // sets paramsubst's glob_subst flag (per `Src/subst.c`
+                    // paramsubst entry, where `~` flips `tok_arg`/glob
+                    // semantics on the result). For the bareword form,
+                    // consume the `~` so the var-name loop sees `name`,
+                    // not `~name`. Without this guard, expand_string fell
+                    // through to its tilde-expansion arm at line 12838 and
+                    // tried to resolve `~name` as a username, emitting
+                    // `no such user or named directory: name` and exiting
+                    // — breaking `${arr:#$~ban}` patterns used by
+                    // zinit/p10k for dynamic-glob array filtering.
+                    // The glob_subst side effect (turning the result into
+                    // a glob pattern) is naturally honored downstream by
+                    // `:#PATTERN` which already does glob matching on its
+                    // operand; the only thing that mattered here was
+                    // routing the `~` away from filesub.
+                    if chars.peek() == Some(&'~') {
+                        chars.next(); // consume the modifier '~'
+                    }
                     let mut var_name = String::new();
                     while let Some(&c) = chars.peek() {
                         // The single-char special params (`@`/`*`/`#`/`?`)
