@@ -2232,13 +2232,14 @@ fn paramsubst(                                              // c:1625
                     }
                 });
         }
-        if flag_lower { value = value.to_lowercase(); }     // c:2197
-        if flag_upper { value = value.to_uppercase(); }     // c:2200
-        if flag_caps {                                      // c:2203
-            // Capitalize each word — zsh CASMOD_CAPS.
-            let mut out = String::with_capacity(value.len());
+        // Case mods operate per-element when array-shaped (so
+        // \${(@U)arr} uppercases each element, preserving shape).
+        // Direct port of subst.c:3937 casmod arm which iterates aval
+        // when isarr is set.
+        let cap_word = |s: &str| -> String {                 // c:2203
+            let mut out = String::with_capacity(s.len());
             let mut next_upper = true;
-            for c in value.chars() {
+            for c in s.chars() {
                 if c.is_whitespace() || matches!(c, '-' | '_' | '/' | '.' | ',') {
                     out.push(c);
                     next_upper = true;
@@ -2249,7 +2250,25 @@ fn paramsubst(                                              // c:1625
                     out.extend(c.to_lowercase());
                 }
             }
-            value = out;
+            out
+        };
+        if flag_lower || flag_upper || flag_caps {           // c:2197
+            let transform = |s: &str| -> String {            // c:3937
+                if flag_lower { s.to_lowercase() }
+                else if flag_upper { s.to_uppercase() }
+                else { cap_word(s) }
+            };
+            if let Some(parts) = split_parts.clone() {       // c:3937
+                let new_parts: Vec<String> = parts.iter().map(|s| transform(s)).collect();
+                value = new_parts.join(" ");                 // c:3937
+                split_parts = Some(new_parts);               // c:3937
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| transform(s)).collect();
+                value = new_arr.join(" ");                   // c:3937
+                split_parts = Some(new_arr);                 // c:3937
+            } else {
+                value = transform(&value);                   // c:3937
+            }
         }
         // (o)/(O)/(i)/(n)/(a)/(u) sort + unique. Port of
         // subst.c:4180-4253 array sortit/unique post-processing.
