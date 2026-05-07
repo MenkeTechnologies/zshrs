@@ -2468,17 +2468,33 @@ fn paramsubst(                                              // c:1625
         // routes through modify()'s tilde-contraction at the end of
         // the pipeline. Common idiom: `${(D)PWD}` → `~/projects/foo`.
         // Without ZLE's nameddir hash, this reduces to plain $HOME.
+        // (D) per-element dir-magic. Direct port of subst.c:2229
+        // mods bit 1 → modify()'s tilde-contraction iterating aval.
         if flag_d_dir {                                     // c:2229
-            if let Some(home) = state.variables.get("HOME").cloned() // c:2229
-                .or_else(|| std::env::var("HOME").ok())     // c:2229
-            {                                                // c:2229
-                if !home.is_empty() && value.starts_with(&home) { // c:2229
-                    let rest = &value[home.len()..];        // c:2229
-                    if rest.is_empty() || rest.starts_with('/') { // c:2229
-                        value = format!("~{}", rest);       // c:2229
+            let home_opt = state.variables.get("HOME").cloned()
+                .or_else(|| std::env::var("HOME").ok());
+            let dir_one = |s: &str| -> String {              // c:2229
+                if let Some(ref h) = home_opt {              // c:2229
+                    if !h.is_empty() && s.starts_with(h.as_str()) { // c:2229
+                        let r = &s[h.len()..];               // c:2229
+                        if r.is_empty() || r.starts_with('/') { // c:2229
+                            return format!("~{}", r);       // c:2229
+                        }                                    // c:2229
                     }                                        // c:2229
                 }                                            // c:2229
-            }                                                // c:2229
+                s.to_string()                                // c:2229
+            };                                               // c:2229
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| dir_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| dir_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = dir_one(&value);                     // c:2229
+            }
         }                                                    // c:2229
 
         // (b) backslash-quote pattern metachars — output is safe to
@@ -2489,19 +2505,34 @@ fn paramsubst(                                              // c:1625
         // a leading backslash. Used by `[[ x =~ ${(b)pat} ]]` and
         // `case x in ${(b)pat}` to neutralize a user-supplied
         // string before it's interpreted as a pattern.
-        if flag_b_pattern {                                 // c:2255
-            let mut out = String::with_capacity(value.len() * 2); // c:2255
-            for ch in value.chars() {                       // c:2255
-                if matches!(ch,                              // c:2255
+        // (b) per-element backslash-quote. Direct port of subst.c:2255
+        // QT_BACKSLASH_PATTERN iterating aval per-element.
+        let b_one = |s: &str| -> String {                    // c:2255
+            let mut out = String::with_capacity(s.len() * 2);
+            for ch in s.chars() {
+                if matches!(ch,
                     '*' | '?' | '[' | ']' | '(' | ')' | '|' | '^' | '#' | '~'
                     | '\\' | '<' | '>' | '&' | ';' | '{' | '}' | '$' | '`'
-                    | '"' | '\'' | ' ' | '\t' | '\n')        // c:2255
-                {                                            // c:2255
-                    out.push('\\');                          // c:2255
-                }                                            // c:2255
-                out.push(ch);                                // c:2255
+                    | '"' | '\'' | ' ' | '\t' | '\n')
+                {
+                    out.push('\\');
+                }
+                out.push(ch);
+            }
+            out
+        };
+        if flag_b_pattern {                                 // c:2255
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| b_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| b_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = b_one(&value);                       // c:2255
             }                                                // c:2255
-            value = out;                                     // c:2255
         }                                                    // c:2255
 
         // (Q) unquote — strip outer quotes / backslash escapes /
