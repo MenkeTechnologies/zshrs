@@ -2043,6 +2043,7 @@ fn paramsubst(                                              // c:1625
                     })                                       // c:3540
                     .collect();
                 value = kept.join(" ");
+                split_parts = Some(kept);                    // c:3540 (auto-splat)
             } else if let Some(rhs) = r.strip_prefix(":*") { // c:3540 (intersect)
                 // ${arr:*other} — array set-intersection — KEEP
                 // elems of arr matching ANY pattern in `other`.
@@ -2056,6 +2057,7 @@ fn paramsubst(                                              // c:1625
                     })                                       // c:3540
                     .collect();
                 value = kept.join(" ");
+                split_parts = Some(kept);                    // c:3540 (auto-splat)
             } else if let Some(rhs) = r.strip_prefix(":^^") { // c:3540 (zip-long)
                 // ${arr:^^other} — interleave two arrays, continuing
                 // past the shorter one with empty strings (vs `:^`
@@ -2070,6 +2072,7 @@ fn paramsubst(                                              // c:1625
                     zipped.push(other.get(i).cloned().unwrap_or_default());
                 }
                 value = zipped.join(" ");
+                split_parts = Some(zipped);                  // c:3540 (auto-splat)
             } else if let Some(rhs) = r.strip_prefix(":^") { // c:3540 (zip)
                 // ${arr:^other} — interleave two arrays element-by-elem.
                 let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
@@ -2081,6 +2084,7 @@ fn paramsubst(                                              // c:1625
                     zipped.push(other[i].clone());
                 }
                 value = zipped.join(" ");
+                split_parts = Some(zipped);                  // c:3540 (auto-splat)
             } else if let Some(slice) = r.strip_prefix(':') { // c:715 (substring)
                 let parts: Vec<&str> = slice.splitn(2, ':').collect();
                 let off = singsub(parts[0], state).parse::<i64>().unwrap_or(0);
