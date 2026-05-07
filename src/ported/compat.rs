@@ -362,11 +362,11 @@ pub fn strwidth(s: &str) -> usize {
 }
 
 /// Metafy a string (encode bytes the parser would otherwise eat).
-/// Port of `metafy()` from Src/utils.c — escapes the high-bit
+/// Port of `pastebuf()` from Src/utils.c — escapes the high-bit
 /// range zsh's parser reserves (`Meta`+`xor 32`). Most Rust code
 /// paths don't need metafication (UTF-8 is native) but FFI to C
 /// modules sometimes does.
-pub fn metafy(s: &str) -> String {
+pub fn pastebuf(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
         let b = c as u32;
@@ -381,7 +381,7 @@ pub fn metafy(s: &str) -> String {
 }
 
 /// Unmetafy a string.
-/// Port of `unmetafy()` from Src/utils.c — inverse of `metafy`.
+/// Port of `unmetafy()` from Src/utils.c — inverse of `pastebuf`.
 pub fn unmetafy(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn test_metafy_unmetafy() {
         let original = "hello\x00world";
-        let meta = metafy(original);
+        let meta = pastebuf(original);
         let unmeta = unmetafy(&meta);
         assert_eq!(unmeta, original);
     }

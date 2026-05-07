@@ -6693,7 +6693,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool, state: &SubstStat
             let untoked = crate::lex::untokenize(s);        // c:1543
             if escapes {                                    // c:1544
                 // C: `dst = getkeystring(dst, &klen,
-                //          GETKEYS_SEP, NULL); dst = metafy(...);`
+                //          GETKEYS_SEP, NULL); dst = pastebuf(...);`
                 crate::ported::utils::getkeystring(&untoked).0 // c:1545
             } else {
                 untoked                                     // c:1543

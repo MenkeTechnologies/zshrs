@@ -52,7 +52,7 @@ fn color_distance_sq(c1: &ColorEntry, c2: &ColorEntry) -> u32 {
 /// uses the same squared-distance metric over the same palette to
 /// downgrade `\\e[38;2;R;G;Bm` truecolor escapes when the active
 /// terminal can't display them.
-pub fn nearest_color_16(r: u8, g: u8, b: u8) -> u8 {
+pub fn nearcolor(r: u8, g: u8, b: u8) -> u8 {
     let target = ColorEntry::new(r, g, b);
     let mut best_idx = 0u8;
     let mut best_dist = u32::MAX;
@@ -74,14 +74,14 @@ pub fn nearest_color_16(r: u8, g: u8, b: u8) -> u8 {
 /// 256-colour layout (16 base + 6×6×6 cube + 24 grays) is decoded
 /// here using the canonical xterm step values (51 per cube level,
 /// 23 grayscale steps from 232..255).
-pub fn color_256_to_16(color: u8) -> u8 {
+pub fn nearcolor_256(color: u8) -> u8 {
     if color < 16 {
         return color;
     }
 
     if color >= 232 {
         let gray = (color - 232) * 255 / 23;
-        return nearest_color_16(gray, gray, gray);
+        return nearcolor(gray, gray, gray);
     }
 
     let idx = color - 16;
@@ -89,7 +89,7 @@ pub fn color_256_to_16(color: u8) -> u8 {
     let g = ((idx % 36) / 6) * 51;
     let b = (idx % 6) * 51;
 
-    nearest_color_16(r, g, b)
+    nearcolor(r, g, b)
 }
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
@@ -184,24 +184,24 @@ mod tests {
 
     #[test]
     fn test_nearest_color_16_black() {
-        assert_eq!(nearest_color_16(0, 0, 0), 0);
+        assert_eq!(nearcolor(0, 0, 0), 0);
     }
 
     #[test]
     fn test_nearest_color_16_white() {
-        assert_eq!(nearest_color_16(255, 255, 255), 15);
+        assert_eq!(nearcolor(255, 255, 255), 15);
     }
 
     #[test]
     fn test_nearest_color_16_red() {
-        let idx = nearest_color_16(255, 0, 0);
+        let idx = nearcolor(255, 0, 0);
         assert!(idx == 1 || idx == 9);
     }
 
     #[test]
     fn test_color_256_to_16_passthrough() {
         for i in 0..16 {
-            assert_eq!(color_256_to_16(i), i);
+            assert_eq!(nearcolor_256(i), i);
         }
     }
 

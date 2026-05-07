@@ -502,9 +502,9 @@ impl ModuleTable {
     }
 }
 
-/// Module lifecycle callbacks (from module.c setup_/boot_/cleanup_/finish_)
+/// Module lifecycle callbacks (from module.c setup_/getrandom_buffer/cleanup_/finish_)
 /// Lifecycle hooks every module must implement.
-/// Port of the `setup_`/`features_`/`enables_`/`boot_`/`cleanup_`
+/// Port of the `setup_`/`features_`/`enables_`/`getrandom_buffer`/`cleanup_`
 /// /`finish_` entry points every C module exposes (Src/module.c
 /// lines 306-345 illustrate the canonical no-op set). Rust
 /// modules implement this trait directly.

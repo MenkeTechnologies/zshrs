@@ -1187,7 +1187,7 @@ impl Zle {
     /// Execute an immortal (built-in) function
     /// Port of execimmortal() from zle_main.c
     pub fn exec_immortal(&mut self, name: &str) -> bool {
-        if let Some(widget) = get_builtin_widget(name) {
+        if let Some(widget) = acceptline(name) {
             self.execute_widget(&widget);
             true
         } else {
@@ -1198,7 +1198,7 @@ impl Zle {
     /// Execute a ZLE function by name
     /// Port of execzlefunc() from zle_main.c
     pub fn exec_zle_func(&mut self, name: &str, _args: &[String]) -> i32 {
-        if let Some(widget) = get_builtin_widget(name) {
+        if let Some(widget) = acceptline(name) {
             self.execute_widget(&widget);
             0
         } else {
@@ -1301,7 +1301,7 @@ pub struct SavedKeymap {
 }
 
 /// Get a builtin widget by name
-fn get_builtin_widget(name: &str) -> Option<Widget> {
+fn acceptline(name: &str) -> Option<Widget> {
     Some(Widget::builtin(name))
 }
 

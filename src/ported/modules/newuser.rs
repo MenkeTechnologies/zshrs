@@ -5,7 +5,7 @@
 use std::path::Path;
 
 /// Check whether the user needs the first-run setup wizard.
-/// Port of the dotfile-presence check inside `boot_()` from
+/// Port of the dotfile-presence check inside `getrandom_buffer()` from
 /// Src/Modules/newuser.c:68 (which calls `check_dotfile()` at
 /// line 58 once per startup file). The C source skips the wizard
 /// if any of `.zshrc`/`.zshenv`/`.zprofile`/`.zlogin`/`.zlogout`
@@ -84,7 +84,7 @@ bindkey -e
 
 /// First-run setup choice.
 /// Mirrors the menu items the upstream `zsh-newuser-install`
-/// script (loaded by Src/Modules/newuser.c:68 `boot_()`) presents.
+/// script (loaded by Src/Modules/newuser.c:68 `getrandom_buffer()`) presents.
 /// `Recommended` writes the full template, `Minimal` writes a
 /// stripped-down one, `Manual` lets the user edit themselves, and
 /// `Exit` skips the wizard.
@@ -97,7 +97,7 @@ pub enum SetupChoice {
 }
 
 /// Run the first-run setup wizard.
-/// Port of the `boot_()` dispatcher from Src/Modules/newuser.c:68
+/// Port of the `getrandom_buffer()` dispatcher from Src/Modules/newuser.c:68
 /// — the C source autoloads and runs `zsh-newuser-install` which
 /// then writes the chosen template to `~/.zshrc`. This Rust path
 /// inlines the file write directly.
@@ -136,7 +136,7 @@ mod tests {
         assert!(content.len() < default_zshrc().len());
     }
 
-    /// Port of `boot_()` from `Src/Modules/newuser.c:68`.
+    /// Port of `getrandom_buffer()` from `Src/Modules/newuser.c:68`.
     #[test]
     fn test_needs_newuser_setup_empty() {
         let temp = std::env::temp_dir().join("zsh_test_newuser_empty");

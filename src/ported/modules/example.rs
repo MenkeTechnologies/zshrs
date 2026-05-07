@@ -2,7 +2,7 @@
 //!
 //! `example.c` is zsh's documentation/template module — it ships
 //! with the source tree as a worked example of the loadable-module
-//! contract (`setup_`, `boot_`, `cleanup_`, `finish_`, the
+//! contract (`setup_`, `getrandom_buffer`, `cleanup_`, `finish_`, the
 //! `bintab` / `cotab` / `pmtab` / `mftab` shapes). It is never
 //! `zmodload`-ed at runtime by any real script; its purpose is to
 //! be read.

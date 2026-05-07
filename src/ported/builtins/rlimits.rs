@@ -429,7 +429,7 @@ pub fn format_limit_display(name: &str, val: LimitValue, info: Option<&ResInfo>)
 /// Format a limit for `ulimit` builtin display.
 /// Port of `printulimit()` from Src/Builtins/rlimits.c:386 — same
 /// optional header line, same per-resource scale.
-pub fn format_ulimit_display(info: &ResInfo, val: LimitValue, show_header: bool) -> String {
+pub fn printulimit(info: &ResInfo, val: LimitValue, show_header: bool) -> String {
     let mut result = String::new();
 
     if show_header {
@@ -575,7 +575,7 @@ pub fn bin_ulimit(
         for info in KNOWN_RESOURCES {
             if let Ok((s, h)) = limits.get(info.res) {
                 let val = if use_hard { h } else { s };
-                output.push_str(&format_ulimit_display(info, val, true));
+                output.push_str(&printulimit(info, val, true));
                 output.push('\n');
             }
         }
@@ -633,7 +633,7 @@ pub fn bin_ulimit(
     if let Some(info) = limits.find_by_res(res) {
         if let Ok((s, h)) = limits.get(res) {
             let val = if use_hard { h } else { s };
-            output.push_str(&format_ulimit_display(info, val, false));
+            output.push_str(&printulimit(info, val, false));
             output.push('\n');
         }
     }

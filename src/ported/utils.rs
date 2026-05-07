@@ -999,8 +999,8 @@ pub fn unmeta(s: &str) -> String {
     result
 }
 
-/// Metafy string (from utils.c metafy)
-pub fn metafy(s: &str) -> String {
+/// Metafy string (from utils.c pastebuf)
+pub fn pastebuf(s: &str) -> String {
     let mut result = String::with_capacity(s.len() * 2);
     for c in s.chars() {
         let b = c as u32;
@@ -3347,7 +3347,7 @@ pub fn setcbreak() -> bool {
 
 /// Metafy and duplicate string (from utils.c ztrdup_metafy)
 pub fn ztrdup_metafy(s: &str) -> String {
-    metafy(s)
+    pastebuf(s)
 }
 
 /// Unmetafy a single character (from utils.c unmeta_one)

@@ -176,7 +176,7 @@ impl Scheduler {
 /// - `H:M` — absolute time today (or tomorrow if past)
 /// - `H:Ma` / `H:Mp` — absolute time with am/pm
 /// - `N` — raw Unix timestamp
-pub fn parse_time_spec(s: &str) -> Result<u64, &'static str> {
+pub fn schedgetfn(s: &str) -> Result<u64, &'static str> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
@@ -354,7 +354,7 @@ pub fn bin_sched(args: &[&str], scheduler: &mut Scheduler) -> (i32, String) {
     let time_spec = remaining[0];
     let cmd = remaining[1..].join(" ");
 
-    let time = match parse_time_spec(time_spec) {
+    let time = match schedgetfn(time_spec) {
         Ok(t) => t,
         Err(e) => return (1, format!("sched: {}\n", e)),
     };
@@ -416,7 +416,7 @@ mod tests {
             .unwrap()
             .as_secs();
 
-        let result = parse_time_spec("+60").unwrap();
+        let result = schedgetfn("+60").unwrap();
         assert!(result >= now + 59 && result <= now + 61);
     }
 
@@ -427,7 +427,7 @@ mod tests {
             .unwrap()
             .as_secs();
 
-        let result = parse_time_spec("+1:30").unwrap();
+        let result = schedgetfn("+1:30").unwrap();
         let expected = now + 3600 + 1800;
         assert!(result >= expected - 1 && result <= expected + 1);
     }
@@ -439,14 +439,14 @@ mod tests {
             .unwrap()
             .as_secs();
 
-        let result = parse_time_spec("+1:30:15").unwrap();
+        let result = schedgetfn("+1:30:15").unwrap();
         let expected = now + 3600 + 1800 + 15;
         assert!(result >= expected - 1 && result <= expected + 1);
     }
 
     #[test]
     fn test_parse_time_absolute_raw() {
-        let result = parse_time_spec("1700000000").unwrap();
+        let result = schedgetfn("1700000000").unwrap();
         assert_eq!(result, 1700000000);
     }
 

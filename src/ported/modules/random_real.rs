@@ -94,7 +94,7 @@ pub fn random_real_53() -> f64 {
 /// Port of `bin_random_real()` from Src/Modules/random_real.c.
 /// Dispatches to the 0/1/2-argument forms (random in [0,1),
 /// [0,max), [min,max)).
-pub fn math_random_real(args: &[f64]) -> Result<f64, String> {
+pub fn bin_random_real(args: &[f64]) -> Result<f64, String> {
     match args.len() {
         0 => Ok(random_real_53()),
         1 => {
@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_math_random_real_no_args() {
-        let result = math_random_real(&[]);
+        let result = bin_random_real(&[]);
         assert!(result.is_ok());
         let r = result.unwrap();
         assert!((0.0..1.0).contains(&r));
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_math_random_real_one_arg() {
-        let result = math_random_real(&[100.0]);
+        let result = bin_random_real(&[100.0]);
         assert!(result.is_ok());
         let r = result.unwrap();
         assert!((0.0..100.0).contains(&r));
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_math_random_real_two_args() {
-        let result = math_random_real(&[10.0, 20.0]);
+        let result = bin_random_real(&[10.0, 20.0]);
         assert!(result.is_ok());
         let r = result.unwrap();
         assert!((10.0..20.0).contains(&r));
@@ -178,8 +178,8 @@ mod tests {
 
     #[test]
     fn test_math_random_real_invalid() {
-        assert!(math_random_real(&[-1.0]).is_err());
-        assert!(math_random_real(&[10.0, 5.0]).is_err());
-        assert!(math_random_real(&[1.0, 2.0, 3.0]).is_err());
+        assert!(bin_random_real(&[-1.0]).is_err());
+        assert!(bin_random_real(&[10.0, 5.0]).is_err());
+        assert!(bin_random_real(&[1.0, 2.0, 3.0]).is_err());
     }
 }
