@@ -6355,6 +6355,18 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             0..=3 => is_empty,
             _ => !is_set,
         };
+        // Empty-unquoted-elide for default-family results. When the
+        // resulting expansion is empty AND we're unquoted, drop the
+        // arg. Direct port of zsh's elide-empty-words pass which
+        // applies to ALL paramsubst results, including default-family.
+        let in_dq = with_executor(|exec| exec.in_dq_context > 0);
+        let maybe_elide = |s: String| -> fusevm::Value {
+            if s.is_empty() && !in_dq {
+                fusevm::Value::Array(Vec::new())
+            } else {
+                fusevm::Value::str(s)
+            }
+        };
         // The default/alt operand may contain `$var` / `$(cmd)` /
         // `$((expr))` — zsh expands these before substitution. Apply
         // expand_string lazily (only when we'll actually use rhs).
@@ -6363,9 +6375,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             0 | 4 => {
                 // `:-` / `-` use default if missing
                 if missing {
-                    fusevm::Value::str(expand_rhs(&rhs))
+                    maybe_elide(expand_rhs(&rhs))
                 } else {
-                    fusevm::Value::str(val)
+                    maybe_elide(val)
                 }
             }
             1 | 5 => {
@@ -6375,9 +6387,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     with_executor(|exec| {
                         exec.variables.insert(name, expanded.clone());
                     });
-                    fusevm::Value::str(expanded)
+                    maybe_elide(expanded)
                 } else {
-                    fusevm::Value::str(val)
+                    maybe_elide(val)
                 }
             }
             2 | 6 => {
@@ -6401,9 +6413,9 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // `:+` / `+` use alt if NOT missing (set-and-non-empty
                 // for colon variant; just set for no-colon variant).
                 if missing {
-                    fusevm::Value::str("")
+                    maybe_elide(String::new())
                 } else {
-                    fusevm::Value::str(expand_rhs(&rhs))
+                    maybe_elide(expand_rhs(&rhs))
                 }
             }
             8 => {
