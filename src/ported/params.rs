@@ -3624,18 +3624,6 @@ pub fn unsetparam(
     assoc_arrays.remove(name);
 }
 
-/// Check if parameter is readonly
-/// Check whether a parameter has `PM_READONLY`.
-/// Equivalent to the `pm->node.flags & PM_READONLY` test
-/// `setvalue()` (Src/params.c) consults before allowing writes.
-pub fn isreadonly(table: &ParamTable, name: &str) -> bool {
-    table
-        .params
-        .get(name)
-        .map(|p| p.is_readonly())
-        .unwrap_or(false)
-}
-
 /// Export parameter to environment
 /// Mark a parameter exported.
 /// Port of `export_param()` from Src/params.c:2653 — sets
@@ -3895,35 +3883,6 @@ pub fn get_array_element(arr: &[String], idx: i64, ksh_arrays: bool) -> Option<S
     arr.get(actual_idx).cloned()
 }
 
-/// Get array slice based on subscript index
-pub fn get_array_slice(arr: &[String], idx: &SubscriptIndex, ksh_arrays: bool) -> Vec<String> {
-    if idx.is_all {
-        return arr.to_vec();
-    }
-    let len = arr.len() as i64;
-    let start = if idx.start < 0 {
-        (len + idx.start).max(0) as usize
-    } else if ksh_arrays {
-        idx.start as usize
-    } else {
-        if idx.start > 0 {
-            (idx.start - 1) as usize
-        } else {
-            0
-        }
-    };
-    let end = if idx.end < 0 {
-        ((len + idx.end + 1).max(0) as usize).min(arr.len())
-    } else {
-        // ksh_arrays vs zsh-default both clamp the same positive index
-        // to len(arr); they only differ on negatives (handled above).
-        (idx.end as usize).min(arr.len())
-    };
-    if start >= arr.len() || start >= end {
-        return Vec::new();
-    }
-    arr[start..end].to_vec()
-}
 
 /// Simple glob match for parameter scanning
 fn glob_match(pattern: &str, name: &str) -> bool {

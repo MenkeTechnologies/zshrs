@@ -172,10 +172,8 @@ charcount
 # params.rs Rust-side helpers extracted from inlined C code:
 # subscript parsing/flag-parsing and array-element accessors all
 # correspond to inline blocks inside `getindex()` / `getarrvalue`.
-isreadonly
 parse_index_value
 get_array_element
-get_array_slice
 parse_subscription_flags
 parse_subscript_flags
 array_subscript_flag
