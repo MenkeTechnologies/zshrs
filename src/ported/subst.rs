@@ -2703,6 +2703,36 @@ fn paramsubst(                                              // c:1625
             }                                               // c:1625
         }                                                   // c:1625
 
+        // Auto-splat for bare \$arr outside DQ in multsub context —
+        // mirrors the braced-form auto_splat in the brace arm above.
+        // zsh treats arrays as inherently multi-word in unquoted
+        // context. Direct port of subst.c:3950 multi-node return.
+        if !qt                                                // c:3950
+            && pf_flags & prefork_flags::SINGLE == 0          // c:3950
+            && subscript_str.is_none()                        // c:3950
+            && state.arrays.contains_key(&var_name)           // c:3950
+        {                                                     // c:3950
+            if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let prefix: String = chars[..start_pos].iter().collect(); // c:3950
+                let suffix: String = chars[pos..].iter().collect();        // c:3950
+                let mut nodes: Vec<String> = Vec::with_capacity(arr.len()); // c:3950
+                for (i, part) in arr.iter().enumerate() {     // c:3950
+                    let s = if arr.len() == 1 {               // c:3950
+                        format!("{}{}{}", prefix, part, suffix) // c:3950
+                    } else if i == 0 {                        // c:3950
+                        format!("{}{}", prefix, part)         // c:3950
+                    } else if i == arr.len() - 1 {            // c:3950
+                        format!("{}{}", part, suffix)         // c:3950
+                    } else {                                  // c:3950
+                        part.clone()                          // c:3950
+                    };                                        // c:3950
+                    nodes.push(s);                            // c:3950
+                }                                             // c:3950
+                let first = nodes.first().cloned().unwrap_or_default(); // c:3950
+                return (first, prefix.len(), nodes);          // c:3950
+            }                                                 // c:3950
+        }                                                     // c:3950
+
         let prefix: String = chars[..start_pos].iter().collect(); // c:1625
         let suffix: String = chars[pos..].iter().collect(); // c:1625
         let result = format!("{}{}{}", prefix, value, suffix); // c:1625
