@@ -1225,6 +1225,7 @@ fn paramsubst(                                              // c:1625
                     '-' => { sort_signed = true; sort_active = true; } // c:2219
                     'a' => { sort_index_order = true; sort_active = true; } // c:2225
                     'u' => { unique = true; }               // c:2476
+                    '*' => { sub_flags_bits |= crate::ported::subst::sub_flags::EGLOB; }   // c:2168 (*)
                     'M' => { sub_flags_bits |= crate::ported::subst::sub_flags::MATCH; }   // c:2171 (M)
                     'R' => { sub_flags_bits |= crate::ported::subst::sub_flags::REST; }    // c:2174 (R)
                     'B' => { sub_flags_bits |= crate::ported::subst::sub_flags::BIND; }    // c:2177 (B)
