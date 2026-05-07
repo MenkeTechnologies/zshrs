@@ -2673,16 +2673,35 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // Pops [content] (the brace body without the outer ${...}) and
     // returns Value::Array of per-element words.
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
-        let content = vm.pop().to_str();
-        let nodes = with_executor(|exec| {
-            vec![content.to_string()]
+        // Inner body of `${(...)...}` (already stripped of `${`/`}` by
+        // the caller). Re-wrap and route through subst.rs's paramsubst
+        // so the flag-loop + per-operator array semantics
+        // (e.g. `(M)arr:#pat`) execute properly. Earlier this returned
+        // the body verbatim, which is why `${(M)arr:#pat}` printed as
+        // literal text.
+        let body = vm.pop().to_str();
+        let full = format!("${{{}}}", body);
+        let result = with_executor(|exec| {
+            let mut state = crate::ported::subst::SubstState::from_executor(exec);
+            let mut ret_flags = 0u32;
+            let (_full_str, _new_pos, nodes) = crate::ported::subst::paramsubst_bridge(
+                &full,
+                0,
+                false,
+                0,
+                &mut ret_flags,
+                &mut state,
+            );
+            state.commit_to_executor(exec);
+            nodes
         });
-        if nodes.len() == 1 {
-            // Preserve scalar context for single-element results so
-            // surrounding concat ops don't see an unexpected Array.
-            return fusevm::Value::str(nodes.into_iter().next().unwrap_or_default());
+        if result.is_empty() {
+            return fusevm::Value::Array(Vec::new());
         }
-        fusevm::Value::Array(nodes.into_iter().map(fusevm::Value::str).collect())
+        if result.len() == 1 {
+            return fusevm::Value::str(result.into_iter().next().unwrap());
+        }
+        fusevm::Value::Array(result.into_iter().map(fusevm::Value::str).collect())
     });
 
     vm.register_builtin(BUILTIN_PARAM_FLAG, |vm, _argc| {
