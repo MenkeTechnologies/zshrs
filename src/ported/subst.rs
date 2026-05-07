@@ -2314,7 +2314,13 @@ fn paramsubst(                                              // c:1625
                 // value. Direct port of subst.c's array-shape branch
                 // around c:715. Falls back to scalar substring when
                 // var_name isn't an array.
-                if let Some(mut arr) = state.arrays.get(&var_name).cloned() {
+                // Source priority: split_parts (prior operator
+                // result like filter/sort) → state.arrays → joined
+                // value. Direct port of zsh's getarrvalue → slice
+                // dispatch which uses aval if isarr is set.
+                let array_source: Option<Vec<String>> = split_parts.clone()
+                    .or_else(|| state.arrays.get(&var_name).cloned());
+                if let Some(mut arr) = array_source {
                     // Positional-param slice (`@`/`*`/`argv`) — zsh
                     // counts offset 0 as $0 (script/function name),
                     // not $1. Prepend $0 so `${@:0:2}` returns
