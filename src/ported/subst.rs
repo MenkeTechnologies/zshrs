@@ -1152,6 +1152,7 @@ fn paramsubst(                                              // c:1625
         let mut flag_d_dir = false;                         // c:2229 (D)
         let mut flag_p_escapes = false;                     // c:2382 (p)
         let mut multi_width: u32 = 0;                       // c:2376 (m count)
+        let mut flnum: u32 = 0;                              // c:1786 (I:N:)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1226,6 +1227,27 @@ fn paramsubst(                                              // c:1625
                     'a' => { sort_index_order = true; sort_active = true; } // c:2225
                     'u' => { unique = true; }               // c:2476
                     '*' => { sub_flags_bits |= crate::ported::subst::sub_flags::EGLOB; }   // c:2168 (*)
+                    'I' => {                                // c:2189 (I:N:)
+                        // (I:N:) — match the Nth occurrence in
+                        // \${var//pat/repl}. Direct port of
+                        // subst.c:2189 which calls get_intarg to
+                        // pull the digits and stash in flnum. The
+                        // Rust port stashes on state.match_index
+                        // so the BUILTIN_PARAM_REPLACE arm reads
+                        // it via with_executor.
+                        idx += 1;                           // c:2190 (s++)
+                        let mut digits = String::new();     // c:2191
+                        while idx < body_chars.len()        // c:2191
+                            && body_chars[idx].is_ascii_digit() // c:2191
+                        {                                    // c:2191
+                            digits.push(body_chars[idx]);   // c:2191
+                            idx += 1;                       // c:2191
+                        }                                    // c:2191
+                        if let Ok(n) = digits.parse::<u32>() { // c:2191
+                            flnum = n;                      // c:2191
+                        }                                    // c:2191
+                        continue;                           // c:2195
+                    }                                       // c:2195
                     'M' => { sub_flags_bits |= crate::ported::subst::sub_flags::MATCH; }   // c:2171 (M)
                     'R' => { sub_flags_bits |= crate::ported::subst::sub_flags::REST; }    // c:2174 (R)
                     'B' => { sub_flags_bits |= crate::ported::subst::sub_flags::BIND; }    // c:2177 (B)
