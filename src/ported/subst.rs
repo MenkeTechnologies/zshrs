@@ -2194,7 +2194,14 @@ fn paramsubst(                                              // c:1625
             let parts: Vec<String> = if let Some(arr) = state.arrays.get(&var_name) {
                 arr.clone()                                 // c:3960 (real array splat)
             } else if let Some(map) = state.assoc_arrays.get(&var_name) {
-                if flag_keys {                              // c:3955 (k-flag splat)
+                if flag_keys && flag_values {                // c:3955 (kv splat — interleaved)
+                    let mut out: Vec<String> = Vec::with_capacity(map.len() * 2); // c:3955
+                    for (k, v) in map {                      // c:3955
+                        out.push(k.clone());                 // c:3955
+                        out.push(v.clone());                 // c:3955
+                    }                                        // c:3955
+                    out                                      // c:3955
+                } else if flag_keys {                       // c:3955 (k-flag splat)
                     map.keys().cloned().collect()
                 } else if flag_values {                     // c:3957 (v-flag splat)
                     map.values().cloned().collect()
