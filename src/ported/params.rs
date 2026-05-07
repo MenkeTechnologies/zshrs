@@ -6252,7 +6252,13 @@ pub(crate) fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<S
     if start < 0 && start < -len {
         return Vec::new();
     }
-    let resolve = |i: i64| -> i64 {
+    // zsh treats 0 differently for start vs end of a slice:
+    //   start=0 → "before first element" → resolved to 1 (first index).
+    //   end=0   → "before first element" → empty slice (no elements
+    //             from start to "before first" can exist).
+    // Earlier this resolver mapped 0→1 for both sides, so `${a[1,0]}`
+    // and `${a[0,0]}` returned the first element instead of empty.
+    let resolve_start = |i: i64| -> i64 {
         if i < 0 {
             (len + i + 1).max(1)
         } else if i == 0 {
@@ -6261,9 +6267,18 @@ pub(crate) fn slice_indexed_array(arr: &[String], start: i64, end: i64) -> Vec<S
             i.min(len)
         }
     };
-    let s = resolve(start);
-    let e = resolve(end);
-    if s > e {
+    let resolve_end = |i: i64| -> i64 {
+        if i < 0 {
+            (len + i + 1).max(0)
+        } else if i == 0 {
+            0
+        } else {
+            i.min(len)
+        }
+    };
+    let s = resolve_start(start);
+    let e = resolve_end(end);
+    if e < 1 || s > e {
         return Vec::new();
     }
     let s_idx = (s - 1) as usize;
