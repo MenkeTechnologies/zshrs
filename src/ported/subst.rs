@@ -1805,25 +1805,31 @@ fn paramsubst(                                              // c:1625
             } else if let Some(rhs) = r.strip_prefix(":|") { // c:3540 (set difference)
                 // ${arr:|other} — array set-difference: keep elems
                 // of arr that are NOT in other. Port of subst.c:3540
-                // SUB_DIFFERENCE arm.
+                // SUB_DIFFERENCE arm. Per zsh, the RHS array's
+                // elements are GLOB PATTERNS — so `\${arr:|patterns}`
+                // drops every elem of arr that matches ANY pattern
+                // in `patterns`. Was doing literal-eq via HashSet.
                 let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
                 let other_name = rhs.trim();                 // c:3543
                 let other = state.arrays.get(other_name).cloned().unwrap_or_default();
-                let other_set: std::collections::HashSet<&str> =
-                    other.iter().map(|s| s.as_str()).collect();
-                let kept: Vec<String> = arr.into_iter()
-                    .filter(|s| !other_set.contains(s.as_str()))
+                let kept: Vec<String> = arr.into_iter()      // c:3540
+                    .filter(|s| {                            // c:3540
+                        !other.iter().any(|pat|              // c:3540
+                            crate::exec::ShellExecutor::glob_match_static(s, pat)) // c:3540
+                    })                                       // c:3540
                     .collect();
                 value = kept.join(" ");
             } else if let Some(rhs) = r.strip_prefix(":*") { // c:3540 (intersect)
-                // ${arr:*other} — array set-intersection.
+                // ${arr:*other} — array set-intersection — KEEP
+                // elems of arr matching ANY pattern in `other`.
                 let arr = state.arrays.get(&var_name).cloned().unwrap_or_default();
                 let other_name = rhs.trim();                 // c:3543
                 let other = state.arrays.get(other_name).cloned().unwrap_or_default();
-                let other_set: std::collections::HashSet<&str> =
-                    other.iter().map(|s| s.as_str()).collect();
-                let kept: Vec<String> = arr.into_iter()
-                    .filter(|s| other_set.contains(s.as_str()))
+                let kept: Vec<String> = arr.into_iter()      // c:3540
+                    .filter(|s| {                            // c:3540
+                        other.iter().any(|pat|               // c:3540
+                            crate::exec::ShellExecutor::glob_match_static(s, pat)) // c:3540
+                    })                                       // c:3540
                     .collect();
                 value = kept.join(" ");
             } else if let Some(rhs) = r.strip_prefix(":^^") { // c:3540 (zip-long)
