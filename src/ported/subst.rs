@@ -234,6 +234,13 @@ pub struct SubstState {                                     // c:100
     /// later refs in the same shell session both see it. Committed
     /// back to ShellExecutor in commit_to_executor.
     pub last_subst: Option<(String, String)>,               // c:4531
+    /// SUB_* flag bits accumulated by `(M)/(R)/(B)/(E)/(N)/(S)`
+    /// in the flag-loop. Direct port of subst.c:2169-2199. Read
+    /// by getmatch / igetmatch and the BUILTIN_PARAM_REPLACE /
+    /// BUILTIN_PARAM_STRIP arms which alter their match
+    /// disposition based on these bits. Reset per paramsubst call
+    /// so flags don't leak between successive ${...} expansions.
+    pub sub_flags: u32,                                     // c:2169
 }                                                           // c:2807
 
 impl SubstState {                                           // c:2807
@@ -288,6 +295,7 @@ impl SubstState {                                           // c:2807
                 .collect(),                                 // c:4902
             pushdminus: exec.options.get("PUSHDMINUS").copied().unwrap_or(false), // c:4906
             last_subst: exec.last_subst.clone(),            // c:4531 (hsubl/hsubr)
+            sub_flags: 0,                                   // c:2169 (per-call)
         }
     }
 
@@ -1131,6 +1139,12 @@ fn paramsubst(                                              // c:1625
         let mut flag_word_count = false;                    // c:2278 (w)
         let mut flag_word_count_w = false;                  // c:2281 (W)
         let mut flag_b_pattern = false;                     // c:2255 (b)
+        // SUB_* flag bits accumulated by M/R/B/E/N/S/I/* in the
+        // flag-loop. Direct port of subst.c:2169-2199 — passed
+        // through to getmatch() / igetmatch() to alter the
+        // ${var//pat/repl}-style match disposition: return matched
+        // text vs rest, return position vs string, etc.
+        let mut sub_flags_bits: u32 = 0;                     // c:2169
         let mut flag_d_dir = false;                         // c:2229 (D)
         let mut flag_p_escapes = false;                     // c:2382 (p)
         if body_chars.first() == Some(&'(') {               // c:2147
@@ -1206,12 +1220,12 @@ fn paramsubst(                                              // c:1625
                     '-' => { sort_signed = true; sort_active = true; } // c:2219
                     'a' => { sort_index_order = true; sort_active = true; } // c:2225
                     'u' => { unique = true; }               // c:2476
-                    'M' => { /* SUB_MATCH bit — c:2172 */ } // c:2171 (M)
-                    'R' => { /* SUB_REST bit — c:2175 */ }  // c:2174 (R)
-                    'B' => { /* SUB_BIND bit — c:2178 */ }  // c:2177 (B)
-                    'E' => { /* SUB_EIND bit — c:2181 */ }  // c:2180 (E)
-                    'N' => { /* SUB_LEN bit — c:2184 */ }   // c:2183 (N)
-                    'S' => { /* SUB_SUBSTR bit — c:2187 */ } // c:2186 (S)
+                    'M' => { sub_flags_bits |= crate::ported::subst::sub_flags::MATCH; }   // c:2171 (M)
+                    'R' => { sub_flags_bits |= crate::ported::subst::sub_flags::REST; }    // c:2174 (R)
+                    'B' => { sub_flags_bits |= crate::ported::subst::sub_flags::BIND; }    // c:2177 (B)
+                    'E' => { sub_flags_bits |= crate::ported::subst::sub_flags::EIND; }    // c:2180 (E)
+                    'N' => { sub_flags_bits |= crate::ported::subst::sub_flags::LEN; }     // c:2183 (N)
+                    'S' => { sub_flags_bits |= crate::ported::subst::sub_flags::SUBSTR; }  // c:2186 (S)
                     'e' => { flag_eval = true; }            // c:2268 (e)
                     'Q' => { flag_unquote = true; }         // c:2261 (Q)
                     'X' => { flag_error = true; }           // c:2264 (X)
@@ -1261,6 +1275,11 @@ fn paramsubst(                                              // c:1625
                 idx += 1;
             }
         }
+        // Stash accumulated SUB_* bits on state so the BUILTIN_PARAM
+        // dispatch arms (REPLACE / STRIP / FLAG) can read them via
+        // with_executor → exec.sub_flags. Reset back to 0 after the
+        // arm runs so the next paramsubst sees a clean slate.
+        state.sub_flags = sub_flags_bits;                    // c:2169
         // ${#var} — length-of operator at start of brace (after flags).
         let length_op = body_chars.get(idx).copied() == Some('#'); // c:2128
         let post_flags_start = idx;
