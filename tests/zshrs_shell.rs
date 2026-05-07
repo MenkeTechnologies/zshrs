@@ -1070,7 +1070,7 @@ fn test_print_p_bang_alias_for_history_line() {
 }
 
 // ---------------------------------------------------------------------------
-// `print -P %D{fmt}` strftime format
+// `print -P %D{fmt}` output_strftime format
 // ---------------------------------------------------------------------------
 
 #[test]

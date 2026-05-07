@@ -185,7 +185,7 @@ pub(crate) static BUILTIN_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|
         "noglob",
         "zstat",
         "stat",
-        "strftime",
+        "output_strftime",
         "zsleep",
         "zselect",
         "zln",

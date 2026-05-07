@@ -199,7 +199,7 @@ pub struct NamerefOptions {
 /// `zsh/ksh93` module aliases as `nameref`. Validates the variable
 /// name and reference target the same way the C source's
 /// `bin_typeset()` does.
-pub fn builtin_nameref(args: &[&str], options: &NamerefOptions) -> (i32, String) {
+pub fn ksh93_wrapper(args: &[&str], options: &NamerefOptions) -> (i32, String) {
     if args.is_empty() {
         if options.print {
             return (0, String::new());
@@ -317,28 +317,28 @@ mod tests {
     #[test]
     fn test_builtin_nameref_no_args() {
         let options = NamerefOptions::default();
-        let (status, _) = builtin_nameref(&[], &options);
+        let (status, _) = ksh93_wrapper(&[], &options);
         assert_eq!(status, 1);
     }
 
     #[test]
     fn test_builtin_nameref_no_target() {
         let options = NamerefOptions::default();
-        let (status, _) = builtin_nameref(&["foo"], &options);
+        let (status, _) = ksh93_wrapper(&["foo"], &options);
         assert_eq!(status, 1);
     }
 
     #[test]
     fn test_builtin_nameref_valid() {
         let options = NamerefOptions::default();
-        let (status, _) = builtin_nameref(&["foo", "bar"], &options);
+        let (status, _) = ksh93_wrapper(&["foo", "bar"], &options);
         assert_eq!(status, 0);
     }
 
     #[test]
     fn test_builtin_nameref_invalid_name() {
         let options = NamerefOptions::default();
-        let (status, _) = builtin_nameref(&["123", "bar"], &options);
+        let (status, _) = ksh93_wrapper(&["123", "bar"], &options);
         assert_eq!(status, 1);
     }
 }

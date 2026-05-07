@@ -29,12 +29,12 @@ pub fn mkdir(path: &Path, options: &MkdirOptions) -> Result<(), String> {
     if options.parents {
         mkdir_parents(path, mode)
     } else {
-        mkdir_single(path, mode)
+        domkdir(path, mode)
     }
 }
 
 /// Port of `domkdir()` from `Src/Modules/files.c:115`.
-fn mkdir_single(path: &Path, mode: u32) -> Result<(), String> {
+fn domkdir(path: &Path, mode: u32) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::ffi::CString;
@@ -80,7 +80,7 @@ fn mkdir_parents(path: &Path, mode: u32) -> Result<(), String> {
         }
     }
 
-    mkdir_single(path, mode)
+    domkdir(path, mode)
 }
 
 /// Remove a directory

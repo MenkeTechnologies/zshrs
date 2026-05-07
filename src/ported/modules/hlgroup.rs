@@ -9,7 +9,7 @@ use std::collections::HashMap;
 /// `sgr=0` — emits each ANSI code wrapped in `\e[...m`. The
 /// `none`/`reset` short forms map onto SGR 0 the same way the C
 /// source's table does.
-pub fn attr_to_escape(attr: &str) -> String {
+pub fn convertattr(attr: &str) -> String {
     let mut result = String::new();
 
     for part in attr.split(',') {
@@ -226,7 +226,7 @@ impl HlGroups {
     pub fn get_esc(&self, name: &str) -> String {
         self.groups
             .get(name)
-            .map(|attr| attr_to_escape(attr))
+            .map(|attr| convertattr(attr))
             .unwrap_or_default()
     }
 
@@ -268,7 +268,7 @@ impl HlGroups {
     pub fn to_hash_esc(&self) -> HashMap<String, String> {
         self.groups
             .iter()
-            .map(|(k, v)| (k.clone(), attr_to_escape(v)))
+            .map(|(k, v)| (k.clone(), convertattr(v)))
             .collect()
     }
 
@@ -289,20 +289,20 @@ mod tests {
 
     #[test]
     fn test_attr_to_escape_bold() {
-        let esc = attr_to_escape("bold");
+        let esc = convertattr("bold");
         assert_eq!(esc, "\x1b[1m");
     }
 
     #[test]
     fn test_attr_to_escape_multiple() {
-        let esc = attr_to_escape("bold,underline");
+        let esc = convertattr("bold,underline");
         assert!(esc.contains("\x1b[1m"));
         assert!(esc.contains("\x1b[4m"));
     }
 
     #[test]
     fn test_attr_to_escape_fg_color() {
-        let esc = attr_to_escape("fg=red");
+        let esc = convertattr("fg=red");
         assert!(esc.contains("31"));
     }
 
@@ -348,13 +348,13 @@ mod tests {
 
     #[test]
     fn test_color_256() {
-        let esc = attr_to_escape("fg=196");
+        let esc = convertattr("fg=196");
         assert!(esc.contains("38;5;196"));
     }
 
     #[test]
     fn test_color_truecolor() {
-        let esc = attr_to_escape("fg=#ff0000");
+        let esc = convertattr("fg=#ff0000");
         assert!(esc.contains("38;2;255;0;0"));
     }
 }

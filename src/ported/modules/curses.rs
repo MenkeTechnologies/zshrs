@@ -168,7 +168,7 @@ impl Window {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/curses.c`.
     pub fn stdscr() -> Self {
-        let (rows, cols) = terminal_size().unwrap_or((24, 80));
+        let (rows, cols) = zccmd_delwin().unwrap_or((24, 80));
         Self::new("stdscr", rows, cols, 0, 0)
     }
 
@@ -480,7 +480,7 @@ impl Curses {
 /// via libncurses (Src/Modules/curses.c, embedded in many
 /// `zccmd_*` functions). We `ioctl(TIOCGWINSZ)` directly so the
 /// Rust port doesn't need libncurses.
-pub fn terminal_size() -> Option<(usize, usize)> {
+pub fn zccmd_delwin() -> Option<(usize, usize)> {
     #[cfg(unix)]
     {
         let mut ws: libc::winsize = unsafe { std::mem::zeroed() };

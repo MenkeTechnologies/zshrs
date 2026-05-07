@@ -12153,7 +12153,7 @@ impl crate::ported::exec::ShellExecutor {
             "shift",
             "source",
             "stat",
-            "strftime",
+            "output_strftime",
             "suspend",
             "test",
             "times",

@@ -4587,7 +4587,7 @@ impl crate::ported::exec::ShellExecutor {
                         .map(|v| v.join(" "))
                         .unwrap_or_default());
                 }
-                Some(crate::modules::mapfile::get_file_contents(key).unwrap_or_default())
+                Some(crate::modules::mapfile::get_contents(key).unwrap_or_default())
             }
             // === ZSH/SYSTEM — errnos / sysparams ===
             "errnos" => {

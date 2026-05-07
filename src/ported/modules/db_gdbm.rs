@@ -102,7 +102,7 @@ extern "C" {
     fn gdbm_close(dbf: GdbmFile);
     fn gdbm_store(dbf: GdbmFile, key: Datum, content: Datum, flag: c_int) -> c_int;
     fn gdbm_fetch(dbf: GdbmFile, key: Datum) -> Datum;
-    fn gdbm_delete(dbf: GdbmFile, key: Datum) -> c_int;
+    fn gdbmunsetfn(dbf: GdbmFile, key: Datum) -> c_int;
     fn gdbm_exists(dbf: GdbmFile, key: Datum) -> c_int;
     fn gdbm_firstkey(dbf: GdbmFile) -> Datum;
     fn gdbm_nextkey(dbf: GdbmFile, key: Datum) -> Datum;
@@ -266,7 +266,7 @@ impl GdbmDatabase {
         let key_datum = Datum::from_bytes(key.as_bytes());
 
         let ret = unsafe {
-            gdbm_delete(
+            gdbmunsetfn(
                 self.dbf,
                 Datum {
                     dptr: key_datum.dptr,
@@ -494,8 +494,8 @@ static TIED_PARAMS: Lazy<Mutex<HashMap<String, Arc<TiedGdbmParam>>>> =
 /// List currently-tied GDBM parameter names.
 /// Port of the `tied_param_list` enumeration the C source keeps in
 /// Src/Modules/db_gdbm.c via `append_tied_name()` /
-/// `remove_tied_name()` (lines 42/43) — `${zgdbm_tied}` reads it.
-pub fn zgdbm_tied() -> Vec<String> {
+/// `remove_tied_name()` (lines 42/43) — `${scangdbmkeys}` reads it.
+pub fn scangdbmkeys() -> Vec<String> {
     if let Ok(params) = TIED_PARAMS.lock() {
         params.keys().cloned().collect()
     } else {
@@ -635,13 +635,13 @@ pub fn get_tied_param(param_name: &str) -> Option<Arc<TiedGdbmParam>> {
 /// Read a key from a tied parameter.
 /// Port of `gdbmgetfn()` from Src/Modules/db_gdbm.c:282 — the
 /// `getfn` slot the C source wires for `${db[key]}`.
-pub fn gdbm_get(param_name: &str, key: &str) -> Option<String> {
+pub fn gdbmgetfn(param_name: &str, key: &str) -> Option<String> {
     get_tied_param(param_name).and_then(|p| p.get(key))
 }
 
 /// Write a key to a tied parameter.
 /// Port of `gdbmsetfn()` from Src/Modules/db_gdbm.c:347.
-pub fn gdbm_set(param_name: &str, key: &str, value: &str) -> Result<(), String> {
+pub fn gdbmsetfn(param_name: &str, key: &str, value: &str) -> Result<(), String> {
     let param = get_tied_param(param_name)
         .ok_or_else(|| format!("not a tied gdbm hash: {}", param_name))?;
     param.set(key, value)
@@ -650,7 +650,7 @@ pub fn gdbm_set(param_name: &str, key: &str, value: &str) -> Result<(), String> 
 /// Delete a key from a tied parameter.
 /// Port of `gdbmunsetfn()` from Src/Modules/db_gdbm.c:399 — used
 /// by `unset 'db[key]'`.
-pub fn gdbm_delete(param_name: &str, key: &str) -> Result<(), String> {
+pub fn gdbmunsetfn(param_name: &str, key: &str) -> Result<(), String> {
     let param = get_tied_param(param_name)
         .ok_or_else(|| format!("not a tied gdbm hash: {}", param_name))?;
     param.delete(key)

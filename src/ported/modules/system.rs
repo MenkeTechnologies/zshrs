@@ -380,11 +380,11 @@ pub fn sysseek(offset: i64, options: &SysseekOptions) -> Result<i64, String> {
 }
 
 /// Get current position in file descriptor
-/// `systell()` math function.
+/// `math_systell()` math function.
 /// Port of `math_systell()` from Src/Modules/system.c:467 — the
 /// C source registers it as a math function for `((pos =
-/// systell(fd)))` arithmetic.
-pub fn systell(fd: i32) -> Result<i64, String> {
+/// math_systell(fd)))` arithmetic.
+pub fn math_systell(fd: i32) -> Result<i64, String> {
     #[cfg(unix)]
     {
         let result = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) };
@@ -397,7 +397,7 @@ pub fn systell(fd: i32) -> Result<i64, String> {
 
     #[cfg(not(unix))]
     {
-        Err("systell not supported on this platform".to_string())
+        Err("math_systell not supported on this platform".to_string())
     }
 }
 
@@ -629,7 +629,7 @@ pub fn errno_from_name(name: &str) -> Option<i32> {
 /// Inverse of `errno_from_name`.
 /// Port of `errnosgetfn()` from Src/Modules/system.c:832 — used
 /// by `${errnos[N]}` lookup.
-pub fn errno_to_name(errno: i32) -> Option<&'static str> {
+pub fn errnosgetfn(errno: i32) -> Option<&'static str> {
     ERRNO_NAMES
         .iter()
         .find(|(_, e)| *e == errno)
@@ -816,7 +816,7 @@ pub fn zsystem_supports(feature: &str) -> bool {
 /// Port of `getpmsysparams()` (Src/Modules/system.c:873) +
 /// `scanpmsysparams()` (line 885) — exposes selected `sysconf(3)`
 /// values to shell scripts.
-pub fn get_sysparams() -> HashMap<String, String> {
+pub fn getpmsysparams() -> HashMap<String, String> {
     let mut params = HashMap::new();
 
     #[cfg(unix)]
@@ -873,10 +873,10 @@ mod tests {
 
     #[test]
     fn test_errno_to_name() {
-        assert_eq!(errno_to_name(1), Some("EPERM"));
-        assert_eq!(errno_to_name(2), Some("ENOENT"));
-        assert_eq!(errno_to_name(22), Some("EINVAL"));
-        assert_eq!(errno_to_name(999), None);
+        assert_eq!(errnosgetfn(1), Some("EPERM"));
+        assert_eq!(errnosgetfn(2), Some("ENOENT"));
+        assert_eq!(errnosgetfn(22), Some("EINVAL"));
+        assert_eq!(errnosgetfn(999), None);
     }
 
     #[test]
@@ -895,7 +895,7 @@ mod tests {
 
     #[test]
     fn test_get_sysparams() {
-        let params = get_sysparams();
+        let params = getpmsysparams();
         assert!(params.contains_key("pid"));
         assert!(params.contains_key("ppid"));
     }
@@ -990,7 +990,7 @@ mod tests {
         let pos = sysseek(5, &options).unwrap();
         assert_eq!(pos, 5);
 
-        let current = systell(fd).unwrap();
+        let current = math_systell(fd).unwrap();
         assert_eq!(current, 5);
 
         unsafe {

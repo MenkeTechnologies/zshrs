@@ -355,7 +355,7 @@ impl FileStat {
         if flags.string_format {
             #[cfg(unix)]
             {
-                if let Some(name) = get_username(self.uid) {
+                if let Some(name) = statuidprint(self.uid) {
                     result.push_str(&name);
                 } else {
                     result.push_str(&format!("{}", self.uid));
@@ -484,7 +484,7 @@ fn set_bit(mode: u32, bit: u32) -> bool {
 
 /// Port of `statuidprint()` from `Src/Modules/stat.c:132`.
 #[cfg(unix)]
-fn get_username(uid: u32) -> Option<String> {
+fn statuidprint(uid: u32) -> Option<String> {
     use std::ffi::CStr;
     unsafe {
         let pwd = libc::getpwuid(uid);

@@ -264,7 +264,7 @@ mod datetime_module {
     fn strftime_formats() {
         assert_parity(&with_modules(
             &["datetime"],
-            r#"strftime "%Y-%m-%d" 1700000000"#,
+            r#"output_strftime "%Y-%m-%d" 1700000000"#,
         ));
     }
 
@@ -1203,12 +1203,12 @@ b=$EPOCHSECONDS
         ));
     }
 
-    /// `strftime` builtin formats a known epoch.
+    /// `output_strftime` builtin formats a known epoch.
     #[test]
     fn strftime_formats_known_epoch() {
         assert_parity(&with_modules(
             &["datetime"],
-            r#"strftime "%Y-%m-%d %H:%M:%S" 0"#,
+            r#"output_strftime "%Y-%m-%d %H:%M:%S" 0"#,
         ));
     }
 }

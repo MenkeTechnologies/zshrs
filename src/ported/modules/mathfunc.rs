@@ -405,7 +405,7 @@ impl MathFunctions {
     fn gamma(args: &[MathNumber]) -> Result<MathNumber, String> {
         Self::check_args(args, 1, 1, "gamma")?;
         let x = args[0].as_float();
-        Ok(MathNumber::Float(gamma_fn(x)))
+        Ok(MathNumber::Float(math_func(x)))
     }
 
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
@@ -484,13 +484,13 @@ impl MathFunctions {
 }
 
 /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
-fn gamma_fn(x: f64) -> f64 {
+fn math_func(x: f64) -> f64 {
     if x <= 0.0 && x == x.floor() {
         return f64::INFINITY;
     }
 
     if x < 0.5 {
-        PI / (PI * x).sin() / gamma_fn(1.0 - x)
+        PI / (PI * x).sin() / math_func(1.0 - x)
     } else {
         let x = x - 1.0;
         let g = 7;
@@ -519,7 +519,7 @@ fn gamma_fn(x: f64) -> f64 {
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/mathfunc.c`.
 fn lgamma_fn(x: f64) -> f64 {
-    gamma_fn(x).abs().ln()
+    math_func(x).abs().ln()
 }
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT

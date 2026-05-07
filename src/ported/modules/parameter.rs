@@ -139,7 +139,7 @@ pub struct ParamFlags {
 /// Generate parameter type string (like "scalar-local-export")
 /// Render a parameter's type as a `typeset -p` flag string.
 /// Port of `paramtypestr()` from Src/Modules/parameter.c:43.
-pub fn param_type_str(ptype: ParamType, flags: &ParamFlags) -> String {
+pub fn paramtypestr(ptype: ParamType, flags: &ParamFlags) -> String {
     let mut parts = vec![ptype.name().to_string()];
 
     if flags.local {
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn test_param_type_str() {
         let flags = ParamFlags::default();
-        assert_eq!(param_type_str(ParamType::Scalar, &flags), "scalar");
+        assert_eq!(paramtypestr(ParamType::Scalar, &flags), "scalar");
 
         let flags = ParamFlags {
             local: true,
@@ -861,7 +861,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            param_type_str(ParamType::Array, &flags),
+            paramtypestr(ParamType::Array, &flags),
             "array-local-export"
         );
     }

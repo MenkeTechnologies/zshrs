@@ -378,7 +378,7 @@ impl FtpSession {
             return Err(io::Error::other(resp.message));
         }
 
-        let (ip, port) = parse_pasv_response(&resp.message)?;
+        let (ip, port) = zfopendata(&resp.message)?;
         let addr = format!("{}:{}", ip, port);
 
         TcpStream::connect_timeout(
@@ -540,7 +540,7 @@ impl FtpSession {
 }
 
 /// Port of `zfopendata()` from `Src/Modules/zftp.c:859`.
-fn parse_pasv_response(msg: &str) -> io::Result<(String, u16)> {
+fn zfopendata(msg: &str) -> io::Result<(String, u16)> {
     let start = msg
         .find('(')
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PASV response"))?;
@@ -1127,7 +1127,7 @@ mod tests {
     #[test]
     fn test_parse_pasv_response() {
         let msg = "227 Entering Passive Mode (192,168,1,1,4,1)";
-        let (ip, port) = parse_pasv_response(msg).unwrap();
+        let (ip, port) = zfopendata(msg).unwrap();
         assert_eq!(ip, "192.168.1.1");
         assert_eq!(port, 1025);
     }
@@ -1135,7 +1135,7 @@ mod tests {
     #[test]
     fn test_parse_pasv_response_invalid() {
         let msg = "invalid";
-        assert!(parse_pasv_response(msg).is_err());
+        assert!(zfopendata(msg).is_err());
     }
 
     #[test]

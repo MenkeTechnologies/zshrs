@@ -659,7 +659,7 @@ mod modules {
     use super::*;
 
     #[test] fn datetime_epochseconds()   { assert_parity(r#"zmodload zsh/datetime; print -- $(( EPOCHSECONDS > 0 ))"#); }
-    #[test] fn datetime_strftime()       { assert_parity(r#"zmodload zsh/datetime; strftime "%Y" 0"#); }
+    #[test] fn datetime_strftime()       { assert_parity(r#"zmodload zsh/datetime; output_strftime "%Y" 0"#); }
     #[test] fn mathfunc_sin_zero()       { assert_parity(r#"zmodload zsh/mathfunc; print -- $(( sin(0) ))"#); }
     #[test] fn mathfunc_abs_neg()        { assert_parity(r#"zmodload zsh/mathfunc; print -- $(( abs(-5.0) ))"#); }
     #[test] fn mathfunc_log_e()          { assert_parity(r#"zmodload zsh/mathfunc; print -- $(( int(exp(log(7))) ))"#); }

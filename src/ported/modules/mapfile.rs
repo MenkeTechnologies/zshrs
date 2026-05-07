@@ -48,7 +48,7 @@ impl Mapfile {
     /// the `getfn` slot of the per-key Param the C source builds on
     /// the fly when `$mapfile[KEY]` is dereferenced.
     pub fn get(&self, filename: &str) -> Option<String> {
-        get_file_contents(filename).ok()
+        get_contents(filename).ok()
     }
 
     /// Set file contents by filename (key).
@@ -95,7 +95,7 @@ impl Mapfile {
     pub fn to_hash(&self) -> io::Result<HashMap<String, String>> {
         let mut result = HashMap::new();
         for filename in self.keys()? {
-            if let Ok(contents) = get_file_contents(&filename) {
+            if let Ok(contents) = get_contents(&filename) {
                 result.insert(filename, contents);
             }
         }
@@ -125,7 +125,7 @@ impl Mapfile {
 /// the same `open(2)` + `mmap(2, MAP_PRIVATE)` fast-path the C
 /// source uses, with a `read(2)` fallback when mmap fails.
 #[cfg(unix)]
-pub fn get_file_contents(filename: &str) -> io::Result<String> {
+pub fn get_contents(filename: &str) -> io::Result<String> {
     use std::os::unix::fs::MetadataExt;
 
     let file = File::open(filename)?;
@@ -168,12 +168,12 @@ pub fn get_file_contents(filename: &str) -> io::Result<String> {
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/mapfile.c`.
-/// Non-Unix fallback for `get_file_contents` — `mmap(2)` is POSIX-
+/// Non-Unix fallback for `get_contents` — `mmap(2)` is POSIX-
 /// only, so on Windows / WASI we fall through to a plain
 /// `read_to_string`. Mirrors the `#ifndef HAVE_MMAP` branch in
 /// Src/Modules/mapfile.c.
 #[cfg(not(unix))]
-pub fn get_file_contents(filename: &str) -> io::Result<String> {
+pub fn get_contents(filename: &str) -> io::Result<String> {
     fs::read_to_string(filename)
 }
 
@@ -320,7 +320,7 @@ mod tests {
         let result = set_file_contents(test_file, content);
         assert!(result.is_ok());
 
-        let read_content = get_file_contents(test_file).unwrap();
+        let read_content = get_contents(test_file).unwrap();
         assert_eq!(read_content, content);
 
         let _ = fs::remove_file(test_file);
@@ -333,7 +333,7 @@ mod tests {
         let result = set_file_contents(test_file, "");
         assert!(result.is_ok());
 
-        let read_content = get_file_contents(test_file).unwrap();
+        let read_content = get_contents(test_file).unwrap();
         assert!(read_content.is_empty());
 
         let _ = fs::remove_file(test_file);
