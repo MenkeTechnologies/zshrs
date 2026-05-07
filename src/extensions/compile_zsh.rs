@@ -4296,7 +4296,13 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
                 .unwrap_or(false)
         };
         let is_dollar = is_meta_dollar || is_literal_dollar_with_expansion;
-        let is_backtick = c == '`';
+        // Backtick trigger: literal `` ` `` OR the lexer's TICK
+        // (`\u{93}`) / QTICK (`\u{99}`) markers. Without the marker
+        // forms, `\`echo $foo\`` (which the lexer emits as
+        // `\u{93}echo $foo\u{93}`) only split on `$foo`, treating
+        // the surrounding TICK chars as literal text — the bridge
+        // never saw a whole-word backquote.
+        let is_backtick = c == '`' || c == '\u{93}' || c == '\u{99}';
         let at_top = brace_depth == 0 && brack_depth == 0;
         if !(is_dollar || is_backtick) || !at_top {
             i += 1;
@@ -4339,10 +4345,18 @@ fn split_word_segments(s: &str) -> Option<Vec<WordSegment>> {
 /// `$((...))`, `$NAME`, `$N`, `$@` etc., and `` `cmd` ``.
 fn find_expansion_end(chars: &[char], i: usize) -> usize {
     let c = chars[i];
-    if c == '`' {
-        // Backtick: find matching `
+    if c == '`' || c == '\u{93}' || c == '\u{99}' {
+        // Backtick: find matching `, TICK, or QTICK. The opening
+        // marker MUST match the closing form per parse/tokens
+        // (TICK pairs with TICK, etc.) but in practice the lexer
+        // is consistent within a word — accept any of the three
+        // as the close.
         let mut j = i + 1;
-        while j < chars.len() && chars[j] != '`' {
+        while j < chars.len()
+            && chars[j] != '`'
+            && chars[j] != '\u{93}'
+            && chars[j] != '\u{99}'
+        {
             j += 1;
         }
         return (j + 1).min(chars.len());
