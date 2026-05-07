@@ -44,7 +44,7 @@ pub(crate) use crate::ported::math::{
 #[allow(unused_imports)]
 pub(crate) use crate::ported::params::{
     array_subscript_flag, assoc_subscript_flag,
-    slice_indexed_array,
+    getarrvalue,
 };
 #[allow(unused_imports)]
 pub(crate) use crate::ported::pattern::{
