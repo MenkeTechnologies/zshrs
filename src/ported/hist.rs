@@ -1838,7 +1838,7 @@ pub fn readhistline(line: &str) -> Option<HistEntry> {
     Some(HistEntry::new(0, line.to_string()))
 }
 
-/// Lock history file with flock (from hist.c flockhistfile)
+/// Lock history file with bin_zsystem_flock (from hist.c flockhistfile)
 pub fn flockhistfile(path: &str) -> bool {
     #[cfg(unix)]
     {

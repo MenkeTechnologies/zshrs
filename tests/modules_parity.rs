@@ -430,12 +430,12 @@ mod system_module {
         assert!(z > 0 && r > 0, "pids: zsh={} zshrs={}", z, r);
     }
 
-    /// `zsystem supports flock` returns 0 on Unix.
+    /// `zsystem supports bin_zsystem_flock` returns 0 on Unix.
     #[test]
     fn zsystem_supports_flock() {
         assert_parity(&with_modules(
             &["system"],
-            r#"zsystem supports flock && echo Y || echo N"#,
+            r#"zsystem supports bin_zsystem_flock && echo Y || echo N"#,
         ));
     }
 }

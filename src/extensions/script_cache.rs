@@ -28,7 +28,7 @@
 //!     zshrs binary's mtime (any rebuild of zshrs invalidates entries silently).
 //!
 //! Write path:
-//!   - `flock(LOCK_EX)` on `scripts.rkyv.lock` so concurrent writers serialize.
+//!   - `bin_zsystem_flock(LOCK_EX)` on `scripts.rkyv.lock` so concurrent writers serialize.
 //!   - Read existing shard into owned form, mutate, `rkyv::to_bytes`,
 //!     write to `scripts.rkyv.tmp.<pid>.<nanos>`, fsync, atomic-rename.
 //!   - Drop the in-process `mmap` so the next read picks up the new shard.
