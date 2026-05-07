@@ -1827,6 +1827,7 @@ fn paramsubst(                                              // c:1625
                 postone.as_deref(),
                 premul.as_deref().unwrap_or(&mul_default),
                 postmul.as_deref().unwrap_or(&mul_default),
+                multi_width as i32,                         // c:2376 (m)
             );
         }
 
@@ -3306,6 +3307,10 @@ pub struct SortOptions {                                    // utils.c:6141
 /// Port of dopadding() from subst.c lines 798-1193
 /// `${(l:N:)var}` left/right-pad.
 /// Port of `dopadding()` from Src/subst.c:893.
+///
+/// `multi_width` controls cell-counting per the (m) flag (subst.c:2376):
+///   • 0  → every char counts as one cell (C zsh's MULTIBYTE_SUPPORT off)
+///   • 1+ → use wcpadwidth (CJK wide=2, combining=0, ZWJ=0).
 pub fn dopadding(                                           // c:893
     s: &str,                                                // c:893
     prenum: usize,                                          // c:893
@@ -3314,8 +3319,21 @@ pub fn dopadding(                                           // c:893
     postone: Option<&str>,                                  // c:893
     premul: &str,                                           // c:893
     postmul: &str,                                          // c:893
+    multi_width: i32,                                       // c:2376 (m)
 ) -> String {                                               // c:893
-    let len = s.chars().count();                            // c:893
+    // (m)-aware string-cell counter. With multi_width==0 every
+    // codepoint counts 1 (legacy behavior); otherwise wcpadwidth
+    // gives the wide-char-aware metric. Direct port of zsh's
+    // MULTIBYTE_SUPPORT path which routes the (l)/(r) length
+    // checks through wcwidth() before deciding pad vs truncate.
+    let cells = |t: &str| -> usize {                        // c:893
+        if multi_width <= 0 {                               // c:893
+            t.chars().count()                                // c:893
+        } else {                                             // c:893
+            t.chars().map(|c| wcpadwidth(c, multi_width) as usize).sum() // c:2376
+        }                                                    // c:893
+    };
+    let len = cells(s);                                     // c:893
     let total_width = prenum + postnum;                     // c:893
 
     if total_width == 0 || total_width == len {             // c:893
@@ -3385,7 +3403,7 @@ pub fn dopadding(                                           // c:893
 
     // Right padding
     if postnum > 0 {                                        // c:893
-        let current_len = result.chars().count();           // c:893
+        let current_len = cells(&result);                   // c:893
 
         if current_len > postnum {                          // c:893
             // Truncate from right
