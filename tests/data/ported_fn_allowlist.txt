@@ -17,3 +17,14 @@
 #
 # Lines starting with `#` are comments. Blank lines ignored.
 
+# Rust-only architectural helpers — no C counterpart by design.
+# zsh C uses the global `sigtrapped[]` / `sigfuncs[]` arrays
+# directly (no accessor function); zshrs needs a singleton to own
+# the OnceLock<TrapHandler>. Inlining at 18 call sites would mean
+# repeating `TRAPS.get_or_init(...)` everywhere.
+traps
+# zsh C forks before installing handlers, so it has no analog. Rust's
+# Rayon worker pool means the signal handler may run in a forked
+# child and must skip touching parent state. Used by glob.rs's parallel
+# expansion path to disable post-fork worker thread access.
+is_forked_child
