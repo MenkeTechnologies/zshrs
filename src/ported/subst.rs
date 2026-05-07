@@ -1779,126 +1779,145 @@ pub fn singsub(s: &str, state: &mut SubstState) -> String { // c:514
 /// Port of multsub() from subst.c lines 540-621
 /// Multi-word substitution with IFS splitting.
 /// Port of `multsub()` from Src/subst.c:544.
+/// Port of `multsub()` from `Src/subst.c:544-660`.
+///
+/// Multi-word substitution: prefork the input as a single linknode,
+/// optionally word-split on IFS first, return the result as scalar or
+/// array depending on whether more than one node emerged or LF_ARRAY
+/// was set.
+///
+/// C signature: `int multsub(char **s, int pf_flags, char ***a,
+/// int *isarr, char *sep, int *ms_flags)`. Returns 0 on success;
+/// in-out pointers carry the result.
+///
+/// Rust signature: `(s, pf_flags, state) -> (String, Vec<String>,
+/// bool isarr, u32 ms_flags)`. The `sep` parameter is reserved on the
+/// caller side and folded into `state.variables["IFS"]` for now;
+/// pending an explicit sep arg if a caller needs it. The return tuple
+/// carries (joined-scalar, array, isarr, ms_flags).
 pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<String>, bool, u32) { // c:544
-    let mut x = s.to_string();                              // c:544
-    let mut ms_flags = 0u32;                                // c:544
+    let mut ms_flags = 0u32;                                // c:551
+    let mut x = s.to_string();                              // c:550 (`x = *s`)
 
-    // Handle leading whitespace with SPLIT flag
-    if pf_flags & prefork_flags::SPLIT != 0 {               // c:544
-        let leading_ws: String = x.chars().take_while(|c| c.is_ascii_whitespace()).collect(); // c:544
-        if !leading_ws.is_empty() {                         // c:544
-            ms_flags |= multsub_flags::WS_AT_START;         // c:544
-            x = x.chars().skip(leading_ws.len()).collect(); // c:544
-        }                                                   // c:544
-    }                                                       // c:544
+    // C lines 555-563: PREFORK_SPLIT — skip leading IFS whitespace,
+    // mark MULTSUB_WS_AT_START.
+    let ifs = state.variables.get("IFS").cloned()
+        .unwrap_or_else(|| " \t\n".to_string());            // c:N/A (state plumb)
+    let is_ifs_sep = |c: char| -> bool {                    // c:556
+        ifs.contains(c)                                     // c:556
+    };
 
-    let mut list = { let mut _l = LinkList::default(); _l.nodes.push_back(LinkNode { data: x.to_string() }); _l };               // c:544
+    if pf_flags & prefork_flags::SPLIT != 0 {               // c:553
+        let leading: usize = x.chars().take_while(|&c| is_ifs_sep(c)).count(); // c:556
+        if leading > 0 {                                    // c:557
+            ms_flags |= multsub_flags::WS_AT_START;         // c:561
+            x = x.chars().skip(leading).collect();          // c:562
+        }
+    }
 
-    // Handle word splitting within the string
-    if pf_flags & prefork_flags::SPLIT != 0 {               // c:544
-        let mut node_idx = 0;                               // c:544
-        let mut in_quote = false;                           // c:544
-        let mut in_paren = 0;                               // c:544
+    // C: `init_list1(foo, x);` — single-element linklist seeded with x.
+    let mut list = LinkList::default();                     // c:565
+    list.nodes.push_back(LinkNode { data: x.clone() });     // c:565
 
-        while node_idx < list.nodes.len() {                       // c:544
-            if let Some(data) = list.getdata(node_idx) {   // c:544
-                let chars: Vec<char> = data.chars().collect(); // c:544
-                let mut split_points = Vec::new();          // c:544
-                let mut i = 0;                              // c:544
+    // C lines 568-619: PREFORK_SPLIT walks chars looking for ISEP
+    // separators outside quotes/parens. On hit, NUL-terminate and
+    // start a new linknode.
+    if pf_flags & prefork_flags::SPLIT != 0 {               // c:567
+        // Take ownership of the only node's chars; rebuild list.
+        let chars: Vec<char> = x.chars().collect();         // c:565
+        let mut nodes: Vec<String> = Vec::new();            // c:565
+        let mut cur = String::new();                        // c:565
+        let mut inq = false;                                // c:570 (quote state)
+        let mut inp = 0_i32;                                // c:570 (paren depth)
+        let mut i = 0_usize;                                // c:572
+        while i < chars.len() {                             // c:572
+            let c = chars[i];                               // c:573
+            // C: `if (*x == Dash) *x = '-';` — Dash token →
+            // literal dash. Rust doesn't have this token here.
+            // C: `if (itok((unsigned char) *x)) { rawc = *x; l = 1; }`
+            // Tokens (META range \u{80}-\u{9F}) are single-byte and
+            // can't be separators. Skip the IFS check for them.
+            let is_token = matches!(c as u32, 0x80..=0x9F); // c:577
+            // Bnull/Bnullkeep arms (C lines 612-617): skip the next
+            // char (parser-verified to exist). \u{99} = Bnull,
+            // \u{9a} = Bnullkeep in our token table.
+            if c == '\u{99}' || c == '\u{9a}' {             // c:612
+                cur.push(c);                                // c:614
+                i += 1;                                     // c:615
+                if i < chars.len() {                        // c:615
+                    cur.push(chars[i]);                     // c:616
+                    i += 1;                                 // c:616
+                }
+                continue;                                   // c:617
+            }
+            // Quote/paren state tracking (C lines 600-611).
+            match c {                                       // c:600
+                '\u{97}' /* Dnull */ |                      // c:602 (")
+                '\u{98}' /* Snull */ |                      // c:603 (')
+                '\u{83}' /* Tick */ => { inq = !inq; }      // c:604 (`)
+                '\u{85}' /* Inpar */ => { inp += 1; }       // c:606
+                '\u{86}' /* Outpar */ => { inp -= 1; }      // c:608
+                _ => {}
+            }
+            // ISEP test (C line 581) — outside quotes/parens, char
+            // matches IFS, char is not a token.
+            if !inq && inp == 0 && !is_token && is_ifs_sep(c) { // c:581
+                // Split here; NUL-terminate cur, walk past trailing
+                // separators (C lines 583-595).
+                if !cur.is_empty() || nodes.is_empty() {    // c:583
+                    nodes.push(std::mem::take(&mut cur));   // c:583
+                }
+                i += 1;                                     // c:584
+                while i < chars.len() && is_ifs_sep(chars[i]) { // c:584-595
+                    i += 1;                                 // c:594
+                }
+                if i >= chars.len() {                       // c:596
+                    ms_flags |= multsub_flags::WS_AT_END;   // c:597
+                    break;                                  // c:598
+                }
+                continue;                                   // c:599
+            }
+            cur.push(c);                                    // c:619
+            i += 1;                                         // c:620
+        }
+        if !cur.is_empty() {                                // c:622
+            nodes.push(cur);                                // c:622
+        }
+        // Rebuild the linklist with the split nodes.
+        list = LinkList::default();                         // c:622
+        for n in nodes {                                    // c:622
+            list.nodes.push_back(LinkNode { data: n });     // c:622
+        }
+    }
 
-                while i < chars.len() {                     // c:544
-                    let c = chars[i];                       // c:544
+    // C: `prefork(&foo, pf_flags, ms_flags);`
+    let mut ret_flags = 0u32;                               // c:625
+    prefork(&mut list, pf_flags, &mut ret_flags, state);    // c:625
 
-                    // Handle quote state
-                    match c {                               // c:544
-                        '"' | '\'' | TICK | QTICK => in_quote = !in_quote, // c:544
-                        INPAR => in_paren += 1,             // c:544
-                        OUTPAR => in_paren = (in_paren - 1).max(0), // c:544
-                        _ => {}                             // c:544
-                    }                                       // c:544
+    // C lines 626-630: errflag bail.
+    if state.errflag {                                      // c:626
+        return (String::new(), Vec::new(), false, ms_flags); // c:629
+    }
 
-                    // Check for IFS separator outside quotes
-                    if !in_quote && in_paren == 0 {         // c:544
-                        let ifs = state                     // c:544
-                            .variables                      // c:544
-                            .get("IFS")                     // c:544
-                            .map(|s| s.as_str())            // c:544
-                            .unwrap_or(" \t\n");            // c:544
-                        if ifs.contains(c) && !false /* is_token stub */ { // c:544
-                            split_points.push(i);           // c:544
-                        }                                   // c:544
-                    }                                       // c:544
-
-                    i += 1;                                 // c:544
-                }                                           // c:544
-
-                // Split at found points
-                if !split_points.is_empty() {               // c:544
-                    let data_str = data.to_string();        // c:544
-                    let chars: Vec<char> = data_str.chars().collect(); // c:544
-                    let mut last = 0;                       // c:544
-
-                    list.delete_node(node_idx);                  // c:544
-
-                    for (idx, &point) in split_points.iter().enumerate() { // c:544
-                        if point > last {                   // c:544
-                            let segment: String = chars[last..point].iter().collect(); // c:544
-                            if idx == 0 {                   // c:544
-                                list.nodes.insert(node_idx, LinkNode { data: segment }); // c:544
-                            } else {                        // c:544
-                                list.insertlinknode(node_idx + idx - 1, segment); // c:544
-                            }                               // c:544
-                        }                                   // c:544
-                        last = point + 1;                   // c:544
-                    }                                       // c:544
-
-                    if last < chars.len() {                 // c:544
-                        let segment: String = chars[last..].iter().collect(); // c:544
-                        if split_points.is_empty() {        // c:544
-                            list.nodes.insert(node_idx, LinkNode { data: segment }); // c:544
-                        } else {                            // c:544
-                            list.insertlinknode(node_idx + split_points.len() - 1, segment); // c:544
-                        }                                   // c:544
-                    }                                       // c:544
-                }                                           // c:544
-            }                                               // c:544
-            node_idx += 1;                                  // c:544
-        }                                                   // c:544
-    }                                                       // c:544
-
-    let mut ret_flags = 0u32;                               // c:544
-    prefork(&mut list, pf_flags, &mut ret_flags, state);    // c:544
-
-    if state.errflag {                                      // c:544
-        return (String::new(), Vec::new(), false, ms_flags); // c:544
-    }                                                       // c:544
-
-    // Check for trailing whitespace
-    if pf_flags & prefork_flags::SPLIT != 0 {               // c:544
-        if let Some(last) = list.nodes.back() {             // c:544
-            if last                                         // c:544
-                .data                                       // c:544
-                .chars()                                    // c:544
-                .last()                                     // c:544
-                .map(|c| c.is_ascii_whitespace())           // c:544
-                .unwrap_or(false)                           // c:544
-            {                                               // c:544
-                ms_flags |= multsub_flags::WS_AT_END;       // c:544
-            }                                               // c:544
-        }                                                   // c:544
-    }                                                       // c:544
-
-    let len = list.nodes.len();                                   // c:544
-    if len > 1 || (list.flags & LF_ARRAY != 0) {            // c:544
-        // Return as array
-        let arr: Vec<String> = list.nodes.iter().map(|n| n.data.clone()).collect(); // c:544
-        let joined = arr.join(" ");                         // c:544
-        return (joined, arr, true, ms_flags);               // c:544
-    }                                                       // c:544
-
-    let result = list.getdata(0).unwrap_or("").to_string(); // c:544
-    (result.clone(), vec![result], false, ms_flags)         // c:544
-}                                                           // c:544
+    // C lines 633-650: count nodes; if > 1 or LF_ARRAY, return as
+    // array; else single scalar (or empty).
+    let l = list.nodes.len();                               // c:633
+    if l > 1 || (list.flags & LF_ARRAY != 0) {              // c:633
+        let arr: Vec<String> = list.nodes.iter().map(|n| n.data.clone()).collect(); // c:635-637
+        // C: `*s = sepjoin(r, sep, 1);` — join with IFS first-char
+        // when sep is NULL. Use first IFS char as join separator,
+        // matching zsh's sepjoin defaults.
+        let join_sep = ifs.chars().next().map(String::from).unwrap_or_default(); // c:649
+        let joined = arr.join(&join_sep);                   // c:649
+        return (joined, arr, true, ms_flags);               // c:642-647 (array path)
+    }
+    if l == 1 {                                             // c:653
+        let result = list.getdata(0).unwrap_or("").to_string(); // c:653
+        return (result.clone(), vec![result], false, ms_flags); // c:653
+    }
+    // C: `*s = dupstring("");` — empty result.
+    (String::new(), vec![String::new()], false, ms_flags)   // c:655
+}                                                           // c:660
 
 // CaseMod enum imported from src/ported/hist.rs (canonical port of
 // Src/hist.c::casemodify's CASMOD_* flag set). Local definition was
