@@ -1237,24 +1237,43 @@ fn paramsubst(                                              // c:1625
         let subexp_value: Option<String> = if idx < body_chars.len()
             && body_chars[idx] == '$'                       // c:2649
         {
-            // Find end of nested form: either `$(…)`, `${…}`, or `$((…))`.
-            let inner: String = body_chars[idx..].iter().collect();
-            let expanded = singsub(&inner, state);          // c:2681
-            // Walk past whatever singsub consumed; for safety advance
-            // past matching close paren/brace if found.
-            let mut depth = 0_i32;
-            let mut p = idx;
-            let mut started = false;
-            while p < body_chars.len() {
-                let ch = body_chars[p];
-                if ch == '(' || ch == '{' || ch == '[' { depth += 1; started = true; }
-                else if ch == ')' || ch == '}' || ch == ']' {
-                    depth -= 1;
-                    if started && depth <= 0 { p += 1; break; }
+            // Walk just the nested $-form (depth-tracked over its
+            // matching brace/paren), then singsub only that slice.
+            // Without this scoping the trailing operators got fed
+            // into the recursive expansion.
+            let start = idx;
+            let mut p = idx + 1;
+            if p < body_chars.len() {
+                let nx = body_chars[p];
+                let (open, close) = match nx {
+                    '{' => ('{', '}'),
+                    '(' => ('(', ')'),
+                    _ => ('\0', '\0'),
+                };
+                if open != '\0' {
+                    let mut depth = 0_i32;
+                    while p < body_chars.len() {
+                        let ch = body_chars[p];
+                        if ch == open { depth += 1; }
+                        else if ch == close {
+                            depth -= 1;
+                            if depth == 0 { p += 1; break; }
+                        }
+                        p += 1;
+                    }
+                } else {
+                    // Bare $name — walk identifier chars.
+                    p += 1;
+                    while p < body_chars.len()
+                        && (body_chars[p].is_ascii_alphanumeric() || body_chars[p] == '_')
+                    {
+                        p += 1;
+                    }
                 }
-                p += 1;
             }
-            idx = p;
+            let inner: String = body_chars[start..p].iter().collect(); // c:2671
+            let expanded = singsub(&inner, state);          // c:2681
+            idx = p;                                        // c:2691
             Some(expanded)
         } else { None };
 
