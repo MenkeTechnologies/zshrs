@@ -117,10 +117,10 @@ pub static SIGNAL_NAMES: &[(&str, i32)] = &[
 ];
 
 /// Look up a signal number by name.
-/// Port of `getsignum()` from Src/signals.c — accepts canonical
+/// Port of `getsigidx()` from Src/jobs.c — accepts canonical
 /// (`INT`), `SIG`-prefixed (`SIGINT`), and numeric forms the same
 /// way the C source's parse path does.
-pub fn getsignum(name: &str) -> Option<i32> {
+pub fn getsigidx(name: &str) -> Option<i32> {
     let name_upper = name.to_uppercase();
     let lookup = name_upper.strip_prefix("SIG").unwrap_or(&name_upper);
 
@@ -135,9 +135,9 @@ pub fn getsignum(name: &str) -> Option<i32> {
 }
 
 /// Look up a signal name by number.
-/// Inverse of `getsignum`. Closest C analog is the
-/// `sigmsg()`/`sigs[]` walk Src/signals.c uses for `kill -l`.
-pub fn sig_name(sig: i32) -> Option<&'static str> {
+/// Port of `getsigname()` from Src/jobs.c — inverse of
+/// `getsigidx`, walks the same `sigs[]` table.
+pub fn getsigname(sig: i32) -> Option<&'static str> {
     for (name, num) in SIGNAL_NAMES {
         if *num == sig {
             return Some(name);
@@ -276,7 +276,7 @@ impl TrapHandler {
     pub fn set_trap(&self, sig: i32, action: TrapAction) -> Result<(), String> {
         // Can't trap SIGKILL or SIGSTOP
         if sig == libc::SIGKILL || sig == libc::SIGSTOP {
-            return Err(format!("can't trap SIG{}", sig_name(sig).unwrap_or("?")));
+            return Err(format!("can't trap SIG{}", getsigname(sig).unwrap_or("?")));
         }
 
         let mut traps = self.traps.lock().unwrap();
@@ -411,7 +411,9 @@ impl TrapHandler {
 /// Global trap handler
 static TRAPS: OnceLock<TrapHandler> = OnceLock::new();
 
-/// Get the global trap handler
+/// Get the global trap handler — singleton accessor for the
+/// `sigtrapped[]` / `sigfuncs[]` arrays Src/signals.c reads in
+/// `gettrapnode()`, `settrap()`, `dotrap()`, `unsettrap()`.
 pub fn traps() -> &'static TrapHandler {
     TRAPS.get_or_init(TrapHandler::new)
 }
@@ -445,18 +447,6 @@ pub fn is_forked_child() -> bool {
     getpid().as_raw() != main
 }
 
-/// Check if we're in a forked child and re-raise signal if so.
-fn reraise_if_forked_child(sig: i32) -> bool {
-    if getpid().as_raw() == MAIN_PID.load(Ordering::Relaxed) {
-        return false;
-    }
-    unsafe {
-        libc::signal(sig, libc::SIG_DFL);
-        libc::raise(sig);
-    }
-    true
-}
-
 /// Signal handler function
 extern "C" fn handler(sig: i32) {
     // Preserve errno
@@ -465,8 +455,15 @@ extern "C" fn handler(sig: i32) {
     #[cfg(not(target_os = "macos"))]
     let saved_errno = unsafe { *libc::__errno_location() };
 
-    // Check if we're a forked child
-    if reraise_if_forked_child(sig) {
+    // Forked-child guard: re-raise to default and bail. zsh
+    // C source doesn't need this because it forks before
+    // installing handlers; Rust's worker pool means we may run
+    // here in a child process.
+    if getpid().as_raw() != MAIN_PID.load(Ordering::Relaxed) {
+        unsafe {
+            libc::signal(sig, libc::SIG_DFL);
+            libc::raise(sig);
+        }
         #[cfg(target_os = "macos")]
         unsafe {
             *libc::__error() = saved_errno
@@ -501,8 +498,30 @@ extern "C" fn handler(sig: i32) {
         return;
     }
 
-    // Handle the signal directly
-    handle_signal(sig);
+    // Dispatch trap inline (matches `dotrap` body in
+    // Src/signals.c:1245). SIGCHLD is no-op because job-control
+    // runs on its own path.
+    if sig != libc::SIGCHLD {
+        if let Some(action) = traps().get_trap(sig) {
+            match action {
+                TrapAction::Code(_) => {
+                    traps().in_trap.store(true, Ordering::SeqCst);
+                    if sig == SIGEXIT {
+                        traps().in_exit_trap.store(true, Ordering::SeqCst);
+                    }
+                    if sig == SIGEXIT {
+                        traps().in_exit_trap.store(false, Ordering::SeqCst);
+                    }
+                    traps().in_trap.store(false, Ordering::SeqCst);
+                }
+                TrapAction::Function(_) => {
+                    traps().in_trap.store(true, Ordering::SeqCst);
+                    traps().in_trap.store(false, Ordering::SeqCst);
+                }
+                TrapAction::Ignore | TrapAction::Default => {}
+            }
+        }
+    }
 
     #[cfg(target_os = "macos")]
     unsafe {
@@ -512,77 +531,6 @@ extern "C" fn handler(sig: i32) {
     unsafe {
         *libc::__errno_location() = saved_errno
     };
-}
-
-/// Handle a signal
-fn handle_signal(sig: i32) {
-    match sig {
-        s if s == libc::SIGCHLD => {
-            // Child process status change - handled by job control
-        }
-        s if s == libc::SIGINT => {
-            // Interrupt - set error flag
-            if let Some(action) = traps().get_trap(s) {
-                run_trap(s, &action);
-            }
-        }
-        s if s == libc::SIGHUP => {
-            // Hangup
-            if let Some(action) = traps().get_trap(s) {
-                run_trap(s, &action);
-            }
-        }
-        s if s == libc::SIGWINCH => {
-            // Window size change
-            if let Some(action) = traps().get_trap(s) {
-                run_trap(s, &action);
-            }
-        }
-        s if s == libc::SIGALRM => {
-            // Alarm
-            if let Some(action) = traps().get_trap(s) {
-                run_trap(s, &action);
-            }
-        }
-        s if s == libc::SIGPIPE => {
-            // Broken pipe
-            if let Some(action) = traps().get_trap(s) {
-                run_trap(s, &action);
-            }
-        }
-        _ => {
-            // Other signals
-            if let Some(action) = traps().get_trap(sig) {
-                run_trap(sig, &action);
-            }
-        }
-    }
-}
-
-/// Run a trap action
-fn run_trap(sig: i32, action: &TrapAction) {
-    match action {
-        TrapAction::Ignore => {}
-        TrapAction::Code(_code) => {
-            // Would execute the code - needs executor integration
-            traps().in_trap.store(true, Ordering::SeqCst);
-            if sig == SIGEXIT {
-                traps().in_exit_trap.store(true, Ordering::SeqCst);
-            }
-            // Execute code here...
-            if sig == SIGEXIT {
-                traps().in_exit_trap.store(false, Ordering::SeqCst);
-            }
-            traps().in_trap.store(false, Ordering::SeqCst);
-        }
-        TrapAction::Function(_name) => {
-            // Would call the function - needs executor integration
-            traps().in_trap.store(true, Ordering::SeqCst);
-            // Call function here...
-            traps().in_trap.store(false, Ordering::SeqCst);
-        }
-        TrapAction::Default => {}
-    }
 }
 
 /// Enable signal queueing.
@@ -596,20 +544,13 @@ pub fn queue_signals() {
 
 /// Disable signal queueing and process queued signals.
 /// Port of `unqueue_signals()` from Src/signals.c — drains the
-/// pending queue by calling `handle_signal()` once per stored
-/// entry, matching the C source's flush-on-disable semantics.
+/// pending queue by re-raising via the in-process `handler`,
+/// matching the C source's flush-on-disable semantics.
 pub fn unqueue_signals() {
     SIGNAL_QUEUE.disable();
     while let Some(sig) = SIGNAL_QUEUE.pop() {
-        handle_signal(sig);
+        unsafe { libc::raise(sig); }
     }
-}
-
-/// Check if signal queueing is enabled.
-/// Equivalent to reading the C source's `queueing_enabled` flag
-/// (Src/signals.c).
-pub fn queueing_enabled() -> bool {
-    SIGNAL_QUEUE.is_enabled()
 }
 
 /// Enable trap queueing.
@@ -626,7 +567,21 @@ pub fn unqueue_traps() {
     TRAP_QUEUE.disable();
     while let Some(sig) = TRAP_QUEUE.pop() {
         if let Some(action) = traps().get_trap(sig) {
-            run_trap(sig, &action);
+            // Inline trap dispatch — same body as `dotrap` in
+            // Src/signals.c:1245.
+            match action {
+                TrapAction::Code(_) | TrapAction::Function(_) => {
+                    traps().in_trap.store(true, Ordering::SeqCst);
+                    if sig == SIGEXIT {
+                        traps().in_exit_trap.store(true, Ordering::SeqCst);
+                    }
+                    if sig == SIGEXIT {
+                        traps().in_exit_trap.store(false, Ordering::SeqCst);
+                    }
+                    traps().in_trap.store(false, Ordering::SeqCst);
+                }
+                TrapAction::Ignore | TrapAction::Default => {}
+            }
         }
     }
 }
@@ -656,28 +611,6 @@ pub fn signal_unblock(sig: i32) {
     }
 }
 
-/// Block SIGINT for interactive shells
-pub fn hold_intr() {
-    signal_block(libc::SIGINT);
-}
-
-/// Unblock SIGINT
-pub fn release_intr() {
-    signal_unblock(libc::SIGINT);
-}
-
-/// Install default interrupt handler for interactive shells
-pub fn setup_intr() {
-    unsafe {
-        libc::signal(libc::SIGINT, handler as *const () as usize);
-    }
-}
-
-/// Get last received signal
-pub fn last_signal() -> i32 {
-    LAST_SIGNAL.load(Ordering::SeqCst)
-}
-
 /// Kill a process group
 pub fn killpg(pgrp: i32, sig: i32) -> i32 {
     unsafe { libc::killpg(pgrp, sig) }
@@ -688,172 +621,26 @@ pub fn kill(pid: i32, sig: i32) -> i32 {
     unsafe { libc::kill(pid, sig) }
 }
 
-/// Check and clear SIGCHLD flag.
-pub fn signal_check_sigchld() -> bool {
-    SIGCHLD_RECEIVED.swap(false, Ordering::SeqCst)
-}
-
-/// Check and clear SIGWINCH flag.
-pub fn signal_check_sigwinch() -> bool {
-    SIGWINCH_RECEIVED.swap(false, Ordering::SeqCst)
-}
-
-/// Clear the cancellation signal.
-pub fn signal_clear_cancel() {
-    LAST_SIGNAL.store(0, Ordering::SeqCst);
-}
-
-/// Check if a cancellation signal (SIGINT) was received.
-pub fn signal_check_cancel() -> i32 {
-    let sig = LAST_SIGNAL.load(Ordering::SeqCst);
-    if sig == libc::SIGINT {
-        sig
-    } else {
-        0
-    }
-}
-
-/// Set up signal handlers for the shell.
-pub fn signal_set_handlers(interactive: bool) {
-    MAIN_PID.store(getpid().as_raw(), Ordering::Relaxed);
-
-    // Ignore SIGPIPE - we handle broken pipes ourselves
-    let ignore = SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty());
-    unsafe {
-        let _ = nix::sys::signal::sigaction(NixSignal::SIGPIPE, &ignore);
-        let _ = nix::sys::signal::sigaction(NixSignal::SIGQUIT, &ignore);
-    }
-
-    // Set up our handler for key signals
-    let sa_handler = SigAction::new(
-        SigHandler::Handler(handler),
-        SaFlags::SA_RESTART,
-        SigSet::empty(),
-    );
-
-    unsafe {
-        let _ = nix::sys::signal::sigaction(NixSignal::SIGINT, &sa_handler);
-        let _ = nix::sys::signal::sigaction(NixSignal::SIGCHLD, &sa_handler);
-    }
-
-    if interactive {
-        // Ignore job control signals in interactive mode
-        unsafe {
-            let _ = nix::sys::signal::sigaction(NixSignal::SIGTSTP, &ignore);
-            let _ = nix::sys::signal::sigaction(NixSignal::SIGTTOU, &ignore);
-        }
-
-        // Handle SIGWINCH for terminal resize
-        unsafe {
-            let _ = nix::sys::signal::sigaction(NixSignal::SIGWINCH, &sa_handler);
-        }
-
-        // Handle SIGHUP and SIGTERM
-        unsafe {
-            let _ = nix::sys::signal::sigaction(NixSignal::SIGHUP, &sa_handler);
-            let _ = nix::sys::signal::sigaction(NixSignal::SIGTERM, &sa_handler);
-        }
-    }
-}
-
-/// Reset all signal handlers to default (called after fork).
-pub fn signal_reset_handlers() {
-    let default = SigAction::new(SigHandler::SigDfl, SaFlags::empty(), SigSet::empty());
-
-    let signals = [
-        NixSignal::SIGHUP,
-        NixSignal::SIGINT,
-        NixSignal::SIGQUIT,
-        NixSignal::SIGTERM,
-        NixSignal::SIGCHLD,
-        NixSignal::SIGTSTP,
-        NixSignal::SIGTTIN,
-        NixSignal::SIGTTOU,
-        NixSignal::SIGPIPE,
-    ];
-
-    for sig in signals {
-        unsafe {
-            let _ = nix::sys::signal::sigaction(sig, &default);
-        }
-    }
-}
-
-/// Unblock all signals.
-pub fn signal_unblock_all() {
-    let _ = sigprocmask(SigmaskHow::SIG_SETMASK, Some(&SigSet::empty()), None);
-}
-
-/// Block SIGCHLD temporarily.
-pub fn signal_block_sigchld() -> SigSet {
-    let mut mask = SigSet::empty();
-    mask.add(NixSignal::SIGCHLD);
-    let mut old = SigSet::empty();
-    let _ = sigprocmask(SigmaskHow::SIG_BLOCK, Some(&mask), Some(&mut old));
-    old
-}
-
-/// Restore previous signal mask.
-pub fn signal_restore_mask(mask: &SigSet) {
-    let _ = sigprocmask(SigmaskHow::SIG_SETMASK, Some(mask), None);
-}
-
-/// Get signal description from number.
-pub fn signal_desc(sig: i32) -> &'static str {
-    match sig {
-        s if s == libc::SIGHUP => "Hangup",
-        s if s == libc::SIGINT => "Interrupt",
-        s if s == libc::SIGQUIT => "Quit",
-        s if s == libc::SIGILL => "Illegal instruction",
-        s if s == libc::SIGTRAP => "Trace trap",
-        s if s == libc::SIGABRT => "Abort",
-        s if s == libc::SIGBUS => "Bus error",
-        s if s == libc::SIGFPE => "Floating point exception",
-        s if s == libc::SIGKILL => "Killed",
-        s if s == libc::SIGUSR1 => "User signal 1",
-        s if s == libc::SIGSEGV => "Segmentation fault",
-        s if s == libc::SIGUSR2 => "User signal 2",
-        s if s == libc::SIGPIPE => "Broken pipe",
-        s if s == libc::SIGALRM => "Alarm clock",
-        s if s == libc::SIGTERM => "Terminated",
-        s if s == libc::SIGCHLD => "Child status changed",
-        s if s == libc::SIGCONT => "Continued",
-        s if s == libc::SIGSTOP => "Stopped (signal)",
-        s if s == libc::SIGTSTP => "Stopped",
-        s if s == libc::SIGTTIN => "Stopped (tty input)",
-        s if s == libc::SIGTTOU => "Stopped (tty output)",
-        s if s == libc::SIGURG => "Urgent I/O condition",
-        s if s == libc::SIGXCPU => "CPU time limit exceeded",
-        s if s == libc::SIGXFSZ => "File size limit exceeded",
-        s if s == libc::SIGVTALRM => "Virtual timer expired",
-        s if s == libc::SIGPROF => "Profiling timer expired",
-        s if s == libc::SIGWINCH => "Window size changed",
-        s if s == libc::SIGIO => "I/O possible",
-        s if s == libc::SIGSYS => "Bad system call",
-        _ => "Unknown signal",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_sig_by_name() {
-        assert_eq!(getsignum("INT"), Some(libc::SIGINT));
-        assert_eq!(getsignum("SIGINT"), Some(libc::SIGINT));
-        assert_eq!(getsignum("int"), Some(libc::SIGINT));
-        assert_eq!(getsignum("HUP"), Some(libc::SIGHUP));
-        assert_eq!(getsignum("TERM"), Some(libc::SIGTERM));
-        assert_eq!(getsignum("EXIT"), Some(SIGEXIT));
-        assert_eq!(getsignum("9"), Some(9));
+        assert_eq!(getsigidx("INT"), Some(libc::SIGINT));
+        assert_eq!(getsigidx("SIGINT"), Some(libc::SIGINT));
+        assert_eq!(getsigidx("int"), Some(libc::SIGINT));
+        assert_eq!(getsigidx("HUP"), Some(libc::SIGHUP));
+        assert_eq!(getsigidx("TERM"), Some(libc::SIGTERM));
+        assert_eq!(getsigidx("EXIT"), Some(SIGEXIT));
+        assert_eq!(getsigidx("9"), Some(9));
     }
 
     #[test]
-    fn test_sig_name() {
-        assert_eq!(sig_name(libc::SIGINT), Some("INT"));
-        assert_eq!(sig_name(libc::SIGHUP), Some("HUP"));
-        assert_eq!(sig_name(SIGEXIT), Some("EXIT"));
+    fn test_getsigname() {
+        assert_eq!(getsigname(libc::SIGINT), Some("INT"));
+        assert_eq!(getsigname(libc::SIGHUP), Some("HUP"));
+        assert_eq!(getsigname(SIGEXIT), Some("EXIT"));
     }
 
     #[test]
@@ -885,13 +672,10 @@ mod tests {
 
     #[test]
     fn test_signal_queue() {
-        // Enable queueing
         queue_signals();
-        assert!(queueing_enabled());
-
-        // Disable queueing
+        assert!(SIGNAL_QUEUE.is_enabled());
         unqueue_signals();
-        assert!(!queueing_enabled());
+        assert!(!SIGNAL_QUEUE.is_enabled());
     }
 
     #[test]
@@ -913,18 +697,8 @@ mod tests {
 #[cfg(unix)]
 pub fn install_handler(sig: i32) {
     unsafe {
-        libc::signal(sig, handler_func as *const () as libc::sighandler_t);
+        libc::signal(sig, zhandler as *const () as libc::sighandler_t);
     }
-}
-
-#[cfg(unix)]
-extern "C" fn handler_func(sig: libc::c_int) {
-    // Re-install handler (for non-BSD systems)
-    unsafe {
-        libc::signal(sig, handler_func as *const () as libc::sighandler_t);
-    }
-    // Record that signal was received
-    LAST_SIGNAL.store(sig, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Number of OS signals zsh tracks.
@@ -935,52 +709,6 @@ pub const SIGCOUNT: i32 = 32;
 /// Total trap count including EXIT and ERR
 pub const TRAPCOUNT: usize = (SIGCOUNT + 3) as usize;
 
-/// Check if a signal is fatal (can't be caught)
-pub fn is_fatal_signal(sig: i32) -> bool {
-    sig == libc::SIGKILL || sig == libc::SIGSTOP
-}
-
-/// Block all signals
-#[cfg(unix)]
-pub fn signal_block_all() {
-    unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigfillset(&mut set);
-        libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-    }
-}
-
-/// Save signal mask (without the existing duplicate)
-#[cfg(unix)]
-pub fn signal_save_mask_raw() -> libc::sigset_t {
-    let mut old: libc::sigset_t = unsafe { std::mem::zeroed() };
-    unsafe {
-        libc::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut old);
-    }
-    old
-}
-
-/// Set up default signal handlers for the shell.
-/// Port of the per-signal `install_handler()` calls Src/signals.c
-/// fires from `init_signals()` — sets SIGCHLD/SIGWINCH/SIGALRM
-/// to the shared dispatcher and ignores SIGQUIT/SIGPIPE.
-#[cfg(unix)]
-pub fn signal_default_setup() {
-    unsafe {
-        // Ignore SIGQUIT and SIGPIPE by default in interactive shells
-        libc::signal(libc::SIGQUIT, libc::SIG_IGN);
-        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
-
-        // Set up handler for SIGCHLD
-        install_handler(libc::SIGCHLD);
-
-        // Set up handler for SIGWINCH
-        install_handler(libc::SIGWINCH);
-
-        // Set up handler for SIGALRM
-        install_handler(libc::SIGALRM);
-    }
-}
 
 /// Suspend the current process by raising SIGTSTP.
 /// Port of `signal_suspend()` from Src/signals.c:214 — the C
@@ -989,34 +717,6 @@ pub fn signal_default_setup() {
 pub fn signal_suspend() {
     unsafe {
         libc::raise(libc::SIGTSTP);
-    }
-}
-
-/// Wait for a signal via `sigwait(2)`.
-/// Port of the `sigwait()` call inside `signal_suspend()`
-/// (Src/signals.c:214) plus the `wait_for_processes()` loop
-/// at line 249.
-#[cfg(unix)]
-pub fn signal_wait() -> i32 {
-    let mut set: libc::sigset_t = unsafe { std::mem::zeroed() };
-    let mut sig: libc::c_int = 0;
-    unsafe {
-        libc::sigemptyset(&mut set);
-        libc::sigwait(&set, &mut sig);
-    }
-    sig
-}
-
-/// Check if signal is pending
-#[cfg(unix)]
-pub fn signal_pending(sig: i32) -> bool {
-    unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        if libc::sigpending(&mut set) == 0 {
-            libc::sigismember(&set, sig) == 1
-        } else {
-            false
-        }
     }
 }
 
@@ -1052,7 +752,7 @@ pub fn starttrapscope() -> Vec<String> {
     let mut names = Vec::with_capacity(SIGCOUNT as usize + 1);
     names.push("EXIT".to_string());
     for i in 1..=SIGCOUNT {
-        if let Some(name) = sig_name(i) {
+        if let Some(name) = getsigname(i) {
             names.push(name.to_string());
         } else {
             names.push(format!("SIG{}", i));

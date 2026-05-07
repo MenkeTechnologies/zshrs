@@ -1035,28 +1035,6 @@ pub fn ztrftime(fmt: &str, time: std::time::SystemTime) -> String {
     }
 }
 
-
-/// Escape string for shell
-pub fn shescape(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_alphanumeric() || c == '_' || c == '/' || c == '.' || c == '-')
-    {
-        return s.to_string();
-    }
-
-    let mut result = String::with_capacity(s.len() + 2);
-    result.push('\'');
-    for c in s.chars() {
-        if c == '\'' {
-            result.push_str("'\\''");
-        } else {
-            result.push(c);
-        }
-    }
-    result.push('\'');
-    result
-}
-
 /// Unescape string
 pub fn unescape(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
