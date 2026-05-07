@@ -2396,15 +2396,50 @@ pub fn get_strarg(s: &str) -> Option<(char, String, &str)> { // c:1348
 /// Port of get_intarg() from subst.c
 /// Parse an `:N:`-delimited integer flag argument.
 /// Port of `get_intarg()` from Src/subst.c:1428.
+/// Port of `get_intarg()` from `Src/subst.c:1428-1457`.
+///
+/// Parses an `:N:`-delimited integer flag argument (e.g. `(l:5:)`).
+/// The C source returns -1 on error, the absolute value otherwise,
+/// and writes the matched delimiter length to *delmatchp.
+///
+/// Rust returns Option<(value, rest)> — None on error, Some((|n|, rest))
+/// on success. The delmatchp output is folded into `rest` (a slice
+/// past the closing delimiter).
+///
+/// Body: get_strarg → parsestr → singsub → mathevali, then absolute
+/// value. The math eval lets `(l:$n:)` etc. work.
 pub fn get_intarg(s: &str) -> Option<(i64, &str)> {         // c:1428
-    if let Some((_, content, rest)) = get_strarg(s) {       // c:1428
-        // Parse and evaluate the content
-        let val: i64 = content.trim().parse().ok()?;        // c:1428
-        Some((val.abs(), rest))                             // c:1428
-    } else {                                                // c:1428
-        None                                                // c:1428
-    }                                                       // c:1428
-}                                                           // c:1428
+    // C: `char *t = get_strarg(*s, &arglen);` — get the delimited
+    // expression text + delimiter length.
+    let (_del, content, rest) = get_strarg(s)?;             // c:1431
+
+    if rest.is_empty() && content.is_empty() {              // c:1436
+        // C: `if (!*t) return -1;` — empty input → error.
+        return None;
+    }
+
+    // C: `if (parsestr(&p)) return -1;` — full lexer reentry skipped
+    // (subst_parse_str approximates).
+    let parsed = subst_parse_str(&content, false, true)?;   // c:1442
+
+    // C: `singsub(&p);` — parameter-substitute the content (so
+    // `(l:$n:)` looks up $n).
+    let mut state = SubstState::default();                  // c:1444
+    let expanded = singsub(&parsed, &mut state);            // c:1444
+    if state.errflag { return None; }                       // c:1445
+
+    // C: `ret = mathevali(p);` — evaluate as integer math.
+    let ret = match crate::ported::math::mathevali(&expanded) { // c:1447
+        Ok(n) => n,                                         // c:1447
+        Err(_) => return None,                              // c:1448
+    };
+
+    // C: `if (ret < 0) ret = -ret;` — absolute value.
+    let abs_ret = if ret < 0 { -ret } else { ret };         // c:1452
+
+    // C: `*delmatchp = arglen;` — Rust folds delim-len into rest.
+    Some((abs_ret, rest))                                   // c:1455
+}                                                           // c:1457
 
 
 
