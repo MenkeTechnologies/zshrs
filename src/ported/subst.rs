@@ -1907,6 +1907,7 @@ fn paramsubst(                                              // c:1625
         // subst.c:2965 getstrvalue / getarrvalue dispatch.
         // If subexp_value is set, the value comes from the recursive
         // $(...)/${...} expansion and we skip var-name lookup.
+        let used_subexp = subexp_value.is_some();
         let raw_value: String = if let Some(sv) = subexp_value {
             sv                                              // c:2681 (subexp result)
         } else if let Some(sub) = subscript.as_deref() {
@@ -2120,7 +2121,16 @@ fn paramsubst(                                              // c:1625
                     exec.get_special_array_value(&var_name, "@")))
                 .unwrap_or_default()
         };
-        let is_set = state.variables.contains_key(&var_name)
+        // Nested subexp result counts as "set" so the outer `:-` /
+        // `-` / `:?` modifiers see a real value rather than treating
+        // an empty var_name lookup as unset. Direct port of zsh's
+        // aspar/subexp path: when the inner $-form yielded a string,
+        // vunset stays 0 even though no parameter table entry
+        // exists. Without this, `\${\${(M)0:#/*}:-DEFAULT}` always
+        // fired the default because the outer paramsubst saw
+        // is_set=false (no variable named "${(M)0:#/*}").
+        let is_set = used_subexp
+            || state.variables.contains_key(&var_name)
             || state.arrays.contains_key(&var_name)
             || state.assoc_arrays.contains_key(&var_name);
 
