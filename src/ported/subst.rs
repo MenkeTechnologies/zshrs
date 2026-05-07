@@ -1705,6 +1705,44 @@ fn paramsubst(                                              // c:1625
             } else if let Some(arr) = state.arrays.get(&var_name) { // c:2926 (array)
                 if sub == "*" || sub == "@" {                // c:2916 (full array)
                     arr.join(" ")
+                } else if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                    // (I)/(i)/(R)/(r) array subscript flags —
+                    // (i)pat returns 1-based index of first matching
+                    // element, (I)pat returns all indices joined,
+                    // (r)pat returns first matching VALUE, (R)pat
+                    // returns all matching values. Direct port of
+                    // Src/params.c getarg array-pattern routing.
+                    let s = s.trim_start();
+                    let rest = s.strip_prefix('(')?;
+                    let close = rest.find(')')?;
+                    let flags = rest[..close].to_string();
+                    let pat = rest[close + 1..].to_string();
+                    if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e')) {
+                        Some((flags, pat))
+                    } else { None }
+                })(sub) {
+                    let return_index = flags.contains('I') || flags.contains('i');
+                    let return_all = flags.contains('I') || flags.contains('R');
+                    let mut out: Vec<String> = Vec::new();
+                    for (idx, elem) in arr.iter().enumerate() {
+                        if crate::exec::ShellExecutor::glob_match_static(elem, &pat) {
+                            if return_index {
+                                out.push((idx + 1).to_string());
+                            } else {
+                                out.push(elem.clone());
+                            }
+                            if !return_all { break; }
+                        }
+                    }
+                    if out.is_empty() && return_index {
+                        // (i) returns one-past-end on no-match (zsh
+                        // convention so $arr[$arr[(i)pat]] yields
+                        // empty string for missing); (I) returns
+                        // empty string. Direct port of params.c.
+                        (arr.len() + 1).to_string()
+                    } else {
+                        out.join(" ")
+                    }
                 } else if let Ok(idx_n) = sub.parse::<i64>() { // c:2926 (numeric index)
                     let len = arr.len() as i64;
                     let i = if idx_n < 0 { len + idx_n } else { idx_n - 1 };
