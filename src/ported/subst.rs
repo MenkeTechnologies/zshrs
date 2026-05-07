@@ -3236,13 +3236,33 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
                     chars.next();
                 }
             }
-            // Apply: gbal→all, else first match. C's :S anchors at
-            // head/tail; for the common :s case treat both same.
-            // Save for :& replay.
-            result = if gbal {                              // c:4665
-                result.replace(pat.as_str(), repl.as_str())
+            // Apply: gbal→all, else first match. :S allows
+            // anchored patterns via leading `#` (prefix) or
+            // trailing `%` (suffix); :s treats those literally.
+            // Direct port of subst.c modify's S-arm anchoring.
+            let (eff_pat, anchor_head, anchor_tail) = if modifier == 'S' {
+                if let Some(rest) = pat.strip_prefix('#') {
+                    (rest.to_string(), true, false)         // c:4665 (#X)
+                } else if let Some(rest) = pat.strip_suffix('%') {
+                    (rest.to_string(), false, true)         // c:4665 (X%)
+                } else {
+                    (pat.clone(), false, false)             // c:4665
+                }
             } else {
-                result.replacen(pat.as_str(), repl.as_str(), 1)
+                (pat.clone(), false, false)                 // c:4665
+            };
+            result = if anchor_head {                       // c:4665
+                if result.starts_with(&eff_pat) {           // c:4665
+                    format!("{}{}", repl, &result[eff_pat.len()..]) // c:4665
+                } else { result }                            // c:4665
+            } else if anchor_tail {                         // c:4665
+                if result.ends_with(&eff_pat) {             // c:4665
+                    format!("{}{}", &result[..result.len() - eff_pat.len()], repl) // c:4665
+                } else { result }                            // c:4665
+            } else if gbal {                                // c:4665
+                result.replace(eff_pat.as_str(), repl.as_str())
+            } else {
+                result.replacen(eff_pat.as_str(), repl.as_str(), 1)
             };
             state.last_subst = Some((pat.clone(), repl.clone())); // c:4673
             // `:s` on word-each (`:w` / `:W:sep`) splits, applies,
