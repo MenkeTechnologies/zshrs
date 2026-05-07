@@ -1255,6 +1255,7 @@ fn paramsubst(                                              // c:1625
         let mut sub_flags_bits: u32 = 0;                     // c:2169
         let mut flag_d_dir = false;                         // c:2229 (D)
         let mut flag_p_escapes = false;                     // c:2382 (p)
+        let mut flag_pct_prompt: u32 = 0;                   // c:2405 (% prompt count)
         let mut multi_width: u32 = 0;                       // c:2376 (m count)
         let mut flnum: u32 = 0;                              // c:1786 (I:N:)
         let mut flag_z_tokenize = false;                     // c:2439 (z)
@@ -1450,6 +1451,7 @@ fn paramsubst(                                              // c:1625
                     '~' => { state.opts.glob_subst = !state.opts.glob_subst; } // c:2160 (~)
                     'm' => { multi_width += 1; }            // c:2376 (m)
                     'p' => { flag_p_escapes = true; }       // c:2382
+                    '%' => { flag_pct_prompt += 1; }        // c:2405 (% prompt-expand)
                     'f' => { spsep = Some("\n".to_string()); } // c:2285
                     'F' => { sep = Some("\n".to_string()); }   // c:2289
                     '0' => { spsep = Some("\u{0}".to_string()); } // c:2293 (split on NUL)
@@ -2251,6 +2253,15 @@ fn paramsubst(                                              // c:1625
         if flag_eval {                                      // c:2268
             value = singsub(&value, state);                 // c:2268
         }
+
+        // (%) prompt-expand — interpret %F{red}, %~, %n, %{...%},
+        // etc. Stack count >=2 enables PROMPT_BANG/PROMPT_SUBST
+        // expansion too (zsh subst.c:3983 < 2 path). Direct port
+        // of subst.c:2405 / 3977 presc handling.
+        if flag_pct_prompt > 0 {                            // c:2405
+            value = crate::fusevm_bridge::with_executor(    // c:3977
+                |exec| exec.expand_prompt_string(&value));  // c:3977
+        }                                                    // c:2405
 
         // (z)/(Z:cCn:) — shell-tokenize the value into a list of
         // words. Direct port of subst.c:2439 LEXFLAGS_ACTIVE +
