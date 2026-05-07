@@ -2781,7 +2781,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
         // chain.
         if modifier == '&' {                                // c:4531
             if let Some((p, r)) = &last_subst {             // c:4531
-                result = (if gbal { result.replace(p as &str, r as &str) } else { result.replacen(p as &str, r as &str, 1) });  // c:4531
+                result = if gbal { result.replace(p as &str, r as &str) } else { result.replacen(p as &str, r as &str, 1) };  // c:4531
             }                                               // c:4531
             continue;                                       // c:4531
         }                                                   // c:4531
@@ -3010,13 +3010,11 @@ pub fn subst_parse_str(s: &str, single: bool, err: bool) -> Option<String> { // 
 ///   - Off-the-end → NULL (caller emits "not enough directory stack
 ///     entries" if NOMATCH is set).
 ///
-/// Rust signature: takes the dirstack slice + pwd; pushdminus_set is
-/// pulled from the caller's options (default false). Returns Option.
-pub fn dstackent(ch: char, val: i32, dirstack: &[String], pwd: &str) -> Option<String> { // c:4902
+/// Rust signature: takes the dirstack slice + pwd + the PUSHDMINUS
+/// option flag (callers read it from the live executor's options
+/// table). Returns Option.
+pub fn dstackent(ch: char, val: i32, dirstack: &[String], pwd: &str, pushdminus_set: bool) -> Option<String> { // c:4902
     // C: `backwards = ch == (isset(PUSHDMINUS) ? '+' : '-');`
-    // — without PUSHDMINUS plumbing, default to standard zsh
-    // semantics where `~-N` walks backward (most-recent-first).
-    let pushdminus_set = false;                             // c:4906 (TODO: plumb)
     let backwards = ch == if pushdminus_set { '+' } else { '-' }; // c:4906
 
     // C: `if (!backwards && !val--) return pwd;`
