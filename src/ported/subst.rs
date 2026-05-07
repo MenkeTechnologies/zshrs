@@ -2250,7 +2250,36 @@ fn paramsubst(                                              // c:1625
                 }
                 value = zipped.join(" ");
                 split_parts = Some(zipped);                  // c:3540 (auto-splat)
-            } else if let Some(slice) = r.strip_prefix(':') { // c:715 (substring)
+            } else if let Some(slice) = r.strip_prefix(':') { // c:715 (substring) OR :modifier
+                // Detect history-style modifier (`:h`, `:t`, `:r`,
+                // `:e`, `:l`, `:u`, `:q`, `:Q`, `:A`, `:a`, `:P`,
+                // `:c`, `:s/x/y/`, `:S/x/y/`, `:&`). Route through
+                // modify() which handles the full chain. Direct
+                // port of subst.c's c:715 modifier dispatch.
+                let first = slice.chars().next().unwrap_or('\0');
+                let is_modifier = matches!(first, 'h' | 't' | 'r' | 'e' | 'l' | 'u' | 'q' | 'Q'
+                                  | 'A' | 'a' | 'P' | 'c' | 's' | 'S' | '&'
+                                  | 'g' | 'w' | 'W');
+                if is_modifier {                             // c:4531
+                    // Per-element on arrays.
+                    let mod_str = format!(":{}", slice);
+                    let mod_one = |s: &str, st: &mut SubstState| -> String {
+                        modify(s, &mod_str, st)
+                    };
+                    if let Some(parts) = split_parts.clone() {
+                        let new_parts: Vec<String> = parts.iter()
+                            .map(|s| mod_one(s, state)).collect();
+                        value = new_parts.join(" ");
+                        split_parts = Some(new_parts);
+                    } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                        let new_arr: Vec<String> = arr.iter()
+                            .map(|s| mod_one(s, state)).collect();
+                        value = new_arr.join(" ");
+                        split_parts = Some(new_arr);
+                    } else {
+                        value = mod_one(&value, state);
+                    }
+                } else {
                 let parts: Vec<&str> = slice.splitn(2, ':').collect();
                 let off = singsub(parts[0], state).parse::<i64>().unwrap_or(0);
                 // Array context: ${arr:offset:length} slices the
@@ -2286,6 +2315,7 @@ fn paramsubst(                                              // c:1625
                         None => raw_value.chars().skip(start).collect(),
                     };
                 }
+                } // close is_modifier else
             }
         }
         // Apply post-processing flags to the substituted value.
