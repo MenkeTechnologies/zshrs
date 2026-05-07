@@ -281,7 +281,7 @@ pub fn xremovexattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Re
 /// over `listxattr(2)` / `llistxattr(2)`. The C source returns the
 /// raw NUL-terminated buffer; we parse it into a `Vec<String>`.
 #[cfg(target_os = "macos")]
-pub fn listxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>> {
+pub fn xlistxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>> {
     let path_c = CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
 
@@ -371,7 +371,7 @@ pub fn xlistxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>>
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/attr.c`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn listxattr(_path: &str, _options: &XattrOptions) -> io::Result<Vec<String>> {
+pub fn xlistxattr(_path: &str, _options: &XattrOptions) -> io::Result<Vec<String>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "xattr not supported",
@@ -445,7 +445,7 @@ pub fn bin_delattr(file: &str, attrs: &[&str], options: &XattrOptions) -> (i32, 
 /// `zlistattr` builtin entry point.
 /// Port of `bin_listattr()` from Src/Modules/attr.c:169.
 pub fn bin_listattr(file: &str, options: &XattrOptions) -> (i32, Vec<String>, String) {
-    match listxattr(file, options) {
+    match xlistxattr(file, options) {
         Ok(attrs) => (0, attrs, String::new()),
         Err(e) => (1, Vec::new(), format!("zlistattr: {}: {}\n", file, e)),
     }

@@ -110,7 +110,21 @@ fn find_mismatches_in(file: &PathBuf, out: &mut Vec<Mismatch>) {
         if in_test_mod {
             continue;
         }
+
+        // Methods (depth > 0) still CONSUME the pending cite —
+        // the cite was for the method directly below it. Without
+        // this consumption, the cite leaks past the impl block
+        // and falsely binds to the next free fn.
         if pre_depth != 0 {
+            let s = trimmed
+                .strip_prefix("pub(crate) ")
+                .or_else(|| trimmed.strip_prefix("pub(super) "))
+                .unwrap_or_else(|| trimmed.strip_prefix("pub ").unwrap_or(trimmed));
+            let s = s.strip_prefix("async ").unwrap_or(s);
+            let s = s.strip_prefix("unsafe ").unwrap_or(s);
+            if s.starts_with("fn ") {
+                pending_c_name = None;
+            }
             continue;
         }
 

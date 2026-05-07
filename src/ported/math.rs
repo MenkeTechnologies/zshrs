@@ -2454,7 +2454,7 @@ impl crate::ported::exec::ShellExecutor {
                 // integer results).
                 if let Some((base, no_prefix)) = output_radix {
                     let n = result.to_int();
-                    let mut body = format_int_in_base(n, base);
+                    let mut body = convbase(n, base);
                     // Apply underscore digit grouping if `[#N_M]` was
                     // given. Direct port of convbase_underscore at
                     // src/zsh/Src/params.c:5645-5680.
@@ -2937,11 +2937,11 @@ pub fn underscore_separate_digits(s: &str, group: u32) -> String {
 
 /// Format an integer in the given base (2-36) using zsh's
 /// `BASE#DIGITS` form.
-/// Port of `convbase()` from Src/utils.c — also exposed via
-/// `crate::utils::convbase`. Bases 2-9 are unsigned-style;
-/// uppercase A-Z are used for digits >= 10. A negative value is
-/// output as `-BASE#DIGITS`.
-pub fn format_int_in_base(n: i64, base: u32) -> String {
+/// Port of `convbase()` from Src/utils.c (also called from
+/// Src/math.c:1089). Bases 2-9 are unsigned-style; uppercase
+/// A-Z are used for digits >= 10. A negative value is output
+/// as `-BASE#DIGITS`.
+pub fn convbase(n: i64, base: u32) -> String {
     if !(2..=36).contains(&base) {
         return n.to_string();
     }

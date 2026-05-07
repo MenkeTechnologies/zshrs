@@ -146,7 +146,7 @@ impl MathFunctions {
     /// Src/Modules/mathfunc.c — kept in sync with the dispatch in
     /// `call()` above so `${(k)mathfuncs}` round-trips against
     /// what's actually callable.
-    pub fn list() -> Vec<&'static str> {
+    pub fn math_func() -> Vec<&'static str> {
         vec![
             "abs",
             "acos",
@@ -913,7 +913,7 @@ mod tests {
     /// Port of `math_func()` from `Src/Modules/mathfunc.c:173`.
     #[test]
     fn test_list() {
-        let funcs = MathFunctions::list();
+        let funcs = MathFunctions::math_func();
         assert!(funcs.contains(&"sin"));
         assert!(funcs.contains(&"cos"));
         assert!(funcs.contains(&"sqrt"));

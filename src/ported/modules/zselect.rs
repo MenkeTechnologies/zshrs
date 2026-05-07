@@ -54,12 +54,12 @@ pub struct SelectResult {
 }
 
 /// Perform select/poll on file descriptors.
-/// Port of the `select(2)` core of `bin_zselect()` from
-/// Src/Modules/zselect.c:65 — populates the read/write/error fd
-/// sets, runs the kernel call (we use `poll(2)` since it scales past
-/// `FD_SETSIZE`), and surfaces ready fds either as a flag-prefixed
-/// array (`-r 0 -w 1`) or as an `fd → mode-string` hash to mirror
-/// the `-a` / `-A` output forms zsh exposes.
+/// Helper extracted from `bin_zselect()` (Src/Modules/zselect.c:65) —
+/// populates the read/write/error fd sets, runs the kernel call
+/// (we use `poll(2)` since it scales past `FD_SETSIZE`), and surfaces
+/// ready fds either as a flag-prefixed array (`-r 0 -w 1`) or as
+/// an `fd → mode-string` hash to mirror the `-a` / `-A` output
+/// forms zsh exposes.
 #[cfg(unix)]
 pub fn zselect(options: &ZselectOptions) -> Result<SelectResult, String> {
     use std::collections::HashSet;
@@ -189,7 +189,8 @@ pub fn zselect(options: &ZselectOptions) -> Result<SelectResult, String> {
     })
 }
 
-/// Port of `bin_zselect()` from `Src/Modules/zselect.c:65`.
+/// Stub for non-unix targets (no `select(2)`); helper for `bin_zselect`
+/// at `Src/Modules/zselect.c:65`.
 #[cfg(not(unix))]
 pub fn zselect(_options: &ZselectOptions) -> Result<SelectResult, String> {
     Err("your system does not implement the select system call".to_string())

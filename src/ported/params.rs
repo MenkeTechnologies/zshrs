@@ -3288,9 +3288,8 @@ pub fn getsparam_u(table: &ParamTable, name: &str, default: &str) -> String {
     getstrvalue(table, name).unwrap_or_else(|| default.to_string())
 }
 
-/// Get array parameter (from params.c getaparam)
 /// Get an array parameter.
-/// Port of `getarrvalue()` from Src/params.c:2548.
+/// Port of `getaparam()` from Src/params.c:3100.
 pub fn getaparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
     match table.get_value(name)? {
         ParamValue::Array(arr) => Some(arr),
@@ -4708,7 +4707,7 @@ impl crate::ported::exec::ShellExecutor {
                 // subset, but a script may query any cap by name
                 // (`$terminfo[acsc]`, `$terminfo[colors]`). Mirror
                 // zsh's terminfo.c::getterminfo lazy-resolve path.
-                Some(crate::modules::terminfo::lookup(key).unwrap_or_default())
+                Some(crate::modules::terminfo::getterminfo(key).unwrap_or_default())
             }
             // `termcap` is dispatched in the `magic_assoc_lookup`
             // function (the primary special-array path) so that

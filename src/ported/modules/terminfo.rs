@@ -42,12 +42,12 @@ fn ensure_initialized() -> bool {
     })
 }
 
-/// Port of `bin_echoti()` from `Src/Modules/terminfo.c:64`.
 /// Look up a terminfo capability by name. Direct port of
-/// `getterminfo()` from `Src/Modules/terminfo.c:135`. Tries string
+/// `getterminfo()` from `Src/Modules/terminfo.c:135` (also the
+/// lookup driver behind `bin_echoti` at line 64). Tries string
 /// → numeric → boolean in that order. Returns `None` for unknown
 /// names so the caller can map to `""`.
-pub fn lookup(name: &str) -> Option<String> {
+pub fn getterminfo(name: &str) -> Option<String> {
     if !ensure_initialized() {
         return None;
     }

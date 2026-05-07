@@ -694,10 +694,11 @@ pub fn zle_refresh_finish(state: &mut RefreshState) {
 ///     one of the named ANSI colours below,
 ///   * `none` (clears every attr).
 ///
-/// Port of `match_highlight()` from Src/prompt.c:2031, restricted to the
-/// subset zsh users actually set in `$zle_highlight`. The `hl=`/`layer=`/
-/// `opacity=` clauses (prompt.c:2042-2094) are not surfaced here — those
-/// are prompt-system hooks that don't apply to ZLE region paint.
+/// ZLE-region subset of `match_highlight` (Src/prompt.c:2031),
+/// restricted to the tokens users actually set in `$zle_highlight`.
+/// The `hl=`/`layer=`/`opacity=` clauses (prompt.c:2042-2094) are
+/// not surfaced here — those are prompt-system hooks that don't
+/// apply to ZLE region paint.
 pub fn parse_highlight_spec(spec: &str) -> TextAttr {
     let mut attr = TextAttr::default();
     for token in spec.split(',') {
