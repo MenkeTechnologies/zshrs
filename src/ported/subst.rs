@@ -1503,7 +1503,7 @@ fn paramsubst(                                              // c:1625
                 p += 1;                                      // c:2649
             }                                                // c:2649
         }                                                    // c:2649
-        let subexp_value: Option<String> = if idx < body_chars.len()
+        let mut subexp_value: Option<String> = if idx < body_chars.len()
             && body_chars[idx] == '$'                       // c:2649
         {
             // Walk just the nested $-form (depth-tracked over its
@@ -1600,15 +1600,27 @@ fn paramsubst(                                              // c:1625
 
         let rest: String = body_chars[idx..].iter().collect();
 
-        // (P) indirect: var_name's VALUE becomes the new var name.
-        // Port of subst.c:2730+ aspar arm. Single level — multi-level
-        // indirect via ${(P)${(P)x}} requires the recursive paramsubst
-        // to land first.
+        // (P) indirect: take the var name from somewhere — either
+        // the value of a parameter (\${(P)x}) or the result of a
+        // nested expansion (\${(P)\${(P)x}} = `(P)`-of-(P)-of-x).
+        // Direct port of subst.c:2730+ aspar arm. The C source's
+        // val pointer is the resolved name string regardless of
+        // whether it came from a parameter or a sub-expression.
         if flag_p_indirect {                                // c:2730
-            let target = state.variables.get(&var_name).cloned()
-                .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
-                .unwrap_or_default();
-            var_name = target;                              // c:2741 (val = idbeg = getstrvalue(v))
+            // If a sub-expression already produced the resolved
+            // text (subexp arm above), use THAT as the indirect
+            // name — clear subexp_value so the var-lookup path
+            // applies to the new name. Multi-level (P) chains
+            // resolve correctly.
+            if let Some(sv) = subexp_value.clone() {        // c:2741
+                var_name = sv.trim().to_string();           // c:2741
+                subexp_value = None;                        // c:2741 (consumed)
+            } else {                                        // c:2741
+                let target = state.variables.get(&var_name).cloned() // c:2741
+                    .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" "))) // c:2741
+                    .unwrap_or_default();                   // c:2741
+                var_name = target;                          // c:2741
+            }                                                // c:2741
         }
 
         // Look up var (with subscript if present). Port of
