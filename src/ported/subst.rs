@@ -1802,6 +1802,10 @@ fn paramsubst(                                              // c:1625
         } else {                                            // c:N/A
             value = raw_value.clone();
         }
+        // split_parts: tracks any post-operator array-shape result
+        // (e.g. :# filter, (s::) split) so the auto-splat block
+        // below splats those instead of the original backing array.
+        let mut split_parts: Option<Vec<String>> = None;     // c:3950
         if !rest.is_empty() {
             let r = rest.as_str();
             if let Some(pat) = r.strip_prefix(":#") {        // c:3540 (:#pat filter)
@@ -1822,6 +1826,11 @@ fn paramsubst(                                              // c:1625
                         })                                    // c:3540
                         .collect();
                     value = kept.join(" ");                  // c:3540
+                    // Stash filtered parts so the auto-splat block
+                    // below uses these, not the unfiltered backing
+                    // array. \${(@)arr:#pat} now correctly splats
+                    // only the kept elements.
+                    split_parts = Some(kept);                // c:3540
                 } else {                                      // c:3540
                     let m = crate::exec::ShellExecutor::glob_match_static(&raw_value, &p); // c:3540
                     value = if invert {                       // c:3540
@@ -2198,7 +2207,9 @@ fn paramsubst(                                              // c:1625
         // around line 3950+ (post-fetch split block).
         // Track the post-split parts for the auto-splat block so
         // (@s::) on a scalar splats into multiple result_nodes.
-        let mut split_parts: Option<Vec<String>> = None;     // c:3950
+        // split_parts hoisted to top of operand-handling so the
+        // :# filter arm (which runs much earlier) can populate it
+        // for the auto-splat block. No-op if not set later.
         if let Some(ref sp) = spsep {                       // c:3950
             let parts: Vec<String> = if sp.is_empty() {
                 value.chars().map(|c| c.to_string()).collect()
