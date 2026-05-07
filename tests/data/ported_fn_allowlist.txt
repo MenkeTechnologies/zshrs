@@ -36,3 +36,50 @@ format_process_status
 # of src/zsh/Src/sort.c:137-172 (the `if (sortnumeric)` block).
 # 100+ lines; inlining into zstrcmp would make it unwieldy.
 compare_numeric
+
+# Math function arms extracted from `math_func()` switch
+# (Src/Modules/mathfunc.c:math_func). The C source dispatches to
+# libm directly; the Rust port adds wrappers for portability.
+lgamma_fn
+erf_fn
+bessel_j0
+bessel_j1
+bessel_jn
+bessel_y0
+bessel_y1
+bessel_yn
+
+# Color-distance / 256-palette mapping helpers — extracted from
+# nearcolor module's main lookup logic. zsh C does this inline.
+color_distance_sq
+rgb_to_256
+color_256_to_rgb
+truecolor_to_256
+nearcolor
+nearcolor_256
+
+# Rust-only RNG primitives — zsh C uses `random()` libc directly.
+# We wrap to centralise the seed/state and provide ChaCha20Rng for
+# tests. These names exist nowhere in zsh C.
+get_random_u32
+get_random_u64
+get_bounded_random
+shuffle
+
+# OpenSSH BSD setresuid/setresgid shim helpers — these are Rust
+# wrappers around libc::setres{uid,gid}() with errno save/restore;
+# zsh C has the same shim file (openssh_bsd_setres_id.c) but uses
+# direct errno macros, not function-shaped helpers.
+errno
+set_errno
+errno_ptr
+errno_str
+
+# init.rs argv-parsing / help-text / exe-resolution helpers —
+# zsh C inlines this work in `parseargs()` and `init_main()`.
+# Each is single-caller and < 30 lines.
+set_option_by_name
+print_help
+get_exe_path
+is_login_shell
+
