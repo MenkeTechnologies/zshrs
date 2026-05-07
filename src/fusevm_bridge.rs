@@ -2619,6 +2619,13 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let start = crate::params::parse_subscript_index(exec, start_s);
                     let end = crate::params::parse_subscript_index(exec, end_s);
                     if let (Some(s), Some(e)) = (start, end) {
+                        // KSH_ARRAYS: indices are 0-based, so shift
+                        // positive values up by 1 before the (1-based)
+                        // slicer runs. zsh: `setopt ksh_arrays;
+                        // a=(a b c d); echo $a[1,2]` → `b c`.
+                        let ksh = exec.options.get("ksharrays").copied().unwrap_or(false);
+                        let s = if ksh && s >= 0 { s + 1 } else { s };
+                        let e = if ksh && e >= 0 { e + 1 } else { e };
                         let sliced = slice_indexed_array(&arr, s, e);
                         // (@) flag in surrounding chain overrides DQ-join
                         // — always splat to Value::Array so the caller's
@@ -2642,12 +2649,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // Single index — try literal int first (fast), then fall
                 // back to arithmetic eval which handles bare variable
                 // names (`arr[i]`), expressions (`arr[i+1]`), etc.
+                // KSH_ARRAYS: 0-based, so a 0 means first element and
+                // valid indices are 0..len-1. Without this, `setopt
+                // ksh_arrays; a[0]` returned empty (treating 0 as
+                // "before first" per the standard 1-based path).
                 let i = match idx.parse::<i64>() {
                     Ok(i) => i,
                     Err(_) => exec.eval_arith_expr(&idx),
                 };
                 let len = arr.len() as i64;
-                let resolved = if i > 0 {
+                let ksh = exec.options.get("ksharrays").copied().unwrap_or(false);
+                let resolved = if ksh {
+                    if i < 0 {
+                        let off = len + i;
+                        if off < 0 {
+                            return Value::str("");
+                        }
+                        off as usize
+                    } else if i >= len {
+                        return Value::str("");
+                    } else {
+                        i as usize
+                    }
+                } else if i > 0 {
                     (i - 1) as usize
                 } else if i < 0 {
                     let off = len + i;
