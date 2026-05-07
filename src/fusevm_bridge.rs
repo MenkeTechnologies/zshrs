@@ -6425,11 +6425,54 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // is_set was computed above and includes positional
                 // params, zsh-special vars, regular vars, arrays,
                 // assocs. Subscripted form `${+arr[i]}` checks if
-                // that specific element is set — handled by name
-                // containing `[…]` and falling through to get_variable
-                // which returns empty for missing → is_set=false.
-                if name.contains('[') {
-                    // Subscripted: ask getter, "set" iff non-empty.
+                // that specific element is set — get_variable doesn't
+                // parse subscripts, so resolve the lookup by hand:
+                // numeric N → arr[N-1] is set iff N <= len; (r)PAT /
+                // (R)PAT / KEY → resolve via the same subscript
+                // engine as plain `${arr[i]}`.
+                if let Some(lb) = name.find('[') {
+                    if name.ends_with(']') {
+                        let arr_name = &name[..lb];
+                        let key = &name[lb + 1..name.len() - 1];
+                        let element_set = with_executor(|exec| {
+                            // Numeric index: 1-based, must be in range.
+                            if let Ok(n) = key.parse::<i64>() {
+                                let len = exec
+                                    .arrays
+                                    .get(arr_name)
+                                    .map(|a| a.len() as i64)
+                                    .unwrap_or(0);
+                                if n > 0 && n <= len {
+                                    return true;
+                                }
+                                if n < 0 {
+                                    let resolved = len + n;
+                                    return resolved >= 0;
+                                }
+                                return false;
+                            }
+                            // Assoc key — direct lookup.
+                            if let Some(map) = exec.assoc_arrays.get(arr_name) {
+                                return map.contains_key(key);
+                            }
+                            // (r)PAT / (R)PAT — set iff any element matches.
+                            if let Some(arr) = exec.arrays.get(arr_name) {
+                                let pat = if let Some(p) = key
+                                    .strip_prefix("(r)")
+                                    .or_else(|| key.strip_prefix("(R)"))
+                                {
+                                    p
+                                } else {
+                                    key
+                                };
+                                return arr.iter().any(|el| {
+                                    crate::exec::ShellExecutor::glob_match_static(el, pat)
+                                });
+                            }
+                            false
+                        });
+                        return fusevm::Value::str(if element_set { "1" } else { "0" });
+                    }
                     fusevm::Value::str(if !val.is_empty() { "1" } else { "0" })
                 } else {
                     fusevm::Value::str(if is_set { "1" } else { "0" })

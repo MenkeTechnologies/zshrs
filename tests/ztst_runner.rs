@@ -644,8 +644,15 @@ fn run_ztst_file(zshrs: &Path, ztst_path: &Path) -> (usize, usize, usize) {
 
 fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> TestResult {
     let expected_fail = test.flags.contains('f');
+    // ztst's `>line\n>` block joins to "line\n" — a single trailing
+    // empty `>` from `print ${empty}` style cases. zsh's ztst harness
+    // ignores the trailing newline-equivalence (one `>` blank vs zero
+    // `>` blanks) when the body is otherwise identical. Trim trailing
+    // newlines on both sides so the comparison ignores that mismatch.
     let actual_stdout = stdout.trim_end_matches('\n');
     let actual_stderr = stderr.trim_end_matches('\n');
+    let expected_stdout_trim = test.expected_stdout.trim_end_matches('\n');
+    let expected_stderr_trim = test.expected_stderr.trim_end_matches('\n');
 
     // Check exit status
     if let Some(expected) = test.expected_status {
@@ -663,11 +670,11 @@ fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> Te
     }
 
     // Check stdout (unless 'd' flag)
-    if !test.flags.contains('d') && !test.expected_stdout.is_empty() {
+    if !test.flags.contains('d') && !expected_stdout_trim.is_empty() {
         let matches = if test.stdout_pattern {
-            pattern_match(&test.expected_stdout, actual_stdout)
+            pattern_match(expected_stdout_trim, actual_stdout)
         } else {
-            test.expected_stdout == actual_stdout
+            expected_stdout_trim == actual_stdout
         };
         if !matches {
             return TestResult {
@@ -676,18 +683,18 @@ fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> Te
                 skipped: false,
                 detail: format!(
                     "stdout mismatch\nexpected:\n{}\nactual:\n{}",
-                    test.expected_stdout, actual_stdout
+                    expected_stdout_trim, actual_stdout
                 ),
             };
         }
     }
 
     // Check stderr (unless 'D' flag)
-    if !test.flags.contains('D') && !test.expected_stderr.is_empty() {
+    if !test.flags.contains('D') && !expected_stderr_trim.is_empty() {
         let matches = if test.stderr_pattern {
-            pattern_match(&test.expected_stderr, actual_stderr)
+            pattern_match(expected_stderr_trim, actual_stderr)
         } else {
-            test.expected_stderr == actual_stderr
+            expected_stderr_trim == actual_stderr
         };
         if !matches {
             return TestResult {
@@ -696,7 +703,7 @@ fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> Te
                 skipped: false,
                 detail: format!(
                     "stderr mismatch\nexpected:\n{}\nactual:\n{}",
-                    test.expected_stderr, actual_stderr
+                    expected_stderr_trim, actual_stderr
                 ),
             };
         }

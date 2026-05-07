@@ -4088,6 +4088,13 @@ impl ZshCompiler {
 /// expand-word path so `{a,b,c}` and `{1..5}` get expanded into multiple
 /// arguments instead of being passed as a literal `{a,b,c}`.
 fn looks_like_brace_expansion(s: &str) -> bool {
+    // Detects three forms:
+    //   1. `{a,b,c}`  — comma list
+    //   2. `{1..10}`  — range
+    //   3. `{X…}` non-empty body — possible BRACE_CCL match (the
+    //      runtime checks the option; expand_braces no-ops if not set)
+    // Without case 3, `setopt brace_ccl; print X{za-q521}Y` skipped
+    // the brace pass because the body had no `,` / `..`.
     let mut depth = 0;
     let mut start: Option<usize> = None;
     for (i, c) in s.char_indices() {
@@ -4104,6 +4111,13 @@ fn looks_like_brace_expansion(s: &str) -> bool {
                     if let Some(b) = start {
                         let body = &s[b + 1..i];
                         if body.contains(',') || body.contains("..") {
+                            return true;
+                        }
+                        // Possible CCL body — non-empty without comma/
+                        // dotdot. Defer the BRACE_CCL option check to
+                        // the runtime expand_braces; this just opens
+                        // the gate so the option can take effect.
+                        if !body.is_empty() {
                             return true;
                         }
                     }
