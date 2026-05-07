@@ -867,19 +867,39 @@ fn stringsubst(                                             // c:237
                 continue;                                   // c:237
             } else if next_is(INBRACK, '[') {               // c:237
                 // $[...] arithmetic
+                // $[...] arith substitution. Walk to matching ]
+                // tracking depth so $[$[a+b]+c] nests correctly.
                 let start = pos + 2;                        // c:237
                 let open = if next_c == Some(INBRACK) { INBRACK } else { '[' }; // c:237
                 let close = if open == INBRACK { OUTBRACK } else { ']' }; // c:237
-                if let Some(end) = None::<usize> /* find_matching_bracket stub */ { // c:237
-                    let expr: String = str3.chars().skip(start).take(end).collect(); // c:237
-                    let prefix: String = str3.chars().take(pos).collect(); // c:237
-                    let suffix: String = str3.chars().skip(start + end + 1).collect(); // c:237
+                let chars: Vec<char> = str3.chars().collect(); // c:237
+                let mut depth = 1_i32;                      // c:237
+                let mut end_off: Option<usize> = None;      // c:237
+                let mut p = start;                          // c:237
+                while p < chars.len() {                     // c:237
+                    let ch = chars[p];                      // c:237
+                    if ch == open || ch == '[' { depth += 1; } // c:237
+                    else if ch == close || ch == ']' {      // c:237
+                        depth -= 1;                         // c:237
+                        if depth == 0 { end_off = Some(p - start); break; } // c:237
+                    }                                       // c:237
+                    p += 1;                                 // c:237
+                }                                           // c:237
+                if let Some(end) = end_off {                // c:237
+                    let expr: String = chars[start..start + end].iter().collect(); // c:237
+                    let prefix: String = chars[..pos].iter().collect(); // c:237
+                    let suffix: String = if start + end + 1 < chars.len() {
+                        chars[start + end + 1..].iter().collect()
+                    } else {
+                        String::new()
+                    };
                     str3 = arithsubst(&expr, &prefix, &suffix, state); // c:237
-                    list.setdata(node_idx, str3.clone());  // c:237
+                    list.setdata(node_idx, str3.clone());   // c:237
+                    pos = prefix.chars().count() + arithsubst(&expr, "", "", state).chars().count(); // c:237
                     continue;                               // c:237
                 } else {                                    // c:237
                     state.errflag = true;                   // c:237
-                    eprintln!("closing bracket missing");   // c:237
+                    eprintln!("zshrs: closing bracket missing"); // c:237
                     return None;                            // c:237
                 }                                           // c:237
             } else if next_c == Some(SNULL) || next_c == Some('\'') { // c:237
