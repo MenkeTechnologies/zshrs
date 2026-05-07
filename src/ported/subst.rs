@@ -1200,6 +1200,8 @@ fn paramsubst(                                              // c:1625
         let mut flag_upper = false;                         // c:2200 (U)
         let mut flag_caps = false;                          // c:2203 (C)
         let mut flag_qcount: u32 = 0;                       // c:2237 (q)
+        let mut flag_qmin = false;                          // c:2245 (q-)
+        let mut flag_qplus = false;                         // c:2245 (q+)
         let mut flag_at = false;                            // c:2167 (@)
         let mut flag_p_indirect = false;                    // c:2295 (P)
         let mut flag_typeinfo = false;                      // c:2807 (t)
@@ -1260,7 +1262,24 @@ fn paramsubst(                                              // c:1625
                     'L' => { flag_lower = true; }           // c:2197
                     'U' => { flag_upper = true; }           // c:2200
                     'C' => { flag_caps = true; }            // c:2203
-                    'q' => { flag_qcount += 1; }            // c:2237
+                    'q' => {                                // c:2237
+                        // (q-) → SINGLE_OPTIONAL: quote only if
+                        // needed (whitespace / metachar present);
+                        // (q+) → QUOTEDZPUTS: print -V style.
+                        // Without next char or with another q,
+                        // bump the count for the (qq)/(qqq)/(qqqq)
+                        // cascade. Direct port of subst.c:2236-2253.
+                        let next = body_chars.get(idx + 1).copied();
+                        if next == Some('-') {              // c:2240
+                            idx += 1;                       // c:2243 (s++)
+                            flag_qmin = true;               // c:2245 (QT_SINGLE_OPTIONAL)
+                        } else if next == Some('+') {       // c:2240
+                            idx += 1;                       // c:2243
+                            flag_qplus = true;              // c:2245 (QT_QUOTEDZPUTS)
+                        } else {                            // c:2247
+                            flag_qcount += 1;               // c:2252
+                        }                                    // c:2253
+                    }                                       // c:2253
                     '@' => { flag_at = true; }              // c:2167
                     'P' => { flag_p_indirect = true; }      // c:2295
                     't' => { flag_typeinfo = true; }        // c:2807
@@ -2419,7 +2438,28 @@ fn paramsubst(                                              // c:1625
             value = parts.len().to_string();                // c:2281
         }
 
-        if flag_qcount > 0 {                                // c:2237
+        if flag_qmin {                                       // c:2245 (q-)
+            // (q-) — single-quote ONLY if value contains a char
+            // that needs quoting (whitespace or shell metachar).
+            // Plain alphanumeric values pass through unmodified.
+            // Direct port of QT_SINGLE_OPTIONAL.
+            let needs = value.chars().any(|c| {
+                c.is_whitespace()
+                    || matches!(c, '*' | '?' | '[' | ']' | '(' | ')' | '|' | '&' | ';'
+                                | '<' | '>' | '$' | '`' | '\\' | '"' | '\'' | '#' | '~')
+            });
+            if needs {
+                value = crate::ported::utils::quotestring(   // c:2245
+                    &value, crate::ported::utils::QuoteType::Single);
+            }
+        } else if flag_qplus {                               // c:2245 (q+)
+            // (q+) — print -V style, like single quote but
+            // smarter for control chars (uses $'…' for them).
+            // Approximate via Dollars for now since QuoteType
+            // doesn't have a dedicated QuotedZputs variant.
+            value = crate::ported::utils::quotestring(       // c:2245
+                &value, crate::ported::utils::QuoteType::Dollars);
+        } else if flag_qcount > 0 {                          // c:2237
             // (q)/(qq)/(qqq)/(qqqq) — quote per count.
             value = match flag_qcount {
                 1 => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Backslash),
