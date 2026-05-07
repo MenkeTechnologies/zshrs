@@ -2584,6 +2584,22 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             None => break,                                  // c:4531
         };                                                  // c:4531
 
+        // Count suffix for :h/:t — `:h2` = repeat 2 times.
+        // Port of subst.c:4570-4577 idigit count parse.
+        let mut count: i32 = 1;                             // c:4570
+        if matches!(modifier, 'h' | 't') {                  // c:4571
+            let mut count_str = String::new();              // c:4572
+            while let Some(&pc) = chars.peek() {
+                if pc.is_ascii_digit() {
+                    count_str.push(pc);
+                    chars.next();
+                } else { break; }
+            }
+            if !count_str.is_empty() {
+                count = count_str.parse().unwrap_or(1);     // c:4575
+            }
+        }
+
         // `:s/old/new/` and `:S/old/new/` — port of subst.c:4583-4685.
         // `:s` is the standard substitute, `:S` is the anchored
         // variant. Parsing rules:
@@ -2660,8 +2676,8 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
         // helper (the per-modifier C body lives in Src/hist.c).
         let dispatch = |w: &str| -> Option<String> {        // c:4585
             match modifier {                                // c:4585
-                'h' => Some(remtpath(w, 1)),                // c:4585 (:h head)
-                't' => Some(remlpaths(w, 1)),               // c:4585 (:t tail)
+                'h' => Some(remtpath(w, count)),            // c:4585 (:h head, count = :hN)
+                't' => Some(remlpaths(w, count)),           // c:4585 (:t tail, count = :tN)
                 'r' => Some(rembutext(w)),                  // c:4585 (:r root)
                 'e' => Some(remtext(w)),                    // c:4585 (:e ext)
                 'l' => Some(casemodify(w, CaseMod::Lower)), // c:4585 (:l)
