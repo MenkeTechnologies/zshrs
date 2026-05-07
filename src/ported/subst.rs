@@ -3839,10 +3839,10 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
         crate::math::MathNum::Float(f) => {                 // c:4495
             // Integer cast + convbase per radix.
             let l = f as i64;                               // c:4496
-            convbase_to_string(l, outputradix as u32)       // c:4497
+            crate::ported::utils::convbase(l, outputradix as u32)       // c:4497
         }                                                   // c:4497
         crate::math::MathNum::Integer(n) => {               // c:4498
-            convbase_to_string(n, outputradix as u32)       // c:4498
+            crate::ported::utils::convbase(n, outputradix as u32)       // c:4498
         }                                                   // c:4498
         crate::math::MathNum::Unset => "0".to_string(),     // c:4498
     };                                                      // c:4499
@@ -3853,34 +3853,8 @@ fn arithsubst(expr: &str, prefix: &str, rest: &str, state: &mut SubstState) -> S
     format!("{}{}{}", prefix, b, rest)                      // c:4501-4509
 }                                                           // c:4509
 
-/// Port of `convbase_underscore()` family from Src/utils.c — render
-/// integer in given radix. Radix 0 = base 10. Underscore-grouping
-/// pending OUTPUT_UNDERSCORE option.
-fn convbase_to_string(n: i64, radix: u32) -> String {       // utils.c
-    if radix == 0 || radix == 10 {                          // utils.c
-        return n.to_string();                               // utils.c
-    }
-    let neg = n < 0;                                        // utils.c
-    let abs = if neg { (n as i128).wrapping_neg() as u128 } else { n as u128 };
-    let s = match radix {                                   // utils.c
-        2 => format!("2#{:b}", abs),                        // utils.c
-        8 => format!("8#{:o}", abs),                        // utils.c
-        16 => format!("16#{:X}", abs),                      // utils.c
-        r if (2..=36).contains(&r) => {                     // utils.c
-            let digits = "0123456789abcdefghijklmnopqrstuvwxyz".as_bytes(); // utils.c
-            let mut tmp = abs;                              // utils.c
-            let mut buf = String::new();                    // utils.c
-            if tmp == 0 { buf.push('0'); }                  // utils.c
-            while tmp > 0 {                                 // utils.c
-                buf.push(digits[(tmp % r as u128) as usize] as char); // utils.c
-                tmp /= r as u128;                           // utils.c
-            }
-            format!("{}#{}", r, buf.chars().rev().collect::<String>()) // utils.c
-        }
-        _ => n.to_string(),                                 // utils.c
-    };
-    if neg { format!("-{}", s) } else { s }                 // utils.c
-}                                                           // utils.c
+// `convbase` lives in src/ported/utils.rs (canonical port of
+// Src/utils.c). Callers below import via the full path.
 
 
 /// Multsub flags (from subst.c)
