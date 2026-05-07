@@ -4331,49 +4331,19 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
 ///   1 → wcwidth(wc); zero if negative
 ///   * → boolean: 1 if wcwidth>0 else 0
 pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {      // c:848
+    // wcwidth fallback lives in utils.rs (canonical port of
+    // Src/utils.c::zwcwidth). Use the unicode_width-backed
+    // implementation there.
+    let wcw = crate::ported::utils::zwcwidth(wc) as i32;
     match multi_width {                                     // c:854
         // C: `case 0: return 1;`
         0 => 1,                                             // c:855
         // C: `case 1: width = WCWIDTH(wc); if (width >= 0) return width; return 0;`
-        1 => {                                              // c:858
-            let w = wcwidth(wc);                            // c:859
-            if w >= 0 { w } else { 0 }                      // c:861
-        }
+        1 => if wcw >= 0 { wcw } else { 0 },                // c:858
         // C: `default: return WCWIDTH(wc) > 0 ? 1 : 0;`
-        _ => if wcwidth(wc) > 0 { 1 } else { 0 },           // c:864
+        _ => if wcw > 0 { 1 } else { 0 },                   // c:864
     }
 }                                                           // c:866
-
-/// Approximate Unicode wcwidth — returns display-cell width of a
-/// char. 0 for non-printable / control, 1 for normal, 2 for CJK
-/// ideographs and other wide ranges.
-fn wcwidth(c: char) -> i32 {
-    let cp = c as u32;
-    // Control chars + zero-width joiners / formatters
-    if cp < 0x20 || cp == 0x7f { return 0; }
-    // Combining marks + ZWJ + ZWNJ + variation selectors
-    if (0x0300..=0x036F).contains(&cp)
-        || (0x200B..=0x200F).contains(&cp)
-        || (0x202A..=0x202E).contains(&cp)
-        || (0xFE00..=0xFE0F).contains(&cp)
-    { return 0; }
-    // East-Asian Wide / Fullwidth blocks (a representative subset).
-    if (0x1100..=0x115F).contains(&cp)            // Hangul Jamo
-        || (0x2E80..=0x303E).contains(&cp)        // CJK Radicals
-        || (0x3041..=0x33FF).contains(&cp)        // Hiragana/Katakana/CJK Symbols
-        || (0x3400..=0x4DBF).contains(&cp)        // CJK Unified Ideographs Ext A
-        || (0x4E00..=0x9FFF).contains(&cp)        // CJK Unified Ideographs
-        || (0xA000..=0xA4CF).contains(&cp)        // Yi Syllables
-        || (0xAC00..=0xD7A3).contains(&cp)        // Hangul Syllables
-        || (0xF900..=0xFAFF).contains(&cp)        // CJK Compat Ideographs
-        || (0xFE30..=0xFE4F).contains(&cp)        // CJK Compat Forms
-        || (0xFF00..=0xFF60).contains(&cp)        // Fullwidth ASCII
-        || (0xFFE0..=0xFFE6).contains(&cp)        // Fullwidth Signs
-        || (0x20000..=0x2FFFD).contains(&cp)      // CJK Ext B+
-        || (0x30000..=0x3FFFD).contains(&cp)      // CJK Ext G
-    { return 2; }
-    1
-}
 
 
 /// `subst_parse_str(sp, single, err)` — parse a substitution string in
