@@ -53,7 +53,6 @@ use crate::ported::exec::{
     self, ShellExecutor,
     cached_regex, slice_array_zero_based, slice_positionals,
 };
-use crate::ported::params::{array_subscript_flag, assoc_subscript_flag};
 // Per user directive: history-modifier helpers (casemodify, remtpath,
 // remlpaths, remtext, xsymlinks) live in src/ported/hist.rs (the
 // canonical port of Src/hist.c). Import here so subst.rs's modify()
