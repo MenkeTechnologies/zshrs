@@ -3625,7 +3625,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // alternating [key, value] pairs by
                                 // pairing magic_assoc_keys with
                                 // get_special_array_value lookups.
-                                if let Some(keys) = None::<Vec<String>> {
+                                if let Some(keys) = magic_assoc_keys(&name, exec) {
                                     let mut out = Vec::with_capacity(keys.len() * 2);
                                     for k in keys {
                                         let v = exec
@@ -3658,7 +3658,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 // parameter.c et al.). Returns the
                                 // sorted key set the C source builds
                                 // by walking each magic table.
-                                None::<Vec<String>>
+                                magic_assoc_keys(&name, exec)
                                     .unwrap_or_default()
                             }
                         });
@@ -3685,7 +3685,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 }
                                 out
                             } else if let Some(keys) =
-                                None::<Vec<String>>
+                                magic_assoc_keys(&name, exec)
                             {
                                 let mut out = Vec::with_capacity(keys.len() * 2);
                                 for k in keys {
@@ -3706,7 +3706,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             if let Some(m) = exec.assoc_arrays.get(&name) {
                                 m.values().cloned().collect::<Vec<_>>()
                             } else if let Some(keys) =
-                                None::<Vec<String>>
+                                magic_assoc_keys(&name, exec)
                             {
                                 keys.iter()
                                     .map(|k| {
@@ -5026,7 +5026,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // splitting for assoc-bare references.
         let magic_vals = with_executor(|exec| {
             sync_status(exec);
-            None::<Vec<String>>.map(|keys| {
+            magic_assoc_keys(&name, exec).map(|keys| {
                 keys.iter()
                     .map(|k| exec.get_special_array_value(&name, k).unwrap_or_default())
                     .collect::<Vec<_>>()
