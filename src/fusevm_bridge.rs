@@ -82,6 +82,27 @@ impl Drop for ExecutorContext {
     }
 }
 
+/// Magic-assoc key lookup for `${(k)NAME}` / `${(v)NAME}` introspection.
+///
+/// Port of zsh's per-module getfn/scanfn dispatch (Src/Modules/parameter.c
+/// + the various magic-assoc tables). Returns the key list for known
+/// magic-assoc names; None for non-magic names (caller falls back to
+/// regular variable lookup).
+pub(crate) fn magic_assoc_keys(name: &str, exec: &ShellExecutor) -> Option<Vec<String>> {
+    match name {
+        "aliases" => Some(exec.aliases.keys().cloned().collect()),
+        "functions" | "dis_functions" => Some(exec.function_names().into_iter().collect()),
+        "options" => Some(exec.options.keys().cloned().collect()),
+        "parameters" => {
+            let mut keys: Vec<String> = exec.variables.keys().cloned().collect();
+            keys.extend(exec.arrays.keys().cloned());
+            keys.extend(exec.assoc_arrays.keys().cloned());
+            Some(keys)
+        }
+        _ => None,
+    }
+}
+
 /// Access the current executor from a builtin handler.
 /// # Safety
 /// Only call this from within a VM execution context (after ExecutorContext::enter).
@@ -2769,7 +2790,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // scanfn dispatch (Src/Modules/parameter.c +
                     // system.c + terminfo.c et al.).
                     if let Some(keys) =
-                        None::<Vec<String>>
+                        magic_assoc_keys(&name, exec)
                     {
                         St::A(keys)
                     } else {
@@ -2783,7 +2804,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // (v) symmetry was missing, so plugin code that
                     // looped over alias bodies got an empty list.
                     if let Some(keys) =
-                        None::<Vec<String>>
+                        magic_assoc_keys(&name, exec)
                     {
                         let values: Vec<String> = keys
                             .iter()
