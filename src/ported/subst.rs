@@ -2510,17 +2510,16 @@ fn paramsubst(                                              // c:1625
         // SQ spans (literal), DQ spans (with backslash escapes),
         // $'…' spans (with full \n / \t / \xNN / \NNN decoding via
         // getkeystring), and standalone backslash escapes.
-        if flag_unquote {                                   // c:2261
-            let chars_v: Vec<char> = value.chars().collect();
-            let mut out = String::with_capacity(value.len());
+        // (Q) unquote per-element on arrays. Direct port of
+        // subst.c:2261 quotemod-- which iterates aval per-element.
+        let unquote_one = |s: &str| -> String {              // c:2261
+            let chars_v: Vec<char> = s.chars().collect();
+            let mut out = String::with_capacity(s.len());
             let mut i = 0_usize;
             while i < chars_v.len() {
                 let c = chars_v[i];
-                // $'...' C-string quoting: decode escapes via the
-                // canonical getkeystring port.
                 if c == '$' && i + 1 < chars_v.len() && chars_v[i + 1] == '\'' { // c:2261
                     let body_start = i + 2;
-                    // Find unescaped closing single quote.
                     let mut j = body_start;
                     while j < chars_v.len() && chars_v[j] != '\'' {
                         if chars_v[j] == '\\' && j + 1 < chars_v.len() {
@@ -2532,23 +2531,36 @@ fn paramsubst(                                              // c:1625
                     let body: String = chars_v[body_start..j].iter().collect();
                     let (decoded, _) = crate::ported::utils::getkeystring(&body); // c:2261
                     out.push_str(&decoded);
-                    i = j + 1;                              // c:2261 (skip closing ')
+                    i = j + 1;
                     continue;
                 }
-                if c == '\\' {                              // c:2261 (drop backslash)
+                if c == '\\' {
                     if i + 1 < chars_v.len() {
                         out.push(chars_v[i + 1]);
                         i += 2;
                         continue;
                     }
-                } else if c == '\'' || c == '"' {           // c:2261 (drop surrounding quotes)
+                } else if c == '\'' || c == '"' {
                     i += 1;
                     continue;
                 }
                 out.push(c);
                 i += 1;
             }
-            value = out;
+            out
+        };
+        if flag_unquote {                                   // c:2261
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| unquote_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| unquote_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = unquote_one(&value);
+            }
         }
 
         // (X) error on unset/empty — emit error if value is empty.
