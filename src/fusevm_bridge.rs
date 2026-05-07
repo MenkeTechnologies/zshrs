@@ -1663,10 +1663,50 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // match handling — without this, `${aliases[(I)foo*]}` and
         // friends were passing the literal `(I)foo*` text through
         // as the key.
-        // Magic-assoc subscript flags (I)/(R)/etc. — stubbed pending
-        // faithful per-module getfn/scanfn ports from
-        // Src/Modules/parameter.c.
-        let _ = idx.trim_start();
+        // Magic-assoc subscript flags (I)/(R)/(i)/(r): parse the
+        // leading `(...)` flag tag and dispatch by-key (I/i) or
+        // by-value (R/r) glob match. Capital = return all matches
+        // joined by space; lowercase = return first only.
+        // Direct port of Src/params.c getarg path which routes
+        // hash subscripts through pattern matching when the flag
+        // tag is present.
+        let parsed_flags: Option<(String, String)> = (|s: &str| {
+            let s = s.trim_start();
+            let rest = s.strip_prefix('(')?;
+            let close = rest.find(')')?;
+            let flags = rest[..close].to_string();
+            let pat = rest[close + 1..].to_string();
+            if flags.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'k' | 'K' | 'n' | 'e' | 'b')) {
+                Some((flags, pat))
+            } else { None }
+        })(idx);
+        if let Some((flags, pat)) = parsed_flags.clone() {
+            let pairs = with_executor(|exec| -> Option<Vec<(String, String)>> {
+                let keys = magic_assoc_keys(name, exec)?;
+                Some(keys
+                    .into_iter()
+                    .map(|k| {
+                        let v = exec
+                            .get_special_array_value(name, &k)
+                            .unwrap_or_default();
+                        (k, v)
+                    })
+                    .collect())
+            });
+            if let Some(pairs) = pairs {
+                let by_key = flags.contains('I') || flags.contains('i');
+                let return_all = flags.contains('I') || flags.contains('R');
+                let mut out: Vec<String> = Vec::new();
+                for (k, v) in &pairs {
+                    let hay = if by_key { k } else { v };
+                    if ShellExecutor::glob_match_static(hay, &pat) {
+                        out.push(if by_key { k.clone() } else { v.clone() });
+                        if !return_all { break; }
+                    }
+                }
+                return Some(Value::str(out.join(" ")));
+            }
+        }
         with_executor(|exec| -> Option<Value> {
             match name {
                 "commands" => {
