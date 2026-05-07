@@ -2528,16 +2528,21 @@ fn paramsubst(                                              // c:1625
             value = parts.join(join_with);
             split_parts = Some(parts);                       // c:3950
         } else if let Some(ref sp) = sep {                  // c:3963 (j with no s)
-            // (j:STR:) — join an array with STR. Direct port of
-            // subst.c:3963 sepjoin call. Was reusing the value
-            // (post-fetch joined string) and re-splitting on
-            // whitespace, which lost embedded-spaces in elements.
-            // Now consult state.arrays directly when var_name is
-            // an array; falls through to the whitespace-split
-            // approximation only when value isn't backed by an
-            // explicit array (computed via flag, subexp, etc.).
-            if let Some(arr) = state.arrays.get(&var_name) { // c:3963
+            // (j:STR:) — join an array with STR. Source priority:
+            // split_parts (operator result) → state.arrays →
+            // assoc-values → whitespace-split fallback. Direct
+            // port of subst.c:3963 sepjoin which reads aval.
+            if let Some(parts) = split_parts.clone() {
+                value = parts.join(sp);                      // c:3963
+                // Join collapses array shape → reset split_parts
+                // so auto_splat emits one scalar node, not the
+                // joined-then-1-elem-splat.
+                split_parts = None;                          // c:3963
+            } else if let Some(arr) = state.arrays.get(&var_name) { // c:3963
                 value = arr.join(sp);                        // c:3963
+            } else if let Some(map) = state.assoc_arrays.get(&var_name) { // c:3963
+                let vals: Vec<String> = map.values().cloned().collect();
+                value = vals.join(sp);                       // c:3963
             } else if value.contains(' ') || value.contains('\n') {
                 let parts: Vec<&str> = value.split_whitespace().collect();
                 value = parts.join(sp);
