@@ -1544,44 +1544,86 @@ pub fn filesubstr(s: &str, assign: bool, state: &SubstState) -> Option<String> {
     None
 }
 
-fn filesub(s: &str, _flags: u32, _state: &mut SubstState) -> String { // c:667
-    // Tilde expansion
-    if let Some(rest) = s.strip_prefix('~') {               // c:667
-        let (user, suffix) = match rest.find('/') {         // c:667
-            Some(pos) => (&rest[..pos], &rest[pos..]),      // c:667
-            None => (rest, ""),                             // c:667
-        };                                                  // c:667
+/// Port of `filesub()` from `Src/subst.c:667-704`.
+///
+/// 1:1 with C: applies filesubstr to the leading `~`/`=`, then in
+/// assign-context walks `=` (TYPESET-only) and `:`-separated path
+/// lists, reapplying filesubstr to each suffix that begins with a
+/// tilde/equals.
+fn filesub(s: &str, flags: u32, state: &mut SubstState) -> String { // c:667
+    // C: `filesubstr(namptr, assign);`  (line 672)
+    let mut namptr: String = filesubstr(s, flags != 0, state)
+        .unwrap_or_else(|| s.to_string());                 // c:672
 
-        if user.is_empty() {                                // c:667
-            if let Ok(home) = std::env::var("HOME") {       // c:667
-                return format!("{}{}", home, suffix);       // c:667
-            }                                               // c:667
-        } else if user == "+" {                             // c:667
-            if let Ok(pwd) = std::env::var("PWD") {         // c:667
-                return format!("{}{}", pwd, suffix);        // c:667
-            }                                               // c:667
-        } else if user == "-" {                             // c:667
-            if let Ok(oldpwd) = std::env::var("OLDPWD") {   // c:667
-                return format!("{}{}", oldpwd, suffix);     // c:667
-            }                                               // c:667
-        }                                                   // c:667
-    }                                                       // c:667
+    // C: `if (!assign) return;` — non-assign context bails early.
+    if flags == 0 {                                         // c:674
+        return namptr;                                      // c:675
+    }
 
-    // = substitution (=cmd -> path to cmd)
-    if s.starts_with('=') && s.len() > 1 {                  // c:667
-        let cmd = &s[1..];                                  // c:667
-        if let Ok(path) = std::env::var("PATH") {           // c:667
-            for dir in path.split(':') {                    // c:667
-                let full_path = format!("{}/{}", dir, cmd); // c:667
-                if std::path::Path::new(&full_path).exists() { // c:667
-                    return full_path;                       // c:667
-                }                                           // c:667
-            }                                               // c:667
-        }                                                   // c:667
-    }                                                       // c:667
+    let mut eql: Option<usize> = None;                      // c:668 (eql=NULL)
 
-    s.to_string()                                           // c:667
-}                                                           // c:667
+    // C: PREFORK_TYPESET arm — `${var}=value` shape, find `=` then
+    // recurse filesubstr on the RHS.
+    if flags & prefork_flags::TYPESET != 0 {                // c:677
+        // C: `(*namptr)[1] && (eql = sub = strchr(*namptr + 1, Equals))`
+        if namptr.len() >= 2 {                              // c:678
+            // strchr from index 1 onward
+            if let Some(sub) = namptr[1..].find('=').map(|p| p + 1) { // c:678
+                eql = Some(sub);                            // c:678
+                let str_start = sub + 1;                    // c:679
+                if str_start < namptr.len()                 // c:680
+                    && (namptr.as_bytes()[str_start] == b'~'
+                        || namptr.as_bytes()[str_start] == b'=')
+                {                                           // c:680
+                    let rhs = &namptr[str_start..];          // c:679
+                    if let Some(expanded) = filesubstr(rhs, true, state) { // c:680
+                        // C: `sub[1] = '\0'; *namptr = dyncat(*namptr, str);`
+                        namptr = format!("{}{}", &namptr[..str_start], expanded); // c:682
+                    }                                       // c:682
+                }                                           // c:680
+            } else {                                        // c:684
+                return namptr;                              // c:685
+            }                                               // c:686
+        } else {                                            // c:684
+            return namptr;                                  // c:685
+        }                                                   // c:686
+    }
+
+    // C: `ptr = *namptr; while ((sub = strchr(ptr, ':'))) { … }`
+    // Walk `:`-separated path components, reapply filesubstr on each
+    // suffix that starts with `~` or `=`.
+    let mut ptr_off = 0_usize;                              // c:689
+    loop {                                                  // c:690
+        let slice = &namptr[ptr_off..];                     // c:690
+        let colon_rel = match slice.find(':') {             // c:690
+            Some(p) => p,                                   // c:690
+            None => break,                                  // c:690
+        };                                                  // c:690
+        let sub = ptr_off + colon_rel;                      // c:690
+        let str_start = sub + 1;                            // c:691
+        let len = sub;                                      // c:692
+        // C: `sub > eql` — skip the `:` we already chewed in TYPESET.
+        let past_eql = match eql {                          // c:693
+            Some(e) => sub > e,                             // c:693
+            None => true,                                   // c:693
+        };                                                  // c:693
+        if past_eql                                         // c:693
+            && str_start < namptr.len()                     // c:694
+            && (namptr.as_bytes()[str_start] == b'~'
+                || namptr.as_bytes()[str_start] == b'=')
+        {                                                   // c:694
+            let rhs = &namptr[str_start..];                 // c:691
+            if let Some(expanded) = filesubstr(rhs, true, state) { // c:695
+                namptr = format!("{}{}", &namptr[..str_start], expanded); // c:697
+            }                                               // c:695
+        }                                                   // c:695
+        ptr_off = len + 1;                                  // c:700
+        if ptr_off >= namptr.len() {                        // c:700
+            break;                                          // c:700
+        }                                                   // c:700
+    }                                                       // c:701
+    namptr                                                  // c:702
+}                                                           // c:703
 
 
 
