@@ -850,7 +850,7 @@ mod tests_strwidth {
 
 #[cfg(test)]
 mod tests_bindkey_format {
-    use super::bind_ztrdup;
+    use super::bindztrdup;
     use super::print_bind;
 
     #[test]

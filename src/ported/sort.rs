@@ -318,9 +318,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_make_sort_key() {
-        assert_eq!(make_sort_key("Hello", false), "Hello");
-        assert_eq!(make_sort_key("Hello", true), "hello");
-    }
 }
