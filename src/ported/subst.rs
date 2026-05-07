@@ -1250,6 +1250,32 @@ fn paramsubst(                                              // c:1625
             }
         }
         let mut var_name: String = body_chars[name_start..idx].iter().collect();
+
+        // ${arr[subscript]} — subscript loop. Port of subst.c:2862-3000.
+        // Parse `[…]` after the var name, with brace-depth tracking
+        // for nested `${arr[$other[1]]}`.
+        let mut subscript: Option<String> = None;           // c:2867
+        if idx < body_chars.len() && body_chars[idx] == '[' { // c:2867
+            idx += 1;                                       // c:2867
+            let sub_start = idx;
+            let mut depth = 1_i32;
+            while idx < body_chars.len() && depth > 0 {     // c:2867
+                let bc = body_chars[idx];
+                if bc == '[' { depth += 1; }                // c:2867
+                else if bc == ']' {                         // c:2867
+                    depth -= 1;
+                    if depth == 0 { break; }
+                }
+                idx += 1;
+            }
+            if idx > sub_start {
+                let raw_sub: String = body_chars[sub_start..idx].iter().collect();
+                // Subscript expressions can contain $vars — singsub them.
+                subscript = Some(singsub(&raw_sub, state)); // c:2899
+            }
+            if idx < body_chars.len() { idx += 1; }         // skip ]
+        }
+
         let rest: String = body_chars[idx..].iter().collect();
 
         // (P) indirect: var_name's VALUE becomes the new var name.
@@ -1263,10 +1289,64 @@ fn paramsubst(                                              // c:1625
             var_name = target;                              // c:2741 (val = idbeg = getstrvalue(v))
         }
 
-        // Look up var
-        let raw_value: String = state.variables.get(&var_name).cloned()
-            .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
-            .unwrap_or_default();
+        // Look up var (with subscript if present). Port of
+        // subst.c:2965 getstrvalue / getarrvalue dispatch.
+        let raw_value: String = if let Some(sub) = subscript.as_deref() {
+            // Subscripted lookup: assoc-key, array-index, or slice.
+            if let Some(map) = state.assoc_arrays.get(&var_name) { // c:2926 (assoc lookup)
+                map.get(sub).cloned().unwrap_or_default()
+            } else if let Some(arr) = state.arrays.get(&var_name) { // c:2926 (array)
+                if sub == "*" || sub == "@" {                // c:2916 (full array)
+                    arr.join(" ")
+                } else if let Ok(idx_n) = sub.parse::<i64>() { // c:2926 (numeric index)
+                    let len = arr.len() as i64;
+                    let i = if idx_n < 0 { len + idx_n } else { idx_n - 1 };
+                    if i >= 0 && (i as usize) < arr.len() {
+                        arr[i as usize].clone()
+                    } else {
+                        String::new()
+                    }
+                } else if let Some((start_s, end_s)) = sub.split_once(',') { // c:2944 (slice)
+                    // Clone arr first to release the borrow, since
+                    // singsub needs &mut state.
+                    let arr_clone = arr.clone();
+                    let len = arr_clone.len() as i64;
+                    let start_str = start_s.to_string();
+                    let end_str = end_s.to_string();
+                    let start: i64 = singsub(&start_str, state).parse().unwrap_or(1);
+                    let end: i64 = singsub(&end_str, state).parse().unwrap_or(len);
+                    let s = if start < 0 { (len + start).max(0) } else { (start - 1).max(0) } as usize;
+                    let e = if end < 0 { (len + end + 1).max(0) } else { end.min(len) } as usize;
+                    if s < arr_clone.len() && s < e {
+                        arr_clone[s..e.min(arr_clone.len())].join(" ")
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                // Scalar with subscript — char-index access.
+                let s_chars: Vec<char> = state.variables.get(&var_name)
+                    .cloned().unwrap_or_default().chars().collect();
+                if let Ok(idx_n) = sub.parse::<i64>() {
+                    let len = s_chars.len() as i64;
+                    let i = if idx_n < 0 { len + idx_n } else { idx_n - 1 };
+                    if i >= 0 && (i as usize) < s_chars.len() {
+                        s_chars[i as usize].to_string()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            }
+        } else {
+            // No subscript — scalar / array / assoc fallthrough.
+            state.variables.get(&var_name).cloned()
+                .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
+                .unwrap_or_default()
+        };
         let is_set = state.variables.contains_key(&var_name)
             || state.arrays.contains_key(&var_name)
             || state.assoc_arrays.contains_key(&var_name);
