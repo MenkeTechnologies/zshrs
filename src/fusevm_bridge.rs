@@ -2171,7 +2171,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 .collect(),
                         ));
                     }
-                    let val = crate::langinfo::get_langinfo(idx).unwrap_or_default();
+                    let val = crate::langinfo::getlanginfo(idx).unwrap_or_default();
                     Some(Value::str(val))
                 }
                 // `.zle.esc` and `.zle.sgr` — port of zsh/hlgroup
@@ -2201,7 +2201,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     let converted = if sgr {
                         crate::hlgroup::attr_to_sgr(&attr)
                     } else {
-                        crate::hlgroup::attr_to_escape(&attr)
+                        crate::hlgroup::convertattr(&attr)
                     };
                     Some(Value::str(converted))
                 }

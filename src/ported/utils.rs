@@ -1061,7 +1061,7 @@ pub fn get_user_home_by_name(username: &str) -> Option<String> {
 }
 
 /// Get username from UID (from utils.c getpwuid handling)
-pub fn get_username(uid: u32) -> Option<String> {
+pub fn statuidprint(uid: u32) -> Option<String> {
     #[cfg(unix)]
     {
         let pwd = unsafe { libc::getpwuid(uid) };

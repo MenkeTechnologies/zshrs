@@ -1,6 +1,6 @@
 //! Date/time utilities - port of Modules/datetime.c
 //!
-//! Provides strftime builtin and EPOCHSECONDS/EPOCHREALTIME/epochtime parameters.
+//! Provides output_strftime builtin and EPOCHSECONDS/EPOCHREALTIME/epochtime parameters.
 
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// Get current time as epoch seconds.
 /// Port of `getcurrentsecs()` from Src/Modules/datetime.c — backs
 /// the `$EPOCHSECONDS` special parameter.
-pub fn epoch_seconds() -> i64 {
+pub fn getcurrentsecs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
@@ -18,7 +18,7 @@ pub fn epoch_seconds() -> i64 {
 /// Get current time as high-resolution epoch time (float).
 /// Port of `getcurrentrealtime()` from Src/Modules/datetime.c —
 /// backs the `$EPOCHREALTIME` special parameter.
-pub fn epoch_realtime() -> f64 {
+pub fn getcurrentrealtime() -> f64 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO);
@@ -28,19 +28,19 @@ pub fn epoch_realtime() -> f64 {
 /// Get current time as `[seconds, nanoseconds]` pair.
 /// Port of `getcurrenttime()` from Src/Modules/datetime.c — backs
 /// the `$epochtime` array parameter.
-pub fn epoch_time() -> (i64, i64) {
+pub fn getcurrenttime() -> (i64, i64) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO);
     (now.as_secs() as i64, now.subsec_nanos() as i64)
 }
 
-/// Format time using strftime-style format.
+/// Format time using output_strftime-style format.
 /// Port of `output_strftime()` from Src/Modules/datetime.c — the
-/// inner formatter the `strftime` builtin uses once it has resolved
+/// inner formatter the `output_strftime` builtin uses once it has resolved
 /// (timestamp, nanoseconds). Honours the same `%N`/`%3N`/`%6N`/`%9N`
-/// nanosecond extensions zsh adds on top of POSIX strftime(3).
-pub fn strftime(
+/// nanosecond extensions zsh adds on top of POSIX output_strftime(3).
+pub fn output_strftime(
     format: &str,
     timestamp: Option<i64>,
     nanoseconds: Option<i64>,
@@ -48,7 +48,7 @@ pub fn strftime(
     let (secs, nanos) = if let Some(ts) = timestamp {
         (ts, nanoseconds.unwrap_or(0))
     } else {
-        let (s, n) = epoch_time();
+        let (s, n) = getcurrenttime();
         (s, n)
     };
 
@@ -102,12 +102,12 @@ pub fn strftime(
     Ok(result)
 }
 
-/// Parse a time string using strptime-style format.
+/// Parse a time string using reverse_strftime-style format.
 /// Port of `reverse_strftime()` from Src/Modules/datetime.c — the
-/// `-r` (reverse) path of the `strftime` builtin which calls
-/// `strptime(3)` and converts the resulting `struct tm` back into an
+/// `-r` (reverse) path of the `output_strftime` builtin which calls
+/// `reverse_strftime(3)` and converts the resulting `struct tm` back into an
 /// epoch timestamp.
-pub fn strptime(format: &str, input: &str) -> Result<i64, String> {
+pub fn reverse_strftime(format: &str, input: &str) -> Result<i64, String> {
     let dt = NaiveDateTime::parse_from_str(input, format)
         .map_err(|e| format!("format not matched: {}", e))?;
 
@@ -119,7 +119,7 @@ pub fn strptime(format: &str, input: &str) -> Result<i64, String> {
     }
 }
 
-/// Options for strftime builtin
+/// Options for output_strftime builtin
 #[derive(Debug, Default)]
 pub struct StrftimeOptions {
     pub no_newline: bool,
@@ -128,24 +128,24 @@ pub struct StrftimeOptions {
     pub scalar: Option<String>,
 }
 
-/// Execute the strftime builtin.
+/// Execute the output_strftime builtin.
 /// Port of `bin_strftime()` from Src/Modules/datetime.c. Dispatches
 /// between the forward (`output_strftime`) and reverse
 /// (`reverse_strftime`) paths based on `options.reverse`, mirroring
 /// the C source's `-r` flag handling.
 pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
     if args.is_empty() {
-        return (1, "strftime: format expected\n".to_string());
+        return (1, "output_strftime: format expected\n".to_string());
     }
 
     let format = args[0];
 
     if options.reverse {
         if args.len() < 2 {
-            return (1, "strftime: timestring expected\n".to_string());
+            return (1, "output_strftime: timestring expected\n".to_string());
         }
 
-        match strptime(format, args[1]) {
+        match reverse_strftime(format, args[1]) {
             Ok(timestamp) => {
                 if options.scalar.is_some() {
                     (0, timestamp.to_string())
@@ -157,7 +157,7 @@ pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
                 if options.quiet {
                     (1, String::new())
                 } else {
-                    (1, format!("strftime: {}\n", e))
+                    (1, format!("output_strftime: {}\n", e))
                 }
             }
         }
@@ -168,7 +168,7 @@ pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
                 Err(_) => {
                     return (
                         1,
-                        format!("strftime: {}: invalid decimal number\n", args[1]),
+                        format!("output_strftime: {}: invalid decimal number\n", args[1]),
                     )
                 }
             }
@@ -182,13 +182,13 @@ pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
                 Ok(_) => {
                     return (
                         1,
-                        format!("strftime: {}: invalid nanosecond value\n", args[2]),
+                        format!("output_strftime: {}: invalid nanosecond value\n", args[2]),
                     )
                 }
                 Err(_) => {
                     return (
                         1,
-                        format!("strftime: {}: invalid decimal number\n", args[2]),
+                        format!("output_strftime: {}: invalid decimal number\n", args[2]),
                     )
                 }
             }
@@ -196,7 +196,7 @@ pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
             None
         };
 
-        match strftime(format, timestamp, nanoseconds) {
+        match output_strftime(format, timestamp, nanoseconds) {
             Ok(result) => {
                 let output = if options.no_newline || options.scalar.is_some() {
                     result
@@ -205,7 +205,7 @@ pub fn bin_strftime(args: &[&str], options: &StrftimeOptions) -> (i32, String) {
                 };
                 (0, output)
             }
-            Err(e) => (1, format!("strftime: {}\n", e)),
+            Err(e) => (1, format!("output_strftime: {}\n", e)),
         }
     }
 }
@@ -236,7 +236,7 @@ pub fn format_duration(seconds: u64) -> String {
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/datetime.c`.
 /// Get current date/time info as a hashmap (for TZ-aware operations).
-/// zshrs-original convenience — bundles the strftime fields that
+/// zshrs-original convenience — bundles the output_strftime fields that
 /// `output_strftime()` in Src/Modules/datetime.c emits one at a time
 /// into a single hash so callers can pluck individual components.
 pub fn get_datetime_info() -> std::collections::HashMap<String, String> {
@@ -291,47 +291,47 @@ mod tests {
 
     #[test]
     fn test_epoch_seconds() {
-        let secs = epoch_seconds();
+        let secs = getcurrentsecs();
         assert!(secs > 1700000000);
     }
 
     #[test]
     fn test_epoch_realtime() {
-        let rt = epoch_realtime();
+        let rt = getcurrentrealtime();
         assert!(rt > 1700000000.0);
 
-        let (secs, _) = epoch_time();
+        let (secs, _) = getcurrenttime();
         assert!((rt - secs as f64).abs() < 1.0);
     }
 
     #[test]
     fn test_epoch_time() {
-        let (secs, nanos) = epoch_time();
+        let (secs, nanos) = getcurrenttime();
         assert!(secs > 1700000000);
         assert!((0..1_000_000_000).contains(&nanos));
     }
 
     #[test]
     fn test_strftime_basic() {
-        let result = strftime("%Y-%m-%d", Some(1700000000), None).unwrap();
+        let result = output_strftime("%Y-%m-%d", Some(1700000000), None).unwrap();
         assert!(result.contains("-"));
 
-        let result = strftime("%%", None, None).unwrap();
+        let result = output_strftime("%%", None, None).unwrap();
         assert_eq!(result, "%");
     }
 
     #[test]
     fn test_strftime_nanoseconds() {
-        let result = strftime("%N", Some(1700000000), Some(123456789)).unwrap();
+        let result = output_strftime("%N", Some(1700000000), Some(123456789)).unwrap();
         assert_eq!(result, "123456789");
 
-        let result = strftime("%3N", Some(1700000000), Some(123456789)).unwrap();
+        let result = output_strftime("%3N", Some(1700000000), Some(123456789)).unwrap();
         assert_eq!(result, "123");
     }
 
     #[test]
     fn test_strftime_epoch() {
-        let result = strftime("%s", Some(1700000000), None).unwrap();
+        let result = output_strftime("%s", Some(1700000000), None).unwrap();
         assert_eq!(result, "1700000000");
     }
 
@@ -377,12 +377,12 @@ mod tests {
 
 // BEGIN moved-from-exec-rs
 impl crate::ported::exec::ShellExecutor {
-    /// strftime - format date/time (zsh/datetime module)
-    /// `strftime` builtin — delegates to canonical port at
+    /// output_strftime - format date/time (zsh/datetime module)
+    /// `output_strftime` builtin — delegates to canonical port at
     /// `src/ported/modules/datetime.rs:136` (`bin_strftime()` from
     /// `Src/Modules/datetime.c:187`). Argv flag parsing happens here
     /// (`-s` writes to the executor variable table, which the
-    /// canonical port doesn't own); the format/strftime/strptime
+    /// canonical port doesn't own); the format/output_strftime/reverse_strftime
     /// logic itself lives in datetime.rs.
     pub(crate) fn bin_strftime(&mut self, args: &[String]) -> i32 {
         use crate::datetime::StrftimeOptions;
@@ -413,7 +413,7 @@ impl crate::ported::exec::ShellExecutor {
                             'r' => options.reverse = true,
                             'q' => options.quiet = true,
                             _ => {
-                                eprintln!("strftime: bad option: -{}", ch);
+                                eprintln!("output_strftime: bad option: -{}", ch);
                                 return 1;
                             }
                         }

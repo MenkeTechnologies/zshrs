@@ -143,7 +143,7 @@ impl ModuleTable {
             ),
             ("zsh/complist", &["complist"][..]),
             ("zsh/computil", &["compadd", "compset"][..]),
-            ("zsh/datetime", &["strftime"][..]),
+            ("zsh/datetime", &["output_strftime"][..]),
             (
                 "zsh/files",
                 &[

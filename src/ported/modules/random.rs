@@ -45,7 +45,7 @@ impl RandomState {
     pub fn get_srandom(&mut self) -> u32 {
         if self.buf_cnt == 0 {                                                  // c:145
             let mut bytes = [0u8; RAND_BUFF_SIZE * 4];                          // c:143
-            if fill_random_bytes(&mut bytes).is_ok() {                          // c:143
+            if boot_(&mut bytes).is_ok() {                          // c:143
                 for (i, chunk) in bytes.chunks_exact(4).enumerate() {           // c:143
                     self.buffer[i] = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);  // c:143
                 }                                                               // c:143
@@ -64,7 +64,7 @@ impl RandomState {
 /// `arc4random_buf(3)` for macOS (BSD-derived), `getrandom(2)` on
 /// Linux, and `/dev/urandom` everywhere else.
 #[cfg(target_os = "macos")]
-pub fn fill_random_bytes(buf: &mut [u8]) -> io::Result<()> {
+pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
     unsafe {
         libc::arc4random_buf(buf.as_mut_ptr() as *mut libc::c_void, buf.len());
     }
@@ -74,7 +74,7 @@ pub fn fill_random_bytes(buf: &mut [u8]) -> io::Result<()> {
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/random.c`.
 #[cfg(target_os = "linux")]
-pub fn fill_random_bytes(buf: &mut [u8]) -> io::Result<()> {
+pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
     let mut filled = 0;
 
     while filled < buf.len() {
@@ -102,7 +102,7 @@ pub fn fill_random_bytes(buf: &mut [u8]) -> io::Result<()> {
 
 /// Port of `boot_()` from `Src/Modules/random.c:282`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn fill_random_bytes(buf: &mut [u8]) -> io::Result<()> {
+pub fn boot_(buf: &mut [u8]) -> io::Result<()> {
     use std::fs::File;
     use std::io::Read;
 
@@ -119,7 +119,7 @@ pub fn fill_random_bytes(buf: &mut [u8]) -> io::Result<()> {
 /// 8-element batching `RandomState` provides.
 pub fn get_random_u32() -> u32 {
     let mut buf = [0u8; 4];
-    let _ = fill_random_bytes(&mut buf);
+    let _ = boot_(&mut buf);
     u32::from_ne_bytes(buf)
 }
 
@@ -131,7 +131,7 @@ pub fn get_random_u32() -> u32 {
 /// reads 64 bits at a time when building uniform-real samples.
 pub fn get_random_u64() -> u64 {
     let mut buf = [0u8; 8];
-    let _ = fill_random_bytes(&mut buf);
+    let _ = boot_(&mut buf);
     u64::from_ne_bytes(buf)
 }
 
@@ -170,18 +170,18 @@ pub fn get_bounded_random(max: u32) -> u32 {
 /// Port of `get_bound_random_buffer()` from Src/Modules/random.c:104
 /// — repeatedly pulls from the kernel and rejection-samples each
 /// slot until the entire buffer is filled with values in `[0, max)`.
-pub fn get_bounded_random_buffer(buffer: &mut [u32], max: u32) {
+pub fn get_bound_random_buffer(buffer: &mut [u32], max: u32) {
     for item in buffer.iter_mut() {
         *item = get_bounded_random(max);
     }
 }
 
-/// `zrand_int(upper, lower, inclusive)` math function.
+/// `math_zrand_int(upper, lower, inclusive)` math function.
 /// Port of `math_zrand_int()` from Src/Modules/random.c:161 — the
 /// C source's math-function entry point exposed to `${(( ... ))}`.
 /// All three arguments are optional; behaviour matches the C
 /// source's bound-checks (`lower < 0`, `upper < lower`, etc.).
-pub fn zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -> Result<i64, String> {
+pub fn math_zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -> Result<i64, String> {
     let lower = lower.unwrap_or(0);
     let upper = upper.unwrap_or(u32::MAX as i64);
 
@@ -217,11 +217,11 @@ pub fn zrand_int(upper: Option<i64>, lower: Option<i64>, inclusive: bool) -> Res
     Ok(r as i64 + lower)
 }
 
-/// `zrand_float()` math function.
+/// `math_zrand_float()` math function.
 /// Port of `math_zrand_float()` from Src/Modules/random.c:204 —
 /// the C source's math-function entry point that returns a
 /// uniform double in `[0, 1)`.
-pub fn zrand_float() -> f64 {
+pub fn math_zrand_float() -> f64 {
     random_real()
 }
 
@@ -342,29 +342,29 @@ mod tests {
 
     #[test]
     fn test_zrand_int() {
-        let r = zrand_int(Some(100), Some(50), false).unwrap();
+        let r = math_zrand_int(Some(100), Some(50), false).unwrap();
         assert!((50..100).contains(&r));
 
-        let r = zrand_int(Some(100), Some(50), true).unwrap();
+        let r = math_zrand_int(Some(100), Some(50), true).unwrap();
         assert!((50..=100).contains(&r));
     }
 
     #[test]
     fn test_zrand_int_no_args() {
-        let r = zrand_int(None, None, false).unwrap();
+        let r = math_zrand_int(None, None, false).unwrap();
         assert!(r >= 0);
     }
 
     #[test]
     fn test_zrand_int_errors() {
-        assert!(zrand_int(Some(50), Some(100), false).is_err());
-        assert!(zrand_int(Some(-1), None, false).is_err());
+        assert!(math_zrand_int(Some(50), Some(100), false).is_err());
+        assert!(math_zrand_int(Some(-1), None, false).is_err());
     }
 
     #[test]
     fn test_zrand_float() {
         for _ in 0..100 {
-            let r = zrand_float();
+            let r = math_zrand_float();
             assert!((0.0..1.0).contains(&r));
         }
     }
@@ -397,7 +397,7 @@ mod tests {
     #[test]
     fn test_fill_random_bytes() {
         let mut buf = [0u8; 32];
-        fill_random_bytes(&mut buf).unwrap();
+        boot_(&mut buf).unwrap();
         assert!(!buf.iter().all(|&b| b == 0));
     }
 }

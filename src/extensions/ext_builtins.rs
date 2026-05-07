@@ -3823,7 +3823,7 @@ impl ShellExecutor {
         // coreutils touch(1) port: -a/-m, -c (no create), -r REF
         // (copy times from REF). -d / -t / -h are accepted but
         // not yet honored — they need date-string parsing through
-        // strptime.
+        // reverse_strftime.
         use std::fs::OpenOptions;
 
         if args.is_empty() {

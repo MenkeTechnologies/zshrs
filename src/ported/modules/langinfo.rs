@@ -71,7 +71,7 @@ pub static LANGINFO_NAMES: &[&str] = &[
 /// parameter wrapper and the prompt-expansion code that reads
 /// `%D`/`%T` formats.
 #[cfg(unix)]
-pub fn get_langinfo(name: &str) -> Option<String> {
+pub fn getlanginfo(name: &str) -> Option<String> {
     use std::ffi::CStr;
 
     let item = match name {
@@ -144,12 +144,12 @@ pub fn get_langinfo(name: &str) -> Option<String> {
 }
 
 /// Port of `getlanginfo()` from `Src/Modules/langinfo.c:396`.
-/// Non-Unix fallback for `get_langinfo` — `nl_langinfo(3)` is POSIX-only.
+/// Non-Unix fallback for `getlanginfo` — `nl_langinfo(3)` is POSIX-only.
 /// On Windows / WASI / sandboxed builds the parameter always reads
 /// as unset, matching how Src/Modules/langinfo.c behaves when the
 /// build doesn't link against libc's locale.
 #[cfg(not(unix))]
-pub fn get_langinfo(_name: &str) -> Option<String> {
+pub fn getlanginfo(_name: &str) -> Option<String> {
     None
 }
 
@@ -163,7 +163,7 @@ pub fn get_all_langinfo() -> HashMap<String, String> {
     let mut result = HashMap::new();
 
     for name in LANGINFO_NAMES {
-        if let Some(value) = get_langinfo(name) {
+        if let Some(value) = getlanginfo(name) {
             result.insert(name.to_string(), value);
         }
     }
@@ -193,7 +193,7 @@ impl Langinfo {
     /// Equivalent to the `getfn` slot of the `langinfo` Param in
     /// Src/Modules/langinfo.c.
     pub fn get(&self, name: &str) -> Option<String> {
-        get_langinfo(name)
+        getlanginfo(name)
     }
 
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
@@ -226,14 +226,14 @@ mod tests {
     fn test_get_langinfo_codeset() {
         #[cfg(unix)]
         {
-            let result = get_langinfo("CODESET");
+            let result = getlanginfo("CODESET");
             assert!(result.is_some());
         }
     }
 
     #[test]
     fn test_get_langinfo_invalid() {
-        let result = get_langinfo("INVALID_NAME");
+        let result = getlanginfo("INVALID_NAME");
         assert!(result.is_none());
     }
 

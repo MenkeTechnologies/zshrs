@@ -363,7 +363,7 @@ pub fn resolve_port(service: &str) -> Option<u16> {
 /// Port of `zsh_gethostbyname2()` from Src/Modules/tcp.c:146
 /// (with `zsh_getipnodebyname()` line 170 fallback) — wraps
 /// `getaddrinfo(3)`.
-pub fn resolve_host(host: &str) -> io::Result<IpAddr> {
+pub fn zsh_gethostbyname2(host: &str) -> io::Result<IpAddr> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(ip);
     }
@@ -640,10 +640,10 @@ mod tests {
 
     #[test]
     fn test_resolve_host() {
-        let ip = resolve_host("127.0.0.1").unwrap();
+        let ip = zsh_gethostbyname2("127.0.0.1").unwrap();
         assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
 
-        let ip = resolve_host("::1").unwrap();
+        let ip = zsh_gethostbyname2("::1").unwrap();
         assert_eq!(ip, IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)));
     }
 

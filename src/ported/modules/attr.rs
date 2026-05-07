@@ -14,12 +14,12 @@ pub struct XattrOptions {
 
 /// Read an extended attribute value.
 /// Port of `xgetxattr()` from Src/Modules/attr.c:37 — the C source
-/// abstracts the macOS / Linux / FreeBSD `getxattr(2)` ABI
+/// abstracts the macOS / Linux / FreeBSD `xgetxattr(2)` ABI
 /// differences behind a single helper. The `symlink` flag in the C
 /// source maps onto our `options.no_dereference` (macOS:
 /// `XATTR_NOFOLLOW`, Linux: `lgetxattr`).
 #[cfg(target_os = "macos")]
-pub fn getxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Vec<u8>> {
+pub fn xgetxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Vec<u8>> {
     let path_c = CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
     let name_c = CString::new(name)
@@ -73,7 +73,7 @@ pub fn getxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Ve
 
 /// Port of `xgetxattr()` from `Src/Modules/attr.c:37`.
 #[cfg(target_os = "linux")]
-pub fn getxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Vec<u8>> {
+pub fn xgetxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Vec<u8>> {
     let path_c = CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
     let name_c = CString::new(name)
@@ -126,7 +126,7 @@ pub fn getxattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<Ve
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/attr.c`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn getxattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Result<Vec<u8>> {
+pub fn xgetxattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Result<Vec<u8>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "xattr not supported",
@@ -135,9 +135,9 @@ pub fn getxattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Result
 
 /// Write an extended attribute value.
 /// Port of `xsetxattr()` from Src/Modules/attr.c:67 — the C
-/// source's wrapper over `setxattr(2)` / `lsetxattr(2)`.
+/// source's wrapper over `xsetxattr(2)` / `lsetxattr(2)`.
 #[cfg(target_os = "macos")]
-pub fn setxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) -> io::Result<()> {
+pub fn xsetxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) -> io::Result<()> {
     let path_c = CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
     let name_c = CString::new(name)
@@ -169,7 +169,7 @@ pub fn setxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) ->
 
 /// Port of `xsetxattr()` from `Src/Modules/attr.c:67`.
 #[cfg(target_os = "linux")]
-pub fn setxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) -> io::Result<()> {
+pub fn xsetxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) -> io::Result<()> {
     let path_c = CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
     let name_c = CString::new(name)
@@ -207,7 +207,7 @@ pub fn setxattr(path: &str, name: &str, value: &[u8], options: &XattrOptions) ->
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/attr.c`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn setxattr(
+pub fn xsetxattr(
     _path: &str,
     _name: &str,
     _value: &[u8],
@@ -221,9 +221,9 @@ pub fn setxattr(
 
 /// Remove an extended attribute.
 /// Port of `xremovexattr()` from Src/Modules/attr.c:83 — wrapper
-/// over `removexattr(2)` / `lremovexattr(2)`.
+/// over `xremovexattr(2)` / `lremovexattr(2)`.
 #[cfg(target_os = "macos")]
-pub fn removexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<()> {
+pub fn xremovexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<()> {
     let path_c = CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
     let name_c = CString::new(name)
@@ -247,7 +247,7 @@ pub fn removexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/attr.c`.
 #[cfg(target_os = "linux")]
-pub fn removexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<()> {
+pub fn xremovexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result<()> {
     let path_c = CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
     let name_c = CString::new(name)
@@ -269,7 +269,7 @@ pub fn removexattr(path: &str, name: &str, options: &XattrOptions) -> io::Result
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/attr.c`.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn removexattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Result<()> {
+pub fn xremovexattr(_path: &str, _name: &str, _options: &XattrOptions) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "xattr not supported",
@@ -406,7 +406,7 @@ fn parse_xattr_list(buf: &[u8]) -> io::Result<Vec<String>> {
 /// `xgetxattr()` and surfaces the value as a string. Honours
 /// `-h` (no-dereference) the same way the C source does.
 pub fn bin_getattr(file: &str, attr: &str, options: &XattrOptions) -> (i32, Option<String>) {
-    match getxattr(file, attr, options) {
+    match xgetxattr(file, attr, options) {
         Ok(value) => {
             let s = String::from_utf8_lossy(&value).into_owned();
             (0, Some(s))
@@ -423,7 +423,7 @@ pub fn bin_setattr(
     value: &str,
     options: &XattrOptions,
 ) -> (i32, String) {
-    match setxattr(file, attr, value.as_bytes(), options) {
+    match xsetxattr(file, attr, value.as_bytes(), options) {
         Ok(()) => (0, String::new()),
         Err(e) => (1, format!("zsetattr: {}: {}\n", file, e)),
     }
@@ -435,7 +435,7 @@ pub fn bin_setattr(
 /// source's loop.
 pub fn bin_delattr(file: &str, attrs: &[&str], options: &XattrOptions) -> (i32, String) {
     for attr in attrs {
-        if let Err(e) = removexattr(file, attr, options) {
+        if let Err(e) = xremovexattr(file, attr, options) {
             return (1, format!("zdelattr: {}: {}\n", file, e));
         }
     }

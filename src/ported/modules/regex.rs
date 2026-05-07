@@ -37,7 +37,7 @@ pub struct RegexMatch {
 /// of the regcomp + regexec sequence in `zcond_regex_match`
 /// (regex.c:78-145). Case-folding follows zsh's `CASEMATCH` option;
 /// the caller passes `case_insensitive` when that option is OFF.
-pub fn match_regex(text: &str, pat: &str, case_insensitive: bool) -> RegexMatch {
+pub fn zcond_regex_match(text: &str, pat: &str, case_insensitive: bool) -> RegexMatch {
     // Wrap pat in `(?i)` for case-insensitive — the regex crate's
     // builder API accepts it inline; this matches the C source's
     // `rcflags |= REG_ICASE` branch (regex.c:75-76).
@@ -77,27 +77,27 @@ mod tests {
 
     #[test]
     fn matches_simple_pattern() {
-        let r = match_regex("hello world", "wor.d", false);
+        let r = zcond_regex_match("hello world", "wor.d", false);
         assert!(r.matched);
         assert_eq!(r.full, "world");
     }
 
     #[test]
     fn captures_subgroups() {
-        let r = match_regex("foo=42", "([a-z]+)=([0-9]+)", false);
+        let r = zcond_regex_match("foo=42", "([a-z]+)=([0-9]+)", false);
         assert!(r.matched);
         assert_eq!(r.captures, vec!["foo".to_string(), "42".to_string()]);
     }
 
     #[test]
     fn case_insensitive_flag() {
-        let r = match_regex("HELLO", "hello", true);
+        let r = zcond_regex_match("HELLO", "hello", true);
         assert!(r.matched);
     }
 
     #[test]
     fn returns_unmatched_for_invalid_pattern() {
-        let r = match_regex("anything", "[", false);
+        let r = zcond_regex_match("anything", "[", false);
         assert!(!r.matched);
     }
 }

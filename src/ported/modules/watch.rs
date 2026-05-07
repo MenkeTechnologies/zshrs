@@ -264,7 +264,7 @@ fn read_utmp_file(_path: &str) -> Vec<UtmpEntry> {
 /// Match a `$watch` pattern against an actual user/host/tty.
 /// Port of `watchlog_match()` from Src/Modules/watch.c:434 — same
 /// `user@host:tty` triple-component matching.
-pub fn watch_match(pattern: &str, value: &str) -> bool {
+pub fn watchlog_match(pattern: &str, value: &str) -> bool {
     if pattern == value {
         return true;
     }
@@ -316,7 +316,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 /// Port of `watch3ary()` from Src/Modules/watch.c:206 (the
 /// per-format-character branch of `watchlog2()` line 242) — same
 /// `%n`/`%M`/`%l`/`%a`/`%T`/`%t`/`%w`/`%W`/`%D` directives.
-pub fn format_watch(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
+pub fn watch3ary(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
     let mut result = String::new();
     let mut chars = fmt.chars().peekable();
 
@@ -458,9 +458,9 @@ fn format_conditional(
     }
 
     if truth {
-        Some(format_watch(entry, logged_in, &true_branch))
+        Some(watch3ary(entry, logged_in, &true_branch))
     } else {
-        Some(format_watch(entry, logged_in, &false_branch))
+        Some(watch3ary(entry, logged_in, &false_branch))
     }
 }
 
@@ -520,7 +520,7 @@ fn matches_watch_pattern(pattern: &str, entry: &UtmpEntry) -> bool {
     if !rest.starts_with('@') && !rest.starts_with('%') {
         let end = rest.find(['@', '%']).unwrap_or(rest.len());
         let user_pat = &rest[..end];
-        if !watch_match(user_pat, &entry.user) {
+        if !watchlog_match(user_pat, &entry.user) {
             matched = false;
         }
         rest = &rest[end..];
@@ -531,7 +531,7 @@ fn matches_watch_pattern(pattern: &str, entry: &UtmpEntry) -> bool {
             rest = &rest[1..];
             let end = rest.find('@').unwrap_or(rest.len());
             let line_pat = &rest[..end];
-            if !watch_match(line_pat, &entry.line) {
+            if !watchlog_match(line_pat, &entry.line) {
                 matched = false;
             }
             rest = &rest[end..];
@@ -539,7 +539,7 @@ fn matches_watch_pattern(pattern: &str, entry: &UtmpEntry) -> bool {
             rest = &rest[1..];
             let end = rest.find('%').unwrap_or(rest.len());
             let host_pat = &rest[..end];
-            if !watch_match(host_pat, &entry.host) {
+            if !watchlog_match(host_pat, &entry.host) {
                 matched = false;
             }
             rest = &rest[end..];
@@ -556,7 +556,7 @@ fn matches_watch_pattern(pattern: &str, entry: &UtmpEntry) -> bool {
 /// Port of `dowatch()` from Src/Modules/watch.c:597 — the C
 /// source diffs the cached `wtab` against a fresh utmp read and
 /// fires `watchlog()` for each new entry / departure.
-pub fn do_watch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bool)> {
+pub fn dowatch(state: &mut WatchState, current_user: &str) -> Vec<(UtmpEntry, bool)> {
     let mut events = Vec::new();
     let new_entries = read_utmp();
 
@@ -629,11 +629,11 @@ pub fn bin_log(state: &mut WatchState, current_user: &str, fmt: Option<&str>) ->
     state.entries.clear();
     state.last_check = 0;
 
-    let events = do_watch(state, current_user);
+    let events = dowatch(state, current_user);
     let mut output = String::new();
 
     for (entry, logged_in) in events {
-        output.push_str(&format_watch(&entry, logged_in, &fmt_str));
+        output.push_str(&watch3ary(&entry, logged_in, &fmt_str));
         output.push('\n');
     }
 
@@ -662,9 +662,9 @@ mod tests {
 
     #[test]
     fn test_watch_match() {
-        assert!(watch_match("root", "root"));
-        assert!(watch_match("*", "anyuser"));
-        assert!(!watch_match("root", "admin"));
+        assert!(watchlog_match("root", "root"));
+        assert!(watchlog_match("*", "anyuser"));
+        assert!(!watchlog_match("root", "admin"));
     }
 
     #[test]
@@ -678,12 +678,12 @@ mod tests {
             session_type: SessionType::UserProcess,
         };
 
-        let result = format_watch(&entry, true, "%n has %a %l");
+        let result = watch3ary(&entry, true, "%n has %a %l");
         assert!(result.contains("testuser"));
         assert!(result.contains("logged on"));
         assert!(result.contains("1"));
 
-        let result = format_watch(&entry, false, "%n has %a");
+        let result = watch3ary(&entry, false, "%n has %a");
         assert!(result.contains("logged off"));
     }
 
@@ -698,10 +698,10 @@ mod tests {
             session_type: SessionType::UserProcess,
         };
 
-        let result = format_watch(&entry, true, "%m");
+        let result = watch3ary(&entry, true, "%m");
         assert_eq!(result, "host");
 
-        let result = format_watch(&entry, true, "%M");
+        let result = watch3ary(&entry, true, "%M");
         assert_eq!(result, "host.example.com");
     }
 

@@ -59,8 +59,17 @@ def find_call_sites(name):
 
 
 def whole_word_replace(text, old, new):
-    """Replace whole-word occurrences of old with new."""
-    pattern = re.compile(rf"\b{re.escape(old)}\b")
+    """Replace whole-word occurrences of old with new — but NOT when
+    the identifier is qualified by an external path like `libc::X`,
+    `ffi::X`, `c::X`, or `zsh_sys::X`. Those refer to FFI bindings
+    whose name follows the foreign C convention (e.g. `libc::getxattr`
+    for the actual libc syscall). Renaming those would break the
+    extern binding lookup.
+    """
+    # Negative lookbehind for `<ident>::` qualifiers. Rust paths are
+    # `::`-separated; if the previous chars are `::` then this is a
+    # qualified call, leave it alone.
+    pattern = re.compile(rf"(?<!::)\b{re.escape(old)}\b")
     return pattern.subn(new, text)
 
 

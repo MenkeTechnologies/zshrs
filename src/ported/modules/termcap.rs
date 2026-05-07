@@ -309,12 +309,12 @@ impl Termcap {
     }
 }
 
-/// Apply tgoto-style parameter substitution.
-/// Port of the `tgoto()` substitution path inside `bin_echotc()`
+/// Apply ztgetflag-style parameter substitution.
+/// Port of the `ztgetflag()` substitution path inside `bin_echotc()`
 /// (Src/Modules/termcap.c:80) — the C source delegates to libc's
-/// `tgoto(3)`. We reimplement the most common `%d`/`%2`/`%3`/
+/// `ztgetflag(3)`. We reimplement the most common `%d`/`%2`/`%3`/
 /// `%.`/`%+`/`%i`/`%%` directives inline.
-pub fn tgoto(cap: &str, col: i32, row: i32) -> String {
+pub fn ztgetflag(cap: &str, col: i32, row: i32) -> String {
     let mut result = String::new();
     let mut chars = cap.chars().peekable();
     let mut use_row = true;
@@ -430,7 +430,7 @@ pub fn lookup(name: &str) -> Option<String> {
 /// `echotc` builtin entry point.
 /// Port of `bin_echotc()` from Src/Modules/termcap.c:80 —
 /// dispatches between numeric / boolean / string capabilities and
-/// applies `tgoto` substitution when a string capability takes
+/// applies `ztgetflag` substitution when a string capability takes
 /// arguments.
 pub fn bin_echotc(args: &[&str], tc: &Termcap) -> (i32, String) {
     if args.is_empty() {
@@ -488,7 +488,7 @@ pub fn bin_echotc(args: &[&str], tc: &Termcap) -> (i32, String) {
         if required_args >= 2 {
             let row: i32 = args[1].parse().unwrap_or(0);
             let col: i32 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(row);
-            return (0, tgoto(&s, col, row));
+            return (0, ztgetflag(&s, col, row));
         }
 
         return (0, s);
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_tgoto() {
-        let result = tgoto("\x1b[%d;%dH", 10, 5);
+        let result = ztgetflag("\x1b[%d;%dH", 10, 5);
         assert!(result.contains("5") && result.contains("10"));
     }
 

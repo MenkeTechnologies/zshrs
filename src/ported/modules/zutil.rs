@@ -135,7 +135,7 @@ impl StylePattern {
             return true;
         }
 
-        let regex_pattern = glob_to_regex(&self.pattern);
+        let regex_pattern = setstypat(&self.pattern);
         if let Ok(re) = Regex::new(&regex_pattern) {
             re.is_match(context)
         } else {
@@ -146,7 +146,7 @@ impl StylePattern {
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/zutil.c`.
-fn glob_to_regex(pattern: &str) -> String {
+fn setstypat(pattern: &str) -> String {
     let mut result = String::from("^");
     for ch in pattern.chars() {
         match ch {

@@ -119,7 +119,7 @@ impl PtyCmds {
 /// the fallback path on systems without `posix_openpt`). Wraps
 /// `posix_openpt` + `grantpt` + `unlockpt` + `ptsname` + `open`.
 #[cfg(unix)]
-pub fn open_pty() -> io::Result<(RawFd, RawFd)> {
+pub fn get_pty() -> io::Result<(RawFd, RawFd)> {
     let master_fd = unsafe {
         let fd = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY);
         if fd < 0 {
@@ -159,7 +159,7 @@ pub fn open_pty() -> io::Result<(RawFd, RawFd)> {
 /// Port of `ptynonblock()` from Src/Modules/zpty.c:65 — wraps
 /// `fcntl(F_GETFL)` + `fcntl(F_SETFL, |O_NONBLOCK)`.
 #[cfg(unix)]
-pub fn set_nonblock(fd: RawFd) -> io::Result<()> {
+pub fn ptynonblock(fd: RawFd) -> io::Result<()> {
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFL);
         if flags < 0 {
@@ -198,7 +198,7 @@ pub fn disable_echo(fd: RawFd) -> io::Result<()> {
 /// Port of `ptyread()` from Src/Modules/zpty.c:548 — `poll(2)` +
 /// `read(2)` loop that bails when `pattern` is found in the
 /// accumulated buffer or when EOF/timeout fires.
-pub fn pty_read(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> {
+pub fn ptyread(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io::Result<String> {
     let mut buffer = vec![0u8; 4096];
     let mut result = Vec::new();
 
@@ -258,7 +258,7 @@ pub fn pty_read(fd: RawFd, pattern: Option<&str>, timeout_ms: Option<i32>) -> io
 /// Write a string to a pty's master end.
 /// Port of `ptywritestr()` from Src/Modules/zpty.c:714 (which
 /// `ptywrite()` line 743 wraps with `-n` newline handling).
-pub fn pty_write(fd: RawFd, data: &str) -> io::Result<usize> {
+pub fn ptywritestr(fd: RawFd, data: &str) -> io::Result<usize> {
     #[cfg(unix)]
     {
         let bytes = data.as_bytes();
@@ -412,7 +412,7 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
         let data: String = args[1..].join(" ");
 
         if let Some(cmd) = cmds.get(name) {
-            match pty_write(cmd.master_fd, &data) {
+            match ptywritestr(cmd.master_fd, &data) {
                 Ok(_) => (0, output),
                 Err(e) => (1, format!("zpty: write failed: {}\n", e)),
             }
@@ -429,7 +429,7 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
         let timeout = options.timeout;
 
         if let Some(cmd) = cmds.get(name) {
-            match pty_read(cmd.master_fd, pattern, timeout) {
+            match ptyread(cmd.master_fd, pattern, timeout) {
                 Ok(data) => {
                     output.push_str(&data);
                     (0, output)
@@ -468,7 +468,7 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
 
         #[cfg(unix)]
         {
-            match open_pty() {
+            match get_pty() {
                 Ok((master, slave)) => match unsafe { libc::fork() } {
                     -1 => {
                         let _ = pty_close(master);
@@ -514,7 +514,7 @@ pub fn bin_zpty(args: &[&str], options: &ZptyOptions, cmds: &mut PtyCmds) -> (i3
                         let _ = pty_close(slave);
 
                         if !options.block {
-                            let _ = set_nonblock(master);
+                            let _ = ptynonblock(master);
                         }
 
                         let pty_cmd =
