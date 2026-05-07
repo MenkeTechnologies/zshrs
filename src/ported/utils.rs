@@ -2473,7 +2473,7 @@ pub fn restoredir(saved: &str) -> bool {
 
 /// Convert float for output (from utils.c convfloat)
 pub fn convfloat(dval: f64, digits: i32, flags: u32) -> String {
-    crate::params::format_float(dval, digits, flags)
+    crate::params::convfloat(dval, digits, flags)
 }
 
 /// Convert float with underscores (from utils.c convfloat_underscore)

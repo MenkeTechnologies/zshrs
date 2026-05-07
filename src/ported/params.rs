@@ -155,7 +155,7 @@ impl ParamValue {
         match self {
             ParamValue::Scalar(s) => s.clone(),
             ParamValue::Integer(i) => i.to_string(),
-            ParamValue::Float(f) => format_float(*f, 0, 0),
+            ParamValue::Float(f) => convfloat(*f, 0, 0),
             ParamValue::Array(a) => a.join(" "),
             ParamValue::Assoc(h) => {
                 let mut vals: Vec<&String> = h.values().collect();
@@ -198,7 +198,7 @@ impl ParamValue {
                 }
             }
             ParamValue::Integer(i) => vec![i.to_string()],
-            ParamValue::Float(f) => vec![format_float(*f, 0, 0)],
+            ParamValue::Float(f) => vec![convfloat(*f, 0, 0)],
             ParamValue::Array(a) => a.clone(),
             ParamValue::Assoc(h) => h.values().cloned().collect(),
             ParamValue::Unset => Vec::new(),
@@ -2311,7 +2311,7 @@ impl ParamTable {
                 return false;
             }
             let value = if param.is_unique() {
-                uniq_array(value)
+                uniqarray(value)
             } else {
                 value
             };
@@ -3008,7 +3008,7 @@ impl ParamTable {
                 flags::ARRAY | flags::HASHED => return, // Can't export arrays
                 flags::INTEGER => convbase(param.value.as_integer(), param.base as u32),
                 flags::EFLOAT | flags::FFLOAT => {
-                    format_float(param.value.as_float(), param.base, param.flags)
+                    convfloat(param.value.as_float(), param.base, param.flags)
                 }
                 _ => param.value.as_string(),
             };
@@ -3172,7 +3172,7 @@ impl ParamTable {
                     out.push_str(&convbase(*i, param.base as u32));
                 }
                 ParamValue::Float(f) => {
-                    out.push_str(&format_float(*f, param.base, param.flags));
+                    out.push_str(&convfloat(*f, param.base, param.flags));
                 }
                 ParamValue::Array(arr) => {
                     out.push('(');
@@ -3359,21 +3359,6 @@ pub fn setaparam(table: &mut ParamTable, name: &str, val: Vec<String>) -> bool {
     table.set_array(name, val)
 }
 
-/// Assign float parameter
-/// Assign a float parameter.
-/// Port of the float branch of `setnumvalue()` (Src/params.c).
-pub fn assignfparam(table: &mut ParamTable, name: &str, val: f64) -> bool {
-    table.set_float(name, val)
-}
-
-/// Assign hash parameter (from params.c sethparam)
-/// Assign a hash parameter.
-/// Port of the hash-assignment branch of `setvalue()`
-/// (Src/params.c).
-pub fn assignhparam(table: &mut ParamTable, name: &str, val: HashMap<String, String>) -> bool {
-    table.set_assoc(name, val)
-}
-
 /// Unset parameter (from params.c unsetparam_pm)
 /// Unset a parameter.
 /// Port of `unsetparam_pm()` (Src/params.c) — invokes the
@@ -3381,34 +3366,6 @@ pub fn assignhparam(table: &mut ParamTable, name: &str, val: HashMap<String, Str
 /// HashTable.
 pub fn unsetparam_pm(table: &mut ParamTable, name: &str) -> bool {
     table.unset(name)
-}
-
-/// Check if parameter is set
-/// Check whether a parameter is currently set.
-/// Equivalent to the `getparamnode() != NULL` test the C source
-/// inlines (Src/params.c:570).
-pub fn isset_param(table: &ParamTable, name: &str) -> bool {
-    table.contains(name)
-}
-
-/// Get parameter type flags
-/// Get a parameter's `PM_*` type bitmask.
-/// zshrs convenience — C zsh just reads `pm->node.flags &
-/// PM_TYPE` at the call site.
-pub fn paramtype(table: &ParamTable, name: &str) -> u32 {
-    table.params.get(name).map(|p| p.flags).unwrap_or(0)
-}
-
-/// Check if parameter is exported
-/// Check whether a parameter has `PM_EXPORTED`.
-/// Equivalent to the `pm->node.flags & PM_EXPORTED` test
-/// Src/params.c uses for env propagation.
-pub fn isexported(table: &ParamTable, name: &str) -> bool {
-    table
-        .params
-        .get(name)
-        .map(|p| p.is_exported())
-        .unwrap_or(false)
 }
 
 /// Check if parameter is readonly
@@ -3430,14 +3387,6 @@ pub fn isreadonly(table: &ParamTable, name: &str) -> bool {
 /// `setenv(3)`.
 pub fn export_param(table: &mut ParamTable, name: &str) {
     table.export_param(name);
-}
-
-/// Unexport parameter
-/// Clear a parameter's exported flag.
-/// Port of the `unsetenv(3)` + `PM_EXPORTED` clear path inside
-/// `unsetparam_pm()` (Src/params.c).
-pub fn unexport_param(table: &mut ParamTable, name: &str) {
-    table.unexport(name);
 }
 
 /// Start a parameter scope
@@ -3530,21 +3479,25 @@ pub fn valid_refname(val: &str) -> bool {
     true
 }
 
-/// Colon-separated path to array
-pub fn colonarr_to_array(s: &str) -> Vec<String> {
+/// Colon-separated path to array.
+/// Port of `colonsplit()` from Src/params.c.
+pub fn colonsplit(s: &str) -> Vec<String> {
     s.split(':')
         .filter(|s| !s.is_empty())
         .map(String::from)
         .collect()
 }
 
-/// Array to colon-separated path
-pub fn array_to_colonarr(arr: &[String]) -> String {
+/// Array to colon-separated path — inverse of `colonsplit`.
+/// Port of `colonarrgetfn()` from Src/params.c (joins the array
+/// stored in `pm->u.colon` back into the `:`-form for env).
+pub fn colonarrgetfn(arr: &[String]) -> String {
     arr.join(":")
 }
 
-/// Remove duplicate elements from array while preserving order
-pub fn uniq_array(arr: Vec<String>) -> Vec<String> {
+/// Remove duplicate elements from array while preserving order.
+/// Port of `uniqarray()` from Src/params.c.
+pub fn uniqarray(arr: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     arr.into_iter().filter(|s| seen.insert(s.clone())).collect()
 }
@@ -3575,23 +3528,6 @@ fn parse_index_value(s: &str, _ksh_arrays: bool) -> Option<i64> {
         return None;
     }
     s.parse::<i64>().ok()
-}
-
-/// Parse simple subscript - extract index from `[n]` or `[m,n]` syntax
-pub fn parse_simple_subscript(s: &str) -> Option<(i64, i64)> {
-    let s = s.trim();
-    if !s.starts_with('[') || !s.ends_with(']') {
-        return None;
-    }
-    let inner = &s[1..s.len() - 1];
-    if let Some(comma) = inner.find(',') {
-        let start = inner[..comma].trim().parse::<i64>().ok()?;
-        let end = inner[comma + 1..].trim().parse::<i64>().ok()?;
-        Some((start, end))
-    } else {
-        let idx = inner.trim().parse::<i64>().ok()?;
-        Some((idx, idx))
-    }
 }
 
 /// Get array element with subscript handling (from params.c getarrvalue)
@@ -3834,8 +3770,9 @@ pub fn convbase_underscore(val: i64, base: u32, underscore: i32) -> String {
     result
 }
 
-/// Format a float value for output (from params.c convfloat)
-pub fn format_float(dval: f64, digits: i32, pm_flags: u32) -> String {
+/// Format a float value for output.
+/// Port of `convfloat()` from Src/params.c.
+pub fn convfloat(dval: f64, digits: i32, pm_flags: u32) -> String {
     if dval.is_infinite() {
         return if dval < 0.0 {
             "-Inf".to_string()
@@ -3867,7 +3804,7 @@ pub fn format_float(dval: f64, digits: i32, pm_flags: u32) -> String {
 
 /// Format float with underscores
 pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
-    let s = format_float(dval, 0, 0);
+    let s = convfloat(dval, 0, 0);
     if underscore <= 0 {
         return s;
     }
@@ -4082,9 +4019,9 @@ mod tests {
 
     #[test]
     fn test_colonarr_conversion() {
-        let arr = colonarr_to_array("/bin:/usr/bin:/usr/local/bin");
+        let arr = colonsplit("/bin:/usr/bin:/usr/local/bin");
         assert_eq!(arr, vec!["/bin", "/usr/bin", "/usr/local/bin"]);
-        let path = array_to_colonarr(&arr);
+        let path = colonarrgetfn(&arr);
         assert_eq!(path, "/bin:/usr/bin:/usr/local/bin");
     }
 
@@ -4151,7 +4088,7 @@ mod tests {
     #[test]
     fn test_unique_array() {
         let arr = vec!["a".into(), "b".into(), "a".into(), "c".into(), "b".into()];
-        let result = uniq_array(arr);
+        let result = uniqarray(arr);
         assert_eq!(result, vec!["a", "b", "c"]);
     }
 
@@ -4165,16 +4102,16 @@ mod tests {
     }
 
     #[test]
-    fn test_format_float() {
+    fn test_convfloat() {
         // Use 2.5 instead of 3.14 — clippy errors on the latter as
         // an approx PI constant. The test checks 2-decimal formatting
         // round-trips, which the exact value doesn't influence.
-        let s = format_float(2.5, 2, flags::FFLOAT);
+        let s = convfloat(2.5, 2, flags::FFLOAT);
         assert!(s.starts_with("2.50"));
 
-        assert_eq!(format_float(f64::INFINITY, 0, 0), "Inf");
-        assert_eq!(format_float(f64::NEG_INFINITY, 0, 0), "-Inf");
-        assert_eq!(format_float(f64::NAN, 0, 0), "NaN");
+        assert_eq!(convfloat(f64::INFINITY, 0, 0), "Inf");
+        assert_eq!(convfloat(f64::NEG_INFINITY, 0, 0), "-Inf");
+        assert_eq!(convfloat(f64::NAN, 0, 0), "NaN");
     }
 
     #[test]
@@ -4379,7 +4316,7 @@ mod tests {
     #[test]
     fn test_uniq_array_empty() {
         let empty: Vec<String> = Vec::new();
-        assert!(uniq_array(empty).is_empty());
+        assert!(uniqarray(empty).is_empty());
     }
 
     #[test]
