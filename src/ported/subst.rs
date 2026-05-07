@@ -1241,7 +1241,27 @@ fn paramsubst(                                              // c:1625
                     'c' => { flag_char_count = true; }      // c:2275 (c)
                     'W' => { flag_word_count_w = true; }    // c:2281 (W)
                     'z' | 'Z' => { /* tokenize — c:2439 */ } // c:2439 (z/Z)
-                    'g' => { /* escapes — c:2409 */ }       // c:2409 (g)
+                    'g' => {                                // c:2409 (g)
+                        // (g:flags:) — getkeys subflags. Format is
+                        // `g` immediately followed by a delimited
+                        // arg whose chars are sub-flag letters
+                        // (e/o/c). Direct port of subst.c:2409 —
+                        // skips the entire `g:...:` arg span; the
+                        // actual escape decoding happens in
+                        // getkeystring (already wired by `(p)`).
+                        idx += 1;                           // c:2410
+                        if idx < body_chars.len() {         // c:2410
+                            let del = body_chars[idx];      // c:2410
+                            idx += 1;                       // c:2410
+                            while idx < body_chars.len()    // c:2410
+                                && body_chars[idx] != del   // c:2410
+                            {                                // c:2410
+                                idx += 1;                   // c:2410
+                            }                                // c:2410
+                            if idx < body_chars.len() { idx += 1; } // c:2410
+                        }                                    // c:2410
+                        continue;                           // c:2410
+                    }                                       // c:2409 (g)
                     '~' => { state.opts.glob_subst = !state.opts.glob_subst; } // c:2160 (~)
                     'm' => { multi_width += 1; }            // c:2376 (m)
                     'p' => { flag_p_escapes = true; }       // c:2382
