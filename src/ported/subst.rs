@@ -2287,7 +2287,17 @@ fn paramsubst(                                              // c:1625
                 // value. Direct port of subst.c's array-shape branch
                 // around c:715. Falls back to scalar substring when
                 // var_name isn't an array.
-                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                if let Some(mut arr) = state.arrays.get(&var_name).cloned() {
+                    // Positional-param slice (`@`/`*`/`argv`) — zsh
+                    // counts offset 0 as $0 (script/function name),
+                    // not $1. Prepend $0 so `${@:0:2}` returns
+                    // [$0, $1] instead of [$1, $2]. Direct port of
+                    // subst.c's @/* offset arm which routes through
+                    // dohist offset = 0 (includes argzero).
+                    if var_name == "@" || var_name == "*" || var_name == "argv" {
+                        let s0 = state.variables.get("0").cloned().unwrap_or_default();
+                        arr.insert(0, s0);                   // c:715
+                    }
                     let n = arr.len() as i64;                // c:715
                     let lo = if off < 0 { (n + off).max(0) } else { off.min(n) } as usize; // c:715
                     let len = parts.get(1)                   // c:715
