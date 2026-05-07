@@ -3359,6 +3359,125 @@ pub fn setaparam(table: &mut ParamTable, name: &str, val: Vec<String>) -> bool {
     table.set_array(name, val)
 }
 
+/// Subscript-aware scalar parameter assignment.
+///
+/// Port of `assignsparam()` from Src/params.c:3193. The C function
+/// takes the LHS as a single string and embeds the subscript inside
+/// brackets (e.g. `m[$k]`); it then calls `getvalue` → `getindex` →
+/// `getarg` to parse-and-singsub the subscript before dispatching
+/// to the typed setter. Our Rust adaptation takes the subscript
+/// separately because subst.rs::paramsubst already singsubs it
+/// (subst.rs:1822 — direct port of the same singsub call inside
+/// getarg at params.c:1567).
+///
+/// Dispatch shape mirrors C:
+///   - subscript present → key/index lookup, dispatch to existing
+///     assoc / array, or auto-vivify as assoc on string keys
+///     (mirrors createparam(s, PM_HASHED) fallback at params.c:3214)
+///   - no subscript → scalar set (params.c:3253) — caller is
+///     expected to have routed `(A)`/`(AA)`-flagged assignments to
+///     `assignaparam`/`assignhparam` instead.
+///
+/// TODOs (not yet ported from C — file:line cited where they live):
+///   - PM_READONLY rejection (params.c:3210)
+///   - resetparam scalar conversion (params.c:3232)
+///   - PM_NAMEREF dispatch (params.c:3250)
+///   - PM_TIED + PM_SPECIAL setfn callbacks
+///   - ASSPM_AUGMENT (`+=` augment semantics)
+pub fn assignsparam(
+    variables: &mut std::collections::HashMap<String, String>,
+    arrays: &mut std::collections::HashMap<String, Vec<String>>,
+    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
+    name: &str,
+    subscript: Option<&str>,
+    val: &str,
+) {
+    if let Some(key) = subscript {                              // c:3210 (subscripted)
+        // Existing assoc — write the key.
+        if let Some(map) = assoc_arrays.get_mut(name) {         // c:3602 sethparam path
+            map.insert(key.to_string(), val.to_string());
+            return;
+        }
+        // Numeric key on a (potentially auto-vivified) array.
+        if let Ok(idx) = key.parse::<i64>() {                   // c:3357 assignaparam idx
+            let arr = arrays.entry(name.to_string()).or_default();
+            let len = arr.len() as i64;
+            // 1-based forward, negative-from-end. Direct port of
+            // setarrvalue's offset math (params.c).
+            let real_idx = if idx < 0 { len + idx } else { idx - 1 };
+            let real_idx = real_idx.max(0) as usize;
+            while arr.len() <= real_idx {
+                arr.push(String::new());
+            }
+            arr[real_idx] = val.to_string();
+            variables.remove(name);
+            return;
+        }
+        // String key on an unset name — auto-vivify as assoc, mirroring
+        // the C source's `createparam(s, PM_HASHED)` fallback inside
+        // assignhparam when the target doesn't exist (params.c:3214).
+        let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+        map.insert(key.to_string(), val.to_string());
+        assoc_arrays.insert(name.to_string(), map);
+        variables.remove(name);
+        arrays.remove(name);
+        return;
+    }
+    // No subscript — scalar set (params.c:3253 setvalue path).
+    variables.insert(name.to_string(), val.to_string());
+}
+
+/// Array parameter assignment (no subscript).
+///
+/// Port of `assignaparam()` from Src/params.c:3357. Used by the
+/// `(A)`-flagged `${var=val}` form in paramsubst (subst.c:3263).
+/// Splits `val` on IFS into elements and stores as an array,
+/// dropping any prior scalar/assoc value at `name`.
+///
+/// TODOs (not yet ported):
+///   - PM_READONLY check (params.c:3370-3381)
+///   - resetparam from non-array (params.c:3403)
+///   - element-wise subscript assignment with `[k]` syntax
+pub fn assignaparam(
+    variables: &mut std::collections::HashMap<String, String>,
+    arrays: &mut std::collections::HashMap<String, Vec<String>>,
+    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
+    name: &str,
+    parts: Vec<String>,
+) {
+    arrays.insert(name.to_string(), parts);
+    variables.remove(name);
+    assoc_arrays.remove(name);
+}
+
+/// Hash parameter assignment (no subscript).
+///
+/// Port of `sethparam()` from Src/params.c:3602 / `assignhparam` at
+/// 3357. Used by the `(AA)`-flagged `${var=val}` form in paramsubst
+/// (subst.c:3263). Takes a flat key/value sequence and stores as an
+/// associative array, dropping prior scalar/array.
+///
+/// TODOs (not yet ported):
+///   - PM_READONLY rejection (params.c:3617)
+///   - createparam(PM_HASHED) flag propagation
+pub fn sethparam(
+    variables: &mut std::collections::HashMap<String, String>,
+    arrays: &mut std::collections::HashMap<String, Vec<String>>,
+    assoc_arrays: &mut std::collections::HashMap<String, indexmap::IndexMap<String, String>>,
+    name: &str,
+    parts: Vec<String>,
+) {
+    let mut map: indexmap::IndexMap<String, String> = indexmap::IndexMap::new();
+    let mut iter = parts.into_iter();
+    while let Some(k) = iter.next() {
+        let v = iter.next().unwrap_or_default();
+        map.insert(k, v);
+    }
+    assoc_arrays.insert(name.to_string(), map);
+    variables.remove(name);
+    arrays.remove(name);
+}
+
 /// Unset parameter (from params.c unsetparam_pm)
 /// Unset a parameter.
 /// Port of `unsetparam_pm()` (Src/params.c) — invokes the
