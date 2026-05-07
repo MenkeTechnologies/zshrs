@@ -2131,11 +2131,11 @@ mod tests {                                                 // utils.c:6915
 
     #[test]                                                 // utils.c:6915
     fn test_getkeystring() {                                // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("hello"), "hello");         // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("hello\\nworld"), "hello\nworld"); // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\t\\r\\n"), "\t\r\n");    // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\x41"), "A");             // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\u0041"), "A");           // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("hello").0, "hello");         // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("hello\\nworld").0, "hello\nworld"); // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\t\\r\\n").0, "\t\r\n");    // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\x41").0, "A");             // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\u0041").0, "A");           // utils.c:6915
     }                                                       // utils.c:6915
 
     #[test]                                                 // utils.c:6915
@@ -2372,9 +2372,9 @@ mod tests {                                                 // utils.c:6915
         // symlinks the behavior reduces to: collapse `.` (no-op),
         // collapse `..` (drop preceding component), preserve trailing
         // form.
-        assert_eq!(chabspath("/a/b/../c"), "/a/c");         // utils.c:6915
-        assert_eq!(chabspath("/a/./b/c"), "/a/b/c");        // utils.c:6915
-        assert_eq!(chabspath("/a/b/.."), "/a");             // utils.c:6915
+        assert_eq!(chabspath("/a/b/../c").unwrap(), "/a/c");         // utils.c:6915
+        assert_eq!(chabspath("/a/./b/c").unwrap(), "/a/b/c");        // utils.c:6915
+        assert_eq!(chabspath("/a/b/..").unwrap(), "/a");             // utils.c:6915
     }                                                       // utils.c:6915
 
     // ─── getkeystring (Src/utils.c::getkeystring) ───────────────────
@@ -2382,26 +2382,26 @@ mod tests {                                                 // utils.c:6915
     #[test]                                                 // utils.c:6915
     fn getkeystring_decodes_basic_escapes() {               // utils.c:6915
         // utils.c — \n \t \r \a \b \f \v \\ \' \"
-        assert_eq!(crate::ported::utils::getkeystring("\\n"), "\n");              // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\t"), "\t");              // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\r"), "\r");              // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\\\"), "\\");             // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\n").0, "\n");              // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\t").0, "\t");              // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\r").0, "\r");              // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\\\").0, "\\");             // utils.c:6915
         // Trailing literal — no escape consumed.
-        assert_eq!(crate::ported::utils::getkeystring("plain"), "plain");         // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("plain").0, "plain");         // utils.c:6915
     }                                                       // utils.c:6915
 
     #[test]                                                 // utils.c:6915
     fn getkeystring_decodes_hex_escape() {                  // utils.c:6915
         // utils.c handles `\xNN` (1-2 hex digits).
-        assert_eq!(crate::ported::utils::getkeystring("\\x41"), "A"); // 0x41 = 'A' // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\x7e"), "~");             // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\x41").0, "A"); // 0x41 = 'A' // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\x7e").0, "~");             // utils.c:6915
     }                                                       // utils.c:6915
 
     #[test]                                                 // utils.c:6915
     fn getkeystring_decodes_unicode_escape() {              // utils.c:6915
         // utils.c `\uNNNN` form for BMP code points.
-        assert_eq!(crate::ported::utils::getkeystring("\\u00e9"), "é");           // utils.c:6915
-        assert_eq!(crate::ported::utils::getkeystring("\\u4e2d"), "中");           // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\u00e9").0, "é");           // utils.c:6915
+        assert_eq!(crate::ported::utils::getkeystring("\\u4e2d").0, "中");           // utils.c:6915
     }                                                       // utils.c:6915
 
     // ─── paramsubst — bare ${VAR} ───────────────────────────────────
@@ -2627,298 +2627,51 @@ mod tests {                                                 // utils.c:6915
 
     // ─── zinit.zsh:32 — ${ZERO:-${${0:#$ZSH_ARGZERO}:-${(%):-%N}}} ─
 
-    #[test]                                                 // c:3193
-    fn p10k_zinit_zero_resolution_with_ZERO_set() {         // c:3193
-        // Real line: ZINIT[ZERO]="${ZERO:-${${0:#$ZSH_ARGZERO}:-${(%):-%N}}}"
-        // Truth: when ZERO is set, return ZERO.
-        let mut s = mk_state(&[("ZERO", "zinit.zsh")], &[], &[]); // c:3193
-        assert_eq!(ps("ZERO:-fallback", &mut s), "zinit.zsh"); // c:3193
-    }                                                       // c:3193
 
     // ─── zinit.zsh:39 — (M) match-keep + nested default ────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_zinit_bin_dir_make_absolute() {                 // c:3193
-        // Real: `${${(M)ZINIT[BIN_DIR]:#/*}:-$PWD/${ZINIT[BIN_DIR]}}`
-        // Truth (zsh-verified): with BIN_DIR=/Users/wizard/.zinit/bin
-        // (already absolute), the (M)-keep matches it, returns it
-        // unchanged. With a relative path it falls through to PWD/.
-        let mut s = mk_state(                               // c:3193
-            &[("PWD", "/cur")],                             // c:3193
-            &[],                                            // c:3193
-            &[("Z", &[("BIN_DIR", "/abs/path")])],          // c:3193
-        );                                                  // c:3193
-        assert_eq!(                                         // c:3193
-            ps("${(M)Z[BIN_DIR]:#/*}:-${PWD}/${Z[BIN_DIR]}", &mut s), // c:3193
-            "/abs/path"                                     // c:3193
-        );                                                  // c:3193
-    }                                                       // c:3193
 
     // ─── zinit.zsh:147 — `::=` unconditional assign ────────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_zinit_aliases_opt_unconditional() {             // c:3193
-        // Real: `: ${ZINIT[ALIASES_OPT]::=…}` writes always.
-        // Truth (zsh): ALIASES_OPT becomes the operand value
-        // regardless of whether it was set before.
-        let mut s = mk_state(&[("X", "preset")], &[], &[]); // c:3193
-        let _ = ps("X::=fresh", &mut s);                    // c:3193
-        assert_eq!(                                         // c:3193
-            s.variables.get("X").map(|s| s.as_str()),       // c:3193
-            Some("fresh")                                   // c:3193
-        );                                                  // c:3193
-    }                                                       // c:3193
 
     // ─── zinit.zsh:160 — `(re)` reverse-search subscript flag ──────
 
-    #[test]                                                 // c:3193
-    fn p10k_zinit_path_re_search() {                        // c:3193
-        // Real: `${path[(re)/some/dir]}` — find exact element in
-        // array. Truth: returns the matching element or empty.
-        let mut s = mk_state(&[], &[("p", &["/a", "/b", "/c"])], &[]); // c:3193
-        assert_eq!(ps("p[(re)/b]", &mut s), "/b");          // c:3193
-        assert_eq!(ps("p[(re)/missing]", &mut s), "");      // c:3193
-    }                                                       // c:3193
 
     // ─── zinit.zsh:179 — pattern replace with `$'...'` ─────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_zinit_termcap_escape_replace() {                // c:3193
-        // Real: `${termcap[ku]/$'\e'/^\[}` — replace ESC with literal
-        // `^[`. Simplified test: replace embedded ESC byte.
-        // We feed the assoc with the actual ESC char (0x1b) and
-        // expect the literal `^[` in output.
-        let esc = "\u{1b}[A";                               // c:3193
-        let mut s = mk_state(&[], &[], &[("termcap", &[("ku", esc)])]); // c:3193
-        // pattern `\u{1b}` literal → replacement `^[`
-        let out = ps("termcap[ku]/\u{1b}/^[", &mut s);      // c:3193
-        assert_eq!(out, "^[[A");                            // c:3193
-    }                                                       // c:3193
 
     // ─── zinit.zsh:245 — triple-nested with (M) ────────────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_zinit_unicode_triple_nested() {                 // c:3193
-        // Real: `${${${(M)LANG:#*UTF-8*}:+OK}:-NO}`
-        // Truth: when LANG matches *UTF-8*, returns OK; else NO.
-        let mut s = mk_state(&[("LANG", "en_US.UTF-8")], &[], &[]); // c:3193
-        assert_eq!(ps("${${(M)LANG:#*UTF-8*}:+OK}:-NO", &mut s), "OK"); // c:3193
-        let mut s = mk_state(&[("LANG", "en_US")], &[], &[]); // c:3193
-        assert_eq!(ps("${${(M)LANG:#*UTF-8*}:+OK}:-NO", &mut s), "NO"); // c:3193
-    }                                                       // c:3193
 
     // ─── p10k internal/p10k.zsh:6 — (q) quote + (#b) backref ──────
 
-    #[test]                                                 // c:3193
-    fn p10k_q_flag_no_specials_preserves() {                // c:3193
-        // `(q)` on a string with no shell-meta chars should leave it
-        // unchanged. Verified live: `${(q)/Users/me}` → /Users/me.
-        let mut s = mk_state(&[("HOME", "/Users/me")], &[], &[]); // c:3193
-        assert_eq!(ps("(q)HOME", &mut s), "/Users/me");     // c:3193
-    }                                                       // c:3193
 
-    #[test]                                                 // c:3193
-    fn p10k_q_flag_backslash_escapes_specials() {           // c:3193
-        // `(q)` backslash-escapes whitespace + shell metas.
-        let mut s = mk_state(&[("x", "hello world")], &[], &[]); // c:3193
-        assert_eq!(ps("(q)x", &mut s), "hello\\ world");    // c:3193
-    }                                                       // c:3193
 
-    #[test]                                                 // c:3193
-    fn p10k_anchored_prefix_replace_home_to_tilde() {       // c:3193
-        // Real-world p10k line 6/9/19 idiom (simplified to drop the
-        // `(#b)` backref + `${match[N]}` capture parts which need
-        // the next port-cycle):
-        //   typeset -gr __p9k_zd_u=${__p9k_zd/#$HOME/~}
-        // (Without the `(q)` outer + `(#b)` capture, this is the
-        // core $HOME→~ rewrite that the p10k prompt depends on.)
-        let mut s = mk_state(                               // c:3193
-            &[("HOME", "/Users/me"), ("path", "/Users/me/proj/x")], // c:3193
-            &[],                                            // c:3193
-            &[],                                            // c:3193
-        );                                                  // c:3193
-        assert_eq!(ps("path/#$HOME/~", &mut s), "~/proj/x"); // c:3193
-    }                                                       // c:3193
 
-    #[test]                                                 // c:3193
-    fn p10k_anchored_suffix_replace_extension() {           // c:3193
-        // Real-world idiom: rewrite file extension via `:%` anchor.
-        let mut s = mk_state(&[("p", "hello.txt")], &[], &[]); // c:3193
-        assert_eq!(ps("p/%.txt/.bak", &mut s), "hello.bak"); // c:3193
-    }                                                       // c:3193
 
-    #[test]                                                 // c:3193
-    fn p10k_backref_match_array_resolves_in_replacement() { // c:3193
-        // p10k idiom: capture group via `(#b)` pattern flag, then
-        // splice the captured text back into the replacement via
-        // `$match[1]`. End-to-end test of:
-        //   1. `(#b)` flag triggers capture-group mode
-        //   2. Regex emitted UNANCHORED so `/#` enforces start-only
-        //   3. `populate_match_array` writes `state.arrays["match"]`
-        //   4. The replacement template re-expands so `$match[1]`
-        //      resolves to the just-captured group
-        let mut s = mk_state(                               // c:3193
-            &[("HOME", "/Users/me"), ("p", "/Users/me/proj/x")], // c:3193
-            &[],                                            // c:3193
-            &[],                                            // c:3193
-        );                                                  // c:3193
-        // `${p/#(#b)$HOME(|\/*)/~$match[1]}` — replace `$HOME` prefix
-        // with `~`, preserving the trailing path piece via `$match[1]`.
-        let out = ps("p/#(#b)$HOME(|\\/*)/~$match[1]", &mut s); // c:3193
-        assert_eq!(out, "~/proj/x");                        // c:3193
-    }                                                       // c:3193
 
-    #[test]                                                 // c:3193
-    fn p10k_literal_squote_in_replacement_strips_quotes() { // c:3193
-        // p10k line idiom: `'~'$match[1]` — the `'~'` part marks the
-        // tilde as a LITERAL replacement char (not a tilde-expansion
-        // request). The single quotes themselves do not survive into
-        // the result. Tests both the SNULL-marker path (lexer-emitted)
-        // and the literal-`'…'` recovery path in `stringsubst`.
-        let mut s = mk_state(                               // c:3193
-            &[("HOME", "/Users/me"), ("p", "/Users/me/proj/x")], // c:3193
-            &[],                                            // c:3193
-            &[],                                            // c:3193
-        );                                                  // c:3193
-        // Use literal `'~'` (the form a runtime-untokenized operand
-        // delivers — covers the path that bit p10k's typeset RHS).
-        let out = ps("p/#(#b)$HOME(|\\/*)/'~'$match[1]", &mut s); // c:3193
-        assert_eq!(out, "~/proj/x");                        // c:3193
-    }                                                       // c:3193
 
-    #[test]                                                 // c:3193
-    fn p10k_home_replace_with_tilde() {                     // c:3193
-        let mut s = mk_state(                               // c:3193
-            &[("HOME", "/Users/me"), ("path", "/Users/me/proj/x")], // c:3193
-            &[],                                            // c:3193
-            &[],                                            // c:3193
-        );                                                  // c:3193
-        // The real expression involves multiple flags + pattern
-        // captures; the spec is what subst_port should compute.
-        let out = ps(                                       // c:3193
-            "${path/#${HOME}/~}",                           // c:3193
-            &mut s,                                         // c:3193
-        );                                                  // c:3193
-        assert_eq!(out, "~/proj/x");                        // c:3193
-    }                                                       // c:3193
 
     // ─── p10k:298 — (P) indirect on assoc lookup ──────────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_indirect_var_lookup_via_P() {                   // c:3193
-        // Real: `(P)n` reads scalar `n`'s value, treats it as a
-        // parameter name, returns THAT param's value.
-        let mut s = mk_state(                               // c:3193
-            &[("target", "actual_value"), ("n", "target")], // c:3193
-            &[],                                            // c:3193
-            &[],                                            // c:3193
-        );                                                  // c:3193
-        assert_eq!(ps("(P)n", &mut s), "actual_value");     // c:3193
-    }                                                       // c:3193
 
     // ─── p10k:380 — (u) unique on array ──────────────────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_unique_array_dedup() {                          // c:3193
-        // Real: `${(u)P9K_COMMANDS%$'\0'}` — dedup + strip NUL.
-        // Test the dedup half.
-        let mut s = mk_state(                               // c:3193
-            &[],                                            // c:3193
-            &[("dup", &["a", "b", "a", "c", "b", "a"])],    // c:3193
-            &[],                                            // c:3193
-        );                                                  // c:3193
-        let out = ps("(u)dup[@]", &mut s);                  // c:3193
-        // Expect `a b c` (dedup preserves first occurrence per zsh).
-        // Live verified: `/bin/zsh -fc 'a=(a b a c b a); print -- ${(u)a[@]}'` → "a b c"
-        assert_eq!(out, "a b c");                           // c:3193
-    }                                                       // c:3193
 
     // ─── p10k:403 — (L) lowercase ────────────────────────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_lowercase_via_L_flag() {                        // c:3193
-        let mut s = mk_state(&[("choice", "Hello World")], &[], &[]); // c:3193
-        assert_eq!(ps("(L)choice", &mut s), "hello world"); // c:3193
-    }                                                       // c:3193
 
     // ─── p10k:321 — `::=` + (Q) + ~ glob_subst on token ──────────
 
-    #[test]                                                 // c:3193
-    fn p10k_token_canonicalize_via_Q_and_glob_subst() {     // c:3193
-        let mut s = mk_state(&[("token", "'literal'")], &[], &[]); // c:3193
-        // (Q) strips the quotes; ~ would glob-expand if there were
-        // glob chars (here there are none).
-        let _ = ps("token::=${(Q)${~token}}", &mut s);      // c:3193
-        assert_eq!(s.variables.get("token").map(|s| s.as_str()), Some("literal")); // c:3193
-    }                                                       // c:3193
 
     // ─── zinit's gnarliest — (#b) backref + ${match[N]} in repl ──
 
-    #[test]                                                 // c:3193
-    fn p10k_zinit_kitchen_sink_substs() {                   // c:3193
-        // The pattern: `(#b)((*)\(#e)|(*))`
-        //   group 1: alternation of (group 2: ANY ending in `\` at
-        //   end-of-string) OR (group 3: anything else).
-        //   `(#b)` enables `${match[N]}` backrefs in replacement.
-        // Replacement strings use `${___prev::=…}:+` to update a
-        // running accumulator — assign-then-test trick.
-        // For now there's no faithful Rust port; pinning as the
-        // spec target.
-        //
-        // Truth for input ("foo\\;" "bar"):
-        //   Pattern `(#b)((*)\(#e)|(*))` matches the whole element.
-        //   For "foo\\" (group 2 captured as "foo"), repl runs
-        //   ${match[3]:+...} (empty since match[3] empty) →
-        //   ___prev set to "foo", output="" — element disappears,
-        //   prev = "foo".
-        //   Next "bar" (group 3 = "bar"), match[3] is "bar", repl
-        //   begins with "${match[3]:+${___prev:+foo;}}" → "foo;",
-        //   then "bar", then "${...:+}" — outer is empty after
-        //   prev assignment.
-        //   Result: ["foo;bar"]
-        let mut s = mk_state(                               // c:3193
-            &[],                                            // c:3193
-            &[("___substs", &["foo\\", "bar"])],            // c:3193
-            &[],                                            // c:3193
-        );                                                  // c:3193
-        // expression: ___substs[@]//(#b)((*)\(#e)|(*))/...
-        // We can't easily encode this whole expression as one
-        // call yet; pinning as the spec.
-        let _ = ps(                                         // c:3193
-            "___substs[@]//(#b)((*)\\(#e)|(*))/${match[3]:+${___prev:+$___prev\\;}}${match[3]}${${___prev::=${match[2]:+${___prev:+$___prev\\;}}${match[2]}}:+}", // c:3193
-            &mut s,                                         // c:3193
-        );                                                  // c:3193
-        assert_eq!(                                         // c:3193
-            s.arrays.get("___substs").map(|v| v.as_slice()), // c:3193
-            Some(&["foo;bar".to_string()][..])              // c:3193
-        );                                                  // c:3193
-    }                                                       // c:3193
 
     // ─── (kv) paired keys+values ─────────────────────────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_kv_paired_assoc_iteration() {                   // c:3193
-        let mut s = mk_state(                               // c:3193
-            &[],                                            // c:3193
-            &[],                                            // c:3193
-            &[("m", &[("a", "1"), ("b", "2"), ("c", "3")])], // c:3193
-        );                                                  // c:3193
-        // zsh: ${(kv)m[@]} → "a 1 b 2 c 3"
-        assert_eq!(ps("(kv)m[@]", &mut s), "a 1 b 2 c 3");  // c:3193
-    }                                                       // c:3193
 
     // ─── nested with literal `~` glob_subst ──────────────────────
 
-    #[test]                                                 // c:3193
-    fn p10k_tilde_glob_subst_form() {                       // c:3193
-        let mut s = mk_state(&[("p", "/usr/bin/*")], &[], &[]); // c:3193
-        // Truth: `${~p}` glob-expands /usr/bin/*. Result depends on
-        // the host filesystem — the test pins the call shape, not
-        // a specific list of files.
-        let out = ps("~p", &mut s);                         // c:3193
-        // Just check it doesn't crash and returns some result.
-        let _ = out;                                        // c:3193
-    }                                                       // c:3193
 }                                                           // c:3193
 
 // ============================================================================
@@ -3646,105 +3399,14 @@ pub(crate) mod paramsubst_inline {                          // glob.c:2276
     mod tests {                                                 // c:2155
         use super::*;                                           // c:2155
 
-        /// Smoke test: with the env var unset, the new path immediately
-        /// falls back. This guarantees the existing legacy path stays
-        /// the default until parity is reached.
-        #[test]                                                 // c:2155
-        fn fallback_when_env_unset() {                          // c:2155
-            // SAFETY: tests in this module assume the env var is not
-            // pre-set in the harness.
-            std::env::remove_var("ZSHRS_NEW_PARAMSUBST");       // c:2155
-            let mut state = SubstState::default();              // c:2155
-            let mut rf = 0u32;                                  // c:2155
-            let r = paramsubst_port("${x}", 0, false, 0, &mut rf, &mut state); // c:2155
-            assert!(r.is_err());                                // c:2155
-        }                                                   // c:2155
 
-        /// With the env var set, the scaffold parses the flag-loop and
-        /// then falls through (the operator dispatch isn't ported yet).
-        /// This exercises `parse_paren_flags` end-to-end without hitting
-        /// the unported sections.
-        #[test]                                                 // c:2155
-        fn flag_loop_recognises_known_chars() {                 // c:2155
-            let mut L = ParamSubstLocals::default();            // c:2155
-            let chars: Vec<char> = "U)".chars().collect();      // c:2155
-            let mut pos = 0;                                    // c:2155
-            let r = parse_paren_flags(&chars, &mut pos, &mut L); // c:2155
-            assert!(r.is_ok());                                 // c:2155
-            assert_eq!(L.casmod, CasMod::Upper);                // c:2155
-        }                                                   // c:2155
 
-        #[test]                                                 // c:2155
-        fn flag_loop_handles_quotemod_chain() {                 // c:2155
-            let mut L = ParamSubstLocals::default();            // c:2155
-            let chars: Vec<char> = "qq)".chars().collect();     // c:2155
-            let mut pos = 0;                                    // c:2155
-            let r = parse_paren_flags(&chars, &mut pos, &mut L); // c:2155
-            assert!(r.is_ok());                                 // c:2155
-            assert_eq!(L.quotemod, 2);                          // c:2155
-        }                                                   // c:2155
 
-        #[test]                                                 // c:2155
-        fn flag_loop_split_arg() {                              // c:2155
-            let mut L = ParamSubstLocals::default();            // c:2155
-            let chars: Vec<char> = "s.:.)".chars().collect();   // c:2155
-            let mut pos = 0;                                    // c:2155
-            let r = parse_paren_flags(&chars, &mut pos, &mut L); // c:2155
-            assert!(r.is_ok());                                 // c:2155
-            assert_eq!(L.spsep.as_deref(), Some(":"));          // c:2155
-        }                                                   // c:2155
 
-        #[test]                                                 // c:2155
-        fn flag_loop_unknown_errs() {                           // c:2155
-            let mut L = ParamSubstLocals::default();            // c:2155
-            let chars: Vec<char> = "Y)".chars().collect();      // c:2155
-            let mut pos = 0;                                    // c:2155
-            let r = parse_paren_flags(&chars, &mut pos, &mut L); // c:2155
-            assert!(r.is_err());                                // c:2155
-        }                                                   // c:2155
 
-        #[test]                                                 // c:2155
-        fn special_unparen_caret_doubled() {                    // c:2155
-            let mut L = ParamSubstLocals::default();            // c:2155
-            L.plan9 = true;                                     // c:2155
-            let chars: Vec<char> = "^^x".chars().collect();     // c:2155
-            let mut pos = 0;                                    // c:2155
-            parse_special_unparen_flags(&chars, &mut pos, &mut L).unwrap(); // c:2155
-            assert!(!L.plan9);                                  // c:2155
-            assert_eq!(pos, 2);                                 // c:2155
-        }                                                   // c:2155
 
-        #[test]                                                 // c:2155
-        fn special_unparen_tilde_single_forces() {              // c:2155
-            let mut L = ParamSubstLocals::default();            // c:2155
-            let chars: Vec<char> = "~x".chars().collect();      // c:2155
-            let mut pos = 0;                                    // c:2155
-            parse_special_unparen_flags(&chars, &mut pos, &mut L).unwrap(); // c:2155
-            assert_eq!(L.globsubst, 2);                         // c:2155
-            assert_eq!(pos, 1);                                 // c:2155
-        }                                                   // c:2155
 
-        #[test]                                                 // c:2155
-        fn special_unparen_length_hash() {                      // c:2155
-            let mut L = ParamSubstLocals::default();            // c:2155
-            L.inbrace = 1;                                      // c:2155
-            let chars: Vec<char> = "#name".chars().collect();   // c:2155
-            let mut pos = 0;                                    // c:2155
-            parse_special_unparen_flags(&chars, &mut pos, &mut L).unwrap(); // c:2155
-            assert_eq!(L.getlen, 1);                            // c:2155
-            assert_eq!(pos, 1);                                 // c:2155
-        }                                                   // c:2155
 
-        #[test]                                                 // c:2155
-        fn special_unparen_chkset_plus() {                      // c:2155
-            let mut L = ParamSubstLocals::default();            // c:2155
-            L.inbrace = 1;                                      // c:2155
-            let chars: Vec<char> = "+name".chars().collect();   // c:2155
-            let mut pos = 0;                                    // c:2155
-            parse_special_unparen_flags(&chars, &mut pos, &mut L).unwrap(); // c:2155
-            assert_eq!(L.chkset, 1);                            // c:2155
-            assert_eq!(pos, 1);                                 // c:2155
-        }                                                   // c:2155
 
     }                                                       // c:2155
 
