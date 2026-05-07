@@ -111,13 +111,6 @@ pub fn is_word_char(c: char, wordchars: &str) -> bool {
     c.is_alphanumeric() || wordchars.contains(c)
 }
 
-/// Check if character is an IFS character
-/// Check whether a char is in `$IFS`.
-/// Port of the `iifs()` macro from Src/zsh.h.
-pub fn is_ifs_char(c: char, ifs: &str) -> bool {
-    ifs.contains(c)
-}
-
 /// Convert character to lowercase
 /// To-lowercase that respects locale.
 /// Port of `tulower()` from Src/utils.c.
@@ -1109,58 +1102,6 @@ pub fn unescape(s: &str) -> String {
     result
 }
 
-/// Check if string contains only printable characters
-pub fn isprintable(s: &str) -> bool {
-    s.chars().all(|c| !c.is_control() || c == '\n' || c == '\t')
-}
-
-/// Get terminal width (fallback to 80)
-pub fn term_columns() -> usize {
-    #[cfg(unix)]
-    {
-        use std::mem::MaybeUninit;
-        unsafe {
-            let mut ws: MaybeUninit<libc::winsize> = MaybeUninit::uninit();
-            if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, ws.as_mut_ptr()) == 0 {
-                let ws = ws.assume_init();
-                if ws.ws_col > 0 {
-                    return ws.ws_col as usize;
-                }
-            }
-        }
-    }
-    std::env::var("COLUMNS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(80)
-}
-
-/// Get terminal lines (fallback to 24)
-pub fn term_lines() -> usize {
-    #[cfg(unix)]
-    {
-        use std::mem::MaybeUninit;
-        unsafe {
-            let mut ws: MaybeUninit<libc::winsize> = MaybeUninit::uninit();
-            if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, ws.as_mut_ptr()) == 0 {
-                let ws = ws.assume_init();
-                if ws.ws_row > 0 {
-                    return ws.ws_row as usize;
-                }
-            }
-        }
-    }
-    std::env::var("LINES")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(24)
-}
-
-/// Sleep for milliseconds
-pub fn zsleep_ms(ms: u64) {
-    std::thread::sleep(std::time::Duration::from_millis(ms));
-}
-
 /// Get hostname
 pub fn gethostname() -> String {
     #[cfg(unix)]
@@ -1193,18 +1134,6 @@ pub fn isabspath(path: &str) -> bool {
     path.starts_with('/')
 }
 
-/// Make path absolute
-pub fn makeabspath(path: &str) -> String {
-    if isabspath(path) {
-        return path.to_string();
-    }
-    if let Some(cwd) = zgetcwd() {
-        format!("{}/{}", cwd, path)
-    } else {
-        path.to_string()
-    }
-}
-
 /// Get real (canonical) path
 pub fn realpath(path: &str) -> Option<String> {
     std::fs::canonicalize(path)
@@ -1232,11 +1161,6 @@ pub fn is_link(path: &str) -> bool {
     std::fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
-}
-
-/// Get file size
-pub fn file_size(path: &str) -> Option<u64> {
-    std::fs::metadata(path).ok().map(|m| m.len())
 }
 
 /// Get file modification time as seconds since epoch
@@ -1276,49 +1200,9 @@ pub fn append_file(path: &str, contents: &str) -> bool {
         .is_ok()
 }
 
-/// List directory contents
-pub fn list_dir(path: &str) -> Option<Vec<String>> {
-    std::fs::read_dir(path).ok().map(|entries| {
-        entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect()
-    })
-}
-
 /// Create directory
 pub fn mkdir(path: &str) -> bool {
     std::fs::create_dir(path).is_ok()
-}
-
-/// Create directory recursively
-pub fn mkdir_p(path: &str) -> bool {
-    std::fs::create_dir_all(path).is_ok()
-}
-
-/// Remove file
-pub fn rm_file(path: &str) -> bool {
-    std::fs::remove_file(path).is_ok()
-}
-
-/// Remove directory
-pub fn rm_dir(path: &str) -> bool {
-    std::fs::remove_dir(path).is_ok()
-}
-
-/// Remove directory recursively
-pub fn rm_dir_all(path: &str) -> bool {
-    std::fs::remove_dir_all(path).is_ok()
-}
-
-/// Copy file
-pub fn copy_file(src: &str, dst: &str) -> bool {
-    std::fs::copy(src, dst).is_ok()
-}
-
-/// Rename/move file
-pub fn rename_file(src: &str, dst: &str) -> bool {
-    std::fs::rename(src, dst).is_ok()
 }
 
 /// Create symlink
