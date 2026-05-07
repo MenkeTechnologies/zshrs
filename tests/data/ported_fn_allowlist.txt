@@ -32,3 +32,7 @@ is_forked_child
 # inline block. Used by 2 sites in jobs.rs printjob; inlining
 # would double the 25-line status-decode block.
 format_process_status
+# Inner numeric-compare branch of zstrcmp/eltpcmp — direct port
+# of src/zsh/Src/sort.c:137-172 (the `if (sortnumeric)` block).
+# 100+ lines; inlining into zstrcmp would make it unwieldy.
+compare_numeric
