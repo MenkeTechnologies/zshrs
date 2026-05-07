@@ -486,16 +486,38 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                 let data = data.replace('\0', "");                // c:100
                 list.setdata(node_idx, data.clone());      // c:100
 
-                // Brace expansion
-                if !state.opts.ignore_braces && (flags & prefork_flags::SINGLE == 0) { // c:100
-                    if !keep {                              // c:100
-                        stop_idx = list.nextnode(node_idx); // c:100
-                    }                                       // c:100
-                    while false { /* hasbraces stub — TODO port glob.c hasbraces */ // c:100
-                        keep = true;                        // c:100
-                        /* xpandbraces stub — TODO port glob.c:4799 */;   // c:100
-                    }                                       // c:100
-                }                                           // c:100
+                // Brace expansion. C: `while (hasbraces(getdata(node)))
+                // { keep = 1; xpandbraces(list, &node); }`. zsh's
+                // hasbraces walks the string looking for a balanced
+                // `{…}` containing `,` or `..` (range). xpandbraces
+                // splits the node into N nodes.
+                //
+                // Routes through canonical
+                // crate::ported::glob::expand_braces; treats >1
+                // result as a positive hasbraces hit.
+                if !state.opts.ignore_braces && (flags & prefork_flags::SINGLE == 0) { // c:166
+                    if !keep {                              // c:168
+                        stop_idx = list.nextnode(node_idx); // c:169
+                    }
+                    loop {                                  // c:170 (while hasbraces)
+                        let cur = match list.getdata(node_idx) {
+                            Some(d) => d.to_string(),
+                            None => break,
+                        };
+                        let expanded = crate::ported::glob::expand_braces(&cur, false); // c:171
+                        if expanded.len() <= 1 { break; }   // c:170 (!hasbraces)
+                        keep = true;                        // c:172
+                        // Replace current node with first expansion;
+                        // insert the rest as new nodes after it.
+                        list.setdata(node_idx, expanded[0].clone()); // c:173 (xpandbraces)
+                        let mut last = node_idx;
+                        for ex in &expanded[1..] {
+                            last = list.insertlinknode(last, ex.clone());
+                        }
+                        // Loop again: the first expansion may itself
+                        // contain more brace patterns to expand.
+                    }
+                }
 
                 // File substitution (non-SHFILEEXPANSION). Skip
                 // entirely when state.skip_filesub is set — used
