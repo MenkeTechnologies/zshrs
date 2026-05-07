@@ -314,57 +314,83 @@ pub const NULSTRING: &str = "\u{8F}";                       // c:100
 
 /// Check for array assignment with entries like [key]=val
 /// Port of keyvalpairelement() from subst.c lines 47-77
+/// Port of `keyvalpairelement()` from `Src/subst.c:49-79`.
+///
+/// Detects an `[key]=value` or `[key]+=value` shape (assoc-array
+/// element assignment used in `typeset -A foo=([k]=v)`). On match,
+/// rewrites the single linknode into THREE nodes: a Marker sentinel,
+/// the unquoted key, and the unquoted value. The Marker sentinel
+/// (with optional `+` for append) signals downstream globlist /
+/// prefork that this triplet should NOT be globbed.
+///
+/// Returns Some(value_node_idx) on match, None when the input doesn't
+/// fit the shape (caller falls through to normal word handling).
 fn keyvalpairelement(list: &mut LinkList, node_idx: usize) -> Option<usize> { // c:49
-    let data = list.getdata(node_idx)?;                    // c:49
-    let chars: Vec<char> = data.chars().collect();          // c:49
+    // C: `start = (char *)getdata(node)` — fetch the node's text.
+    let data = list.getdata(node_idx)?.to_string();         // c:53
+    let chars: Vec<char> = data.chars().collect();          // c:53
 
-    if chars.is_empty() || chars[0] != INBRACK {            // c:49
-        return None;                                        // c:49
-    }                                                       // c:49
+    // C: `start[0] == Inbrack` — must lead with `[` (or token).
+    if chars.is_empty()                                     // c:54
+        || (chars[0] != INBRACK && chars[0] != '[')         // c:54
+    {
+        return None;                                        // c:54
+    }
 
-    // Find closing bracket
-    let mut end_pos = None;                                 // c:49
-    for (i, &c) in chars.iter().enumerate().skip(1) {       // c:49
-        if c == OUTBRACK {                                  // c:49
-            end_pos = Some(i);                              // c:49
-            break;                                          // c:49
-        }                                                   // c:49
-    }                                                       // c:49
+    // C: `end = strchr(start+1, Outbrack)` — find matching `]`.
+    let mut end_pos: Option<usize> = None;                  // c:55
+    for (i, &c) in chars.iter().enumerate().skip(1) {       // c:55
+        if c == OUTBRACK || c == ']' {                      // c:55
+            end_pos = Some(i);                              // c:55
+            break;                                          // c:55
+        }
+    }
+    let end_pos = end_pos?;                                 // c:55
 
-    let end_pos = end_pos?;                                 // c:49
+    // C: `end[1] == Equals || (end[1] == '+' && end[2] == Equals)`
+    // — `]=value` or `]+=value` postfix.
+    if end_pos + 1 >= chars.len() {                         // c:57
+        return None;                                        // c:57
+    }
+    let is_append = chars.get(end_pos + 1) == Some(&'+')    // c:58
+        && (chars.get(end_pos + 2) == Some(&EQUALS)
+            || chars.get(end_pos + 2) == Some(&'='));
+    let is_assign = !is_append                              // c:57
+        && (chars.get(end_pos + 1) == Some(&EQUALS)
+            || chars.get(end_pos + 1) == Some(&'='));
+    if !is_assign && !is_append {                           // c:60
+        return None;
+    }
 
-    // Check for ]=value or ]+=value
-    if end_pos + 1 >= chars.len() {                         // c:49
-        return None;                                        // c:49
-    }                                                       // c:49
+    // C: `*end = '\0'; dat = start + 1; singsub(&dat); untokenize(dat);`
+    // — extract key, run param-subst, untokenize.
+    let raw_key: String = chars[1..end_pos].iter().collect(); // c:64
+    let mut tmp_state = SubstState::default();              // c:65 (singsub context)
+    let key_subst = singsub(&raw_key, &mut tmp_state);      // c:65
+    let key = crate::lex::untokenize(&key_subst);           // c:66
 
-    let is_append = chars.get(end_pos + 1) == Some(&'+') && chars.get(end_pos + 2) == Some(&EQUALS); // c:49
-    let is_assign = chars.get(end_pos + 1) == Some(&EQUALS); // c:49
+    // C lines 67-75: Marker / Marker_plus sentinel + insertlinknode
+    // for key and value.
+    let value_start = if is_append { end_pos + 3 } else { end_pos + 2 }; // c:67-72
+    let raw_value: String = chars[value_start..].iter().collect(); // c:69 / 73
+    let mut tmp_state2 = SubstState::default();             // c:75 (singsub context)
+    let value_subst = singsub(&raw_value, &mut tmp_state2); // c:75
+    let value = crate::lex::untokenize(&value_subst);       // c:76
 
-    if !is_assign && !is_append {                           // c:49
-        return None;                                        // c:49
-    }                                                       // c:49
+    let marker = if is_append {                             // c:67
+        format!("{}+", MARKER)                              // c:67
+    } else {                                                // c:71
+        MARKER.to_string()                                  // c:71
+    };
 
-    // Extract key
-    let key: String = chars[1..end_pos].iter().collect();   // c:49
+    list.setdata(node_idx, marker);                         // c:72
+    let key_idx = list.insertlinknode(node_idx, key);       // c:73
+    let val_idx = list.insertlinknode(key_idx, value);      // c:77
 
-    // Extract value
-    let value_start = if is_append { end_pos + 3 } else { end_pos + 2 }; // c:49
-    let value: String = chars[value_start..].iter().collect(); // c:49
-
-    // Set marker
-    let marker = if is_append {                             // c:49
-        format!("{}+", MARKER)                              // c:49
-    } else {                                                // c:49
-        MARKER.to_string()                                  // c:49
-    };                                                      // c:49
-
-    list.setdata(node_idx, marker);                        // c:49
-    let key_idx = list.insertlinknode(node_idx, key);         // c:49
-    let val_idx = list.insertlinknode(key_idx, value);        // c:49
-
-    Some(val_idx)                                           // c:49
-}                                                           // c:49
+    // C: `return insertlinknode(list, node, dat);` — node where
+    // value was inserted.
+    Some(val_idx)                                           // c:77
+}                                                           // c:79
 
 /// Do substitutions before fork
 /// Port of prefork() from subst.c lines 94-183
