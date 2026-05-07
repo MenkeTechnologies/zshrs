@@ -329,6 +329,10 @@ impl SubstState {                                           // c:2807
         if self.last_subst.is_some() {                      // c:4531
             exec.last_subst = self.last_subst;              // c:4531
         }
+        // SUB_* bits flow per-call into the executor so the
+        // BUILTIN_PARAM_* arms can read them via with_executor.
+        // Direct port of subst.c flag-loop → getmatch() bridge.
+        exec.sub_flags = self.sub_flags;                    // c:2169
     }
 }                                                           // c:2807
 
