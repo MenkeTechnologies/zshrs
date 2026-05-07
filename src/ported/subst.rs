@@ -5731,7 +5731,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool, state: &SubstStat
     }
 
     // C: `if (dst == NULL) { untokenize(dst = dupstring(s)); … }`
-    let mut result = match dst {                            // c:1542
+    let result = match dst {                                // c:1542
         Some(d) => d,                                       // c:1542
         None => {
             let untoked = crate::lex::untokenize(s);        // c:1543
@@ -5754,7 +5754,6 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool, state: &SubstStat
         // Result kept as-is; tok_arg is a hint for downstream glob
         // engines that consume the tokenized form directly.
     }
-    let _ = &mut result;                                    // suppress unused mut
     result                                                  // c:1553
 }                                                           // c:1554
 
