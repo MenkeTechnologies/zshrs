@@ -1822,6 +1822,38 @@ impl ZshCompiler {
             }
         }
 
+        // Fast path: bare `$~NAME` — equivalent to `${~NAME}` (forced
+        // glob substitution on the value). zsh: `str=*.txt; print
+        // $~str` expands to matching filenames just like the braced
+        // form. Direct port of subst.c:2596 `case '~'` reached via
+        // the unbraced-shorthand path. Without this, `$~name` was
+        // emitted as literal text.
+        if !has_bnull && untoked.len() >= 3 && untoked.starts_with("$~") {
+            let rest = &untoked[2..];
+            // `$~~NAME` toggles globsubst OFF — emit bare GET_VAR.
+            let (do_glob, name_part) = if let Some(after) = rest.strip_prefix('~') {
+                (false, after)
+            } else {
+                (true, rest)
+            };
+            let valid = !name_part.is_empty()
+                && name_part.chars().next()
+                    .map(|c| c == '_' || c.is_ascii_alphabetic())
+                    .unwrap_or(false)
+                && name_part.chars().all(|c| c == '_' || c.is_ascii_alphanumeric());
+            if valid {
+                let idx = self.builder.add_constant(Value::str(name_part));
+                self.builder.emit(Op::LoadConst(idx), 0);
+                self.builder
+                    .emit(Op::CallBuiltin(crate::exec::BUILTIN_GET_VAR, 1), 0);
+                if do_glob {
+                    self.builder
+                        .emit(Op::CallBuiltin(crate::exec::BUILTIN_GLOB_EXPAND, 0), 0);
+                }
+                return;
+            }
+        }
+
         // Fast path: bare `$NAME[KEY]` — without braces, zsh lexes
         // `$NAME` as the variable name and `[KEY]` as a subscript that
         // applies to it (NOT a literal `[KEY]` suffix). Emit name+key
