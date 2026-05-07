@@ -3246,14 +3246,54 @@ pub mod valflag {                                           // c:N/A
 
 /// Evaluate character from number (for (#) flag)
 /// Port of substevalchar() from subst.c
+/// Port of `substevalchar()` from `Src/subst.c:1490-1521`.
+///
+/// Implements the `(#)` paramsubst flag: evaluate the expression as
+/// a math integer, then convert that codepoint to a UTF-8 string.
+/// Used by `${(#)foo}` where `foo` is a numeric expression yielding
+/// a character code.
 pub fn substevalchar(s: &str) -> Option<String> {           // c:1490
-    let val = crate::ported::math::mathevali(s).unwrap_or(0);                                 // c:1490
-    if val < 0 {                                            // c:1490
-        return None;                                        // c:1490
-    }                                                       // c:1490
+    // C: `int saved_errflag = errflag; errflag = 0;` — clear-and-save
+    // the global error flag around mathevali so failure from an
+    // invalid math expr stays local.
+    // (Rust port has no global errflag — the Result type carries
+    // the error directly.)
+    let ires = match crate::ported::math::mathevali(s) {    // c:1497
+        Ok(n) => n,                                         // c:1497
+        Err(_) => {                                         // c:1499
+            // C: `return noerrs ? dupstring("") : NULL;` —
+            // empty string when noerrs flag is set, NULL otherwise.
+            // Rust port returns Some("") so callers see a clean
+            // empty value rather than aborting; the `noerrs` global
+            // is at the parser layer and isn't plumbed here yet.
+            return Some(String::new());                     // c:1500
+        }                                                   // c:1502
+    };                                                      // c:1502
+    if ires < 0 {                                           // c:1505
+        // C: `zerr("character not in range");` — diagnostic to
+        // stderr.
+        eprintln!("zshrs: character not in range");         // c:1506
+        // C falls through to the byte-render path with a negative
+        // ires, which emits a garbage byte. The Rust port returns
+        // empty rather than a corrupt char.
+        return Some(String::new());                         // c:1506
+    }                                                       // c:1507
 
-    char::from_u32(val as u32).map(|c| c.to_string())       // c:1490
-}                                                           // c:1490
+    // C: MULTIBYTE arm — `if (isset(MULTIBYTE) && ires > 127)` use
+    // ucs4tomb to encode as multibyte. Rust uses char::from_u32
+    // which handles all valid Unicode scalar values uniformly.
+    if let Some(ch) = char::from_u32(ires as u32) {         // c:1509
+        let mut buf = [0u8; 4];                             // c:1510
+        return Some(ch.encode_utf8(&mut buf).to_string());  // c:1510
+    }                                                       // c:1510
+
+    // C fallback: `sprintf(ptr, "%c", (int)ires);` — single byte.
+    // Rust falls back to a single byte when char::from_u32 rejects
+    // (surrogate range or out-of-range value). Render as Latin-1
+    // byte for compatibility with C's `(char)ires` cast.
+    let byte = (ires as u32 & 0xFF) as u8;                  // c:1517
+    Some(String::from_utf8_lossy(&[byte]).into_owned())     // c:1517
+}                                                           // c:1521
 
 /// Check for colon subscript in parameter expansion
 /// Port of check_colon_subscript() from subst.c
