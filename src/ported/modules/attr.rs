@@ -322,7 +322,7 @@ pub fn listxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>> 
 
 /// Port of `xlistxattr()` from `Src/Modules/attr.c:52`.
 #[cfg(target_os = "linux")]
-pub fn listxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>> {
+pub fn xlistxattr(path: &str, options: &XattrOptions) -> io::Result<Vec<String>> {
     let path_c = CString::new(path)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid path"))?;
 
