@@ -1107,11 +1107,6 @@ pub fn zchdir(path: &str) -> bool {
     std::env::set_current_dir(path).is_ok()
 }
 
-/// Check if path is absolute
-pub fn isabspath(path: &str) -> bool {
-    path.starts_with('/')
-}
-
 /// Get real (canonical) path
 pub fn realpath(path: &str) -> Option<String> {
     std::fs::canonicalize(path)
@@ -1283,47 +1278,6 @@ pub fn is_root() -> bool {
     geteuid() == 0
 }
 
-/// Get umask
-pub fn getumask() -> u32 {
-    #[cfg(unix)]
-    unsafe {
-        let mask = libc::umask(0);
-        libc::umask(mask);
-        mask as u32
-    }
-    #[cfg(not(unix))]
-    0o022
-}
-
-/// Set umask
-pub fn setumask(mask: u32) -> u32 {
-    #[cfg(unix)]
-    unsafe {
-        libc::umask(mask as libc::mode_t) as u32
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = mask;
-        0
-    }
-}
-
-/// Get current time as seconds since epoch
-pub fn time_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-/// Get current time with nanoseconds
-pub fn time_now_ns() -> (i64, i64) {
-    let dur = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    (dur.as_secs() as i64, dur.subsec_nanos() as i64)
-}
-
 /// Format seconds as HH:MM:SS
 pub fn printtime(secs: i64) -> String {
     let hours = secs / 3600;
@@ -1333,26 +1287,6 @@ pub fn printtime(secs: i64) -> String {
         format!("{}:{:02}:{:02}", hours, mins, secs)
     } else {
         format!("{}:{:02}", mins, secs)
-    }
-}
-
-/// Parse HH:MM:SS to seconds
-pub fn parse_time(s: &str) -> Option<i64> {
-    let parts: Vec<&str> = s.split(':').collect();
-    match parts.len() {
-        1 => parts[0].parse().ok(),
-        2 => {
-            let mins: i64 = parts[0].parse().ok()?;
-            let secs: i64 = parts[1].parse().ok()?;
-            Some(mins * 60 + secs)
-        }
-        3 => {
-            let hours: i64 = parts[0].parse().ok()?;
-            let mins: i64 = parts[1].parse().ok()?;
-            let secs: i64 = parts[2].parse().ok()?;
-            Some(hours * 3600 + mins * 60 + secs)
-        }
-        _ => None,
     }
 }
 
@@ -1370,15 +1304,6 @@ pub fn random_range(max: u32) -> u32 {
     } else {
         random_int() % max
     }
-}
-
-/// Hash a string (simple djb2)
-pub fn hash_string(s: &str) -> u64 {
-    let mut hash: u64 = 5381;
-    for c in s.bytes() {
-        hash = hash.wrapping_mul(33).wrapping_add(c as u64);
-    }
-    hash
 }
 
 // ---------------------------------------------------------------------------
@@ -1910,20 +1835,6 @@ pub fn quotedzputs(s: &str) -> String {
 /// Check for special characters that need quoting (from utils.c hasspecial)
 pub fn hasspecial(s: &str) -> bool {
     s.chars().any(is_special)
-}
-
-/// Get or set the file creation mask (wrapper over umask)
-pub fn getumask_value() -> u32 {
-    #[cfg(unix)]
-    {
-        let mask = unsafe { libc::umask(0o022) };
-        unsafe { libc::umask(mask) };
-        mask as u32
-    }
-    #[cfg(not(unix))]
-    {
-        0o022
-    }
 }
 
 /// Attach to the controlling tty's process group (from utils.c attachtty)
