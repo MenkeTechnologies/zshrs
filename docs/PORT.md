@@ -11,6 +11,109 @@ deleted on sight by the maintainer. No exceptions.
 
 ---
 
+## ABSOLUTE FREEZE on `src/ported/`
+
+**`src/ported/` is FROZEN. No new files. No new functions whose name is
+not already in zsh's C source. No exceptions.**
+
+These are hard, blanket bans — they override every previous "you may
+create the matching Rust file" or "find a C file with no Rust
+counterpart yet" instruction in this document. If older text in this
+file conflicts with the freeze below, the freeze wins.
+
+### File freeze (`src/ported/**.rs`)
+
+- ❌ **You may NOT create any new `.rs` file under `src/ported/`.** Not
+  for a port that doesn't have a Rust home yet, not for a "tiny one,"
+  not even if the matching `Src/<x>.c` is sitting right there.
+- The legal file set is the **89 files currently checked in** under
+  `src/ported/` (run `find src/ported -name '*.rs' | sort` to see the
+  exhaustive list). That set is the universe. New ports either land in
+  one of those 89 files or they do not land at all.
+- ❌ No new directories under `src/ported/` either. The directory tree
+  is frozen identically to the file tree.
+- If a C function genuinely belongs in `src/ported/<x>.rs` and that file
+  doesn't exist, **stop**. Do not create the file. Do not "temporarily"
+  put the port in a different file. Raise it with the maintainer; the
+  freeze is intentional. New file creation is a one-line PR by the
+  maintainer, not a side-effect of a port.
+
+### Function freeze (`fn` names in `src/ported/**.rs`)
+
+- ❌ **You may NOT introduce any new `fn` under `src/ported/` whose
+  name does not already exist as a function in upstream zsh C source**
+  (`src/zsh/Src/**/*.c`). Verify every name with:
+
+  ```sh
+  grep -nE '^<name>\(' src/zsh/Src/**/*.c
+  # or use the cached allowlist:
+  grep -xF '<name>' docs/zsh_c_functions.txt
+  ```
+
+- If `grep` returns nothing, the name is invented. Invented names are
+  the drift signature — they are how `shell_quote`, `get_user_home`,
+  `is_directory`, `find_in_path`, etc. ended up in the tree. Do not
+  add another one.
+- The Rule 3 exemptions for trait-impl methods (`fn new`, `fn drop`,
+  `fn fmt`, `fn clone`, `fn from`, `fn next`, `fn poll`, etc.) and for
+  `#[test]` functions still apply. Nothing else is exempt.
+- ❌ Do not "rename to fit." Reusing a real zsh name like `metafy` for
+  a function that does something different is worse than inventing a
+  new name. Cite the C source line; if the behavior doesn't match, the
+  port is wrong.
+
+### Why this freeze exists
+
+Bots have produced 114 distinct duplicate function names across
+`src/ported/`, with 148 extra copies and 1,638 self-confessed
+`// c:N/A` adhoc functions. Every drift originated as either (a) a new
+file the bot created to "have somewhere to put" a helper, or (b) a new
+function name the bot invented because no real zsh fn matched. The
+freeze closes both vectors at the source. From this point forward, the
+only edits permitted under `src/ported/` are: (i) modifying an
+existing fn in an existing file to be a more faithful port, (ii)
+adding a fn whose name already exists in upstream C code to an
+existing Rust file that already maps to that C file's `Src/*.c`
+counterpart, (iii) deleting drift.
+
+Genuinely new code (features zsh C does not have) goes to
+`src/extensions/`. The recorder goes to `src/recorder/`. Nothing else
+moves.
+
+---
+
+## Scope: `src/ported/` Is Strict-Port Territory
+
+**Every Rust file currently under `src/ported/` (and every file ever
+added under `src/ported/`) is bound by every rule in this document —
+no grandfathering, no "legacy" exemptions, no "we'll fix it later".**
+
+If a file lives under `src/ported/`:
+
+- It **must** mirror a real C file under `src/zsh/Src/` (same stem, same
+  relative subpath — see the mapping table below).
+- Every `fn` in it **must** carry the `/// Port of <c_name>() from
+  Src/...:NNNN` doc-comment (Rule 2).
+- Every `fn` name **must** appear in `docs/zsh_c_functions.txt` or be one
+  of the narrow Rule 3 exemptions (trait-impls, tests).
+- Every line **must** trace back to a specific upstream C line. No
+  invented helpers, no "cleaner" abstractions, no idiomatic-Rust
+  refactors, no convenience wrappers.
+
+A file under `src/ported/` that fails any of these tests is treated as
+adhoc code and is deleted on sight regardless of when it was added,
+who added it, or how much of the build depends on it. Fix it by porting
+it properly, move it to `src/extensions/` if it implements a feature
+zsh C does not have, or delete it. There is no fourth option.
+
+The only two locations in the entire tree where non-ported code may
+exist are `src/extensions/` and `src/recorder/` (see Rule 1). The two
+crate-root files `src/exec.rs` and `src/fusevm_bridge.rs` are the only
+sanctioned non-port files outside those two directories — they are
+explicitly carved out below and are **not** a precedent for adding more.
+
+---
+
 ## The Three Hard Rules
 
 ### 1. PORT-ONLY. NO ADHOC IMPLEMENTATIONS.
@@ -153,27 +256,44 @@ directories under `src/`:
 
 `src/lib.rs` re-exports `pub use ported::*;` so call sites (`crate::exec::…`,
 `crate::subst::…`, etc.) continue to resolve without churn — but **all
-new ports must land under `src/ported/`**.
+ports, new or existing, must land under `src/ported/` and obey every
+rule in this document**. Existing files are not grandfathered: if an
+audit finds a file under `src/ported/` that lacks a matching C file, or
+a function under `src/ported/` that lacks a `/// Port of …` citation or
+uses an out-of-allowlist name, it is treated as adhoc and deleted on
+sight.
 
-**Inside `src/ported/`, you may not create any Rust file that does not
-have a corresponding C file in `src/zsh/Src/`.** Period. New non-port
-files belong only in `src/extensions/` (features zsh lacks) or
-`src/recorder/` (the recorder feature). See Rule 1.
+**Inside `src/ported/`, you may not create any Rust file at all** —
+not even one that mirrors a real `Src/<x>.c`. The 89 files currently
+checked in are the closed legal set (see ABSOLUTE FREEZE above). New
+non-port files belong only in `src/extensions/` (features zsh lacks)
+or `src/recorder/` (the recorder feature). See Rule 1.
 
-- ❌ No `src/ported/utils.rs`, `src/ported/helpers.rs`,
-  `src/ported/common.rs`, `src/ported/types.rs`, `src/ported/error.rs`,
-  `src/ported/prelude.rs`, `src/ported/macros.rs`, `src/ported/ffi.rs`,
-  `src/ported/state.rs`, `src/ported/context.rs`,
+- ❌ No `src/ported/helpers.rs`, `src/ported/common.rs`,
+  `src/ported/types.rs`, `src/ported/error.rs`, `src/ported/prelude.rs`,
+  `src/ported/macros.rs`, `src/ported/ffi.rs`, `src/ported/state.rs`,
   `src/ported/runtime.rs`, `src/ported/wrapper.rs`,
-  `src/ported/safe_*.rs`, `src/ported/rusty_*.rs`, etc.
+  `src/ported/safe_*.rs`, `src/ported/rusty_*.rs`, etc. (None of these
+  names correspond to any `Src/*.c` in upstream zsh — they are
+  invented helper-bucket names by definition.)
+- ✅ `src/ported/utils.rs` and `src/ported/context.rs` are **legal**
+  because `Src/utils.c` and `Src/context.c` both exist upstream and are
+  their canonical 1:1 homes. They are **not** catch-basins: the only
+  functions that may live in them are ports of fns whose C definition
+  is in `Src/utils.c` or `Src/context.c` respectively (verify via
+  `grep -nE '^<name>\(' src/zsh/Src/utils.c` etc.). Anything else in
+  those files is drift and must be moved to its canonical home or
+  deleted.
 - ❌ No new `mod` directories under `src/ported/` that don't exist as a
   directory under `src/zsh/Src/`.
 - ❌ No "support crate," no `zshrs-core`, no `zshrs-utils`,
   no workspace splits that don't mirror zsh's `Src/` subdirectories.
-- ✅ The only legal way to add a new Rust file under `src/ported/` is:
-  (1) find a C file in `src/zsh/Src/` that has no Rust counterpart yet,
-  (2) create the matching Rust file at the 1:1 mirrored path under
-  `src/ported/`. Nothing else.
+- ❌ **No new Rust files under `src/ported/`, period.** See the
+  ABSOLUTE FREEZE section above. The previous "find a C file with no
+  Rust counterpart yet, then create the mirror file" workflow is
+  RESCINDED. The 89 existing files in `src/ported/` are the complete,
+  closed legal set. If a port needs a Rust file that doesn't exist in
+  that set, raise it with the maintainer; do not create it yourself.
 - ✅ The only legal way to add a new file under `src/extensions/` is:
   the file implements a feature that zsh C demonstrably does **not**
   have, and does not duplicate or shadow any existing port.
@@ -252,9 +372,10 @@ Before writing any code:
 1. Identify the C function you intend to port. Get its exact name,
    file, and line. Confirm it appears in `docs/zsh_c_functions.txt`.
 2. Identify the destination Rust file using the 1:1 mapping table.
-   New files always live under `src/ported/`. If it doesn't exist
-   yet, create it (and add a `pub mod` line in the appropriate
-   `src/ported/<subdir>/mod.rs` or `src/ported/mod.rs`).
+   The destination MUST be one of the 89 existing files under
+   `src/ported/`. If it isn't — STOP. Do not create a new file. Do not
+   reroute the port to a "close enough" file. Raise it with the
+   maintainer. (See the ABSOLUTE FREEZE section.)
 3. Read the C function in full. Read every helper it calls. Read the
    relevant `struct` definitions in headers.
 4. Translate line-by-line. Preserve identifier names where legal in
@@ -271,18 +392,28 @@ Before writing any code:
 
 ## What You Must Never Do
 
+- ❌ **Create ANY new Rust file under `src/ported/`.** Period.
+  `src/ported/` is frozen at its current 89-file set. Even when a real
+  `Src/<x>.c` exists with no Rust counterpart, you do not get to add
+  the file. (See the ABSOLUTE FREEZE section.)
 - ❌ **Create any Rust file outside `src/ported/`** other than the two
   sanctioned exceptions (`src/extensions/`, `src/recorder/`).
-- ❌ **Create any Rust file under `src/ported/` that has no
-  corresponding C file in `src/zsh/Src/`.** This is the #1 violation
-  and will be reverted.
-- ❌ **Create any directory under `src/ported/` that doesn't mirror a
-  directory under `src/zsh/Src/`.**
+- ❌ **Create any directory under `src/ported/`.** The directory tree
+  is frozen alongside the file tree.
+- ❌ **Add any `fn` under `src/ported/` whose name does not already
+  exist as a function in `src/zsh/Src/**/*.c`.** Verify with `grep` or
+  `docs/zsh_c_functions.txt` before writing the signature. Trait-impl
+  and `#[test]` exemptions from Rule 3 are the only carve-outs.
 - ❌ Invent a function with a name not in `docs/zsh_c_functions.txt`.
 - ❌ Write "helper" / "utility" / "convenience" functions or files.
-- ❌ Add new modules like `utils`, `helpers`, `common`, `prelude`,
-  `error`, `state`, `context`, `runtime`, `ffi`, `macros`, `types`,
-  `safe_*`, `rusty_*`.
+- ❌ Add new modules like `helpers`, `common`, `prelude`, `error`,
+  `state`, `runtime`, `ffi`, `macros`, `types`, `safe_*`, `rusty_*` —
+  none correspond to any `Src/*.c`.
+- ⚠️ The modules `utils` and `context` are legal **only** as 1:1
+  mirrors of `Src/utils.c` and `Src/context.c`. Treating them as
+  catch-basins for orphan helpers is a violation: if a fn's C
+  definition lives in a different `Src/<other>.c`, it ports to
+  `src/ported/<other>.rs`, never to `utils.rs`/`context.rs`.
 - ❌ Refactor C control flow into Rust iterators / combinators / traits
   unless the C code already does the equivalent.
 - ❌ Add abstraction layers (traits, generics, builders) that aren't in
@@ -328,9 +459,14 @@ Before writing any code:
 
 ## TL;DR
 
-> **Port C functions into the matching Rust file under `src/ported/`.
-> Cite the source. Use the C name. Put genuinely new features (things
-> zsh C doesn't have) under `src/extensions/`. Put recorder code
-> under `src/recorder/`. Adhoc code anywhere else — files without a
-> C counterpart that aren't in `extensions/` or `recorder/` — is
-> deleted on sight.**
+> **`src/ported/` is FROZEN. The 89 existing files are the legal set —
+> no new files, no new directories, ever. The only `fn` names allowed
+> are ones that already exist as functions in `src/zsh/Src/**/*.c`
+> (verify with `grep` before writing). Every file is a strict 1:1 port
+> of its `Src/*.c`. Every function cites its C source. No
+> grandfathering, no helpers, no "legacy" exemptions — old files and
+> new edits alike must comply. Genuinely new features go under
+> `src/extensions/`. The recorder goes under `src/recorder/`. The only
+> non-port files sanctioned outside those two dirs are `src/exec.rs`
+> and `src/fusevm_bridge.rs`. Adhoc code anywhere else is deleted on
+> sight.**
