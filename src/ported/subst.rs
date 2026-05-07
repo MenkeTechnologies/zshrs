@@ -2370,6 +2370,22 @@ fn paramsubst(                                              // c:1625
                         "association".to_string()           // c:2814
                     } else if state.arrays.contains_key(&var_name) {
                         "array".to_string()                  // c:2814
+                    } else if matches!(var_name.as_str(),
+                        "aliases" | "galiases" | "saliases"
+                        | "dis_aliases" | "dis_galiases" | "dis_saliases"
+                        | "functions" | "dis_functions"
+                        | "builtins" | "dis_builtins"
+                        | "reswords" | "dis_reswords"
+                        | "options" | "commands" | "modules"
+                        | "nameddirs" | "userdirs"
+                        | "jobtexts" | "jobdirs" | "jobstates"
+                        | "parameters" | "dirstack" | "errnos"
+                        | "sysparams" | "mapfile") {
+                        // Magic-assoc params — type is association.
+                        // Direct port of subst.c:2814 paramtab
+                        // lookup which finds the magic-assoc entry
+                        // and returns PM_HASHED type tag.
+                        "association".to_string()           // c:2814
                     } else if is_set {
                         "scalar".to_string()
                     } else {
