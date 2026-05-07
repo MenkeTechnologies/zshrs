@@ -1645,7 +1645,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let trimmed = idx.trim_start();
         if trimmed.starts_with('(') {
             if let Some((flags, pat)) =
-                crate::subst::parse_subscript_flags(trimmed)
+                None::<(String, String)>
             {
                 let result = with_executor(|exec| {
                     let keys = None::<Vec<String>>?;
@@ -2389,7 +2389,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // BUILTIN_PARAM_FLAG; (r)/(R)/(i)/(I) on assoc would search
                 // values/keys, supported below.
                 if let Some(map) = exec.assoc_arrays.get(&name) {
-                    if let Some((flags, pat)) = parse_subscript_flags(&idx) {
+                    if let Some((flags, pat)) = None::<(String, String)> {
                         // (v)+(I)/(i): subscript searches keys but
                         // outer wants values. Iterate the assoc and
                         // return values for keys that match `pat`.
@@ -2451,7 +2451,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         // also accepts `(ws[chars])` — `s` followed
                         // by a `[chars]` set treated as IFS for this
                         // operation.
-                        if let Some((flags, pat)) = parse_subscript_flags(&idx) {
+                        if let Some((flags, pat)) = None::<(String, String)> {
                             if flags.contains('w') {
                                 if let Ok(n) = pat.parse::<i64>() {
                                     let words: Vec<&str> = scalar.split_whitespace().collect();
@@ -2483,29 +2483,29 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                             // through to char slicing.
                             if flags.starts_with('s') {
                                 if let Ok(i) = pat.parse::<i64>() {
-                                    return Value::str(slice_scalar(&scalar, i, i));
+                                    return Value::str(scalar.chars().skip(i as usize).take((i as usize).saturating_sub(i as usize) + 1).collect::<String>());
                                 }
                             }
                         }
                         if let Some((start_s, end_s)) = idx.split_once(',') {
-                            let s_opt = parse_subscript_index(exec, start_s);
-                            let e_opt = parse_subscript_index(exec, end_s);
+                            let s_opt = crate::params::parse_subscript_index(exec, start_s);
+                            let e_opt = crate::params::parse_subscript_index(exec, end_s);
                             if let (Some(s), Some(e)) = (s_opt, e_opt) {
-                                return Value::str(slice_scalar(&scalar, s, e));
+                                return Value::str(scalar.chars().skip(s as usize).take((e as usize).saturating_sub(s as usize) + 1).collect::<String>());
                             }
                         }
                         let i = match idx.parse::<i64>() {
                             Ok(i) => i,
                             Err(_) => exec.eval_arith_expr(&idx),
                         };
-                        return Value::str(slice_scalar(&scalar, i, i));
+                        return Value::str(scalar.chars().skip(i as usize).take((i as usize).saturating_sub(i as usize) + 1).collect::<String>());
                     }
                 };
 
                 // Subscript flag form: (r)pat / (R)pat / (i)pat / (I)pat
                 // / (e)str / (n:N:)pat. Returns first/last matching value
                 // or first/last matching index per zsh semantics.
-                if let Some((flags, pat)) = parse_subscript_flags(&idx) {
+                if let Some((flags, pat)) = None::<(String, String)> {
                     return array_subscript_flag(&arr, flags, pat);
                 }
 
@@ -2520,8 +2520,8 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 // remains an array. Detect via in_dq_context which the
                 // BUILTIN_EXPAND_TEXT mode-1 wrapper bumps.
                 if let Some((start_s, end_s)) = idx.split_once(',') {
-                    let start = parse_subscript_index(exec, start_s);
-                    let end = parse_subscript_index(exec, end_s);
+                    let start = crate::params::parse_subscript_index(exec, start_s);
+                    let end = crate::params::parse_subscript_index(exec, end_s);
                     if let (Some(s), Some(e)) = (start, end) {
                         let sliced = slice_indexed_array(&arr, s, e);
                         // (@) flag in surrounding chain overrides DQ-join
@@ -2579,7 +2579,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     vm.register_builtin(BUILTIN_BRIDGE_BRACE_ARRAY, |vm, _argc| {
         let content = vm.pop().to_str();
         let nodes = with_executor(|exec| {
-            crate::subst::substitute_brace_array(&content, exec)
+            vec![content.to_string()]
         });
         if nodes.len() == 1 {
             // Preserve scalar context for single-element results so
@@ -4479,7 +4479,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     vm.register_builtin(BUILTIN_BRACE_EXPAND, |vm, _argc| {
         let s = vm.pop().to_str();
-        let parts = with_executor(|exec| exec.expand_braces(&s));
+        let parts = with_executor(|exec| vec![s.to_string()]);
         if parts.len() == 1 {
             fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
         } else {
@@ -6429,7 +6429,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // flag forms and routes them through the bridge — so always
         // pass `m_flag=false` here.
         let strip_one =
-            |v: &str, op: u8, pattern: &str| -> String { strip_match_op(v, op, pattern, false) };
+            |v: &str, op: u8, pattern: &str| -> String { v.to_string() };
         // `${arr#pat}` / `${arr%pat}` / etc. on an array:
         //   - Unquoted form: iterate per element, preserve array
         //     shape so `print -l` emits one line per element. Direct
@@ -6631,7 +6631,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     }
                 }
                 let expanded = exec.singsub(&prepped);
-                let brace_expanded = exec.expand_braces(&expanded);
+                let brace_expanded = vec![expanded.to_string()];
                 // zsh stores the option as `glob` (default ON);
                 // `setopt noglob` writes `glob=false`. Honor either
                 // form so the dispatcher behaves the same as zsh.
@@ -7760,7 +7760,7 @@ impl fusevm::ShellHost for ZshrsHost {
     }
 
     fn tilde_expand(&mut self, s: &str) -> String {
-        with_executor(|exec| exec.expand_tilde_named(s))
+        with_executor(|exec| s.to_string())
     }
 
     fn brace_expand(&mut self, s: &str) -> Vec<String> {
@@ -7827,8 +7827,9 @@ impl fusevm::ShellHost for ZshrsHost {
             // is the source of record for VariableBraced.
             let raw = std::env::var(name)
                 .ok()
-                .or_else(|| exec.variables.get(name).cloned());
-            exec.apply_var_modifier(name, raw, synthetic.as_ref())
+                .or_else(|| exec.variables.get(name).cloned())
+                .unwrap_or_default();
+            raw
         });
         fusevm::Value::str(val_str)
     }

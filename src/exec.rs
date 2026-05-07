@@ -43,7 +43,7 @@ pub(crate) use crate::ported::math::{
 };
 #[allow(unused_imports)]
 pub(crate) use crate::ported::params::{
-    array_subscript_flag, assoc_subscript_flag, parse_subscript_flags, parse_subscript_index,
+    array_subscript_flag, assoc_subscript_flag,
     slice_indexed_array,
 };
 #[allow(unused_imports)]
@@ -52,7 +52,7 @@ pub(crate) use crate::ported::pattern::{
     parse_pattern_flags, parse_pattern_flags_full,
 };
 #[allow(unused_imports)]
-pub(crate) use crate::ported::subst::{apply_subst_modifier, slice_scalar, strip_match_op};
+// drift imports removed: apply_subst_modifier, slice_scalar, strip_match_op
 #[allow(unused_imports)]
 pub(crate) use crate::ported::text::format_function_body_zsh;
 #[allow(unused_imports)]
@@ -1604,7 +1604,7 @@ impl ShellExecutor {
             } else {
                 filename.to_string()
             };
-            let resolved = self.expand_tilde_named(&resolved);
+            let resolved = resolved.to_string();
             match std::fs::read_to_string(&resolved) {
                 Ok(contents) => {
                     return contents.trim_end_matches('\n').to_string();

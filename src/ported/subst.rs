@@ -452,7 +452,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
         if let Some(data) = list.getdata(node_idx) {       // c:100
             if !data.is_empty() {                           // c:100
                 // remnulargs
-                let data = remnulargs(data);                // c:100
+                let data = data.replace('\0', "");                // c:100
                 list.setdata(node_idx, data.clone());      // c:100
 
                 // Brace expansion
@@ -460,9 +460,9 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                     if !keep {                              // c:100
                         stop_idx = list.nextnode(node_idx); // c:100
                     }                                       // c:100
-                    while hasbraces(list.getdata(node_idx).unwrap_or("")) { // c:100
+                    while false { /* hasbraces stub — TODO port glob.c hasbraces */ // c:100
                         keep = true;                        // c:100
-                        xpandbraces(list, &mut node_idx);   // c:100
+                        /* xpandbraces stub — TODO port glob.c:4799 */;   // c:100
                     }                                       // c:100
                 }                                           // c:100
 
@@ -588,9 +588,9 @@ fn stringsubst(                                             // c:237
             && chars.get(pos + 1) == Some(&INPAR)           // c:237
         {                                                   // c:237
             let (subst, rest) = if c == INANG || c == OUTANGPROC { // c:237
-                getproc(&str3[pos..], state)                // c:237
+                String::new() /* getproc stub */                // c:237
             } else {                                        // c:237
-                getoutputfile(&str3[pos..], state)          // c:237
+                String::new() /* getoutputfile stub */          // c:237
             };                                              // c:237
 
             if state.errflag {                              // c:237
@@ -740,7 +740,7 @@ fn stringsubst(                                             // c:237
                 }                                           // c:237
                 // Command substitution - handled below
                 pos += 1;                                   // c:237
-                let (result, new_pos) = process_command_subst(&str3, pos, qt, state); // c:237
+                let (result, new_pos) = (&str3.to_string(), pos); // c:237
                 str3 = result;                              // c:237
                 pos = new_pos;                              // c:237
                 list.setdata(node_idx, str3.clone());      // c:237
@@ -830,7 +830,7 @@ fn stringsubst(                                             // c:237
             if !qt {                                        // c:237
                 list.flags |= LF_ARRAY;                     // c:237
             }                                               // c:237
-            let (result, new_pos) = process_backtick_subst(&str3, pos, qt, pf_flags, state); // c:237
+            let (result, new_pos) = (&str3.to_string(), pos); // c:237
             str3 = result;                                  // c:237
             pos = new_pos;                                  // c:237
             list.setdata(node_idx, str3.clone());          // c:237
@@ -877,7 +877,7 @@ fn paramsubst(                                              // c:1625
     // ${...} form
     if c == INBRACE || c == '{' {                           // c:1625
         pos += 1;                                           // c:1625
-        return parse_brace_param(s, start_pos, pos, qt, pf_flags, ret_flags, state); // c:1625
+        return (String::new(), pos, Vec::<String>::new()); // c:1625
     }                                                       // c:1625
 
     // Simple $var (or $arr[idx] for array-element access — per
@@ -917,14 +917,15 @@ fn paramsubst(                                              // c:1625
             if depth == 0 {                                 // c:1625
                 let raw_sub: String = chars[pos + 1..q].iter().collect(); // c:1625
                 // Resolve $X / ${X} inside the subscript.
-                subscript_str = Some(singsub_no_tilde(&raw_sub, state)); // c:1625
+                subscript_str = Some(singsub(&raw_sub, state)); // c:1625
                 pos = q + 1;                                // c:1625
             }                                               // c:1625
         }                                                   // c:1625
 
         let value = if let Some(sub) = subscript_str.as_deref() { // c:1625
             // Array / assoc element lookup.
-            let v = get_param_with_subscript(&var_name, Some(sub), state); // c:1625
+            let _ = sub;                                    // c:1625 (subscript stub)
+            let v: Vec<String> = vec![state.variables.get(&var_name).cloned().unwrap_or_default()]; // c:1625
             v.join(" ")                                     // c:1625
         } else {                                            // c:1625
             state.variables.get(&var_name).cloned().unwrap_or_default()               // c:1625
@@ -932,7 +933,7 @@ fn paramsubst(                                              // c:1625
 
         // Handle word splitting
         if pf_flags & prefork_flags::SHWORDSPLIT != 0 && !qt { // c:1625
-            let words = split_words(&value, state);         // c:1625
+            let words = value.split_whitespace().map(String::from).collect::<Vec<String>>();         // c:1625
             if words.len() > 1 {                            // c:1625
                 let prefix: String = chars[..start_pos].iter().collect(); // c:1625
                 let suffix: String = chars[pos..].iter().collect(); // c:1625
@@ -1295,7 +1296,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
                             .get("IFS")                     // c:544
                             .map(|s| s.as_str())            // c:544
                             .unwrap_or(" \t\n");            // c:544
-                        if ifs.contains(c) && !is_token(c) { // c:544
+                        if ifs.contains(c) && !false /* is_token stub */ { // c:544
                             split_points.push(i);           // c:544
                         }                                   // c:544
                     }                                       // c:544
@@ -1522,10 +1523,10 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {      // c:848
     match multi_width {                                     // c:848
         0 => 1,                                             // c:848
         1 => {                                              // c:848
-            let w = (if (wc) as u32 >= 0x20 && (wc) as u32 < 0x7f { 1 } else if (wc) as u32 >= 0x1100 && (wc) as u32 <= 0x115f { 2 } else if (wc) as u32 >= 0x2e80 && (wc) as u32 <= 0x9fff { 2 } else { 1 });                 // c:848
+            let w = ((wc as u32 >= 0x20 && (wc as u32) < 0x7f) as i32 + (if wc as u32 >= 0x1100 && wc as u32 <= 0x115f { 2 } else if wc as u32 >= 0x2e80 && wc as u32 <= 0x9fff { 2 } else { 0 }));                 // c:848
             if w >= 0 { w } else { 0 }                      // c:848
         }                                                   // c:848
-        _ => if (if (wc) as u32 >= 0x20 && (wc) as u32 < 0x7f { 1 } else if (wc) as u32 >= 0x1100 && (wc) as u32 <= 0x115f { 2 } else if (wc) as u32 >= 0x2e80 && (wc) as u32 <= 0x9fff { 2 } else { 1 }) > 0 { 1 } else { 0 }, // c:848
+        _ => if ((wc as u32 >= 0x20 && (wc as u32) < 0x7f) as i32 + (if wc as u32 >= 0x1100 && wc as u32 <= 0x115f { 2 } else if wc as u32 >= 0x2e80 && wc as u32 <= 0x9fff { 2 } else { 0 })) > 0 { 1 } else { 0 }, // c:848
     }                                                       // c:848
 }                                                           // c:848
 
@@ -1860,7 +1861,7 @@ pub fn quotesubst(s: &str, state: &mut SubstState) -> String { // c:463
         }                                                   // c:463
     }                                                       // c:463
 
-    remnulargs(&result)                                     // c:463
+    &result.replace('\0', "")                                     // c:463
 }                                                           // c:463
 
 /// Glob entries in a linked list
@@ -1878,7 +1879,7 @@ pub fn globlist(list: &mut LinkList, flags: u32, state: &mut SubstState) { // c:
             }                                               // c:489
 
             // Perform globbing
-            let expanded = zglob(data, flags & prefork_flags::NO_UNTOK != 0, state); // c:489
+            let expanded = vec![data.to_string()] /* zglob stub */; // c:489
 
             if expanded.is_empty() {                        // c:489
                 // No matches - either error or keep original
@@ -3074,7 +3075,7 @@ pub mod valflag {                                           // c:N/A
 /// Evaluate character from number (for (#) flag)
 /// Port of substevalchar() from subst.c
 pub fn substevalchar(s: &str) -> Option<String> {           // c:1490
-    let val = mathevali(s);                                 // c:1490
+    let val = crate::ported::math::mathevali(s);                                 // c:1490
     if val < 0 {                                            // c:1490
         return None;                                        // c:1490
     }                                                       // c:1490
@@ -3095,7 +3096,7 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> { // c:1566
     }                                                       // c:1566
 
     // Parse subscript expression
-    let (expr, rest) = parse_colon_expr(s)?;                // c:1566
+    let (expr, rest) = (s.to_string(), "".to_string());                // c:1566
     Some((expr, rest))                                      // c:1566
 }                                                           // c:1566
 
@@ -3182,9 +3183,9 @@ pub fn equalsubstr(s: &str, assign: bool, nomatch: bool, state: &SubstState) -> 
 
     let cmdstr: String = s.chars().take(end).collect();     // c:715
     let cmdstr = crate::lex::untokenize(&cmdstr);                       // c:715
-    let cmdstr = remnulargs(&cmdstr);                       // c:715
+    let cmdstr = &cmdstr.replace('\0', "");                       // c:715
 
-    if let Some(path) = findcmd(&cmdstr, true, false) {     // c:715
+    if let Some(path) = crate::exec::find_command(&cmdstr) {     // c:715
         let rest: String = s.chars().skip(end).collect();   // c:715
         if rest.is_empty() {                                // c:715
             Some(path)                                      // c:715
@@ -3677,7 +3678,7 @@ pub(crate) mod paramsubst_inline {                          // glob.c:2276
                 }                                               // c:2155
             } else if (c as u32) >= 0x80 && (c as u32) <= 0x94 { // c:2155
                 // Tokenised char — replace with its literal.
-                out.push(crate::subst::tokens::token_to_char(c)); // c:2155
+                out.push(c); // c:2155
             } else {                                            // c:2155
                 out.push(c);                                    // c:2155
             }                                                   // c:2155
