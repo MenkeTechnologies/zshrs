@@ -1924,17 +1924,38 @@ fn paramsubst(                                              // c:1625
             } else if let Some(slice) = r.strip_prefix(':') { // c:715 (substring)
                 let parts: Vec<&str> = slice.splitn(2, ':').collect();
                 let off = singsub(parts[0], state).parse::<i64>().unwrap_or(0);
-                let total = raw_value.chars().count() as i64;
-                let start = if off < 0 { (total + off).max(0) } else { off.min(total) } as usize;
-                let len = parts.get(1).map(|s| singsub(s, state).parse::<i64>().unwrap_or(0));
-                value = match len {
-                    Some(l) if l >= 0 => raw_value.chars().skip(start).take(l as usize).collect(),
-                    Some(l) => {
-                        let take = ((total - start as i64) + l).max(0) as usize;
-                        raw_value.chars().skip(start).take(take).collect()
-                    }
-                    None => raw_value.chars().skip(start).collect(),
-                };
+                // Array context: ${arr:offset:length} slices the
+                // ARRAY (1-based, like Bash's offset), not the joined
+                // value. Direct port of subst.c's array-shape branch
+                // around c:715. Falls back to scalar substring when
+                // var_name isn't an array.
+                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                    let n = arr.len() as i64;                // c:715
+                    let lo = if off < 0 { (n + off).max(0) } else { off.min(n) } as usize; // c:715
+                    let len = parts.get(1)                   // c:715
+                        .map(|s| singsub(s, state).parse::<i64>().unwrap_or(0)); // c:715
+                    let kept: Vec<String> = match len {      // c:715
+                        Some(l) if l >= 0 => arr.iter().skip(lo).take(l as usize).cloned().collect(), // c:715
+                        Some(l) => {                          // c:715 (negative len = from-end)
+                            let end = ((n - lo as i64) + l).max(0) as usize; // c:715
+                            arr.iter().skip(lo).take(end).cloned().collect() // c:715
+                        }                                     // c:715
+                        None => arr.iter().skip(lo).cloned().collect(), // c:715
+                    };
+                    value = kept.join(" ");                  // c:715
+                } else {
+                    let total = raw_value.chars().count() as i64;
+                    let start = if off < 0 { (total + off).max(0) } else { off.min(total) } as usize;
+                    let len = parts.get(1).map(|s| singsub(s, state).parse::<i64>().unwrap_or(0));
+                    value = match len {
+                        Some(l) if l >= 0 => raw_value.chars().skip(start).take(l as usize).collect(),
+                        Some(l) => {
+                            let take = ((total - start as i64) + l).max(0) as usize;
+                            raw_value.chars().skip(start).take(take).collect()
+                        }
+                        None => raw_value.chars().skip(start).collect(),
+                    };
+                }
             }
         }
         // Apply post-processing flags to the substituted value.
