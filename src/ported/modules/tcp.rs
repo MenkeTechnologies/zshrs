@@ -186,13 +186,11 @@ pub fn tcp_connect(host: &str, port: u16) -> io::Result<(RawFd, SocketAddr, Sock
     tcp_connect_timeout(host, port, std::time::Duration::from_secs(10))         // c:316
 }
 
-/// Port of `bin_ztcp()` from `Src/Modules/tcp.c:342`.
-/// Connect with explicit timeout.
 /// Connect with an explicit timeout.
-/// zshrs convenience over `tcp_connect()` from
-/// Src/Modules/tcp.c:316 — the C source's connect blocks
-/// until kernel default timeout; this exposes a configurable
-/// one.
+/// zshrs convenience over `tcp_connect()` (Src/Modules/tcp.c:316)
+/// reachable from `bin_ztcp` (Src/Modules/tcp.c:342) — the C
+/// source's connect blocks until kernel default timeout; this
+/// exposes a configurable one.
 pub fn tcp_connect_timeout(
     host: &str,
     port: u16,

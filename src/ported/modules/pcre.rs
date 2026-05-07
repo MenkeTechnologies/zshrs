@@ -142,11 +142,11 @@ pub fn pcre_compile(
     }
 }
 
-/// Study a compiled pattern.
-/// Port of `bin_pcre_study()` from Src/Modules/pcre.c:112. The C
-/// source calls `pcre2_jit_compile()` to JIT-optimize the compiled
-/// pattern; the Rust `regex` crate already builds an optimal NFA
-/// at compile time, so this is a no-op other than the "no pattern"
+/// Study a compiled pattern (helper for `bin_pcre_study` —
+/// Src/Modules/pcre.c:112). The C source calls
+/// `pcre2_jit_compile()` to JIT-optimize the compiled pattern;
+/// the Rust `regex` crate already builds an optimal NFA at
+/// compile time, so this is a no-op other than the "no pattern"
 /// guard the C source also returns.
 pub fn pcre_study(state: &PcreState) -> Result<(), String> {
     if state.pattern.is_none() {

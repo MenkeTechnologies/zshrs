@@ -310,10 +310,10 @@ impl StyleTable {
 
 /// Format a string with specifications
 /// `zformat` builtin entry point.
-/// Port of `bin_zformat()` from Src/Modules/zutil.c:955 — same
-/// `%X:value` substitution + width / left/right-align / repeat
-/// flag handling the C source's `zformat_substring()` (line 814)
-/// implements.
+/// Helper extracted from `bin_zformat()` (Src/Modules/zutil.c:955)
+/// — same `%X:value` substitution + width / left/right-align /
+/// repeat flag handling the C source's `zformat_substring()`
+/// (line 814) implements.
 pub fn zformat(format: &str, specs: &HashMap<char, String>, presence: bool) -> String {
     // Direct port of src/zsh/Src/Modules/zutil.c:814-952
     // zformat_substring. Recursive walker that handles:
@@ -614,9 +614,9 @@ impl OptDesc {
 /// Parse options from arguments
 #[allow(clippy::type_complexity)]
 /// `zparseopts` builtin entry point.
-/// Port of `bin_zparseopts()` from Src/Modules/zutil.c — the
-/// option-parser the C source ships for completion-system use
-/// (`-D` consume, `-K` keep, `-E` non-strict, `-M` aliasing).
+/// Helper extracted from `bin_zparseopts()` (Src/Modules/zutil.c) —
+/// the option-parser the C source ships for completion-system
+/// use (`-D` consume, `-K` keep, `-E` non-strict, `-M` aliasing).
 pub fn zparseopts(
     args: &[String],
     specs: &[OptDesc],

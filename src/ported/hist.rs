@@ -741,10 +741,8 @@ pub fn quotebreak(s: &str) -> String {
     result
 }
 
-/// Perform history substitution (from hist.c subst lines 2336-2391)
 /// `:s/old/new/` modifier — substitute pattern.
-/// Port of `getsubsargs()` (Src/hist.c:518) + the inline
-/// substitution loop `histsubchar()` (Src/hist.c:595) drives.
+/// Port of `subst()` from Src/hist.c:2336.
 pub fn subst(s: &str, in_pattern: &str, out_pattern: &str, global: bool) -> String {
     // Direct port of src/zsh/Src/hist.c:2336-2391 subst.
     // - Empty pattern means "use whole string as the pattern"

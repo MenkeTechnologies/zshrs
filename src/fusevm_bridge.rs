@@ -2116,7 +2116,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // for INDEX lookups we always reach `lookup()`
                     // and uncommon caps like `bel` resolve correctly.
                     Some(Value::str(
-                        crate::modules::terminfo::lookup(idx).unwrap_or_default(),
+                        crate::modules::terminfo::getterminfo(idx).unwrap_or_default(),
                     ))
                 }
                 "errnos" => {

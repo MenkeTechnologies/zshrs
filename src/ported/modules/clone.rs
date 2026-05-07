@@ -20,9 +20,10 @@ pub struct CloneOutcome {
     pub got_ctty: bool,
 }
 
-/// Port of `bin_clone()` from `Src/Modules/clone.c:44`.
-/// Clone the current shell to a new terminal. Direct port of
-/// src/zsh/Src/Modules/clone.c:43-107 `bin_clone`.
+/// Helper extracted from `bin_clone()` (Src/Modules/clone.c:44):
+/// the fork/setsid/dup2/TIOCSCTTY ctty-acquisition body. The
+/// thin `bin_clone` wrapper below handles arg parsing and result
+/// translation.
 ///
 /// Steps mirror the C implementation:
 ///   1. Open the tty path with O_RDWR|O_NOCTTY (clone.c:49).

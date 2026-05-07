@@ -908,8 +908,8 @@ mod tests {
 ///   (tab)echo b
 ///   }
 /// Render a function body as zsh source.
-/// Port of `getpermtext()` from Src/text.c:279 specialized for
-/// the function-body subset (used by `functions`, `which -x`).
+/// Specialized variant of `getpermtext` (Src/text.c:279) for the
+/// function-body subset (used by `functions`, `which -x`).
 pub fn format_function_body_zsh(body: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::new();

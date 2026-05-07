@@ -42,9 +42,9 @@ pub fn convertattr(attr: &str) -> String {
 }
 
 /// Convert an attribute spec to a bare SGR parameter string.
-/// Port of `convertattr()` from Src/Modules/hlgroup.c:40 with
-/// `sgr=1` — returns the `;`-joined parameter list without the
-/// `\e[`/`m` framing, matching what `${.zle.sgr[name]}` returns.
+/// SGR-only variant of `convertattr` (Src/Modules/hlgroup.c:40)
+/// with `sgr=1` — returns the `;`-joined parameter list without
+/// the `\e[`/`m` framing, matching `${.zle.sgr[name]}`.
 pub fn attr_to_sgr(attr: &str) -> String {
     let mut codes = Vec::new();
 

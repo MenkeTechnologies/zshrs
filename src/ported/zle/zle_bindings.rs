@@ -18,9 +18,10 @@ pub fn init_default_bindings(km: &mut KeymapManager) {
 
 /// Parse a bindkey-style key sequence string into raw bytes.
 ///
-/// Port of `getkeystring()` from Src/utils.c (which zsh also uses for
-/// `bindkey 'seq' widget` parsing) restricted to the key-sequence
-/// vocabulary documented at `man zshzle` BINDKEY:
+/// Bindkey-vocabulary subset of `getkeystring` (Src/utils.c) —
+/// zsh uses the same parser for `bindkey 'seq' widget`, restricted
+/// to the key-sequence vocabulary documented at `man zshzle`
+/// BINDKEY:
 ///   - `^X` → control character (X & 0x1F)
 ///   - `\\e` → ESC (0x1B)
 ///   - `\\M-X` → ESC + X (zsh's meta encoding for the keymap-trie)
