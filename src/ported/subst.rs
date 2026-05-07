@@ -2559,10 +2559,10 @@ fn paramsubst(                                              // c:1625
         }
 
         // (V) visible — render control chars as ^X form.
-        // Port of subst.c:2232 mods bit 1.
-        if flag_visible {                                   // c:2232
-            let mut out = String::with_capacity(value.len());
-            for c in value.chars() {
+        // Port of subst.c:2232 mods bit 1. Per-element on arrays.
+        let visible_one = |s: &str| -> String {              // c:2232
+            let mut out = String::with_capacity(s.len());
+            for c in s.chars() {
                 let cp = c as u32;
                 if cp < 0x20 {                              // c:2232 (control chars)
                     out.push('^');
@@ -2573,7 +2573,20 @@ fn paramsubst(                                              // c:1625
                     out.push(c);
                 }
             }
-            value = out;
+            out
+        };
+        if flag_visible {                                   // c:2232
+            if let Some(parts) = split_parts.clone() {
+                let new_parts: Vec<String> = parts.iter().map(|s| visible_one(s)).collect();
+                value = new_parts.join(" ");
+                split_parts = Some(new_parts);
+            } else if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                let new_arr: Vec<String> = arr.iter().map(|s| visible_one(s)).collect();
+                value = new_arr.join(" ");
+                split_parts = Some(new_arr);
+            } else {
+                value = visible_one(&value);
+            }
         }
 
         // (c)/(w)/(W) length variants — char count, word count
