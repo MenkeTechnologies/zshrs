@@ -678,6 +678,21 @@ impl ShellExecutor {
         r
     }
 
+    /// Same as `singsub` but with `skip_filesub` set so tilde / `=cmd`
+    /// expansion is NOT performed. Used by `${var/pat/~}` replacement
+    /// where the literal `~` must reach the result unmodified — the
+    /// p10k / oh-my-zsh idiom of replacing `$HOME` with `~` for
+    /// display would otherwise re-expand right back to the home path.
+    /// Direct port of zsh's filesub-skip pattern (Src/subst.c flag
+    /// gate around line 100 ssub).
+    pub fn singsub_no_tilde(&mut self, s: &str) -> String {
+        let mut state = crate::ported::subst::SubstState::from_executor(self);
+        state.skip_filesub = true;
+        let r = crate::ported::subst::singsub(s, &mut state);
+        state.commit_to_executor(self);
+        r
+    }
+
     pub fn new() -> Self {
         tracing::debug!("ShellExecutor::new() initializing");
 
