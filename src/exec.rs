@@ -473,6 +473,13 @@ pub struct ShellExecutor {
     /// SubstState mirrors / commits this so all paramsubst calls
     /// share the most recent value.
     pub last_subst: Option<(String, String)>,
+    /// SUB_* flag bits set per paramsubst call by the (M)/(R)/(B)/
+    /// (E)/(N)/(S) flag-loop arms. Read by BUILTIN_PARAM_FILTER /
+    /// REPLACE / STRIP to alter their match disposition. Direct
+    /// port of subst.c:2169-2199 — value matches zsh.h:1981-1996
+    /// (SUB_MATCH=0x0008, SUB_REST=0x0010, etc.). Reset by the
+    /// dispatch arm after consumption.
+    pub sub_flags: u32,
     /// Stack for `local` variable save/restore (name, old_value).
     pub local_save_stack: Vec<(String, Option<String>)>,
     /// Parallel stack for `local arr=(...)` array save/restore.
@@ -856,6 +863,7 @@ impl ShellExecutor {
             readonly_vars: std::collections::HashSet::new(),
             var_attrs: std::collections::HashMap::new(),
             last_subst: None,
+            sub_flags: 0,
             local_save_stack: Vec::new(),
             local_array_save_stack: Vec::new(),
             local_assoc_save_stack: Vec::new(),

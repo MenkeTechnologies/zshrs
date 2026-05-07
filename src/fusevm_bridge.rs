@@ -5717,16 +5717,31 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 s == pat
             }
         };
+        // (M) flag inverts the filter: keep matching elements, drop
+        // non-matching (vs default which drops matches). Direct port
+        // of subst.c's SUB_MATCH bit which getmatch consults to
+        // pick the "matched" disposition over the "rest" default.
+        let invert = with_executor(|exec| {
+            let inv = (exec.sub_flags & 0x0008) != 0;       // c:2171 SUB_MATCH
+            exec.sub_flags = 0;                              // c:2169 (consume)
+            inv
+        });
         if let Some(arr) = arr_val {
             let kept: Vec<fusevm::Value> = arr
                 .into_iter()
-                .filter(|elem| !matches_glob(elem, &pattern))
+                .filter(|elem| {                             // c:2171
+                    let m = matches_glob(elem, &pattern);   // c:2171
+                    if invert { m } else { !m }              // c:2171
+                })
                 .map(fusevm::Value::str)
                 .collect();
             return fusevm::Value::Array(kept);
         }
         let val = with_executor(|exec| exec.get_variable(&name));
-        if matches_glob(&val, &pattern) {
+        let m = matches_glob(&val, &pattern);
+        if invert {                                          // c:2171
+            if m { fusevm::Value::str(val) } else { fusevm::Value::str(String::new()) } // c:2171
+        } else if m {
             fusevm::Value::str(String::new())
         } else {
             fusevm::Value::str(val)
