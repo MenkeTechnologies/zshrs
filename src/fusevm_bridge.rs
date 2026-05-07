@@ -7048,7 +7048,17 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // only handled `$VAR` / `${VAR}` references, missing
         // `$(cmd)` and `$((expr))` in templates like
         // `\${var//foo/$(date +%s)}`.
-        let repl = with_executor(|exec| exec.singsub_no_tilde(&repl_raw));
+        // Inline `singsub-with-skip_filesub` — C zsh sets the flag
+        // inline before calling singsub rather than wrapping in a
+        // helper. Direct port of the prefork SUB_FLAG | SKIP_FILESUB
+        // pattern. PORT.md: no helpers without C counterpart.
+        let repl = with_executor(|exec| {
+            let mut state = crate::ported::subst::SubstState::from_executor(exec);
+            state.skip_filesub = true;
+            let r = crate::ported::subst::singsub(&repl_raw, &mut state);
+            state.commit_to_executor(exec);
+            r
+        });
         let repl = crate::lex::untokenize(&repl);
         // Strip backslash escapes from the pattern. zsh: `\X` in a
         // ${var/pat/repl} pattern means "literal X" — the backslash
