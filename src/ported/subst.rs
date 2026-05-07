@@ -1511,32 +1511,60 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             continue;                                       // c:4531
         }                                                   // c:4531
 
+        // Single-char modifier dispatch — port of Src/subst.c:4585+
+        // modifier-arm ladder. Each arm calls a canonical hist.rs
+        // helper (the per-modifier C body lives in Src/hist.c).
+        let dispatch = |w: &str| -> Option<String> {        // c:4585
+            match modifier {                                // c:4585
+                'h' => Some(remtpath(w, 1)),                // c:4585 (:h head)
+                't' => Some(remlpaths(w, 1)),               // c:4585 (:t tail)
+                'r' => Some(rembutext(w)),                  // c:4585 (:r root)
+                'e' => Some(remtext(w)),                    // c:4585 (:e ext)
+                'l' => Some(casemodify(w, CaseMod::Lower)), // c:4585 (:l)
+                'u' => Some(casemodify(w, CaseMod::Upper)), // c:4585 (:u)
+                'q' => Some(crate::ported::utils::quotestring( // c:4585 (:q)
+                    w, crate::ported::utils::QuoteType::Backslash)),
+                'Q' => {                                    // c:4585 (:Q unquote)
+                    let mut out = String::with_capacity(w.len());
+                    let mut chs = w.chars().peekable();
+                    while let Some(c) = chs.next() {
+                        if c == '\\' { if let Some(nc) = chs.next() { out.push(nc); } }
+                        else if c == '\'' || c == '"' { /* drop quotes */ }
+                        else { out.push(c); }
+                    }
+                    Some(out)
+                }
+                'A' => chabspath(w).ok(),                   // c:4585 (:A absolute)
+                'a' => Some(remtpath(w, 0)),                // c:4585 (:a)
+                _ => None,                                  // c:4585 (unrecognized)
+            }
+        };
         if wall {                                           // c:4531
             // Apply modifier to each word
             let separator = sep.as_deref().unwrap_or(" ");  // c:4531
-            let words: Vec<&str> = result.split(separator).collect(); // c:4531
-            let mut modified: Vec<String> = Vec::with_capacity(words.len()); // c:4531
-            for w in &words {                               // c:4531
-                match Some::<String>((w).to_string()) /* TODO modify() port */ { // c:4531
-                    Some(m) => modified.push(m),            // c:4531
-                    None => {                               // c:4531
-                        eprintln!("zshrs: unrecognized modifier `{}'", modifier); // c:4531
-                        state.errflag = true;               // c:4531
-                        return String::new();               // c:4531
-                    }                                       // c:4531
-                }                                           // c:4531
-            }                                               // c:4531
-            result = modified.join(separator);              // c:4531
-        } else {                                            // c:4531
-            match Some::<String>((result).to_string()) /* TODO modify() port */ { // c:4531
-                Some(m) => result = m,                      // c:4531
-                None => {                                   // c:4531
-                    eprintln!("zshrs: unrecognized modifier `{}'", modifier); // c:4531
-                    state.errflag = true;                   // c:4531
-                    return String::new();                   // c:4531
-                }                                           // c:4531
-            }                                               // c:4531
-        }                                                   // c:4531
+            let words: Vec<&str> = result.split(separator).collect();
+            let mut modified: Vec<String> = Vec::with_capacity(words.len());
+            for w in &words {
+                match dispatch(w) {
+                    Some(m) => modified.push(m),
+                    None => {
+                        eprintln!("zshrs: unrecognized modifier `{}'", modifier);
+                        state.errflag = true;
+                        return String::new();
+                    }
+                }
+            }
+            result = modified.join(separator);
+        } else {
+            match dispatch(&result) {
+                Some(m) => result = m,
+                None => {
+                    eprintln!("zshrs: unrecognized modifier `{}'", modifier);
+                    state.errflag = true;
+                    return String::new();
+                }
+            }
+        }
     }                                                       // c:4531
 
     result                                                  // c:4531
