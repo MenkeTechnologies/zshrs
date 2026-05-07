@@ -1851,10 +1851,68 @@ fn paramsubst(                                              // c:1625
         }                                                   // c:1625
 
         let value = if let Some(sub) = subscript_str.as_deref() { // c:1625
-            // Array / assoc element lookup.
-            let _ = sub;                                    // c:1625 (subscript stub)
-            let v: Vec<String> = vec![state.variables.get(&var_name).cloned().unwrap_or_default()]; // c:1625
-            v.join(" ")                                     // c:1625
+            // Array / assoc element lookup. Port of zsh's
+            // getarrvalue + getindex + getasub (Src/params.c).
+            // Order: assoc first (key lookup), then array
+            // (numeric / `*` / `@` / range), then scalar fallback
+            // (zsh treats `$scalar[N]` as char-N of the scalar
+            // string, 1-based; `$scalar[N,M]` as substring).
+            if let Some(map) = state.assoc_arrays.get(&var_name) { // c:1625
+                map.get(sub).cloned().unwrap_or_default()   // c:1625
+            } else if let Some(arr) = state.arrays.get(&var_name) { // c:1625
+                if sub == "*" || sub == "@" {               // c:1625
+                    arr.join(" ")                            // c:1625
+                } else if let Some((lo, hi)) = sub.split_once(',') { // c:1625
+                    // `$arr[N,M]` range. 1-based, inclusive.
+                    let lo: i32 = lo.trim().parse().unwrap_or(1); // c:1625
+                    let hi: i32 = hi.trim().parse().unwrap_or(arr.len() as i32); // c:1625
+                    let n = arr.len() as i32;               // c:1625
+                    let lo = if lo < 0 { (n + lo + 1).max(1) } else { lo.max(1) } as usize; // c:1625
+                    let hi = if hi < 0 { (n + hi + 1).max(0) } else { hi.min(n).max(0) } as usize; // c:1625
+                    if lo == 0 || lo > arr.len() || lo > hi { // c:1625
+                        String::new()                        // c:1625
+                    } else {                                // c:1625
+                        arr[lo - 1..hi].join(" ")           // c:1625
+                    }                                        // c:1625
+                } else if let Ok(idx) = sub.parse::<i32>() { // c:1625
+                    let n = arr.len() as i32;               // c:1625
+                    let i = if idx < 0 { n + idx } else { idx - 1 }; // c:1625
+                    if i >= 0 && (i as usize) < arr.len() { // c:1625
+                        arr[i as usize].clone()             // c:1625
+                    } else {                                // c:1625
+                        String::new()                       // c:1625
+                    }                                        // c:1625
+                } else {                                    // c:1625
+                    String::new()                            // c:1625
+                }                                            // c:1625
+            } else {                                         // c:1625
+                let s = state.variables.get(&var_name).cloned().unwrap_or_default(); // c:1625
+                let chars_v: Vec<char> = s.chars().collect(); // c:1625
+                if sub == "*" || sub == "@" {               // c:1625
+                    s                                        // c:1625
+                } else if let Some((lo, hi)) = sub.split_once(',') { // c:1625
+                    let lo: i32 = lo.trim().parse().unwrap_or(1); // c:1625
+                    let hi: i32 = hi.trim().parse().unwrap_or(chars_v.len() as i32); // c:1625
+                    let n = chars_v.len() as i32;           // c:1625
+                    let lo = if lo < 0 { (n + lo + 1).max(1) } else { lo.max(1) } as usize; // c:1625
+                    let hi = if hi < 0 { (n + hi + 1).max(0) } else { hi.min(n).max(0) } as usize; // c:1625
+                    if lo == 0 || lo > chars_v.len() || lo > hi { // c:1625
+                        String::new()                        // c:1625
+                    } else {                                 // c:1625
+                        chars_v[lo - 1..hi].iter().collect() // c:1625
+                    }                                        // c:1625
+                } else if let Ok(idx) = sub.parse::<i32>() { // c:1625
+                    let n = chars_v.len() as i32;           // c:1625
+                    let i = if idx < 0 { n + idx } else { idx - 1 }; // c:1625
+                    if i >= 0 && (i as usize) < chars_v.len() { // c:1625
+                        chars_v[i as usize].to_string()     // c:1625
+                    } else {                                 // c:1625
+                        String::new()                        // c:1625
+                    }                                        // c:1625
+                } else {                                    // c:1625
+                    String::new()                            // c:1625
+                }                                            // c:1625
+            }                                                // c:1625
         } else {                                            // c:1625
             state.variables.get(&var_name).cloned().unwrap_or_default()               // c:1625
         };                                                  // c:1625
