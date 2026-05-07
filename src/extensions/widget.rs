@@ -256,7 +256,7 @@ fn get_builtin_widget(name: &str) -> (fn(&mut Zle), WidgetFlags) {
 
         // Region / mark — ports cited in each widget body docstring
         // against Src/Zle/zle_move.c (set-mark / exchange-point /
-        // visual / deactivate) and zle_misc.c (quote-line / quote-region
+        // visual / deactivate) and zle_misc.c (bslashquote-line / bslashquote-region
         // / copy-region-as-kill / pound-insert / copy-prev-word).
         "set-mark-command" => (
             widget_set_mark_command,
@@ -268,8 +268,8 @@ fn get_builtin_widget(name: &str) -> (fn(&mut Zle), WidgetFlags) {
         "visual-line-mode" => (widget_visual_line_mode, WidgetFlags::empty()),
         "copy-region-as-kill" => (widget_copy_region_as_kill, WidgetFlags::KEEPSUFFIX),
         "copy-prev-word" => (widget_copy_prev_word, WidgetFlags::KEEPSUFFIX),
-        "quote-line" => (widget_quote_line, WidgetFlags::empty()),
-        "quote-region" => (widget_quote_region, WidgetFlags::empty()),
+        "bslashquote-line" => (widget_quote_line, WidgetFlags::empty()),
+        "bslashquote-region" => (widget_quote_region, WidgetFlags::empty()),
         "pound-insert" => (widget_pound_insert, WidgetFlags::empty()),
         "vi-pound-insert" => (widget_pound_insert, WidgetFlags::empty()),
 
@@ -2002,7 +2002,7 @@ fn widget_pound_insert(zle: &mut Zle) {
 
 fn widget_quote_line(zle: &mut Zle) {
     // Port of quoteline() from Src/Zle/zle_misc.c:1187. Wrap the entire
-    // buffer in single quotes, escaping any embedded single quote as
+    // buffer in single quotes, escaping any embedded single bslashquote as
     // `'\''` (the C source's makequote routine).
     let inner: String = zle.zleline.iter().collect();
     let escaped = inner.replace('\'', r"'\''");
@@ -2016,7 +2016,7 @@ fn widget_quote_line(zle: &mut Zle) {
 fn widget_quote_region(zle: &mut Zle) {
     // Port of quoteregion() from Src/Zle/zle_misc.c:1152. Wrap the
     // currently-selected region (mark..zlecs, normalised) in single
-    // quotes with embedded-quote escaping.
+    // quotes with embedded-bslashquote escaping.
     let (lo, hi) = if zle.mark <= zle.zlecs {
         (zle.mark, zle.zlecs)
     } else {

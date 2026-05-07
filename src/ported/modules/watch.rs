@@ -351,19 +351,19 @@ pub fn format_watch(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
                     }
                     'M' => result.push_str(&entry.host),
                     't' | '@' => {
-                        let time = format_time(entry.time, "%l:%M%p");
+                        let time = printtime(entry.time, "%l:%M%p");
                         result.push_str(&time);
                     }
                     'T' => {
-                        let time = format_time(entry.time, "%H:%M");
+                        let time = printtime(entry.time, "%H:%M");
                         result.push_str(&time);
                     }
                     'w' => {
-                        let time = format_time(entry.time, "%a %e");
+                        let time = printtime(entry.time, "%a %e");
                         result.push_str(&time);
                     }
                     'W' => {
-                        let time = format_time(entry.time, "%m/%d/%y");
+                        let time = printtime(entry.time, "%m/%d/%y");
                         result.push_str(&time);
                     }
                     'D' => {
@@ -376,10 +376,10 @@ pub fn format_watch(entry: &UtmpEntry, logged_in: bool, fmt: &str) -> String {
                                 }
                                 custom_fmt.push(fc);
                             }
-                            let time = format_time(entry.time, &custom_fmt);
+                            let time = printtime(entry.time, &custom_fmt);
                             result.push_str(&time);
                         } else {
-                            let time = format_time(entry.time, "%y-%m-%d");
+                            let time = printtime(entry.time, "%y-%m-%d");
                             result.push_str(&time);
                         }
                     }
@@ -466,7 +466,7 @@ fn format_conditional(
 
 /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
 /// of any function in `Src/Modules/watch.c`.
-fn format_time(timestamp: i64, fmt: &str) -> String {
+fn printtime(timestamp: i64, fmt: &str) -> String {
     use chrono::{Local, TimeZone};
 
     if let Some(dt) = Local.timestamp_opt(timestamp, 0).single() {

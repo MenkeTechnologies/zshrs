@@ -120,7 +120,7 @@ pub static SIGNAL_NAMES: &[(&str, i32)] = &[
 /// Port of `getsignum()` from Src/signals.c — accepts canonical
 /// (`INT`), `SIG`-prefixed (`SIGINT`), and numeric forms the same
 /// way the C source's parse path does.
-pub fn sig_by_name(name: &str) -> Option<i32> {
+pub fn getsignum(name: &str) -> Option<i32> {
     let name_upper = name.to_uppercase();
     let lookup = name_upper.strip_prefix("SIG").unwrap_or(&name_upper);
 
@@ -135,7 +135,7 @@ pub fn sig_by_name(name: &str) -> Option<i32> {
 }
 
 /// Look up a signal name by number.
-/// Inverse of `sig_by_name`. Closest C analog is the
+/// Inverse of `getsignum`. Closest C analog is the
 /// `sigmsg()`/`sigs[]` walk Src/signals.c uses for `kill -l`.
 pub fn sig_name(sig: i32) -> Option<&'static str> {
     for (name, num) in SIGNAL_NAMES {
@@ -840,13 +840,13 @@ mod tests {
 
     #[test]
     fn test_sig_by_name() {
-        assert_eq!(sig_by_name("INT"), Some(libc::SIGINT));
-        assert_eq!(sig_by_name("SIGINT"), Some(libc::SIGINT));
-        assert_eq!(sig_by_name("int"), Some(libc::SIGINT));
-        assert_eq!(sig_by_name("HUP"), Some(libc::SIGHUP));
-        assert_eq!(sig_by_name("TERM"), Some(libc::SIGTERM));
-        assert_eq!(sig_by_name("EXIT"), Some(SIGEXIT));
-        assert_eq!(sig_by_name("9"), Some(9));
+        assert_eq!(getsignum("INT"), Some(libc::SIGINT));
+        assert_eq!(getsignum("SIGINT"), Some(libc::SIGINT));
+        assert_eq!(getsignum("int"), Some(libc::SIGINT));
+        assert_eq!(getsignum("HUP"), Some(libc::SIGHUP));
+        assert_eq!(getsignum("TERM"), Some(libc::SIGTERM));
+        assert_eq!(getsignum("EXIT"), Some(SIGEXIT));
+        assert_eq!(getsignum("9"), Some(9));
     }
 
     #[test]
@@ -1048,7 +1048,7 @@ impl TrapScope {
 /// Build a signal-name list for display.
 /// Port of the `kill -l` output path Src/signals.c builds by
 /// walking `sigs[]` (around `bin_kill()` in Src/jobs.c:bin_kill).
-pub fn signal_names_list() -> Vec<String> {
+pub fn starttrapscope() -> Vec<String> {
     let mut names = Vec::with_capacity(SIGCOUNT as usize + 1);
     names.push("EXIT".to_string());
     for i in 1..=SIGCOUNT {

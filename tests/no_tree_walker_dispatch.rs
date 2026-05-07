@@ -1055,13 +1055,13 @@ fn zshflag_q_single_quote_escapes_inner() {
 
 #[test]
 fn zshflag_qq_double_quote() {
-    // (qq) per zshexpn(1): single-quote always.
+    // (qq) per zshexpn(1): single-bslashquote always.
     ok(r#"x=hello; echo "${(qq)x}""#, "'hello'\n");
 }
 
 #[test]
 fn zshflag_qqq_ansi_c_quoting() {
-    // (qqq) per zshexpn(1): double-quote always — tab stays literal
+    // (qqq) per zshexpn(1): double-bslashquote always — tab stays literal
     // inside "...".
     ok(r#"s=$(printf 'a\tb'); echo "${(qqq)s}""#, "\"a\tb\"\n");
 }

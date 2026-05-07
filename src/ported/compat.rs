@@ -80,7 +80,7 @@ static MONOTONIC_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new(
 /// Src/compat.c:133 — uses `CLOCK_MONOTONIC` so the value never
 /// goes backwards across NTP corrections. Rust's `Instant`
 /// guarantees monotonicity.
-pub fn zgettime_monotonic() -> TimeSpec {
+pub fn zgettime_monotonic_if_available() -> TimeSpec {
     let start = MONOTONIC_START.get_or_init(Instant::now);
     let elapsed = start.elapsed();
     TimeSpec {
@@ -331,17 +331,17 @@ pub fn gethostname() -> Option<String> {
 /// Port of `isprint_ascii()` from Src/compat.c:785 — locale-
 /// independent printable check the C source uses when locale
 /// data isn't safe to read (signal handlers, early init).
-pub fn isprint_safe(c: char) -> bool {
+pub fn isprint_ascii(c: char) -> bool {
     let b = c as u32;
     (0x20..=0x7e).contains(&b)
 }
 
 /// Get the column width of a Unicode character.
 /// Port of `u9_wcwidth()` from Src/compat.c:760 — the C source
-/// ships its own Unicode 9 wcwidth fallback because system
-/// `wcwidth(3)` data ages with libc. Rust uses the
+/// ships its own Unicode 9 u9_wcwidth fallback because system
+/// `u9_wcwidth(3)` data ages with libc. Rust uses the
 /// `unicode-width` crate which tracks the latest UCD.
-pub fn wcwidth(c: char) -> i32 {
+pub fn u9_wcwidth(c: char) -> i32 {
     unicode_width::UnicodeWidthChar::width(c)
         .map(|w| w as i32)
         .unwrap_or(if c.is_control() { -1 } else { 1 })
@@ -349,12 +349,12 @@ pub fn wcwidth(c: char) -> i32 {
 
 /// Check whether a wide character is printable.
 /// Port of `u9_iswprint()` from Src/compat.c:770.
-pub fn iswprint(c: char) -> bool {
-    !c.is_control() && wcwidth(c) >= 0
+pub fn u9_iswprint(c: char) -> bool {
+    !c.is_control() && u9_wcwidth(c) >= 0
 }
 
 /// Compute the column width of a UTF-8 string.
-/// zshrs convenience over `wcwidth` — closest C analog is the
+/// zshrs convenience over `u9_wcwidth` — closest C analog is the
 /// per-character width sum the prompt-width logic does in
 /// Src/prompt.c via repeated `WCWIDTH()` calls.
 pub fn strwidth(s: &str) -> usize {
@@ -432,9 +432,9 @@ mod tests {
 
     #[test]
     fn test_zgettime_monotonic() {
-        let t1 = zgettime_monotonic();
+        let t1 = zgettime_monotonic_if_available();
         std::thread::sleep(std::time::Duration::from_millis(10));
-        let t2 = zgettime_monotonic();
+        let t2 = zgettime_monotonic_if_available();
         let diff = t2 - t1;
         assert!(diff.tv_sec > 0 || diff.tv_nsec > 0);
     }
@@ -474,18 +474,18 @@ mod tests {
 
     #[test]
     fn test_isprint_safe() {
-        assert!(isprint_safe('a'));
-        assert!(isprint_safe('Z'));
-        assert!(isprint_safe(' '));
-        assert!(!isprint_safe('\x00'));
-        assert!(!isprint_safe('\x1f'));
+        assert!(isprint_ascii('a'));
+        assert!(isprint_ascii('Z'));
+        assert!(isprint_ascii(' '));
+        assert!(!isprint_ascii('\x00'));
+        assert!(!isprint_ascii('\x1f'));
     }
 
     #[test]
     fn test_wcwidth() {
-        assert_eq!(wcwidth('a'), 1);
-        assert_eq!(wcwidth('中'), 2);
-        assert!(wcwidth('\x00') <= 0);
+        assert_eq!(u9_wcwidth('a'), 1);
+        assert_eq!(u9_wcwidth('中'), 2);
+        assert!(u9_wcwidth('\x00') <= 0);
     }
 
     #[test]

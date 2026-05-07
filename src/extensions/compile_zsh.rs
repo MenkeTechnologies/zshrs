@@ -1544,7 +1544,7 @@ impl ZshCompiler {
         // `\u{85}` (META-$) in `s` — the literal-char check on
         // `s` would miss every expansion. Glob triggers (`*`,
         // `?`, `[`) however MUST run on `s` so the SNULL/DNULL
-        // quote markers correctly suppress meta-interpretation
+        // bslashquote markers correctly suppress meta-interpretation
         // inside `'…'` / `"…"` spans. Direct port of Src/pattern.c
         // ::patcompswitch — chars inside quoted spans bypass meta.
         // Without the marker-aware glob check,
@@ -1641,7 +1641,7 @@ impl ZshCompiler {
         }
 
         if !trigger_dollar && !trigger_glob && !trigger_tilde && !trigger_brace {
-            // Pure literal — strip any \0 quote-sentinels.
+            // Pure literal — strip any \0 bslashquote-sentinels.
             let cleaned = strip_quote_markers(&untoked);
             let idx = self.builder.add_constant(Value::str(cleaned.as_str()));
             self.builder.emit(Op::LoadConst(idx), 0);
@@ -1691,8 +1691,8 @@ impl ZshCompiler {
         // no modifier). Covers `$x`, `$1`, `$#`, `$?`, `$!`, etc. — the
         // most common case in real scripts. Emits BUILTIN_GET_VAR
         // directly without going through the runtime expand path.
-        // Skip when the raw word has DNULL/SNULL quote markers — those
-        // signal an internal quote boundary (e.g. `"$a"bar` becomes
+        // Skip when the raw word has DNULL/SNULL bslashquote markers — those
+        // signal an internal bslashquote boundary (e.g. `"$a"bar` becomes
         // DNULL+$+a+DNULL+bar; after untokenize it looks like `$abar`
         // and the fast-path reads the wrong name). The bridge below
         // handles those correctly by routing through expand_string.
@@ -2102,7 +2102,7 @@ impl ZshCompiler {
 
         // Fast path: `${(flags)"literal"}` — zsh parameter flags applied
         // to a literal string operand. Detection runs on the original `s`
-        // (with quote markers intact) so we can distinguish a quoted
+        // (with bslashquote markers intact) so we can distinguish a quoted
         // literal from a bare name. The literal value is prefixed with
         // `\u{01}` so BUILTIN_PARAM_FLAG skips the variable lookup and
         // treats the rest as a scalar value.
@@ -2688,7 +2688,7 @@ impl ZshCompiler {
                 }
                 if needs_brace && !parent_is_dq {
                     // Brace-expand the assembled scalar. Pops Value::Str,
-                    // runs expand_braces, pushes Value::Array.
+                    // runs xpandbraces, pushes Value::Array.
                     self.builder
                         .emit(Op::CallBuiltin(crate::exec::BUILTIN_BRACE_EXPAND, 0), 0);
                 }
@@ -4193,7 +4193,7 @@ impl ZshCompiler {
 }
 
 /// True iff `s` contains `target` at a position not preceded by the `\0`
-/// quote sentinel.
+/// bslashquote sentinel.
 /// Cheap check: does `s` contain a top-level `{...}` group that's a brace
 /// expansion (comma list or `..` range)? Used to trigger the runtime
 /// expand-word path so `{a,b,c}` and `{1..5}` get expanded into multiple
@@ -4203,7 +4203,7 @@ fn looks_like_brace_expansion(s: &str) -> bool {
     //   1. `{a,b,c}`  — comma list
     //   2. `{1..10}`  — range
     //   3. `{X…}` non-empty body — possible BRACE_CCL match (the
-    //      runtime checks the option; expand_braces no-ops if not set)
+    //      runtime checks the option; xpandbraces no-ops if not set)
     // Without case 3, `setopt brace_ccl; print X{za-q521}Y` skipped
     // the brace pass because the body had no `,` / `..`.
     let mut depth = 0;
@@ -4226,7 +4226,7 @@ fn looks_like_brace_expansion(s: &str) -> bool {
                         }
                         // Possible CCL body — non-empty without comma/
                         // dotdot. Defer the BRACE_CCL option check to
-                        // the runtime expand_braces; this just opens
+                        // the runtime xpandbraces; this just opens
                         // the gate so the option can take effect.
                         if !body.is_empty() {
                             return true;
@@ -4241,7 +4241,7 @@ fn looks_like_brace_expansion(s: &str) -> bool {
     false
 }
 
-/// Determine the quote-mode for the bridge replacement based on the
+/// Determine the bslashquote-mode for the bridge replacement based on the
 /// raw zsh-tokenized word. Returns one of:
 ///   0 = Default (full expand_string + braces + glob)
 ///   1 = DoubleQuoted (expand vars, suppress brace + glob)
@@ -5657,8 +5657,8 @@ fn array_splice_is_star(s: &str) -> bool {
 /// glob metas (`*`, `?`, `[`) that fall INSIDE single/double-quoted
 /// regions with backslash-escaped versions. Quoted glob metas should
 /// match literally per zsh. Markers used by the lexer:
-///   `\u{9d}` (SNULL) — single-quote boundary
-///   `\u{9e}` (DNULL) — double-quote boundary
+///   `\u{9d}` (SNULL) — single-bslashquote boundary
+///   `\u{9e}` (DNULL) — double-bslashquote boundary
 fn escape_quoted_glob_metas(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut in_squote = false;
@@ -5974,7 +5974,7 @@ fn render_cond(c: &crate::parse::ZshCond) -> String {
 
 fn unquoted(s: &str, target: char) -> bool {
     // True iff `target` appears in the un-quoted portion of `s`. The
-    // word may carry lexer-level quote markers — `\u{9d}` (SNULL,
+    // word may carry lexer-level bslashquote markers — `\u{9d}` (SNULL,
     // single-quoted span) and `\u{9e}` (DNULL, double-quoted span)
     // bracket regions where globbing is suppressed. C zsh's pattern
     // compiler (Src/pattern.c::patcompswitch) skips meta-interpretation
@@ -6057,7 +6057,7 @@ fn has_numeric_range_glob(s: &str) -> bool {
     false
 }
 
-/// Strip the lexer's `\0X` quote sentinels (single-quoted special chars).
+/// Strip the lexer's `\0X` bslashquote sentinels (single-quoted special chars).
 fn strip_quote_markers(s: &str) -> String {
     if !s.contains('\x00') {
         return s.to_string();

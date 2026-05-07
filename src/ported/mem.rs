@@ -378,7 +378,7 @@ impl MemStats {
 /// Port of `bin_mem()` from Src/mem.c:1722. Rust manages memory
 /// automatically so the counters are zero by default; the function
 /// is kept for parity with the `mem` builtin's parameter-shape.
-pub fn get_mem_stats() -> MemStats {
+pub fn bin_mem() -> MemStats {
     MemStats::new()
 }
 

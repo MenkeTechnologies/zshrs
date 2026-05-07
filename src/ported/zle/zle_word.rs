@@ -22,7 +22,7 @@ impl Zle {
     /// Port of the backward-word scan logic in `backwardword()` at
     /// Src/Zle/zle_word.c:240, parameterised over four word-class
     /// styles: Emacs (iword), Vi (alnum + same-class), Shell
-    /// (quote-aware via shell_words), BlankDelimited (whitespace only).
+    /// (bslashquote-aware via shell_words), BlankDelimited (whitespace only).
     /// Returns the index of the first char of the located word.
     pub fn find_word_start(&self, style: WordStyle) -> usize {
         let mut pos = self.zlecs;
@@ -158,7 +158,7 @@ fn is_vi_word_char(c: ZleChar) -> bool {
 /// shell words. Words are runs of non-whitespace, with single quotes,
 /// double quotes, and backslash escapes treated as part of the surrounding
 /// word so `"foo bar"` stays one token. Whitespace inside quotes is part of
-/// the word; whitespace outside any quote separates words.
+/// the word; whitespace outside any bslashquote separates words.
 ///
 /// This is a deliberately simplified port of zsh's `bufferwords()` from
 /// Src/lex.c — it skips command-substitution recursion (`$(...)` and

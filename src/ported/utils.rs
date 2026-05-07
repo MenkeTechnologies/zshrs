@@ -115,7 +115,7 @@ pub fn find_in_path(name: &str) -> Option<PathBuf> {
 /// Port of `unmeta_named_dir()` / `gethnameddir()` chain from
 /// Src/utils.c (around `equalsplit()` line 3000-ish) — same
 /// `~`/`~+N`/`~-N`/`~user` precedence.
-pub fn expand_tilde(path: &str) -> String {
+pub fn unmeta_named_dir(path: &str) -> String {
     if !path.starts_with('~') {
         return path.to_string();
     }
@@ -459,7 +459,7 @@ fn is_pattern(c: char) -> bool {
 
 /// Quote a string according to the specified type
 /// Port from zsh/Src/utils.c quotestring() (lines 6141-6452)
-/// Quote a string per the requested quote style.
+/// Quote a string per the requested bslashquote style.
 /// Port of `quotestring()` from Src/utils.c — used by `print
 /// -%q`, `${(q)var}`, completion-output escaping, history
 /// re-emission.
@@ -480,7 +480,7 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
         QuoteType::None => s.to_string(),
 
         QuoteType::BackslashPattern => {
-            // Only quote pattern characters (lines 6242-6247)
+            // Only bslashquote pattern characters (lines 6242-6247)
             let mut result = String::with_capacity(s.len() * 2);
             for c in s.chars() {
                 if is_pattern(c) {
@@ -504,12 +504,12 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
         }
 
         QuoteType::Single => {
-            // Single quote: 'string' (lines 6359-6382)
+            // Single bslashquote: 'string' (lines 6359-6382)
             let mut result = String::with_capacity(s.len() + 4);
             result.push('\'');
             for c in s.chars() {
                 if c == '\'' {
-                    // End quote, add escaped quote, start new quote
+                    // End bslashquote, add escaped bslashquote, start new bslashquote
                     result.push_str("'\\''");
                 } else if c == '\n' {
                     // Newlines need $'...' quoting
@@ -560,7 +560,7 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
         }
 
         QuoteType::Double => {
-            // Double quote: "string" (lines 6272-6280, 6311-6312)
+            // Double bslashquote: "string" (lines 6272-6280, 6311-6312)
             let mut result = String::with_capacity(s.len() + 4);
             result.push('"');
             for c in s.chars() {
@@ -610,9 +610,9 @@ pub fn quotestring(s: &str, quote_type: QuoteType) -> String {
 }
 
 /// Quote a string for safe shell use (convenience wrapper)
-/// Default-mode quote.
+/// Default-mode bslashquote.
 /// Convenience wrapper around `quotestring()` with the most
-/// conservative quote-everything-special mode.
+/// conservative bslashquote-everything-special mode.
 pub fn quote_string(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
@@ -628,7 +628,7 @@ pub fn quote_string(s: &str) -> String {
 }
 
 /// Split a string respecting quotes
-/// Split a string respecting quote pairs.
+/// Split a string respecting bslashquote pairs.
 /// Port of the `getshquote()` / `splitstring` routines around
 /// Src/utils.c — used for `${(z)…}` parameter flag.
 pub fn split_quoted(s: &str) -> Vec<String> {
@@ -1794,7 +1794,7 @@ pub fn time_now_ns() -> (i64, i64) {
 }
 
 /// Format seconds as HH:MM:SS
-pub fn format_time(secs: i64) -> String {
+pub fn printtime(secs: i64) -> String {
     let hours = secs / 3600;
     let mins = (secs % 3600) / 60;
     let secs = secs % 60;
@@ -3027,7 +3027,7 @@ pub fn niceztrlen(s: &str) -> usize {
     niceformat(s).len()
 }
 
-/// Duplicate and double-quote a string (from utils.c dquotedztrdup)
+/// Duplicate and double-bslashquote a string (from utils.c dquotedztrdup)
 pub fn dquotedztrdup(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 4);
     for c in s.chars() {
@@ -3187,7 +3187,7 @@ mod tests {
     #[test]
     fn test_expand_tilde() {
         // Just test that it doesn't crash - actual expansion depends on env
-        let result = expand_tilde("~/test");
+        let result = unmeta_named_dir("~/test");
         assert!(!result.starts_with('~') || result == "~/test");
     }
 
@@ -3447,7 +3447,7 @@ pub fn addunprintable(c: char) -> String {
     }
 }
 
-/// Double-quote and print string (from utils.c dquotedzputs)
+/// Double-bslashquote and print string (from utils.c dquotedzputs)
 pub fn dquotedzputs(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 2);
     result.push('"');
@@ -3640,7 +3640,7 @@ pub fn pretty_io_err(e: &std::io::Error) -> String {
 
 // ===========================================================
 // Utility helpers moved from src/ported/exec.rs.
-// All correspond to Src/utils.c logic (path/string/quote helpers).
+// All correspond to Src/utils.c logic (path/string/bslashquote helpers).
 // ===========================================================
 
 /// Convert float to hex representation (%a/%A format)
@@ -3775,7 +3775,7 @@ pub(crate) fn zsh_split_z(s: &str) -> Vec<String> {
                 i += 1;
             }
             '\'' => {
-                // Single-quoted: take until matching quote, no expansion.
+                // Single-quoted: take until matching bslashquote, no expansion.
                 i += 1;
                 while i < chars.len() && chars[i] != '\'' {
                     cur.push(chars[i]);
@@ -3786,7 +3786,7 @@ pub(crate) fn zsh_split_z(s: &str) -> Vec<String> {
                 }
             }
             '"' => {
-                // Double-quoted: take until matching quote, honor `\"`.
+                // Double-quoted: take until matching bslashquote, honor `\"`.
                 i += 1;
                 while i < chars.len() && chars[i] != '"' {
                     if chars[i] == '\\' && i + 1 < chars.len() {
@@ -3929,7 +3929,7 @@ pub(crate) fn quote_xtrace_arg(s: &str) -> String {
         return "''".to_string();
     }
     // Direct port of `SPECCHARS "#$^*()=|{}[]`<>?~;&\n\t \\\'\""`
-    // from Src/zsh.h:228. ANY occurrence triggers the single-quote
+    // from Src/zsh.h:228. ANY occurrence triggers the single-bslashquote
     // wrap — e.g. `name=val` quotes because `=` is in the set.
     let needs_quote = s.chars().any(|c| {
         matches!(
@@ -3963,7 +3963,7 @@ pub(crate) fn quote_xtrace_arg(s: &str) -> String {
     if !needs_quote {
         s.to_string()
     } else {
-        // `'` inside a single-quoted string closes the quote, escapes
+        // `'` inside a single-quoted string closes the bslashquote, escapes
         // an apostrophe via `'\''`, then reopens.
         let inner = s.replace('\'', "'\\''");
         format!("'{}'", inner)

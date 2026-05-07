@@ -19,7 +19,7 @@ use std::fs::{self, Metadata};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
-use crate::glob::pattern_match;
+use crate::glob::matchpat;
 
 /// `[[ ... ]]` operator codes.
 /// Port of the `COND_*` enum from Src/zsh.h — `evalcond()`
@@ -225,14 +225,14 @@ impl<'a> CondEval<'a> {
             CondType::StrEq | CondType::StrDeq => {
                 // In [[ ]], right side is a pattern
                 if !self.posix_mode {
-                    CondResult::from_bool(pattern_match(right, left, true, true))
+                    CondResult::from_bool(matchpat(right, left, true, true))
                 } else {
                     CondResult::from_bool(left == right)
                 }
             }
             CondType::StrNeq => {
                 if !self.posix_mode {
-                    CondResult::from_bool(!pattern_match(right, left, true, true))
+                    CondResult::from_bool(!matchpat(right, left, true, true))
                 } else {
                     CondResult::from_bool(left != right)
                 }
@@ -544,7 +544,7 @@ impl<'a> CondEval<'a> {
         #[cfg(not(feature = "regex"))]
         {
             // Fallback: simple pattern match
-            CondResult::from_bool(pattern_match(pattern, text, true, true))
+            CondResult::from_bool(matchpat(pattern, text, true, true))
         }
     }
 }

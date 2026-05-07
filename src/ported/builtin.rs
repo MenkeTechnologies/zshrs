@@ -2243,7 +2243,7 @@ impl crate::ported::exec::ShellExecutor {
         let mut is_trace = false; // -t
         let mut is_unique = false; // -U: dedupe array elements
         let mut print_mode = false; // -p
-        let mut pattern_match = false; // -m
+        let mut matchpat = false; // -m
         let mut list_mode = false; // no args: list all
         let mut plus_mode = false; // +x etc: remove attribute
         let mut width: Option<usize> = None;
@@ -2294,7 +2294,7 @@ impl crate::ported::exec::ShellExecutor {
                         't' => is_trace = false,
                         'U' => is_unique = false,
                         'p' => print_mode = false,
-                        'm' => pattern_match = false,
+                        'm' => matchpat = false,
                         // `+` flag also handles `-i` removal etc. Unknown
                         // letters error like the `-` arm: `bad option: +X`.
                         other => {
@@ -2413,7 +2413,7 @@ impl crate::ported::exec::ShellExecutor {
                         't' => is_trace = true,
                         'U' => is_unique = true,
                         'p' => print_mode = true,
-                        'm' => pattern_match = true,
+                        'm' => matchpat = true,
                         // zsh: unknown typeset/declare flag letter
                         // errors `bad option: -X` exit 1. zshrs's
                         // silent fallback masked typos and made
@@ -2472,7 +2472,7 @@ impl crate::ported::exec::ShellExecutor {
         // and list matching variables. With no flags besides -m it acts as
         // a filter on the listing output. The patterns may match scalars,
         // arrays, assocs, and (with -f) functions.
-        if pattern_match && !var_args.is_empty() {
+        if matchpat && !var_args.is_empty() {
             let patterns = std::mem::take(&mut var_args);
             let mut matched: Vec<String> = Vec::new();
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -3006,7 +3006,7 @@ impl crate::ported::exec::ShellExecutor {
                     // `"..."` and `'...'` so that DQ-quoted
                     // strings stay as one element (preserving
                     // embedded whitespace) but still get the
-                    // quote chars stripped from the result.
+                    // bslashquote chars stripped from the result.
                     // Direct port of zsh's lex.c word-splitting
                     // for assignment RHS — naive split_whitespace
                     // broke `local arr=( "a b" c )` because "a b"
@@ -3027,9 +3027,9 @@ impl crate::ported::exec::ShellExecutor {
                             while i < bytes.len() && !(bytes[i] as char).is_whitespace() {
                                 let c = bytes[i] as char;
                                 if c == '"' || c == '\'' {
-                                    let quote = c;
+                                    let bslashquote = c;
                                     i += 1;
-                                    while i < bytes.len() && (bytes[i] as char) != quote {
+                                    while i < bytes.len() && (bytes[i] as char) != bslashquote {
                                         // Inside DQ, `\"` and `\\`
                                         // are escaped; pass through
                                         // verbatim (the lexer
@@ -3039,7 +3039,7 @@ impl crate::ported::exec::ShellExecutor {
                                         i += 1;
                                     }
                                     if i < bytes.len() {
-                                        i += 1; // close quote
+                                        i += 1; // close bslashquote
                                     }
                                 } else if c == '\\' && i + 1 < bytes.len() {
                                     // Backslash escape in arg —
@@ -5278,7 +5278,7 @@ impl crate::ported::exec::ShellExecutor {
         let mut is_suffix = false;
         let mut is_regular = false;
         let mut list_form = false;
-        let mut pattern_match = false;
+        let mut matchpat = false;
         let mut print_global = false;
         let mut print_suffix = false;
         let mut print_regular = false;
@@ -5295,7 +5295,7 @@ impl crate::ported::exec::ShellExecutor {
                         's' => print_suffix = true,
                         'r' => print_regular = true,
                         'L' => list_form = true,
-                        'm' => pattern_match = true,
+                        'm' => matchpat = true,
                         // BUILTIN("alias", ..., "Lgmrs") — `-` and `+`
                         // forms share the same letter set. The `-`
                         // form below already rejects unknown letters;
@@ -5313,7 +5313,7 @@ impl crate::ported::exec::ShellExecutor {
                         'g' => is_global = true,
                         's' => is_suffix = true,
                         'L' => list_form = true,
-                        'm' => pattern_match = true,
+                        'm' => matchpat = true,
                         'r' => is_regular = true,
                         _ => {
                             eprintln!("zshrs:alias:1: bad option: -{}", ch);
@@ -5450,7 +5450,7 @@ impl crate::ported::exec::ShellExecutor {
                         crate::recorder::emit_alias(name, Some(value), ctx);
                     }
                 }
-            } else if pattern_match {
+            } else if matchpat {
                 // -m: pattern match mode — list matching aliases.
                 // Direct port of zsh/Src/builtin.c:4396-4424 (bin_unhash
                 // alias path). Uses Self::glob_match_static so character
@@ -6519,7 +6519,7 @@ impl crate::ported::exec::ShellExecutor {
         // when invoked as `rehash`.
         let mut rehash = cmd_name == "rehash";
         let mut fill_all = false;
-        let mut pattern_match = false;
+        let mut matchpat = false;
         let mut verbose = false;
         let mut list_form = false;
         let mut names = Vec::new();
@@ -6536,7 +6536,7 @@ impl crate::ported::exec::ShellExecutor {
                         'd' => dir_mode = true,
                         'f' => fill_all = true,
                         'r' if allow_full => rehash = true,
-                        'm' if allow_full => pattern_match = true,
+                        'm' if allow_full => matchpat = true,
                         'v' if allow_full => verbose = true,
                         'L' if allow_full => list_form = true,
                         // bad option for the active mask. zsh's
@@ -6638,7 +6638,7 @@ impl crate::ported::exec::ShellExecutor {
 
             if rehash {
                 // Remove named directories
-                if pattern_match {
+                if matchpat {
                     // -m: pattern matching
                     let to_remove: Vec<String> = self
                         .named_dirs
@@ -8412,7 +8412,7 @@ impl crate::ported::exec::ShellExecutor {
     pub(crate) fn bin_functions(&self, args: &[String]) -> i32 {
         let mut list_only = false;
         let mut show_trace = false;
-        let mut pattern_match = false;
+        let mut matchpat = false;
         let mut enable_trace = false;
         let mut names: Vec<&str> = Vec::new();
         let mut after_dashes = false;
@@ -8454,7 +8454,7 @@ impl crate::ported::exec::ShellExecutor {
                 // function name and erred "no such function". Mirror
                 // by silently consuming.
                 "+t" | "+T" => enable_trace = true,
-                "-m" => pattern_match = true,
+                "-m" => matchpat = true,
                 _ if arg.starts_with('-') && arg.len() > 1 => {
                     // Combined flags like `-lm`
                     for c in arg[1..].chars() {
@@ -8462,7 +8462,7 @@ impl crate::ported::exec::ShellExecutor {
                             'l' => list_only = true,
                             't' => show_trace = true,
                             'T' => enable_trace = true,
-                            'm' => pattern_match = true,
+                            'm' => matchpat = true,
                             // BUILTIN("functions", ..., "ckmMstTuUWx:z")
                             // — those are valid letters. Most are
                             // accepted as no-op (we don't track all
@@ -8502,7 +8502,7 @@ impl crate::ported::exec::ShellExecutor {
 
         // With -m, treat each name as a glob pattern and expand to
         // matching function names.
-        if pattern_match && !names.is_empty() {
+        if matchpat && !names.is_empty() {
             let mut matched: Vec<String> = Vec::new();
             for pat in &names {
                 for fname in self.function_names() {
@@ -11954,7 +11954,7 @@ impl crate::ported::exec::ShellExecutor {
                         'q' => {
                             // zsh `%q` — backslash-escape shell-special
                             // chars (matches `${(q)}` flag, NOT `(qq)`).
-                            // bash uses single-quote wrapping here; zsh's
+                            // bash uses single-bslashquote wrapping here; zsh's
                             // own printf takes the backslash route.
                             let mut out = String::with_capacity(arg.len() + 4);
                             for c in arg.chars() {

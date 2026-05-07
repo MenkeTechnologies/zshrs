@@ -3266,26 +3266,26 @@ impl ParamTable {
 // Free functions matching the C API
 // ---------------------------------------------------------------------------
 
-/// Get integer parameter value (from params.c getiparam)
+/// Get integer parameter value (from params.c getintvalue)
 /// Get an integer parameter.
 /// Port of `getintvalue()` from Src/params.c:2601.
-pub fn getiparam(table: &ParamTable, name: &str) -> i64 {
+pub fn getintvalue(table: &ParamTable, name: &str) -> i64 {
     table.get_value(name).map(|v| v.as_integer()).unwrap_or(0)
 }
 
-/// Get scalar (string) parameter (from params.c getsparam)
+/// Get scalar (string) parameter (from params.c getstrvalue)
 /// Get a scalar parameter.
 /// Port of `getstrvalue()` from Src/params.c:2335.
-pub fn getsparam(table: &ParamTable, name: &str) -> Option<String> {
+pub fn getstrvalue(table: &ParamTable, name: &str) -> Option<String> {
     table.get_value(name).map(|v| v.as_string())
 }
 
 /// Get scalar with default
 /// Get a scalar parameter with a default fallback.
-/// zshrs convenience over `getsparam()` — C zsh inlines the
+/// zshrs convenience over `getstrvalue()` — C zsh inlines the
 /// `value ? value : default` ternary at every call site.
 pub fn getsparam_u(table: &ParamTable, name: &str, default: &str) -> String {
-    getsparam(table, name).unwrap_or_else(|| default.to_string())
+    getstrvalue(table, name).unwrap_or_else(|| default.to_string())
 }
 
 /// Get array parameter (from params.c getaparam)
@@ -3319,10 +3319,10 @@ pub fn gethkparam(table: &ParamTable, name: &str) -> Option<Vec<String>> {
     }
 }
 
-/// Get numeric parameter (from params.c getnparam)
+/// Get numeric parameter (from params.c getnumvalue)
 /// Get a parameter as an `MNumber`.
 /// Port of `getnumvalue()` from Src/params.c:2624.
-pub fn getnparam(table: &ParamTable, name: &str) -> MNumber {
+pub fn getnumvalue(table: &ParamTable, name: &str) -> MNumber {
     match table.get_value(name) {
         Some(ParamValue::Integer(i)) => MNumber::Integer(i),
         Some(ParamValue::Float(f)) => MNumber::Float(f),
@@ -3339,10 +3339,10 @@ pub fn getnparam(table: &ParamTable, name: &str) -> MNumber {
     }
 }
 
-/// Assign string parameter (from params.c assignsparam)
+/// Assign string parameter (from params.c setstrvalue)
 /// Assign a scalar parameter.
 /// Port of `setstrvalue()` from Src/params.c:2685.
-pub fn assignsparam(table: &mut ParamTable, name: &str, val: &str) -> bool {
+pub fn setstrvalue(table: &mut ParamTable, name: &str, val: &str) -> bool {
     table.set_scalar(name, val)
 }
 
@@ -3353,10 +3353,10 @@ pub fn assigniparam(table: &mut ParamTable, name: &str, val: i64) -> bool {
     table.set_integer(name, val)
 }
 
-/// Assign array parameter (from params.c assignaparam)
+/// Assign array parameter (from params.c setaparam)
 /// Assign an array parameter.
 /// Port of `setaparam()` (Src/params.c).
-pub fn assignaparam(table: &mut ParamTable, name: &str, val: Vec<String>) -> bool {
+pub fn setaparam(table: &mut ParamTable, name: &str, val: Vec<String>) -> bool {
     table.set_array(name, val)
 }
 
@@ -3375,12 +3375,12 @@ pub fn assignhparam(table: &mut ParamTable, name: &str, val: HashMap<String, Str
     table.set_assoc(name, val)
 }
 
-/// Unset parameter (from params.c unsetparam)
+/// Unset parameter (from params.c unsetparam_pm)
 /// Unset a parameter.
 /// Port of `unsetparam_pm()` (Src/params.c) — invokes the
 /// per-param `unsetfn` callback before removing from the
 /// HashTable.
-pub fn unsetparam(table: &mut ParamTable, name: &str) -> bool {
+pub fn unsetparam_pm(table: &mut ParamTable, name: &str) -> bool {
     table.unset(name)
 }
 
@@ -3713,7 +3713,7 @@ fn glob_match(pattern: &str, name: &str) -> bool {
     pattern == name
 }
 
-/// Shell-quote a string for display
+/// Shell-bslashquote a string for display
 fn shell_quote(s: &str) -> String {
     if s.is_empty() {
         return "''".to_string();
@@ -3929,13 +3929,13 @@ pub fn convfloat_underscore(dval: f64, underscore: i32) -> String {
 
 /// Integer parameter with base formatting (from params.c intgetfn)
 pub fn intgetfn(table: &ParamTable, name: &str, base: u32) -> String {
-    let val = getiparam(table, name);
+    let val = getintvalue(table, name);
     convbase(val, base)
 }
 
 /// String parameter with modifiers (from params.c strgetfn)
 pub fn strgetfn(table: &ParamTable, name: &str, lower: bool, upper: bool) -> Option<String> {
-    let val = getsparam(table, name)?;
+    let val = getstrvalue(table, name)?;
     Some(if lower {
         val.to_lowercase()
     } else if upper {

@@ -257,9 +257,9 @@ impl FileStat {
             StatElement::Gid => self.format_gid(flags),
             StatElement::Rdev => format!("{}", self.rdev),
             StatElement::Size => format!("{}", self.size),
-            StatElement::Atime => self.format_time(self.atime, flags),
-            StatElement::Mtime => self.format_time(self.mtime, flags),
-            StatElement::Ctime => self.format_time(self.ctime, flags),
+            StatElement::Atime => self.printtime(self.atime, flags),
+            StatElement::Mtime => self.printtime(self.mtime, flags),
+            StatElement::Ctime => self.printtime(self.ctime, flags),
             StatElement::Blksize => format!("{}", self.blksize),
             StatElement::Blocks => format!("{}", self.blocks),
             StatElement::Link => self.link_target.clone().unwrap_or_default(),
@@ -418,7 +418,7 @@ impl FileStat {
 
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/stat.c`.
-    fn format_time(&self, timestamp: i64, flags: &StatFlags) -> String {
+    fn printtime(&self, timestamp: i64, flags: &StatFlags) -> String {
         let mut result = String::new();
 
         if flags.raw_format {
@@ -832,7 +832,7 @@ impl crate::ported::exec::ShellExecutor {
         // field-table order. Direct port of stat.c:418-426 STF_HASH.
         let mut as_hash = false;
         let mut hash_name = String::new();
-        let mut format_time = String::new();
+        let mut printtime = String::new();
         let mut elements: Vec<String> = Vec::new();
         let mut files: Vec<&str> = Vec::new();
         // `-t` flag: prefix each output line with the filename.
@@ -882,7 +882,7 @@ impl crate::ported::exec::ShellExecutor {
                 }
                 "-F" => {
                     if let Some(fmt) = iter.next() {
-                        format_time = fmt.clone();
+                        printtime = fmt.clone();
                     }
                 }
                 s if s.starts_with('+') => {
@@ -1012,11 +1012,11 @@ impl crate::ported::exec::ShellExecutor {
             output_element("size", &meta.len().to_string());
 
             let format_timestamp = |secs: i64| -> String {
-                if format_time.is_empty() {
+                if printtime.is_empty() {
                     secs.to_string()
                 } else {
                     chrono::DateTime::from_timestamp(secs, 0)
-                        .map(|dt| dt.format(&format_time).to_string())
+                        .map(|dt| dt.format(&printtime).to_string())
                         .unwrap_or_else(|| secs.to_string())
                 }
             };

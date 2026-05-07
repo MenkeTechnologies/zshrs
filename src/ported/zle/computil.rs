@@ -423,7 +423,7 @@ mod tests {
 
 // BEGIN moved-from-exec-rs
 impl crate::ported::exec::ShellExecutor {
-    /// compquote — shell-quote the value of each named parameter.
+    /// compquote — shell-bslashquote the value of each named parameter.
     /// Direct port of zsh/Src/Zle/computil.c:3679 bin_compquote.
     /// Walks each arg as a parameter name, replaces scalar values
     /// with comp_quote(value); for arrays, quotes each element.
@@ -431,9 +431,9 @@ impl crate::ported::exec::ShellExecutor {
     /// the same way by shell_quote_value, which is conservative).
     pub(crate) fn bin_compquote(&mut self, args: &[String]) -> i32 {
         // computil.c:3691-3692 — early-out when there's nothing to
-        // quote (no nested completion stack). zshrs has no compqstack
+        // bslashquote (no nested completion stack). zshrs has no compqstack
         // surfaced through the VM yet; mimic the no-op by still doing
-        // the quote so user code that calls compquote gets a value.
+        // the bslashquote so user code that calls compquote gets a value.
         let mut returnval = 0;
         for raw in args {
             let name = raw.trim_start_matches('-');
@@ -555,8 +555,8 @@ pub struct CompState {
     pub old_list: String,              // previous list value
     pub parameter: String,             // parameter being completed
     pub pattern_insert: String,        // pattern insert mode
-    pub pattern_match: String,         // pattern matching mode
-    pub quote: String,                 // quoting type
+    pub matchpat: String,         // pattern matching mode
+    pub bslashquote: String,                 // quoting type
     pub quoting: String,               // current quoting
     pub redirect: String,              // redirection type
     pub restore: String,               // restore mode

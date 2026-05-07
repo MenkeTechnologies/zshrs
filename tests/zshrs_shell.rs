@@ -208,7 +208,7 @@ fn test_zparseopts() {
 
 #[test]
 fn test_error_syntax() {
-    // Lexer-level syntax error (unmatched single quote). zsh treats
+    // Lexer-level syntax error (unmatched single bslashquote). zsh treats
     // `for in; do; done` as valid (`in` becomes the loop variable),
     // so use a construct mainline zsh actually rejects so we test
     // that zshrs surfaces the same error condition.
@@ -1315,7 +1315,7 @@ fn test_subst_modifier_chained_with_t() {
 
 #[test]
 fn test_q_modifier_backslash_quote() {
-    // zsh `:q` uses backslash escaping, not single-quote wrapping.
+    // zsh `:q` uses backslash escaping, not single-bslashquote wrapping.
     let (_, output, _) = run_zshrs("p='hi there'; echo ${p:q}");
     assert_eq!(output.trim(), "hi\\ there", "got: {output:?}");
 }
@@ -2126,7 +2126,7 @@ fn test_zsh_param_q_flag_backslash_only() {
 
 #[test]
 fn test_zsh_param_q_flag_gradient() {
-    // q→\ , qq→single-quote, qqq→double-quote, qqqq→$'...'
+    // q→\ , qq→single-bslashquote, qqq→double-bslashquote, qqqq→$'...'
     let (_, output, _) = run_zshrs(r#"a=hi; print "${(q)a}|${(qq)a}|${(qqq)a}|${(qqqq)a}""#);
     assert_eq!(output.trim(), "hi|'hi'|\"hi\"|$'hi'", "got: {output:?}");
 }
@@ -2380,7 +2380,7 @@ fn test_alias_listing_unquoted_for_simple_values() {
     );
     assert!(
         !output.contains("x='1'"),
-        "should not quote bare numeric values, got: {output:?}"
+        "should not bslashquote bare numeric values, got: {output:?}"
     );
 }
 
@@ -2869,7 +2869,7 @@ fn test_dollar_lt_no_space() {
 #[test]
 fn test_printf_q_uses_backslash_quoting() {
     // zsh's `%q` uses backslash quoting (matches ${(q)}), NOT bash's
-    // single-quote wrapping.
+    // single-bslashquote wrapping.
     let (_, output, _) = run_zshrs(r#"printf "%q\n" "hello world""#);
     assert_eq!(output, "hello\\ world\n", "got: {output:?}");
 }
@@ -4253,7 +4253,7 @@ fn test_escaped_braces_stay_literal_in_word() {
     // `echo \{foo,bar\}` — backslash-escaped braces must not trigger
     // brace expansion. Regression: zshrs produced `oo ar\` because
     // the lexer's BNULL-encoded `\{` got untokenized to `\{` before
-    // expand_braces, which then expanded the comma list. Added
+    // xpandbraces, which then expanded the comma list. Added
     // has_balanced_escaped_braces() short-circuit that strips the
     // backslashes and returns the literal.
     let (_, output, _) = run_zshrs(r#"echo \{foo,bar\}"#);
@@ -8333,8 +8333,8 @@ fn test_typeset_array_quote_aware_split() {
     // RHS — `local arr=( "a b" c )` keeps "a b" as one element,
     // not two. zshrs's typeset array path naively
     // split-by-whitespace'd the body, breaking quoted strings.
-    // Replaced with quote-aware scanner that honors `"..."`/'...'`
-    // boundaries (still strips the quote chars from the result).
+    // Replaced with bslashquote-aware scanner that honors `"..."`/'...'`
+    // boundaries (still strips the bslashquote chars from the result).
     let (_, output, _) =
         run_zshrs(r#"foo() { local arr=( "abc" "def ghi" jk ); echo "${#arr}|${arr[2]}"; }; foo"#);
     assert_eq!(output.trim(), "3|def ghi", "got: {output:?}");
@@ -9018,7 +9018,7 @@ fn test_alias_listing_quotes_value_with_equals() {
     // zsh: `alias g='x=y'; alias g` prints `g='x=y'` — quoted
     // because the body contains `=`. zshrs's `format_alias_kv` (and
     // its inline copy in the per-name listing path) didn't include
-    // `=` in the quote-trigger set, so `alias g=x=y` round-tripped
+    // `=` in the bslashquote-trigger set, so `alias g=x=y` round-tripped
     // as bare which would re-parse as `alias g=x` + arg `=y`.
     let (_, output, _) = run_zshrs(r#"alias g="x=y"; alias g"#);
     assert_eq!(output.trim(), "g='x=y'");

@@ -425,8 +425,8 @@ impl KeymapManager {
         km.bind_seq(b"\x1bu", Thingy::builtin("up-case-word"));
 
         // Quote / pound — Src/Zle/zle_bindings.c emacs '\e\'','\e\"','\e#'.
-        km.bind_seq(b"\x1b'", Thingy::builtin("quote-line"));
-        km.bind_seq(b"\x1b\"", Thingy::builtin("quote-region"));
+        km.bind_seq(b"\x1b'", Thingy::builtin("bslashquote-line"));
+        km.bind_seq(b"\x1b\"", Thingy::builtin("bslashquote-region"));
         km.bind_seq(b"\x1b#", Thingy::builtin("pound-insert"));
 
         // Argument prefixes — Src/Zle/zle_bindings.c emacs '\e0'..'\e9','\e-'.

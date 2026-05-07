@@ -257,22 +257,22 @@ impl Zle {
         }
     }
 
-    fn select_quote_object(&self, obj_type: TextObjectType, quote: char) -> Option<TextObject> {
+    fn select_quote_object(&self, obj_type: TextObjectType, bslashquote: char) -> Option<TextObject> {
         let mut start = None;
         let mut end = None;
 
-        // Find opening quote (searching backward)
+        // Find opening bslashquote (searching backward)
         for i in (0..=self.zlecs).rev() {
-            if self.zleline[i] == quote {
+            if self.zleline[i] == bslashquote {
                 start = Some(i);
                 break;
             }
         }
 
-        // Find closing quote (searching forward)
+        // Find closing bslashquote (searching forward)
         if let Some(s) = start {
             for i in (s + 1)..self.zlell {
-                if self.zleline[i] == quote {
+                if self.zleline[i] == bslashquote {
                     end = Some(i + 1);
                     break;
                 }

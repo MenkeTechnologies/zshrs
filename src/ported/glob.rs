@@ -522,9 +522,9 @@ impl GlobState {
         // per glob.c:2424 BRACECCL block; without, only `{a,b}` lists and
         // `{1..5}`/`{a..e}` ranges expand. Recurse on each variant and
         // concatenate matches.
-        if has_braces(pattern, self.options.brace_ccl) {
+        if hasbraces(pattern, self.options.brace_ccl) {
             let mut all = Vec::new();
-            for variant in expand_braces(pattern, self.options.brace_ccl) {
+            for variant in xpandbraces(pattern, self.options.brace_ccl) {
                 all.extend(self.glob(&variant));
             }
             return all;
@@ -593,7 +593,7 @@ impl GlobState {
                 let mut s = glob_emit_path(&m.path);
                 if mark_dirs || list_types {
                     if let Ok(meta) = fs::symlink_metadata(&m.path) {
-                        let ch = file_type_char(meta.mode());
+                        let ch = file_type(meta.mode());
                         if list_types || (mark_dirs && ch == '/') {
                             s.push(ch);
                         }
@@ -1141,7 +1141,7 @@ impl GlobState {
                 continue;
             }
 
-            if pattern_match(
+            if matchpat(
                 pattern,
                 &name,
                 self.options.extended_glob,
@@ -1439,7 +1439,7 @@ pub fn has_wildcards(s: &str) -> bool {
 /// Match a glob pattern against a single string.
 /// Port of `matchpat()` from Src/glob.c:2514 — same
 /// `EXTENDED_GLOB`/`NO_CASE_GLOB` option handling.
-pub fn pattern_match(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool {
+pub fn matchpat(pattern: &str, text: &str, extended: bool, case_sensitive: bool) -> bool {
     let pat = if case_sensitive {
         pattern.to_string()
     } else {
@@ -1575,7 +1575,7 @@ fn match_bracket_expr(pi: &mut std::iter::Peekable<std::str::Chars>, tc: char) -
 /// Render a mode bitmap as the `*` qualifier letter (`d`/`b`/
 /// `c`/`l`/`s`/`p`/etc.).
 /// Port of `file_type()` from Src/glob.c:2018.
-pub fn file_type_char(mode: u32) -> char {
+pub fn file_type(mode: u32) -> char {
     let fmt = mode & libc::S_IFMT as u32;
     if fmt == libc::S_IFBLK as u32 {
         '#'
@@ -1637,7 +1637,7 @@ fn compare_range(value: u64, target: u64, op: RangeOp) -> bool {
 /// Check if string has brace expansion
 /// Check whether a string has brace-expansion `{a,b}` content.
 /// Port of `hasbraces()` from Src/glob.c:2042.
-pub fn has_braces(s: &str, brace_ccl: bool) -> bool {
+pub fn hasbraces(s: &str, brace_ccl: bool) -> bool {
     let mut depth = 0;
     let mut has_comma = false;
     let mut has_dotdot = false;
@@ -1690,8 +1690,8 @@ pub fn has_braces(s: &str, brace_ccl: bool) -> bool {
 /// Brace-expand a string into a flat list.
 /// Port of `xpandbraces()` from Src/glob.c:2276 — same
 /// `{a,b}` / `{1..10}` / `{a-z}` handling.
-pub fn expand_braces(s: &str, brace_ccl: bool) -> Vec<String> {
-    if !has_braces(s, brace_ccl) {
+pub fn xpandbraces(s: &str, brace_ccl: bool) -> Vec<String> {
+    if !hasbraces(s, brace_ccl) {
         return vec![s.to_string()];
     }
 
@@ -2095,7 +2095,7 @@ fn apply_modifier_subst(input: &str, mods_after_s: &str, global: bool) -> (Strin
 }
 
 /// `:a` — make absolute lexically, no symlink resolution. Direct port
-/// of zsh/Src/subst.c chabspath: prepend `$PWD` if relative, then
+/// of zsh/Src/subst.c xsymlinks: prepend `$PWD` if relative, then
 /// collapse `.` and `..` components without touching the filesystem.
 fn modifier_abs(s: &str) -> String {
     let base = if s.starts_with('/') {
@@ -2181,7 +2181,7 @@ fn modifier_upper(s: &str) -> String {
     s.to_uppercase()
 }
 
-/// `:q` — backslash-quote shell metacharacters. Direct port of
+/// `:q` — backslash-bslashquote shell metacharacters. Direct port of
 /// zsh/Src/subst.c:4860 `quotestring(*str, QT_BACKSLASH)` — escape
 /// every char that would otherwise be parsed as syntax (whitespace,
 /// quotes, redirects, glob metas, history bangs, `$`, backtick, etc.).
@@ -2373,7 +2373,7 @@ pub fn apply_colon_modifiers(input: &str, mods: &str) -> String {
 /// between the matching parens, without the surrounding `()` and without
 /// any leading `#q`. Returns `(pattern, None)` when there is no qualifier
 /// suffix. Useful for callers that want to use the pattern half with the
-/// runtime [`pattern_match`] (which has no qualifier semantics) while
+/// runtime [`matchpat`] (which has no qualifier semantics) while
 /// reporting or applying the qualifier separately.
 /// Split a glob pattern into (path-pattern, qualifier-string).
 /// Port of the qualifier-detection step in `parsepat()`
@@ -2848,7 +2848,7 @@ pub fn getmatch(s: &str, pat: &str, flags: MatchFlags, n: i32, replstr: Option<&
     // Find match
     let (match_start, match_end) = if flags.anchored_start && flags.anchored_end {
         // Full match
-        if pattern_match(pat, s, true, true) {
+        if matchpat(pat, s, true, true) {
             (0, len)
         } else {
             return s.to_string();
@@ -2858,7 +2858,7 @@ pub fn getmatch(s: &str, pat: &str, flags: MatchFlags, n: i32, replstr: Option<&
         let mut best_end = 0;
         for end in 1..=len {
             let substr: String = chars[..end].iter().collect();
-            if pattern_match(pat, &substr, true, true) {
+            if matchpat(pat, &substr, true, true) {
                 if flags.shortest {
                     return match replstr {
                         Some(r) => format!("{}{}", r, chars[end..].iter().collect::<String>()),
@@ -2878,7 +2878,7 @@ pub fn getmatch(s: &str, pat: &str, flags: MatchFlags, n: i32, replstr: Option<&
         let mut best_start = len;
         for start in (0..len).rev() {
             let substr: String = chars[start..].iter().collect();
-            if pattern_match(pat, &substr, true, true) {
+            if matchpat(pat, &substr, true, true) {
                 if flags.shortest {
                     return match replstr {
                         Some(r) => format!("{}{}", chars[..start].iter().collect::<String>(), r),
@@ -2898,7 +2898,7 @@ pub fn getmatch(s: &str, pat: &str, flags: MatchFlags, n: i32, replstr: Option<&
         for start in 0..len {
             for end in (start + 1)..=len {
                 let substr: String = chars[start..end].iter().collect();
-                if pattern_match(pat, &substr, true, true) {
+                if matchpat(pat, &substr, true, true) {
                     let prefix: String = chars[..start].iter().collect();
                     let suffix: String = chars[end..].iter().collect();
                     return match replstr {
@@ -2944,7 +2944,7 @@ pub fn getmatchlist(s: &str, pat: &str) -> Vec<(usize, usize)> {
     while pos < len {
         for end in (pos + 1)..=len {
             let substr: String = chars[pos..end].iter().collect();
-            if pattern_match(pat, &substr, true, true) {
+            if matchpat(pat, &substr, true, true) {
                 matches.push((pos, end));
                 pos = end;
                 break;
@@ -3422,25 +3422,25 @@ mod tests {
 
     #[test]
     fn test_pattern_match() {
-        assert!(pattern_match("*.txt", "file.txt", false, true));
-        assert!(pattern_match("file?.txt", "file1.txt", false, true));
-        assert!(!pattern_match("*.txt", "file.rs", false, true));
-        assert!(pattern_match("file[12].txt", "file1.txt", false, true));
-        assert!(!pattern_match("file[12].txt", "file3.txt", false, true));
+        assert!(matchpat("*.txt", "file.txt", false, true));
+        assert!(matchpat("file?.txt", "file1.txt", false, true));
+        assert!(!matchpat("*.txt", "file.rs", false, true));
+        assert!(matchpat("file[12].txt", "file1.txt", false, true));
+        assert!(!matchpat("file[12].txt", "file3.txt", false, true));
     }
 
     #[test]
     fn test_brace_expansion() {
-        let result = expand_braces("{a,b,c}", false);
+        let result = xpandbraces("{a,b,c}", false);
         assert_eq!(result, vec!["a", "b", "c"]);
 
-        let result = expand_braces("file{1,2,3}.txt", false);
+        let result = xpandbraces("file{1,2,3}.txt", false);
         assert_eq!(result, vec!["file1.txt", "file2.txt", "file3.txt"]);
 
-        let result = expand_braces("{1..5}", false);
+        let result = xpandbraces("{1..5}", false);
         assert_eq!(result, vec!["1", "2", "3", "4", "5"]);
 
-        let result = expand_braces("{a..e}", false);
+        let result = xpandbraces("{a..e}", false);
         assert_eq!(result, vec!["a", "b", "c", "d", "e"]);
     }
 
@@ -3490,10 +3490,10 @@ mod tests {
 
     #[test]
     fn test_file_type_char() {
-        assert_eq!(file_type_char(libc::S_IFDIR as u32), '/');
-        assert_eq!(file_type_char(libc::S_IFREG as u32), ' ');
-        assert_eq!(file_type_char(libc::S_IFREG as u32 | 0o111), '*');
-        assert_eq!(file_type_char(libc::S_IFLNK as u32), '@');
+        assert_eq!(file_type(libc::S_IFDIR as u32), '/');
+        assert_eq!(file_type(libc::S_IFREG as u32), ' ');
+        assert_eq!(file_type(libc::S_IFREG as u32 | 0o111), '*');
+        assert_eq!(file_type(libc::S_IFLNK as u32), '@');
     }
 
     #[test]
@@ -5590,7 +5590,7 @@ impl crate::ported::exec::ShellExecutor {
                         Ok(m) => m,
                         Err(_) => return p,
                     };
-                    let ch = crate::glob::file_type_char(meta.permissions().mode());
+                    let ch = crate::glob::file_type(meta.permissions().mode());
                     if list_types || (mark_dirs && ch == '/') {
                         format!("{}{}", p, ch)
                     } else {

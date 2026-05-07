@@ -438,7 +438,7 @@ impl fmt::Display for TestResult {
 }
 
 /// Simple glob-style pattern match (supports * as wildcard sequence)
-fn pattern_match(pattern: &str, text: &str) -> bool {
+fn matchpat(pattern: &str, text: &str) -> bool {
     let pat_lines: Vec<&str> = pattern.lines().collect();
     let txt_lines: Vec<&str> = text.lines().collect();
 
@@ -672,7 +672,7 @@ fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> Te
     // Check stdout (unless 'd' flag)
     if !test.flags.contains('d') && !expected_stdout_trim.is_empty() {
         let matches = if test.stdout_pattern {
-            pattern_match(expected_stdout_trim, actual_stdout)
+            matchpat(expected_stdout_trim, actual_stdout)
         } else {
             expected_stdout_trim == actual_stdout
         };
@@ -692,7 +692,7 @@ fn compare_test(test: &TestBlock, status: i32, stdout: &str, stderr: &str) -> Te
     // Check stderr (unless 'D' flag)
     if !test.flags.contains('D') && !expected_stderr_trim.is_empty() {
         let matches = if test.stderr_pattern {
-            pattern_match(expected_stderr_trim, actual_stderr)
+            matchpat(expected_stderr_trim, actual_stderr)
         } else {
             expected_stderr_trim == actual_stderr
         };

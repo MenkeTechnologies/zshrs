@@ -579,7 +579,7 @@ pub fn format_hhmmss(secs: f64) -> String {
 /// Port of `printtime()` from Src/jobs.c:768 — same
 /// `%U`/`%S`/`%E`/`%P`/`%J`/`%c`/`%R`/etc. directive set the
 /// `time` keyword's output uses.
-pub fn format_time(
+pub fn printtime(
     elapsed_secs: f64,
     user_secs: f64,
     system_secs: f64,
@@ -680,7 +680,7 @@ impl CommandTimer {
         let user = user_time.as_secs_f64();
         let sys = sys_time.as_secs_f64();
 
-        format_time(
+        printtime(
             elapsed,
             user,
             sys,
@@ -1451,7 +1451,7 @@ pub fn dumptime(job: &Job, format: &str) -> Option<String> {
         total_sys += proc.ti.sys_time.as_secs_f64();
     }
 
-    Some(format_time(
+    Some(printtime(
         elapsed,
         total_user,
         total_sys,
