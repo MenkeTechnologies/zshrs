@@ -2517,10 +2517,18 @@ fn paramsubst(                                              // c:1625
         // (singsub-only) mode gets array-shape splat — zsh treats
         // arrays as inherently word-bearing in unquoted context.
         // (DQ joins via sepjoin → handled in the value-set above.)
+        // Subscript that selects a single element (\${arr[1]}) must
+        // NOT auto_splat — it's a scalar pick. Splat applies only
+        // when subscript is absent, or @/* (full splat), or a range
+        // (slice has multiple elements).
+        let scripted_scalar = subscript.as_deref()           // c:3950
+            .map(|s| s != "@" && s != "*" && !s.contains(','))
+            .unwrap_or(false);                               // c:3950
         let auto_splat = !flag_at                           // c:3950
             && !qt                                           // c:3950 (only outside DQ)
             && pf_flags & prefork_flags::SINGLE == 0         // c:3950 (multsub context)
             && rest.is_empty()                               // c:3950 (no operator subverted shape)
+            && !scripted_scalar                              // c:3950 (single-elem pick is scalar)
             && (state.arrays.contains_key(&var_name)         // c:3950
                 || split_parts.is_some());                   // c:3950 ((s::) made an array)
         if flag_at || auto_splat {                          // c:3950
@@ -2530,6 +2538,17 @@ fn paramsubst(                                              // c:1625
                 // ssub-then-splat where spsep promotes scalar to
                 // array via the split.
                 sp                                          // c:3950
+            } else if let Some(sub) = subscript.as_deref() {
+                // Range subscript: splat the slice elements.
+                if let Some((lo, hi)) = sub.split_once(',') {
+                    let lo: i64 = lo.trim().parse().unwrap_or(1); // c:3950
+                    let hi: i64 = hi.trim().parse().unwrap_or(0); // c:3950
+                    state.arrays.get(&var_name)              // c:3950
+                        .map(|arr| crate::ported::params::slice_indexed_array(arr, lo, hi))
+                        .unwrap_or_default()
+                } else if let Some(arr) = state.arrays.get(&var_name) {
+                    arr.clone()                              // c:3950 (@ / *)
+                } else { vec![value.clone()] }
             } else if let Some(arr) = state.arrays.get(&var_name) {
                 arr.clone()                                 // c:3960 (real array splat)
             } else if let Some(map) = state.assoc_arrays.get(&var_name) {
