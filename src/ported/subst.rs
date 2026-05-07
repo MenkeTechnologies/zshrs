@@ -1623,6 +1623,19 @@ fn paramsubst(                                              // c:1625
             Some(expanded)
         } else { None };
 
+        // ${+name} set-test. subst.c:2603-2613 — when body opens with
+        // `+` followed by an identifier (or string-special with brace/
+        // paren as in (P)+name), `chkset = 1; s++;`. The post-lookup
+        // path (subst.c:3600) returns "0" if vunset else "1".
+        let mut chkset = false;                                   // c:1683
+        if idx < body_chars.len() && body_chars[idx] == '+' {     // c:2603
+            let nxt = body_chars.get(idx + 1).copied().unwrap_or('\0');
+            if nxt.is_ascii_alphanumeric() || nxt == '_' || nxt == '@' || nxt == '*' || nxt == '#' || nxt == '?' {
+                chkset = true;                                     // c:2612
+                idx += 1;                                          // c:2612
+            }
+        }
+
         // Walk var-name chars
         let name_start = idx;
         while idx < body_chars.len() {
@@ -1900,6 +1913,33 @@ fn paramsubst(                                              // c:1625
         let is_set = state.variables.contains_key(&var_name)
             || state.arrays.contains_key(&var_name)
             || state.assoc_arrays.contains_key(&var_name);
+
+        // ${+name} short-circuit per subst.c:3600 — return "1"/"0".
+        // Subscripted form `${+arr[i]}` checks whether THAT element is
+        // set, not the array as a whole; raw_value (already
+        // subscript-resolved) being non-empty is the proxy.
+        if chkset {                                                // c:3600
+            let set_str = if subscript.is_some() {
+                if !raw_value.is_empty() { "1" } else { "0" }
+            } else if is_set {
+                "1"
+            } else {
+                "0"
+            };
+            // Splice the result back into the surrounding string
+            // (prefix + value + suffix) per the convention used by
+            // `${...}` arms below — the caller (stringsubst) reads
+            // the linknode by index, not the returned `new_str`.
+            let prefix: String = chars[..start_pos].iter().collect();
+            let suffix: String = if new_pos < chars.len() {
+                chars[new_pos..].iter().collect()
+            } else {
+                String::new()
+            };
+            let full = format!("{}{}{}", prefix, set_str, suffix);
+            let new_pos_in_full = prefix.chars().count() + set_str.chars().count();
+            return (full.clone(), new_pos_in_full, vec![full]);    // c:3600
+        }
 
         // (#)var → element count of array/assoc (or char count of
         // scalar). Port of subst.c:2128 length_op fast path.

@@ -1641,6 +1641,7 @@ pub fn has_braces(s: &str, brace_ccl: bool) -> bool {
     let mut depth = 0;
     let mut has_comma = false;
     let mut has_dotdot = false;
+    let mut brace_open: Option<usize> = None;
 
     let chars: Vec<char> = s.chars().collect();
     let len = chars.len();
@@ -1648,18 +1649,32 @@ pub fn has_braces(s: &str, brace_ccl: bool) -> bool {
     for i in 0..len {
         match chars[i] {
             '{' => {
-                if brace_ccl && depth == 0 {
-                    // Check for {a-z} style
-                    if i + 2 < len && chars[i + 2] == '}' {
-                        return true;
-                    }
+                if depth == 0 {
+                    brace_open = Some(i);
                 }
                 depth += 1;
             }
             '}' if depth > 0 => {
                 depth -= 1;
-                if depth == 0 && (has_comma || has_dotdot) {
-                    return true;
+                if depth == 0 {
+                    if has_comma || has_dotdot {
+                        return true;
+                    }
+                    // BRACE_CCL: any non-empty `{…}` body without a
+                    // comma/dotdot becomes a character-class set.
+                    // Direct port of Src/lex.c::xpandbraces that
+                    // routes the body through expand_ccl when
+                    // BRACE_CCL is set, regardless of body length.
+                    if brace_ccl {
+                        if let Some(open) = brace_open {
+                            if i > open + 1 {
+                                return true;
+                            }
+                        }
+                    }
+                    has_comma = false;
+                    has_dotdot = false;
+                    brace_open = None;
                 }
             }
             ',' if depth == 1 => has_comma = true,
@@ -1765,40 +1780,79 @@ fn expand_range(
     let left = &content[..dotdot_pos];
     let right_start = dotdot_pos + 2;
 
-    // Check for second ..
-    let (right, incr) = if let Some(pos) = content[right_start..].find("..") {
-        let r = &content[right_start..right_start + pos];
-        let i: i64 = content[right_start + pos + 2..].parse().unwrap_or(1);
-        (r, i.unsigned_abs())
-    } else {
-        (&content[right_start..], 1u64)
-    };
+    // Check for second `..` for `{N..M..S}` step form. Step may be
+    // signed: negative-step REVERSES the natural direction sequence
+    // per zsh's brace expansion (Src/lex.c::brace_expand_range
+    // recursive iteration with sign tracking). Examples:
+    //   {1..32..3}   →  1,4,7,…,31 (natural ascending)
+    //   {1..32..-3}  → 31,28,…,1   (same set, reversed)
+    //   {32..1..3}   → 32,29,…,2   (natural descending)
+    //   {32..1..-3}  →  2,5,…,32   (same set, reversed)
+    let (right, incr_abs, incr_sign_negative, step_text) =
+        if let Some(pos) = content[right_start..].find("..") {
+            let r = &content[right_start..right_start + pos];
+            let s_text = &content[right_start + pos + 2..];
+            let raw: i64 = s_text.parse().unwrap_or(1);
+            (r, raw.unsigned_abs(), raw < 0, s_text)
+        } else {
+            (&content[right_start..], 1u64, false, "")
+        };
 
     // Try numeric range
     if let (Ok(start), Ok(end)) = (left.parse::<i64>(), right.parse::<i64>()) {
         let mut results = Vec::new();
-        let (start, end, reverse) = if start <= end {
-            (start, end, false)
+
+        // Iterate from `start` toward `end` with abs(step). Sign of
+        // start/end relative to each other determines natural
+        // direction; step is always |step|.
+        let step = incr_abs.max(1) as i64;
+        let mut vals: Vec<i64> = Vec::new();
+        if start <= end {
+            let mut v = start;
+            while v <= end {
+                vals.push(v);
+                v += step;
+            }
         } else {
-            (end, start, true)
-        };
-
-        // Determine padding width
-        let width = left.len().max(right.len());
-        let pad = left.starts_with('0') || right.starts_with('0');
-
-        let mut vals: Vec<i64> = (start..=end).step_by(incr as usize).collect();
-        if reverse {
+            let mut v = start;
+            while v >= end {
+                vals.push(v);
+                v -= step;
+            }
+        }
+        if incr_sign_negative {
             vals.reverse();
         }
 
+        // Padding: zsh pads with leading zeros when ANY of the three
+        // textual fields (left endpoint, right endpoint, step) has a
+        // leading zero after stripping the optional sign. Width is
+        // the max textual width across left/right/step. For negative
+        // values, the sign prefix counts toward width — we emit `-`
+        // then zero-pad the remaining digits (`-02`, not `0-2`).
+        // Direct port of Src/lex.c::dobrace_pad logic which detects
+        // pad mode per the textual form of all three fields.
+        let lstrip = left.trim_start_matches(['+', '-']);
+        let rstrip = right.trim_start_matches(['+', '-']);
+        let sstrip = step_text.trim_start_matches(['+', '-']);
+        let pad = lstrip.starts_with('0')
+            || rstrip.starts_with('0')
+            || (!step_text.is_empty() && sstrip.starts_with('0'));
+        let width = left.len().max(right.len()).max(step_text.len());
+
         for v in vals {
-            let s = if pad {
-                format!("{}{:0>width$}{}", prefix, v, suffix, width = width)
+            let formatted = if pad {
+                if v < 0 {
+                    let abs = (-v).to_string();
+                    let inner_w = width.saturating_sub(1);
+                    format!("-{:0>w$}", abs, w = inner_w)
+                } else {
+                    format!("{:0>w$}", v, w = width)
+                }
             } else {
-                format!("{}{}{}", prefix, v, suffix)
+                v.to_string()
             };
-            results.push(s);
+            results.push(format!("{}{}{}", prefix, formatted, suffix));
         }
         return Some(results);
     }
