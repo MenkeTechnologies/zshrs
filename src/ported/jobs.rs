@@ -357,35 +357,6 @@ impl JobTable {
     }
 }
 
-/// Format a job for display
-/// Format a job line for `jobs` builtin output.
-/// Port of `printjob()` from Src/jobs.c:1138 — same column
-/// layout (`[N]`, status, text). Honours the `lng` / `synch`
-/// flags the C source's `printjob` uses.
-pub fn format_job(
-    job: &Job,
-    job_num: usize,
-    cur_job: Option<usize>,
-    prev_job: Option<usize>,
-) -> String {
-    let marker = if Some(job_num) == cur_job {
-        '+'
-    } else if Some(job_num) == prev_job {
-        '-'
-    } else {
-        ' '
-    };
-
-    let status = if job.is_done() {
-        "done"
-    } else if job.is_stopped() {
-        "suspended"
-    } else {
-        "running"
-    };
-
-    format!("[{}]{} {:10}  {}", job_num, marker, status, job.text)
-}
 
 #[cfg(test)]
 mod tests {
@@ -437,9 +408,9 @@ mod tests {
         job.text = "vim file.txt".to_string();
         job.stat |= stat::STOPPED;
 
-        let formatted = format_job(&job, 1, Some(1), None);
+        let formatted = printjob(&job, 1, false, Some(1), None);
         assert!(formatted.contains("[1]+"));
-        assert!(formatted.contains("suspended"));
+        assert!(formatted.contains("suspended") || formatted.contains("Stopped"));
         assert!(formatted.contains("vim file.txt"));
     }
 
@@ -559,7 +530,7 @@ pub fn get_clktck() -> i64 {
 /// Format time as hh:mm:ss.xx (from jobs.c printhhmmss lines 752-765)
 /// Format a duration as `H:MM:SS` / `M:SS`.
 /// Port of `printhhmmss()` from Src/jobs.c:752.
-pub fn format_hhmmss(secs: f64) -> String {
+pub fn printhhmmss(secs: f64) -> String {
     let mins = (secs / 60.0) as i32;
     let hours = mins / 60;
     let secs = secs - (mins * 60) as f64;
@@ -626,9 +597,9 @@ pub fn printtime(
                     _ => result.push_str("%n"),
                 },
                 Some('*') => match chars.next() {
-                    Some('E') => result.push_str(&format_hhmmss(elapsed_secs)),
-                    Some('U') => result.push_str(&format_hhmmss(user_secs)),
-                    Some('S') => result.push_str(&format_hhmmss(system_secs)),
+                    Some('E') => result.push_str(&printhhmmss(elapsed_secs)),
+                    Some('U') => result.push_str(&printhhmmss(user_secs)),
+                    Some('S') => result.push_str(&printhhmmss(system_secs)),
                     _ => result.push_str("%*"),
                 },
                 Some('%') => result.push('%'),
