@@ -2392,9 +2392,37 @@ fn paramsubst(                                              // c:1625
                 value = out;                                         // c:3870
                 } // close handled_array else block
             } else if let Some(rep) = r.strip_prefix('/') {   // c:3870 (single replace)
-                let parts: Vec<&str> = rep.splitn(2, '/').collect();
-                let pat = singsub(parts[0], state);
-                let repl = parts.get(1).map(|s| singsub(s, state)).unwrap_or_default();
+                // Same NUL/BNULL-aware split as `//` arm — honor
+                // \\X escape markers in pat. See c:3884 comment.
+                let split_unescaped = |s: &str| -> (String, String) {
+                    let cv: Vec<char> = s.chars().collect();
+                    let mut pat_buf = String::new();
+                    let mut i = 0;
+                    while i < cv.len() {
+                        let c = cv[i];
+                        if (c == '\x00' || c == '\u{9f}') && i + 1 < cv.len() {
+                            pat_buf.push('\\');
+                            pat_buf.push(cv[i + 1]);
+                            i += 2;
+                            continue;
+                        }
+                        if c == '\\' && i + 1 < cv.len() && cv[i + 1] == '/' {
+                            pat_buf.push(cv[i + 1]);
+                            i += 2;
+                            continue;
+                        }
+                        if c == '/' {
+                            let rest: String = cv[i + 1..].iter().collect();
+                            return (pat_buf, rest);
+                        }
+                        pat_buf.push(c);
+                        i += 1;
+                    }
+                    (pat_buf, String::new())
+                };
+                let (raw_pat, raw_repl) = split_unescaped(rep);
+                let pat = singsub(&raw_pat, state);
+                let repl = singsub(&raw_repl, state);
                 // Single-replace helper. Variants: anchor-prefix
                 // (pat starts with `#`), anchor-suffix (`%`), or
                 // unanchored. Returns the post-replacement string.
