@@ -926,10 +926,170 @@ fn paramsubst(                                              // c:1625
     let c = chars.get(pos).copied().unwrap_or('\0');        // c:1625
 
     // ${...} form
-    if c == INBRACE || c == '{' {                           // c:1625
-        pos += 1;                                           // c:1625
-        return (String::new(), pos, Vec::<String>::new()); // c:1625
-    }                                                       // c:1625
+    // ${...} brace form. Pragmatic inline port covering high-traffic
+    // shapes from subst.c:1885+ (full 2,849-line paramsubst port is
+    // an ongoing arm-by-arm effort). Handles: bare ref, ${#var}
+    // length, :- :+ := :? defaults, # ## % %% strip, / // replace
+    // with anchored # / % variants, :N:M slice, plus a permissive
+    // (...)-flag prefix swallow.
+    if c == INBRACE || c == '{' {                           // c:1885
+        pos += 1;                                           // c:1885 (skip {)
+        // Find matching `}` — track brace depth for nested ${...}
+        let mut depth = 1_i32;                              // c:1885
+        let mut end = pos;                                  // c:1885
+        while end < chars.len() && depth > 0 {              // c:1885
+            let ch = chars[end];                            // c:1885
+            if ch == '{' || ch == INBRACE { depth += 1; }   // c:1885
+            else if ch == '}' || ch == OUTBRACE {           // c:1885
+                depth -= 1;                                 // c:1885
+                if depth == 0 { break; }                    // c:1885
+            }                                               // c:1885
+            end += 1;                                       // c:1885
+        }                                                   // c:1885
+        let body: String = chars[pos..end].iter().collect(); // c:1885
+        let new_pos = if end < chars.len() { end + 1 } else { end };
+        let body_chars: Vec<char> = body.chars().collect();
+        let mut idx = 0_usize;
+        // Skip flag block `(...)` — flags currently no-op.
+        if body_chars.first() == Some(&'(') {               // c:2147
+            let mut d = 1_i32;
+            idx = 1;
+            while idx < body_chars.len() && d > 0 {
+                if body_chars[idx] == '(' { d += 1; }
+                else if body_chars[idx] == ')' { d -= 1; if d == 0 { idx += 1; break; } }
+                idx += 1;
+            }
+        }
+        // ${#var} — length-of operator at start of brace (after flags).
+        let length_op = body_chars.get(idx).copied() == Some('#'); // c:2128
+        let post_flags_start = idx;
+        if length_op {
+            let next = body_chars.get(idx + 1).copied().unwrap_or('\0');
+            if next.is_ascii_alphabetic() || next == '_' || next == '@' || next == '*' {
+                idx += 1; // skip the leading #
+            }
+        }
+        // Walk var-name chars
+        let name_start = idx;
+        while idx < body_chars.len() {
+            let bc = body_chars[idx];
+            let allowed = if idx == name_start {
+                bc.is_ascii_alphanumeric() || bc == '_' || bc == '@' || bc == '*' || bc == '#' || bc == '?' || bc == '0'
+            } else {
+                bc.is_ascii_alphanumeric() || bc == '_'
+            };
+            if allowed {
+                idx += 1;
+                // Single-char specials stop after one char
+                if idx == name_start + 1 && matches!(body_chars[name_start], '@' | '*' | '#' | '?' | '0') {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        let var_name: String = body_chars[name_start..idx].iter().collect();
+        let rest: String = body_chars[idx..].iter().collect();
+        // Look up var
+        let raw_value: String = state.variables.get(&var_name).cloned()
+            .or_else(|| state.arrays.get(&var_name).map(|a| a.join(" ")))
+            .unwrap_or_default();
+        let is_set = state.variables.contains_key(&var_name)
+            || state.arrays.contains_key(&var_name)
+            || state.assoc_arrays.contains_key(&var_name);
+        if length_op {                                      // c:2128
+            let _ = post_flags_start;
+            return (raw_value.chars().count().to_string(), new_pos, vec![]);
+        }
+        let mut value = raw_value.clone();
+        if !rest.is_empty() {
+            let r = rest.as_str();
+            if let Some(default) = r.strip_prefix(":-") {     // c:3193
+                if !is_set || raw_value.is_empty() { value = singsub(default, state); }
+            } else if let Some(default) = r.strip_prefix('-') { // c:3193
+                if !is_set { value = singsub(default, state); }
+            } else if let Some(default) = r.strip_prefix(":=") { // c:3245
+                if !is_set || raw_value.is_empty() {
+                    value = singsub(default, state);
+                    state.variables.insert(var_name.clone(), value.clone());
+                }
+            } else if let Some(alt) = r.strip_prefix(":+") {  // c:3296
+                if is_set && !raw_value.is_empty() { value = singsub(alt, state); }
+                else { value = String::new(); }
+            } else if let Some(alt) = r.strip_prefix('+') {   // c:3296
+                if is_set { value = singsub(alt, state); } else { value = String::new(); }
+            } else if let Some(msg) = r.strip_prefix(":?") {  // c:3193
+                if !is_set || raw_value.is_empty() {
+                    eprintln!("{}: {}", var_name, singsub(msg, state));
+                    state.errflag = true;
+                }
+            } else if let Some(rep) = r.strip_prefix("//") {  // c:3870 (global replace)
+                let parts: Vec<&str> = rep.splitn(2, '/').collect();
+                let pat = singsub(parts[0], state);
+                let repl = parts.get(1).map(|s| singsub(s, state)).unwrap_or_default();
+                value = raw_value.replace(&pat, &repl);
+            } else if let Some(rep) = r.strip_prefix('/') {   // c:3870 (single replace)
+                let parts: Vec<&str> = rep.splitn(2, '/').collect();
+                let pat = singsub(parts[0], state);
+                let repl = parts.get(1).map(|s| singsub(s, state)).unwrap_or_default();
+                if let Some(anchor_pat) = pat.strip_prefix('#') {
+                    let p = anchor_pat.to_string();
+                    if raw_value.starts_with(&p) { value = format!("{}{}", repl, &raw_value[p.len()..]); }
+                } else if let Some(anchor_pat) = pat.strip_prefix('%') {
+                    let p = anchor_pat.to_string();
+                    if raw_value.ends_with(&p) { value = format!("{}{}", &raw_value[..raw_value.len()-p.len()], repl); }
+                } else {
+                    value = raw_value.replacen(&pat, &repl, 1);
+                }
+            } else if let Some(pat) = r.strip_prefix("##") {  // c:3540 (longest prefix strip)
+                let p = singsub(pat, state);
+                let mut k = raw_value.chars().count();
+                while k > 0 {
+                    let prefix: String = raw_value.chars().take(k).collect();
+                    if prefix == p { value = raw_value.chars().skip(k).collect(); break; }
+                    k -= 1;
+                }
+            } else if let Some(pat) = r.strip_prefix('#') {   // c:3540 (shortest prefix strip)
+                let p = singsub(pat, state);
+                let total = raw_value.chars().count();
+                for k in 0..=total {
+                    let prefix: String = raw_value.chars().take(k).collect();
+                    if prefix == p { value = raw_value.chars().skip(k).collect(); break; }
+                }
+            } else if let Some(pat) = r.strip_prefix("%%") {  // c:3540 (longest suffix strip)
+                let p = singsub(pat, state);
+                let total = raw_value.chars().count();
+                let mut k = total;
+                while k > 0 {
+                    let suffix: String = raw_value.chars().skip(total - k).collect();
+                    if suffix == p { value = raw_value.chars().take(total - k).collect(); break; }
+                    k -= 1;
+                }
+            } else if let Some(pat) = r.strip_prefix('%') {   // c:3540 (shortest suffix strip)
+                let p = singsub(pat, state);
+                let total = raw_value.chars().count();
+                for k in 0..=total {
+                    let suffix: String = raw_value.chars().skip(total - k).collect();
+                    if suffix == p { value = raw_value.chars().take(total - k).collect(); break; }
+                }
+            } else if let Some(slice) = r.strip_prefix(':') { // c:715 (substring)
+                let parts: Vec<&str> = slice.splitn(2, ':').collect();
+                let off = singsub(parts[0], state).parse::<i64>().unwrap_or(0);
+                let total = raw_value.chars().count() as i64;
+                let start = if off < 0 { (total + off).max(0) } else { off.min(total) } as usize;
+                let len = parts.get(1).map(|s| singsub(s, state).parse::<i64>().unwrap_or(0));
+                value = match len {
+                    Some(l) if l >= 0 => raw_value.chars().skip(start).take(l as usize).collect(),
+                    Some(l) => {
+                        let take = ((total - start as i64) + l).max(0) as usize;
+                        raw_value.chars().skip(start).take(take).collect()
+                    }
+                    None => raw_value.chars().skip(start).collect(),
+                };
+            }
+        }
+        return (value, new_pos, vec![]);
+    }                                                       // c:1885
 
     // Simple $var (or $arr[idx] for array-element access — per
     // Src/lex.c::gettokstr, zsh accepts `$name[subscript]` as a
