@@ -5959,6 +5959,74 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
     // and DQ semantics. Direct port of Src/subst.c sepjoin path
     // (line ~1813) which gates element-vs-join on the rc_expand_param
     // option, defaulting to join.
+    // BUILTIN_CONCAT_DISTRIBUTE_FORCED — same shape as
+    // CONCAT_DISTRIBUTE, but always cartesian-distributes when one
+    // side is Array. Used for compile-time-detected explicit
+    // distribution forms (`${^arr}` etc.) where the source flag
+    // overrides the rcexpandparam option default.
+    vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE_FORCED, |vm, _argc| {
+        let rhs = vm.pop();
+        let lhs = vm.pop();
+        match (lhs, rhs) {
+            (fusevm::Value::Array(la), fusevm::Value::Array(ra)) => {
+                if ra.is_empty() {
+                    return fusevm::Value::Array(la);
+                }
+                if la.is_empty() {
+                    return fusevm::Value::Array(ra);
+                }
+                let mut out = Vec::with_capacity(la.len() * ra.len());
+                for a in &la {
+                    let a_s = a.as_str_cow();
+                    for b in &ra {
+                        let b_s = b.as_str_cow();
+                        let mut s = String::with_capacity(a_s.len() + b_s.len());
+                        s.push_str(&a_s);
+                        s.push_str(&b_s);
+                        out.push(fusevm::Value::str(s));
+                    }
+                }
+                fusevm::Value::Array(out)
+            }
+            (fusevm::Value::Array(la), rhs_scalar) => {
+                let r = rhs_scalar.as_str_cow();
+                let out: Vec<fusevm::Value> = la
+                    .into_iter()
+                    .map(|a| {
+                        let a_s = a.as_str_cow();
+                        let mut s = String::with_capacity(a_s.len() + r.len());
+                        s.push_str(&a_s);
+                        s.push_str(&r);
+                        fusevm::Value::str(s)
+                    })
+                    .collect();
+                fusevm::Value::Array(out)
+            }
+            (lhs_scalar, fusevm::Value::Array(ra)) => {
+                let l = lhs_scalar.as_str_cow();
+                let out: Vec<fusevm::Value> = ra
+                    .into_iter()
+                    .map(|b| {
+                        let b_s = b.as_str_cow();
+                        let mut s = String::with_capacity(l.len() + b_s.len());
+                        s.push_str(&l);
+                        s.push_str(&b_s);
+                        fusevm::Value::str(s)
+                    })
+                    .collect();
+                fusevm::Value::Array(out)
+            }
+            (lhs_s, rhs_s) => {
+                let l = lhs_s.as_str_cow();
+                let r = rhs_s.as_str_cow();
+                let mut s = String::with_capacity(l.len() + r.len());
+                s.push_str(&l);
+                s.push_str(&r);
+                fusevm::Value::str(s)
+            }
+        }
+    });
+
     vm.register_builtin(BUILTIN_CONCAT_DISTRIBUTE, |vm, _argc| {
         let rhs = vm.pop();
         let lhs = vm.pop();
@@ -8084,6 +8152,16 @@ pub const BUILTIN_OPEN_NAMED_FD: u16 = 317;
 /// - lhs scalar, rhs Array: `Value::Array([lhs + b for b in rhs])`
 /// - both Array: cartesian product `[a + b for a in lhs for b in rhs]`
 pub const BUILTIN_CONCAT_DISTRIBUTE: u16 = 318;
+
+/// Forced-distribute concat — like `BUILTIN_CONCAT_DISTRIBUTE` but
+/// always distributes cartesian regardless of the `rcexpandparam`
+/// option. Emitted by the segments fast-path when an
+/// `is_distribute_expansion` segment is present (`${^arr}`,
+/// `${(@)arr}`, `${(s.…)arr}` etc.) per zsh: the source-level
+/// distribution flag overrides the option default.
+/// Direct port of Src/subst.c:1875 `case Hat: nojoin = 1` and the
+/// `rcexpandparam` test bypass for the explicit-distribute flags.
+pub const BUILTIN_CONCAT_DISTRIBUTE_FORCED: u16 = 522;
 
 /// Capture current `last_status` into the `TRY_BLOCK_ERROR` variable.
 /// Emitted between the try block and the always block of `{ … } always
