@@ -64,27 +64,36 @@ use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 
 // Token constants from zsh.h (mapped to char values > 127)
 pub mod tokens {                                            // c:N/A
-    pub const POUND: char = '\u{80}'; // #                  // c:N/A
-    pub const STRING: char = '\u{81}'; // $                 // c:N/A
-    pub const QSTRING: char = '\u{82}'; // Quoted $         // c:N/A
-    pub const TICK: char = '\u{83}'; // `                   // c:N/A
-    pub const QTICK: char = '\u{84}'; // Quoted `           // c:N/A
-    pub const INPAR: char = '\u{85}'; // (                  // c:N/A
-    pub const OUTPAR: char = '\u{86}'; // )                 // c:N/A
-    pub const INBRACE: char = '\u{87}'; // {                // c:N/A
-    pub const OUTBRACE: char = '\u{88}'; // }               // c:N/A
-    pub const INBRACK: char = '\u{89}'; // [                // c:N/A
-    pub const OUTBRACK: char = '\u{8A}'; // ]               // c:N/A
-    pub const INANG: char = '\u{8B}'; // <                  // c:N/A
-    pub const OUTANG: char = '\u{8C}'; // >                 // c:N/A
-    pub const OUTANGPROC: char = '\u{8D}'; // >( for process sub // c:N/A
-    pub const EQUALS: char = '\u{8E}'; // =                 // c:N/A
-    pub const NULARG: char = '\u{8F}'; // Null argument marker // c:N/A
-    pub const INPARMATH: char = '\u{90}'; // $((            // c:N/A
-    pub const OUTPARMATH: char = '\u{91}'; // ))            // c:N/A
-    pub const SNULL: char = '\u{92}'; // $' quote marker    // c:N/A
-    pub const MARKER: char = '\u{93}'; // Array key-value marker // c:N/A
-    pub const BNULL: char = '\u{94}'; // Backslash null     // c:N/A
+    // Token values MUST match `parse/src/tokens.rs::char_tokens` —
+    // the canonical lexer table. Earlier this module had its own
+    // independent values (POUND=0x80, TICK=0x83, etc.) that DIDN'T
+    // match the lexer's emitted markers (POUND=0x84, TICK=0x93,
+    // QTICK=0x99). Every `c == TICK` check in stringsubst silently
+    // missed every backtick `\`cmd\`` in real shell input because
+    // the lexer marks them with 0x93/0x99 not 0x83/0x84. Aligning
+    // these values is correctness-critical.
+    pub const POUND: char = '\u{84}'; // #                  // c:N/A
+    pub const STRING: char = '\u{85}'; // $                 // c:N/A
+    pub const QSTRING: char = '\u{8c}'; // Quoted $         // c:N/A
+    pub const TICK: char = '\u{93}'; // `                   // c:N/A
+    pub const QTICK: char = '\u{99}'; // Quoted `           // c:N/A
+    pub const INPAR: char = '\u{88}'; // (                  // c:N/A
+    pub const OUTPAR: char = '\u{8a}'; // )                 // c:N/A
+    pub const INBRACE: char = '\u{8f}'; // {                // c:N/A
+    pub const OUTBRACE: char = '\u{90}'; // }               // c:N/A
+    pub const INBRACK: char = '\u{91}'; // [                // c:N/A
+    pub const OUTBRACK: char = '\u{92}'; // ]               // c:N/A
+    pub const INANG: char = '\u{94}'; // <                  // c:N/A
+    pub const OUTANG: char = '\u{95}'; // >                 // c:N/A
+    pub const OUTANGPROC: char = '\u{96}'; // >( for process sub // c:N/A
+    pub const EQUALS: char = '\u{8d}'; // =                 // c:N/A
+    pub const NULARG: char = '\u{a1}'; // Null argument marker // c:N/A
+    pub const INPARMATH: char = '\u{89}'; // $((            // c:N/A
+    pub const OUTPARMATH: char = '\u{8b}'; // ))            // c:N/A
+    pub const SNULL: char = '\u{9d}'; // single quote marker    // c:N/A
+    pub const DNULL: char = '\u{9e}'; // double quote marker    // c:N/A
+    pub const MARKER: char = '\u{a2}'; // Array key-value marker // c:N/A
+    pub const BNULL: char = '\u{9f}'; // Backslash null     // c:N/A
 
 
 }                                                           // c:N/A
@@ -1112,15 +1121,22 @@ fn stringsubst(                                             // c:237
         // Backtick command substitution `cmd` — same engine as
         // `$(cmd)` per subst.c:237. Find the matching backtick,
         // capture cmd text, delegate to run_command_substitution.
+        // The bridge's BUILTIN_EXPAND_TEXT untokenizes TICK/QTICK
+        // back to a raw `` ` `` before calling singsub, so accept
+        // any of the three forms as the open/close delimiter.
         let qt = c == QTICK;                                // c:237
-        if qt || c == TICK {                                // c:237
+        if qt || c == TICK || c == '`' {                    // c:237
             if !qt {                                        // c:237
                 list.flags |= LF_ARRAY;                     // c:237
             }                                               // c:237
             let chars: Vec<char> = str3.chars().collect();  // c:237
             let cmd_start = pos + 1;                        // c:237
             let mut end = cmd_start;                        // c:237
-            while end < chars.len() && chars[end] != TICK && chars[end] != QTICK { // c:237
+            while end < chars.len()
+                && chars[end] != TICK
+                && chars[end] != QTICK
+                && chars[end] != '`'
+            {
                 if chars[end] == '\\' && end + 1 < chars.len() { end += 1; } // c:237
                 end += 1;                                   // c:237
             }                                               // c:237

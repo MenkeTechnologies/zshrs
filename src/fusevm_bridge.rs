@@ -6933,12 +6933,39 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
             }
             3 => {
                 // Backquote command sub: strip outer backticks.
+                // Word-split the result on IFS when the surrounding
+                // word is unquoted — zsh: `print -l \`echo a b c\``
+                // emits one arg per word. The $(…) path applies the
+                // same split via BUILTIN_WORD_SPLIT after capture; do
+                // the equivalent here for the `…` form.
                 let inner = if text.len() >= 2 && text.starts_with('`') && text.ends_with('`') {
                     &text[1..text.len() - 1]
                 } else {
                     text.as_str()
                 };
-                fusevm::Value::str(exec.run_command_substitution(inner))
+                let captured = exec.run_command_substitution(inner);
+                let trimmed = captured.trim_end_matches('\n');
+                if exec.in_dq_context > 0 {
+                    fusevm::Value::str(trimmed.to_string())
+                } else {
+                    let ifs = exec
+                        .variables
+                        .get("IFS")
+                        .cloned()
+                        .unwrap_or_else(|| " \t\n".to_string());
+                    let parts: Vec<fusevm::Value> = trimmed
+                        .split(|c: char| ifs.contains(c))
+                        .filter(|s| !s.is_empty())
+                        .map(|s| fusevm::Value::str(s.to_string()))
+                        .collect();
+                    if parts.is_empty() {
+                        fusevm::Value::str(String::new())
+                    } else if parts.len() == 1 {
+                        parts.into_iter().next().unwrap()
+                    } else {
+                        fusevm::Value::Array(parts)
+                    }
+                }
             }
             4 => {
                 // HeredocBody: expand variables / command-subst / arith
