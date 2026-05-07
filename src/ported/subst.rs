@@ -1811,9 +1811,69 @@ fn paramsubst(                                              // c:1625
                 magic_val                                    // c:2926
             } else {
                 // Scalar with subscript — char-index access.
-                let s_chars: Vec<char> = state.variables.get(&var_name)
-                    .cloned().unwrap_or_default().chars().collect();
-                if let Ok(idx_n) = sub.parse::<i64>() {
+                let scalar = state.variables.get(&var_name).cloned().unwrap_or_default();
+                let s_chars: Vec<char> = scalar.chars().collect();
+                // Pattern-subscript on scalar: (i)pat / (I)pat
+                // returns 1-based char position of first/last match;
+                // (r)pat / (R)pat returns the matched substring.
+                // Direct port of Src/params.c getasub which routes
+                // scalar pattern lookups through getindex with
+                // PATSCAN_FIRST/LAST.
+                if let Some((flags, pat)) = (|s: &str| -> Option<(String, String)> {
+                    let s = s.trim_start();
+                    let rest = s.strip_prefix('(')?;
+                    let close = rest.find(')')?;
+                    let f = rest[..close].to_string();
+                    let p = rest[close + 1..].to_string();
+                    if f.chars().all(|c| matches!(c, 'I' | 'R' | 'i' | 'r' | 'n' | 'e' | 'b')) {
+                        Some((f, p))
+                    } else { None }
+                })(sub) {
+                    let return_index = flags.contains('I') || flags.contains('i');
+                    let want_last = flags.contains('I') || flags.contains('R');
+                    // Sliding-window glob match across the string.
+                    let n = s_chars.len();
+                    let mut found: Option<(usize, usize)> = None;
+                    'outer: for start in 0..=n {
+                        let lengths: Box<dyn Iterator<Item = usize>> = if want_last {
+                            Box::new((1..=(n - start)).rev())
+                        } else {
+                            Box::new(1..=(n - start))
+                        };
+                        for len in lengths {
+                            let cand: String = s_chars[start..start + len].iter().collect();
+                            if crate::exec::ShellExecutor::glob_match_static(&cand, &pat) {
+                                found = Some((start, start + len));
+                                if !want_last { break 'outer; }
+                                break;
+                            }
+                        }
+                    }
+                    // For (I): keep scanning to find LAST match.
+                    if want_last {
+                        for start in (0..=n).rev() {
+                            for len in 1..=(n - start) {
+                                let cand: String = s_chars[start..start + len].iter().collect();
+                                if crate::exec::ShellExecutor::glob_match_static(&cand, &pat) {
+                                    found = Some((start, start + len));
+                                    break;
+                                }
+                            }
+                            if found.is_some() && found.unwrap().0 >= start { break; }
+                        }
+                    }
+                    match (found, return_index) {
+                        (Some((s, _)), true) => (s + 1).to_string(),
+                        (Some((s, e)), false) => s_chars[s..e].iter().collect(),
+                        (None, true) => {
+                            // (i) returns len+1, (I) returns 0 on no match.
+                            // Direct port of Src/params.c getindex.
+                            if flags.contains('i') { (n + 1).to_string() }
+                            else { "0".to_string() }
+                        }
+                        (None, false) => String::new(),
+                    }
+                } else if let Ok(idx_n) = sub.parse::<i64>() {
                     let len = s_chars.len() as i64;
                     let i = if idx_n < 0 { len + idx_n } else { idx_n - 1 };
                     if i >= 0 && (i as usize) < s_chars.len() {
