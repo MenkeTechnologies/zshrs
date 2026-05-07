@@ -2423,7 +2423,16 @@ fn paramsubst(                                              // c:1625
         // var OR the value is genuinely array-shaped (multi-element
         // assoc keys/values), emit one result_node per array element
         // so multsub-aware callers see distinct words.
-        if flag_at {                                        // c:3950
+        // Implicit splat: bare `$arr` outside DQ AND not in SINGLE
+        // (singsub-only) mode gets array-shape splat — zsh treats
+        // arrays as inherently word-bearing in unquoted context.
+        // (DQ joins via sepjoin → handled in the value-set above.)
+        let auto_splat = !flag_at                           // c:3950
+            && !qt                                           // c:3950 (only outside DQ)
+            && pf_flags & prefork_flags::SINGLE == 0         // c:3950 (multsub context)
+            && rest.is_empty()                               // c:3950 (no operator subverted shape)
+            && state.arrays.contains_key(&var_name);         // c:3950
+        if flag_at || auto_splat {                          // c:3950
             let parts: Vec<String> = if let Some(arr) = state.arrays.get(&var_name) {
                 arr.clone()                                 // c:3960 (real array splat)
             } else if let Some(map) = state.assoc_arrays.get(&var_name) {
