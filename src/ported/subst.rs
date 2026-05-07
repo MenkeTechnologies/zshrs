@@ -294,9 +294,15 @@ impl SubstState {                                           // c:2807
         arrays.insert("*".to_string(), exec.positional_params.clone());
         arrays.insert("argv".to_string(), exec.positional_params.clone());
 
+        let mut opts = SubstOptions::default();
+        opts.hist_subst_pattern = exec
+            .options
+            .get("histsubstpattern")
+            .copied()
+            .unwrap_or(false);
         SubstState {
             errflag: false,
-            opts: SubstOptions::default(),
+            opts,
             variables: exec.variables.clone(),
             arrays,
             assoc_arrays,
@@ -373,6 +379,13 @@ pub struct SubstOptions {                                   // c:100
     pub glob_subst: bool,                                   // c:100
     pub ksh_typeset: bool,                                  // c:100
     pub exec_opt: bool,                                     // c:100
+    /// HISTSUBSTPATTERN — when set, the `:s/old/new/` modifier
+    /// matches `old` as a glob pattern instead of a literal string.
+    /// `:S/...` is unconditionally pattern-matched per zsh — this
+    /// flag promotes `:s` to the same path. Direct port of the
+    /// `isset(HISTSUBSTPATTERN)` test in Src/hist.c::subst()
+    /// (line 2349).
+    pub hist_subst_pattern: bool,                           // c:hist 2349
 }                                                           // c:100
 
 /// Null string constant (from subst.c line 36)
@@ -4302,16 +4315,123 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
             } else {
                 (pat.clone(), false, false)                 // c:4665
             };
+            // For `:S` (modifier=='S'), matching is glob-based per
+            // hist.c::subst() forcepat=1 path (parse_subst_string +
+            // getmatch). For `:s` (modifier=='s'), matching is
+            // literal `strstr` unless HISTSUBSTPATTERN option is on.
+            // Direct port of Src/hist.c:2336 — `if (isset(HISTSUBSTPATTERN)
+            // || forcepat)` selects the pattern path; otherwise the
+            // strstr-based literal replace runs.
+            let use_glob = modifier == 'S'
+                || state.opts.hist_subst_pattern;
+            let do_match = |hay: &str| -> Option<(usize, usize)> {
+                if use_glob {
+                    // Sliding-window glob match — find first
+                    // [start..end) span where eff_pat matches.
+                    // Direct port of zsh's getmatch() SUB_SUBSTR
+                    // search loop. Empty match returns (q, q).
+                    let cv: Vec<char> = hay.chars().collect();
+                    let n = cv.len();
+                    for start in 0..=n {
+                        for end in start..=n {
+                            let span: String = cv[start..end].iter().collect();
+                            if crate::exec::ShellExecutor::glob_match_static(
+                                &span,
+                                &eff_pat,
+                            ) {
+                                // Convert char positions to byte positions.
+                                let bs: usize = cv[..start].iter()
+                                    .map(|c| c.len_utf8()).sum();
+                                let be: usize = bs
+                                    + cv[start..end].iter()
+                                        .map(|c| c.len_utf8()).sum::<usize>();
+                                return Some((bs, be));
+                            }
+                        }
+                    }
+                    None
+                } else {
+                    hay.find(eff_pat.as_str())
+                        .map(|s| (s, s + eff_pat.len()))
+                }
+            };
             result = if anchor_head {                       // c:4665
-                if result.starts_with(&eff_pat) {           // c:4665
+                if use_glob {
+                    let cv: Vec<char> = result.chars().collect();
+                    let n = cv.len();
+                    let mut found: Option<usize> = None;
+                    for end in 0..=n {
+                        let span: String = cv[..end].iter().collect();
+                        if crate::exec::ShellExecutor::glob_match_static(
+                            &span,
+                            &eff_pat,
+                        ) {
+                            found = Some(cv[..end].iter()
+                                .map(|c| c.len_utf8()).sum());
+                            break;
+                        }
+                    }
+                    if let Some(be) = found {
+                        format!("{}{}", repl, &result[be..])
+                    } else { result }
+                } else if result.starts_with(&eff_pat) {    // c:4665
                     format!("{}{}", repl, &result[eff_pat.len()..]) // c:4665
                 } else { result }                            // c:4665
             } else if anchor_tail {                         // c:4665
-                if result.ends_with(&eff_pat) {             // c:4665
+                if use_glob {
+                    let cv: Vec<char> = result.chars().collect();
+                    let n = cv.len();
+                    let mut found: Option<usize> = None;
+                    for start in 0..=n {
+                        let span: String = cv[start..].iter().collect();
+                        if crate::exec::ShellExecutor::glob_match_static(
+                            &span,
+                            &eff_pat,
+                        ) {
+                            found = Some(cv[..start].iter()
+                                .map(|c| c.len_utf8()).sum());
+                            break;
+                        }
+                    }
+                    if let Some(bs) = found {
+                        format!("{}{}", &result[..bs], repl)
+                    } else { result }
+                } else if result.ends_with(&eff_pat) {      // c:4665
                     format!("{}{}", &result[..result.len() - eff_pat.len()], repl) // c:4665
                 } else { result }                            // c:4665
             } else if gbal {                                // c:4665
-                result.replace(eff_pat.as_str(), repl.as_str())
+                if use_glob {
+                    let mut out = String::with_capacity(result.len());
+                    let mut rem = result.as_str();
+                    while let Some((s, e)) = do_match(rem) {
+                        out.push_str(&rem[..s]);
+                        out.push_str(&repl);
+                        if e == s {
+                            // Empty match — advance one char to
+                            // avoid infinite loop, mirroring zsh's
+                            // SUB_GLOBAL safeguard.
+                            let mut chars = rem[s..].char_indices();
+                            chars.next();
+                            let next_s = s + chars.next()
+                                .map(|(b, _)| b)
+                                .unwrap_or(rem.len() - s);
+                            out.push_str(&rem[s..next_s]);
+                            rem = &rem[next_s..];
+                        } else {
+                            rem = &rem[e..];
+                        }
+                    }
+                    out.push_str(rem);
+                    out
+                } else {
+                    result.replace(eff_pat.as_str(), repl.as_str())
+                }
+            } else if use_glob {
+                if let Some((s, e)) = do_match(&result) {
+                    format!("{}{}{}", &result[..s], repl, &result[e..])
+                } else {
+                    result
+                }
             } else {
                 result.replacen(eff_pat.as_str(), repl.as_str(), 1)
             };
