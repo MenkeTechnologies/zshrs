@@ -501,7 +501,7 @@ impl FtpSession {
     /// WARNING: THIS IS ADHOC IMPLEMENTATION AND NOT A FAITHFUL PORT
     /// of any function in `Src/Modules/zftp.c`.
     /// Send raw command
-    pub fn quote(&mut self, cmd: &str) -> io::Result<FtpResponse> {
+    pub fn bslashquote(&mut self, cmd: &str) -> io::Result<FtpResponse> {
         self.send_command(cmd)?;
         self.read_response()
     }
@@ -988,21 +988,21 @@ pub fn bin_zftp(args: &[&str], zftp: &mut Zftp) -> (i32, String) {
             }
         }
 
-        "quote" => {
+        "bslashquote" => {
             if args.len() < 2 {
-                return (1, "zftp quote: command required\n".to_string());
+                return (1, "zftp bslashquote: command required\n".to_string());
             }
 
             let cmd = args[1..].join(" ");
 
             let sess = match zftp.get_session_mut(None) {
                 Some(s) => s,
-                None => return (1, "zftp quote: not connected\n".to_string()),
+                None => return (1, "zftp bslashquote: not connected\n".to_string()),
             };
 
-            match sess.quote(&cmd) {
+            match sess.bslashquote(&cmd) {
                 Ok(resp) => (if resp.is_positive() { 0 } else { 1 }, resp.message),
-                Err(e) => (1, format!("zftp quote: {}\n", e)),
+                Err(e) => (1, format!("zftp bslashquote: {}\n", e)),
             }
         }
 

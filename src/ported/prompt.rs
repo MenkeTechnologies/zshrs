@@ -128,7 +128,7 @@ impl CmdState {
             CmdState::Subsh => "subsh",
             CmdState::Cursh => "cursh",
             CmdState::Array => "array",
-            CmdState::Quote => "quote",
+            CmdState::Quote => "bslashquote",
             CmdState::DQuote => "dquote",
             CmdState::BQuote => "bquote",
             CmdState::CmdSubst => "cmdsubst",

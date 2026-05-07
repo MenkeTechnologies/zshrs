@@ -190,7 +190,7 @@ pub fn addmatch(state: &mut CompState, m: CompMatch) {
 
 /// Look up a user-set parameter for the completion engine.
 /// Port of `get_user_var()` from Src/Zle/compcore.c. The C source
-/// reads the `Param` table directly via `getsparam()`; our shape
+/// reads the `Param` table directly via `getstrvalue()`; our shape
 /// takes an explicit `vars` map so completion functions can be
 /// called outside a live shell session (e.g. tests).
 pub fn get_user_var(

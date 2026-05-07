@@ -594,7 +594,7 @@ fn zshflag_q() {
 }
 #[test]
 fn zshflag_qq() {
-    // (qq) = single-quote always. Verified: `zsh -c 'x=hi; echo ${(qq)x}'`.
+    // (qq) = single-bslashquote always. Verified: `zsh -c 'x=hi; echo ${(qq)x}'`.
     ok("x=hi; echo ${(qq)x}", "'hi'\n");
 }
 #[test]

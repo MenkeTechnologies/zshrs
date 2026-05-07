@@ -10,7 +10,7 @@
 //! - kill-line, backward-kill-line, kill-buffer, kill-whole-line
 //! - copy-region-as-kill, kill-region
 //! - yank, yank-pop
-//! - transpose-chars, quote-line, quote-region
+//! - transpose-chars, bslashquote-line, bslashquote-region
 //! - what-cursor-position, universal-argument, digit-argument
 //! - undefined-key, send-break
 //! - vi-put-after, vi-put-before, overwrite-mode

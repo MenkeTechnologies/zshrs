@@ -659,11 +659,11 @@ pub fn rembutext(s: &str) -> String {
     String::new()
 }
 
-/// Convert to absolute path (from hist.c chabspath lines 1877-1955)
+/// Convert to absolute path (from hist.c xsymlinks lines 1877-1955)
 /// `:A` / `:a` modifier — canonicalize path.
 /// Port of `xsymlinks()` (Src/utils.c) — same `realpath(3)`
 /// fallback the C source uses on systems without it.
-pub fn chabspath(s: &str) -> std::io::Result<String> {
+pub fn xsymlinks(s: &str) -> std::io::Result<String> {
     if s.is_empty() {
         return Ok(String::new());
     }
@@ -699,10 +699,10 @@ pub fn chabspath(s: &str) -> std::io::Result<String> {
     }
 }
 
-/// Quote a string for shell (from hist.c quote lines 2486-2523)
-/// `:q` modifier — backslash-quote the string.
+/// Quote a string for shell (from hist.c bslashquote lines 2486-2523)
+/// `:q` modifier — backslash-bslashquote the string.
 /// Port of `bslashquote()` from Src/utils.c.
-pub fn quote(s: &str) -> String {
+pub fn bslashquote(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 10);
     result.push('\'');
 
@@ -719,7 +719,7 @@ pub fn quote(s: &str) -> String {
 }
 
 /// Quote with word breaking (from hist.c quotebreak lines 2527-2556)
-/// Backslash-quote shell metachars including word breaks.
+/// Backslash-bslashquote shell metachars including word breaks.
 /// Port of `quotebreak()` from Src/utils.c.
 pub fn quotebreak(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 10);
@@ -1132,8 +1132,8 @@ pub enum WriteMode {
 ///
 /// Modifiers: h (head/dirname), t (tail/basename), r (remove ext), e (ext only),
 ///   l (lowercase), u (uppercase), s/old/new/ (substitute), & (repeat subst),
-///   g (global modifier), p (print, don't execute), q (quote), Q (unquote),
-///   x (quote words), a (absolute path)
+///   g (global modifier), p (print, don't execute), q (bslashquote), Q (unquote),
+///   x (bslashquote words), a (absolute path)
 /// Apply a word designator (`:N`/`:^`/`:$`/`:*`/etc.).
 /// Port of the word-designator dispatch inside `histsubchar()`
 /// (Src/hist.c:595).
@@ -1235,7 +1235,7 @@ pub fn apply_hist_modifier(
         'l' => text.to_lowercase(),
         'u' => text.to_uppercase(),
         'q' => {
-            // Quote - single-quote the text
+            // Quote - single-bslashquote the text
             format!("'{}'", text.replace('\'', "'\\''"))
         }
         'Q' => {
@@ -2459,7 +2459,7 @@ impl crate::ported::exec::ShellExecutor {
                     // For now, just expand — :p suppression would need upstream support
                 }
                 'q' => {
-                    // Quote — single-quote the result
+                    // Quote — single-bslashquote the result
                     i += 1;
                     sline = format!("'{}'", sline.replace('\'', "'\\''"));
                 }
@@ -2815,7 +2815,7 @@ impl crate::ported::exec::ShellExecutor {
                     result = casemodify(&result, CaseMod::Caps);
                 }
                 'q' => {
-                    // zsh `:q` uses backslash quoting, not single-quote
+                    // zsh `:q` uses backslash quoting, not single-bslashquote
                     // wrapping. Each shell-meta char gets a `\` prefix.
                     let mut out = String::with_capacity(result.len() + 8);
                     for ch in result.chars() {
@@ -2827,7 +2827,7 @@ impl crate::ported::exec::ShellExecutor {
                     result = out;
                 }
                 'x' => {
-                    // `:x` quote with word breaks. Direct port of
+                    // `:x` bslashquote with word breaks. Direct port of
                     // src/zsh/Src/hist.c:2527-2556 quotebreak —
                     // wraps the value in single quotes, escapes
                     // internal `'` as `'\''`, AND closes-then-reopens
@@ -2837,7 +2837,7 @@ impl crate::ported::exec::ShellExecutor {
                     result = crate::hist::quotebreak(&result);
                 }
                 'Q' => {
-                    // Same shell-quote-remove as the other :Q path
+                    // Same shell-bslashquote-remove as the other :Q path
                     // (hist.c remquote): strips matching `'`/`"` pairs
                     // AND backslash escapes inside or unquoted.
                     let bytes: Vec<char> = result.chars().collect();

@@ -23,7 +23,7 @@ pub struct NamedDir {
 /// Port of the `nameddirtab` HashTable from Src/hashnameddir.c —
 /// the C source builds it via `createnameddirtable()` (line 59) and
 /// hangs the per-entry hooks (`addnameddirnode`,
-/// `removenameddirnode`, `freenameddirnode`, `printnameddirnode`)
+/// `removenameddirnode`, `freenameddirnode`, `shell_quote`)
 /// off it. This struct holds the same role on the Rust side; the
 /// `finddir_cache` field mirrors the file-static cache C zsh keeps
 /// in `Src/utils.c:1096`.
@@ -208,7 +208,7 @@ impl NamedDirTable {
     /// Iterate over all entries.
     /// Port of the `scannode` walk the C source uses on
     /// `nameddirtab` (Src/hashtable.c `scanhashtable` driving each
-    /// `printnameddirnode`).
+    /// `shell_quote`).
     pub fn iter(&self) -> impl Iterator<Item = (&String, &NamedDir)> {
         self.table.iter()
     }
@@ -218,36 +218,32 @@ impl NamedDirTable {
     /// `list_format=true` mirrors the `PRINT_LIST` flag the C source
     /// honours when called via `hash -d -L`; the leading `--` guard
     /// for entries that begin with `-` matches the same defensive
-    /// quoting the C source emits.
+    /// quoting the C source emits via `quotedzputs()`.
     pub fn print_entry(&self, name: &str, list_format: bool) -> Option<String> {
         let nd = self.get(name)?;
-
+        // Inline `quotedzputs()` per c:hashnameddir.c:161 — the C
+        // source calls quotedzputs(name) and quotedzputs(dir) which
+        // write a single-quote-wrapped form to stdout when the
+        // string contains shell-special chars, plain form otherwise.
+        // Rust returns a String instead of writing; the predicate
+        // and quote logic is identical.
+        let quote_one = |s: &str| -> String {
+            if s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '/' || c == '.' || c == '-') {
+                s.to_string()
+            } else {
+                format!("'{}'", s.replace('\'', "'\\''"))
+            }
+        };
         if list_format {
             let prefix = if name.starts_with('-') {
                 "hash -d -- "
             } else {
                 "hash -d "
             };
-            Some(format!(
-                "{}{}={}",
-                prefix,
-                shell_quote(name),
-                shell_quote(&nd.dir)
-            ))
+            Some(format!("{}{}={}", prefix, quote_one(name), quote_one(&nd.dir)))
         } else {
-            Some(format!("{}={}", shell_quote(name), shell_quote(&nd.dir)))
+            Some(format!("{}={}", quote_one(name), quote_one(&nd.dir)))
         }
-    }
-}
-
-/// Quote a string for shell output
-fn shell_quote(s: &str) -> String {
-    if s.chars()
-        .all(|c| c.is_alphanumeric() || c == '_' || c == '/' || c == '.' || c == '-')
-    {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', "'\\''"))
     }
 }
 

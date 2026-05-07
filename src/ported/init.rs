@@ -532,12 +532,12 @@ pub fn zexit(val: i32, from_where: i32) -> ! {
     std::process::exit(val)
 }
 
-/// Set up the tty (from init.c init_tty)
+/// Set up the tty (from init.c init_shout)
 /// Initialize the controlling terminal.
 /// Port of `init_shout()` from Src/init.c:712 — opens `/dev/tty`
 /// and configures the shell's output stream for prompt-aware
 /// writes.
-pub fn init_tty(state: &mut ShellState) {
+pub fn init_shout(state: &mut ShellState) {
     #[cfg(unix)]
     {
         // Check if stdin is a tty
@@ -565,7 +565,7 @@ pub fn init_hashtable() {
 /// Port of `parseopts_setemulate()` from Src/init.c:348 — sets
 /// the `EMULATE_*` flag bits and toggles compatibility options
 /// to match `--emulate sh`/`csh`/`ksh`.
-pub fn setup_emulation_opts(state: &mut ShellState) {
+pub fn parseopts_setemulate(state: &mut ShellState) {
     match state.emulation {
         ShellEmulation::Sh => {
             // POSIX sh compatibility
@@ -636,12 +636,12 @@ pub fn get_zdotdir() -> String {
     env::var("ZDOTDIR").unwrap_or_else(|_| env::var("HOME").unwrap_or_else(|_| ".".to_string()))
 }
 
-/// Full initialization sequence (from init.c init_main)
+/// Full initialization sequence (from init.c zsh_main)
 /// Top-level shell initialization driver.
 /// Port of `zsh_main()` from Src/init.c:1855 — parses argv,
 /// sets up signals, populates the env, sources the init chain,
 /// then returns ready state for the main loop.
-pub fn init_main(args: &[String]) -> ShellState {
+pub fn zsh_main(args: &[String]) -> ShellState {
     let (opts, cmd, positional) = parseargs(args);
     let mut state = ShellState::new();
     state.options = opts;
@@ -658,13 +658,13 @@ pub fn init_main(args: &[String]) -> ShellState {
     }
 
     // Set up tty
-    init_tty(&mut state);
+    init_shout(&mut state);
 
     // Set up values
     setupvals(&mut state);
 
     // Set up emulation-specific options
-    setup_emulation_opts(&mut state);
+    parseopts_setemulate(&mut state);
 
     // Set PWD
     set_pwd_env(&mut state);

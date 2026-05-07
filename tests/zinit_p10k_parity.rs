@@ -8,7 +8,7 @@
 //!   - Nested `${${(M)X[K]:#PAT}:-DEFAULT}` patterns
 //!   - `${(j:_:)arr}` join with custom separator
 //!   - `${(@f)$(cmd)}` line-split of cmd-subst
-//!   - `(qq)` / `(qqq)` / `(qqqq)` quote levels
+//!   - `(qq)` / `(qqq)` / `(qqqq)` bslashquote levels
 //!   - `printf -v var ...` (print to variable)
 //!   - `${(P)varname}` indirect expansion
 //!   - `[[ -v var ]]` set-test
@@ -173,7 +173,7 @@ mod p10k_join_split {
     }
 }
 
-// ───────────────────────── quote-flag variants ───────────────────
+// ───────────────────────── bslashquote-flag variants ───────────────────
 
 mod p10k_quote_flags {
     use super::*;
@@ -184,13 +184,13 @@ mod p10k_quote_flags {
         assert_parity(r#"s='a b c'; print -- "${(q)s}""#);
     }
 
-    /// `(qq)` — single-quote.
+    /// `(qq)` — single-bslashquote.
     #[test]
     fn qq_flag_single_quotes() {
         assert_parity(r#"s="hello world"; print -- "${(qq)s}""#);
     }
 
-    /// `(qqq)` — double-quote.
+    /// `(qqq)` — double-bslashquote.
     #[test]
     fn qqq_flag_double_quotes() {
         assert_parity(r#"s='hello world'; print -- "${(qqq)s}""#);
@@ -202,7 +202,7 @@ mod p10k_quote_flags {
         assert_parity(r#"s='a b'; print -- "${(qqqq)s}""#);
     }
 
-    /// `(Q)` — un-quote.
+    /// `(Q)` — un-bslashquote.
     #[test]
     fn capital_q_unquotes() {
         assert_parity(r#"s='"hello"'; print -- "${(Q)s}""#);
@@ -1385,8 +1385,8 @@ echo "[${${p#  }%  }]""#,
 
     // ─── (q) round-trip with embedded specials ──────────────────────
 
-    /// `(qq)` quote, then `(Q)` un-quote — round-trip should be
-    /// identical even with spaces, backslashes, and quote chars.
+    /// `(qq)` bslashquote, then `(Q)` un-bslashquote — round-trip should be
+    /// identical even with spaces, backslashes, and bslashquote chars.
     #[test]
     fn qq_then_Q_roundtrip_specials() {
         assert_parity(
@@ -2367,7 +2367,7 @@ print -l -- "${out[@]}""#,
     }
 
     /// User-supplied: zbrowse parameters magic-assoc enum + (qkv) join.
-    /// `${(j: :)${(qkv)mymap[@]}}` — quote each key/value, space-join.
+    /// `${(j: :)${(qkv)mymap[@]}}` — bslashquote each key/value, space-join.
     /// Order is non-deterministic so we compare sorted lines.
     #[test]
     fn zbrowse_qkv_quoted_kv_pairs_joined() {

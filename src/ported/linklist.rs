@@ -338,7 +338,7 @@ impl<T> DoubleEndedIterator for IntoIter<T> {
 /// heap-arena variant of the list-to-array conversion. The Rust
 /// version doesn't need the `copy` flag because `Vec<String>` always
 /// owns its strings.
-pub fn linklist_to_vec(list: &LinkList<String>) -> Vec<String> {
+pub fn hlinklist2array(list: &LinkList<String>) -> Vec<String> {
     list.iter().cloned().collect()
 }
 

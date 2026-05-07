@@ -392,7 +392,7 @@ impl InputBuffer {
 
     /// Check if current input is from an alias
     /// Look up an active alias frame on the input stack.
-    /// Port of `input_hasalias()` from Src/input.c:831 — the
+    /// Port of `is_meta()` from Src/input.c:831 — the
     /// alias-loop guard the lexer uses to avoid recursing into
     /// the same alias twice.
     pub fn input_has_alias(&self) -> Option<&str> {

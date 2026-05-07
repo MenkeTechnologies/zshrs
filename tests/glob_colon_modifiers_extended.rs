@@ -40,7 +40,7 @@ fn unquote_strips_quoting() {
     assert_eq!(apply_colon_modifiers("'hello world'", ":Q"), "hello world");
     // Double-quoted with backslash-escapes (\" \\ \$ \` only).
     assert_eq!(apply_colon_modifiers("\"a\\\"b\\$c\"", ":Q"), "a\"b$c");
-    // q then Q is a round-trip for non-quote metachars.
+    // q then Q is a round-trip for non-bslashquote metachars.
     assert_eq!(apply_colon_modifiers("foo bar;baz", ":q:Q"), "foo bar;baz");
 }
 

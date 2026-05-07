@@ -19,7 +19,7 @@
 //! All 24 top-level C functions are present:
 //! - prefork() — main pre-fork substitution dispatcher
 //! - stringsubst() — string substitution engine
-//! - stringsubstquote() — $'...' quote processing
+//! - stringsubstquote() — $'...' bslashquote processing
 //! - paramsubst() — parameter expansion (the largest: ~3300 lines in C)
 //! - multsub() — multiple word substitution
 //! - singsub() — single word substitution
@@ -55,10 +55,10 @@ use crate::ported::exec::{
 };
 use crate::ported::params::{array_subscript_flag, assoc_subscript_flag};
 // Per user directive: history-modifier helpers (casemodify, remtpath,
-// remlpaths, remtext, chabspath) live in src/ported/hist.rs (the
+// remlpaths, remtext, xsymlinks) live in src/ported/hist.rs (the
 // canonical port of Src/hist.c). Import here so subst.rs's modify()
 // arms and the parity tests can reference by bare name.
-use crate::ported::hist::{casemodify, CaseMod, chabspath, remlpaths, rembutext, remtext, remtpath};
+use crate::ported::hist::{casemodify, CaseMod, xsymlinks, remlpaths, rembutext, remtext, remtpath};
 #[allow(unused_imports)]
 use crate::parse::{ShellWord, VarModifier, ZshParamFlag};
 
@@ -90,8 +90,8 @@ pub mod tokens {                                            // c:N/A
     pub const NULARG: char = '\u{a1}'; // Null argument marker // c:N/A
     pub const INPARMATH: char = '\u{89}'; // $((            // c:N/A
     pub const OUTPARMATH: char = '\u{8b}'; // ))            // c:N/A
-    pub const SNULL: char = '\u{9d}'; // single quote marker    // c:N/A
-    pub const DNULL: char = '\u{9e}'; // double quote marker    // c:N/A
+    pub const SNULL: char = '\u{9d}'; // single bslashquote marker    // c:N/A
+    pub const DNULL: char = '\u{9e}'; // double bslashquote marker    // c:N/A
     pub const MARKER: char = '\u{a2}'; // Array key-value marker // c:N/A
     pub const BNULL: char = '\u{9f}'; // Backslash null     // c:N/A
 
@@ -572,7 +572,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                 // splits the node into N nodes.
                 //
                 // Routes through canonical
-                // crate::ported::glob::expand_braces; treats >1
+                // crate::ported::glob::xpandbraces; treats >1
                 // result as a positive hasbraces hit.
                 if !state.opts.ignore_braces && (flags & prefork_flags::SINGLE == 0) { // c:166
                     if !keep {                              // c:168
@@ -583,7 +583,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
                             Some(d) => d.to_string(),
                             None => break,
                         };
-                        let expanded = crate::ported::glob::expand_braces(&cur, false); // c:171
+                        let expanded = crate::ported::glob::xpandbraces(&cur, false); // c:171
                         if expanded.len() <= 1 { break; }   // c:170 (!hasbraces)
                         keep = true;                        // c:172
                         // Replace current node with first expansion;
@@ -642,7 +642,7 @@ pub fn prefork(list: &mut LinkList, flags: u32, ret_flags: &mut u32, state: &mut
 ///
 /// C body:
 ///   1. `strsub = getkeystring(strdpos+2, &len, GETKEYS_DOLLARS_QUOTE, NULL)`
-///      — calls utils.c's getkeystring with the dollars-quote flag,
+///      — calls utils.c's getkeystring with the dollars-bslashquote flag,
 ///      which walks chars until an unescaped `'` and returns the
 ///      unescaped contents.
 ///   2. `len += 2` — account for the `$'` prefix.
@@ -698,11 +698,11 @@ fn stringsubstquote(strstart: &str, strdpos: usize) -> (String, usize) { // c:20
     };
 
     // C: empty `$''` special case — `strret = dupstring(nulstring);`
-    // returns the NULARG sentinel string so the empty quote doesn't
+    // returns the NULARG sentinel string so the empty bslashquote doesn't
     // get elided by stringsubst's word-walk.
     let strret = if strsub.is_empty() && prefix.is_empty() && suffix.is_empty() { // c:226
         // Nularg = '\u{8b}' per zsh.h. Emit as a single-char string
-        // so downstream code recognises the empty-quote sentinel.
+        // so downstream code recognises the empty-bslashquote sentinel.
         "\u{8b}".to_string()                                // c:227
     } else {
         format!("{}{}{}", prefix, strsub, suffix)           // c:215-220
@@ -820,7 +820,7 @@ fn stringsubst(                                             // c:237
         }                                                   // c:237
         let c = chars[pos];                                 // c:237
 
-        // Lexer-emitted single-quote marker (`\u{9d}`, parse/src/tokens.rs
+        // Lexer-emitted single-bslashquote marker (`\u{9d}`, parse/src/tokens.rs
         // SNULL) encloses literal `'…'` regions. Inside, no parameter /
         // command substitution / glob fires — content is verbatim.
         // Strip both markers and leave the body intact. Without this, a
@@ -846,7 +846,7 @@ fn stringsubst(                                             // c:237
             list.setdata(node_idx, str3.clone());          // c:237
             continue;                                       // c:237
         }                                                   // c:237
-        // Lexer-emitted double-quote marker (`\u{9e}`, DNULL) — strip;
+        // Lexer-emitted double-bslashquote marker (`\u{9e}`, DNULL) — strip;
         // contents inside DQ already had `$`/`${…}` tokenized to STRING
         // / QSTRING by the lexer, so the surrounding pass picks them
         // up. The markers themselves are noise for substitution.
@@ -883,11 +883,11 @@ fn stringsubst(                                             // c:237
         // untokenized text (e.g. an outer expand_string ran
         // `untokenize`, dropping SNULLs but preserving the literal
         // `'`) still need the literal-span semantics. Per zsh single-
-        // quote rules: contents are verbatim, no `$`/`${…}` / glob
+        // bslashquote rules: contents are verbatim, no `$`/`${…}` / glob
         // expansion fires inside. Strip the surrounding quotes and
         // leave the body intact.
         if c == '\'' {                                      // c:237
-            // Find matching close quote — backslash inside `'…'` is
+            // Find matching close bslashquote — backslash inside `'…'` is
             // NOT an escape (zsh rule), so don't track escaping.
             let mut end = pos + 1;                          // c:237
             while end < chars.len() && chars[end] != '\'' { // c:237
@@ -1362,7 +1362,7 @@ pub fn paramsubst(                                          // c:1625
                     'U' => { flag_upper = true; }           // c:2200
                     'C' => { flag_caps = true; }            // c:2203
                     'q' => {                                // c:2237
-                        // (q-) → SINGLE_OPTIONAL: quote only if
+                        // (q-) → SINGLE_OPTIONAL: bslashquote only if
                         // needed (whitespace / metachar present);
                         // (q+) → QUOTEDZPUTS: print -V style.
                         // Without next char or with another q,
@@ -1687,7 +1687,7 @@ pub fn paramsubst(                                          // c:1625
             && body_chars[idx] == '"'                        // c:2649
             && body_chars[idx + 1] == '$'                    // c:2649
         {                                                    // c:2649
-            // Find matching close quote (depth-tracked over $(...)
+            // Find matching close bslashquote (depth-tracked over $(...)
             // and ${...} so nested DQs don't fool us). Direct port
             // of zsh's QSTRING/STRING dual-pass at subst.c:282.
             let mut p = idx + 1;                             // c:2649
@@ -1701,11 +1701,11 @@ pub fn paramsubst(                                          // c:1625
                     '{' => brace_depth += 1,                 // c:2649
                     '}' => brace_depth -= 1,                 // c:2649
                     '"' if paren_depth == 0 && brace_depth == 0 => { // c:2649
-                        // close quote
+                        // close bslashquote
                         idx += 1;                            // skip leading "
                         // Mark peeled; inner $-form starts at idx now.
                         peeled_quotes = true;                // c:2649
-                        // Note p is the closing quote position;
+                        // Note p is the closing bslashquote position;
                         // skip it after the inner $-form is consumed.
                         let _ = p;                           // c:2649
                         break;                               // c:2649
@@ -2972,7 +2972,7 @@ pub fn paramsubst(                                          // c:1625
             split_parts = Some(sorted);                      // c:4180
         }
 
-        // (s::SEP:) split-on-SEP: apply BEFORE dopadding/quote/case
+        // (s::SEP:) split-on-SEP: apply BEFORE dopadding/bslashquote/case
         // (per zsh order). Port of subst.c flag-loop spsep usage
         // around line 3950+ (post-fetch split block).
         // Track the post-split parts for the auto-splat block so
@@ -3120,7 +3120,7 @@ pub fn paramsubst(                                          // c:1625
         // (z)/(Z:cCn:) — shell-tokenize the value into a list of
         // words. Direct port of subst.c:2439 LEXFLAGS_ACTIVE +
         // sub-flags. Simplified port: use whitespace splitting
-        // that respects single/double-quote spans and backslash
+        // that respects single/double-bslashquote spans and backslash
         // escapes, plus optional comment handling. The full lexer
         // reentry is deferred — this covers the common idioms
         // \${(z)cmdline} (split a command into words) and
@@ -3250,7 +3250,7 @@ pub fn paramsubst(                                          // c:1625
             }
         }                                                    // c:2229
 
-        // (b) backslash-quote pattern metachars — output is safe to
+        // (b) backslash-bslashquote pattern metachars — output is safe to
         // feed back into a glob/regex context as a literal. Port of
         // subst.c:2255 QT_BACKSLASH_PATTERN: every char that has
         // pattern meaning (`* ? [ ] ( ) | ^ # ~ \ < >` plus IFS
@@ -3258,7 +3258,7 @@ pub fn paramsubst(                                          // c:1625
         // a leading backslash. Used by `[[ x =~ ${(b)pat} ]]` and
         // `case x in ${(b)pat}` to neutralize a user-supplied
         // string before it's interpreted as a pattern.
-        // (b) per-element backslash-quote. Direct port of subst.c:2255
+        // (b) per-element backslash-bslashquote. Direct port of subst.c:2255
         // QT_BACKSLASH_PATTERN iterating aval per-element.
         let b_one = |s: &str| -> String {                    // c:2255
             let mut out = String::with_capacity(s.len() * 2);
@@ -4583,7 +4583,7 @@ pub fn multsub(s: &str, pf_flags: u32, state: &mut SubstState) -> (String, Vec<S
         let chars: Vec<char> = x.chars().collect();         // c:565
         let mut nodes: Vec<String> = Vec::new();            // c:565
         let mut cur = String::new();                        // c:565
-        let mut inq = false;                                // c:570 (quote state)
+        let mut inq = false;                                // c:570 (bslashquote state)
         let mut inp = 0_i32;                                // c:570 (paren depth)
         let mut i = 0_usize;                                // c:572
         while i < chars.len() {                             // c:572
@@ -5044,16 +5044,16 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
                     }
                     Some(out)
                 }
-                'A' => chabspath(w).ok(),                   // c:4585 (:A absolute)
+                'A' => xsymlinks(w).ok(),                   // c:4585 (:A absolute)
                 'a' => Some(remtpath(w, 0)),                // c:4585 (:a)
                 'P' => {                                    // c:4585 (:P physical)
                     // :P canonicalizes (resolves symlinks) like
                     // realpath(3). zsh sets `physical = 1` for the
-                    // chabspath call. std::fs::canonicalize wraps
+                    // xsymlinks call. std::fs::canonicalize wraps
                     // the libc realpath.
                     std::fs::canonicalize(w).ok()
                         .map(|p| p.to_string_lossy().into_owned())
-                        .or_else(|| chabspath(w).ok())
+                        .or_else(|| xsymlinks(w).ok())
                 }
                 'c' => {                                    // c:4585 (:c command-resolve)
                     // :c resolves like `which` — search PATH for
@@ -5124,7 +5124,7 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
 ///
 /// Modes:
 ///   • `multi_width == 0` — every char counts as one cell.
-///   • `multi_width == 1` — use `wcwidth`-style cell counting.
+///   • `multi_width == 1` — use `u9_wcwidth`-style cell counting.
 ///   • else — combining/zero-width chars count as 0, all others as 1.
 ///
 /// The Rust port uses `unicode-width`-style heuristics inline: ASCII
@@ -5137,10 +5137,10 @@ pub fn modify(s: &str, modifiers: &str, state: &mut SubstState) -> String { // c
 /// C signature: `int wcpadwidth(wchar_t wc, int multi_width)`.
 /// multi_width values:
 ///   0 → always 1 (legacy / no multibyte)
-///   1 → wcwidth(wc); zero if negative
-///   * → boolean: 1 if wcwidth>0 else 0
+///   1 → u9_wcwidth(wc); zero if negative
+///   * → boolean: 1 if u9_wcwidth>0 else 0
 pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {      // c:848
-    // wcwidth fallback lives in utils.rs (canonical port of
+    // u9_wcwidth fallback lives in utils.rs (canonical port of
     // Src/utils.c::zwcwidth). Use the unicode_width-backed
     // implementation there.
     let wcw = crate::ported::utils::zwcwidth(wc) as i32;
@@ -5169,7 +5169,7 @@ pub fn wcpadwidth(wc: char, multi_width: i32) -> i32 {      // c:848
 ///
 /// The `single` flag (false) maps the lexer's `Qstring`/`Qtick` quoted
 /// markers back to plain `String`/`Tick` tokens, mirroring the inner
-/// loop at subst.c:1473-1485 that strips the doubled-up quote
+/// loop at subst.c:1473-1485 that strips the doubled-up bslashquote
 /// recognition.
 /// Port of `subst_parse_str()` from `Src/subst.c:1460-1486`.
 ///
@@ -5280,7 +5280,7 @@ pub fn dstackent(ch: char, val: i32, dirstack: &[String], pwd: &str, pushdminus_
 
 /// Quote types for (q) flag
 #[derive(Debug, Clone, Copy, PartialEq)]                    // c:N/A
-/// `${(q)var}` quote style.
+/// `${(q)var}` bslashquote style.
 /// Mirrors the `QT_*` enum Src/utils.c uses inside
 /// `quotestring()` — backslash / single / double / POSIX `$'…'`.
 pub enum QuoteType {                                        // c:N/A
@@ -5334,7 +5334,7 @@ pub fn dopadding(                                           // c:893
     // codepoint counts 1 (legacy behavior); otherwise wcpadwidth
     // gives the wide-char-aware metric. Direct port of zsh's
     // MULTIBYTE_SUPPORT path which routes the (l)/(r) length
-    // checks through wcwidth() before deciding pad vs truncate.
+    // checks through u9_wcwidth() before deciding pad vs truncate.
     let cells = |t: &str| -> usize {                        // c:893
         if multi_width <= 0 {                               // c:893
             t.chars().count()                                // c:893
@@ -6114,7 +6114,7 @@ mod tests {                                                 // utils.c:6915
         assert_eq!(rembutext("/path.with.dot/noext"), "");  // utils.c:6915
     }                                                       // utils.c:6915
 
-    // ─── chabspath (Src/utils.c::chabspath) ─────────────────────────
+    // ─── xsymlinks (Src/utils.c::xsymlinks) ─────────────────────────
 
     #[test]                                                 // utils.c:6915
     fn chabspath_collapses_dot_and_dotdot() {               // utils.c:6915
@@ -6122,9 +6122,9 @@ mod tests {                                                 // utils.c:6915
         // symlinks the behavior reduces to: collapse `.` (no-op),
         // collapse `..` (drop preceding component), preserve trailing
         // form.
-        assert_eq!(chabspath("/a/b/../c").unwrap(), "/a/c");         // utils.c:6915
-        assert_eq!(chabspath("/a/./b/c").unwrap(), "/a/b/c");        // utils.c:6915
-        assert_eq!(chabspath("/a/b/..").unwrap(), "/a");             // utils.c:6915
+        assert_eq!(xsymlinks("/a/b/../c").unwrap(), "/a/c");         // utils.c:6915
+        assert_eq!(xsymlinks("/a/./b/c").unwrap(), "/a/b/c");        // utils.c:6915
+        assert_eq!(xsymlinks("/a/b/..").unwrap(), "/a");             // utils.c:6915
     }                                                       // utils.c:6915
 
     // ─── getkeystring (Src/utils.c::getkeystring) ───────────────────
@@ -6393,7 +6393,7 @@ mod tests {                                                 // utils.c:6915
     // ─── zinit.zsh:245 — triple-nested with (M) ────────────────────
 
 
-    // ─── p10k internal/p10k.zsh:6 — (q) quote + (#b) backref ──────
+    // ─── p10k internal/p10k.zsh:6 — (q) bslashquote + (#b) backref ──────
 
 
 
@@ -6446,7 +6446,7 @@ pub mod casmod {                                            // c:3193
     pub const CAPS: u32 = 3;                                // c:3193
 }                                                           // c:3193
 
-/// QT_* quote type constants from subst.c
+/// QT_* bslashquote type constants from subst.c
 pub mod qt {                                                // c:3193
     pub const NONE: u32 = 0;                                // c:3193
     pub const BACKSLASH: u32 = 1;                           // c:3193
@@ -6656,7 +6656,7 @@ pub fn check_colon_subscript(s: &str) -> Option<(String, String)> { // c:1566
 ///
 ///   - If `escapes` is set AND `s` begins with `$<ident>` or
 ///     `Qstring<ident>`, look up the named parameter and use its
-///     value directly (zsh's `getsparam`). Otherwise untokenize
+///     value directly (zsh's `getstrvalue`). Otherwise untokenize
 ///     and run `getkeystring` to process print-style escapes.
 ///
 ///   - If `tok_arg` is set, additionally run `shtokenize` on the
@@ -6679,7 +6679,7 @@ pub fn untok_and_escape(s: &str, escapes: bool, tok_arg: bool, state: &SubstStat
             }
             pend += 1;                                      // c:1535
         }
-        // C: `if (!*pend) { dst = dupstring(getsparam(pstart)); }`
+        // C: `if (!*pend) { dst = dupstring(getstrvalue(pstart)); }`
         if pend == chars.len() {                            // c:1538
             let name: String = chars[1..].iter().collect(); // c:1539
             dst = state.variables.get(&name).cloned();      // c:1539

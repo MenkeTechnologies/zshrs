@@ -637,8 +637,8 @@ impl Keymap {
 
         // Quote — zle_bindings.c emacs '\e\\','\e\"','\e\''.
         km.bind("\\e#", "pound-insert");
-        km.bind("\\e\"", "quote-region");
-        km.bind("\\e'", "quote-line");
+        km.bind("\\e\"", "bslashquote-region");
+        km.bind("\\e'", "bslashquote-line");
 
         // Argument — zle_bindings.c emacs '^[0'..'^[9','\e-','\e[0-9]'.
         km.bind("\\e0", "digit-argument");
@@ -1052,9 +1052,9 @@ mod tests {
     #[test]
     fn emacs_default_binds_quote_and_paste() {
         let km = Keymap::emacs_default();
-        // \\e' quote-line, \\e\" quote-region — zle_bindings.c emacs.
-        assert_eq!(km.lookup("\\e'"), Some("quote-line"));
-        assert_eq!(km.lookup("\\e\""), Some("quote-region"));
+        // \\e' bslashquote-line, \\e\" bslashquote-region — zle_bindings.c emacs.
+        assert_eq!(km.lookup("\\e'"), Some("bslashquote-line"));
+        assert_eq!(km.lookup("\\e\""), Some("bslashquote-region"));
         // Bracketed paste prefix sequence.
         assert_eq!(km.lookup("\\e[200~"), Some("bracketed-paste"));
         // Insert last word — zle_bindings.c emacs '\\e.'.

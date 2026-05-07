@@ -905,7 +905,7 @@ pub mod print_flags {
 /// Format a `$cmdtab` entry for `hash` listing.
 /// Port of `printcmdnamnode()` from Src/hashtable.c (the C
 /// source's per-command formatter `bin_hash()` invokes).
-pub fn format_cmdnam(cmd: &CmdName, path: &[String], print_flags: u32) -> String {
+pub fn printcmdnamnode(cmd: &CmdName, path: &[String], print_flags: u32) -> String {
     let name = &cmd.name;
 
     if print_flags & print_flags::WHENCE_WORD != 0 {
@@ -975,7 +975,7 @@ pub fn format_cmdnam(cmd: &CmdName, path: &[String], print_flags: u32) -> String
 /// Port of `printshfuncnode()` from Src/builtin.c — emits the
 /// declaration / source-text combination `functions -t`/`-T`/
 /// `+/-`/etc. variants produce.
-pub fn format_shfunc(func: &ShFunc, print_flags: u32) -> String {
+pub fn printshfuncnode(func: &ShFunc, print_flags: u32) -> String {
     let name = &func.name;
 
     if print_flags & print_flags::NAMEONLY != 0

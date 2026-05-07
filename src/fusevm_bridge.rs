@@ -3484,12 +3484,12 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // Src/utils.c::dequotestring which scans the entire
                     // string, handling SQ-spans (`'…'`), DQ-spans
                     // (`"…"`) with backslash escapes, and standalone
-                    // `\X` escapes — NOT just outer-quote strip. The
+                    // `\X` escapes — NOT just outer-bslashquote strip. The
                     // canonical roundtrip is `(qq)` → `(Q)` for strings
                     // containing single quotes: `(qq)` of `a'b` produces
                     // `'a'\''b'` and `(Q)` must reverse the four
                     // close/escape/open transitions to recover `a'b`.
-                    // Earlier outer-quote-strip left `a'\''b` literal.
+                    // Earlier outer-bslashquote-strip left `a'\''b` literal.
                     let dequote = |s: &str| -> String {
                         let mut out = String::with_capacity(s.len());
                         let mut chars = s.chars().peekable();
@@ -3883,10 +3883,10 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                     // (q) quoting flag — direct port of `case 'q':` in
                     // Src/subst.c:2235-2253. zsh accepts ONLY:
                     //   q     backslash-escape (QT_BACKSLASH)
-                    //   qq    single-quote   (QT_SINGLE)
-                    //   qqq   double-quote   (QT_DOUBLE)
+                    //   qq    single-bslashquote   (QT_SINGLE)
+                    //   qqq   double-bslashquote   (QT_DOUBLE)
                     //   qqqq  $'…' ANSI-C   (QT_DOLLARS)
-                    //   q-    QT_SINGLE_OPTIONAL (single-quote if needed)
+                    //   q-    QT_SINGLE_OPTIONAL (single-bslashquote if needed)
                     //   q+    QT_QUOTEDZPUTS    (quotedzputs() format)
                     // No `q*`, no `q!`, and crucially no `q:str:` delimiter
                     // form — those were bot-invented extensions. The
@@ -3964,7 +3964,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         if wrap_only_if_needed {
                             // q+: skip quoting if the value is "shell-safe";
                             // otherwise wrap with single-quotes (zsh's q+
-                            // promotes to single-quote level when needed).
+                            // promotes to single-bslashquote level when needed).
                             if !needs_quoting(s) {
                                 return s.to_string();
                             }
@@ -4022,7 +4022,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 out
                             }
                             2 => {
-                                // qq: single-quote, escape inner ' as '\''.
+                                // qq: single-bslashquote, escape inner ' as '\''.
                                 let mut escaped = s.replace('\'', "'\\''");
                                 if escape_glob_chars {
                                     escaped = escaped.replace('*', "\\*").replace('?', "\\?");
@@ -4030,7 +4030,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                                 format!("'{}'", escaped)
                             }
                             3 => {
-                                // qqq: double-quote, escape $ ` " \\.
+                                // qqq: double-bslashquote, escape $ ` " \\.
                                 let mut out = String::with_capacity(s.len() + 2);
                                 out.push('"');
                                 for c in s.chars() {
@@ -4434,7 +4434,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                 }
                 'b' | 'B' => {
                     // (b)/(B) — backslash-escape shell + pattern metas
-                    // (whitespace, glob/redirect/quote/expansion specials).
+                    // (whitespace, glob/redirect/bslashquote/expansion specials).
                     let escape = |s: &str| -> String {
                         let mut r = String::new();
                         for c in s.chars() {
@@ -4609,7 +4609,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         Value::Status(0)
     });
 
-    // Brace expansion. Routes through executor.expand_braces (already
+    // Brace expansion. Routes through executor.xpandbraces (already
     // implemented for the tree-walker era). Returns Value::Array.
     vm.register_builtin(BUILTIN_WORD_SPLIT, |vm, _argc| {
         let s = vm.pop().to_str();
@@ -4669,7 +4669,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         // as `vec![s]` — every `print X{1,2,3}Y` returned literal.
         let brace_ccl = with_executor(|exec|
             exec.options.get("braceccl").copied().unwrap_or(false));
-        let parts = crate::ported::glob::expand_braces(&s, brace_ccl);
+        let parts = crate::ported::glob::xpandbraces(&s, brace_ccl);
         if parts.len() == 1 {
             fusevm::Value::str(parts.into_iter().next().unwrap_or_default())
         } else {
@@ -4870,7 +4870,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
                         Err(_) => return p,
                     };
                     let mode = meta.permissions().mode();
-                    let ch = crate::glob::file_type_char(mode);
+                    let ch = crate::glob::file_type(mode);
                     if list_types || (mark_dirs && ch == '/') {
                         format!("{}{}", p, ch)
                     } else {
@@ -5146,7 +5146,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
         let live_status = vm.last_status;
         // `$@` and `$*` need splice semantics — return Value::Array of
         // positional params so for-loop's BUILTIN_ARRAY_FLATTEN spreads them
-        // and pop_args splits them into argv slots. zsh's `"$@"` quote-each-
+        // and pop_args splits them into argv slots. zsh's `"$@"` bslashquote-each-
         // word semantics matches: each pos-param becomes its own arg.
         // Same for arrays accessed by name (e.g. `$arr` in some contexts).
         let sync_status = |exec: &mut ShellExecutor| {
@@ -7026,7 +7026,7 @@ pub(crate) fn register_builtins(vm: &mut fusevm::VM) {
 
     // Text-based word expansion. Pops [preserved_text, mode_byte].
     // mode_byte:
-    //   0 = Default — expand_string + expand_braces + expand_glob
+    //   0 = Default — expand_string + xpandbraces + expand_glob
     //   1 = DoubleQuoted — strip outer `"…"`, expand_string only
     //         (no brace, no glob — DQ semantics)
     //   2 = SingleQuoted — strip outer `'…'`, no expansion
@@ -8142,7 +8142,7 @@ pub const BUILTIN_ARITH_EVAL: u16 = 312;
 pub const BUILTIN_CMD_SUBST_TEXT: u16 = 313;
 /// Text-based word expansion. Pops \[preserved_text\]: the word with
 /// quotes preserved (DNULL→`"`, SNULL→`'`, BNULL→`\`), runs
-/// `expand_string` (variable + cmd-sub + arith) then `expand_braces`
+/// `expand_string` (variable + cmd-sub + arith) then `xpandbraces`
 /// then `expand_glob`. Returns Value::str (single match) or
 /// Value::Array (multi-match brace/glob).
 pub const BUILTIN_EXPAND_TEXT: u16 = 314;
@@ -8381,7 +8381,7 @@ impl fusevm::ShellHost for ZshrsHost {
         // class form `{a-z}` requires. Pull from executor options.
         let brace_ccl = with_executor(|exec|
             exec.options.get("braceccl").copied().unwrap_or(false));
-        crate::ported::glob::expand_braces(s, brace_ccl)
+        crate::ported::glob::xpandbraces(s, brace_ccl)
     }
 
     fn str_match(&mut self, s: &str, pattern: &str) -> bool {

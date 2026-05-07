@@ -125,8 +125,8 @@ const TILDE: u8 = 0x98; // ~
 const COMMA: u8 = 0x9a; // ,
 const DASH: u8 = 0x9b; // - (only in patterns; zsh.h:182)
 const BANG: u8 = 0x9c; // ! (only in patterns; zsh.h:183)
-const SNULL: u8 = 0x9d; // ' quote marker
-const DNULL: u8 = 0x9e; // " quote marker
+const SNULL: u8 = 0x9d; // ' bslashquote marker
+const DNULL: u8 = 0x9e; // " bslashquote marker
 const BNULL: u8 = 0x9f; // \ backslash marker
 const NULARG: u8 = 0xa1; // empty argument marker
 
