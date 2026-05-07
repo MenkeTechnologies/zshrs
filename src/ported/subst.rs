@@ -1151,6 +1151,7 @@ fn paramsubst(                                              // c:1625
         let mut sub_flags_bits: u32 = 0;                     // c:2169
         let mut flag_d_dir = false;                         // c:2229 (D)
         let mut flag_p_escapes = false;                     // c:2382 (p)
+        let mut multi_width: u32 = 0;                       // c:2376 (m count)
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
@@ -1242,7 +1243,7 @@ fn paramsubst(                                              // c:1625
                     'z' | 'Z' => { /* tokenize — c:2439 */ } // c:2439 (z/Z)
                     'g' => { /* escapes — c:2409 */ }       // c:2409 (g)
                     '~' => { state.opts.glob_subst = !state.opts.glob_subst; } // c:2160 (~)
-                    'm' => { /* multi_width — c:2376, skip for now */ } // c:2376
+                    'm' => { multi_width += 1; }            // c:2376 (m)
                     'p' => { flag_p_escapes = true; }       // c:2382
                     'f' => { spsep = Some("\n".to_string()); } // c:2285
                     'F' => { sep = Some("\n".to_string()); }   // c:2289
@@ -1906,7 +1907,17 @@ fn paramsubst(                                              // c:1625
         // (whitespace-split), word count (W = WS_NULL).
         // Port of subst.c:2275-2281 whichlen.
         if flag_char_count {                                // c:2275
-            value = value.chars().count().to_string();      // c:2275
+            // (m) flag, when set, counts cells via wcpadwidth (so
+            // wide chars count 2). Without (m): plain chars.count().
+            // Direct port of subst.c:2275 whichlen + multi_width.
+            value = if multi_width > 0 {                    // c:2275
+                value.chars()                               // c:2376
+                    .map(|c| wcpadwidth(c, multi_width as i32) as usize) // c:2376
+                    .sum::<usize>()                         // c:2376
+                    .to_string()                            // c:2376
+            } else {                                        // c:2275
+                value.chars().count().to_string()           // c:2275
+            };                                               // c:2275
         } else if flag_word_count {                         // c:2278
             value = value.split_whitespace().count().to_string(); // c:2278
         } else if flag_word_count_w {                       // c:2281
