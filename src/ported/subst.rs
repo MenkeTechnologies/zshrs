@@ -1670,6 +1670,47 @@ fn paramsubst(                                              // c:1625
         } else {                                            // c:1885
             String::new()                                   // c:1885
         };                                                  // c:1885
+
+        // Post-processing splat — port of subst.c:3900-4470
+        // multi-node return path. When (@) flag is set on an array
+        // var OR the value is genuinely array-shaped (multi-element
+        // assoc keys/values), emit one result_node per array element
+        // so multsub-aware callers see distinct words.
+        if flag_at {                                        // c:3950
+            let parts: Vec<String> = if let Some(arr) = state.arrays.get(&var_name) {
+                arr.clone()                                 // c:3960 (real array splat)
+            } else if let Some(map) = state.assoc_arrays.get(&var_name) {
+                if flag_keys {                              // c:3955 (k-flag splat)
+                    map.keys().cloned().collect()
+                } else if flag_values {                     // c:3957 (v-flag splat)
+                    map.values().cloned().collect()
+                } else {
+                    vec![value.clone()]                     // c:3962 (scalar fallback)
+                }
+            } else {
+                vec![value.clone()]                         // c:3960 (scalar)
+            };
+            // Build per-node strings: prefix + element + suffix.
+            // First node carries prefix; last carries suffix; middle
+            // nodes are bare elements.
+            let mut nodes: Vec<String> = Vec::with_capacity(parts.len());
+            for (i, part) in parts.iter().enumerate() {
+                let s = if parts.len() == 1 {
+                    format!("{}{}{}", prefix, part, suffix)
+                } else if i == 0 {
+                    format!("{}{}", prefix, part)
+                } else if i == parts.len() - 1 {
+                    format!("{}{}", part, suffix)
+                } else {
+                    part.clone()
+                };
+                nodes.push(s);
+            }
+            let first = nodes.first().cloned().unwrap_or_default();
+            let new_pos_in_full = prefix.chars().count() + first.chars().count().saturating_sub(prefix.chars().count());
+            return (first, new_pos_in_full, nodes);
+        }
+
         let full = format!("{}{}{}", prefix, value, suffix); // c:1885
         let new_pos_in_full = prefix.chars().count() + value.chars().count();
         return (full.clone(), new_pos_in_full, vec![full]);
