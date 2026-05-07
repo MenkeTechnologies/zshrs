@@ -1275,6 +1275,15 @@ fn paramsubst(                                              // c:1625
         if body_chars.first() == Some(&'(') {               // c:2147
             let mut d = 1_i32;                              // c:2147
             idx = 1;                                        // c:2147
+            // No closing paren on flag block → "bad substitution".
+            // Direct port of zsh's flagerr label which calls zerr
+            // and aborts the substitution. Emit and bail rather than
+            // silently treating the entire body as flag chars.
+            if !body_chars.iter().skip(1).any(|c| *c == ')') { // c:2147
+                eprintln!("zshrs: bad substitution");        // c:2147
+                state.errflag = true;                        // c:2147
+                return (String::new(), new_pos, vec![]);     // c:2147
+            }                                                // c:2147
             while idx < body_chars.len() && d > 0 {         // c:2147
                 let fc = body_chars[idx];                   // c:2153
                 match fc {                                  // c:2153
