@@ -1060,15 +1060,43 @@ fn paramsubst(                                              // c:1625
         let body_chars: Vec<char> = body.chars().collect();
         let mut idx = 0_usize;
         // Skip flag block `(...)` — flags currently no-op.
+        // ${(flags)var…} — paren-flag block. Port of subst.c:2147+
+        // flag-loop. Each flag char sets a state bit; applied as
+        // post-processing on the substituted value.
+        let mut flag_lower = false;                         // c:2197 (L)
+        let mut flag_upper = false;                         // c:2200 (U)
+        let mut flag_caps = false;                          // c:2203 (C)
+        let mut flag_qcount: u32 = 0;                       // c:2237 (q)
+        let mut flag_at = false;                            // c:2167 (@)
+        let mut flag_p_indirect = false;                    // c:2295 (P)
+        let mut flag_typeinfo = false;                      // c:2807 (t)
+        let mut flag_keys = false;                          // c:2247 (k)
+        let mut flag_values = false;                        // c:2256 (v)
+        let mut flag_arrlen = false;                        // c:2265 (#)
         if body_chars.first() == Some(&'(') {               // c:2147
-            let mut d = 1_i32;
-            idx = 1;
-            while idx < body_chars.len() && d > 0 {
-                if body_chars[idx] == '(' { d += 1; }
-                else if body_chars[idx] == ')' { d -= 1; if d == 0 { idx += 1; break; } }
+            let mut d = 1_i32;                              // c:2147
+            idx = 1;                                        // c:2147
+            while idx < body_chars.len() && d > 0 {         // c:2147
+                let fc = body_chars[idx];                   // c:2153
+                match fc {                                  // c:2153
+                    '(' => { d += 1; }                      // c:2147
+                    ')' => { d -= 1; if d == 0 { idx += 1; break; } } // c:2147
+                    'L' => { flag_lower = true; }           // c:2197
+                    'U' => { flag_upper = true; }           // c:2200
+                    'C' => { flag_caps = true; }            // c:2203
+                    'q' => { flag_qcount += 1; }            // c:2237
+                    '@' => { flag_at = true; }              // c:2167
+                    'P' => { flag_p_indirect = true; }      // c:2295
+                    't' => { flag_typeinfo = true; }        // c:2807
+                    'k' => { flag_keys = true; }            // c:2247
+                    'v' => { flag_values = true; }          // c:2256
+                    '#' => { flag_arrlen = true; }          // c:2265
+                    _ => { /* unhandled flag — swallow per existing behavior */ }
+                }
                 idx += 1;
             }
         }
+        let _ = (flag_at, flag_keys, flag_values, flag_arrlen, flag_p_indirect); // suppress unused for now
         // ${#var} — length-of operator at start of brace (after flags).
         let length_op = body_chars.get(idx).copied() == Some('#'); // c:2128
         let post_flags_start = idx;
@@ -1197,6 +1225,46 @@ fn paramsubst(                                              // c:1625
                 };
             }
         }
+        // Apply post-processing flags to the substituted value.
+        // C lines 3950-4070 — case mods, quoting, etc.
+        if flag_typeinfo {                                  // c:2807
+            // ${(t)var} — emit type tag.
+            value = state.var_attrs.get(&var_name)          // c:2814
+                .map(|attr| attr.format_zsh())              // c:2825
+                .unwrap_or_else(|| {
+                    if is_set { "scalar".to_string() }
+                    else { String::new() }
+                });
+        }
+        if flag_lower { value = value.to_lowercase(); }     // c:2197
+        if flag_upper { value = value.to_uppercase(); }     // c:2200
+        if flag_caps {                                      // c:2203
+            // Capitalize each word — zsh CASMOD_CAPS.
+            let mut out = String::with_capacity(value.len());
+            let mut next_upper = true;
+            for c in value.chars() {
+                if c.is_whitespace() || matches!(c, '-' | '_' | '/' | '.' | ',') {
+                    out.push(c);
+                    next_upper = true;
+                } else if next_upper {
+                    out.extend(c.to_uppercase());
+                    next_upper = false;
+                } else {
+                    out.extend(c.to_lowercase());
+                }
+            }
+            value = out;
+        }
+        if flag_qcount > 0 {                                // c:2237
+            // (q)/(qq)/(qqq)/(qqqq) — quote per count.
+            value = match flag_qcount {
+                1 => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Backslash),
+                2 => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Single),
+                3 => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Double),
+                _ => crate::ported::utils::quotestring(&value, crate::ported::utils::QuoteType::Dollars),
+            };
+        }
+
         // Reconstruct the full str3 with the brace expansion applied
         // — same protocol the simple `$var` arm uses (line 1240).
         // Caller (stringsubst) re-loads `str3 = list.getdata(node_idx)`
