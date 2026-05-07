@@ -1743,7 +1743,33 @@ fn paramsubst(                                              // c:1625
         }
         if !rest.is_empty() {
             let r = rest.as_str();
-            if let Some(default) = r.strip_prefix(":-") {     // c:3193
+            if let Some(pat) = r.strip_prefix(":#") {        // c:3540 (:#pat filter)
+                // Match-test on element(s). Drops elements (or
+                // empties scalar) when pattern matches; keeps
+                // unchanged when not. With (M) flag in sub_flags,
+                // the disposition inverts (keep matching, drop
+                // non-matching). Direct port of subst.c:3540
+                // SUB_FILTER + getmatch SUB_MATCH branch.
+                let p = singsub(pat, state);                 // c:3540
+                let invert = (state.sub_flags & 0x0008) != 0; // c:2171 SUB_MATCH
+                state.sub_flags = 0;                          // c:2169 (consume)
+                if let Some(arr) = state.arrays.get(&var_name).cloned() {
+                    let kept: Vec<String> = arr.into_iter() // c:3540
+                        .filter(|elem| {                      // c:3540
+                            let m = crate::exec::ShellExecutor::glob_match_static(elem, &p); // c:3540
+                            if invert { m } else { !m }      // c:3540
+                        })                                    // c:3540
+                        .collect();
+                    value = kept.join(" ");                  // c:3540
+                } else {                                      // c:3540
+                    let m = crate::exec::ShellExecutor::glob_match_static(&raw_value, &p); // c:3540
+                    value = if invert {                       // c:3540
+                        if m { raw_value.clone() } else { String::new() } // c:3540
+                    } else {                                  // c:3540
+                        if m { String::new() } else { raw_value.clone() } // c:3540
+                    };                                        // c:3540
+                }                                             // c:3540
+            } else if let Some(default) = r.strip_prefix(":-") {     // c:3193
                 if !is_set || raw_value.is_empty() { value = singsub(default, state); }
             } else if let Some(default) = r.strip_prefix('-') { // c:3193
                 if !is_set { value = singsub(default, state); }
