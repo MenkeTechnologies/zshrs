@@ -84,32 +84,6 @@ pub fn is_executable(path: &str) -> bool {
     }
 }
 
-/// Find an executable in PATH
-/// Walk `$PATH` for an executable.
-/// Port of `pathprog()` from Src/init.c (called via `findcmd()`
-/// in Src/exec.c) — first hit on access(X_OK).
-pub fn find_in_path(name: &str) -> Option<PathBuf> {
-    if name.contains('/') {
-        let path = PathBuf::from(name);
-        if is_executable(name) {
-            return Some(path);
-        }
-        return None;
-    }
-
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in path_var.split(':') {
-            let full_path = PathBuf::from(dir).join(name);
-            if let Some(path_str) = full_path.to_str() {
-                if is_executable(path_str) {
-                    return Some(full_path);
-                }
-            }
-        }
-    }
-    None
-}
-
 /// Expand tilde in a path
 /// Expand `~user` and `~+`/`~-` shorthands in a path.
 /// Port of `unmeta_named_dir()` / `gethnameddir()` chain from
@@ -252,17 +226,6 @@ pub fn is_float(s: &str) -> bool {
     s.parse::<f64>().is_ok()
 }
 
-/// Get monotonic time in nanoseconds
-/// Get monotonic time in nanoseconds.
-/// Port of `zgettime_monotonic_if_available()` (Src/compat.c:133)
-/// — used by the `time` keyword and history-duration tracking.
-pub fn monotonic_time_ns() -> u64 {
-    use std::time::Instant;
-    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    let start = START.get_or_init(Instant::now);
-    start.elapsed().as_nanos() as u64
-}
-
 /// Sleep for a given number of seconds (fractional)
 /// Sleep for a fractional number of seconds.
 /// Port of `zsleep()` from Src/utils.c — wraps `nanosleep(2)`
@@ -289,30 +252,6 @@ pub fn write_to_fd(fd: i32, data: &str) -> io::Result<()> {
     {
         let _ = (fd, data);
         Err(io::Error::new(io::ErrorKind::Unsupported, "Not supported"))
-    }
-}
-
-/// Move a file descriptor to a high number (>10)
-/// Move an fd to the high range to avoid colliding with
-/// user redirections.
-/// Port of `movefd()` from Src/utils.c.
-pub fn move_fd(fd: i32) -> i32 {
-    #[cfg(unix)]
-    {
-        if fd < 10 {
-            unsafe {
-                let newfd = libc::fcntl(fd, libc::F_DUPFD, 10);
-                if newfd >= 0 {
-                    libc::close(fd);
-                    return newfd;
-                }
-            }
-        }
-        fd
-    }
-    #[cfg(not(unix))]
-    {
-        fd
     }
 }
 
@@ -2585,13 +2524,26 @@ pub fn zwcwidth(c: char) -> usize {
     unicode_width::UnicodeWidthChar::width(c).unwrap_or(1)
 }
 
-/// Find program in PATH (from utils.c pathprog)
+/// Find program in PATH.
+/// Port of `pathprog()` from Src/utils.c — first hit on
+/// `access(X_OK)`. Absolute or `./`-prefixed paths skip the PATH
+/// walk and check existence directly.
 pub fn pathprog(prog: &str) -> Option<PathBuf> {
     if prog.contains('/') {
         let p = PathBuf::from(prog);
         return if p.exists() { Some(p) } else { None };
     }
-    find_in_path(prog)
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in path_var.split(':') {
+            let full_path = PathBuf::from(dir).join(prog);
+            if let Some(path_str) = full_path.to_str() {
+                if is_executable(path_str) {
+                    return Some(full_path);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Print symlink target if it is one (from utils.c print_if_link)
